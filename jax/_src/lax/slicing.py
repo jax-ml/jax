@@ -14,19 +14,20 @@
 
 import enum
 from functools import partial
-from typing import Any, Callable, NamedTuple, Optional, Sequence, Union
+from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
 import weakref
 
 import numpy as np
 
+import jax
 from jax import core
 from jax._src import ad_util
 from jax._src import dtypes
+from jax._src import source_info_util
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax.interpreters import partial_eval as pe
 from jax._src.lax.utils import (
     _argnum_weak_type,
     _input_dtype,
@@ -34,7 +35,7 @@ from jax._src.lax.utils import (
 )
 from jax._src.lax import lax
 from jax._src import util
-from jax._src.util import safe_zip
+from jax._src.util import safe_map, safe_zip
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_bridge
@@ -42,10 +43,14 @@ from jax._src.lib import xla_client
 
 xb = xla_bridge
 xc = xla_client
-xops = xla_client.ops
 
 Array = Any
 Shape = core.Shape
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
+
+_dtype = partial(dtypes.dtype, canonicalize=True)
 
 
 def slice(operand: Array, start_indices: Sequence[int],
@@ -168,9 +173,9 @@ class GatherDimensionNumbers(NamedTuple):
   implicit; there is always an index vector dimension and it must always be the
   last dimension. To gather scalar indices, add a trailing dimension of size 1.
   """
-  offset_dims: Sequence[int]
-  collapsed_slice_dims: Sequence[int]
-  start_index_map: Sequence[int]
+  offset_dims: Tuple[int, ...]
+  collapsed_slice_dims: Tuple[int, ...]
+  start_index_map: Tuple[int, ...]
 
 
 class GatherScatterMode(enum.Enum):
@@ -204,9 +209,9 @@ class GatherScatterMode(enum.Enum):
       return s
     if s == "clip":
       return GatherScatterMode.CLIP
-    if s == "fill" or s == "drop":
+    if s is None or s == "fill" or s == "drop":
       return GatherScatterMode.FILL_OR_DROP
-    if s is None or s == "promise_in_bounds":
+    if s == "promise_in_bounds":
       return GatherScatterMode.PROMISE_IN_BOUNDS
     else:
       raise ValueError(f'Unknown gather mode "{s}"')
@@ -255,10 +260,12 @@ def gather(operand: Array, start_indices: Array,
   Returns:
     An array containing the gather output.
   """
+  if mode is None:
+    mode = GatherScatterMode.PROMISE_IN_BOUNDS
   parsed_mode = GatherScatterMode.from_any(mode)
   if parsed_mode == GatherScatterMode.FILL_OR_DROP:
     if fill_value is None:
-      dtype = lax._dtype(operand)
+      dtype = _dtype(operand)
       if dtypes.issubdtype(dtype, np.inexact):
         fill_value = np.nan
       elif dtypes.issubdtype(dtype, np.signedinteger):
@@ -278,7 +285,6 @@ def gather(operand: Array, start_indices: Array,
       indices_are_sorted=bool(indices_are_sorted),
       mode=parsed_mode,
       fill_value=fill_value)
-
 
 
 class ScatterDimensionNumbers(NamedTuple):
@@ -606,15 +612,17 @@ def scatter(
 
 def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
   indices = lax.concatenate([lax.expand_dims(i, (1,)) for i in idxs], 1)
-  indices = indices % np.array([src.shape[ax] for ax in axes])
+  max_idx = lax.expand_dims(np.array([src.shape[ax] for ax in axes]),
+                            tuple(range(indices.ndim - 1)))
+  indices = indices % max_idx
   slice_sizes = list(src.shape)
   for ax in axes:
     slice_sizes[ax] = 1
   offset_dims = tuple(range(1, src.ndim - indices.shape[1] + 1))
   dnums = GatherDimensionNumbers(
       offset_dims=offset_dims,
-      collapsed_slice_dims=axes,
-      start_index_map=axes)
+      collapsed_slice_dims=tuple(axes),
+      start_index_map=tuple(axes))
   return gather(src, indices, dimension_numbers=dnums,
                 slice_sizes=tuple(slice_sizes))
 
@@ -750,11 +758,6 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
   diff = core.diff_shape(limit_indices, start_indices)
   return core.stride_shape(diff, (1,) * len(diff), strides)
 
-def _slice_translation_rule(ctx, avals_in, avals_out, operand, *, start_indices,
-                            limit_indices, strides):
-  return [xops.Slice(operand, start_indices, limit_indices,
-                     strides or [1] * len(start_indices))]
-
 def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
   assert ad.is_undefined_primal(operand)
   operand_shape = operand.aval.shape
@@ -766,8 +769,8 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
       start_indices,
       np.where(np.array(t.shape) == 0, 0,
                np.add(1, np.multiply(np.subtract(t.shape, 1), strides))))
-    pads = safe_zip(start_indices, np.subtract(operand_shape, real_limits),
-                    np.subtract(strides, 1))
+    pads = zip(start_indices, np.subtract(operand_shape, real_limits),
+               np.subtract(strides, 1))
   result = lax.pad(t, lax._const(t, 0), pads)
   assert result.shape == operand_shape, (
     f"result.shape={result.shape} operand_shape={operand_shape}")
@@ -794,24 +797,16 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-def _slice_masking_rule(
-    padded_vals, logical_shapes, start_indices, limit_indices, strides):
-  operand, = padded_vals
-  strides = masking.padded_shape_as_value(strides) if strides else None
-  return slice(operand,
-               start_indices=masking.padded_shape_as_value(start_indices),
-               limit_indices=masking.padded_shape_as_value(limit_indices),
-               strides=strides)
-
-slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice',
-                             _slice_translation_rule)
+slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
-masking.masking_rules[slice_p] = _slice_masking_rule
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
-  aval_out, = ctx.avals_out
   strides = strides or [1] * len(start_indices)
+  aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.slice_mlir(
+        ctx, x, start_indices, limit_indices, strides)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
                       mlir.dense_int_elements(limit_indices),
@@ -837,6 +832,9 @@ def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
     msg = ("slice slice_sizes must be greater than or equal to zero, "
            "got slice_sizes of {}.")
     raise TypeError(msg.format(slice_sizes))
+  if any(idx.ndim != 0 for idx in start_indices):
+    raise TypeError("start_indices arguments to dynamic_slice must be scalars, "
+                    f" got indices {start_indices}")
   return tuple(slice_sizes)
 
 def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
@@ -847,15 +845,11 @@ def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
     raise TypeError(msg.format(", ".join(i.dtype.name for i in start_indices)))
   return operand.dtype
 
-def _dynamic_slice_translation_rule(ctx, avals_in, avals_out, operand,
-                                    *start_indices, slice_sizes):
-  return [xops.DynamicSlice(operand, start_indices, slice_sizes)]
-
 def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
   tangent_out = tangents[0]
   if type(tangent_out) is not ad_util.Zero:
-    tangent_out = dynamic_slice(tangent_out, primals[1:], slice_sizes)
-  return dynamic_slice(primals[0], primals[1:], slice_sizes), tangent_out
+    tangent_out = dynamic_slice_p.bind(tangent_out, *primals[1:], slice_sizes=slice_sizes)
+  return dynamic_slice_p.bind(primals[0], *primals[1:], slice_sizes=slice_sizes), tangent_out
 
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   assert ad.is_undefined_primal(operand)
@@ -865,7 +859,7 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
     return [ad_util.Zero(operand.aval)] + [None] * len(start_indices)
   else:
     zeros = lax.full(operand_shape, 0, operand_dtype)
-    return ([dynamic_update_slice(zeros, t, start_indices)] +
+    return ([dynamic_update_slice_p.bind(zeros, t, *start_indices)] +
             [None] * len(start_indices))
 
 def _batch_dynamic_slice_indices(indices, bdims):
@@ -904,15 +898,17 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
-    _dynamic_slice_translation_rule, weak_type_rule=_argnum_weak_type(0))
-ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp  # TODO
+    weak_type_rule=_argnum_weak_type(0))
+ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 
 def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
   aval_out, = ctx.avals_out
-  return mhlo.DynamicSliceOp(mlir.aval_to_ir_type(aval_out), x,
-                             start_indices,
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.dynamic_slice_mlir(
+        ctx, x, start_indices, slice_sizes)
+  return mhlo.DynamicSliceOp(x, start_indices,
                              mlir.dense_int_elements(slice_sizes)).results
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
@@ -931,6 +927,9 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
     msg = ("dynamic_update_slice update shape must be smaller than operand "
            "shape, got update shape {} for operand shape {}.")
     raise TypeError(msg.format(update.shape, operand.shape))
+  if any(idx.ndim != 0 for idx in start_indices):
+    raise TypeError("start_indices arguments to dynamic_update_slice must be "
+                    f"scalars, got indices {start_indices}")
   return operand.shape
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
@@ -947,13 +946,13 @@ def _dynamic_update_slice_jvp(primals, tangents):
   operand, update = primals[:2]
   start_indices = primals[2:]
   g_operand, g_update = tangents[:2]
-  val_out = dynamic_update_slice(operand, update, start_indices)
+  val_out = dynamic_update_slice_p.bind(operand, update, *start_indices)
   if type(g_operand) is ad_util.Zero and type(g_update) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_update = ad.instantiate_zeros(g_update)
-    tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
+    tangent_out = dynamic_update_slice_p.bind(g_operand, g_update, *start_indices)
   return val_out, tangent_out
 
 def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
@@ -966,16 +965,12 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
     operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     update_t = ad_util.Zero(update.aval) if ad.is_undefined_primal(update) else None
   else:
-    dus = dynamic_update_slice
-    ds = dynamic_slice
+    dus = dynamic_update_slice_p.bind
+    ds = dynamic_slice_p.bind
     zeros = lax._zeros(t, shape=update_shape)
-    operand_t = dus(t, zeros, start_indices) if ad.is_undefined_primal(operand) else None
-    update_t = ds(t, start_indices, update_shape) if ad.is_undefined_primal(update) else None
+    operand_t = dus(t, zeros, *start_indices) if ad.is_undefined_primal(operand) else None
+    update_t = ds(t, *start_indices, slice_sizes=update_shape) if ad.is_undefined_primal(update) else None
   return [operand_t, update_t] + [None] * len(start_indices)
-
-def _dynamic_update_slice_translation_rule(ctx, avals_in, avals_out, operand,
-                                           update, *start_indices):
-  return [xops.DynamicUpdateSlice(operand, update, start_indices)]
 
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
   # A dynamic update slice is a special case of scatter; we can delegate to the
@@ -1000,7 +995,7 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
 
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
-    'dynamic_update_slice', _dynamic_update_slice_translation_rule)
+    'dynamic_update_slice')
 ad.primitive_jvps[dynamic_update_slice_p] = _dynamic_update_slice_jvp
 ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
@@ -1009,6 +1004,9 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.dynamic_update_slice_mlir(
+        ctx, x, update, *start_indices)
   return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
                                    start_indices).results
 
@@ -1164,7 +1162,8 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   expanded_indices_shape.pop(index_vector_dim)
   indices_shape = iter(expanded_indices_shape)
 
-  slice_sizes = iter(np.delete(slice_sizes, collapsed_slice_dims))
+  slice_sizes = (s for i, s in enumerate(slice_sizes)
+                 if i not in collapsed_slice_dims)
   return tuple(next(slice_sizes) if i in offset_dims
                else next(indices_shape) for i in range(output_shape_rank))
 
@@ -1175,12 +1174,13 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
   """Lowers a FILL_OR_DROP gather as a PROMISE_IN_BOUNDS gather with masking."""
   dnums = dimension_numbers
   intarray = partial(np.array, dtype=np.int64)
-  operand_dims = lax._shape_as_value(operand.shape)
+  operand_dims = lax.shape_as_value(operand.shape)
   indices = lax.convert_element_type(indices, np.int64)
   num_batch_dims = len(indices.shape) - 1
 
-  upper_bound = (operand_dims[intarray(dnums.start_index_map)] -
-                 intarray(slice_sizes)[intarray(dnums.start_index_map)])
+  upper_bound = (
+      operand_dims[intarray(dnums.start_index_map)] -
+      lax.shape_as_value(slice_sizes)[intarray(dnums.start_index_map)])
   mask = lax.bitwise_and(
       lax.ge(indices, np.int64(0)),
       lax.le(indices, lax.expand_dims(upper_bound, tuple(range(num_batch_dims)))))
@@ -1200,29 +1200,6 @@ def _gather_fill(operand, indices, *, dimension_numbers, slice_sizes,
   return lax.select(
     lax.broadcast_in_dim(mask, output_shape, batch_dims_in_output),
     gather_out, lax.full_like(gather_out, fill_value=fill_value))
-
-
-def _gather_translation_rule(ctx, avals_in, avals_out, operand, indices, *,
-                             dimension_numbers,
-                             slice_sizes, unique_indices, indices_are_sorted,
-                             mode, fill_value):
-  aval_out, = avals_out
-  if mode == GatherScatterMode.FILL_OR_DROP:
-    gather_fill_fn = xla.lower_fun(_gather_fill, multiple_results=False,
-                                   new_style=True)
-    return gather_fill_fn(
-        ctx, avals_in, avals_out, operand, indices,
-        dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
-        unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
-        fill_value=fill_value, output_shape=aval_out.shape)
-
-  operand_aval, indices_aval = avals_in
-  dimensions = _gather_dimensions_proto(indices_aval.shape, dimension_numbers)
-  assert (mode == GatherScatterMode.CLIP or
-          mode == GatherScatterMode.PROMISE_IN_BOUNDS), mode
-  # XLA's Gather has clamp semantics, so we can just call it directly.
-  return [xops.Gather(operand, indices, dimensions, slice_sizes,
-                      indices_are_sorted=indices_are_sorted)]
 
 
 def _gather_jvp_rule(g, operand, indices, *, dimension_numbers,
@@ -1275,7 +1252,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
   elif operand_bdim is None and indices_bdim is not None:
     indices = batching.moveaxis(indices, indices_bdim, 0)
-    offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
+    offset_dims = tuple(1 + d for d in dimension_numbers.offset_dims)
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
@@ -1331,18 +1308,22 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
-    _gather_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
-
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-
 
 
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.gather_mlir(
+        ctx, operand, indices, dimension_numbers=dimension_numbers,
+        slice_sizes=slice_sizes, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
@@ -1358,9 +1339,12 @@ def _gather_lower(ctx, operand, indices, *,
     index_vector_dim=len(ctx.avals_in[1].shape) - 1,
     offset_dims=list(dimension_numbers.offset_dims),
     start_index_map=list(dimension_numbers.start_index_map))
-  return mhlo.GatherOp(operand, indices, dnums,
-                       mlir.dense_int_elements(slice_sizes),
-                       ir.BoolAttr.get(indices_are_sorted)).results
+  return mhlo.GatherOp(
+      operand,
+      indices,
+      dnums,
+      mlir.dense_int_elements(slice_sizes),
+      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
 
 mlir.register_lowering(gather_p, _gather_lower)
 
@@ -1502,69 +1486,12 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
   upper_bounds: core.Shape = tuple(operand.shape[i] - slice_sizes[i]
                                    for i in dnums.scatter_dims_to_operand_dims)
   # Stack upper_bounds into a DeviceArray[n]
-  upper_bound = lax._shape_as_value(upper_bounds)
+  upper_bound = lax.shape_as_value(upper_bounds)
   upper_bound = lax.min(upper_bound, np.iinfo(indices.dtype).max)
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))
   return lax.clamp(np.int64(0), lax.convert_element_type(indices, np.int64),
                    upper_bound)
-
-def _scatter_translation_rule(ctx, avals_in, avals_out, operand, indices,
-                              updates, *, update_jaxpr, update_consts,
-                              dimension_numbers, indices_are_sorted,
-                              unique_indices, mode):
-  operand_aval, indices_aval, updates_aval = avals_in
-  if mode == GatherScatterMode.CLIP:
-    clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
-                            new_style=True)
-    indices, = clip_fn(ctx, avals_in, None, operand, indices, updates,
-                       dnums=dimension_numbers)
-
-  c = ctx.builder
-
-  init_value = xla.pyval_to_ir_constant(c, np.array(0, operand_aval.dtype))
-  update_computation = lax._reduction_computation(
-      ctx, update_jaxpr, update_consts, init_value)
-  return [xops.Scatter(
-      operand, indices, updates, update_computation,
-      _scatter_dimensions_proto(indices_aval.shape, dimension_numbers),
-      indices_are_sorted, unique_indices)]
-
-def _scatter_add_translation_rule(
-    ctx, avals_in, avals_out, operand, indices, updates, *, update_jaxpr,
-    update_consts, dimension_numbers, indices_are_sorted, unique_indices, mode,
-    expand_complex128=False):
-  operand_aval, indices_aval, updates_aval = avals_in
-  if mode == GatherScatterMode.CLIP:
-    clip_fn = xla.lower_fun(_clamp_scatter_indices, multiple_results=False,
-                            new_style=True)
-    indices, = clip_fn(ctx, avals_in, None, operand, indices, updates,
-                       dnums=dimension_numbers)
-
-  dtype = operand_aval.dtype
-  scatter_dims = _scatter_dimensions_proto(
-      indices_aval.shape, dimension_numbers)
-
-  def _make_reducer(dtype):
-    subc = xc.XlaBuilder("scatter_add_reducer")
-    shape = xc.Shape.array_shape(np.dtype(dtype), ())
-    args = [xla.parameter(subc, 0, shape), xla.parameter(subc, 1, shape)]
-    out = xops.Add(args[0], args[1])
-    return subc.build(out)
-
-  if expand_complex128 and dtype == np.complex128:
-    update_computation = _make_reducer(np.float64)
-    re = xops.Scatter(xops.Real(operand), indices, xops.Real(updates),
-                      update_computation, scatter_dims, indices_are_sorted,
-                      unique_indices)
-    im = xops.Scatter(xops.Imag(operand), indices, xops.Imag(updates),
-                      update_computation, scatter_dims, indices_are_sorted,
-                      unique_indices)
-    return [xops.Complex(re, im)]
-  else:
-    update_computation = _make_reducer(dtype)
-    return [xops.Scatter(operand, indices, updates, update_computation,
-                         scatter_dims, indices_are_sorted, unique_indices)]
 
 def _scatter_add_jvp(primals, tangents, *, update_jaxpr, update_consts,
                      dimension_numbers, indices_are_sorted, unique_indices,
@@ -1715,19 +1642,15 @@ def _scatter_batching_rule(scatter_op, batched_args, batch_dims, *,
 
 scatter_add_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-add',
-    _scatter_add_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_add_p] = _scatter_add_jvp
 ad.primitive_transposes[scatter_add_p] = _scatter_add_transpose_rule
 batching.primitive_batchers[scatter_add_p] = (
   partial(_scatter_batching_rule, scatter_add))
 
-xla.register_translation(scatter_add_p, partial(_scatter_add_translation_rule,
-                                                expand_complex128=True),
-                         platform='gpu')
-
 scatter_mul_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-mul',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 
 def _scatter_mul_jvp_rhs(g, x, i, y, *, dimension_numbers,
                          indices_are_sorted, unique_indices, mode, **kw):
@@ -1850,14 +1773,14 @@ def _scatter_extremal_jvp(scatter_op, primals, tangents, update_jaxpr,
 
 scatter_min_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-min',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_min_p] = (
   partial(_scatter_batching_rule, scatter_min))
 ad.primitive_jvps[scatter_min_p] = partial(_scatter_extremal_jvp, scatter_min_p)
 
 scatter_max_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter-max',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 batching.primitive_batchers[scatter_max_p] = (
   partial(_scatter_batching_rule, scatter_max))
 ad.primitive_jvps[scatter_max_p] = partial(_scatter_extremal_jvp, scatter_max_p)
@@ -2003,7 +1926,7 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
 
 scatter_p = standard_primitive(
     _scatter_shape_rule, _scatter_dtype_rule, 'scatter',
-    _scatter_translation_rule, weak_type_rule=_argnum_weak_type(0))
+    weak_type_rule=_argnum_weak_type(0))
 ad.primitive_jvps[scatter_p] = _scatter_jvp
 ad.primitive_transposes[scatter_p] = _scatter_transpose_rule
 batching.primitive_batchers[scatter_p] = (
@@ -2026,15 +1949,25 @@ def _scatter_lower(ctx, operand, indices, updates, *,
     inserted_window_dims=list(dnums.inserted_window_dims),
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
     index_vector_dim=len(ctx.avals_in[1].shape) - 1)
-  op = mhlo.ScatterOp(mlir.aval_to_ir_type(aval_out), operand, indices, updates,
-                      scatter_dnums, ir.BoolAttr.get(indices_are_sorted),
-                      ir.BoolAttr.get(unique_indices))
+  result = mlir.aval_to_ir_types(aval_out)
+  operand = [operand]
+  updates = [updates]
+  op = mhlo.ScatterOp(
+      result,
+      operand,
+      indices,
+      updates,
+      scatter_dnums,
+      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted),
+      unique_indices=ir.BoolAttr.get(unique_indices))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    update_ctx = ctx.module_context.replace(name_stack='')
-    out_nodes = mlir.jaxpr_subcomp(
-        update_ctx, update_jaxpr, update_consts,
+    update_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
+    if update_jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `scatter`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(
+        update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
         (update.arguments[0],), (update.arguments[1],))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
@@ -2062,7 +1995,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx, ctx.avals_in, None, operand, indices, updates,
+    (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices, updates,
                           dnums=dimension_numbers)
 
   aval_out, = ctx.avals_out
@@ -2073,14 +2006,21 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
     index_vector_dim=len(ctx.avals_in[1].shape) - 1)
   real_dtype = _real_dtype(aval_out.dtype)
-  operand_type_part = mlir.aval_to_ir_type(
+  operand_type_part = mlir.aval_to_ir_types(
       core.ShapedArray(aval_out.shape, real_dtype))
 
   def _scatter(operand_part, updates_part):
-    scatter = mhlo.ScatterOp(operand_type_part, operand_part, indices,
-                             updates_part, scatter_dnums,
-                             ir.BoolAttr.get(indices_are_sorted),
-                             ir.BoolAttr.get(unique_indices))
+    operand_part = [operand_part]
+    updates_part = [updates_part]
+
+    scatter = mhlo.ScatterOp(
+        operand_type_part,
+        operand_part,
+        indices,
+        updates_part,
+        scatter_dnums,
+        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted),
+        unique_indices=ir.BoolAttr.get(unique_indices))
     scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
@@ -2105,11 +2045,12 @@ def _dynamic_slice_indices(operand, start_indices: Any):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
-    start_indices = [i for i in start_indices]
-  return [np.asarray(i + d if i < 0 else i, lax._dtype(i))
-          if isinstance(i, (int, np.integer)) and core.is_constant_dim(d)
-          else lax.select(
-              lax.lt(i, lax._const(i, 0)),
-              lax.add(i, lax.convert_element_type(core.dimension_as_value(d), lax._dtype(i))),
-              i)
-          for i, d in zip(start_indices, operand.shape)]
+    start_indices = list(start_indices)
+  result = []
+  for i, d in zip(start_indices, operand.shape):
+    if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
+      result.append(lax.convert_element_type(i + d, _dtype(i)) if i < 0 else i)
+    else:
+      d = lax.convert_element_type(core.dimension_as_value(d), _dtype(i))
+      result.append(lax.select(i < 0, i + d, i))
+  return result

@@ -18,7 +18,7 @@ import types
 from typing import Any, Callable, TypeVar
 
 import jax
-from jax._src.lib import xla_extension, xla_extension_version
+from jax._src.lib import xla_extension
 from jax._src import util
 
 C = TypeVar("C", bound=Callable[..., Any])
@@ -71,9 +71,6 @@ def filter_traceback(tb):
   for f, lineno in reversed(frames):
     if include_frame(f):
       out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
-  if xla_extension_version < 54 and out is None and len(frames) > 0:
-    f, lineno = frames[-1]
-    out = types.TracebackType(out, f, f.f_lasti, lineno)
   return out
 
 def add_call_stack_frames(tb):
@@ -175,8 +172,6 @@ def api_boundary(fun: C) -> C:
       filtered_tb, unfiltered, mode = None, None, None
       try:
         filtered_tb = filter_traceback(e.__traceback__)
-        if xla_extension_version < 54 and filtered_tb is None:
-          raise
         msg = format_exception_only(e)
         msg = f'{msg}\n\n{_jax_message_append}'
         unfiltered = UnfilteredStackTrace(msg)
@@ -187,10 +182,16 @@ def api_boundary(fun: C) -> C:
         e.__context__ = None
         e.__cause__ = unfiltered
 
-        # There seems to be no way to alter the currently raised exception's
-        # traceback, except via the C API. The currently raised exception
-        # is part of the interpreter's thread state: value `e` is a copy.
-        xla_extension.replace_thread_exc_traceback(filtered_tb)
+        e.__traceback__ = filtered_tb
+        # In Python < 3.11, there seems to be no way to alter the currently
+        # raised exception traceback, except via the C API. The interpreter
+        # keeps a copy of the traceback (exc_traceback) that is separate to the
+        # __traceback__ of exc_value. Python 3.11 removes exc_traceback and
+        # just setting __traceback__ is enough. Since it is no longer needed,
+        # the XLA extension no longer defines a traceback-replacing method at
+        # Python 3.11 and onward.
+        if hasattr(xla_extension, "replace_thread_exc_traceback"):
+          xla_extension.replace_thread_exc_traceback(filtered_tb)
         raise
       finally:
         del filtered_tb

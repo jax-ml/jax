@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 from jax import core
 
@@ -145,7 +146,7 @@ class ConcretizationTypeError(JAXTypeError):
   and concrete vs. abstract values, you may want to read
   :ref:`faq-different-kinds-of-jax-values`.
   """
-  def __init__(self, tracer: "core.Tracer", context: str = ""):
+  def __init__(self, tracer: core.Tracer, context: str = ""):
     super().__init__(
         "Abstract tracer value encountered where concrete value is expected: "
         f"{tracer}\n{context}{tracer._origin_msg()}\n")
@@ -237,7 +238,7 @@ class NonConcreteBooleanIndexError(JAXIndexError):
       >>> manual_clip(jnp.arange(-2, 2))
       DeviceArray([0, 0, 0, 1], dtype=int32)
   """
-  def __init__(self, tracer: "core.Tracer"):
+  def __init__(self, tracer: core.Tracer):
     super().__init__(
         f"Array boolean indices must be concrete; got {tracer}\n")
 
@@ -316,7 +317,7 @@ class TracerArrayConversionError(JAXTypeError):
   and concrete vs. abstract values, you may want to read
   :ref:`faq-different-kinds-of-jax-values`.
   """
-  def __init__(self, tracer: "core.Tracer"):
+  def __init__(self, tracer: core.Tracer):
     super().__init__(
         "The numpy.ndarray conversion method __array__() was called on "
         f"the JAX Tracer object {tracer}{tracer._origin_msg()}")
@@ -409,7 +410,7 @@ class TracerIntegerConversionError(JAXTypeError):
   and concrete vs. abstract values, you may want to read
   :ref:`faq-different-kinds-of-jax-values`.
   """
-  def __init__(self, tracer: "core.Tracer"):
+  def __init__(self, tracer: core.Tracer):
     super().__init__(
         f"The __index__() method was called on the JAX Tracer object {tracer}")
 

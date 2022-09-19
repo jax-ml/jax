@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax._src.profiler import (
   StepTraceAnnotation as StepTraceAnnotation,
-  StepTraceContext as StepTraceContext,
   TraceAnnotation as TraceAnnotation,
-  TraceContext as TraceContext,
   device_memory_profile as device_memory_profile,
   save_device_memory_profile as save_device_memory_profile,
   start_server as start_server,
+  stop_server as stop_server,
   start_trace as start_trace,
   stop_trace as stop_trace,
   trace as trace,
   annotate_function as annotate_function,
-  trace_function as trace_function,
 )

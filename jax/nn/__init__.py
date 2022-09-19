@@ -14,8 +14,6 @@
 
 """Common functions for neural network libraries."""
 
-# flake8: noqa: F401
-
 from jax.numpy import tanh as tanh
 from jax.nn import initializers as initializers
 from jax._src.nn.functions import (
@@ -32,6 +30,7 @@ from jax._src.nn.functions import (
   log_softmax as log_softmax,
   logsumexp as logsumexp,
   normalize as normalize,
+  standardize as standardize,
   one_hot as one_hot,
   relu as relu,
   relu6 as relu6,

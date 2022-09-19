@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
-
 from jax._src.scipy.linalg import (
   block_diag as block_diag,
   cholesky as cholesky,
@@ -29,7 +27,9 @@ from jax._src.scipy.linalg import (
   lu_factor as lu_factor,
   lu_solve as lu_solve,
   polar as polar,
+  polar_unitary as polar_unitary,
   qr as qr,
+  rsf2csf as rsf2csf,
   schur as schur,
   sqrtm as sqrtm,
   solve as solve,
@@ -39,6 +39,6 @@ from jax._src.scipy.linalg import (
   triu as triu,
 )
 
-from jax._src.lax.polar import (
-  polar_unitary as polar_unitary,
+from jax._src.third_party.scipy.linalg import (
+  funm as funm,
 )

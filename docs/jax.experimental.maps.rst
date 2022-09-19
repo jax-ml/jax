@@ -8,6 +8,6 @@ API
 
 .. autosummary::
    :toctree: _autosummary
-  
-   mesh
+
+   Mesh
    xmap

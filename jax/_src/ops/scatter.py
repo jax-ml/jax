@@ -14,17 +14,19 @@
 
 # Helpers for indexed updates.
 
-import warnings
 import sys
 from typing import Any, Callable, Optional, Sequence, Tuple, Union
+import warnings
 
 import numpy as np
 
 from jax import core
 from jax import lax
+
 from jax._src import dtypes
-from jax._src.numpy import lax_numpy as jnp
 from jax._src import util
+from jax._src.lax import lax as lax_internal
+from jax._src.numpy import lax_numpy as jnp
 
 
 Array = Any
@@ -80,6 +82,13 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
+  if dtype != dtypes.result_type(x, y):
+    # TODO(jakevdp): change this to an error after the deprecation period.
+    warnings.warn("scatter inputs have incompatible types: cannot safely cast "
+                  f"value from dtype={lax.dtype(y)} to dtype={lax.dtype(x)}. "
+                  "In future JAX releases this will result in an error.",
+                  FutureWarning)
+
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
                                  normalize_indices=normalize_indices)
@@ -110,282 +119,8 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
     mode=mode)
-  return lax._convert_element_type(out, dtype, weak_type)
+  return lax_internal._convert_element_type(out, dtype, weak_type)
 
-
-class _Indexable(object):
-  """Helper object for building indexes for indexed update functions.
-
-  .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`. If an explicit index
-     is needed, use :func:`jax.numpy.index_exp`.
-
-  This is a singleton object that overrides the :code:`__getitem__` method
-  to return the index it is passed.
-
-  >>> jax.ops.index[1:2, 3, None, ..., ::2]
-  (slice(1, 2, None), 3, None, Ellipsis, slice(None, None, 2))
-  """
-  __slots__ = ()
-
-  def __getitem__(self, index):
-    return index
-
-#: Index object singleton
-index = _Indexable()
-
-
-def index_add(x: Array,
-              idx: Index,
-              y: Numeric,
-              indices_are_sorted: bool = False,
-              unique_indices: bool = False) -> Array:
-  """Pure equivalent of :code:`x[idx] += y`.
-
-  .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`.
-
-  Returns the value of `x` that would result from the
-  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-
-    x[idx] += y
-
-  Note the `index_add` operator is pure; `x` itself is
-  not modified, instead the new value that `x` would have taken is returned.
-
-  Unlike the NumPy code :code:`x[idx] += y`, if multiple indices refer to the
-  same location the updates will be summed. (NumPy would only apply the last
-  update, rather than summing the updates.) The order in which conflicting
-  updates are applied is implementation-defined and may be nondeterministic
-  (e.g., due to concurrency on some hardware platforms).
-
-  Args:
-    x: an array with the values to be updated.
-    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
-      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
-      convenient syntactic sugar for forming indices is via the
-      :data:`jax.ops.index` object.
-    y: the array of updates. `y` must be broadcastable to the shape of the
-      array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `idx` is known to be sorted
-    unique_indices: whether `idx` is known to be free of duplicates
-
-  Returns:
-    An array.
-
-  >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_add(x, jnp.index_exp[2:4, 3:], 6.)
-  DeviceArray([[1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 7., 7., 7.],
-               [1., 1., 1., 7., 7., 7.],
-               [1., 1., 1., 1., 1., 1.]], dtype=float32)
-  """
-  warnings.warn("index_add is deprecated. Use x.at[idx].add(y) instead.",
-                DeprecationWarning)
-  return _scatter_update(
-      x, idx, y, lax.scatter_add, indices_are_sorted, unique_indices)
-
-
-def index_mul(x: Array,
-              idx: Index,
-              y: Numeric,
-              indices_are_sorted: bool = False,
-              unique_indices: bool = False) -> Array:
-  """Pure equivalent of :code:`x[idx] *= y`.
-
-  .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`.
-
-  Returns the value of `x` that would result from the
-  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-
-    x[idx] *= y
-
-  Note the `index_mul` operator is pure; `x` itself is
-  not modified, instead the new value that `x` would have taken is returned.
-
-  Unlike the NumPy code :code:`x[idx] *= y`, if multiple indices refer to the
-  same location the updates will be multiplied. (NumPy would only apply the last
-  update, rather than multiplying the updates.) The order in which conflicting
-  updates are applied is implementation-defined and may be nondeterministic
-  (e.g., due to concurrency on some hardware platforms).
-
-  Args:
-    x: an array with the values to be updated.
-    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
-      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
-      convenient syntactic sugar for forming indices is via the
-      :data:`jax.ops.index` object.
-    y: the array of updates. `y` must be broadcastable to the shape of the
-      array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `idx` is known to be sorted
-    unique_indices: whether `idx` is known to be free of duplicates
-
-  Returns:
-    An array.
-
-  >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_mul(x, jnp.index_exp[2:4, 3:], 6.)
-  DeviceArray([[1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 6., 6., 6.],
-               [1., 1., 1., 6., 6., 6.],
-               [1., 1., 1., 1., 1., 1.]], dtype=float32)
-  """
-  warnings.warn("index_mul is deprecated. Use x.at[idx].mul(y) instead.",
-                DeprecationWarning)
-  return _scatter_update(x, idx, y, lax.scatter_mul,
-                         indices_are_sorted, unique_indices)
-
-
-def index_min(x: Array,
-              idx: Index,
-              y: Numeric,
-              indices_are_sorted: bool = False,
-              unique_indices: bool = False) -> Array:
-  """Pure equivalent of :code:`x[idx] = minimum(x[idx], y)`.
-
-  .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`.
-
-  Returns the value of `x` that would result from the
-  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-
-    x[idx] = minimum(x[idx], y)
-
-  Note the `index_min` operator is pure; `x` itself is
-  not modified, instead the new value that `x` would have taken is returned.
-
-  Unlike the NumPy code :code:`x[idx] = minimum(x[idx], y)`, if multiple indices
-  refer to the same location the final value will be the overall min. (NumPy
-  would only look at the last update, rather than all of the updates.)
-
-  Args:
-    x: an array with the values to be updated.
-    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
-      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
-      convenient syntactic sugar for forming indices is via the
-      :data:`jax.ops.index` object.
-    y: the array of updates. `y` must be broadcastable to the shape of the
-      array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `idx` is known to be sorted
-    unique_indices: whether `idx` is known to be free of duplicates
-
-  Returns:
-    An array.
-
-  >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_min(x, jnp.index_exp[2:4, 3:], 0.)
-  DeviceArray([[1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 0., 0., 0.],
-               [1., 1., 1., 0., 0., 0.],
-               [1., 1., 1., 1., 1., 1.]], dtype=float32)
-  """
-  warnings.warn("index_min is deprecated. Use x.at[idx].min(y) instead.",
-                DeprecationWarning)
-  return _scatter_update(
-      x, idx, y, lax.scatter_min, indices_are_sorted, unique_indices)
-
-def index_max(x: Array,
-              idx: Index,
-              y: Numeric,
-              indices_are_sorted: bool = False,
-              unique_indices: bool = False) -> Array:
-  """Pure equivalent of :code:`x[idx] = maximum(x[idx], y)`.
-
-  .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`.
-
-  Returns the value of `x` that would result from the
-  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-
-    x[idx] = maximum(x[idx], y)
-
-  Note the `index_max` operator is pure; `x` itself is
-  not modified, instead the new value that `x` would have taken is returned.
-
-  Unlike the NumPy code :code:`x[idx] = maximum(x[idx], y)`, if multiple indices
-  refer to the same location the final value will be the overall max. (NumPy
-  would only look at the last update, rather than all of the updates.)
-
-  Args:
-    x: an array with the values to be updated.
-    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
-      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
-      convenient syntactic sugar for forming indices is via the
-      :data:`jax.ops.index` object.
-    y: the array of updates. `y` must be broadcastable to the shape of the
-      array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `idx` is known to be sorted
-    unique_indices: whether `idx` is known to be free of duplicates
-
-  Returns:
-    An array.
-
-  >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_max(x, jnp.index_exp[2:4, 3:], 6.)
-  DeviceArray([[1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 6., 6., 6.],
-               [1., 1., 1., 6., 6., 6.],
-               [1., 1., 1., 1., 1., 1.]], dtype=float32)
-  """
-  warnings.warn("index_max is deprecated. Use x.at[idx].max(y) instead.",
-                DeprecationWarning)
-  return _scatter_update(
-      x, idx, y, lax.scatter_max, indices_are_sorted, unique_indices)
-
-def index_update(x: Array,
-                 idx: Index,
-                 y: Numeric,
-                 indices_are_sorted: bool = False,
-                 unique_indices: bool = False) -> Array:
-  """Pure equivalent of :code:`x[idx] = y`.
-
-  .. deprecated:: 0.2.22
-     Prefer the use of :attr:`jax.numpy.ndarray.at`.
-
-  Returns the value of `x` that would result from the
-  NumPy-style :mod:`indexed assignment <numpy.doc.indexing>`::
-
-    x[idx] = y
-
-  Note the `index_update` operator is pure; `x` itself is
-  not modified, instead the new value that `x` would have taken is returned.
-
-  Unlike NumPy's :code:`x[idx] = y`, if multiple indices refer to the same
-  location it is undefined which update is chosen; JAX may choose the order of
-  updates arbitrarily and nondeterministically (e.g., due to concurrent
-  updates on some hardware platforms).
-
-  Args:
-    x: an array with the values to be updated.
-    idx: a Numpy-style index, consisting of `None`, integers, `slice` objects,
-      ellipses, ndarrays with integer dtypes, or a tuple of the above. A
-      convenient syntactic sugar for forming indices is via the
-      :data:`jax.ops.index` object.
-    y: the array of updates. `y` must be broadcastable to the shape of the
-      array that would be returned by `x[idx]`.
-    indices_are_sorted: whether `idx` is known to be sorted
-    unique_indices: whether `idx` is known to be free of duplicates
-
-  Returns:
-    An array.
-
-  >>> x = jax.numpy.ones((5, 6))
-  >>> jax.ops.index_update(x, jnp.index_exp[::2, 3:], 6.)
-  DeviceArray([[1., 1., 1., 6., 6., 6.],
-               [1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 6., 6., 6.],
-               [1., 1., 1., 1., 1., 1.],
-               [1., 1., 1., 6., 6., 6.]], dtype=float32)
-  """
-  warnings.warn("index_update is deprecated. Use x.at[idx].set(y) instead.",
-                DeprecationWarning)
-  return _scatter_update(
-      x, idx, y, lax.scatter, indices_are_sorted, unique_indices)
 
 
 def _get_identity(op, dtype):
@@ -395,11 +130,15 @@ def _get_identity(op, dtype):
   elif op is lax.scatter_mul:
     return 1
   elif op is lax.scatter_min:
-    if jnp.issubdtype(dtype, jnp.integer):
+    if dtype == dtypes.bool_:
+      return True
+    elif jnp.issubdtype(dtype, jnp.integer):
       return jnp.iinfo(dtype).max
     return float('inf')
   elif op is lax.scatter_max:
-    if jnp.issubdtype(dtype, jnp.integer):
+    if dtype == dtypes.bool_:
+      return False
+    elif jnp.issubdtype(dtype, jnp.integer):
       return jnp.iinfo(dtype).min
     return -float('inf')
   else:
@@ -427,11 +166,9 @@ def _segment_update(name: str,
   if num_segments is not None and num_segments < 0:
     raise ValueError("num_segments must be non-negative.")
 
-  out = jnp.full((num_segments,) + data.shape[1:], _get_identity(scatter_op, dtype), dtype=dtype)
-
-  num_buckets = 1 if bucket_size is None \
-                  else util.ceil_of_ratio(segment_ids.size, bucket_size)
-  if num_buckets == 1:
+  if bucket_size is None:
+    out = jnp.full((num_segments,) + data.shape[1:],
+                   _get_identity(scatter_op, dtype), dtype=dtype)
     return _scatter_update(
       out, segment_ids, data, scatter_op, indices_are_sorted,
       unique_indices, normalize_indices=False, mode=mode)
@@ -439,14 +176,15 @@ def _segment_update(name: str,
   # Bucketize indices and perform segment_update on each bucket to improve
   # numerical stability for operations like product and sum.
   assert reducer is not None
-  outs = []
-  for sub_data, sub_segment_ids in zip(
-      jnp.array_split(data, num_buckets),
-      jnp.array_split(segment_ids, num_buckets)):
-    outs.append(
-        _segment_update(name, sub_data, sub_segment_ids, scatter_op, num_segments,
-                        indices_are_sorted, unique_indices))
-  return reducer(jnp.stack(outs), axis=0).astype(dtype)
+  num_buckets = util.ceil_of_ratio(segment_ids.size, bucket_size)
+  out = jnp.full((num_buckets, num_segments) + data.shape[1:],
+                 _get_identity(scatter_op, dtype), dtype=dtype)
+  out = _scatter_update(
+    out, np.index_exp[lax.div(jnp.arange(segment_ids.shape[0]), bucket_size),
+                      segment_ids[None, :]],
+    data, scatter_op, indices_are_sorted,
+    unique_indices, normalize_indices=False, mode=mode)
+  return reducer(out, axis=0).astype(dtype)
 
 
 def segment_sum(data: Array,

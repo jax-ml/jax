@@ -27,6 +27,7 @@ from absl import flags
 
 import flax  # type: ignore[import]
 from flax import linen as nn
+import flax.optim
 
 import jax
 import jax.numpy as jnp

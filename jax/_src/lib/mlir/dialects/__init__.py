@@ -16,4 +16,6 @@
 import jaxlib.mlir.dialects.builtin as builtin
 import jaxlib.mlir.dialects.chlo as chlo
 import jaxlib.mlir.dialects.mhlo as mhlo
-import jaxlib.mlir.dialects.std as std
+import jaxlib.mlir.dialects.func as func
+import jaxlib.mlir.dialects.ml_program as ml_program
+import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor

@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load(
+    "//jaxlib:jax.bzl",
+    "py_deps",
+)
+
 licenses(["notice"])
 
 package(default_visibility = ["//visibility:public"])
@@ -24,7 +29,7 @@ py_library(
         "ignore_for_dep=third_party.py.tensorflow",
     ],
     deps = [
-        "//third_party/py/jax",
+        "//jax",
     ],
 )
 
@@ -32,8 +37,7 @@ py_library(
     name = "jax_to_ir_with_tensorflow",
     srcs = ["jax_to_ir.py"],
     deps = [
-        "//third_party/py/jax",
-        "//third_party/py/jax/experimental/jax2tf",
-        "//third_party/py/tensorflow",
-    ],
+        "//jax",
+        "//jax/experimental/jax2tf",
+    ] + py_deps("tensorflow"),
 )

@@ -16,6 +16,7 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax.scipy.special import gammaln, xlogy
@@ -39,7 +40,7 @@ def logpdf(x, alpha):
       "`x` must have either the same number of entries as `alpha` "
       f"or one entry fewer; got x.shape={x.shape}, alpha.shape={alpha.shape}"
     )
-  one = jnp._constant_like(x, 1)
+  one = _lax_const(x, 1)
   if x.shape[0] != alpha.shape[0]:
     x = jnp.concatenate([x, lax.sub(one, x.sum(0, keepdims=True))], axis=0)
   normalize_term = jnp.sum(gammaln(alpha)) - gammaln(jnp.sum(alpha))

@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2018 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,17 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import functools
 from functools import partial
+import warnings
 
 import numpy as np
 
+import jax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.vectorize import vectorize
 from jax._src import ad_util
 from jax._src import api
 from jax import lax
 from jax._src import dtypes
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -31,23 +34,74 @@ from jax._src.util import prod
 from jax.core import Primitive, ShapedArray, raise_to_shaped
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
-    _input_dtype, _broadcasting_select)
+    _input_dtype)
+from jax._src.lax import control_flow
+from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
+from jax._src.lax import svd as lax_svd
 from jax._src.lib import lapack
 
-from jax._src.lib import cuda_linalg
-from jax._src.lib import cusolver
-from jax._src.lib import cusparse
-from jax._src.lib import rocsolver
+from jax._src.lib import gpu_linalg
+from jax._src.lib import gpu_solver
+from jax._src.lib import gpu_sparse
 
 from jax._src.lib import xla_client
+
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
+from jax._src.lib.mlir.dialects import mhlo
 
 xops = xla_client.ops
 
 
 # traceables
 
-def cholesky(x, symmetrize_input: bool = True):
+# TODO(phawkins): remove backward compatibility shim after 2022/08/11.
+def _warn_on_positional_kwargs(f):
+  """Decorator used for backward compatibility of keyword-only arguments.
+
+  Some functions were changed to mark their keyword arguments as keyword-only.
+  This decorator allows existing code to keep working temporarily, while issuing
+  a warning if a now keyword-only parameter is passed positionally."""
+  sig = inspect.signature(f)
+  pos_names = [name for name, p in sig.parameters.items()
+               if p.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD]
+  kwarg_names = [name for name, p in sig.parameters.items()
+                 if p.kind == inspect.Parameter.KEYWORD_ONLY]
+
+  # This decorator assumes that all arguments to `f` are either
+  # positional-or-keyword or keyword-only.
+  assert len(pos_names) + len(kwarg_names) == len(sig.parameters)
+
+  @functools.wraps(f)
+  def wrapped(*args, **kwargs):
+    if len(args) < len(pos_names):
+      a = pos_names[len(args)]
+      raise TypeError(f"{f.__name__} missing required positional argument: {a}")
+
+    pos_args = args[:len(pos_names)]
+    extra_kwargs = args[len(pos_names):]
+
+    if len(extra_kwargs) > len(kwarg_names):
+      raise TypeError(f"{f.__name__} takes at most {len(sig.parameters)} "
+                      f" arguments but {len(args)} were given.")
+
+    for name, value in zip(kwarg_names, extra_kwargs):
+      if name in kwargs:
+        raise TypeError(f"{f.__name__} got multiple values for argument: "
+                        f"{name}")
+
+      warnings.warn(f"Argument {name} to {f.__name__} is now a keyword-only "
+                    "argument. Support for passing it positionally will be "
+                    "removed in an upcoming JAX release.",
+                    DeprecationWarning)
+      kwargs[name] = value
+    return f(*pos_args, **kwargs)
+
+  return wrapped
+
+@_warn_on_positional_kwargs
+def cholesky(x, *, symmetrize_input: bool = True):
   """Cholesky decomposition.
 
   Computes the Cholesky decomposition
@@ -76,7 +130,8 @@ def cholesky(x, symmetrize_input: bool = True):
     x = symmetrize(x)
   return jnp.tril(cholesky_p.bind(x))
 
-def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
+@_warn_on_positional_kwargs
+def eig(x, *, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
   """Eigendecomposition of a general matrix.
 
   Nonsymmetric eigendecomposition is at present only implemented on CPU.
@@ -84,8 +139,10 @@ def eig(x, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
   return eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                     compute_right_eigenvectors=compute_right_eigenvectors)
 
-def eigh(x, lower: bool = True, symmetrize_input: bool = True):
-  """Eigendecomposition of a Hermitian matrix.
+@_warn_on_positional_kwargs
+def eigh(x, *, lower: bool = True, symmetrize_input: bool = True,
+         sort_eigenvalues: bool = True, ):
+  r"""Eigendecomposition of a Hermitian matrix.
 
   Computes the eigenvectors and eigenvalues of a complex Hermitian or real
   symmetric square matrix.
@@ -98,20 +155,24 @@ def eigh(x, lower: bool = True, symmetrize_input: bool = True):
       triangle given by ``lower`` is accessed; the other triangle is ignored and
       not accessed.
     symmetrize_input: If ``True``, the matrix is symmetrized before the
-      eigendecomposition by computing :math:`\\frac{1}{2}(x + x^H)`.
+      eigendecomposition by computing :math:`\frac{1}{2}(x + x^H)`.
+    sort_eigenvalues: If ``True``, the eigenvalues will be sorted in ascending
+      order. If ``False`` the eigenvalues are returned in an
+      implementation-defined order.
 
   Returns:
-    A tuple ``(w, v)``.
+    A tuple ``(v, w)``.
 
-    ``w`` is an array with the same dtype as ``x`` such that ``w[..., :, i]`` is
-    the eigenvector corresponding to ``v[..., i]``.
+    ``v`` is an array with the same dtype as ``x`` such that ``v[..., :, i]`` is
+    the normalized eigenvector corresponding to eigenvalue ``w[..., i]``.
 
-    ``v`` is an array with the same dtype as ``x`` (or its real counterpart if
-    complex) with shape ``[..., n]`` containing the eigenvalues of ``x``.
+    ``w`` is an array with the same dtype as ``x`` (or its real counterpart if
+    complex) with shape ``[..., n]`` containing the eigenvalues of ``x`` in
+    ascending order(each repeated according to its multiplicity).
   """
   if symmetrize_input:
     x = symmetrize(x)
-  v, w = eigh_p.bind(x, lower=lower)
+  v, w = eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
   return v, w
 
 
@@ -166,7 +227,8 @@ def lu(x):
   lu, pivots, permutation = lu_p.bind(x)
   return lu, pivots, permutation
 
-def qr(x, full_matrices: bool = True):
+@_warn_on_positional_kwargs
+def qr(x, *, full_matrices: bool = True):
   """QR decomposition.
 
   Computes the QR decomposition
@@ -196,7 +258,9 @@ def qr(x, full_matrices: bool = True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, r
 
-def svd(x, full_matrices=True, compute_uv=True):
+# TODO: Add `max_qdwh_iterations` to the function signature for TPU SVD.
+@_warn_on_positional_kwargs
+def svd(x, *, full_matrices=True, compute_uv=True):
   """Singular value decomposition.
 
   Returns the singular values if compute_uv is False, otherwise returns a triple
@@ -211,7 +275,8 @@ def svd(x, full_matrices=True, compute_uv=True):
     s, = result
     return s
 
-def triangular_solve(a, b, left_side: bool = False, lower: bool = False,
+@_warn_on_positional_kwargs
+def triangular_solve(a, b, *, left_side: bool = False, lower: bool = False,
                      transpose_a: bool = False, conjugate_a: bool = False,
                      unit_diagonal: bool = False):
   r"""Triangular solve.
@@ -313,7 +378,7 @@ _cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
 
 # Cholesky decomposition
 
-def cholesky_jvp_rule(primals, tangents):
+def _cholesky_jvp_rule(primals, tangents):
   x, = primals
   sigma_dot, = tangents
   L = jnp.tril(cholesky_p.bind(x))
@@ -321,8 +386,9 @@ def cholesky_jvp_rule(primals, tangents):
   # Forward-mode rule from https://arxiv.org/pdf/1602.07527.pdf
   def phi(X):
     l = jnp.tril(X)
-    return l / lax.expand_dims(jnp._constant_like(X, 1) + jnp.eye(X.shape[-1], dtype=X.dtype),
-                               range(l.ndim - 2))
+    return l / lax.expand_dims(
+        lax_internal._const(X, 1) + jnp.eye(X.shape[-1], dtype=X.dtype),
+        range(l.ndim - 2))
 
   tmp = triangular_solve(L, sigma_dot, left_side=False, transpose_a=True,
                          conjugate_a=True, lower=True)
@@ -331,52 +397,48 @@ def cholesky_jvp_rule(primals, tangents):
       precision=lax.Precision.HIGHEST)
   return L, L_dot
 
-def cholesky_batching_rule(batched_args, batch_dims):
+def _cholesky_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return cholesky(x), 0
 
 cholesky_p = standard_unop(_float | _complex, 'cholesky')
-ad.primitive_jvps[cholesky_p] = cholesky_jvp_rule
-batching.primitive_batchers[cholesky_p] = cholesky_batching_rule
+ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
+batching.primitive_batchers[cholesky_p] = _cholesky_batching_rule
 
-def _nan_like(c, operand):
-  shape = c.get_shape(operand)
-  dtype = shape.element_type()
-  if jnp.issubdtype(dtype, np.complexfloating):
-    nan = xops.Constant(c, np.array(np.nan * (1. + 1j), dtype=dtype))
-  else:
-    nan = xops.Constant(c, np.array(np.nan, dtype=dtype))
-  return xops.Broadcast(nan, shape.dimensions())
+def _cholesky_lowering(ctx, x):
+  return mhlo.CholeskyOp(x, lower=ir.BoolAttr.get(True)).results
 
-def _cholesky_cpu_gpu_translation_rule(potrf_impl, ctx, avals_in, avals_out,
-                                       operand):
-  operand_aval, = avals_in
-  c = ctx.builder
+mlir.register_lowering(cholesky_p, _cholesky_lowering)
+
+def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
+  operand_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
-  result, info = potrf_impl(c, operand, lower=True)
-  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
-  return [_broadcasting_select(c,
-                               xops.Reshape(ok, batch_dims + (1, 1)), result,
-                               _nan_like(c, result))]
+  result, info = potrf_impl(operand_aval.dtype, operand, lower=True)
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+  return [_broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      result, _nan_like_mhlo(out_aval))]
 
-xla.register_translation(
+mlir.register_lowering(
     cholesky_p,
-    partial(_cholesky_cpu_gpu_translation_rule, lapack.potrf),
+    partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
     platform='cpu')
-
-if cusolver is not None:
-  xla.register_translation(
-    cholesky_p,
-    partial(_cholesky_cpu_gpu_translation_rule, cusolver.potrf),
-    platform='gpu')
-
-if rocsolver is not None:
-  xla.register_translation(
-    cholesky_p,
-    partial(_cholesky_cpu_gpu_translation_rule, rocsolver.potrf),
-    platform='gpu')
+mlir.register_lowering(
+  cholesky_p,
+  partial(_cholesky_cpu_gpu_lowering, gpu_solver.cuda_potrf),
+  platform='cuda')
+mlir.register_lowering(
+  cholesky_p,
+  partial(_cholesky_cpu_gpu_lowering, gpu_solver.rocm_potrf),
+  platform='rocm')
 
 # Asymmetric eigendecomposition
 
@@ -386,10 +448,10 @@ def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
                         compute_left_eigenvectors=compute_left_eigenvectors,
                         compute_right_eigenvectors=compute_right_eigenvectors))
 
-def eig_translation_rule(ctx, avals_in, avals_out, operand, *,
-                         compute_left_eigenvectors, compute_right_eigenvectors):
+def eig_lower(*args, **kw):
   raise NotImplementedError(
-    "Nonsymmetric eigendecomposition is only implemented on the CPU backend")
+    "Nonsymmetric eigendecomposition is only implemented on the CPU backend. "
+    "If your matrix is symmetric or Hermitian, you should use eigh instead.")
 
 def eig_abstract_eval(operand, *, compute_left_eigenvectors,
                       compute_right_eigenvectors):
@@ -415,34 +477,49 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
 
   return tuple(output)
 
-_cpu_geev = lapack.geev
-
-def _eig_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
-                              compute_left_eigenvectors,
-                              compute_right_eigenvectors):
-  operand_aval, = avals_in
+def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
+                      compute_right_eigenvectors):
+  operand_aval, = ctx.avals_in
+  out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
-  c = ctx.builder
 
-  w, vl, vr, info = _cpu_geev(c, operand, jobvl=compute_left_eigenvectors,
-                              jobvr=compute_right_eigenvectors)
+  w, vl, vr, info = lapack.geev_mhlo(operand_aval.dtype, operand,
+                                     jobvl=compute_left_eigenvectors,
+                                     jobvr=compute_right_eigenvectors)
 
-  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
-  w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
-                           _nan_like(c, w))
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+  w = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      w, _nan_like_mhlo(out_aval))
   output = [w]
 
   if compute_left_eigenvectors:
-    vl = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vl,
-                              _nan_like(c, vl))
+    aval = ctx.avals_out[len(output)]
+    vl = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vl, _nan_like_mhlo(aval))
     output.append(vl)
 
   if compute_right_eigenvectors:
-    vr = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vr,
-                              _nan_like(c, vr))
+    aval = ctx.avals_out[len(output)]
+    vr = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vr, _nan_like_mhlo(aval))
     output.append(vr)
 
   return output
+
 
 def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
                       compute_right_eigenvectors):
@@ -472,25 +549,64 @@ eig_p = Primitive('eig')
 eig_p.multiple_results = True
 eig_p.def_impl(eig_impl)
 eig_p.def_abstract_eval(eig_abstract_eval)
-xla.register_translation(eig_p, eig_translation_rule)
-xla.register_translation(eig_p, _eig_cpu_translation_rule, platform='cpu')
+mlir.register_lowering(eig_p, eig_lower)
+mlir.register_lowering(eig_p, _eig_cpu_lowering, platform='cpu')
 batching.primitive_batchers[eig_p] = eig_batching_rule
 ad.primitive_jvps[eig_p] = eig_jvp_rule
 
 
 # Symmetric/Hermitian eigendecomposition
 
-def eigh_impl(operand, lower):
-  v, w = xla.apply_primitive(eigh_p, operand, lower=lower)
-  return v, w
 
-def _eigh_translation_rule(ctx, avals_in, avals_out, operand, *, lower):
+def eigh_jacobi(x, *, lower: bool = True, sort_eigenvalues: bool = True):
+  """Helper Jacobi eigendecomposition implemented by XLA.
+
+  Used as a subroutine of QDWH-eig on TPU."""
+  w, v = eigh_jacobi_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues)
+  return w, v
+
+def _eigh_jacobi_impl(operand, *, lower, sort_eigenvalues):
+  w, v = xla.apply_primitive(eigh_jacobi_p, operand, lower=lower,
+                             sort_eigenvalues=sort_eigenvalues)
+  return w, v
+
+def _eigh_jacobi_abstract_eval(operand, *, lower, sort_eigenvalues):
+  if isinstance(operand, ShapedArray):
+    if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
+      raise ValueError(
+        "Argument to symmetric eigendecomposition must have shape [..., n, n],"
+        "got shape {}".format(operand.shape))
+
+    batch_dims = operand.shape[:-2]
+    n = operand.shape[-1]
+    w = operand.update(shape=batch_dims + (n,),
+                       dtype=lax_internal._complex_basetype(operand.dtype))
+    v = operand.update(shape=batch_dims + (n, n))
+  else:
+    w, v = operand, operand
+  return w, v
+
+def _eigh_jacobi_translation_rule(ctx, avals_in, avals_out, operand, *, lower,
+                                  sort_eigenvalues):
   operand_aval, = avals_in
   if operand_aval.shape[-1] == 0:
-    return [operand, xops.Real(xops.Reshape(operand, operand_aval.shape[:-1]))]
-  return xops.Eigh(operand, lower=lower)
+    return [xops.Real(xops.Reshape(operand, operand_aval.shape[:-1])), operand]
+  v, w = xops.Eigh(operand, lower=lower, sort_eigenvalues=sort_eigenvalues)
+  return w, v
 
-def eigh_abstract_eval(operand, lower):
+eigh_jacobi_p = Primitive('eigh_jacobi')
+eigh_jacobi_p.multiple_results = True
+eigh_jacobi_p.def_impl(_eigh_jacobi_impl)
+eigh_jacobi_p.def_abstract_eval(_eigh_jacobi_abstract_eval)
+xla.register_translation(eigh_jacobi_p, _eigh_jacobi_translation_rule)
+
+
+def _eigh_impl(operand, *, lower, sort_eigenvalues):
+  v, w = xla.apply_primitive(eigh_p, operand, lower=lower,
+                             sort_eigenvalues=sort_eigenvalues)
+  return v, w
+
+def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2 or operand.shape[-2] != operand.shape[-1]:
       raise ValueError(
@@ -506,20 +622,69 @@ def eigh_abstract_eval(operand, lower):
     v, w = operand, operand
   return v, w
 
-def _eigh_cpu_gpu_translation_rule(syevd_impl, ctx, avals_in, avals_out,
-                                   operand, *, lower):
-  operand_aval, = avals_in
+def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
+                           sort_eigenvalues):
+  del sort_eigenvalues  # The CPU/GPU implementations always sort.
+  operand_aval, = ctx.avals_in
+  v_aval, w_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
-  c = ctx.builder
-  v, w, info = syevd_impl(c, operand, lower=lower)
-  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
-  v = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), v,
-                           _nan_like(c, v))
-  w = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), w,
-                           _nan_like(c, w))
+  v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
+  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  v = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      v, _nan_like_mhlo(v_aval))
+  w = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      w, _nan_like_mhlo(w_aval))
   return [v, w]
 
-def eigh_jvp_rule(primals, tangents, lower):
+def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
+  *_, m, n = x.shape
+  assert m == n, (m, n)
+
+  termination_size = 256
+
+  if m <= termination_size:
+    eig_vals, eig_vecs = eigh_jacobi(x, lower=lower,
+                                     sort_eigenvalues=sort_eigenvalues)
+    return eig_vecs, eig_vals
+
+  def eigh_qdwh(x):
+    if len(x.shape) > 2:
+      return control_flow.map(eigh_qdwh, x)
+
+    # We should only look at elements from the lower/upper triangle. Reflects
+    # that triangle into the other triangle to form a Hermitian matrix.
+    if lower:
+      mask = jnp.tri(n, k=0, dtype=bool)
+    else:
+      mask = jnp.logical_not(jnp.tri(n, k=-1, dtype=bool))
+    if dtypes.issubdtype(x.dtype, jnp.complexfloating):
+      re = lax.select(mask, lax.real(x), _T(lax.real(x)))
+      if lower:
+        im_mask = jnp.tri(n, k=-1, dtype=bool)
+      else:
+        im_mask = jnp.logical_not(jnp.tri(n, k=0, dtype=bool))
+      im = lax.select(im_mask, lax.imag(x), jnp.zeros_like(lax.imag(x)))
+      im = lax.select(mask, im, -_T(im))
+      x = lax.complex(re, im)
+    else:
+      x = lax.select(mask, x, _T(x))
+
+    return lax_eigh.eigh(x, sort_eigenvalues=sort_eigenvalues,
+                         termination_size=termination_size)
+
+  eig_vals, eig_vecs = eigh_qdwh(x)
+  return eig_vecs, eig_vals
+
+def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
   # Derivative for eigh in the simplest case of distinct eigenvalues.
   # This is classic nondegenerate perurbation theory, but also see
   # https://people.maths.ox.ac.uk/gilesm/files/NA-08-01.pdf
@@ -531,7 +696,8 @@ def eigh_jvp_rule(primals, tangents, lower):
   a, = primals
   a_dot, = tangents
 
-  v, w_real = eigh_p.bind(symmetrize(a), lower=lower)
+  v, w_real = eigh_p.bind(symmetrize(a), lower=lower,
+                          sort_eigenvalues=sort_eigenvalues)
 
   # for complex numbers we need eigenvalues to be full dtype of v, a:
   w = w_real.astype(a.dtype)
@@ -546,42 +712,41 @@ def eigh_jvp_rule(primals, tangents, lower):
   dw = jnp.real(jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1))
   return (v, w_real), (dv, dw)
 
-def eigh_batching_rule(batched_args, batch_dims, lower):
+def _eigh_batching_rule(batched_args, batch_dims, *, lower, sort_eigenvalues):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
-  return eigh_p.bind(x, lower=lower), (0, 0)
+  return eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues), (0, 0)
 
 eigh_p = Primitive('eigh')
 eigh_p.multiple_results = True
-eigh_p.def_impl(eigh_impl)
-eigh_p.def_abstract_eval(eigh_abstract_eval)
-xla.register_translation(eigh_p, _eigh_translation_rule)
-ad.primitive_jvps[eigh_p] = eigh_jvp_rule
-batching.primitive_batchers[eigh_p] = eigh_batching_rule
+eigh_p.def_impl(_eigh_impl)
+eigh_p.def_abstract_eval(_eigh_abstract_eval)
+ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
+batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
-_cpu_syevd = lapack.syevd
-
-xla.register_translation(
-    eigh_p, partial(_eigh_cpu_gpu_translation_rule, _cpu_syevd),
+mlir.register_lowering(
+    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
     platform='cpu')
 
-if cusolver is not None:
-  xla.register_translation(
-    eigh_p, partial(_eigh_cpu_gpu_translation_rule, cusolver.syevd),
-    platform='gpu')
+if gpu_solver is not None:
+  mlir.register_lowering(
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.cuda_syevd),
+    platform='cuda')
+  mlir.register_lowering(
+    eigh_p, partial(_eigh_cpu_gpu_lowering, gpu_solver.rocm_syevd),
+    platform='rocm')
 
-if rocsolver is not None:
-  xla.register_translation(
-    eigh_p, partial(_eigh_cpu_gpu_translation_rule, rocsolver.syevd),
-    platform='gpu')
+mlir.register_lowering(
+    eigh_p, mlir.lower_fun(_eigh_tpu_impl, multiple_results=True),
+    platform='tpu')
 
 
 triangular_solve_dtype_rule = partial(
     naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
     'triangular_solve')
 
-def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
+def triangular_solve_shape_rule(a, b, *, left_side=False, **unused_kwargs):
   if a.ndim < 2:
     msg = "triangular_solve requires a.ndim to be at least 2, got {}."
     raise TypeError(msg.format(a.ndim))
@@ -603,7 +768,8 @@ def triangular_solve_shape_rule(a, b, left_side=False, **unused_kwargs):
   return b.shape
 
 def triangular_solve_jvp_rule_a(
-    g_a, ans, a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+    g_a, ans, a, b, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
   m, n = b.shape[-2:]
   k = 1 if unit_diagonal else 0
   g_a = jnp.tril(g_a, k=-k) if lower else jnp.triu(g_a, k=k)
@@ -614,8 +780,9 @@ def triangular_solve_jvp_rule_a(
                 precision=lax.Precision.HIGHEST)
 
   def a_inverse(rhs):
-    return triangular_solve(a, rhs, left_side, lower, transpose_a, conjugate_a,
-                            unit_diagonal)
+    return triangular_solve(a, rhs, left_side=left_side, lower=lower,
+                            transpose_a=transpose_a, conjugate_a=conjugate_a,
+                            unit_diagonal=unit_diagonal)
 
   # triangular_solve is about the same cost as matrix multplication (~n^2 FLOPs
   # for matrix/vector inputs). Order these operations in whichever order is
@@ -634,7 +801,7 @@ def triangular_solve_jvp_rule_a(
       return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
 def triangular_solve_transpose_rule(
-    cotangent, a, b, left_side, lower, transpose_a, conjugate_a,
+    cotangent, a, b, *, left_side, lower, transpose_a, conjugate_a,
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
   # argument, analogous to `div` but swapped.
@@ -642,12 +809,14 @@ def triangular_solve_transpose_rule(
   if type(cotangent) is ad_util.Zero:
     cotangent_b = ad_util.Zero(b.aval)
   else:
-    cotangent_b = triangular_solve(a, cotangent, left_side, lower,
-                                   not transpose_a, conjugate_a, unit_diagonal)
+    cotangent_b = triangular_solve(a, cotangent, left_side=left_side,
+                                   lower=lower, transpose_a=not transpose_a,
+                                   conjugate_a=conjugate_a,
+                                   unit_diagonal=unit_diagonal)
   return [None, cotangent_b]
 
 
-def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
+def triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
                                    lower, transpose_a, conjugate_a,
                                    unit_diagonal):
   x, y = batched_args
@@ -675,23 +844,9 @@ def triangular_solve_batching_rule(batched_args, batch_dims, left_side,
                             transpose_a=transpose_a, conjugate_a=conjugate_a,
                             unit_diagonal=unit_diagonal), 0
 
-def _triangular_solve_translation_rule(
-    ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
-    conjugate_a, unit_diagonal):
-  if conjugate_a and not transpose_a:
-    a = xops.Conj(a)
-    conjugate_a = False
-  if not transpose_a:
-    transpose = xops.TriangularSolveOptions_Transpose.NO_TRANSPOSE
-  else:
-    transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
-                 else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
-  return [
-      xops.TriangularSolve(a, b, left_side, lower, unit_diagonal, transpose)]
-
 triangular_solve_p = standard_primitive(
     triangular_solve_shape_rule, triangular_solve_dtype_rule,
-    'triangular_solve', translation_rule=_triangular_solve_translation_rule)
+    'triangular_solve')
 ad.defjvp2(triangular_solve_p,
            triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
@@ -699,68 +854,84 @@ ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
 batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
 
 
-def _triangular_solve_cpu_translation_rule(
-    ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
+def _triangular_solve_lowering(
+    ctx, a, b, *, left_side, lower, transpose_a, conjugate_a, unit_diagonal):
+  out_aval, = ctx.avals_out
+  if conjugate_a and not transpose_a:
+    a = chlo.ConjOp(a)
+    conjugate_a = False
+  if not transpose_a:
+    transpose = "NO_TRANSPOSE"
+  else:
+    transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
+  return mhlo.TriangularSolveOp(
+      mlir.aval_to_ir_type(out_aval), a, b, ir.BoolAttr.get(left_side),
+      ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
+      mhlo.TransposeAttr.get(transpose)).results
+
+mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
+
+def _triangular_solve_cpu_lower(
+    ctx, a, b, *, left_side, lower, transpose_a,
     conjugate_a, unit_diagonal):
-  a_aval, _ = avals_in
-  c = ctx.builder
+  a_aval, _ = ctx.avals_in
 
   if conjugate_a and not transpose_a:
-    a = xops.Conj(a)
+    a = chlo.ConjOp(a).result
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
-    return [lapack.jax_trsm(
-      c, xops.Constant(c, np.array(1, dtype=a_aval.dtype)),
+    alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
+    return [lapack.trsm_mhlo(
+      a_aval.dtype, alpha,
       a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
-    if not transpose_a:
-      transpose = xops.TriangularSolveOptions_Transpose.NO_TRANSPOSE
+    if transpose_a:
+      transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
     else:
-      transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
-                   else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
-    return [xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
-                                 transpose)]
+      transpose = "NO_TRANSPOSE"
+    return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
+                                  ir.BoolAttr.get(lower),
+                                  ir.BoolAttr.get(unit_diagonal),
+                                  mhlo.TransposeAttr.get(transpose)).results
 
-xla.register_translation(triangular_solve_p,
-                         _triangular_solve_cpu_translation_rule,
-                         platform='cpu')
+mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
+                       platform='cpu')
 
-def _triangular_solve_gpu_translation_rule(
-    trsm_impl, ctx, avals_in, avals_out, a, b, *, left_side, lower, transpose_a,
-    conjugate_a, unit_diagonal):
-  c = ctx.builder
-  a_aval, _ = avals_in
+
+def _triangular_solve_gpu_lower(
+    trsm_impl, ctx, a, b, *, left_side, lower, transpose_a, conjugate_a,
+    unit_diagonal):
+  a_aval, _ = ctx.avals_in
   m, n = a_aval.shape[-2:]
   batch = prod(a_aval.shape[:-2])
   if conjugate_a and not transpose_a:
-    a = xops.Conj(a)
+    a = chlo.ConjOp(a).result
     conjugate_a = False
   if batch > 1 and m <= 256 and n <= 256:
-    return [trsm_impl(c, a, b, left_side, lower, transpose_a,
+    return [trsm_impl(a_aval.dtype, a, b, left_side, lower, transpose_a,
                       conjugate_a, unit_diagonal)]
   else:
     # Use the XLA implementation for unbatched triangular_solve.
-    if not transpose_a:
-      transpose = xops.TriangularSolveOptions_Transpose.NO_TRANSPOSE
+    if transpose_a:
+      transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
     else:
-      transpose = (xops.TriangularSolveOptions_Transpose.ADJOINT if conjugate_a
-                   else xops.TriangularSolveOptions_Transpose.TRANSPOSE)
-    return [xops.TriangularSolve(a, b, left_side, lower, unit_diagonal,
-                                 transpose)]
+      transpose = "NO_TRANSPOSE"
+    return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
+                                  ir.BoolAttr.get(lower),
+                                  ir.BoolAttr.get(unit_diagonal),
+                                  mhlo.TransposeAttr.get(transpose)).results
 
-if cusolver is not None:
-  xla.register_translation(
-      triangular_solve_p,
-      partial(_triangular_solve_gpu_translation_rule, cusolver.trsm),
-      platform='gpu')
-
-if rocsolver is not None:
-  xla.register_translation(
+mlir.register_lowering(
     triangular_solve_p,
-    partial(_triangular_solve_gpu_translation_rule, rocsolver.trsm),
-    platform='gpu')
+    partial(_triangular_solve_gpu_lower, gpu_solver.cuda_trsm),
+    platform='cuda')
+mlir.register_lowering(
+    triangular_solve_p,
+    partial(_triangular_solve_gpu_lower, gpu_solver.rocm_trsm),
+    platform='rocm')
+
 
 # Support operation for LU decomposition: Transformation of the pivots returned
 # by LU decomposition into permutations.
@@ -833,10 +1004,10 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
   return lu_pivots_to_permutation_p.bind(
       x, permutation_size=permutation_size), 0
 
-def _lu_pivots_to_permutation_gpu(ctx, avals_in, avals_out, pivots, *,
-                                  permutation_size):
-  return [cuda_linalg.lu_pivots_to_permutation(
-      ctx.builder, pivots, permutation_size=permutation_size)]
+def _lu_pivots_to_permutation_gpu_lowering(lowering, ctx, pivots, *,
+                                           permutation_size):
+  return [lowering(pivots, permutation_size=permutation_size)]
+
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
 lu_pivots_to_permutation_p.multiple_results = False
@@ -846,15 +1017,20 @@ lu_pivots_to_permutation_p.def_abstract_eval(
     _lu_pivots_to_permutation_abstract_eval)
 batching.primitive_batchers[lu_pivots_to_permutation_p] = (
     _lu_pivots_to_permutation_batching_rule)
-xla.register_translation(
+mlir.register_lowering(
     lu_pivots_to_permutation_p,
-    xla.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False,
-                  new_style=True))
+    mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
+mlir.register_lowering(
+    lu_pivots_to_permutation_p,
+    partial(_lu_pivots_to_permutation_gpu_lowering,
+            gpu_linalg.cuda_lu_pivots_to_permutation),
+    platform='cuda')
+mlir.register_lowering(
+    lu_pivots_to_permutation_p,
+    partial(_lu_pivots_to_permutation_gpu_lowering,
+            gpu_linalg.hip_lu_pivots_to_permutation),
+    platform='rocm')
 
-if cuda_linalg:
-  xla.register_translation(lu_pivots_to_permutation_p,
-                           _lu_pivots_to_permutation_gpu,
-                           platform='gpu')
 
 # LU decomposition
 
@@ -923,17 +1099,12 @@ def _lu_blocked(a, block_size=128):
 
 def _lu_python(x):
   """Default LU decomposition in Python, where no better version exists."""
-  m, n = x.shape[-2:]
   batch_dims = x.shape[:-2]
-  if len(batch_dims) > 0:
-    batch_size = np.prod(batch_dims, dtype=np.int64)
-    lu, pivot, perm = api.vmap(_lu_blocked)(lax.reshape(x, (batch_size, m, n)))
-    lu = lax.reshape(lu, batch_dims + (m, n))
-    pivot = lax.reshape(pivot, batch_dims + (min(m, n),))
-    perm = lax.reshape(perm, batch_dims + (m,))
-  else:
-    lu, pivot, perm = _lu_blocked(x)
-  return lu, pivot, perm
+  fn = _lu_blocked
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn)
+
+  return fn(x)
 
 def _lu_impl(operand):
   lu, pivot, perm = xla.apply_primitive(lu_p, operand)
@@ -981,7 +1152,7 @@ def _lu_jvp_rule(primals, tangents):
   ndims = len(a_shape)
   l_padding = [(0, 0, 0)] * ndims
   l_padding[-1] = (0, m - k, 0)
-  zero = jnp._constant_like(lu, 0)
+  zero = lax_internal._const(lu, 0)
   l = lax.pad(jnp.tril(lu[..., :, :k], -1), zero, l_padding)
   l = l + lax.expand_dims(jnp.eye(m, m, dtype=dtype), range(l.ndim - 2))
 
@@ -989,7 +1160,8 @@ def _lu_jvp_rule(primals, tangents):
                   ((k, 0, 0), (k, 0, 0)))
   u_padding = [(0, 0, 0)] * ndims
   u_padding[-2] = (0, n - k, 0)
-  u = lax.pad(jnp.triu(lu[..., :k, :]), zero, u_padding) + lax.expand_dims(u_eye, range(lu.ndim - 2))
+  u = (lax.pad(jnp.triu(lu[..., :k, :]), zero, u_padding) +
+       lax.expand_dims(u_eye, range(lu.ndim - 2)))
 
   la = triangular_solve(l, x, left_side=True, transpose_a=False, lower=True,
                         unit_diagonal=True)
@@ -1009,19 +1181,27 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_translation_rule(getrf_impl, ctx, avals_in, avals_out, operand):
-  operand_aval, = avals_in
-  c = ctx.builder
+def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
+  operand_aval, = ctx.avals_in
+  out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   m = operand_aval.shape[-2]
-  lu, pivot, info = getrf_impl(c, operand)
+  lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = xops.Sub(pivot, xops.Constant(c, np.array(1, np.int32)))
-  ok = xops.Ge(info, xops.Constant(c, np.array(0, np.int32)))
-  lu = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), lu,
-                            _nan_like(c, lu))
-  perm = xla.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
-                       multiple_results=False, backend=ctx.platform)(c, pivot)
+  pivot = mhlo.SubtractOp(pivot, mlir.full_like_aval(1, pivot_aval)).result
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "GE", "SIGNED")
+  lu = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      lu, _nan_like_mhlo(out_aval))
+  sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval], avals_out=[perm_aval])
+  perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
+                           multiple_results=False)
+  perm, = perm_fn(sub_ctx, pivot)
   return [lu, pivot, perm]
 
 
@@ -1033,24 +1213,20 @@ lu_p = Primitive('lu')
 lu_p.multiple_results = True
 lu_p.def_impl(_lu_impl)
 lu_p.def_abstract_eval(_lu_abstract_eval)
-xla.register_translation(lu_p, xla.lower_fun(_lu_python, multiple_results=True,
-                                             new_style=True))
+mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-xla.register_translation(lu_p,
-                         partial(_lu_cpu_gpu_translation_rule, lapack.getrf),
-                         platform='cpu')
+mlir.register_lowering(lu_p,
+                       partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
+                       platform='cpu')
 
-if cusolver is not None:
-  xla.register_translation(
-      lu_p, partial(_lu_cpu_gpu_translation_rule, cusolver.getrf),
-      platform='gpu')
-
-if rocsolver is not None:
-  xla.register_translation(
-      lu_p, partial(_lu_cpu_gpu_translation_rule, rocsolver.getrf),
-      platform='gpu')
+mlir.register_lowering(
+    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf),
+    platform='cuda')
+mlir.register_lowering(
+    lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.rocm_getrf),
+    platform='rocm')
 
 xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
 
@@ -1071,7 +1247,7 @@ def _lu_solve_core(lu, permutation, b, trans):
                          transpose_a=True, conjugate_a=conj)
     x = x[jnp.argsort(permutation), :]
   else:
-    raise ValueError("'trans' value must be 0, 1, or 2, got {}".format(trans))
+    raise ValueError(f"'trans' value must be 0, 1, or 2, got {trans}")
   return lax.reshape(x, b.shape)
 
 
@@ -1112,35 +1288,199 @@ def lu_solve(lu, permutation, b, trans=0):
 
 # QR decomposition
 
-def qr_impl(operand, full_matrices):
+# QR decomposition is implemented as a composition of two lower-level primitives
+# geqrf and orgqr. The names, while cryptic Fortran alphabet soup, are LAPACK's
+# names for the primitives, and we stick with them for consistency.
+
+def geqrf(a):
+  """Computes the QR decomposition of a matrix.
+
+  Args:
+    a: an ``[..., m, n]`` batch of matrices, with floating-point or complex type.
+  Returns:
+    An ``(a, taus)`` pair where ``r`` is in the upper triangle of ``a``,
+    ``q`` is represented in the lower triangle of ``a`` and in ``taus`` as
+    elementary Householder reflectors.
+  """
+  a_out, taus = geqrf_p.bind(a)
+  return a_out, taus
+
+def _geqrf_abstract_eval(operand):
+  if not isinstance(operand, ShapedArray):
+    raise NotImplementedError("Unsupported aval in geqrf_abstract_eval: "
+                              f"{operand.aval}")
+  if operand.ndim < 2:
+    raise ValueError("Argument to QR decomposition must have ndims >= 2")
+  *batch_dims, m, n = operand.shape
+  taus = operand.update(shape=(*batch_dims, min(m, n)))
+  return operand, taus
+
+def _geqrf_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  return geqrf(batching.moveaxis(x, bd, 0)), (0, 0)
+
+def _geqrf_translation_rule(ctx, avals_in, avals_out, operand):
+  return xops.QrDecomposition(operand)
+
+def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
+  a_aval, taus_aval = ctx.avals_out
+  *batch_dims, m, n = a_aval.shape
+  batch = prod(batch_dims)
+
+  if batch == 0 or m == 0 or n == 0:
+    return mlir.full_like_aval(0, a_aval), mlir.full_like_aval(0, taus_aval)
+
+  if (batched_geqrf_impl is not None and batch > 1 and m // batch <= 128 and
+      n // batch <= 128):
+    a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
+  else:
+    a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
+    zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+    ok = mlir.compare_mhlo(info_geqrf, zeros, "EQ", "SIGNED")
+    ok_a = mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get((*batch_dims, 1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result
+    a_out = _broadcasting_select_mhlo(ok_a, a_out, _nan_like_mhlo(a_aval))
+    ok_taus = mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get((*batch_dims, 1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result
+    taus = _broadcasting_select_mhlo(ok_taus, taus, _nan_like_mhlo(taus_aval))
+  return a_out, taus
+
+geqrf_p = Primitive('geqrf')
+geqrf_p.multiple_results = True
+geqrf_p.def_impl(partial(xla.apply_primitive, geqrf_p))
+geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
+batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
+xla.register_translation(geqrf_p, _geqrf_translation_rule)
+
+mlir.register_lowering(
+    geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_mhlo, None),
+    platform='cpu')
+mlir.register_lowering(
+    geqrf_p,
+    partial(_geqrf_cpu_gpu_lowering, gpu_solver.cuda_geqrf,
+            gpu_solver.cuda_geqrf_batched),
+    platform='cuda')
+mlir.register_lowering(
+    geqrf_p,
+    partial(_geqrf_cpu_gpu_lowering, gpu_solver.rocm_geqrf,
+            gpu_solver.rocm_geqrf_batched),
+    platform='rocm')
+
+
+# orgqr: product of elementary Householder reflectors
+
+def orgqr(a, taus):
+  """Product of elementary Householder reflectors.
+
+  Args:
+    a: A matrix with shape ``[..., m, n]``, whose lower triangle contains
+      elementary Householder reflectors.
+    taus: A vector with shape ``[..., k]``, where ``k < min(m, n)``, containing
+      the scalar factors of the elementary Householder reflectors.
+
+  Returns:
+    A batch of orthogonal (unitary) matrices with the same shape as ``a``,
+    containing the products of the elementary Householder reflectors.
+  """
+  return orgqr_p.bind(a, taus)
+
+
+def _orgqr_abstract_eval(a, taus):
+  if not isinstance(a, ShapedArray) or not isinstance(taus, ShapedArray):
+    raise NotImplementedError("Unsupported aval in orgqr_abstract_eval: "
+                              f"{a.aval} {taus.aval}")
+  if a.ndim < 2:
+    raise ValueError("Argument to QR decomposition must have ndims >= 2")
+  *batch_dims, m, n = a.shape
+  *taus_batch_dims, k = taus.shape
+  if a.dtype != taus.dtype or batch_dims != taus_batch_dims or k > min(m, n):
+    raise ValueError(f"Type mismatch for orgqr: a={a} taus={taus}")
+  return a
+
+def _orgqr_batching_rule(batched_args, batch_dims):
+  a, taus = batched_args
+  b_a, b_taus, = batch_dims
+  return orgqr(batching.moveaxis(a, b_a, 0),
+               batching.moveaxis(taus, b_taus, 0)), (0,)
+
+def _orgqr_translation_rule(ctx, avals_in, avals_out, a, taus):
+  return [xops.ProductOfElementaryHouseholderReflectors(a, taus)]
+
+def _orgqr_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
+  a_aval, _ = ctx.avals_in
+  *batch_dims, m, n = a_aval.shape
+
+  if m == 0 or n == 0:
+    return [mlir.full_like_aval(0, a_aval)]
+
+  a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
+  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  ok = mlir.compare_mhlo(info_orgqr, zeros, "EQ", "SIGNED")
+  ok = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get((*batch_dims, 1, 1),
+                                ir.IntegerType.get_signless(1)),
+        ok, mlir.dense_int_elements(range(len(batch_dims)))).result
+  a = _broadcasting_select_mhlo(ok, a, _nan_like_mhlo(a_aval))
+  return [a]
+
+
+orgqr_p = Primitive('orgqr')
+orgqr_p.def_impl(partial(xla.apply_primitive, orgqr_p))
+orgqr_p.def_abstract_eval(_orgqr_abstract_eval)
+batching.primitive_batchers[orgqr_p] = _orgqr_batching_rule
+xla.register_translation(orgqr_p, _orgqr_translation_rule)
+
+mlir.register_lowering(
+    orgqr_p, partial(_orgqr_cpu_gpu_lowering, lapack.orgqr_mhlo),
+    platform='cpu')
+mlir.register_lowering(
+    orgqr_p,
+    partial(_orgqr_cpu_gpu_lowering, gpu_solver.cuda_orgqr),
+    platform='cuda')
+mlir.register_lowering(
+    orgqr_p,
+    partial(_orgqr_cpu_gpu_lowering, gpu_solver.rocm_orgqr),
+    platform='rocm')
+
+
+def _qr_impl(operand, *, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
   return q, r
 
 def _qr_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices):
+  operand_aval, = avals_in
+  shape = operand_aval.shape
+  m, n = shape[-2:]
+  if m == 0 or n == 0:
+    return [_eye_like_xla(ctx.builder, avals_out[0]),
+            _zeros_like_xla(ctx.builder, avals_out[1])]
   return xops.QR(operand, full_matrices)
 
-def qr_abstract_eval(operand, full_matrices):
+def _qr_abstract_eval(operand, *, full_matrices):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to QR decomposition must have ndims >= 2")
-    batch_dims = operand.shape[:-2]
-    m = operand.shape[-2]
-    n = operand.shape[-1]
+    *batch_dims, m, n = operand.shape
     k = m if full_matrices else min(m, n)
-    q = operand.update(shape=batch_dims + (m, k))
-    r = operand.update(shape=batch_dims + (k, n))
+    q = operand.update(shape=(*batch_dims, m, k))
+    r = operand.update(shape=(*batch_dims, k, n))
   else:
     q = operand
     r = operand
   return q, r
 
-def qr_jvp_rule(primals, tangents, full_matrices):
+def qr_jvp_rule(primals, tangents, *, full_matrices):
   # See j-towns.github.io/papers/qr-derivative.pdf for a terse derivation.
   x, = primals
   dx, = tangents
   q, r = qr_p.bind(x, full_matrices=False)
   *_, m, n = x.shape
-  if full_matrices or m < n:
+  if m < n or (full_matrices and m != n):
     raise NotImplementedError(
       "Unimplemented case of QR decomposition derivative")
   dx_rinv = triangular_solve(r, dx)  # Right side solve by default
@@ -1149,110 +1489,69 @@ def qr_jvp_rule(primals, tangents, full_matrices):
   do = qt_dx_rinv_lower - _H(qt_dx_rinv_lower)  # This is skew-symmetric
   # The following correction is necessary for complex inputs
   I = lax.expand_dims(jnp.eye(n, dtype=do.dtype), range(qt_dx_rinv.ndim - 2))
-  do = do + I * (qt_dx_rinv - jnp.real(qt_dx_rinv))
+  do = do + I * (qt_dx_rinv - qt_dx_rinv.real.astype(qt_dx_rinv.dtype))
   dq = jnp.matmul(q, do - qt_dx_rinv) + dx_rinv
   dr = jnp.matmul(qt_dx_rinv - do, r)
   return (q, r), (dq, dr)
 
-def qr_batching_rule(batched_args, batch_dims, full_matrices):
+def _qr_batching_rule(batched_args, batch_dims, *, full_matrices):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
-def _qr_cpu_gpu_translation_rule(geqrf_impl, orgqr_impl, ctx, avals_in,
-                                 avals_out, operand, *, full_matrices):
-  c = ctx.builder
-  operand_aval, = avals_in
-  dims = operand_aval.shape
-  m, n = dims[-2:]
-  batch_dims = dims[:-2]
-  r, tau, info_geqrf = geqrf_impl(c, operand)
-  if m < n:
-    q = xops.Slice(r, [0] * len(dims), list(batch_dims) + [m, m],
-                   [1] * len(dims))
-    q, info_orgqr = orgqr_impl(c, q, tau)
-  elif not full_matrices:
-    q, info_orgqr = orgqr_impl(c, r, tau)
-    r = xops.Slice(r, [0] * len(dims), list(batch_dims) + [n, n],
-                   [1] * len(dims))
-  else:
-    padding_config = [(0, 0, 0)] * len(dims)
-    padding_config[-1] = (0, m - n, 0)
-    q = xops.Pad(r, xops.Constant(c, np.array(0, dtype=operand_aval.dtype)),
-                 xla_client.make_padding_config(padding_config))
-    q, info_orgqr = orgqr_impl(c, q, tau)
-  if info_geqrf is not None:
-    ok = xops.And(
-      xops.Eq(info_geqrf, xops.Constant(c, np.array(0, np.int32))),
-      xops.Eq(info_orgqr, xops.Constant(c, np.array(0, np.int32))))
-    q = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), q,
-                             _nan_like(c, q))
-    r = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), r,
-                             _nan_like(c, r))
-  else:
-    pass # rocsolver does not return info
+def _qr_lowering(a, *, full_matrices):
+  *batch_dims, m, n = a.shape
+  if m == 0 or n == 0:
+    k = m if full_matrices else min(m, n)
+    q = jnp.broadcast_to(jnp.eye(m, k, dtype=a.dtype), (*batch_dims, m, k))
+    r = jnp.empty((*batch_dims, k, n), dtype=a.dtype)
+    return q, r
 
-  r = xla.lower_fun(jnp.triu, multiple_results=False,
-                    backend=ctx.platform)(c, r)
-  return [q, r]
+  r, taus = geqrf(a)
+  if m < n:
+    q = orgqr(r[..., :m, :m], taus)
+  elif full_matrices:
+    pads = [(0, 0, 0)] * (len(batch_dims) + 1) + [(0, m - n, 0)]
+    q = lax.pad(r, lax_internal._zero(r), pads)
+    q = orgqr(q, taus)
+  else:
+    q = orgqr(r, taus)
+    r = r[..., :n, :n]
+  r = jnp.triu(r)
+  return q, r
+
 
 qr_p = Primitive('qr')
 qr_p.multiple_results = True
-qr_p.def_impl(qr_impl)
-qr_p.def_abstract_eval(qr_abstract_eval)
-xla.register_translation(qr_p, _qr_translation_rule)
+qr_p.def_impl(_qr_impl)
+qr_p.def_abstract_eval(_qr_abstract_eval)
+
 ad.primitive_jvps[qr_p] = qr_jvp_rule
-batching.primitive_batchers[qr_p] = qr_batching_rule
+batching.primitive_batchers[qr_p] = _qr_batching_rule
 
-xla.register_translation(
-    qr_p, partial(_qr_cpu_gpu_translation_rule, lapack.geqrf, lapack.orgqr),
-    platform='cpu')
-
-if cusolver is not None:
-  xla.register_translation(
-      qr_p,
-      partial(_qr_cpu_gpu_translation_rule, cusolver.geqrf, cusolver.orgqr),
-      platform='gpu')
-
-if rocsolver is not None:
-  xla.register_translation(
-      qr_p,
-      partial(_qr_cpu_gpu_translation_rule, rocsolver.geqrf, rocsolver.orgqr),
-      platform='gpu')
+mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering));
 
 
 # Singular value decomposition
 
-def svd_impl(operand, full_matrices, compute_uv):
+def _svd_impl(operand, *, full_matrices, compute_uv):
   return xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
                              compute_uv=compute_uv)
 
-def _svd_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices,
-                          compute_uv):
-  operand_aval, = avals_in
-  shape = operand_aval.shape
-  m, n = shape[-2:]
-  if m == 0 or n == 0:
-    return xla.lower_fun(_empty_svd, multiple_results=True, new_style=True)(
-      ctx, avals_in, avals_out, operand, full_matrices=full_matrices,
-        compute_uv=compute_uv)
 
-  u, s, v = xops.SVD(operand)
-  permutation = list(range(len(shape)))
-  permutation[-1], permutation[-2] = permutation[-2], permutation[-1]
-  vt = xops.Transpose(v, permutation)
-  if not full_matrices and m != n:
-    u = xops.SliceInDim(u, 0, min(m, n), stride=1, dimno=len(shape) - 1)
-    vt = xops.SliceInDim(vt, 0, min(m, n), stride=1, dimno=len(shape) - 2)
+def _zeros_like_xla(c, aval):
+  zero = xops.Constant(c, np.array(0, aval.dtype))
+  return xops.Broadcast(zero, aval.shape)
 
-  if not compute_uv:
-    return [s]
-  else:
-    return [s, u, vt]
+def _eye_like_xla(c, aval):
+  iota_shape = xla_client.Shape.array_shape(
+      xla.dtype_to_primitive_type(np.dtype(np.int32)), aval.shape)
+  x = xops.Eq(xops.Iota(c, iota_shape, len(aval.shape) - 1),
+              xops.Iota(c, iota_shape, len(aval.shape) - 2))
+  return xops.ConvertElementType(x, xla.dtype_to_primitive_type(aval.dtype))
 
-
-def svd_abstract_eval(operand, full_matrices, compute_uv):
+def _svd_abstract_eval(operand, *, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:
       raise ValueError("Argument to singular value decomposition must have ndims >= 2")
@@ -1271,7 +1570,7 @@ def svd_abstract_eval(operand, full_matrices, compute_uv):
   else:
     raise NotImplementedError
 
-def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
+def _svd_jvp_rule(primals, tangents, *, full_matrices, compute_uv):
   A, = primals
   dA, = tangents
   s, U, Vt = svd_p.bind(A, full_matrices=False, compute_uv=True)
@@ -1293,23 +1592,23 @@ def svd_jvp_rule(primals, tangents, full_matrices, compute_uv):
   s_diffs_zeros = jnp.eye(s.shape[-1], dtype=s.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
   s_diffs_zeros = lax.expand_dims(s_diffs_zeros, range(s_diffs.ndim - 2))
   F = 1 / (s_diffs + s_diffs_zeros) - s_diffs_zeros
-  dSS = s_dim * dS  # dS.dot(jnp.diag(s))
-  SdS = _T(s_dim) * dS  # jnp.diag(s).dot(dS)
+  dSS = s_dim.astype(A.dtype) * dS  # dS.dot(jnp.diag(s))
+  SdS = _T(s_dim.astype(A.dtype)) * dS  # jnp.diag(s).dot(dS)
 
-  s_zeros = jnp.ones((), dtype=A.dtype) * (s == 0.)
+  s_zeros = (s == 0).astype(s.dtype)
   s_inv = 1 / (s + s_zeros) - s_zeros
   s_inv_mat = jnp.vectorize(jnp.diag, signature='(k)->(k,k)')(s_inv)
-  dUdV_diag = .5 * (dS - _H(dS)) * s_inv_mat
-  dU = jnp.matmul(U, F * (dSS + _H(dSS)) + dUdV_diag)
-  dV = jnp.matmul(V, F * (SdS + _H(SdS)))
+  dUdV_diag = .5 * (dS - _H(dS)) * s_inv_mat.astype(A.dtype)
+  dU = jnp.matmul(U, F.astype(A.dtype) * (dSS + _H(dSS)) + dUdV_diag)
+  dV = jnp.matmul(V, F.astype(A.dtype) * (SdS + _H(SdS)))
 
   m, n = A.shape[-2:]
   if m > n:
     I = lax.expand_dims(jnp.eye(m, dtype=A.dtype), range(U.ndim - 2))
-    dU = dU + jnp.matmul(I - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim
+    dU = dU + jnp.matmul(I - jnp.matmul(U, Ut), jnp.matmul(dA, V)) / s_dim.astype(A.dtype)
   if n > m:
     I = lax.expand_dims(jnp.eye(n, dtype=A.dtype), range(V.ndim - 2))
-    dV = dV + jnp.matmul(I - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim
+    dV = dV + jnp.matmul(I - jnp.matmul(V, Vt), jnp.matmul(_H(dA), U)) / s_dim.astype(A.dtype)
 
   return (s, U, Vt), (ds, dU, _H(dV))
 
@@ -1329,37 +1628,74 @@ def _empty_svd(a, *, full_matrices, compute_uv):
     u, v = v, u
   return s, u, v
 
-def _svd_cpu_gpu_translation_rule(gesvd_impl, ctx, avals_in, avals_out, operand,
-                                  *, full_matrices, compute_uv):
-  operand_aval, = avals_in
+def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
+                          compute_uv):
+  operand_aval, = ctx.avals_in
+  s_aval = ctx.avals_out[0]
   m, n = operand_aval.shape[-2:]
   batch_dims = operand_aval.shape[:-2]
-  c = ctx.builder
 
   if m == 0 or n == 0:
-    return xla.lower_fun(_empty_svd, multiple_results=True, new_style=True)(
-      ctx, avals_in, avals_out, operand, full_matrices=full_matrices,
-        compute_uv=compute_uv)
+    return mlir.lower_fun(_empty_svd, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
 
-  s, u, vt, info = gesvd_impl(c, operand,
+  s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
-  s = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1,)), s,
-                           _nan_like(c, s))
-
+  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  s = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      s, _nan_like_mhlo(s_aval))
   result = [s]
 
   if compute_uv:
-    u = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), u,
-                             _nan_like(c, u))
-    vt = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vt,
-                              _nan_like(c, vt))
+    u_aval, vt_aval = ctx.avals_out[1:]
+    u = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+            ir.RankedTensorType.get(batch_dims + (1, 1),
+                                    ir.IntegerType.get_signless(1)),
+            ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        u, _nan_like_mhlo(u_aval))
+    vt = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+            ir.RankedTensorType.get(batch_dims + (1, 1),
+                                    ir.IntegerType.get_signless(1)),
+            ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vt, _nan_like_mhlo(vt_aval))
     result += [u, vt]
 
   return result
 
-def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
+def _svd_tpu(a, *, full_matrices, compute_uv):
+  batch_dims = a.shape[:-2]
+
+  fn = partial(lax_svd.svd, full_matrices=full_matrices, compute_uv=compute_uv)
+  for _ in range(len(batch_dims)):
+    fn = api.vmap(fn)
+
+  if compute_uv:
+    u, s, vh = fn(a)
+    return [s, u, vh]
+  else:
+    s = fn(a)
+    return [s]
+
+def _svd_tpu_lowering_rule(ctx, operand, *, full_matrices, compute_uv):
+  operand_aval, = ctx.avals_in
+  m, n = operand_aval.shape[-2:]
+
+  if m == 0 or n == 0:
+    return mlir.lower_fun(_empty_svd, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
+  return mlir.lower_fun(_svd_tpu, multiple_results=True)(
+      ctx, operand, full_matrices=full_matrices, compute_uv=compute_uv)
+
+def _svd_batching_rule(batched_args, batch_dims, *, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
   x = batching.moveaxis(x, bd, 0)
@@ -1372,30 +1708,26 @@ def svd_batching_rule(batched_args, batch_dims, full_matrices, compute_uv):
 
 svd_p = Primitive('svd')
 svd_p.multiple_results = True
-svd_p.def_impl(svd_impl)
-svd_p.def_abstract_eval(svd_abstract_eval)
-ad.primitive_jvps[svd_p] = svd_jvp_rule
-batching.primitive_batchers[svd_p] = svd_batching_rule
-xla.register_translation(svd_p, _svd_translation_rule)
+svd_p.def_impl(_svd_impl)
+svd_p.def_abstract_eval(_svd_abstract_eval)
+ad.primitive_jvps[svd_p] = _svd_jvp_rule
+batching.primitive_batchers[svd_p] = _svd_batching_rule
 
-xla.register_translation(
-    svd_p, partial(_svd_cpu_gpu_translation_rule, lapack.gesdd),
+mlir.register_lowering(
+    svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
     platform='cpu')
+mlir.register_lowering(
+  svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.cuda_gesvd),
+  platform='cuda')
+mlir.register_lowering(
+  svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.rocm_gesvd),
+  platform='rocm')
 
-if cusolver is not None:
-  xla.register_translation(
-    svd_p, partial(_svd_cpu_gpu_translation_rule, cusolver.gesvd),
-    platform='gpu')
+mlir.register_lowering(svd_p, _svd_tpu_lowering_rule)
 
-if rocsolver is not None:
-  xla.register_translation(
-    svd_p, partial(_svd_cpu_gpu_translation_rule, rocsolver.gesvd),
-    platform='gpu')
-
-
-def _tridiagonal_solve_gpu_translation_rule(ctx, avals_in, avals_out, dl, d, du,
-                                            b, *, m, n, ldb, t):
-  return [cusparse.gtsv2(ctx.builder, dl, d, du, b, m=m, n=n, ldb=ldb, t=t)]
+def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b, *, m, n, ldb, t):
+  return [lowering(dl, d, du, b, m=m, n=n, ldb=ldb,
+                   t=dtypes.canonicalize_dtype(t))]
 
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
@@ -1403,10 +1735,16 @@ tridiagonal_solve_p.def_impl(
     functools.partial(xla.apply_primitive, tridiagonal_solve_p))
 tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
-if cusparse is not None and hasattr(cusparse, "gtsv2"):
-  xla.register_translation(tridiagonal_solve_p,
-                           _tridiagonal_solve_gpu_translation_rule,
-                           platform='gpu')
+
+mlir.register_lowering(
+    tridiagonal_solve_p,
+    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.cuda_gtsv2),
+    platform='cuda')
+mlir.register_lowering(
+    tridiagonal_solve_p,
+    partial(_tridiagonal_solve_gpu_lowering, gpu_sparse.rocm_gtsv2),
+    platform='rocm')
+
 
 def _tridiagonal_solve_jax(dl, d, du, b, **kw):
   """Pure JAX implementation of `tridiagonal_solve`."""
@@ -1436,14 +1774,14 @@ def _tridiagonal_solve_jax(dl, d, du, b, **kw):
   return x_[::-1]
 
 
-xla.register_translation(tridiagonal_solve_p, xla.lower_fun(
-    _tridiagonal_solve_jax, multiple_results=False, new_style=True))
+mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
+    _tridiagonal_solve_jax, multiple_results=False))
 
 
 def tridiagonal_solve(dl, d, du, b):
   r"""Computes the solution of a tridiagonal linear system.
 
-  This function computes the solution of a tridiagonal linear system::
+  This function computes the solution of a tridiagonal linear system:
 
   .. math::
     A . X = B
@@ -1491,7 +1829,8 @@ def tridiagonal_solve(dl, d, du, b):
 # Schur Decomposition
 
 
-def schur(x,
+@_warn_on_positional_kwargs
+def schur(x, *,
           compute_schur_vectors=True,
           sort_eig_vals=False,
           select_callable=None):
@@ -1511,12 +1850,9 @@ def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
       sort_eig_vals=sort_eig_vals,
       select_callable=select_callable)
 
-
-def _schur_translation_rule(ctx, avals_in, avals_out, operand, *,
-                            compute_schur_vectors, sort_eig_vals):
+def _schur_lowering(ctx, *args, **kwargs):
   raise NotImplementedError(
       "Schur decomposition is only implemented on the CPU backend.")
-
 
 def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
                          select_callable):
@@ -1534,38 +1870,38 @@ def _schur_abstract_eval(operand, *, compute_schur_vectors, sort_eig_vals,
 
   return (T, vs) if compute_schur_vectors else (T,)
 
-
-def _schur_cpu_translation_rule(ctx, avals_in, avals_out, operand, *,
-                                compute_schur_vectors, sort_eig_vals,
-                                select_callable):
-  operand_aval, = avals_in
+def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
+                        select_callable):
+  operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
-  c = ctx.builder
 
-  _cpu_gees = lapack.gees
+  gees_result = lapack.gees_mhlo(operand_aval.dtype, operand,
+                                  jobvs=compute_schur_vectors,
+                                  sort=sort_eig_vals,
+                                  select=select_callable)
+  # Number of return values depends on value of sort_eig_vals.
+  T, vs, *_, info = gees_result
 
-  if sort_eig_vals:
-    T, vs, sdim, info = _cpu_gees(
-        c,
-        operand,
-        jobvs=compute_schur_vectors,
-        sort=sort_eig_vals,
-        select=select_callable)
-  else:
-    T, vs, info = _cpu_gees(
-        c,
-        operand,
-        jobvs=compute_schur_vectors,
-        sort=sort_eig_vals,
-        select=select_callable)
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
 
-  ok = xops.Eq(info, xops.Constant(c, np.array(0, np.int32)))
-  T = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), T,
-                           _nan_like(c, T))
+  T = _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok,
+          mlir.dense_int_elements(range(len(batch_dims)))).result,
+      T, _nan_like_mhlo(ctx.avals_out[0]))
   output = [T]
   if compute_schur_vectors:
-    vs = _broadcasting_select(c, xops.Reshape(ok, batch_dims + (1, 1)), vs,
-                              _nan_like(c, vs))
+    vs = _broadcasting_select_mhlo(
+        mhlo.BroadcastInDimOp(
+            ir.RankedTensorType.get(batch_dims + (1, 1),
+                                    ir.IntegerType.get_signless(1)),
+            ok,
+            mlir.dense_int_elements(range(len(batch_dims)))).result,
+        vs, _nan_like_mhlo(ctx.avals_out[1]))
 
     output.append(vs)
 
@@ -1595,7 +1931,38 @@ schur_p = Primitive('schur')
 schur_p.multiple_results = True
 schur_p.def_impl(_schur_impl)
 schur_p.def_abstract_eval(_schur_abstract_eval)
-xla.register_translation(schur_p, _schur_translation_rule)
-xla.register_translation(schur_p, _schur_cpu_translation_rule, platform='cpu')
+mlir.register_lowering(schur_p, _schur_lowering)
+mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule
+
+
+# Utilities
+
+def _nan_like_mhlo(aval):
+  if jnp.issubdtype(aval.dtype, np.complexfloating):
+    return mlir.full_like_aval(np.nan + np.nan * 1j, aval)
+  else:
+    return mlir.full_like_aval(np.nan, aval)
+
+def _broadcasting_select_mhlo(which, x, y):
+  """Wrapper around XLA `Select` that broadcasts its arguments."""
+  which_type, x_type, y_type = (
+    ir.RankedTensorType(v.type) for v in (which, x, y))
+  out_shape = list(lax_internal.broadcast_shapes(
+      tuple(which_type.shape), tuple(x_type.shape), tuple(y_type.shape)))
+  bcast_dims = lambda shape: mlir.dense_int_elements(
+      range(len(out_shape) - len(shape), len(out_shape)))
+  if which_type.shape != out_shape:
+    which = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get(out_shape, which_type.element_type), which,
+        bcast_dims(which_type.shape))
+  if x_type.shape != out_shape:
+    x = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get(out_shape, x_type.element_type), x,
+        bcast_dims(x_type.shape))
+  if y_type.shape != out_shape:
+    y = mhlo.BroadcastInDimOp(
+        ir.RankedTensorType.get(out_shape, y_type.element_type), y,
+        bcast_dims(y_type.shape))
+  return mhlo.SelectOp(which, x, y).result

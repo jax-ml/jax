@@ -12,9 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Common functions for neural network libraries."""
+"""Image manipulation functions.
 
-# flake8: noqa: F401
+More image manipulation functions can be found in libraries built on top of
+JAX, such as `PIX`_.
+
+.. _PIX: https://github.com/deepmind/dm_pix
+"""
+
 from jax._src.image.scale import (
   resize as resize,
   ResizeMethod as ResizeMethod,

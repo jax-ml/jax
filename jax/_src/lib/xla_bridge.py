@@ -19,9 +19,9 @@ and provide some automatic type mapping logic for converting between Numpy and
 XLA. There are also a handful of related casting utilities.
 """
 
-
 from functools import partial, lru_cache
 import os
+import platform as py_platform
 import threading
 from typing import Any, Dict, List, Optional, Union
 import warnings
@@ -30,11 +30,13 @@ from absl import logging
 # Disable "WARNING: Logging before flag parsing goes to stderr." message
 logging._warn_preinit_stderr = 0
 
-import jax._src.lib
-from jax._src.config import flags, bool_env
+import jax._src.lib as lib
+from jax._src.config import flags, bool_env, int_env
+from jax._src import distributed
 from jax._src.lib import tpu_driver_client
 from jax._src.lib import xla_client
 from jax._src import util, traceback_util
+from jax.config import config
 import numpy as np
 
 iree: Optional[Any]
@@ -47,8 +49,12 @@ except (ModuleNotFoundError, ImportError):
 traceback_util.register_exclusion(__file__)
 
 
-xops = xla_client.ops
 XlaBackend = xla_client._xla.Client
+
+use_sharded_buffer = xla_client._version >= 90
+# TODO(chky): Change ShardedBuffer to xla_client.ShardedBuffer when the minimum
+# jaxlib version is updated.
+ShardedBuffer = Any
 
 FLAGS = flags.FLAGS
 
@@ -65,29 +71,33 @@ flags.DEFINE_string(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
     'Deprecated, please use --jax_platforms instead.')
-flags.DEFINE_string(
-    'jax_platforms',
-    os.getenv('JAX_PLATFORMS', '').lower(),
-    'Comma-separated list of platform names specifying which platforms jax '
-    'should attempt to initialize. The first platform in the list that is '
-    'successfully initialized will be used as the default platform. For '
-    'example, --jax_platforms=cpu,gpu means that CPU and GPU backends will be '
-    'initialized, and the CPU backend will be used unless otherwise specified; '
-    '--jax_platforms=cpu means that only the CPU backend will be initialized. '
-    'By default, jax will try to initialize all available platforms and will '
-    'default to GPU or TPU if available, and fallback to CPU otherwise.')
 flags.DEFINE_bool(
     'jax_disable_most_optimizations',
     bool_env('JAX_DISABLE_MOST_OPTIMIZATIONS', False),
     'Try not to do much optimization work. This can be useful if the cost of '
     'optimization is greater than that of running a less-optimized program.')
+flags.DEFINE_integer(
+    'jax_xla_profile_version', int_env('JAX_XLA_PROFILE_VERSION', 0),
+    'Optional profile version for XLA compilation. '
+    'This is meaningful only when XLA is configured to '
+    'support the remote compilation profile feature.')
+flags.DEFINE_string(
+    'jax_cuda_visible_devices', 'all',
+    'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
+    'comma-separate list of integer device IDs.')
+flags.DEFINE_string(
+    'jax_rocm_visible_devices', 'all',
+    'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
+    'comma-separate list of integer device IDs.')
 
 def get_compile_options(
     num_replicas: int,
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
-) -> xla_client.CompileOptions:
+    use_auto_spmd_partitioning: bool = False,
+    auto_spmd_partitioning_mesh_shape=[],
+    auto_spmd_partitioning_mesh_ids=[]) -> xla_client.CompileOptions:
   """Returns the compile options to use, as derived from flag values.
 
   Args:
@@ -99,12 +109,22 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
+    use_auto_spmd_partitioning: boolean indicating whether to automatically
+      generate XLA shardings for SPMD partitioner.
+    auto_spmd_partitioning_mesh_shape: device mesh shape used to create
+      auto_spmd_partitioning search space.
+    auto_spmd_partitioning_mesh_ids: device ids used to create
+      auto_spmd_partitioning search space.
   """
   compile_options = xla_client.CompileOptions()
   compile_options.num_replicas = num_replicas
   compile_options.num_partitions = num_partitions
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
+  build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if use_auto_spmd_partitioning:
+    build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
+    build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids
   if device_assignment is not None:
     logging.vlog(
         2,
@@ -133,8 +153,8 @@ def get_compile_options(
     compile_options.device_assignment = device_assignment
 
   debug_options = compile_options.executable_build_options.debug_options
-  if jax._src.lib.cuda_path is not None:
-    debug_options.xla_gpu_cuda_data_dir = jax._src.lib.cuda_path
+  if lib.cuda_path is not None:
+    debug_options.xla_gpu_cuda_data_dir = lib.cuda_path
 
   if FLAGS.jax_disable_most_optimizations:
 
@@ -142,6 +162,7 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
+  compile_options.profile_version = FLAGS.jax_xla_profile_version
   return compile_options
 
 
@@ -201,14 +222,87 @@ register_backend_factory('cpu',
                          priority=0)
 register_backend_factory('tpu_driver', _make_tpu_driver_client,
                          priority=100)
-register_backend_factory('gpu', xla_client.make_gpu_client,
-                         priority=200)
-register_backend_factory(
-  'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
+
+
+def make_gpu_client(*, platform_name, visible_devices_flag):
+  visible_devices = getattr(FLAGS, visible_devices_flag, "all")
+  # Pass allowed_devices unconditionally when jaxlib 0.3.15 is the minimum.
+  kwargs = {}
+  if visible_devices != "all":
+    kwargs["allowed_devices"] = {int(x) for x in visible_devices.split(",")}
+  return xla_client.make_gpu_client(
+    distributed_client=distributed.global_state.client,
+    node_id=distributed.global_state.process_id,
+    platform_name=platform_name,
+    **kwargs)
+
+if hasattr(xla_client, "make_gpu_client"):
+  register_backend_factory(
+      'cuda', partial(make_gpu_client, platform_name='cuda',
+      visible_devices_flag='jax_cuda_visible_devices'),
+      priority=200)
+  register_backend_factory(
+      'rocm', partial(make_gpu_client, platform_name='rocm',
+      visible_devices_flag='jax_rocm_visible_devices'),
+      priority=200)
+
+
+if hasattr(xla_client, "make_tpu_client"):
+  register_backend_factory(
+    'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
 
+_platform_aliases = {
+  "cuda": "gpu",
+  "rocm": "gpu",
+}
+
+_alias_to_platforms: Dict[str, List[str]] = {}
+for _platform, _alias in _platform_aliases.items():
+  _alias_to_platforms.setdefault(_alias, []).append(_platform)
+
+
+def is_known_platform(platform: str):
+  # A platform is valid if there is a registered factory for it. It does not
+  # matter if we were unable to initialize that platform; we only care that
+  # we've heard of it and it isn't, e.g., a typo.
+  return (platform in _backend_factories.keys() or
+          platform in _platform_aliases.keys())
+
+
+def canonicalize_platform(platform: str) -> str:
+  """Replaces platform aliases with their concrete equivalent.
+
+  In particular, replaces "gpu" with either "cuda" or "rocm", depending on which
+  hardware is actually present. We want to distinguish "cuda" and "rocm" for
+  purposes such as MHLO lowering rules, but in many cases we don't want to
+  force users to care.
+  """
+  platforms = _alias_to_platforms.get(platform, None)
+  if platforms is None:
+    return platform
+
+  b = backends()
+  for p in platforms:
+    if p in b.keys():
+      return p
+  raise RuntimeError(f"Unknown backend: '{platform}' requested, but no "
+                     f"platforms that are instances of {platform} are present. "
+                     "Platforms present are: " + ",".join(b.keys()))
+
+
+def expand_platform_alias(platform: str) -> List[str]:
+  """Expands, e.g., "gpu" to ["cuda", "rocm"].
+
+  This is used for convenience reasons: we expect cuda and rocm to act similarly
+  in many respects since they share most of the same code.
+  """
+  return _alias_to_platforms.get(platform, [platform])
+
+def is_gpu(platform):
+  return platform in ("cuda", "rocm")
 
 def backends():
   global _backends
@@ -218,21 +312,24 @@ def backends():
   with _backend_lock:
     if _backends:
       return _backends
-
-    if FLAGS.jax_platforms:
-      platforms = FLAGS.jax_platforms.split(",")
+    if config.jax_platforms:
+      jax_platforms = config.jax_platforms.split(",")
+      platforms = []
+      # Allow platform aliases in the list of platforms.
+      for platform in jax_platforms:
+        platforms.extend(expand_platform_alias(platform))
       priorities = range(len(platforms), 0, -1)
       platforms_and_priorites = zip(platforms, priorities)
     else:
       platforms_and_priorites = (
           (platform, priority) for platform, (_, priority)
           in _backend_factories.items())
-
     default_priority = -1000
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
         _backends[platform] = backend
+
         if priority > default_priority:
           _default_backend = backend
           default_priority = priority
@@ -244,14 +341,35 @@ def backends():
         else:
           # If the backend isn't built into the binary, or if it has no devices,
           # we expect a RuntimeError.
-          logging.info("Unable to initialize backend '%s': %s", platform,
-                       err)
-          _backends_errors[platform] = str(err)
-          continue
-    if _default_backend.platform == "cpu" and FLAGS.jax_platform_name != 'cpu':
+          err_msg = f"Unable to initialize backend '{platform}': {err}"
+          if config.jax_platforms:
+            raise RuntimeError(err_msg)
+          else:
+            _backends_errors[platform] = str(err)
+            logging.info(err_msg)
+            continue
+    # We don't warn about falling back to CPU on Mac OS, because we don't
+    # support anything else there at the moment and warning would be pointless.
+    if (py_platform.system() != "Darwin" and
+        _default_backend.platform == "cpu" and
+        FLAGS.jax_platform_name != 'cpu'):
       logging.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
+
+
+def _clear_backends():
+  global _backends
+  global _backends_errors
+  global _default_backend
+
+  logging.info("Clearing JAX backend caches.")
+  with _backend_lock:
+    _backends = {}
+    _backends_errors = {}
+    _default_backend = None
+
+  get_backend.cache_clear()
 
 
 def _init_backend(platform):
@@ -281,10 +399,12 @@ def _get_backend_uncached(platform=None):
   if not isinstance(platform, (type(None), str)):
     return platform
 
-  bs = backends()
   platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
               or None)
+
+  bs = backends()
   if platform is not None:
+    platform = canonicalize_platform(platform)
     backend = bs.get(platform, None)
     if backend is None:
       if platform in _backends_errors:

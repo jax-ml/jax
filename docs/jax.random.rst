@@ -16,6 +16,7 @@ List of Available Functions
   :toctree: _autosummary
       
     PRNGKey
+    ball
     bernoulli
     beta
     categorical
@@ -26,12 +27,15 @@ List of Available Functions
     exponential
     fold_in
     gamma
+    generalized_normal
     gumbel
     laplace
+    loggamma
     logistic
     maxwell
     multivariate_normal
     normal
+    orthogonal
     pareto
     permutation
     poisson

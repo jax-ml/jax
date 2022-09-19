@@ -15,6 +15,7 @@
 
 from functools import partial
 from typing import Any, Optional, Sequence, Union
+from operator import index
 import warnings
 
 import numpy as np
@@ -27,13 +28,13 @@ from jax._src import prng
 from jax.config import config
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
-from jax._src.numpy.lax_numpy import (_arraylike, _check_arraylike,
-                                      _constant_like, _convert_and_clip_integer)
+from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_bridge
+from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer, _promote_dtypes_inexact
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import xla
+from jax.interpreters import mlir
 from jax._src.util import prod, canonicalize_axis
 
 
@@ -53,9 +54,15 @@ UINT_DTYPES = prng.UINT_DTYPES
 
 ### utilities
 
+_lax_const = lax_internal._const
+
+def _isnan(x):
+  return lax.ne(x, x)
+
+
 def _check_prng_key(key):
   # TODO(frostig): remove once we always enable_custom_prng
-  if type(key) is prng.PRNGKeyArray:
+  if isinstance(key, prng.PRNGKeyArray):
     return key, False
   elif _arraylike(key):
     if config.jax_enable_custom_prng:
@@ -63,21 +70,23 @@ def _check_prng_key(key):
           'Raw arrays as random keys to jax.random functions are deprecated. '
           'Assuming valid threefry2x32 key for now.',
           FutureWarning)
-    return prng.PRNGKeyArray(default_prng_impl(), key), True
+    return prng.random_wrap(key, impl=default_prng_impl()), True
   else:
     raise TypeError(f'unexpected PRNG key type {type(key)}')
 
+
 def _return_prng_keys(was_wrapped, key):
   # TODO(frostig): remove once we always enable_custom_prng
-  assert type(key) is prng.PRNGKeyArray, type(key)
+  assert isinstance(key, prng.PRNGKeyArray)
   if config.jax_enable_custom_prng:
     return key
   else:
-    return key.unsafe_raw_array() if was_wrapped else key
+    return prng.random_unwrap(key) if was_wrapped else key
+
 
 def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> jnp.ndarray:
-  key, _ = _check_prng_key(key)
-  return key._random_bits(bit_width, shape)
+  assert isinstance(key, prng.PRNGKeyArray)
+  return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
 
 PRNG_IMPLS = {
@@ -116,6 +125,9 @@ def PRNGKey(seed: int) -> KeyArray:
 
   """
   impl = default_prng_impl()
+  if np.ndim(seed):
+    raise TypeError("PRNGKey accepts a scalar seed, but was given an array of"
+                    f"shape {np.shape(seed)} != (). Use jax.vmap for batching")
   key = prng.seed_with_impl(impl, seed)
   return _return_prng_keys(True, key)
 
@@ -152,7 +164,14 @@ def unsafe_rbg_key(seed: int) -> KeyArray:
 def _fold_in(key: KeyArray, data: int) -> KeyArray:
   # Alternative to fold_in() to use within random samplers.
   # TODO(frostig): remove and use fold_in() once we always enable_custom_prng
-  return key._fold_in(jnp.uint32(data))
+  assert isinstance(key, prng.PRNGKeyArray)
+  if key.ndim:
+    raise TypeError("fold_in accepts a single key, but was given a key array of"
+                    f"shape {key.shape} != (). Use jax.vmap for batching.")
+  if np.ndim(data):
+    raise TypeError("fold_in accepts a scalar, but was given an array of"
+                    f"shape {np.shape(data)} != (). Use jax.vmap for batching.")
+  return prng.random_fold_in(key, jnp.uint32(data))
 
 def fold_in(key: KeyArray, data: int) -> KeyArray:
   """Folds in data to a PRNG key to form a new PRNG key.
@@ -170,8 +189,13 @@ def fold_in(key: KeyArray, data: int) -> KeyArray:
 
 def _split(key: KeyArray, num: int = 2) -> KeyArray:
   # Alternative to split() to use within random samplers.
-  # TODO(frostig): remove and use split() once we always enable_custom_prng
-  return key._split(num)
+  # TODO(frostig): remove and use split(); we no longer need to wait
+  # to always enable_custom_prng
+  assert isinstance(key, prng.PRNGKeyArray)
+  if key.ndim:
+    raise TypeError("split accepts a single key, but was given a key array of"
+                    f"shape {key.shape} != (). Use jax.vmap for batching.")
+  return prng.random_split(key, count=num)
 
 def split(key: KeyArray, num: int = 2) -> KeyArray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
@@ -186,6 +210,14 @@ def split(key: KeyArray, num: int = 2) -> KeyArray:
   """
   key, wrapped = _check_prng_key(key)
   return _return_prng_keys(wrapped, _split(key, num))
+
+def _key_data(keys: KeyArray) -> jnp.ndarray:
+  assert isinstance(keys, prng.PRNGKeyArray)
+  return prng.random_unwrap(keys)
+
+def key_data(keys: KeyArray) -> jnp.ndarray:
+  keys, _ = _check_prng_key(keys)
+  return _key_data(keys)
 
 
 ### random samplers
@@ -334,14 +366,14 @@ def _randint(key, shape, minval, maxval, dtype):
   # causing remainders below to have no effect, which is the correct semantics.
   span = lax.select(
     maxval_out_of_range & (maxval > minval),
-    lax.add(span, lax._const(span, 1)),
+    lax.add(span, _lax_const(span, 1)),
     span)
 
   # To compute a remainder operation on an integer that might have twice as many
   # bits as we can represent in the native unsigned dtype, we compute a
   # multiplier equal to 2**nbits % span. To avoid overflow, we use the identity:
   #  (a * b) % N = [(a % N) * (b % N)] % N
-  multiplier = lax.rem(lax._const(span, 2 ** (nbits // 2)), span)
+  multiplier = lax.rem(_lax_const(span, 2 ** (nbits // 2)), span)
   multiplier = lax.rem(lax.mul(multiplier, multiplier), span)
 
   random_offset = lax.add(lax.mul(lax.rem(higher_bits, span), multiplier),
@@ -486,15 +518,17 @@ def choice(key: KeyArray,
       slices = (slice(None),) * axis + (slice(n_draws),)
       result = permutation(key, a, axis)[slices]
   else:
+    _check_arraylike("choice", p)
+    p, = _promote_dtypes_inexact(p)
     if p.shape != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
     if replace:
       p_cuml = jnp.cumsum(p)
-      r = p_cuml[-1] * (1 - uniform(key, shape))
+      r = p_cuml[-1] * (1 - uniform(key, shape, dtype=p_cuml.dtype))
       ind = jnp.searchsorted(p_cuml, r)
     else:
       # Gumbel top-k trick: https://timvieira.github.io/blog/post/2019/09/16/algorithms-for-sampling-without-replacement/
-      g = -gumbel(key, (n_inputs,)) - jnp.log(p)
+      g = -gumbel(key, (n_inputs,), dtype=p.dtype) - jnp.log(p)
       ind = jnp.argsort(g)[:n_draws]
     result = ind if np.ndim(a) == 0 else jnp.take(a, ind, axis)
 
@@ -532,8 +566,8 @@ def _normal(key, shape, dtype) -> jnp.ndarray:
 
     key_re, key_im = _split(key)
     real_dtype = np.array(0, dtype).real.dtype
-    _re = _normal_real(key_re, shape, real_dtype)
-    _im = _normal_real(key_im, shape, real_dtype)
+    _re = _normal_real(key_re, shape, real_dtype).astype(dtype)
+    _im = _normal_real(key_im, shape, real_dtype).astype(dtype)
     return (_re + 1j * _im) / sqrt2
   else:
     return _normal_real(key, shape, dtype) # type: ignore
@@ -744,6 +778,7 @@ def beta(key: KeyArray,
     shape = core.canonicalize_shape(shape)
   return _beta(key, a, b, shape, dtype)
 
+
 def _beta(key, a, b, shape, dtype):
   if shape is None:
     shape = lax.broadcast_shapes(np.shape(a), np.shape(b))
@@ -755,9 +790,13 @@ def _beta(key, a, b, shape, dtype):
   key_a, key_b = _split(key)
   a = jnp.broadcast_to(a, shape)
   b = jnp.broadcast_to(b, shape)
-  gamma_a = gamma(key_a, a, shape, dtype)
-  gamma_b = gamma(key_b, b, shape, dtype)
-  return gamma_a / (gamma_a + gamma_b)
+  log_gamma_a = loggamma(key_a, a, shape, dtype)
+  log_gamma_b = loggamma(key_b, b, shape, dtype)
+  # Compute gamma_a / (gamma_a + gamma_b) without losing precision.
+  log_max = lax.max(log_gamma_a, log_gamma_b)
+  gamma_a_scaled = jnp.exp(log_gamma_a - log_max)
+  gamma_b_scaled = jnp.exp(log_gamma_b - log_max)
+  return gamma_a_scaled / (gamma_a_scaled + gamma_b_scaled)
 
 
 def cauchy(key: KeyArray,
@@ -787,8 +826,8 @@ def cauchy(key: KeyArray,
 def _cauchy(key, shape, dtype):
   _check_shape("cauchy", shape)
   u = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  pi = _constant_like(u, np.pi)
-  return lax.tan(lax.mul(pi, lax.sub(u, _constant_like(u, 0.5))))
+  pi = _lax_const(u, np.pi)
+  return lax.tan(lax.mul(pi, lax.sub(u, _lax_const(u, 0.5))))
 
 
 def dirichlet(key: KeyArray,
@@ -835,8 +874,19 @@ def _dirichlet(key, alpha, shape, dtype):
     _check_shape("dirichlet", shape, np.shape(alpha)[:-1])
 
   alpha = lax.convert_element_type(alpha, dtype)
-  gamma_samples = gamma(key, alpha, shape + np.shape(alpha)[-1:], dtype)
-  return gamma_samples / jnp.sum(gamma_samples, axis=-1, keepdims=True)
+
+  # Compute gamma in log space, otherwise small alpha can lead to poor behavior.
+  log_gamma_samples = loggamma(key, alpha, shape + np.shape(alpha)[-1:], dtype)
+  return _softmax(log_gamma_samples, -1)
+
+
+def _softmax(x, axis):
+  """Utility to compute the softmax of x along a given axis."""
+  if not dtypes.issubdtype(x.dtype, np.floating):
+    raise TypeError(f"_softmax only accepts floating dtypes, got {x.dtype}")
+  x_max = jnp.max(x, axis, keepdims=True)
+  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
+  return unnormalized / unnormalized.sum(axis, keepdims=True)
 
 
 def exponential(key: KeyArray,
@@ -870,25 +920,32 @@ def _exponential(key, shape, dtype):
   return lax.neg(lax.log1p(lax.neg(u)))
 
 
-def _gamma_one(key: KeyArray, alpha):
+def _gamma_one(key: KeyArray, alpha, log_space):
   # Ref: A simple method for generating gamma variables, George Marsaglia and Wai Wan Tsang
   # The algorithm can also be founded in:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
-  zero = _constant_like(alpha, 0)
-  one = _constant_like(alpha, 1)
-  minus_one = _constant_like(alpha, -1)
-  one_over_two = _constant_like(alpha, 0.5)
-  one_over_three = _constant_like(alpha, 1. / 3.)
-  squeeze_const = _constant_like(alpha, 0.0331)
+  zero = _lax_const(alpha, 0)
+  one = _lax_const(alpha, 1)
+  minus_one = _lax_const(alpha, -1)
+  one_over_two = _lax_const(alpha, 0.5)
+  one_over_three = _lax_const(alpha, 1. / 3.)
+  squeeze_const = _lax_const(alpha, 0.0331)
   dtype = lax.dtype(alpha)
 
-  key, subkey = _split(key)
   # for alpha < 1, we boost alpha to alpha + 1 and get a sample according to
-  # Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
-  boost = lax.select(lax.ge(alpha, one),
-                     one,
-                     lax.pow(uniform(subkey, (), dtype=dtype), lax.div(one, alpha)))
-  alpha = lax.select(lax.ge(alpha, one), alpha, lax.add(alpha, one))
+  #   Gamma(alpha) ~ Gamma(alpha+1) * Uniform()^(1 / alpha)
+  # When alpha is very small, this boost can be problematic because it may result
+  # in floating point underflow; for this reason we compute it in log space if
+  # specified by the `log_space` argument:
+  #   log[Gamma(alpha)] ~ log[Gamma(alpha + 1)] + log[Uniform()] / alpha
+  # Note that log[Uniform()] ~ Exponential(), but the exponential() function is
+  # computed via log[1 - Uniform()] to avoid taking log(0). We want the generated
+  # sequence to match between log_space=True and log_space=False, so we avoid this
+  # for now to maintain backward compatibility with the original implementation.
+  # TODO(jakevdp) should we change the convention to avoid -inf in log-space?
+  boost_mask = lax.ge(alpha, one)
+  alpha_orig = alpha
+  alpha = lax.select(boost_mask, alpha, lax.add(alpha, one))
 
   d = lax.sub(alpha, one_over_three)
   c = lax.div(one_over_three, lax.sqrt(d))
@@ -921,55 +978,78 @@ def _gamma_one(key: KeyArray, alpha):
     return key, X, V, U
 
   # initial state is chosen such that _cond_fn will return True
-  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _constant_like(alpha, 2)))
-  z = lax.mul(lax.mul(d, V), boost)
-  return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
+  key, subkey = _split(key)
+  u_boost = uniform(subkey, (), dtype=dtype)
+  _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _lax_const(alpha, 2)))
+  if log_space:
+    # TODO(jakevdp): there are negative infinities here due to issues mentioned above. How should
+    # we handle those?
+    log_boost = lax.select(boost_mask, zero, lax.mul(lax.log(u_boost), lax.div(one, alpha_orig)))
+    return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
+  else:
+    boost = lax.select(boost_mask, one, lax.pow(u_boost, lax.div(one, alpha_orig)))
+    z = lax.mul(lax.mul(d, V), boost)
+    return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)
 
 
-def _gamma_grad(sample, a):
+def _gamma_grad(sample, a, *, log_space):
   samples = jnp.reshape(sample, -1)
   alphas = jnp.reshape(a, -1)
-  if xla_bridge.get_backend().platform == 'cpu':
-    grads = lax.map(lambda args: lax.random_gamma_grad(*args), (alphas, samples))
+  if log_space:
+    # d[log(sample)] = d[sample] / sample
+    # This requires computing exp(log_sample), which may be zero due to float roundoff.
+    # In this case, we use the same zero-correction used in gamma() above.
+    samples = lax.exp(samples)
+    zero = lax_internal._const(sample, 0)
+    tiny = lax.full_like(samples, jnp.finfo(samples.dtype).tiny)
+    samples = lax.select(lax.eq(samples, zero), tiny, samples)
+    gamma_grad = lambda alpha, sample: lax.random_gamma_grad(alpha, sample) / sample
   else:
-    grads = vmap(lax.random_gamma_grad)(alphas, samples)
+    gamma_grad = lax.random_gamma_grad
+  if xla_bridge.get_backend().platform == 'cpu':
+    grads = lax.map(lambda args: gamma_grad(*args), (alphas, samples))
+  else:
+    grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
-def _gamma_impl(key, a, use_vmap=False):
-  a_shape = jnp.shape(a)
+def _gamma_impl(key, a, *, log_space, use_vmap=False):
   # split key to match the shape of a
-  key_ndim = jnp.ndim(key) - 1
-  split_impl = prng.threefry_prng_impl.split
-  key = jnp.reshape(key, (-1, 2))
-  key = vmap(split_impl, in_axes=(0, None))(key, prod(a_shape[key_ndim:]))
-  keys = jnp.reshape(key, (-1, 2))
-  keys = prng.PRNGKeyArray(prng.threefry_prng_impl, keys)
-  alphas = jnp.reshape(a, -1)
+  a_shape = jnp.shape(a)
+  split_count = prod(a_shape[key.ndim:])
+  keys = key.flatten()
+  keys = vmap(_split, in_axes=(0, None))(keys, split_count)
+  keys = keys.flatten()
+  alphas = a.flatten()
+
   if use_vmap:
-    samples = vmap(_gamma_one)(keys, alphas)
+    samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
-    samples = lax.map(lambda args: _gamma_one(*args), (keys, alphas))
+    samples = lax.map(
+        lambda args: _gamma_one(*args, log_space=log_space), (keys, alphas))
 
   return jnp.reshape(samples, a_shape)
 
-def _gamma_batching_rule(batched_args, batch_dims):
-    k, a = batched_args
-    bk, ba = batch_dims
-    size = next(t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
-    k = batching.bdim_at_front(k, bk, size)
-    a = batching.bdim_at_front(a, ba, size)
-    return random_gamma_p.bind(k, a), 0
+def _gamma_batching_rule(batched_args, batch_dims, *, log_space):
+  k, a = batched_args
+  bk, ba = batch_dims
+  size = next(
+      t.shape[i] for t, i in zip(batched_args, batch_dims) if i is not None)
+  k = batching.bdim_at_front(k, bk, size)
+  a = batching.bdim_at_front(a, ba, size)
+  return random_gamma_p.bind(k, a, log_space=log_space), 0
 
 random_gamma_p = core.Primitive('random_gamma')
 random_gamma_p.def_impl(_gamma_impl)
-random_gamma_p.def_abstract_eval(lambda key, a: core.raise_to_shaped(a))
-ad.defjvp2(random_gamma_p, None, lambda tangent, ans, key, a: tangent * _gamma_grad(ans, a))
-xla.register_translation(random_gamma_p, xla.lower_fun(
+random_gamma_p.def_abstract_eval(lambda key, a, **_: core.raise_to_shaped(a))
+ad.defjvp2(
+    random_gamma_p, None,
+    lambda tangent, ans, key, a, **kwds: tangent * _gamma_grad(ans, a, **kwds))
+mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=True),
-    multiple_results=False, new_style=True))
-xla.register_translation(random_gamma_p, xla.lower_fun(
+    multiple_results=False))
+mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=False),
-    multiple_results=False, new_style=True), platform='cpu')
+    multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 
 def gamma(key: KeyArray,
@@ -991,27 +1071,64 @@ def gamma(key: KeyArray,
   Returns:
     A random array with the specified dtype and with shape given by ``shape`` if
     ``shape`` is not None, or else by ``a.shape``.
+
+  See Also:
+    loggamma : sample gamma values in log-space, which can provide improved
+      accuracy for small values of ``a``.
   """
   key, _ = _check_prng_key(key)
-  if key.impl is not prng.threefry_prng_impl:
-    raise NotImplementedError(
-        f'`gamma` is only implemented for the threefry2x32 RNG, not {key.impl}')
-  return gamma_threefry2x32(key.unsafe_raw_array(), a, shape, dtype)
-
-def gamma_threefry2x32(key: jnp.ndarray,  # raw ndarray form of a 2x32 key
-                       a: RealArray,
-                       shape: Optional[Sequence[int]] = None,
-                       dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `gamma` must be a float "
                      f"dtype, got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _gamma(key, a, shape, dtype)
+  return _gamma(key, a, shape=shape, dtype=dtype)
 
-@partial(jit, static_argnums=(2, 3), inline=True)
-def _gamma(key, a, shape, dtype):
+
+def loggamma(key: KeyArray,
+             a: RealArray,
+             shape: Optional[Sequence[int]] = None,
+             dtype: DTypeLikeFloat = dtypes.float_) -> jnp.ndarray:
+  """Sample log-gamma random values with given shape and float dtype.
+
+  This function is implemented such that the following will hold for a
+  dtype-appropriate tolerance::
+
+    np.testing.assert_allclose(jnp.exp(loggamma(*args)), gamma(*args), rtol=rtol)
+
+  The benefit of log-gamma is that for samples very close to zero (which occur frequently
+  when `a << 1`) sampling in log space provides better precision.
+
+  Args:
+    key: a PRNG key used as the random key.
+    a: a float or array of floats broadcast-compatible with ``shape``
+      representing the parameter of the distribution.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      shape. Must be broadcast-compatible with ``a``. The default (None)
+      produces a result shape equal to ``a.shape``.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified dtype and with shape given by ``shape`` if
+    ``shape`` is not None, or else by ``a.shape``.
+
+  See Also:
+    gamma : standard gamma sampler.
+  """
+  key, _ = _check_prng_key(key)
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `gamma` must be a float "
+                     f"dtype, got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  return _gamma(key, a, shape=shape, dtype=dtype, log_space=True)
+
+
+@partial(jit, static_argnames=('shape', 'dtype', 'log_space'), inline=True)
+def _gamma(key, a, shape, dtype, log_space=False):
   if shape is None:
     shape = np.shape(a)
   else:
@@ -1020,7 +1137,7 @@ def _gamma(key, a, shape, dtype):
   a = lax.convert_element_type(a, dtype)
   if np.shape(a) != shape:
     a = jnp.broadcast_to(a, shape)
-  return random_gamma_p.bind(key, a)
+  return random_gamma_p.bind(key, a, log_space=log_space)
 
 
 @partial(jit, static_argnums=(2, 3, 4), inline=True)
@@ -1096,7 +1213,7 @@ def _poisson(key, lam, shape, dtype):
   # https://github.com/numpy/numpy/blob/v1.18.3/numpy/random/src/distributions/distributions.c#L574
   # For lambda < 10, we use the Knuth algorithm; otherwise, we use transformed
   # rejection sampling.
-  use_knuth = lam < 10
+  use_knuth = _isnan(lam) | (lam < 10)
   lam_knuth = lax.select(use_knuth, lam, lax.full_like(lam, 0.0))
   # The acceptance probability for rejection sampling maxes out at 89% as
   # λ -> ∞, so pick some arbitrary large value.
@@ -1129,10 +1246,13 @@ def poisson(key: KeyArray,
     ``shape is not None, or else by ``lam.shape``.
   """
   key, _ = _check_prng_key(key)
-  if key.impl is not prng.threefry_prng_impl:
+  # TODO(frostig): generalize underlying poisson implementation and
+  # remove this check
+  key_impl = key.dtype.impl
+  if key_impl is not prng.threefry_prng_impl:
     raise NotImplementedError(
         '`poisson` is only implemented for the threefry2x32 RNG, '
-        f'not {key.impl}')
+        f'not {key_impl}')
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
@@ -1269,7 +1389,7 @@ def logistic(key: KeyArray,
 def _logistic(key, shape, dtype):
   _check_shape("logistic", shape)
   x = uniform(key, shape, dtype, minval=jnp.finfo(dtype).eps, maxval=1.)
-  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
 
 
 def pareto(key: KeyArray,
@@ -1351,7 +1471,7 @@ def _t(key, df, shape, dtype):
   df = lax.convert_element_type(df, dtype)
   key_n, key_g = _split(key)
   n = normal(key_n, shape, dtype)
-  two = _constant_like(n, 2)
+  two = _lax_const(n, 2)
   half_df = lax.div(df, two)
   g = gamma(key_n, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
@@ -1380,7 +1500,7 @@ def rademacher(key: KeyArray,
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _rademacher(key, shape, dtype):
-  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape)
+  bernoulli_samples = bernoulli(key=key, p=0.5, shape=shape).astype(dtype)
   return (2 * bernoulli_samples - 1).astype(dtype)
 
 
@@ -1510,3 +1630,86 @@ def threefry_2x32(keypair, count):
   warnings.warn('jax.random.threefry_2x32 has moved to jax.prng.threefry_2x32 '
                 'and will be removed from `random` module.', FutureWarning)
   return prng.threefry_2x32(keypair, count)
+
+def orthogonal(
+  key: KeyArray,
+  n: int,
+  shape: Sequence[int] = (),
+  dtype: DTypeLikeFloat = dtypes.float_
+) -> jnp.ndarray:
+  """Sample uniformly from the orthogonal group O(n).
+
+  If the dtype is complex, sample uniformly from the unitary group U(n).
+
+  Args:
+    key: a PRNG key used as the random key.
+    n: an integer indicating the resulting dimension.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array of shape `(*shape, n, n)` and specified dtype.
+  """
+  key, _ = _check_prng_key(key)
+  _check_shape("orthogonal", shape)
+  n = core.concrete_or_error(index, n, "The error occurred in jax.random.orthogonal()")
+  z = normal(key, (*shape, n, n), dtype)
+  q, r = jnp.linalg.qr(z)
+  d = jnp.diagonal(r, 0, -2, -1)
+  return lax.mul(q, lax.expand_dims(lax.div(d, abs(d).astype(d.dtype)), [-2]))
+
+def generalized_normal(
+  key: KeyArray,
+  p: float,
+  shape: Sequence[int] = (),
+  dtype: DTypeLikeFloat = dtypes.float_
+) -> jnp.ndarray:
+  """Sample from the generalized normal distribution.
+
+  Args:
+    key: a PRNG key used as the random key.
+    p: a float representing the shape parameter.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified shape and dtype.
+  """
+  key, _ = _check_prng_key(key)
+  _check_shape("generalized_normal", shape)
+  keys = split(key)
+  g = gamma(keys[0], 1/p, shape, dtype)
+  r = rademacher(keys[1], shape, dtype)
+  return r * g ** (1 / p)
+
+def ball(
+  key: KeyArray,
+  d: int,
+  p: float = 2,
+  shape: Sequence[int] = (),
+  dtype: DTypeLikeFloat = dtypes.float_
+):
+  """Sample uniformly from the unit Lp ball.
+
+  Reference: https://arxiv.org/abs/math/0503650.
+
+  Args:
+    key: a PRNG key used as the random key.
+    d: a nonnegative int representing the dimensionality of the ball.
+    p: a float representing the p parameter of the Lp norm.
+    shape: optional, the batch dimensions of the result. Default ().
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array of shape `(*shape, d)` and specified dtype.
+  """
+  key, _ = _check_prng_key(key)
+  _check_shape("ball", shape)
+  d = core.concrete_or_error(index, d, "The error occurred in jax.random.ball()")
+  k1, k2 = split(key)
+  g = generalized_normal(k1, p, (*shape, d), dtype)
+  e = exponential(k2, shape, dtype)
+  return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]

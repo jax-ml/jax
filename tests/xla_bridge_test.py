@@ -15,6 +15,7 @@
 import time
 import warnings
 
+from absl import logging
 from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge as xb
@@ -84,8 +85,8 @@ class XlaBridgeTest(jtu.JaxTestCase):
         msg = str(w[-1].message)
         self.assertIn("Did you run your code on all TPU hosts?", msg)
 
-      with mock.patch("jax._src.lib.xla_client.make_tpu_client",
-                      side_effect=_mock_tpu_client):
+      with mock.patch.object(xc, "make_tpu_client",
+                             side_effect=_mock_tpu_client):
         xb.tpu_client_timer_callback(0.01)
 
 
@@ -105,9 +106,23 @@ class GetBackendTest(jtu.JaxTestCase):
     def local_devices(self):
       return []
 
-  def _register_factory(self, platform: str, priority, device_count=1):
+  def _register_factory(self, platform: str, priority, device_count=1,
+                        assert_used_at_most_once=False):
+    if assert_used_at_most_once:
+      used = []
+    def factory():
+      if assert_used_at_most_once:
+        if used:
+          # We need to fail aggressively here since exceptions are caught by
+          # the caller and suppressed.
+          logging.fatal("Backend factory for %s was called more than once",
+                        platform)
+        else:
+          used.append(True)
+      return self._DummyBackend(platform, device_count)
+
     xb.register_backend_factory(
-        platform, lambda: self._DummyBackend(platform, device_count),
+        platform, factory,
         priority=priority)
 
   def setUp(self):
@@ -214,8 +229,8 @@ class GetBackendTest(jtu.JaxTestCase):
       self.assertIn("No GPU/TPU found, falling back to CPU", msg)
 
   def test_jax_platforms_flag(self):
-    self._register_factory("platform_A", 20)
-    self._register_factory("platform_B", 10)
+    self._register_factory("platform_A", 20, assert_used_at_most_once=True)
+    self._register_factory("platform_B", 10, assert_used_at_most_once=True)
 
     orig_jax_platforms = config._read("jax_platforms")
     try:

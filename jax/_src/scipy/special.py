@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Any, Optional, Tuple
 
 import numpy as np
 import scipy.special as osp_special
@@ -22,89 +23,86 @@ from jax._src import api
 from jax import jit
 from jax import lax, core
 from jax.interpreters import ad
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy.lax_numpy import (asarray, _reduction_dims, _constant_like,
-                                      _promote_args_inexact)
+import jax.numpy as jnp
+from jax._src.lax.lax import _const as _lax_const
+from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
 from jax._src.numpy.util import _wraps
 
-from typing import Optional, Tuple
 
-
-@_wraps(osp_special.gammaln)
+@_wraps(osp_special.gammaln, module='scipy.special')
 def gammaln(x):
   x, = _promote_args_inexact("gammaln", x)
   return lax.lgamma(x)
 
 
-@_wraps(osp_special.betaln)
+@_wraps(osp_special.betaln, module='scipy.special')
 def betaln(x, y):
   x, y = _promote_args_inexact("betaln", x, y)
   return lax.lgamma(x) + lax.lgamma(y) - lax.lgamma(x + y)
 
 
-@_wraps(osp_special.betainc)
+@_wraps(osp_special.betainc, module='scipy.special')
 def betainc(a, b, x):
   a, b, x = _promote_args_inexact("betainc", a, b, x)
   return lax.betainc(a, b, x)
 
 
-@_wraps(osp_special.digamma, lax_description="""\
+@_wraps(osp_special.digamma, module='scipy.special', lax_description="""\
 The JAX version only accepts real-valued inputs.""")
 def digamma(x):
   x, = _promote_args_inexact("digamma", x)
   return lax.digamma(x)
-ad.defjvp(lax.digamma_p, lambda g, x: lax.mul(g, polygamma(1, x)))
+ad.defjvp(
+    lax.digamma_p,
+    lambda g, x: lax.mul(g, polygamma(1, x)))  # type: ignore[has-type]
 
 
-@_wraps(osp_special.gammainc, update_doc=False)
+@_wraps(osp_special.gammainc, module='scipy.special', update_doc=False)
 def gammainc(a, x):
   a, x = _promote_args_inexact("gammainc", a, x)
   return lax.igamma(a, x)
 
 
-@_wraps(osp_special.gammaincc, update_doc=False)
+@_wraps(osp_special.gammaincc, module='scipy.special', update_doc=False)
 def gammaincc(a, x):
   a, x = _promote_args_inexact("gammaincc", a, x)
   return lax.igammac(a, x)
 
 
-@_wraps(osp_special.erf)
+@_wraps(osp_special.erf, module='scipy.special')
 def erf(x):
   x, = _promote_args_inexact("erf", x)
   return lax.erf(x)
 
 
-@_wraps(osp_special.erfc, update_doc=False)
+@_wraps(osp_special.erfc, module='scipy.special', update_doc=False)
 def erfc(x):
   x, = _promote_args_inexact("erfc", x)
   return lax.erfc(x)
 
 
-@_wraps(osp_special.erfinv)
+@_wraps(osp_special.erfinv, module='scipy.special')
 def erfinv(x):
   x, = _promote_args_inexact("erfinv", x)
   return lax.erf_inv(x)
 
 
 @api.custom_jvp
-@_wraps(osp_special.logit, update_doc=False)
+@_wraps(osp_special.logit, module='scipy.special', update_doc=False)
 def logit(x):
-  x = asarray(x)
-  return lax.log(lax.div(x, lax.sub(lax._const(x, 1), x)))
+  x, = _promote_args_inexact("logit", x)
+  return lax.log(lax.div(x, lax.sub(_lax_const(x, 1), x)))
 logit.defjvps(
-    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(lax._const(x, 1), x))))
+    lambda g, ans, x: lax.div(g, lax.mul(x, lax.sub(_lax_const(x, 1), x))))
 
 
-@api.custom_jvp
-@_wraps(osp_special.expit, update_doc=False)
+@_wraps(osp_special.expit, module='scipy.special', update_doc=False)
 def expit(x):
-  x = asarray(x)
-  one = lax._const(x, 1)
-  return lax.div(one, lax.add(one, lax.exp(lax.neg(x))))
-expit.defjvps(lambda g, ans, x: g * ans * (lax._const(ans, 1) - ans))
+  x, = _promote_args_inexact("expit", x)
+  return lax.logistic(x)
 
 
-@_wraps(osp_special.logsumexp)
+@_wraps(osp_special.logsumexp, module='scipy.special')
 def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if b is not None:
     a, b = _promote_args_inexact("logsumexp", a, b)
@@ -144,7 +142,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   return out
 
 
-@_wraps(osp_special.xlogy)
+@_wraps(osp_special.xlogy, module='scipy.special')
 def xlogy(x, y):
   x, y = _promote_args_inexact("xlogy", x, y)
   x_ok = x != 0.
@@ -153,7 +151,7 @@ def xlogy(x, y):
   return jnp.where(x_ok, lax.mul(safe_x, lax.log(safe_y)), jnp.zeros_like(x))
 
 
-@_wraps(osp_special.xlog1py, update_doc=False)
+@_wraps(osp_special.xlog1py, module='scipy.special', update_doc=False)
 def xlog1py(x, y):
   x, y = _promote_args_inexact("xlog1py", x, y)
   x_ok = x != 0.
@@ -162,10 +160,10 @@ def xlog1py(x, y):
   return jnp.where(x_ok, lax.mul(safe_x, lax.log1p(safe_y)), jnp.zeros_like(x))
 
 
-@_wraps(osp_special.entr)
+@_wraps(osp_special.entr, module='scipy.special')
 def entr(x):
   x, = _promote_args_inexact("entr", x)
-  return lax.select(lax.lt(x, _constant_like(x, 0)),
+  return lax.select(lax.lt(x, _lax_const(x, 0)),
                     lax.full_like(x, -np.inf),
                     lax.neg(xlogy(x, x)))
 
@@ -175,10 +173,10 @@ def multigammaln(a, d):
   d = core.concrete_or_error(int, d, "d argument of multigammaln")
   a, d_ = _promote_args_inexact("multigammaln", a, d)
 
-  constant = lax.mul(lax.mul(lax.mul(_constant_like(a, 0.25), d_),
-                             lax.sub(d_, _constant_like(a, 1))),
-                     lax.log(_constant_like(a, np.pi)))
-  b = lax.div(jnp.arange(d, dtype=d_.dtype), _constant_like(a, 2))
+  constant = lax.mul(lax.mul(lax.mul(_lax_const(a, 0.25), d_),
+                             lax.sub(d_, _lax_const(a, 1))),
+                     lax.log(_lax_const(a, np.pi)))
+  b = lax.div(jnp.arange(d, dtype=d_.dtype), _lax_const(a, 2))
   res = jnp.sum(gammaln(jnp.expand_dims(a, axis=-1) -
                         jnp.expand_dims(b, axis=tuple(range(a.ndim)))),
                 axis=-1)
@@ -207,7 +205,7 @@ _BERNOULLI_COEFS = [
 ]
 
 
-@_wraps(osp_special.zeta)
+@_wraps(osp_special.zeta, module='scipy.special')
 def zeta(x, q=None):
   assert q is not None, "Riemann zeta function is not implemented yet."
   # Reference: Johansson, Fredrik.
@@ -236,7 +234,7 @@ def zeta(x, q=None):
   return S + I + T
 
 
-@_wraps(osp_special.polygamma, update_doc=False)
+@_wraps(osp_special.polygamma, module='scipy.special', update_doc=False)
 def polygamma(n, x):
   assert jnp.issubdtype(lax.dtype(n), jnp.integer)
   n, x = _promote_args_inexact("polygamma", n, x)
@@ -586,7 +584,7 @@ def log_ndtr(x, series_order=3):
     lower_segment = _LOGNDTR_FLOAT32_LOWER
     upper_segment = _LOGNDTR_FLOAT32_UPPER
   else:
-    raise TypeError("x.dtype={} is not supported.".format(np.dtype(dtype)))
+    raise TypeError(f"x.dtype={np.dtype(dtype)} is not supported.")
 
   # The basic idea here was ported from:
   #   https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
@@ -652,33 +650,33 @@ def _double_factorial(n):
 _norm_logpdf_constant = np.log(np.sqrt(2 * np.pi))
 
 def _norm_logpdf(x):
-  neg_half = _constant_like(x, -0.5)
-  log_normalizer = _constant_like(x, _norm_logpdf_constant)
+  neg_half = _lax_const(x, -0.5)
+  log_normalizer = _lax_const(x, _norm_logpdf_constant)
   return lax.sub(lax.mul(neg_half, lax.square(x)), log_normalizer)
 
-@_wraps(osp_special.i0e)
+@_wraps(osp_special.i0e, module='scipy.special')
 def i0e(x):
   x, = _promote_args_inexact("i0e", x)
   return lax.bessel_i0e(x)
 
-@_wraps(osp_special.i0)
+@_wraps(osp_special.i0, module='scipy.special')
 def i0(x):
   x, = _promote_args_inexact("i0", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i0e(x))
 
-@_wraps(osp_special.i1e)
+@_wraps(osp_special.i1e, module='scipy.special')
 def i1e(x):
   x, = _promote_args_inexact("i1e", x)
   return lax.bessel_i1e(x)
 
-@_wraps(osp_special.i1)
+@_wraps(osp_special.i1, module='scipy.special')
 def i1(x):
   x, = _promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
 
 
 def _gen_recurrence_mask(
-    l_max: int, is_normalized: bool = True
+    l_max: int, is_normalized: bool, dtype: Any
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
   """Generates mask for recurrence relation on the remaining entries.
 
@@ -695,7 +693,10 @@ def _gen_recurrence_mask(
   """
 
   # Computes all coefficients.
-  m_mat, l_mat = jnp.mgrid[:l_max + 1, :l_max + 1]
+  m_mat, l_mat = jnp.meshgrid(
+    jnp.arange(l_max + 1, dtype=dtype),
+    jnp.arange(l_max + 1, dtype=dtype),
+    indexing='ij')
   if is_normalized:
     c0 = l_mat * l_mat
     c1 = m_mat * m_mat
@@ -709,7 +710,7 @@ def _gen_recurrence_mask(
 
   d0_mask_indices = jnp.triu_indices(l_max + 1, 1)
   d1_mask_indices = jnp.triu_indices(l_max + 1, 2)
-  d_zeros = jnp.zeros((l_max + 1, l_max + 1))
+  d_zeros = jnp.zeros((l_max + 1, l_max + 1), dtype=dtype)
   d0_mask = d_zeros.at[d0_mask_indices].set(d0[d0_mask_indices])
   d1_mask = d_zeros.at[d1_mask_indices].set(d1[d1_mask_indices])
 
@@ -718,7 +719,7 @@ def _gen_recurrence_mask(
   # j = jnp.arange(l_max + 1)[None, :, None]
   # k = jnp.arange(l_max + 1)[None, None, :]
   i, j, k = jnp.ogrid[:l_max + 1, :l_max + 1, :l_max + 1]
-  mask = 1.0 * (i + j - k == 0)
+  mask = (i + j - k == 0).astype(dtype)
 
   d0_mask_3d = jnp.einsum('jk,ijk->ijk', d0_mask, mask)
   d1_mask_3d = jnp.einsum('jk,ijk->ijk', d1_mask, mask)
@@ -760,24 +761,27 @@ def _gen_derivatives(p: jnp.ndarray,
         'Negative orders for normalization is not implemented yet.')
   else:
     if num_l > 1:
-      l_vec = jnp.arange(1, num_l - 1)
+      l_vec = jnp.arange(1, num_l - 1, dtype=x.dtype)
       p_p1 = p[1, 1:num_l - 1, :]
       coeff = -1.0 / ((l_vec + 1) * l_vec)
       update_p_p1 = jnp.einsum('i,ij->ij', coeff, p_p1)
       p_mm2_lm1 = p_mm2_lm1.at[1, 2:num_l, :].set(update_p_p1)
 
     if num_l > 2:
-      l_vec = jnp.arange(2, num_l - 1)
+      l_vec = jnp.arange(2, num_l - 1, dtype=x.dtype)
       p_p2 = p[2, 2:num_l - 1, :]
-      coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec)
+      coeff = 1.0 / ((l_vec + 2) * (l_vec + 1) * l_vec * (l_vec - 1))
       update_p_p2 = jnp.einsum('i,ij->ij', coeff, p_p2)
       p_mm2_lm1 = p_mm2_lm1.at[0, 3:num_l, :].set(update_p_p2)
 
-  m_mat, l_mat = jnp.mgrid[:num_m, :num_l]
+  m_mat, l_mat = jnp.meshgrid(
+    jnp.arange(num_m, dtype=x.dtype),
+    jnp.arange(num_l, dtype=x.dtype),
+    indexing='ij')
 
-  coeff_zeros = jnp.zeros((num_m, num_l))
+  coeff_zeros = jnp.zeros((num_m, num_l), dtype=x.dtype)
   upper_0_indices = jnp.triu_indices(num_m, 0, num_l)
-  zero_vec = jnp.zeros((num_l,))
+  zero_vec = jnp.zeros((num_l,), dtype=x.dtype)
 
   a0 = -0.5 / (m_mat - 1.0)
   a0_masked = coeff_zeros.at[upper_0_indices].set(a0[upper_0_indices])
@@ -807,13 +811,13 @@ def _gen_derivatives(p: jnp.ndarray,
 
   # Special treatment of the singularity at m = 1.
   if num_m > 1:
-    l_vec = jnp.arange(num_l)
+    l_vec = jnp.arange(num_l, dtype=p.dtype)
     g0 = jnp.einsum('i,ij->ij', (l_vec + 1) * l_vec, p[0, :, :])
     if num_l > 2:
       g0 = g0 -  p[2, :, :]
     p_derivative_m0 = jnp.einsum('j,ij->ij', 0.5 / jnp.sqrt(1 - x * x), g0)
     p_derivative = p_derivative.at[1, :, :].set(p_derivative_m0)
-    p_derivative = p_derivative.at[1, 0, :].set(jnp.zeros((num_x,)))
+    p_derivative = p_derivative.at[1, 0, :].set(0)
 
   return p_derivative
 
@@ -867,10 +871,10 @@ def _gen_associated_legendre(l_max: int,
     of the ALFs at `x`; the dimensions in the sequence of order, degree, and
     evalution points.
   """
-  p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]))
+  p = jnp.zeros((l_max + 1, l_max + 1, x.shape[0]), dtype=x.dtype)
 
-  a_idx = jnp.arange(1, l_max + 1)
-  b_idx = jnp.arange(l_max)
+  a_idx = jnp.arange(1, l_max + 1, dtype=x.dtype)
+  b_idx = jnp.arange(l_max, dtype=x.dtype)
   if is_normalized:
     initial_value = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
     f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
@@ -899,7 +903,7 @@ def _gen_associated_legendre(l_max: int,
 
   # Compute the remaining entries with recurrence.
   d0_mask_3d, d1_mask_3d = _gen_recurrence_mask(
-      l_max, is_normalized=is_normalized)
+      l_max, is_normalized=is_normalized, dtype=x.dtype)
 
   def body_fun(i, p_val):
     coeff_0 = d0_mask_3d[i]
@@ -1117,15 +1121,15 @@ def _expint1(x):
     -7.294949239640527645655e5,
     1.592627163384945429726e6,
   ]
-  A, B = [jnp.array(U, dtype=x.dtype) for U in [A, B]]
+  A, B = (jnp.array(U, dtype=x.dtype) for U in [A, B])
   f = jnp.polyval(A, x) / jnp.polyval(B, x)
   return x * f + jnp.euler_gamma + jnp.log(x)
 
 
 def _eval_expint_k(A, B, x):
   # helper function for all subsequent intervals
-  A, B = [jnp.array(U, dtype=x.dtype) for U in [A, B]]
-  one = _constant_like(x, 1.0)
+  A, B = (jnp.array(U, dtype=x.dtype) for U in [A, B])
+  one = _lax_const(x, 1.0)
   w = one / x
   f = jnp.polyval(A, w) / jnp.polyval(B, w)
   f = w * f + one
@@ -1289,7 +1293,7 @@ def _expint7(x):
 
 def _expi_pos(x):
   # x > 0
-  _c = _constant_like
+  _c = _lax_const
   conds = [(_c(x, 0) < x) & (x <= _c(x, 2))] + [
     (_c(x, 2 ** i) < x) & (x <= _c(x, 2 ** (i + 1))) for i in range(1, 6)
   ]
@@ -1300,7 +1304,7 @@ def _expi_pos(x):
   )
 
 
-@_wraps(osp_special.expi)
+@_wraps(osp_special.expi, module='scipy.special')
 @api.custom_jvp
 @jit
 def expi(x):
@@ -1319,7 +1323,7 @@ def expi_jvp(primals, tangents):
 
 def _expn1(n, x):
   # exponential integral En
-  _c = _constant_like
+  _c = _lax_const
   x = jnp.array(x)
   MACHEP = jnp.finfo(x.dtype).eps
 
@@ -1357,7 +1361,7 @@ def _expn1(n, x):
 
 def _expn2(n, x):
   # x > 1.
-  _c = _constant_like
+  _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
   MACHEP = jnp.finfo(BIG.dtype).eps  # ?
   zero = _c(x, 0.0)
@@ -1408,7 +1412,7 @@ def _expn2(n, x):
 
 def _expn3(n, x):
   # n >= 5000
-  _c = _constant_like
+  _c = _lax_const
   one = _c(x, 1.0)
   xk = x + n
   yk = one / (xk * xk)
@@ -1419,13 +1423,13 @@ def _expn3(n, x):
   return (ans + one) * jnp.exp(-x) / xk
 
 
-@_wraps(osp_special.expn)
+@_wraps(osp_special.expn, module='scipy.special')
 @partial(api.custom_jvp, nondiff_argnums=(0,))
 @jnp.vectorize
 @jit
 def expn(n, x):
   n, x = _promote_args_inexact("expn", n, x)
-  _c = _constant_like
+  _c = _lax_const
   zero = _c(x, 0)
   one = _c(x, 1)
   conds = [
@@ -1455,11 +1459,11 @@ def expn(n, x):
 def expn_jvp(n, primals, tangents):
   (x,), (x_dot,) = primals, tangents
   return expn(n, x), lax.mul(
-    lax.neg(x_dot), expn(lax.sub(n, _constant_like(n, 1)), x)
+    lax.neg(x_dot), expn(lax.sub(n, _lax_const(n, 1)), x)
   )
 
 
-@_wraps(osp_special.exp1)
-def exp1(x):
+@_wraps(osp_special.exp1, module="scipy.special")
+def exp1(x, module='scipy.special'):
   (x,) = _promote_args_inexact("exp1", x)
   return expn(1, x)

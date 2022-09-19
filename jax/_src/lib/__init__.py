@@ -21,18 +21,18 @@ import os
 import warnings
 from typing import Optional, Tuple
 
-__all__ = [
-  'cuda_linalg', 'cuda_prng', 'cusolver', 'rocsolver', 'jaxlib', 'lapack',
-  'pocketfft', 'pytree', 'tpu_driver_client', 'version', 'xla_client',
-  'xla_extension',
-]
-
-# Before attempting to import jaxlib, warn about experimental
-# machine configurations.
-if platform.system() == "Darwin" and platform.machine() == "arm64":
-  warnings.warn("JAX on Mac ARM machines is experimental and minimally tested. "
-                "Please see https://github.com/google/jax/issues/5501 in the "
-                "event of problems.")
+# This apparently-unused import is to work around
+# https://github.com/google/jax/issues/9218#issuecomment-1016949739
+# If the user is using Conda, we want to ensure that Conda's libstdc++ is chosen
+# by the dynamic linker in preference to the system libstdc++. Before importing
+# jaxlib, we first must import a library that:
+# a) is likely to be provided by Conda and not hand-installed by the user, and
+# b) uses C++ and links to libstdc++.
+# Some submodules of scipy (e.g., scipy.signal) satisfy this criterion.
+# If the user isn't using Conda, this code merely wastes a bit of time, but
+# we're likely to import scipy anyway later.
+import scipy.signal as _signal
+del _signal
 
 try:
   import jaxlib as jaxlib
@@ -99,37 +99,27 @@ cpu_feature_guard.check_cpu_features()
 
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
-import jaxlib.pocketfft as pocketfft
+
+# TODO(phawkins): remove pocketfft references when the minimum jaxlib version
+# is 0.3.17 or newer.
+try:
+  import jaxlib.pocketfft as pocketfft  # pytype: disable=import-error
+except ImportError:
+  pocketfft = None  # type: ignore
+try:
+  import jaxlib.ducc_fft as ducc_fft  # pytype: disable=import-error
+except ImportError:
+  ducc_fft = None  # type: ignore
 
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
 pmap_lib = xla_client._xla.pmap_lib
 
-try:
-  import jaxlib.cusolver as cusolver  # pytype: disable=import-error
-except ImportError:
-  cusolver = None
-
-try:
-  import jaxlib.cusparse as cusparse  # pytype: disable=import-error
-except ImportError:
-  cusparse = None
-
-try:
-  import jaxlib.rocsolver as rocsolver  # pytype: disable=import-error
-except ImportError:
-  rocsolver = None
-
-try:
-  import jaxlib.cuda_prng as cuda_prng  # pytype: disable=import-error
-except ImportError:
-  cuda_prng = None
-
-try:
-  import jaxlib.cuda_linalg as cuda_linalg  # pytype: disable=import-error
-except ImportError:
-  cuda_linalg = None
+import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
+import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
+import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error
+import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 
 # Jaxlib code is split between the Jax and the Tensorflow repositories.
 # Only for the internal usage of the JAX developers, we expose a version
@@ -137,21 +127,23 @@ except ImportError:
 # branch on the Jax github.
 xla_extension_version = getattr(xla_client, '_version', 0)
 
-# TODO(phawkins): remove old name
-_xla_extension_version = xla_extension_version
+can_execute_with_token = (
+    xla_extension_version >= 89 and
+    hasattr(xla_client.Executable, "execute_with_token"))
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
-mlir_api_version = getattr(xla_client, 'mlir_api_version', 0)
+mlir_api_version = xla_client.mlir_api_version
 
 try:
   from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error
 except:
   tpu_driver_client = None  # type: ignore
 
+
+# TODO(rocm): check if we need the same for rocm.
 cuda_path: Optional[str]
 cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
 if not os.path.isdir(cuda_path):
   cuda_path = None
 
-if xla_extension_version >= 58:
-  transfer_guard_lib = xla_client._xla.transfer_guard_lib
+transfer_guard_lib = xla_client._xla.transfer_guard_lib

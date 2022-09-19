@@ -14,7 +14,6 @@
 
 import re
 import traceback
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -22,6 +21,7 @@ from absl.testing import parameterized
 import jax
 from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
+from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -41,7 +41,7 @@ def get_exception(etype, f):
 
 def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
                                filter_mode="remove_frames"):
-  with jax._src.config.traceback_filtering(filter_mode):
+  with jax_config.traceback_filtering(filter_mode):
     test.assertRaises(etype, f)
     e = get_exception(etype, f)
   c = e.__cause__
@@ -350,8 +350,6 @@ class FilteredTracebackTest(jtu.JaxTestCase):
     self.assertIsInstance(e.__cause__, traceback_util.UnfilteredStackTrace)
     self.assertIsInstance(e.__cause__.__cause__, ValueError)
 
-  @unittest.skipIf(jax._src.lib.xla_extension_version < 54,
-                   'requires jaxlib >= 0.1.76')
   def test_null_traceback(self, filter_mode):
     class TestA: pass
     def f(a): return a + 1
@@ -383,7 +381,7 @@ class UserContextTracebackTest(jtu.JaxTestCase):
 
 class CustomErrorsTest(jtu.JaxTestCase):
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_{}".format(errorclass), "errorclass": errorclass}
+    {"testcase_name": f"_{errorclass}", "errorclass": errorclass}
      for errorclass in dir(jax.errors)
      if errorclass.endswith('Error') and errorclass not in ['JaxIndexError', 'JAXTypeError']))
   def testErrorsURL(self, errorclass):

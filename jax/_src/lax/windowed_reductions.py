@@ -18,6 +18,7 @@ import warnings
 
 import numpy as np
 
+import jax._src.lib
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
@@ -34,16 +35,10 @@ import jax._src.lax.convolution as convolution
 import jax._src.lax.slicing as slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
-from jax._src.lib import xla_bridge
-from jax._src.lib import xla_client
 import jax._src.util as util
 
 map = util.safe_map
 zip = util.safe_zip
-
-xb = xla_bridge
-xc = xla_client
-xops = xla_client.ops
 
 Array = Any
 
@@ -261,16 +256,6 @@ def _reduce_window_abstract_eval_rule(
     base_dilation, window_dilation)
   return tuple(ShapedArray(out_shape, op.dtype) for op in operand_avals)
 
-def _reduce_window_translation_rule(ctx, avals_in, avals_out, *args, jaxpr,
-                                    consts, window_dimensions, window_strides,
-                                    padding, base_dilation, window_dilation):
-  operands, init_values = util.split_list(args, [len(args) // 2])
-  xla_computation = lax._reduction_computation(ctx, jaxpr, consts, init_values,
-                                               singleton=False)
-  return xla.xla_destructure(ctx.builder, xops.ReduceWindowWithGeneralPadding(
-    operands, init_values, xla_computation, window_dimensions,
-    window_strides, base_dilation, window_dilation, padding))
-
 def _generic_reduce_window_batch_rule(
     batched_args, batch_dims, *, jaxpr, consts, window_dimensions,
     window_strides, padding, base_dilation, window_dilation):
@@ -278,8 +263,6 @@ def _generic_reduce_window_batch_rule(
   operands, init_values = util.split_list(batched_args, [num_operands])
   operand_bdims, init_value_bdims = util.split_list(batch_dims, [num_operands])
 
-  operand, init = batched_args
-  bdim, init_bdim = batch_dims
   if any(init_bdim is not None for init_bdim in init_value_bdims):
     raise NotImplementedError("reduce_window batching is not implemented for "
                               "initial values")
@@ -306,7 +289,6 @@ reduce_window_p.multiple_results = True
 reduce_window_p.def_impl(partial(xla.apply_primitive, reduce_window_p))
 reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
-xla.register_translation(reduce_window_p, _reduce_window_translation_rule)
 
 def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
                                  window_dimensions, window_strides, padding,
@@ -315,16 +297,21 @@ def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
   _, init_value_avals = util.split_list(ctx.avals_in, [len(operands)])
   scalar_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   rw = mhlo.ReduceWindowOp(
-      map(mlir.aval_to_ir_type, ctx.avals_out), operands, init_values,
+      map(mlir.aval_to_ir_type, ctx.avals_out),
+      operands,
+      init_values,
       mlir.dense_int_elements(window_dimensions),
-      mlir.dense_int_elements(window_strides),
-      mlir.dense_int_elements(base_dilation),
-      mlir.dense_int_elements(window_dilation),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+      window_strides=mlir.dense_int_elements(window_strides),
+      base_dilations=mlir.dense_int_elements(base_dilation),
+      window_dilations=mlir.dense_int_elements(window_dilation),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+                                          shape=(len(padding), 2)))
   reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
   with ir.InsertionPoint(reducer):
-    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, consts,
-                                   *([a] for a in reducer.arguments))
+    if jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `reduce_window`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr,
+        mlir.TokenSet(), consts, *([a] for a in reducer.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return rw.results
 
@@ -339,20 +326,6 @@ def _reduce_window_sum_shape_rule(operand, *, window_dimensions, window_strides,
   return _common_reduce_window_shape_rule(operand, window_dimensions,
                                           window_strides, padding,
                                           base_dilation, window_dilation)
-
-def _reduce_window_sum_translation_rule(ctx, avals_in, avals_out, operand, *,
-                                        window_dimensions, window_strides,
-                                        padding, base_dilation,
-                                        window_dilation):
-  operand_aval, = avals_in
-  scalar = ShapedArray((), operand_aval.dtype)
-  return [xops.ReduceWindowWithGeneralPadding(
-    operand,
-    xla.pyval_to_ir_constant(ctx.builder, np.array(0, operand_aval.dtype)),
-    xla.primitive_subcomputation(ctx.platform, ctx.axis_env, lax.add_p, scalar,
-                                 scalar),
-      window_dimensions,
-    window_strides, base_dilation, window_dilation, padding)]
 
 def _reduce_window_sum_transpose_rule(cotangent, operand, *, window_dimensions,
                                       window_strides, padding, base_dilation,
@@ -392,24 +365,10 @@ def _reduce_window_batch_rule(reduce_window, batched_args, bdims, *,
   return operand, bdim
 
 reduce_window_sum_p = lax.standard_primitive(
-    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum',
-    _reduce_window_sum_translation_rule)
+    _reduce_window_sum_shape_rule, lax._input_dtype, 'reduce_window_sum')
 ad.deflinear2(reduce_window_sum_p, _reduce_window_sum_transpose_rule)
 batching.primitive_batchers[reduce_window_sum_p] = partial(
   _reduce_window_batch_rule, _reduce_window_sum)
-
-def _reduce_window_chooser_translation_rule(
-    prim, identity, ctx, avals_in, avals_out, operand, *, window_dimensions,
-    window_strides, padding, base_dilation, window_dilation):
-  operand_aval, = avals_in
-  scalar = ShapedArray((), operand_aval.dtype)
-  return [xops.ReduceWindowWithGeneralPadding(
-    operand,
-    xla.pyval_to_ir_constant(ctx.builder, identity(operand_aval.dtype)),
-    xla.primitive_subcomputation(ctx.platform, ctx.axis_env, prim, scalar,
-                                 scalar),
-      window_dimensions,
-    window_strides, base_dilation, window_dilation, padding)]
 
 def _reduce_window_chooser_jvp_rule(prim, g, operand, *, window_dimensions,
                                     window_strides, padding, base_dilation,
@@ -459,25 +418,19 @@ def reduce_window_shape_tuple(operand_shape, window_dimensions, window_strides,
     operand_shape = lax._dilate_shape(operand_shape, base_dilation)
   if window_dilation is not None:
     window_dimensions = lax._dilate_shape(window_dimensions, window_dilation)
-  pads_lo, pads_hi = zip(*padding)
+  pads_lo, pads_hi = util.unzip2(padding)
   operand_padded = core.sum_shapes(operand_shape, pads_lo, pads_hi)
   return core.stride_shape(operand_padded, window_dimensions, window_strides)
 
-_reduce_window_max_translation_rule = partial(
-    _reduce_window_chooser_translation_rule, lax.max_p, lax._get_max_identity)
 reduce_window_max_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max',
-    _reduce_window_max_translation_rule)
+    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_max')
 ad.defjvp(reduce_window_max_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.max_p))
 batching.primitive_batchers[reduce_window_max_p] = partial(
   _reduce_window_batch_rule, _reduce_window_max)
 
-_reduce_window_min_translation_rule = partial(
-    _reduce_window_chooser_translation_rule, lax.min_p, lax._get_min_identity)
 reduce_window_min_p = lax.standard_primitive(
-    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min',
-    _reduce_window_min_translation_rule)
+    _common_reduce_window_shape_rule, lax._input_dtype, 'reduce_window_min')
 ad.defjvp(reduce_window_min_p, partial(_reduce_window_chooser_jvp_rule,
                                        lax.min_p))
 
@@ -498,10 +451,11 @@ def _reduce_window_lower(
       mlir.aval_to_ir_types(aval_out), [operand],
       [mlir.full_like_aval(init_value(scalar_aval.dtype), scalar_aval)],
       mlir.dense_int_elements(window_dimensions),
-      mlir.dense_int_elements(window_strides),
-      mlir.dense_int_elements(base_dilation),
-      mlir.dense_int_elements(window_dilation),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+      window_strides=mlir.dense_int_elements(window_strides),
+      base_dilations=mlir.dense_int_elements(base_dilation),
+      window_dilations=mlir.dense_int_elements(window_dilation),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+                                          shape=(len(padding), 2)))
   reducer = rw.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer):
     mhlo.ReturnOp(reduce_op(*reducer.arguments))
@@ -528,21 +482,8 @@ def _select_and_scatter_shape_rule(
     raise TypeError(msg.format(window_strides, window_dimensions))
   return operand.shape
 
-def _select_and_scatter_translation(
-    ctx, avals_in, avals_out, operand, source, init_value, *, select_jaxpr,
-    select_consts, scatter_jaxpr, scatter_consts, window_dimensions,
-    window_strides, padding):
-  select = lax._reduction_computation(ctx, select_jaxpr, select_consts,
-                                      init_value)
-  scatter = lax._reduction_computation(ctx, scatter_jaxpr, scatter_consts,
-                                       init_value)
-  return [xops.SelectAndScatterWithGeneralPadding(
-    operand, select, window_dimensions, window_strides, padding, source,
-    init_value, scatter)]
-
 select_and_scatter_p = lax.standard_primitive(
-    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter',
-    _select_and_scatter_translation)
+    _select_and_scatter_shape_rule, lax._input_dtype, 'select_and_scatter')
 
 def _select_and_scatter_lower(
     ctx, operand, source, init_value, *, select_jaxpr,
@@ -553,21 +494,29 @@ def _select_and_scatter_lower(
   scalar_aval = operand_aval.update(shape=())
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   op = mhlo.SelectAndScatterOp(
-      mlir.aval_to_ir_type(aval_out), operand, source,
-      init_value, mlir.dense_int_elements(window_dimensions),
-      mlir.dense_int_elements(window_strides),
-      ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64)))
+      mlir.aval_to_ir_type(aval_out),
+      operand,
+      source,
+      init_value,
+      window_dimensions=mlir.dense_int_elements(window_dimensions),
+      window_strides=mlir.dense_int_elements(window_strides),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+                                          shape=(len(padding), 2)))
   select = op.select.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(select):
-    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
-                                   select_consts,
-                                   *([a] for a in select.arguments))
+    if select_jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `select`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
+                                      mlir.TokenSet(), select_consts,
+                                      *([a] for a in select.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   scatter = op.scatter.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(scatter):
-    out_nodes = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
-                                   scatter_consts,
-                                   *([a] for a in scatter.arguments))
+    if scatter_jaxpr.effects:
+      raise NotImplementedError('Cannot lower effectful `scatter`.')
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
+                                      mlir.TokenSet(), scatter_consts,
+                                      *([a] for a in scatter.arguments))
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 
@@ -577,41 +526,6 @@ def _select_and_scatter_add_shape_rule(
     source, operand, *, select_prim, window_dimensions, window_strides,
     padding):
   return operand.shape
-
-def _select_and_scatter_add_translation(
-    ctx, avals_in, avals_out, source, operand, *, select_prim,
-    window_dimensions, window_strides, padding, expand_padding):
-  source_aval, operand_aval = avals_in
-  c = ctx.builder
-  dtype = operand_aval.dtype
-  scalar = ShapedArray((), dtype)
-  select = xla.primitive_subcomputation(
-      ctx.platform, ctx.axis_env, select_prim, scalar, scalar)
-  scatter = xla.primitive_subcomputation(
-      ctx.platform, ctx.axis_env, lax.or_p if dtype == np.bool_ else lax.add_p,
-      scalar, scalar)
-  zero = xla.pyval_to_ir_constant(c, np.array(0, dtype))
-  # TODO(b/161704903): remove this workaround when XLA:CPU bug is fixed.
-  expand_padding = (expand_padding and
-                    not all(lo == 0 and hi == 0 for (lo, hi) in padding))
-  if expand_padding:
-    original_padding = padding
-    identity = (lax._get_max_identity if select_prim is lax.ge_p
-                else lax._get_min_identity)
-    pads = [(lo, hi, 0) for (lo, hi) in padding]
-    operand = xops.Pad(operand, xla.pyval_to_ir_constant(c, identity(dtype)),
-                       xc.make_padding_config(pads))
-    padding = [(0, 0) for _ in padding]
-  output = xops.SelectAndScatterWithGeneralPadding(
-    operand, select, window_dimensions, window_strides, padding, source, zero,
-    scatter)
-  if expand_padding:
-    start_indices = [lo for (lo, hi) in original_padding]
-    stop_indices = [lo + d for ((lo, hi), d) in zip(original_padding,
-                                                    operand_aval.shape)]
-    output = xops.Slice(output, start_indices, stop_indices,
-                        [1] * len(start_indices))
-  return [output]
 
 def _select_and_scatter_add_jvp(
     primals, tangents, *, select_prim, window_dimensions, window_strides,
@@ -660,26 +574,13 @@ def _select_and_scatter_add_batch_rule(
 
 select_and_scatter_add_p = lax.standard_primitive(
     _select_and_scatter_add_shape_rule, lax._input_dtype,
-    'select_and_scatter_add',
-    partial(_select_and_scatter_add_translation, expand_padding=False))
+    'select_and_scatter_add')
 
 ad.primitive_transposes[select_and_scatter_add_p] = \
     _select_and_scatter_add_transpose
 ad.primitive_jvps[select_and_scatter_add_p] = _select_and_scatter_add_jvp
 batching.primitive_batchers[select_and_scatter_add_p] = \
     _select_and_scatter_add_batch_rule
-
-# TODO(b/161704903): workaround for XLA/CPU crash.
-xla.register_translation(
-    select_and_scatter_add_p,
-    partial(_select_and_scatter_add_translation, expand_padding=True),
-    platform='cpu')
-# TODO(b/182390722): workaround for XLA/GPU crash.
-xla.register_translation(
-    select_and_scatter_add_p,
-    partial(_select_and_scatter_add_translation, expand_padding=True),
-    platform='gpu')
-
 
 def _select_and_scatter_add_impl(source, operand, *,
                                  select_prim, window_dimensions, window_strides,
@@ -708,9 +609,11 @@ def _select_and_scatter_add_impl(source, operand, *,
 mlir.register_lowering(select_and_scatter_add_p, mlir.lower_fun(
     partial(_select_and_scatter_add_impl, expand_padding=False),
     multiple_results=False))
+# TODO(b/161704903): workaround for XLA/CPU crash.
 mlir.register_lowering(select_and_scatter_add_p, mlir.lower_fun(
     partial(_select_and_scatter_add_impl, expand_padding=True),
     multiple_results=False), platform='cpu')
+# TODO(b/182390722): workaround for XLA/GPU crash.
 mlir.register_lowering(select_and_scatter_add_p, mlir.lower_fun(
     partial(_select_and_scatter_add_impl, expand_padding=True),
     multiple_results=False), platform='gpu')
@@ -727,20 +630,24 @@ def _select_and_gather_add_shape_rule(
     operand, window_dimensions, window_strides, padding, base_dilation,
     window_dilation)
 
-def _select_and_gather_add_translation(
-    ctx, avals_in, avals_out, tangents, operand, *, select_prim,
+def _select_and_gather_add_lowering(
+    ctx, tangents, operand, *, select_prim,
     window_dimensions, window_strides, padding, base_dilation, window_dilation,
     max_bits=64):
-  c = ctx.builder
-  tangents_aval, operand_aval, = avals_in
+  _, operand_aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
   dtype = operand_aval.dtype
-  etype = xla.dtype_to_primitive_type(dtype)
+  etype = mlir.dtype_to_ir_type(dtype)
   nbits = dtypes.finfo(dtype).bits
 
   assert nbits <= max_bits
   double_word_reduction = nbits * 2 <= max_bits
 
-  const = lambda c, dtype, x: xops.Constant(c, np.array(x, dtype=dtype))
+  const = lambda dtype, x: mlir.ir_constant(np.array(x, dtype=dtype),
+                                            canonicalize_types=False)
+
+  def _broadcast(x, dims):
+    return mhlo.BroadcastOp(x, mlir.dense_int_elements(dims))
 
   if double_word_reduction:
     # TODO(b/73062247): XLA doesn't yet implement ReduceWindow on tuples, so
@@ -748,28 +655,35 @@ def _select_and_gather_add_translation(
     # 2k-bit unsigned integer using bit tricks.
     word_dtype = lax._UINT_DTYPES[nbits]
     double_word_dtype = lax._UINT_DTYPES[nbits * 2]
-    word_type = xla.dtype_to_primitive_type(word_dtype)
-    double_word_type = xla.dtype_to_primitive_type(double_word_dtype)
+    word_type = mlir.dtype_to_ir_type(word_dtype)
+    double_word_type = mlir.dtype_to_ir_type(double_word_dtype)
 
     # Packs two values into a tuple.
     def pack(a, b):
-      a = xops.BitcastConvertType(a, word_type)
-      b = xops.BitcastConvertType(b, word_type)
-      a = xops.ConvertElementType(a, double_word_type)
-      b = xops.ConvertElementType(b, double_word_type)
-      a = xops.ShiftLeft(a, const(c, double_word_dtype, nbits))
-      return xops.Or(a, b)
+      a_dims = ir.RankedTensorType(a.type).shape
+      b_dims = ir.RankedTensorType(b.type).shape
+      a = mhlo.BitcastConvertOp(ir.RankedTensorType.get(a_dims, word_type), a)
+      b = mhlo.BitcastConvertOp(ir.RankedTensorType.get(b_dims, word_type), b)
+      a = mhlo.ConvertOp(ir.RankedTensorType.get(a_dims, double_word_type), a)
+      b = mhlo.ConvertOp(ir.RankedTensorType.get(b_dims, double_word_type), b)
+      a = mhlo.ShiftLeftOp(a,
+                           _broadcast(const(double_word_dtype, nbits), a_dims))
+      return mhlo.OrOp(a, b)
 
     # Unpacks the first element of a tuple.
-    def fst(c, t):
-      st = xops.ShiftRightLogical(t, const(c, double_word_dtype, nbits))
-      return xops.BitcastConvertType(xops.ConvertElementType(st, word_type),
-                                     etype)
+    def fst(t):
+      dims = ir.RankedTensorType(t.type).shape
+      st = mhlo.ShiftRightLogicalOp(t, const(double_word_dtype, nbits))
+      return mhlo.BitcastConvertOp(
+          ir.RankedTensorType.get(dims, etype),
+          mhlo.ConvertOp(ir.RankedTensorType.get(dims, word_type), st)).result
 
     # Unpacks the second element of a tuple.
     def snd(t):
-      return xops.BitcastConvertType(xops.ConvertElementType(t, word_type),
-                                     etype)
+      dims = ir.RankedTensorType(t.type).shape
+      return mhlo.BitcastConvertOp(
+          ir.RankedTensorType.get(dims, etype),
+          mhlo.ConvertOp(ir.RankedTensorType.get(dims, word_type), t)).result
 
   else:
     # The double-word trick above only works if we have a sufficiently large
@@ -786,46 +700,57 @@ def _select_and_gather_add_translation(
     nmant = r_nbits - nexp - 1
 
     double_word_dtype = word_dtype = lax._UINT_DTYPES[nbits]
-    word_type = xla.dtype_to_primitive_type(word_dtype)
+    double_word_type = word_type = mlir.dtype_to_ir_type(word_dtype)
 
     # Packs two values into a tuple.
     def pack(a, b):
-      a = xops.ReducePrecision(a, exponent_bits=nexp, mantissa_bits=nmant)
-      b = xops.ReducePrecision(b, exponent_bits=nexp, mantissa_bits=nmant)
-      a = xops.BitcastConvertType(a, word_type)
-      b = xops.BitcastConvertType(b, word_type)
-      b = xops.ShiftRightLogical(b, const(c, word_dtype, r_nbits))
-      return xops.Or(a, b)
+      a_dims = ir.RankedTensorType(a.type).shape
+      b_dims = ir.RankedTensorType(b.type).shape
+      a = mhlo.ReducePrecisionOp(a, exponent_bits=mlir.i32_attr(nexp),
+                                  mantissa_bits=mlir.i32_attr(nmant))
+      b = mhlo.ReducePrecisionOp(b, exponent_bits=mlir.i32_attr(nexp),
+                                  mantissa_bits=mlir.i32_attr(nmant))
+      a = mhlo.BitcastConvertOp(ir.RankedTensorType.get(a_dims, word_type), a)
+      b = mhlo.BitcastConvertOp(ir.RankedTensorType.get(b_dims, word_type), b)
+      b = mhlo.ShiftRightLogicalOp(
+          b, _broadcast(const(word_dtype, r_nbits), b_dims))
+      return mhlo.OrOp(a, b)
 
     # Unpacks the first element of a tuple.
-    def fst(c, t):
-      st = xops.And(t, const(c, word_dtype, ((1 << r_nbits) - 1) << r_nbits))
-      return xops.BitcastConvertType(st, etype)
+    def fst(t):
+      st = mhlo.AndOp(t, const(word_dtype, ((1 << r_nbits) - 1) << r_nbits))
+      return mhlo.BitcastConvertOp(ir.RankedTensorType.get([], etype),
+                                   st).result
 
     # Unpacks the second element of a tuple.
     def snd(t):
-      return xops.BitcastConvertType(
-          xops.ShiftLeft(t, const(c, word_dtype, r_nbits)), etype)
-
-  def reducer():
-    c = xc.XlaBuilder("select_and_gather_pair_reducer")
-    x = xla.parameter(c, 0,
-      xla_client.Shape.array_shape(np.dtype(double_word_dtype), ()))
-    y = xla.parameter(c, 1,
-      xla_client.Shape.array_shape(np.dtype(double_word_dtype), ()))
-    assert select_prim is lax.ge_p or select_prim is lax.le_p
-    which = xops.Ge if select_prim is lax.ge_p else xops.Le
-    xops.Select(which(fst(c, x), fst(c, y)), x, y)
-    return c.build()
-
+      dims = ir.RankedTensorType(t.type).shape
+      return mhlo.BitcastConvertOp(
+          ir.RankedTensorType.get(dims, etype),
+          mhlo.ShiftLeftOp(t, _broadcast(const(word_dtype, r_nbits), dims))
+          ).result
 
   assert select_prim is lax.ge_p or select_prim is lax.le_p, select_prim
   init = -np.inf if select_prim is lax.ge_p else np.inf
-  out = xops.ReduceWindowWithGeneralPadding(
-    pack(operand, tangents), pack(const(c, dtype, init), const(c, dtype, 0)),
-    reducer(), window_dimensions, window_strides, base_dilation,
-    window_dilation, padding)
-  return [snd(out)]
+  rw = mhlo.ReduceWindowOp(
+      [ir.RankedTensorType.get(out_aval.shape, double_word_type)],
+      pack(operand, tangents),
+      pack(const(dtype, init), const(dtype, 0)),
+      mlir.dense_int_elements(window_dimensions),
+      window_strides=mlir.dense_int_elements(window_strides),
+      base_dilations=mlir.dense_int_elements(base_dilation),
+      window_dilations=mlir.dense_int_elements(window_dilation),
+      padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
+                                          shape=(len(padding), 2)))
+  scalar_type = ir.RankedTensorType.get([], double_word_type)
+  reducer = rw.regions[0].blocks.append(scalar_type, scalar_type)
+  with ir.InsertionPoint(reducer):
+    x, y = reducer.arguments
+    assert select_prim is lax.ge_p or select_prim is lax.le_p
+    which = "GE" if select_prim is lax.ge_p else "LE"
+    out = mhlo.SelectOp(mlir.compare_mhlo(fst(x), fst(y), which), x, y)
+    mhlo.ReturnOp(out)
+  return [snd(rw.result)]
 
 # TODO(phawkins): use this translation rule on all platforms.
 def _select_and_gather_add_using_variadic_reducewindow(
@@ -910,25 +835,19 @@ def _select_and_gather_add_batching_rule(
 
 select_and_gather_add_p = lax.standard_primitive(
     _select_and_gather_add_shape_rule, lax._input_dtype,
-    'select_and_gather_add',
-    xla.lower_fun(_select_and_gather_add_using_variadic_reducewindow,
-                  new_style=True, multiple_results=False))
+    'select_and_gather_add')
 ad.primitive_jvps[select_and_gather_add_p] = _select_and_gather_add_jvp
 ad.primitive_transposes[select_and_gather_add_p] = \
   _select_and_gather_add_transpose
 batching.primitive_batchers[select_and_gather_add_p] = \
   _select_and_gather_add_batching_rule
-# TODO(b/183233858): use variadic reducewindow on GPU, when implemented.
-xla.register_translation(
-    select_and_gather_add_p,
-    _select_and_gather_add_translation,
-    platform='gpu')
 
 mlir.register_lowering(select_and_gather_add_p, mlir.lower_fun(
     _select_and_gather_add_using_variadic_reducewindow,
     multiple_results=False))
 
+# TODO(b/183233858): use variadic reducewindow on GPU, when implemented.
 mlir.register_lowering(
     select_and_gather_add_p,
-    mlir.xla_fallback_lowering(select_and_gather_add_p),
+    _select_and_gather_add_lowering,
     platform="gpu")

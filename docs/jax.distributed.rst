@@ -9,3 +9,4 @@ jax.distributed module
     :toctree: _autosummary
 
     initialize
+    shutdown

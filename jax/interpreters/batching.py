@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from functools import partial
-from typing import (Any, Callable, Dict, Set, Optional, Tuple, Union, Iterable,
-                    Type)
+from typing import (Any, Callable, Dict, Hashable, Iterable, Optional, Sequence,
+                    Set, Tuple, Type, Union)
 
 import numpy as np
 
@@ -22,17 +22,32 @@ import jax
 from jax.config import config
 from jax import core
 from jax.core import raise_to_shaped, Trace, Tracer
+from jax._src import source_info_util
 from jax._src.tree_util import tree_unflatten, tree_flatten
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero)
 from jax import linear_util as lu
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, wrap_name,
                            split_list, canonicalize_axis, moveaxis,
-                           as_hashable_function, curry, memoize, cache)
-from jax._src import source_info_util
+                           as_hashable_function, curry, memoize,
+                           weakref_lru_cache)
 from jax.interpreters import partial_eval as pe
 
 map = safe_map
+
+def _update_annotation(
+    f: lu.WrappedFun, orig_type: Optional[core.InputType],
+    axis_size: core.AxisSize, axis_name: core.AxisName,
+    in_dims: Sequence[Optional[int]]) -> lu.WrappedFun:
+  if orig_type is None: return f
+  if isinstance(axis_size, core.Tracer):
+    in_type_ = [(core.unmapped_aval(core.DBIdx(0), axis_name, dim, aval), keep)
+                for dim, (aval, keep) in zip(in_dims, orig_type)]
+    in_type = [(axis_size.aval, False), *in_type_]
+  else:
+    in_type = [(core.unmapped_aval(axis_size, axis_name, dim, aval), keep)
+               for dim, (aval, keep) in zip(in_dims, orig_type)]
+  return lu.annotate(f, tuple(in_type))
 
 ### vmappable typeclass
 
@@ -117,7 +132,7 @@ class BatchTracer(Tracer):
       assert type(batch_dim) in (int, NotMapped)
       if type(batch_dim) is int:
         aval = raise_to_shaped(core.get_aval(val))
-        assert aval is core.abstract_unit or 0 <= batch_dim < len(aval.shape)  # type: ignore
+        assert batch_dim is not_mapped or 0 <= batch_dim < len(aval.shape)  # type: ignore
     self._trace = trace
     self.val = val
     self.batch_dim = batch_dim
@@ -126,10 +141,9 @@ class BatchTracer(Tracer):
   @property
   def aval(self):
     aval = raise_to_shaped(core.get_aval(self.val))
-    if self.batch_dim is not_mapped or aval is core.abstract_unit:
+    if self.batch_dim is not_mapped:
       return aval
-    else:
-      return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
+    return core.mapped_aval(aval.shape[self.batch_dim], self.batch_dim, aval)
 
   def full_lower(self):
     if self.batch_dim is not_mapped:
@@ -147,9 +161,11 @@ class BatchTracer(Tracer):
     return [('val', self.val), ('batch_dim', self.batch_dim)]
 
 class BatchTrace(Trace):
-  def __init__(self, *args, axis_name):
+
+  def __init__(self, *args, axis_name, spmd_axis_name = None):
     super().__init__(*args)
     self.axis_name = axis_name
+    self.spmd_axis_name = spmd_axis_name
 
   def pure(self, val):
     return BatchTracer(self, val, not_mapped, source_info_util.current())
@@ -163,6 +179,10 @@ class BatchTrace(Trace):
   def get_primitive_batcher(self, primitive, frame):
     if primitive in primitive_batchers:
       return primitive_batchers[primitive]
+    elif self.spmd_axis_name is not None and primitive in spmd_axis_primitive_batchers:
+      return partial(spmd_axis_primitive_batchers[primitive],
+                     self.spmd_axis_name, frame.size, frame.name,
+                     frame.main_trace.trace_type)
     elif primitive in axis_primitive_batchers:
       return self.get_axis_primitive_batcher(primitive, frame)
     msg = "Batching rule for '{}' not implemented"
@@ -174,11 +194,10 @@ class BatchTrace(Trace):
 
   def get_frame(self, vals, dims) -> core.AxisEnvFrame:
     if self.axis_name is core.no_axis_name:
-      # If axis name is `no_axis_name` we can't find it via `core.axis_name` so we
-      # reconstruct it from the information we have available
-      axis_sizes = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-      assert len(axis_sizes) == 1
-      axis_size, = axis_sizes
+      # If axis name is `no_axis_name` we can't find it via `core.axis_name` so
+      # we reconstruct it from the information we have available
+      axis_size, = core.dedup_referents(x.shape[d] for x, d in zip(vals, dims)
+                                        if d is not not_mapped)
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
     return core.axis_frame(self.axis_name)
 
@@ -203,15 +222,21 @@ class BatchTrace(Trace):
     else:
       return BatchTracer(self, val_out, dim_out, src)
 
-  def process_call(self, call_primitive, f: lu.WrappedFun, tracers, params):
+  def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
-    params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
+    if config.jax_experimental_name_stack:
+      params = dict(params, name=params.get('name', f.__name__))
+    else:
+      params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims):
       return call_primitive.bind(f, *vals, **params)
     else:
-      f, dims_out = batch_subtrace(f, self.main, dims)
-      vals_out = call_primitive.bind(f, *vals, **params)
+      f_, dims_out = batch_subtrace(f, self.main, dims)
+      axis_size, = core.dedup_referents(x.shape[d] for x, d in zip(vals, dims)
+                                        if d is not not_mapped)
+      f_ = _update_annotation(f_, f.in_type, axis_size, self.axis_name, dims)
+      vals_out = call_primitive.bind(f_, *vals, **params)
       src = source_info_util.current()
       return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out())]
 
@@ -316,7 +341,7 @@ class BatchTrace(Trace):
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
     bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
-                               out_dims2, in_dims, self.main.trace_type)
+                               out_dims2, in_dims, self.main.trace_type, self.spmd_axis_name)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -348,7 +373,7 @@ class BatchTrace(Trace):
       return map(partial(BatchTracer, trace), vals, primal_dims, primal_srcs)
     def bwd_transform(bwd):
       return batch_custom_vjp_bwd(bwd, axis_name, axis_size, dims, (None,),
-                                  trace_type)
+                                  trace_type, self.spmd_axis_name)
     return vals, todo, bwd_transform
 
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
@@ -363,16 +388,20 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
 
 def batch(fun: lu.WrappedFun, axis_name: core.AxisName, axis_size,
           in_dims, out_dim_dests, main_type: Type[BatchTrace] = BatchTrace,
-          ) -> lu.WrappedFun:
+          spmd_axis_name: Optional[Hashable] = None) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_size, out_dim_dests)
-  return _batch_outer(f, axis_name, axis_size, in_dims, main_type)
+  return _batch_outer(f, axis_name, axis_size, in_dims, main_type,
+                      spmd_axis_name)
 
 @lu.transformation
-def _batch_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
-  with core.new_main(main_type, axis_name=axis_name) as main:
+def _batch_outer(axis_name, axis_size, in_dims, main_type, spmd_axis_name,
+                 *in_vals):
+  with core.new_main(
+      main_type, axis_name=axis_name, spmd_axis_name=spmd_axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
-      outs = yield (main, in_dims, *in_vals), {}
+      with source_info_util.transform_name_stack('vmap'):
+        outs = yield (main, in_dims, *in_vals), {}
       del main
   yield outs
 
@@ -444,7 +473,6 @@ def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
   return _batch_jaxpr(closed_jaxpr, axis_size, tuple(in_batched), inst,
                       axis_name, main_type)
 
-@cache()
 def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
                  main_type):
   assert (isinstance(instantiate, bool) or
@@ -459,6 +487,12 @@ def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
 
 def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
                      main_type):
+  return _batch_jaxpr_axes(closed_jaxpr, axis_size, tuple(in_axes),
+                           tuple(out_axes_dest), axis_name, main_type)
+
+@weakref_lru_cache
+def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
+                      axis_name, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_batched = _batch_jaxpr_inner(f, axis_size, out_axes_dest)
   f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
@@ -493,7 +527,6 @@ def _batch_jaxpr_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
-             and not isinstance(core.get_aval(x), core.AbstractUnit)
              else ax for x, ax in zip(in_vals, in_dims)]
   with core.new_main(main_type, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
@@ -511,7 +544,8 @@ def _merge_bdims(x, y):
   else:
     return x  # arbitrary
 
-zero_if_mapped = object()
+class ZeroIfMapped: pass
+zero_if_mapped = ZeroIfMapped()
 
 ### functions for handling custom_vjp
 
@@ -533,9 +567,9 @@ def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
                      out_tangent_bds, out_dims, out_tangents)
   yield out_primals + out_tangents, out_dims * 2
 
-def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main_type):
+def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main_type, spmd_axis_name):
   bwd, out_dims_thunk = batch_subtrace(bwd)
-  bwd_ = _batch_outer(bwd, axis_name, axis_size, in_dims, main_type)
+  bwd_ = _batch_outer(bwd, axis_name, axis_size, in_dims, main_type, spmd_axis_name)
   return _match_axes_and_sum(bwd_, axis_size, axis_name, out_dims_thunk, out_dim_dests)
 
 @lu.transformation
@@ -569,6 +603,7 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
 BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
 axis_primitive_batchers: Dict[core.Primitive, Callable] = {}
+spmd_axis_primitive_batchers: Dict[core.Primitive, Callable] = {}
 
 def defvectorized(prim):
   primitive_batchers[prim] = partial(vectorized_batcher, prim)
@@ -590,15 +625,19 @@ def broadcast_batcher(prim, args, dims, **params):
       either an int indicating the batch dimension, or else `not_mapped`
       indicating no batching.
   """
-  shapes = {(x.shape, d) for x, d in zip(args, dims) if np.ndim(x)}
-  if len(shapes) == 1:
+  assert len(args) > 1
+  shape, dim = next((x.shape, d) for x, d in zip(args, dims)
+                    if d is not not_mapped)
+  if all(core.symbolic_equal_shape(shape, x.shape) and d == dim
+         for x, d in zip(args, dims) if np.ndim(x)):
     # if there's only agreeing batch dims and scalars, just call the primitive
-    d = next(d for d in dims if d is not not_mapped)
     out = prim.bind(*args, **params)
-    return (out, (d,) * len(out)) if prim.multiple_results else (out, d)
+    return (out, (dim,) * len(out)) if prim.multiple_results else (out, dim)
   else:
-    size, = {shape[d] for shape, d in shapes if d is not not_mapped}
-    args = [bdim_at_front(x, d, size) if np.ndim(x) else x
+    # We pass size of 1 here because (1) at least one argument has a real batch
+    # dimension and (2) all unmapped axes can have a singleton axis inserted and
+    # then rely on the primitive's built-in broadcasting.
+    args = [bdim_at_front(x, d, 1) if np.ndim(x) else x
             for x, d in zip(args, dims)]
     ndim = max(np.ndim(x) for x in args)  # special-case scalar broadcasting
     args = [_handle_scalar_broadcasting(ndim, x, d) for x, d in zip(args, dims)]
@@ -609,7 +648,7 @@ def _handle_scalar_broadcasting(nd, x, d):
   if d is not_mapped or nd == np.ndim(x):
     return x
   else:
-    return x.reshape(x.shape + (1,) * (nd - np.ndim(x)))
+    return jax.lax.expand_dims(x, tuple(range(np.ndim(x), nd)))
 
 def defreducer(prim):
   primitive_batchers[prim] = partial(reducer_batcher, prim)
@@ -626,8 +665,6 @@ def reducer_batcher(prim, batched_args, batch_dims, axes, **params):
 ### general utilities for manipulating axes on jaxpr types (not vmappables)
 
 def broadcast(x, sz, axis):
-  if core.get_aval(x) is core.abstract_unit:
-    return core.unit
   shape = list(np.shape(x))
   shape.insert(axis, sz)
   broadcast_dims = tuple(np.delete(np.arange(len(shape)), axis))
@@ -635,12 +672,10 @@ def broadcast(x, sz, axis):
 
 def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
   try:
-    aval = core.get_aval(x)
+    _ = core.get_aval(x)
   except TypeError as e:
     raise TypeError(f"Output from batched function {repr(x)} with type "
                     f"{type(x)} is not a valid JAX type") from e
-  if aval is core.abstract_unit:
-    return core.unit
   if src == dst:
     return x
   elif type(src) == type(dst) == int:
@@ -658,8 +693,6 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
       raise ValueError(f'vmap has mapped output but out_axes is {dst}')
 
 def bdim_at_front(x, bdim, size):
-  if core.get_aval(x) is core.abstract_unit:
-    return core.unit
   if bdim is not_mapped:
     return broadcast(x, size, 0)
   else:
@@ -670,7 +703,7 @@ def bdim_at_front(x, bdim, size):
 def add_batched(batched_args, batch_dims):
   bdx, bdy = batch_dims
   x, y = batched_args
-  if bdx == bdy or core.get_aval(x) == core.abstract_unit:
+  if bdx == bdy:
     return add_jaxvals(x, y), bdx
   elif bdx is not_mapped:
     x = broadcast(x, y.shape[bdy], bdy)

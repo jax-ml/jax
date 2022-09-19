@@ -18,35 +18,45 @@ from functools import partial
 import numpy as np
 import scipy.linalg
 import textwrap
+import warnings
 
+import jax
 from jax import jit, vmap, jvp
 from jax import lax
+from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
-from jax._src.lax import polar as lax_polar
-from jax._src.numpy.util import _wraps
+from jax._src.lax import qdwh
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg as np_linalg
 
 _T = lambda x: jnp.swapaxes(x, -1, -2)
+_no_chkfinite_doc = textwrap.dedent("""
+Does not support the Scipy argument ``check_finite=True``,
+because compiled JAX code cannot perform checks of array values at runtime.
+""")
+_no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Scipy argument ``overwrite_*=True``."
 
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a, lower):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
   return l if lower else jnp.conj(_T(l))
 
-@_wraps(scipy.linalg.cholesky)
+@_wraps(scipy.linalg.cholesky,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def cholesky(a, lower=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return _cholesky(a, lower)
 
-@_wraps(scipy.linalg.cho_factor)
+@_wraps(scipy.linalg.cho_factor,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def cho_factor(a, lower=False, overwrite_a=False, check_finite=True):
   return (cholesky(a, lower=lower), lower)
 
 @partial(jit, static_argnames=('lower',))
 def _cho_solve(c, b, lower):
-  c, b = np_linalg._promote_arg_dtypes(jnp.asarray(c), jnp.asarray(b))
+  c, b = _promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
   lax_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
@@ -54,7 +64,8 @@ def _cho_solve(c, b, lower):
                                   transpose_a=lower, conjugate_a=lower)
   return b
 
-@_wraps(scipy.linalg.cho_solve, update_doc=False)
+@_wraps(scipy.linalg.cho_solve, update_doc=False,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
 def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   c, lower = c_and_lower
@@ -63,16 +74,18 @@ def cho_solve(c_and_lower, b, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a, *, full_matrices, compute_uv):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  return lax_linalg.svd(a, full_matrices, compute_uv)
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
-@_wraps(scipy.linalg.svd)
+@_wraps(scipy.linalg.svd,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite', 'lapack_driver'))
 def svd(a, full_matrices=True, compute_uv=True, overwrite_a=False,
         check_finite=True, lapack_driver='gesdd'):
   del overwrite_a, check_finite, lapack_driver
   return _svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
-@_wraps(scipy.linalg.det)
+@_wraps(scipy.linalg.det,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def det(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return np_linalg.det(a)
@@ -88,7 +101,7 @@ def _eigh(a, b, lower, eigvals_only, eigvals, type):
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
 
   if eigvals_only:
@@ -96,7 +109,8 @@ def _eigh(a, b, lower, eigvals_only, eigvals, type):
   else:
     return w, v
 
-@_wraps(scipy.linalg.eigh)
+@_wraps(scipy.linalg.eigh,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'overwrite_b', 'check_finite'))
 def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
          overwrite_b=False, turbo=True, eigvals=None, type=1,
          check_finite=True):
@@ -106,33 +120,36 @@ def eigh(a, b=None, lower=True, eigvals_only=False, overwrite_a=False,
 @partial(jit, static_argnames=('output',))
 def _schur(a, output):
   if output == "complex":
-    a = a.astype(jnp.result_type(a.dtype, 0j))
+    a = a.astype(dtypes.to_complex_dtype(a.dtype))
   return lax_linalg.schur(a)
 
 @_wraps(scipy.linalg.schur)
 def schur(a, output='real'):
   if output not in ('real', 'complex'):
     raise ValueError(
-      "Expected 'output' to be either 'real' or 'complex', got output={}.".format(output))
+      f"Expected 'output' to be either 'real' or 'complex', got output={output}.")
   return _schur(a, output)
 
-@_wraps(scipy.linalg.inv)
+@_wraps(scipy.linalg.inv,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def inv(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
   return np_linalg.inv(a)
 
 
-@_wraps(scipy.linalg.lu_factor)
+@_wraps(scipy.linalg.lu_factor,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   lu, pivots, _ = lax_linalg.lu(a)
   return lu, pivots
 
 
-@_wraps(scipy.linalg.lu_solve)
-@partial(jit, static_argnames=('trans', 'overwrite_a', 'check_finite'))
+@_wraps(scipy.linalg.lu_solve,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'check_finite'))
+@partial(jit, static_argnames=('trans', 'overwrite_b', 'check_finite'))
 def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
   del overwrite_b, check_finite
   lu, pivots = lu_and_piv
@@ -143,11 +160,11 @@ def lu_solve(lu_and_piv, b, trans=0, overwrite_b=False, check_finite=True):
 
 @partial(jit, static_argnums=(1,))
 def _lu(a, permute_l):
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  lu, pivots, permutation = lax_linalg.lu(a)
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
-  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m)[:, None], dtype=dtype))
+  p = jnp.real(jnp.array(permutation[None, :] == jnp.arange(m, dtype=permutation.dtype)[:, None], dtype=dtype))
   k = min(m, n)
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
@@ -156,7 +173,8 @@ def _lu(a, permute_l):
   else:
     return p, l, u
 
-@_wraps(scipy.linalg.lu, update_doc=False)
+@_wraps(scipy.linalg.lu, update_doc=False,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 @partial(jit, static_argnames=('permute_l', 'overwrite_a', 'check_finite'))
 def lu(a, permute_l=False, overwrite_a=False, check_finite=True):
   del overwrite_a, check_finite
@@ -172,26 +190,27 @@ def _qr(a, mode, pivoting):
   elif mode == "economic":
     full_matrices = False
   else:
-    raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
-  a = np_linalg._promote_arg_dtypes(jnp.asarray(a))
-  q, r = lax_linalg.qr(a, full_matrices)
+    raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
-    return r
+    return (r,)
   return q, r
 
-@_wraps(scipy.linalg.qr)
+@_wraps(scipy.linalg.qr,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def qr(a, overwrite_a=False, lwork=None, mode="full", pivoting=False,
        check_finite=True):
   del overwrite_a, lwork, check_finite
   return _qr(a, mode, pivoting)
 
 
-@partial(jit, static_argnames=('sym_pos', 'lower'))
-def _solve(a, b, sym_pos, lower):
-  if not sym_pos:
+@partial(jit, static_argnames=('assume_a', 'lower'))
+def _solve(a, b, assume_a, lower):
+  if assume_a != 'pos':
     return np_linalg.solve(a, b)
 
-  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
 
   # With custom_linear_solve, we can reuse the same factorization when
@@ -210,11 +229,21 @@ def _solve(a, b, sym_pos, lower):
     return vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 
-@_wraps(scipy.linalg.solve)
+@_wraps(scipy.linalg.solve,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'overwrite_b', 'debug', 'check_finite'))
 def solve(a, b, sym_pos=False, lower=False, overwrite_a=False, overwrite_b=False,
-          debug=False, check_finite=True):
+          debug=False, check_finite=True, assume_a='gen'):
+  # TODO(jakevdp) remove sym_pos argument after October 2022
   del overwrite_a, overwrite_b, debug, check_finite
-  return _solve(a, b, sym_pos, lower)
+  valid_assume_a = ['gen', 'sym', 'her', 'pos']
+  if assume_a not in valid_assume_a:
+    raise ValueError(f"Expected assume_a to be one of {valid_assume_a}; got {assume_a!r}")
+  if sym_pos:
+    warnings.warn("The sym_pos argument to solve() is deprecated and will be removed "
+                  "in a future JAX release. Use assume_a='pos' instead.",
+                  category=FutureWarning, stacklevel=2)
+    assume_a = 'pos'
+  return _solve(a, b, assume_a, lower)
 
 @partial(jit, static_argnames=('trans', 'lower', 'unit_diagonal'))
 def _solve_triangular(a, b, trans, lower, unit_diagonal):
@@ -225,9 +254,9 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   elif trans == 2 or trans == "C":
     transpose_a, conjugate_a = True, True
   else:
-    raise ValueError("Invalid 'trans' value {}".format(trans))
+    raise ValueError(f"Invalid 'trans' value {trans}")
 
-  a, b = np_linalg._promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
@@ -242,7 +271,8 @@ def _solve_triangular(a, b, trans, lower, unit_diagonal):
   else:
     return out
 
-@_wraps(scipy.linalg.solve_triangular)
+@_wraps(scipy.linalg.solve_triangular,
+        lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_b', 'debug', 'check_finite'))
 def solve_triangular(a, b, trans=0, lower=False, unit_diagonal=False,
                      overwrite_b=False, debug=None, check_finite=True):
   del overwrite_b, debug, check_finite
@@ -302,20 +332,22 @@ def _calc_P_Q(A):
   if A.dtype == 'float64' or A.dtype == 'complex128':
    maxnorm = 5.371920351148152
    n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
-   A = A / 2**n_squarings
+   A = A / 2 ** n_squarings.astype(A.dtype)
    conds = jnp.array([1.495585217958292e-002, 2.539398330063230e-001,
-                      9.504178996162932e-001, 2.097847961257068e+000])
+                      9.504178996162932e-001, 2.097847961257068e+000],
+                      dtype=A_L1.dtype)
    idx = jnp.digitize(A_L1, conds)
    U, V = lax.switch(idx, [_pade3, _pade5, _pade7, _pade9, _pade13], A)
   elif A.dtype == 'float32' or A.dtype == 'complex64':
     maxnorm = 3.925724783138660
     n_squarings = jnp.maximum(0, jnp.floor(jnp.log2(A_L1 / maxnorm)))
-    A = A / 2**n_squarings
-    conds = jnp.array([4.258730016922831e-001, 1.880152677804762e+000])
+    A = A / 2 ** n_squarings.astype(A.dtype)
+    conds = jnp.array([4.258730016922831e-001, 1.880152677804762e+000],
+                      dtype=A_L1.dtype)
     idx = jnp.digitize(A_L1, conds)
     U, V = lax.switch(idx, [_pade3, _pade5, _pade7], A)
   else:
-    raise TypeError("A.dtype={} is not supported.".format(A.dtype))
+    raise TypeError(f"A.dtype={A.dtype} is not supported.")
   P = U + V  # p_m(A) : numerator
   Q = -U + V # q_m(A) : denominator
   return P, Q, n_squarings
@@ -340,7 +372,7 @@ def _squaring(R, n_squarings, max_squarings):
 
   def _scan_f(c, i):
     return lax.cond(i < n_squarings, _squaring_precise, _identity, c), None
-  res, _ = lax.scan(_scan_f, R, jnp.arange(max_squarings))
+  res, _ = lax.scan(_scan_f, R, jnp.arange(max_squarings, dtype=n_squarings.dtype))
 
   return res
 
@@ -554,11 +586,11 @@ def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
   # Determine the indices of the desired eigenvalues, based on select and
   # select_range.
   if select == 'a':
-    target_counts = jnp.arange(n)
+    target_counts = jnp.arange(n, dtype=jnp.int32)
   elif select == 'i':
     if select_range[0] > select_range[1]:
       raise ValueError('Got empty index range in select_range.')
-    target_counts = jnp.arange(select_range[0], select_range[1] + 1)
+    target_counts = jnp.arange(select_range[0], select_range[1] + 1, dtype=jnp.int32)
   elif select == 'v':
     # TODO(phawkins): requires dynamic shape support.
     raise NotImplementedError("eigh_tridiagonal(..., select='v') is not "
@@ -601,11 +633,112 @@ def eigh_tridiagonal(d, e, *, eigvals_only=False, select='a',
   _, _, mid, _ = lax.while_loop(cond, body, (0, lower, mid, upper))
   return mid
 
-@_wraps(scipy.linalg.polar)
-def polar(a, side='right', method='qdwh', eps=None, maxiter=50):
-   unitary, posdef, _ = lax_polar.polar(a, side=side, method=method, eps=eps,
-                                        maxiter=maxiter)
-   return unitary, posdef
+@partial(jit, static_argnames=('side', 'method'))
+@jax.default_matmul_precision("float32")
+def polar(a, side='right', *, method='qdwh', eps=None, max_iterations=None):
+  r"""Computes the polar decomposition.
+
+  Given the :math:`m \times n` matrix :math:`a`, returns the factors of the polar
+  decomposition :math:`u` (also :math:`m \times n`) and :math:`p` such that
+  :math:`a = up` (if side is ``"right"``; :math:`p` is :math:`n \times n`) or
+  :math:`a = pu` (if side is ``"left"``; :math:`p` is :math:`m \times m`),
+  where :math:`p` is positive semidefinite.  If :math:`a` is nonsingular,
+  :math:`p` is positive definite and the
+  decomposition is unique. :math:`u` has orthonormal columns unless
+  :math:`n > m`, in which case it has orthonormal rows.
+
+  Writing the SVD of :math:`a` as
+  :math:`a = u_\mathit{svd} \cdot s_\mathit{svd} \cdot v^h_\mathit{svd}`, we
+  have :math:`u = u_\mathit{svd} \cdot v^h_\mathit{svd}`. Thus the unitary
+  factor :math:`u` can be constructed as the application of the sign function to
+  the singular values of :math:`a`; or, if :math:`a` is Hermitian, the
+  eigenvalues.
+
+  Several methods exist to compute the polar decomposition. Currently two
+  are supported:
+
+  * ``method="svd"``:
+
+    Computes the SVD of :math:`a` and then forms
+    :math:`u = u_\mathit{svd} \cdot v^h_\mathit{svd}`.
+
+  * ``method="qdwh"``:
+
+    Applies the `QDWH`_ (QR-based Dynamically Weighted Halley) algorithm.
+
+  Args:
+    a: The :math:`m \times n` input matrix.
+    side: Determines whether a right or left polar decomposition is computed.
+      If ``side`` is ``"right"`` then :math:`a = up`. If ``side`` is ``"left"``
+      then :math:`a = pu`. The default is ``"right"``.
+    method: Determines the algorithm used, as described above.
+    precision: :class:`~jax.lax.Precision` object specifying the matmul precision.
+    eps: The final result will satisfy
+      :math:`\left|x_k - x_{k-1}\right| < \left|x_k\right| (4\epsilon)^{\frac{1}{3}}`,
+      where :math:`x_k` are the QDWH iterates. Ignored if ``method`` is not
+      ``"qdwh"``.
+    max_iterations: Iterations will terminate after this many steps even if the
+      above is unsatisfied.  Ignored if ``method`` is not ``"qdwh"``.
+
+  Returns:
+    A ``(unitary, posdef)`` tuple, where ``unitary`` is the unitary factor
+    (:math:`m \times n`), and ``posdef`` is the positive-semidefinite factor.
+    ``posdef`` is either :math:`n \times n` or :math:`m \times m` depending on
+    whether ``side`` is ``"right"`` or ``"left"``, respectively.
+
+  .. _QDWH: https://epubs.siam.org/doi/abs/10.1137/090774999
+  """
+  a = jnp.asarray(a)
+  if a.ndim != 2:
+    raise ValueError("The input `a` must be a 2-D array.")
+
+  if side not in ["right", "left"]:
+    raise ValueError("The argument `side` must be either 'right' or 'left'.")
+
+  m, n = a.shape
+  if method == "qdwh":
+    # TODO(phawkins): return info also if the user opts in?
+    if m >= n and side == "right":
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+    elif m < n and side == "left":
+      a = a.T.conj()
+      unitary, posdef, _, _ = qdwh.qdwh(a, is_hermitian=False, eps=eps)
+      posdef = posdef.T.conj()
+      unitary = unitary.T.conj()
+    else:
+      raise NotImplementedError("method='qdwh' only supports mxn matrices "
+                                "where m < n where side='right' and m >= n "
+                                f"side='left', got {a.shape} with side={side}")
+  elif method == "svd":
+    u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
+    s_svd = s_svd.astype(u_svd.dtype)
+    unitary = u_svd @ vh_svd
+    if side == "right":
+      # a = u * p
+      posdef = (vh_svd.T.conj() * s_svd[None, :]) @ vh_svd
+    else:
+      # a = p * u
+      posdef = (u_svd * s_svd[None, :]) @ (u_svd.T.conj())
+  else:
+    raise ValueError(f"Unknown polar decomposition method {method}.")
+
+  return unitary, posdef
+
+
+def polar_unitary(a, *, method="qdwh", eps=None, max_iterations=None):
+  """ Computes the unitary factor u in the polar decomposition ``a = u p``
+  (or ``a = p u``).
+
+  .. warning::
+    This function is deprecated. Use :func:`jax.scipy.linalg.polar` instead.
+  """
+  # TODO(phawkins): delete this function after 2022/8/11.
+  warnings.warn("jax.scipy.linalg.polar_unitary is deprecated. Call "
+                "jax.scipy.linalg.polar instead.",
+                DeprecationWarning)
+  unitary, _ = polar(a, method, eps, max_iterations)
+  return unitary
+
 
 @jit
 def _sqrtm_triu(T):
@@ -656,3 +789,62 @@ def sqrtm(A, blocksize=1):
   if blocksize > 1:
       raise NotImplementedError("Blocked version is not implemented yet.")
   return _sqrtm(A)
+
+@_wraps(scipy.linalg.rsf2csf, lax_description=_no_chkfinite_doc)
+@partial(jit, static_argnames=('check_finite',))
+def rsf2csf(T, Z, check_finite=True):
+  T = jnp.asarray(T)
+  Z = jnp.asarray(Z)
+
+  for ind, X in enumerate([Z, T]):
+    if X.ndim != 2 or X.shape[0] != X.shape[1]:
+      arg = 'ZT'[ind]
+      raise ValueError(f"Input '{arg}' must be square.")
+  if T.shape[0] != Z.shape[0]:
+    raise ValueError(f"Input array shapes must match: Z: {Z.shape} vs. T: {T.shape}")
+
+  T, Z = _promote_dtypes_complex(T, Z)
+  eps = jnp.finfo(T.dtype).eps
+  N = T.shape[0]
+
+  if N == 1:
+    return T, Z
+
+  def _update_T_Z(m, T, Z):
+    mu = np_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
+    r = np_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
+    c = mu[0] / r
+    s = T[m, m-1] / r
+    G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)
+
+    # T[m-1:m+1, m-1:] = G @ T[m-1:m+1, m-1:]
+    T_rows = lax.dynamic_slice_in_dim(T, m-1, 2, axis=0)
+    col_mask = jnp.arange(N) >= m-1
+    G_dot_T_zeroed_cols = G @ jnp.where(col_mask, T_rows, 0)
+    T_rows_new = jnp.where(~col_mask, T_rows, G_dot_T_zeroed_cols)
+    T = lax.dynamic_update_slice_in_dim(T, T_rows_new, m-1, axis=0)
+
+    # T[:m+1, m-1:m+1] = T[:m+1, m-1:m+1] @ G.conj().T
+    T_cols = lax.dynamic_slice_in_dim(T, m-1, 2, axis=1)
+    row_mask = jnp.arange(N)[:, jnp.newaxis] < m+1
+    T_zeroed_rows_dot_GH = jnp.where(row_mask, T_cols, 0) @ G.conj().T
+    T_cols_new = jnp.where(~row_mask, T_cols, T_zeroed_rows_dot_GH)
+    T = lax.dynamic_update_slice_in_dim(T, T_cols_new, m-1, axis=1)
+
+    # Z[:, m-1:m+1] = Z[:, m-1:m+1] @ G.conj().T
+    Z_cols = lax.dynamic_slice_in_dim(Z, m-1, 2, axis=1)
+    Z = lax.dynamic_update_slice_in_dim(Z, Z_cols @ G.conj().T, m-1, axis=1)
+    return T, Z
+
+  def _rsf2scf_iter(i, TZ):
+    m = N-i
+    T, Z = TZ
+    T, Z = lax.cond(
+      jnp.abs(T[m, m-1]) > eps*(jnp.abs(T[m-1, m-1]) + jnp.abs(T[m, m])),
+      _update_T_Z,
+      lambda m, T, Z: (T, Z),
+      m, T, Z)
+    T = T.at[m, m-1].set(0.0)
+    return T, Z
+
+  return lax.fori_loop(1, N, _rsf2scf_iter, (T, Z))

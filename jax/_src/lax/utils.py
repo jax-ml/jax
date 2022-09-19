@@ -48,8 +48,8 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, named_shape_rule))
-  xla.register_translation(
-      prim, translation_rule or partial(_standard_translate, name))
+  if translation_rule is not None:
+    xla.register_translation(prim, translation_rule)
   return prim
 
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
@@ -67,8 +67,10 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                             dtype_rule(*avals, **kwargs), weak_type=weak_type,
                             named_shape=named_shape_rule(*avals, **kwargs))
   elif least_specialized is core.DShapedArray:
-    return core.DShapedArray(shape_rule(*avals, **kwargs),
-                             dtype_rule(*avals, **kwargs), weak_type)
+    shape = shape_rule(*avals, **kwargs)
+    ty = (core.ShapedArray if all(type(d) is int for d in shape)
+          else core.DShapedArray)
+    return ty(shape, dtype_rule(*avals, **kwargs), weak_type)
   elif least_specialized is core.UnshapedArray:
     return core.UnshapedArray(dtype_rule(*avals, **kwargs), weak_type=weak_type)
   else:
@@ -100,10 +102,13 @@ def standard_multi_result_abstract_eval(
   else:
     raise TypeError(avals, least_specialized)
 
-def _standard_translate(name, ctx, avals_in, avals_out, *args, **kwargs):
-  del ctx, avals_in, avals_out
-  xla_opname = ''.join(term.capitalize() for term in name.split('_'))
-  return [getattr(xops, xla_opname)(*args, **kwargs)]
+def standard_translate(prim):
+  xla_opname = ''.join(term.capitalize() for term in prim.name.split('_'))
+  op = getattr(xops, xla_opname)
+  def translation_rule(ctx, avals_in, avals_out, *args, **kwargs):
+    del ctx, avals_in, avals_out
+    return [op(*args, **kwargs)]
+  return translation_rule
 
 def standard_named_shape_rule(*avals, **kwargs):
   return core.join_named_shapes(*(a.named_shape for a in avals))

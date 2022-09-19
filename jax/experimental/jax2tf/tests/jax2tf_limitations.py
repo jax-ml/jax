@@ -16,6 +16,7 @@
 import itertools
 from typing import Any, Callable, Optional, Sequence, Union
 
+import jax
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
@@ -124,25 +125,20 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   # We keep here the explicit set of groups for which we don't have limitations
   harness_groups_no_limitations = {
-      "abs", "add", "add_any", "and", "atan2",
-      "bitcast_convert_type", "broadcast", "broadcast_in_dim", "cbrt", "ceil",
-      "clamp", "concatenate", "cos", "cosh", "complex", "conj",
-      "convert_element_type",
-      "cummax", "cummin", "device_put", "dynamic_slice",
-      "dynamic_update_slice", "exp", "eq", "floor", "gather", "ge", "gt",
-      "imag",
-      "iota", "is_finite", "le", "lt", "log", "mul", "ne", "neg", "not",
-      "or", "pad", "population_count",
-      "random_categorical", "random_split", "random_uniform", "random_randint",
-      "reduce",
-      "reduce_and", "reduce_prod", "reduce_or", "reduce_sum",
-      "reduce_window_add", "reduce_window_mul", "reduce_window_min",
-      "reduce_window_max",
-      "real", "reshape", "rev", "rsqrt", "scatter_max", "scatter_min",
-      "select_n", "select_and_scatter_add",
-      "shift_left", "shift_right_logical", "shift_right_arithmetic", "sign",
-      "sin", "sinh", "slice", "sqrt", "squeeze", "stop_gradient", "sub",
-      "tie_in", "transpose", "xor", "zeros_like"
+      "abs", "add", "add_any", "and", "atan2", "bitcast_convert_type",
+      "broadcast", "broadcast_in_dim", "cbrt", "ceil", "clamp", "concatenate",
+      "cos", "cosh", "complex", "conj", "convert_element_type", "cummax",
+      "cummin", "device_put", "dynamic_slice", "dynamic_update_slice", "exp",
+      "eq", "floor", "gather", "ge", "gt", "imag", "iota", "is_finite", "le",
+      "logistic", "lt", "log", "mul", "ne", "neg", "not", "or", "pad",
+      "population_count", "random_categorical", "random_uniform",
+      "random_randint", "reduce", "reduce_and", "reduce_prod", "reduce_or",
+      "reduce_sum", "reduce_window_mul", "reduce_window_min",
+      "reduce_window_max", "real", "reshape", "rev", "rsqrt", "select_n",
+      "select_and_scatter_add", "shift_left", "shift_right_logical",
+      "shift_right_arithmetic", "sign", "sin", "sinh", "slice", "sqrt",
+      "squeeze", "stop_gradient", "sub", "tie_in", "transpose", "xor",
+      "zeros_like"
   }
 
   @classmethod
@@ -157,6 +153,18 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         description="May return different but still correct results",
         dtypes=[np.complex64, np.complex128],
         custom_assert=custom_assert)
+
+  @classmethod
+  def random_seed(cls, handess: primitive_harness.Harness):
+    return [custom_random_keys_output()]
+
+  @classmethod
+  def random_split(cls, handess: primitive_harness.Harness):
+    return [custom_random_keys_output()]
+
+  @classmethod
+  def random_fold_in(cls, handess: primitive_harness.Harness):
+    return [custom_random_keys_output()]
 
   @classmethod
   def acos(cls, harness: primitive_harness.Harness):
@@ -182,6 +190,16 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def approx_max_k(cls, harness: primitive_harness.Harness):
+    supported_dtypes = jtu.supported_dtypes()
+    return Jax2TfLimitation(
+        "eager is not supported in CPU or GPU.",
+        dtypes=[t for t in [jnp.bfloat16, np.float16, np.float32]
+                if t in supported_dtypes],
+        devices=("cpu", "gpu", "tpu"),
+        modes=("graph", "compiled"))
+
+  @classmethod
   def argmax(cls, harness: primitive_harness.Harness):
     return [
         Jax2TfLimitation(
@@ -201,8 +219,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def asin(cls, harness: primitive_harness.Harness):
     return [
-        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4),
-        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12),
+        custom_numeric(dtypes=np.complex64, devices=("cpu", "gpu"), tol=1e-4,
+                       modes=("eager", "graph", "compiled")),
+        custom_numeric(dtypes=np.complex128, devices=("cpu", "gpu"), tol=1e-12,
+                       modes=("eager", "graph", "compiled")),
         cls.helper_get_trig_custom_limitation(np.sin)
     ]
 
@@ -389,6 +409,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def dot_general(cls, harness: primitive_harness.Harness):
+    prefer_elem = harness.params["preferred_element_type"]
     return [
         missing_tf_kernel(dtypes=[np.bool_],),
         # TODO(b/189287598)
@@ -399,7 +420,13 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             ],
             devices="gpu",
             modes=("eager", "graph", "compiled"),
-            enabled=(harness.params["preferred_element_type"] is not None),
+            enabled=(prefer_elem is not None),
+            skip_comparison=True),
+        # TODO(b/241740367) - note this only occurs when X64 is enabled.
+        Jax2TfLimitation(
+            "Large tolerances when upcasting with preferred_element_type on CPU (b/241740367)",
+            devices=["cpu", "gpu", "tpu"],
+            enabled=prefer_elem and np.dtype(harness.dtype) < np.dtype(prefer_elem),
             skip_comparison=True),
         # JAX performs float16 matmuls in float32 on CPU, so the JAX result
         # may be more precise.
@@ -548,21 +575,11 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
   @classmethod
   def erf(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
+    return []
 
   @classmethod
   def erfc(cls, harness: primitive_harness.Harness):
-    return [
-        missing_tf_kernel(
-            dtypes=[dtypes.bfloat16],
-            devices=("cpu", "gpu"),
-            modes=("eager", "graph"))
-    ]
+    return []
 
   @classmethod
   def erf_inv(cls, harness: primitive_harness.Harness):
@@ -605,8 +622,15 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         Jax2TfLimitation(
             "TF function not compileable",
             devices=("cpu", "gpu"),
-            dtypes=[np.float64, np.complex128],
+            dtypes=[np.float64],
             modes="compiled"),
+        Jax2TfLimitation(
+            "TF function not compileable for IFFT and IRFFT",
+            devices=("cpu", "gpu"),
+            dtypes=[np.complex128],
+            modes="compiled",
+            enabled=(str(harness.params["fft_type"]) in ["FftType.IFFT",
+                                                         "FftType.IRFFT"])),
         # TODO: very high tolerance
         custom_numeric(tol=1e-3, modes=("eager", "graph", "compiled")),
     ]
@@ -722,13 +746,6 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def integer_pow(cls, harness: primitive_harness.Harness):
     y = harness.params["y"]
     return [
-        missing_tf_kernel(
-            dtypes=[
-                np.int8, np.int16, np.uint8, np.uint16, np.uint32, np.uint64
-            ],
-            modes="graph",
-            enabled=(y not in [0, 1]),  # These are special-cased
-            devices=("cpu", "gpu")),
         # TODO: on TPU, for f16, we get different results with eager mode
         # than with compiled mode.
         Jax2TfLimitation(
@@ -810,7 +827,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(
             dtypes=[np.float32, np.complex64], devices=("cpu", "gpu"),
             tol=1e-5),
-        custom_numeric(dtypes=[np.float64, np.complex128], tol=1e-13),
+        custom_numeric(
+            dtypes=[np.float64, np.complex128],
+            modes=("eager", "graph"),
+            tol=1e-13),
+        custom_numeric(
+            dtypes=[np.float64, np.complex128], modes=("compiled"), tol=1e-14),
         custom_numeric(
             custom_assert=custom_assert,
             description=("May return different, but also correct, results when "
@@ -899,6 +921,28 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     return cls.reduce_max(harness)
 
   @classmethod
+  def reduce_window_add(cls, harness: primitive_harness.Harness):
+    return [
+        Jax2TfLimitation(
+            "Small deviations on GPU for large inputs and enable_xla=False",
+            dtypes=[np.float32],
+            devices="gpu",
+            modes=("eager", "graph", "compiled"),
+            expect_tf_error=False,
+            skip_comparison=False,
+            enabled=not harness.params["enable_xla"],
+            tol=3e-5),
+        Jax2TfLimitation(
+            "Large deviations on TPU for enable_xla=False",
+            dtypes=[np.float16, np.float32],
+            devices="tpu",
+            modes=("eager", "graph", "compiled"),
+            expect_tf_error=False,
+            skip_comparison=True,
+            enabled=not harness.params["enable_xla"]),
+    ]
+
+  @classmethod
   def regularized_incomplete_beta(cls, harness: primitive_harness.Harness):
     return [
         custom_numeric(dtypes=np.float64, tol=1e-14),
@@ -932,12 +976,33 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
+  def scatter(cls, harness):
+    return [
+        Jax2TfLimitation(
+            "out-of-bounds scatters are not supported in graph and eager mode",
+            dtypes=jtu.dtypes.all_inexact,
+            devices=("cpu", "gpu", "tpu"),
+            modes=("eager", "graph"),
+            expect_tf_error=True,
+            skip_comparison=True,
+            enabled=("modes_out_of_bounds" in harness.name and not harness.params["enable_xla"])),
+    ]
+
+  @classmethod
   def scatter_add(cls, harness):
-    return []
+    return cls.scatter(harness)
 
   @classmethod
   def scatter_mul(cls, harness):
-    return []
+    return cls.scatter(harness)
+
+  @classmethod
+  def scatter_max(cls, harness):
+    return cls.scatter(harness)
+
+  @classmethod
+  def scatter_min(cls, harness):
+    return cls.scatter(harness)
 
   @classmethod
   def select_and_gather_add(cls, harness):
@@ -972,26 +1037,145 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     # TODO: slow test
     compute_uv = harness.params["compute_uv"]
 
+    # Both `r_jax` and `r_tf` are 3-Tuples containing the SVD results:
+    # `S` (singular values), `U` (left singular vectors), and `Vh` (the
+    # adjoint of the right singular vectors). Note that the TF results are
+    # obtained through `_svd` in jax/experimental/jax2tf/jax2tf.py.
     def custom_assert(tst, r_jax, r_tf, *, args, tol, err_msg):
 
-      def _reconstruct_operand(result, is_tf: bool):
+      def reconstruct_operand(result):
         # Reconstructing operand as documented in numpy.linalg.svd (see
         # https://numpy.org/doc/stable/reference/generated/numpy.linalg.svd.html)
         s, u, v = result
         U = u[..., :s.shape[-1]]
         V = v[..., :s.shape[-1], :]
         S = s[..., None, :]
-        return jnp.matmul(U * S, V), s.shape, u.shape, v.shape
+        return jnp.matmul(U * S, V, precision=lax.Precision.HIGHEST)
+
+      # Compares the shapes.
+      def compare_shapes(r_jax, r_tf):
+        shapes_jax = [result.shape for result in r_jax]
+        shapes_tf = [result.shape for result in r_tf]
+        tst.assertEqual(shapes_jax, shapes_tf)
+
+      # Compares reconstructed operand.
+      # Computes backward error https://www.netlib.org/lapack/lug/node97.html
+      # and uses the maximum backward error if there are batch dimensions.
+      # The backward error is bounded by some constant multiplying the machine
+      # precision.
+      # TODO: Compares the operand instead of the reconstructed operand.
+      def compare_reconstructed_operand(r_jax, r_tf, tol):
+        operand_jax = reconstruct_operand(r_jax)
+        operand_tf = reconstruct_operand(r_tf)
+        error_norm = jnp.linalg.norm(operand_jax - operand_tf,
+                                              axis=(-2, -1))
+        backward_error = (error_norm /
+                          jnp.linalg.norm(operand_jax, axis=(-2, -1)))
+        max_backward_error = jnp.amax(backward_error)
+        tst.assertLess(max_backward_error, tol)
+
+      # Computes the absolute gap between singular value `\sigma_i` and the
+      # nearest other singular value and for all singular values. The absolute
+      # gap is used to approximate the upper bound of angular difference
+      # between the computed and the true singular vectors. If the matrix is
+      # rectangular `m != n`, the gap for the smallest nonzero singular value
+      # should also consider the gap between it and zero. Note that this code
+      # relies on the singular values being in descending order.
+      def compute_absolute_gap(s, m, n):
+        forward_appendant = np.Inf if m == n else 0
+        forward_diff = jnp.diff(s, axis=-1, append=forward_appendant)
+        backward_diff = jnp.diff(
+            s[..., ::-1], axis=-1, append=np.Inf)[..., ::-1]
+        absolute_gap = jnp.minimum(jnp.abs(forward_diff),
+                                   jnp.abs(backward_diff))
+        return absolute_gap
+
+      # See `CompareSingularVectors` in
+      # tensorflow/python/kernel_tests/linalg/svd_op_test.py
+      def compare_singular_vectors(x, y, *, error_bound):
+        # Singular vectors are only unique up to sign (complex phase factor for
+        # complex matrices), so we normalize the sign first.
+        sum_of_ratios = jnp.sum(jnp.divide(y, x), -2, keepdims=True)
+        phases = jnp.divide(sum_of_ratios, jnp.abs(sum_of_ratios))
+        x *= phases
+
+        # Note that in general `sqrt(sum(squares))` is not a stable way to
+        # compute l2 vector norms, but it should be OK for normalization
+        # factors of vectors with norm ~= 1 as here.
+        def dot_column_wise(a, b):
+          output = jnp.sum(jnp.einsum('...ij,...ij->...ij', a.conj(), b,
+                                      precision=lax.Precision.HIGHEST),
+                           axis=-2)
+          return jnp.real(output)
+
+        cos_angular_diff = (
+            dot_column_wise(x, y) /
+            jnp.sqrt(dot_column_wise(x, x) * dot_column_wise(y, y)))
+
+        # Values of `\cos(angular_diff)` outside the interval [0, 1] are clipped
+        # to the interval edges. For example, `\cos(angular_diff)` could contain
+        # values like 1.0000001 on float32, which are clipped to 1.0. It is
+        # possible that anything other than `cos_angular_diff` can be outside
+        # the interval [0, 1] due to roundoff.
+        cos_angular_diff = jnp.clip(cos_angular_diff, a_min=0.0, a_max=1.0)
+
+        angular_diff = jnp.arccos(cos_angular_diff)
+
+        # TODO: removes the slack factor on the angular difference.
+        # It is possible that the singular vectors are not accurate to much more
+        # than O(\sqrt(eps)), which is likely a property of the SVD algorithms
+        # in question; revisit with better understanding of the SVD algorithms.
+        if x.dtype in [np.float32, np.complex64]:
+          slack_factor = 2E4
+        elif x.dtype in [np.float64, np.complex128]:
+          slack_factor = 2E9
+
+        np.testing.assert_array_less(angular_diff,
+                                     slack_factor * error_bound)
 
       if compute_uv:
-        r_jax_reconstructed = _reconstruct_operand(r_jax, False)
-        r_tf_reconstructed = _reconstruct_operand(r_tf, True)
-        tst.assertAllClose(
-            r_jax_reconstructed,
-            r_tf_reconstructed,
-            atol=tol,
-            rtol=tol,
-            err_msg=err_msg)
+        # Compares the shapes.
+        compare_shapes(r_jax, r_tf)
+
+        # Compares the singular values. Each computed singular value `\sigma_i`
+        # differs from the true `\sigma_i`* by at most
+        # `|\sigma_i - \sigma_i*| <= \epsilon \sigma_1`, where `\sigma_1` is the
+        # largest singular value and `\epsilon` denotes the machine precision.
+        s_jax, s_tf = r_jax[0], r_tf[0]
+        tst.assertAllClose(s_jax, s_tf, atol=tol, rtol=tol, err_msg=err_msg)
+
+        # Compares the reconstructed operand.
+        compare_reconstructed_operand(r_jax, r_tf, tol)
+
+        # Compares the singular vectors.
+        # We only compare the first `rank` singular vectors since the remainder
+        # forms an arbitrary orthonormal basis for the (row- or column-) null
+        # space, whose exact value depends on implementation details.
+        # TODO: A better estimation on the rank?
+        rank = r_jax[0].shape[-1]
+
+        # Computes the upper bound for angular difference of singular vectors.
+        # The upper bound has the shape of `[..., k]`, where `...` denotes the
+        # batch dimensions and `k` is the number of nonzero singular values.
+        m = r_jax[1].shape[-2]
+        n = r_jax[2].shape[-2]
+        absolute_gap = compute_absolute_gap(r_jax[0], m, n)
+        epsilon = jnp.finfo(r_jax[0].dtype).eps
+        sigma_largest = (r_jax[0][..., 0])[..., None]
+        upperbound_singular_vectors = epsilon * sigma_largest / absolute_gap
+        upperbound_singular_vectors = upperbound_singular_vectors[..., :rank]
+
+        # Left singular vectors.
+        u_jax = r_jax[1][..., :rank]
+        u_tf = r_tf[1][..., :rank]
+        compare_singular_vectors(u_jax, u_tf,
+                                 error_bound=upperbound_singular_vectors)
+
+        # Right singular vectors.
+        v_jax = jnp.swapaxes(r_jax[2][..., :rank, :], -2, -1).conj()
+        v_tf = jnp.swapaxes(r_tf[2][..., :rank, :], -2, -1).conj()
+        compare_singular_vectors(v_jax, v_tf,
+                                 error_bound=upperbound_singular_vectors)
       else:
         tst.assertAllClose(r_jax, r_tf, atol=tol, rtol=tol, err_msg=err_msg)
 
@@ -1002,16 +1186,20 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             dtypes=[np.complex64, np.complex128],
             devices=("cpu", "gpu"),
             modes=("compiled",)),
+        Jax2TfLimitation(
+            "Large numerical discrepancy",
+            dtypes=[np.float16],
+            devices=("tpu"),
+            modes=("eager", "graph", "compiled"),
+            skip_comparison=True),
         missing_tf_kernel(dtypes=[dtypes.bfloat16], devices="tpu"),
+        missing_tf_kernel(dtypes=[np.complex64, np.complex128],
+                          modes=("compiled", "graph"),
+                          devices="tpu"),
         custom_numeric(
             tol=1e-4,
             dtypes=[np.float32, np.complex64],
             devices=("cpu", "gpu"),
-            modes=("eager", "graph", "compiled")),
-        custom_numeric(
-            tol=1e-2,
-            dtypes=[np.float16],
-            devices=("tpu"),
             modes=("eager", "graph", "compiled")),
         # TODO: this is very low tolerance for f64
         custom_numeric(
@@ -1020,11 +1208,20 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
         custom_numeric(
-            description="custom numeric comparison when compute_uv",
+            tol=1e-4,
+            description="custom numeric comparison when compute_uv on CPU/GPU",
             custom_assert=custom_assert,
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled"),
-            enabled=(compute_uv == True))
+            enabled=(compute_uv == True)),
+        custom_numeric(
+            tol=1e-2,
+            description="custom numeric comparison when compute_uv on TPU",
+            dtypes=[np.float32, np.float64, np.complex64, np.complex128],
+            custom_assert=custom_assert,
+            devices=("tpu"),
+            modes=("eager", "graph", "compiled"),
+            enabled=(compute_uv == True)),
     ]
 
   @classmethod
@@ -1069,7 +1266,10 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   @classmethod
   def triangular_solve(cls, harness: primitive_harness.Harness):
     return [
-        missing_tf_kernel(dtypes=[dtypes.bfloat16]),
+        missing_tf_kernel(
+            dtypes=[dtypes.bfloat16],
+            devices=("gpu", "cpu"),
+            modes=("eager", "graph")),
         missing_tf_kernel(
             dtypes=[np.float16],
             devices=("gpu", "cpu"),
@@ -1104,6 +1304,24 @@ def custom_numeric(
       custom_assert=custom_assert,
       enabled=enabled,
       tol=tol)
+
+def custom_random_keys_output():
+  def custom_assert(tst, result_jax, result_tf, *, args, tol, err_msg):
+    # TODO(frostig): Don't need this conditional once we always
+    # enable_custom_prng. We can even assert the isinstance instead.
+    def unwrap_keys(keys):
+      if isinstance(keys, jax.random.KeyArray):
+        return jax._src.prng.random_unwrap(keys)
+      else:
+        return keys
+
+    tst.assertAllClose(unwrap_keys(result_jax), result_tf,
+                       atol=tol, rtol=tol, err_msg=err_msg)
+
+  return custom_numeric(
+      description="Returns JAX key arrays, so compare underlying base array",
+      modes=("eager", "graph", "compiled"),
+      custom_assert=custom_assert)
 
 
 def missing_tf_kernel(*,

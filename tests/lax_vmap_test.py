@@ -24,9 +24,12 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax import dtypes
 from jax import lax
+
 from jax._src import test_util as jtu
+from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip
 
@@ -111,17 +114,18 @@ class LaxVmapTest(jtu.JaxTestCase):
        "testcase_name":
        "_lhs_shape={}_rhs_shape={}_strides={}_padding={}_lhs_dilation={}_"
        "rhs_dilation={}_dims={}_feature_group_count={}_batch_group_count={}"
-       "_lhs_bdim={}_rhs_bdim={}"
+       "_lhs_bdim={}_rhs_bdim={}_bdim_size={}"
        .format(jtu.format_shape_dtype_string(lhs_shape, dtype),
                jtu.format_shape_dtype_string(rhs_shape, dtype),
                strides, padding, lhs_dil, rhs_dil, ",".join(dim_nums),
-               feature_group_count, batch_group_count, lhs_bdim, rhs_bdim),
+               feature_group_count, batch_group_count, lhs_bdim, rhs_bdim,
+               bdim_size),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
        "strides": strides, "padding": padding, "lhs_dil": lhs_dil,
        "rhs_dil": rhs_dil, "dimension_numbers": dim_nums,
        "perms": perms, "lhs_bdim": lhs_bdim, "rhs_bdim": rhs_bdim,
        "feature_group_count": feature_group_count,
-       "batch_group_count": batch_group_count,
+       "batch_group_count": batch_group_count, "bdim_size": bdim_size,
      } for batch_group_count, feature_group_count in s([(1, 1), (2, 1), (1, 2)])
        for lhs_shape, rhs_shape, all_strides, all_pads, lhs_dils, rhs_dils in s([
            ((b * batch_group_count, i * feature_group_count, 6, 7),  # lhs_shape
@@ -139,7 +143,10 @@ class LaxVmapTest(jtu.JaxTestCase):
        for dim_nums, perms in s([
            (("NCHW", "OIHW", "NCHW"), ([0, 1, 2, 3], [0, 1, 2, 3])),
            (("NHWC", "HWIO", "NHWC"), ([0, 2, 3, 1], [2, 3, 1, 0])),
-           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3]))])
+           (("NHWC", "OIHW", "NCHW"), ([0, 2, 3, 1], [0, 1, 2, 3])),
+           (("HWCN", "HWIO", "HWCN"), ([2, 3, 1, 0], [2, 3, 1, 0])),
+       ])
+       for bdim_size in s([0, 5])
        for lhs_bdim in s(itertools.chain([cast(Optional[int], None)],
                                          range(len(lhs_shape) + 1)))
        for rhs_bdim in s(itertools.chain([cast(Optional[int], None)],
@@ -149,7 +156,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   def testConvGeneralDilatedBatching(
       self, lhs_shape, rhs_shape, dtype, strides, padding, lhs_dil, rhs_dil,
       dimension_numbers, perms, feature_group_count, batch_group_count,
-      lhs_bdim, rhs_bdim):
+      lhs_bdim, rhs_bdim, bdim_size):
     rng = jtu.rand_default(self.rng())
     tol = 1e-1 if dtypes.finfo(dtype).bits <= 32 else 1e-3
 
@@ -164,8 +171,9 @@ class LaxVmapTest(jtu.JaxTestCase):
                    feature_group_count=feature_group_count,
                    batch_group_count=batch_group_count,
                    precision=lax.Precision.HIGHEST)
-    self._CheckBatching(conv, 5, (lhs_bdim, rhs_bdim), (lhs_shape, rhs_shape),
-                        (dtype, dtype), rng, rtol=tol, atol=tol)
+    self._CheckBatching(conv, bdim_size, (lhs_bdim, rhs_bdim),
+                        (lhs_shape, rhs_shape), (dtype, dtype), rng, rtol=tol,
+                        atol=tol)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_from_dtype={}_to_dtype={}_bdims={}".format(
@@ -411,7 +419,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     op = lambda c, x, y: lax.select(c < 0, x, y)
     self._CheckBatching(op, 5, bdims, (pred_shape, arg_shape, arg_shape,),
-                        (np.bool_, arg_dtype, arg_dtype), rng)
+                        (arg_dtype, arg_dtype, arg_dtype), rng)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -464,12 +472,11 @@ class LaxVmapTest(jtu.JaxTestCase):
       for init_val, op, dtypes in [
           (0, lax.add, default_dtypes),
           (1, lax.mul, default_dtypes),
-          (0, lax.max, all_dtypes), # non-monoidal
+          # non-monoidal for everything except unsigned integers
+          (0, lax.max, all_dtypes),
           (-np.inf, lax.max, float_dtypes),
           (dtypes.iinfo(np.int32).min, lax.max, [np.int32]),
           (dtypes.iinfo(np.int64).min, lax.max, [np.int64]),
-          (dtypes.iinfo(np.uint32).min, lax.max, [np.uint32]),
-          (dtypes.iinfo(np.uint64).min, lax.max, [np.uint64]),
           (np.inf, lax.min, float_dtypes),
           (dtypes.iinfo(np.int32).max, lax.min, [np.int32]),
           (dtypes.iinfo(np.int64).max, lax.min, [np.int64]),
@@ -610,8 +617,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     def fun(operand, tangents):
       pads = lax.padtype_to_pads(operand.shape, dims, strides, padding)
       ones = (1,) * len(operand.shape)
-      return lax._select_and_gather_add(operand, tangents, lax.ge_p, dims,
-                                        strides, pads, ones, ones)
+      return lax_windowed_reductions._select_and_gather_add(
+          operand, tangents, lax.ge_p, dims, strides, pads, ones, ones)
 
     for shape, dims, strides in all_configs:
       for bdims in all_bdims(shape, shape):
@@ -633,12 +640,12 @@ class LaxVmapTest(jtu.JaxTestCase):
     pads = lax.padtype_to_pads(shape, dims, strides, padding)
 
     def fun(operand, cotangents):
-      return lax._select_and_scatter_add(operand, cotangents, lax.ge_p, dims,
-                                         strides, pads)
+      return lax_windowed_reductions._select_and_scatter_add(
+          operand, cotangents, lax.ge_p, dims, strides, pads)
     ones = (1,) * len(shape)
     cotangent_shape = jax.eval_shape(
-      lambda x: lax._select_and_gather_add(x, x, lax.ge_p, dims, strides,
-                                           pads, ones, ones),
+      lambda x: lax_windowed_reductions._select_and_gather_add(
+          x, x, lax.ge_p, dims, strides, pads, ones, ones),
       np.ones(shape, dtype)).shape
 
     for bdims in all_bdims(cotangent_shape, shape):
@@ -658,7 +665,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     axes = range(ndims - fft_ndims, ndims)
     fft_lengths = tuple(shape[axis] for axis in axes)
     op = lambda x: lax.fft(x, xla_client.FftType.FFT, fft_lengths)
-    self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng)
+    self._CheckBatching(op, 5, bdims, [shape], [np.complex64], rng,
+                        rtol=1e-5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_idxs={}_dnums={}_slice_sizes={}_bdims={}"
@@ -723,6 +731,15 @@ class LaxVmapTest(jtu.JaxTestCase):
     out_shape = lax.broadcast_shapes(shape1, shape2)
     self.assertTrue(all(type(s) is int for s in out_shape))
 
+  def testBroadcastShapesFaultyInputs(self):
+    err_shape1, err_shape2 = (-1,), "hello"
+    # negative inputs should fail while informing about illegal negative indices...
+    with self.assertRaisesRegex(TypeError, "Only non-negative indices are allowed.*"):
+      lax.broadcast_shapes(err_shape1)
+    # ... while non-integers should error earlier, in the canonicalize_shape machinery.
+    with self.assertRaisesRegex(TypeError, "Shapes must be 1D sequences.*"):
+      lax.broadcast_shapes(err_shape2)  # pytype: disable=wrong-arg-types
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_k={}_bdims={}".format(
           jtu.format_shape_dtype_string(shape, dtype), k, bdims),
@@ -778,6 +795,37 @@ class LaxVmapTest(jtu.JaxTestCase):
   # TODO DynamicUpdateSlice
   # TODO Collapse
   # TODO Scatter
+
+  # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
+  @jtu.skip_on_devices("gpu")
+  def test_variadic_reduce_window(self):
+    # https://github.com/google/jax/discussions/9818 and
+    # https://github.com/google/jax/issues/9837
+    def normpool(x):
+      norms = jnp.linalg.norm(x, axis=-1)
+      idxs = jnp.arange(x.shape[0])
+
+      def g(a, b):
+        an, ai = a
+        bn, bi = b
+        which = an >= bn
+        return (jnp.where(which, an, bn), jnp.where(which, ai, bi))
+
+      _, idxs = lax.reduce_window((norms, idxs), (-np.inf, -1), g,
+                        window_dimensions=(2,), window_strides=(2,),
+                        padding=((0, 0),))
+      return x[idxs]
+
+
+    inpt = jnp.array([
+      [1.0, 0.0, 1.0],
+      [2.0, 2.0, 0.0],
+      [3.0, 0.0, 1.0],
+      [0.0, 1.0, 1.0],
+    ])
+    output = jax.vmap(normpool)(inpt[None, ...])  # doesn't crash
+    expected = jnp.array([[[2.0, 2.0, 0.0], [3.0, 0.0, 1.0]]])
+    self.assertAllClose(output, expected, check_dtypes=False)
 
 
 if __name__ == '__main__':

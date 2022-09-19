@@ -19,11 +19,13 @@ import unittest
 from absl.testing import absltest, parameterized
 
 import numpy as np
+import scipy.signal as osp_signal
 
 from jax import lax
+import jax.numpy as jnp
+from jax._src import dtypes
 from jax._src import test_util as jtu
 import jax.scipy.signal as jsp_signal
-import scipy.signal as osp_signal
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -38,6 +40,7 @@ stft_test_shapes = [
     ((3, 17, 2), 9, 3, 1),
     ((2, 3, 389, 5), 17, 13, 2),
     ((2, 1, 133, 3), 17, 13, -2),
+    ((3, 7), 1, 0, 1),
 ]
 csd_test_shapes = [
     # (x_input_shape, y_input_shape, nperseg, noverlap, axis)
@@ -46,10 +49,22 @@ csd_test_shapes = [
     ((3, 17, 2), (3, 12, 2), 9, 3, 1),
 ]
 welch_test_shapes = stft_test_shapes
+istft_test_shapes = [
+    # (input_shape, nperseg, noverlap, timeaxis, freqaxis)
+    ((3, 2, 64, 31), 100, 75, -1, -2),
+    ((17, 8, 5), 13, 7, 0, 1),
+    ((65, 24), 24, 7, -2, -1),
+]
 
 
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 _TPU_FFT_TOL = 0.15
+
+def _real_dtype(dtype):
+  return jnp.finfo(dtypes.to_inexact_dtype(dtype)).dtype
+
+def _complex_dtype(dtype):
+  return dtypes.to_complex_dtype(dtype)
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
@@ -115,9 +130,17 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testDetrend(self, shape, dtype, axis, type, bp):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    osp_fun = partial(osp_signal.detrend, axis=axis, type=type, bp=bp)
-    jsp_fun = partial(jsp_signal.detrend, axis=axis, type=type, bp=bp)
-    tol = {np.float32: 1e-5, np.float64: 1e-12}
+    kwds = dict(axis=axis, type=type, bp=bp)
+
+    def osp_fun(x):
+      return osp_signal.detrend(x, **kwds).astype(dtypes.to_inexact_dtype(x.dtype))
+    jsp_fun = partial(jsp_signal.detrend, **kwds)
+
+    if jtu.device_under_test() == 'tpu':
+      tol = {np.float32: 3e-2, np.float64: 1e-12}
+    else:
+      tol = {np.float32: 1e-5, np.float64: 1e-12}
+
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
@@ -142,18 +165,18 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testStftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                            noverlap, nfft, detrend, boundary, padded,
                            timeaxis):
-    is_complex = np.dtype(dtype).kind == 'c'
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     if is_complex and detrend is not None:
-      return
+      self.skipTest("Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    osp_fun = partial(osp_signal.stft,
-        fs=fs, window=window, nfft=nfft, boundary=boundary, padded=padded,
-        detrend=detrend, nperseg=nperseg, noverlap=noverlap, axis=timeaxis,
-        return_onesided=not is_complex)
-    jsp_fun = partial(jsp_signal.stft,
-        fs=fs, window=window, nfft=nfft, boundary=boundary, padded=padded,
-        detrend=detrend, nperseg=nperseg, noverlap=noverlap, axis=timeaxis,
-        return_onesided=not is_complex)
+    kwds = dict(fs=fs, window=window, nfft=nfft, boundary=boundary, padded=padded,
+                detrend=detrend, nperseg=nperseg, noverlap=noverlap, axis=timeaxis,
+                return_onesided=not is_complex)
+
+    def osp_fun(x):
+      freqs, time, Pxx = osp_signal.stft(x, **kwds)
+      return freqs.astype(_real_dtype(dtype)), time.astype(_real_dtype(dtype)), Pxx.astype(_complex_dtype(dtype))
+    jsp_fun = partial(jsp_signal.stft, **kwds)
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
@@ -193,21 +216,19 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testCsdAgainstNumpy(
       self, *, xshape, yshape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
-    is_complex = np.dtype(dtype).kind == 'c'
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     if is_complex and detrend is not None:
-      raise unittest.SkipTest(
-          "Complex signal is not supported in lax-backed `signal.detrend`.")
+      self.skipTest("Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    osp_fun = partial(osp_signal.csd,
-        fs=fs, window=window,
-        nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-        detrend=detrend, return_onesided=not is_complex,
-        scaling=scaling, axis=timeaxis, average=average)
-    jsp_fun = partial(jsp_signal.csd,
-        fs=fs, window=window,
-        nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-        detrend=detrend, return_onesided=not is_complex,
-        scaling=scaling, axis=timeaxis, average=average)
+    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
+                nfft=nfft, detrend=detrend, return_onesided=not is_complex,
+                scaling=scaling, axis=timeaxis, average=average)
+
+    def osp_fun(x, y):
+      freqs, Pxy = osp_signal.csd(x, y, **kwds)
+      # Make type-casting the same as JAX.
+      return freqs.astype(_real_dtype(dtype)), Pxy.astype(_complex_dtype(dtype))
+    jsp_fun = partial(jsp_signal.csd, **kwds)
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
@@ -243,27 +264,21 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testCsdWithSameParamAgainstNumpy(
       self, *, shape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
-    is_complex = np.dtype(dtype).kind == 'c'
+    is_complex = dtypes.issubdtype(dtype, np.complexfloating)
     if is_complex and detrend is not None:
-      raise unittest.SkipTest(
-          "Complex signal is not supported in lax-backed `signal.detrend`.")
+      self.skipTest("Complex signal is not supported in lax-backed `signal.detrend`.")
+
+    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
+                nfft=nfft, detrend=detrend, return_onesided=not is_complex,
+                scaling=scaling, axis=timeaxis, average=average)
 
     def osp_fun(x, y):
       # When the identical parameters are given, jsp-version follows
       # the behavior with copied parameters.
-      freqs, Pxy = osp_signal.csd(
-          x, y.copy(),
-          fs=fs, window=window,
-          nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-          detrend=detrend, return_onesided=not is_complex,
-          scaling=scaling, axis=timeaxis, average=average)
-      return freqs, Pxy
-    jsp_fun = partial(jsp_signal.csd,
-        fs=fs, window=window,
-        nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-        detrend=detrend, return_onesided=not is_complex,
-        scaling=scaling, axis=timeaxis, average=average)
-
+      freqs, Pxy = osp_signal.csd(x, y.copy(), **kwds)
+      # Make type-casting the same as JAX.
+      return freqs.astype(_real_dtype(dtype)), Pxy.astype(_complex_dtype(dtype))
+    jsp_fun = partial(jsp_signal.csd, **kwds)
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
@@ -306,14 +321,14 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
         raise unittest.SkipTest(
             "Complex signal is not supported in lax-backed `signal.detrend`.")
 
-    osp_fun = partial(osp_signal.welch,
-        fs=fs, window=window, nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-        detrend=detrend, return_onesided=return_onesided, scaling=scaling,
-        axis=timeaxis, average=average)
-    jsp_fun = partial(jsp_signal.welch,
-        fs=fs, window=window, nperseg=nperseg, noverlap=noverlap, nfft=nfft,
-        detrend=detrend, return_onesided=return_onesided, scaling=scaling,
-        axis=timeaxis, average=average)
+    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap, nfft=nfft,
+                detrend=detrend, return_onesided=return_onesided, scaling=scaling,
+                axis=timeaxis, average=average)
+
+    def osp_fun(x):
+      freqs, Pxx = osp_signal.welch(x, **kwds)
+      return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))
+    jsp_fun = partial(jsp_signal.welch, **kwds)
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
         np.complex64: 1e-5, np.complex128: 1e-12
@@ -344,18 +359,19 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   def testWelchWithDefaultStepArgsAgainstNumpy(
       self, *, shape, dtype, nperseg, noverlap, use_nperseg, use_noverlap,
       timeaxis):
-    kwargs = {
-        'axis': timeaxis
-    }
+    kwargs = {'axis': timeaxis}
 
     if use_nperseg:
       kwargs['nperseg'] = nperseg
     else:
-      kwargs['window'] = osp_signal.get_window('hann', nperseg)
+      kwargs['window'] = jnp.array(osp_signal.get_window('hann', nperseg),
+                                   dtype=dtypes.to_complex_dtype(dtype))
     if use_noverlap:
       kwargs['noverlap'] = noverlap
 
-    osp_fun = partial(osp_signal.welch, **kwargs)
+    def osp_fun(x):
+      freqs, Pxx = osp_signal.welch(x, **kwargs)
+      return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))
     jsp_fun = partial(jsp_signal.welch, **kwargs)
     tol = {
         np.float32: 1e-5, np.float64: 1e-12,
@@ -370,6 +386,53 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
+          f"_fs={fs}_window={window}_boundary={boundary}"
+          f"_nperseg={nperseg}_noverlap={noverlap}_onesided={onesided}"
+          f"_timeaxis={timeaxis}_freqaxis{freqaxis}_nfft={nfft}",
+       "shape": shape, "dtype": dtype, "fs": fs, "window": window,
+       "nperseg": nperseg, "noverlap": noverlap, "nfft": nfft,
+       "onesided": onesided, "boundary": boundary,
+       "timeaxis": timeaxis, "freqaxis": freqaxis}
+      for shape, nperseg, noverlap, timeaxis, freqaxis in istft_test_shapes
+      for dtype in default_dtypes
+      for fs in [1.0, 16000.0]
+      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
+      for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
+      for onesided in [False, True]
+      for boundary in [False, True]))
+  def testIstftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
+                            noverlap, nfft, onesided, boundary,
+                            timeaxis, freqaxis):
+    if not onesided:
+      new_freq_len = (shape[freqaxis] - 1) * 2
+      shape = shape[:freqaxis] + (new_freq_len ,) + shape[freqaxis + 1:]
+
+    kwds = dict(fs=fs, window=window, nperseg=nperseg, noverlap=noverlap,
+                nfft=nfft, input_onesided=onesided, boundary=boundary,
+                time_axis=timeaxis, freq_axis=freqaxis)
+
+    osp_fun = partial(osp_signal.istft, **kwds)
+    osp_fun = jtu.ignore_warning(message="NOLA condition failed, STFT may not be invertible")(osp_fun)
+    jsp_fun = partial(jsp_signal.istft, **kwds)
+
+    tol = {
+        np.float32: 1e-4, np.float64: 1e-6,
+        np.complex64: 1e-4, np.complex128: 1e-6
+    }
+    if jtu.device_under_test() == 'tpu':
+      tol = _TPU_FFT_TOL
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    # Here, dtype of output signal is different depending on osp versions,
+    # and so depending on the test environment.  Thus, dtype check is disabled.
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

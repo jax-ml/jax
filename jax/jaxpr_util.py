@@ -22,7 +22,7 @@ import types
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
 
 from jax import core
-from jax._src.lib import xla_client, xla_extension_version
+from jax._src.lib import xla_client
 from jax._src import util
 from jax._src import source_info_util
 
@@ -75,13 +75,12 @@ def var_defs_and_refs(jaxpr: core.Jaxpr):
   refs: Dict[core.Var, List[MaybeEqn]] = {}
 
   def read(a: core.Atom, eqn: MaybeEqn):
-    if a is not core.unitvar and not isinstance(a, core.Literal):
+    if not isinstance(a, core.Literal):
       assert a in defs, a
       assert a in refs, a
       refs[a].append(eqn)
 
   def write(v: core.Var, eqn: MaybeEqn):
-    assert v is not core.unitvar
     assert v not in defs, v
     assert v not in refs, v
     if not isinstance(v, core.DropVar):
@@ -118,7 +117,7 @@ def vars_by_fanout(jaxpr: core.Jaxpr):
     return {fmt_key(var, var_def): len(var_refs)
             for var, var_def, var_refs in reads}
 
-  return [(j, hist(j, reads)) for j, reads in var_defs_and_refs(jaxpr)]
+  return [(j, hist(j, reads)) for j, reads in var_defs_and_refs(jaxpr)]  # pytype: disable=bad-unpacking
 
 def print_histogram(histogram: Dict[Any, int]):
   count_width = max(len(str(v)) for v in histogram.values())
@@ -149,11 +148,7 @@ def _pprof_profile(
     if tb is None:
       frames = []
     else:
-      # TODO(phawkins): drop this test when jaxlib 0.3 becomes the minimum.
-      if xla_extension_version >= 57:
-        raw_frames = zip(*tb.raw_frames())
-      else:
-        raw_frames = tb.raw_frames()
+      raw_frames = zip(*tb.raw_frames())
       frames = [loc[(code, lasti)] for code, lasti in raw_frames
                 if source_info_util.is_user_filename(code.co_filename)]  # type: ignore
     samples.append({

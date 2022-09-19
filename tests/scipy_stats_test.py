@@ -13,16 +13,16 @@
 # limitations under the License.
 
 
+from functools import partial
 import itertools
 
 from absl.testing import absltest, parameterized
 
 import numpy as np
-import scipy as osp
 import scipy.stats as osp_stats
 
 import jax
-from jax._src import test_util as jtu
+from jax._src import test_util as jtu, tree_util
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
@@ -31,16 +31,15 @@ config.parse_flags_with_absl()
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
-scipy_version = tuple(map(int, osp.version.version.split('.')[:2]))
 
 
 def genNamedParametersNArgs(n):
-    return parameterized.named_parameters(
-        jtu.cases_from_list(
-          {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
-            "shapes": shapes, "dtypes": dtypes}
-          for shapes in itertools.combinations_with_replacement(all_shapes, n)
-          for dtypes in itertools.combinations_with_replacement(jtu.dtypes.floating, n)))
+  return parameterized.named_parameters(
+      jtu.cases_from_list(
+        {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
+          "shapes": shapes, "dtypes": dtypes}
+        for shapes in itertools.combinations_with_replacement(all_shapes, n)
+        for dtypes in itertools.combinations_with_replacement(jtu.dtypes.floating, n)))
 
 
 # Allow implicit rank promotion in these tests, as virtually every test exercises it.
@@ -58,13 +57,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       k, mu, loc = map(rng, shapes, dtypes)
       k = np.floor(k)
       # clipping to ensure that rate parameter is strictly positive
-      mu = np.clip(np.abs(mu), a_min=0.1, a_max=None)
+      mu = np.clip(np.abs(mu), a_min=0.1, a_max=None).astype(mu.dtype)
       loc = np.floor(loc)
       return [k, mu, loc]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14})
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker, rtol={np.float64: 1e-14})
 
   @genNamedParametersNArgs(3)
   def testPoissonPmf(self, shapes, dtypes):
@@ -76,13 +76,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       k, mu, loc = map(rng, shapes, dtypes)
       k = np.floor(k)
       # clipping to ensure that rate parameter is strictly positive
-      mu = np.clip(np.abs(mu), a_min=0.1, a_max=None)
+      mu = np.clip(np.abs(mu), a_min=0.1, a_max=None).astype(mu.dtype)
       loc = np.floor(loc)
       return [k, mu, loc]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
   def testPoissonCdf(self, shapes, dtypes):
@@ -93,12 +94,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       k, mu, loc = map(rng, shapes, dtypes)
       # clipping to ensure that rate parameter is strictly positive
-      mu = np.clip(np.abs(mu), a_min=0.1, a_max=None)
+      mu = np.clip(np.abs(mu), a_min=0.1, a_max=None).astype(mu.dtype)
       return [k, mu, loc]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
 
 
   @genNamedParametersNArgs(3)
@@ -114,9 +116,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [x, p, loc]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
   def testGeomLogPmf(self, shapes, dtypes):
@@ -131,9 +134,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       loc = np.floor(loc)
       return [x, p, loc]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testBetaLogPdf(self, shapes, dtypes):
@@ -145,10 +149,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, a, b, loc, scale = map(rng, shapes, dtypes)
       return [x, a, b, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker,
-                          rtol={np.float32: 2e-3, np.float64: 1e-4})
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float32: 2e-3, np.float64: 1e-4})
 
   def testBetaLogPdfZero(self):
     # Regression test for https://github.com/google/jax/issues/7645
@@ -166,12 +171,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       # clipping to ensure that scale is not too low
-      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @parameterized.named_parameters(
     jtu.cases_from_list(
@@ -208,9 +214,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return x, alpha
 
     tol = {np.float32: 1E-3, np.float64: 1e-5}
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=tol)
-    self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=tol)
+      self._CompileAndCheck(lax_fun, args_maker, atol=tol, rtol=tol)
 
   @genNamedParametersNArgs(3)
   def testExponLogPdf(self, shapes, dtypes):
@@ -222,9 +230,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(4)
   def testGammaLogPdf(self, shapes, dtypes):
@@ -236,14 +245,45 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, a, loc, scale = map(rng, shapes, dtypes)
       return [x, a, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=5e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   def testGammaLogPdfZero(self):
     # Regression test for https://github.com/google/jax/issues/7256
     self.assertAllClose(
       osp_stats.gamma.pdf(0.0, 1.0), lsp_stats.gamma.pdf(0.0, 1.0), atol=1E-6)
+
+  @genNamedParametersNArgs(2)
+  def testGenNormLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gennorm.logpdf
+    lax_fun = lsp_stats.gennorm.logpdf
+
+    def args_maker():
+      x, p = map(rng, shapes, dtypes)
+      return [x, p]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4, rtol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(2)
+  def testGenNormCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.gennorm.cdf
+    lax_fun = lsp_stats.gennorm.cdf
+
+    def args_maker():
+      x, p = map(rng, shapes, dtypes)
+      return [x, p]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4, rtol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(4)
   def testNBinomLogPmf(self, shapes, dtypes):
@@ -260,9 +300,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return [k, n, p, loc]
 
     tol = {np.float32: 1e-6, np.float64: 1e-8}
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=5e-4)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
 
   @genNamedParametersNArgs(3)
   def testLaplaceLogPdf(self, shapes, dtypes):
@@ -273,12 +315,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       # clipping to ensure that scale is not too low
-      scale = np.clip(scale, a_min=0.1, a_max=None)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
   def testLaplaceCdf(self, shapes, dtypes):
@@ -289,12 +332,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       # ensure that scale is not too low
-      scale = np.clip(scale, a_min=0.1, a_max=None)
+      scale = np.clip(scale, a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol={np.float32: 1e-5, np.float64: 1e-6})
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol={np.float32: 1e-5, np.float64: 1e-6})
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(1)
   def testLogisticCdf(self, shapes, dtypes):
@@ -305,9 +349,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       return list(map(rng, shapes, dtypes))
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=3e-5)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(1)
   def testLogisticLogpdf(self, shapes, dtypes):
@@ -321,6 +366,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=1e-3)
     self._CompileAndCheck(lax_fun, args_maker)
+
+  def testLogisticLogpdfOverflow(self):
+    # Regression test for https://github.com/google/jax/issues/10219
+    self.assertAllClose(
+      np.array([-100, -100], np.float32),
+      lsp_stats.logistic.logpdf(np.array([-100, 100], np.float32)),
+      check_dtypes=False)
 
   @genNamedParametersNArgs(1)
   def testLogisticPpf(self, shapes, dtypes):
@@ -345,7 +397,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       return list(map(rng, shapes, dtypes))
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
+                            tol=2e-5)
     self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(3)
@@ -357,12 +409,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       # clipping to ensure that scale is not too low
-      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
 
 
   @genNamedParametersNArgs(3)
@@ -374,12 +427,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       # clipping to ensure that scale is not too low
-      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
 
   @genNamedParametersNArgs(3)
@@ -391,12 +445,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, loc, scale = map(rng, shapes, dtypes)
       # clipping to ensure that scale is not too low
-      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-6)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-6)
+      self._CompileAndCheck(lax_fun, args_maker)
 
 
   @genNamedParametersNArgs(3)
@@ -408,13 +463,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       q, loc, scale = map(rng, shapes, dtypes)
       # ensure probability is between 0 and 1:
-      q = np.clip(np.abs(q / 3), a_min=None, a_max=1)
+      q = np.clip(np.abs(q / 3), a_min=None, a_max=1).astype(q.dtype)
       # clipping to ensure that scale is not too low
-      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [q, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
 
   @genNamedParametersNArgs(4)
@@ -427,9 +483,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, b, loc, scale = map(rng, shapes, dtypes)
       return [x, b, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
 
 
   @genNamedParametersNArgs(4)
@@ -441,13 +498,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     def args_maker():
       x, df, loc, scale = map(rng, shapes, dtypes)
       # clipping to ensure that scale is not too low
-      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None)
+      scale = np.clip(np.abs(scale), a_min=0.1, a_max=None).astype(scale.dtype)
       return [x, df, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-3)
-    self._CompileAndCheck(lax_fun, args_maker,
-                          rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker,
+                            rtol={np.float64: 1e-14}, atol={np.float64: 1e-14})
 
 
   @genNamedParametersNArgs(3)
@@ -460,9 +518,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, loc, scale = map(rng, shapes, dtypes)
       return [x, loc, np.abs(scale)]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=1e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(4)
   def testChi2LogPdf(self, shapes, dtypes):
@@ -474,9 +533,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       x, df, loc, scale = map(rng, shapes, dtypes)
       return [x, df, loc, scale]
 
-    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                            tol=5e-4)
-    self._CompileAndCheck(lax_fun, args_maker)
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
 
   @genNamedParametersNArgs(5)
   def testBetaBinomLogPmf(self, shapes, dtypes):
@@ -487,22 +547,46 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       k, n, a, b, loc = map(rng, shapes, dtypes)
       k = np.floor(k)
       n = np.ceil(n)
-      a = np.clip(a, a_min = 0.1, a_max = None)
-      b = np.clip(a, a_min = 0.1, a_max = None)
+      a = np.clip(a, a_min = 0.1, a_max=None).astype(a.dtype)
+      b = np.clip(a, a_min = 0.1, a_max=None).astype(b.dtype)
       loc = np.floor(loc)
       return [k, n, a, b, loc]
 
-    if scipy_version >= (1, 4):
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
       scipy_fun = osp_stats.betabinom.logpmf
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
-    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
+      self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   def testIssue972(self):
     self.assertAllClose(
       np.ones((4,), np.float32),
       lsp_stats.norm.cdf(np.full((4,), np.inf, np.float32)),
       check_dtypes=False)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape, shape], [x_dtype, p_dtype]),
+       "x_dtype": x_dtype,
+       "p_dtype": p_dtype,
+       "shape": shape}
+      for shape in [(2), (4,), (1, 5)]
+      for (x_dtype, p_dtype) in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)))
+  def testMultinomialLogPmf(self, shape, x_dtype, p_dtype):
+    rng = jtu.rand_positive(self.rng())
+    scipy_fun = osp_stats.multinomial.logpmf
+    lax_fun = lsp_stats.multinomial.logpmf
+
+    def args_maker():
+      x = rng(shape, x_dtype)
+      n = np.sum(x, dtype=x.dtype)
+      p = rng(shape, p_dtype)
+      # Normalize the array such that it sums it's entries sum to 1 (or close enough to)
+      p = p / np.sum(p)
+      return [x, n, p]
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=5e-4)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_x={}_mean={}_cov={}".format(
@@ -549,11 +633,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           factor_shape = (*cov_shape[:-1], 2 * cov_shape[-1])
           factor = rng(factor_shape, cov_dtype)
           args.append(np.matmul(factor, np.swapaxes(factor, -1, -2)))
-      return args
+      return [a.astype(x_dtype) for a in args]
 
     self._CheckAgainstNumpy(osp_stats.multivariate_normal.logpdf,
                             lsp_stats.multivariate_normal.logpdf,
-                            args_maker, tol=1e-3)
+                            args_maker, tol=1e-3, check_dtypes=False)
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
@@ -596,19 +680,19 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           factor_shape = (*cov_shape[:-1], 2 * cov_shape[-1])
           factor = rng(factor_shape, cov_dtype)
           args.append(np.matmul(factor, np.swapaxes(factor, -1, -2)))
-      return args
+      return [a.astype(x_dtype) for a in args]
 
     osp_fun = np.vectorize(osp_stats.multivariate_normal.logpdf,
                            signature="(n),(n),(n,n)->()")
 
     self._CheckAgainstNumpy(osp_fun, lsp_stats.multivariate_normal.logpdf,
-                            args_maker, tol=1e-3)
+                            args_maker, tol=1e-3, check_dtypes=False)
     self._CompileAndCheck(lsp_stats.multivariate_normal.logpdf, args_maker,
                           rtol=1e-4, atol=1e-4)
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_ndim={}_nbatch={}_dtype={}".format(ndim, nbatch, dtype.__name__),
+      {"testcase_name": f"_ndim={ndim}_nbatch={nbatch}_dtype={dtype.__name__}",
        "ndim": ndim, "nbatch": nbatch, "dtype": dtype}
       for ndim in [2, 3]
       for nbatch in [1, 3, 5]
@@ -623,8 +707,211 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     result1 = lsp_stats.multivariate_normal.logpdf(x, mean, cov)
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
-    self.assertArraysEqual(result1, result2)
+    self.assertArraysEqual(result1, result2, check_dtypes=False)
 
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name":
+        "_inshape={}_outsize={}_weights={}_method={}_func={}".format(
+          jtu.format_shape_dtype_string(inshape, dtype),
+          outsize, weights, method, func),
+       "dtype": dtype,
+       "inshape": inshape,
+       "outsize": outsize,
+       "weights": weights,
+       "method": method,
+       "func": func}
+      for inshape in [(50,), (3, 50), (2, 12)]
+      for dtype in jtu.dtypes.floating
+      for outsize in [None, 10]
+      for weights in [False, True]
+      for method in [None, "scott", "silverman", 1.5, "callable"]
+      for func in [None, "evaluate", "logpdf", "pdf"]))
+  def testKde(self, inshape, dtype, outsize, weights, method, func):
+    if method == "callable":
+      method = lambda kde: jax.numpy.power(kde.neff, -1./(kde.d+4))
+
+    def scipy_fun(dataset, points, w):
+      w = np.abs(w) if weights else None
+      kde = osp_stats.gaussian_kde(dataset, bw_method=method, weights=w)
+      if func is None:
+        result = kde(points)
+      else:
+        result = getattr(kde, func)(points)
+      # Note: the scipy implementation _always_ returns float64
+      return result.astype(dtype)
+
+    def lax_fun(dataset, points, w):
+      w = jax.numpy.abs(w) if weights else None
+      kde = lsp_stats.gaussian_kde(dataset, bw_method=method, weights=w)
+      if func is None:
+        result = kde(points)
+      else:
+        result = getattr(kde, func)(points)
+      return result
+
+    if outsize is None:
+      outshape = inshape
+    else:
+      outshape = inshape[:-1] + (outsize,)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      rng(inshape, dtype), rng(outshape, dtype), rng(inshape[-1:], dtype)]
+    self._CheckAgainstNumpy(
+        scipy_fun, lax_fun, args_maker, tol={
+            np.float32: 1e-2 if jtu.device_under_test() == "tpu" else 1e-3,
+            np.float64: 1e-14
+        })
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (3, 15), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeIntegrateGaussian(self, shape, dtype):
+    def scipy_fun(dataset, weights):
+      kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
+      # Note: the scipy implementation _always_ returns float64
+      return kde.integrate_gaussian(mean, covariance).astype(dtype)
+
+    def lax_fun(dataset, weights):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      return kde.integrate_gaussian(mean, covariance)
+
+    # Construct a random mean and positive definite covariance matrix
+    rng = jtu.rand_default(self.rng())
+    ndim = shape[0] if len(shape) > 1 else 1
+    mean = rng(ndim, dtype)
+    L = rng((ndim, ndim), dtype)
+    L[np.triu_indices(ndim, 1)] = 0.0
+    L[np.diag_indices(ndim)] = np.exp(np.diag(L)) + 0.01
+    covariance = L @ L.T
+
+    args_maker = lambda: [
+      rng(shape, dtype), rng(shape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (12,)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeIntegrateBox1d(self, shape, dtype):
+    def scipy_fun(dataset, weights):
+      kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
+      # Note: the scipy implementation _always_ returns float64
+      return kde.integrate_box_1d(-0.5, 1.5).astype(dtype)
+
+    def lax_fun(dataset, weights):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      return kde.integrate_box_1d(-0.5, 1.5)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      rng(shape, dtype), rng(shape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (3, 15), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeIntegrateKde(self, shape, dtype):
+    def scipy_fun(dataset, weights):
+      kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
+      other = osp_stats.gaussian_kde(
+        dataset[..., :-3] + 0.1, weights=np.abs(weights[:-3]))
+      # Note: the scipy implementation _always_ returns float64
+      return kde.integrate_kde(other).astype(dtype)
+
+    def lax_fun(dataset, weights):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      other = lsp_stats.gaussian_kde(
+        dataset[..., :-3] + 0.1, weights=jax.numpy.abs(weights[:-3]))
+      return kde.integrate_kde(other)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      rng(shape, dtype), rng(shape[-1:], dtype)]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
+                            tol={np.float32: 1e-3, np.float64: 1e-14})
+    self._CompileAndCheck(
+        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (3, 15), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeResampleShape(self, shape, dtype):
+    def resample(key, dataset, weights, *, shape):
+      kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
+      return kde.resample(key, shape=shape)
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [
+      jax.random.PRNGKey(0), rng(shape, dtype), rng(shape[-1:], dtype)]
+
+    ndim = shape[0] if len(shape) > 1 else 1
+
+    args = args_maker()
+    func = partial(resample, shape=())
+    self._CompileAndCheck(
+      func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+    result = func(*args)
+    assert result.shape == (ndim,)
+
+    func = partial(resample, shape=(4,))
+    self._CompileAndCheck(
+      func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+    result = func(*args)
+    assert result.shape == (ndim, 4)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
+       "dtype": dtype,
+       "shape": shape}
+      for shape in [(15,), (1, 12)]
+      for dtype in jtu.dtypes.floating))
+  def testKdeResample1d(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    dataset = rng(shape, dtype)
+    weights = jax.numpy.abs(rng(shape[-1:], dtype))
+    kde = lsp_stats.gaussian_kde(dataset, weights=weights)
+    samples = jax.numpy.squeeze(kde.resample(jax.random.PRNGKey(5), shape=(1000,)))
+
+    def cdf(x):
+      result = jax.vmap(partial(kde.integrate_box_1d, -np.inf))(x)
+      # Manually casting to numpy in order to avoid type promotion error
+      return np.array(result)
+
+    self.assertGreater(osp_stats.kstest(samples, cdf).pvalue, 0.01)
+
+  def testKdePyTree(self):
+    @jax.jit
+    def evaluate_kde(kde, x):
+      return kde.evaluate(x)
+
+    dtype = np.float32
+    rng = jtu.rand_default(self.rng())
+    dataset = rng((3, 15), dtype)
+    x = rng((3, 12), dtype)
+    kde = lsp_stats.gaussian_kde(dataset)
+    leaves, treedef = tree_util.tree_flatten(kde)
+    kde2 = tree_util.tree_unflatten(treedef, leaves)
+    tree_util.tree_map(lambda a, b: self.assertAllClose(a, b), kde, kde2)
+    self.assertAllClose(evaluate_kde(kde, x), kde.evaluate(x))
 
 if __name__ == "__main__":
-    absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(testLoader=jtu.JaxTestLoader())

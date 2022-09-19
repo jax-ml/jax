@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.13.6
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3
   language: python
@@ -22,7 +22,7 @@ kernelspec:
 
 *levskaya@ mattjj@*
 
-When walking about the countryside of [Italy](https://iaml.it/blog/jax-intro), the people will not hesitate to tell you that __JAX__ has _"una anima di pura programmazione funzionale"_.
+When walking about the countryside of Italy, the people will not hesitate to tell you that __JAX__ has [_"una anima di pura programmazione funzionale"_](https://www.sscardapane.it/iaml-backup/jax-intro/).
 
 __JAX__ is a language for __expressing__ and __composing__ __transformations__ of numerical programs. __JAX__ is also able to __compile__ numerical programs for CPU or accelerators (GPU/TPU). 
 JAX works great for many numerical and scientific programs, but __only if they are written with certain constraints__ that we describe below.
@@ -504,7 +504,7 @@ The Mersenne Twister PRNG is also known to have a [number](https://cs.stackexcha
 
 +++ {"id": "COjzGBpO4tzL"}
 
-JAX instead implements an _explicit_ PRNG where entropy production and consumption are handled by explicitly passing and iterating PRNG state.  JAX uses a modern [Threefry counter-based PRNG](https://github.com/google/jax/blob/main/design_notes/prng.md) that's __splittable__.  That is, its design allows us to __fork__ the PRNG state into new PRNGs for use with parallel stochastic generation.
+JAX instead implements an _explicit_ PRNG where entropy production and consumption are handled by explicitly passing and iterating PRNG state.  JAX uses a modern [Threefry counter-based PRNG](https://github.com/google/jax/blob/main/docs/jep/263-prng.md) that's __splittable__.  That is, its design allows us to __fork__ the PRNG state into new PRNGs for use with parallel stochastic generation.
 
 The random state is described by two unsigned-int32s that we call a __key__:
 
@@ -811,7 +811,7 @@ There are more options for control flow in JAX. Say you want to avoid re-compila
 
  - `lax.cond`  _differentiable_
  - `lax.while_loop` __fwd-mode-differentiable__
- - `lax.fori_loop` __fwd-mode-differentiable__
+ - `lax.fori_loop` __fwd-mode-differentiable__ in general; __fwd and rev-mode differentiable__ if endpoints are static.
  - `lax.scan` _differentiable_
 
 +++ {"id": "Sd9xrLMXeK3A"}
@@ -1062,7 +1062,7 @@ When this code sees a nan in the output of an `@jit` function, it calls into the
 
 +++ {"id": "YTktlwTTMgFl"}
 
-## Double (64bit) precision
+## 🔪 Double (64bit) precision
 
 At the moment, JAX by default enforces single-precision numbers to mitigate the Numpy API's tendency to aggressively promote operands to `double`.  This is the desired behavior for many machine-learning applications, but it may catch you by surprise!
 
@@ -1132,6 +1132,25 @@ x.dtype # --> dtype('float64')
 ⚠️ XLA doesn't support 64-bit convolutions on all backends!
 
 +++ {"id": "WAHjmL0E2XwO"}
+
+## 🔪 Miscellaneous Divergences from NumPy
+
+While `jax.numpy` makes every attempt to replicate the behavior of numpy's API, there do exist corner cases where the behaviors differ.
+Many such cases are discussed in detail in the sections above; here we list several other known places where the APIs diverge.
+
+- For binary operations, JAX's type promotion rules differ somewhat from those used by NumPy. See [Type Promotion Semantics](https://jax.readthedocs.io/en/latest/type_promotion.html) for more details.
+- When performing unsafe type casts (i.e. casts in which the target dtype cannot represent the input value), JAX's behavior may be backend dependent, and in general may diverge from NumPy's behavior. Numpy allows control over the result in these scenarios via the `casting` argument (see [`np.ndarray.astype`](https://numpy.org/devdocs/reference/generated/numpy.ndarray.astype.html)); JAX does not provide any such configuration, instead directly inheriting the behavior of [XLA:ConvertElementType](https://www.tensorflow.org/xla/operation_semantics#convertelementtype).
+
+  Here is an example of an unsafe cast with differing results between NumPy and JAX:
+  ```python
+  >>> np.arange(254.0, 258.0).astype('uint8')                                                
+  array([254, 255,   0,   1], dtype=uint8)
+
+  >>> jnp.arange(254.0, 258.0).astype('uint8')                                               
+  DeviceArray([254, 255, 255, 255], dtype=uint8)
+  ```
+  This sort of mismatch would typically arise when casting extreme values from floating to integer types or vice versa.
+
 
 ## Fin.
 

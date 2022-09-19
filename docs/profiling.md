@@ -1,5 +1,69 @@
 # Profiling JAX programs
 
+## Viewing program traces with Perfetto
+
+We can use the JAX profiler to generate traces of a JAX program that can be
+visualized using the [Perfetto visualizer](https://ui.perfetto.dev). Currently,
+this method blocks the program until a link is clicked and the Perfetto UI loads
+the trace. If you wish to get profiling information without any interaction,
+check out the Tensorboard profiler below.
+
+```python
+with jax.profiler.trace("/tmp/jax-trace", create_perfetto_link=True):
+  # Run the operations to be profiled
+  key = jax.random.PRNGKey(0)
+  x = jax.random.normal(key, (5000, 5000))
+  y = x @ x
+  y.block_until_ready()
+```
+
+After this computation is done, the program will prompt you to open a link to
+`ui.perfetto.dev`. When you open the link, the Perfetto UI will load the trace
+file and open a visualizer.
+
+![Perfetto trace viewer](_static/perfetto.png)
+
+Program execution will continue after loading the link. The link is no longer
+valid after opening once, but it will redirect to a new URL that remains valid.
+You can then click the "Share" button in the Perfetto UI to create a permalink
+to the trace that can be shared with others.
+
+### Remote profiling
+
+When profiling code that is running remotely (for example on a hosted VM),
+you need to establish an SSH tunnel on port 9001 for the link to work. You can
+do that with this command:
+```bash
+$ ssh -L 9001:127.0.0.1:9001 <user>@<host>
+```
+or if you're using Google Cloud:
+```bash
+$ gcloud compute ssh <machine-name> -- -L 9001:127.0.0.1:9001
+```
+
+### Manual capture
+
+Instead of capturing traces programmatically using `jax.profiler.trace`, you can
+instead start a profiling server in the script of interest by calling
+`jax.profiler.start_server(<port>)`. If you only need the profiler server to be
+active for a portion of your script, you can shut it down by calling
+`jax.profiler.stop_server()`.
+
+Once the script is running and after the profiler server has started, we can
+manually capture an trace by running:
+```bash
+$ python -m jax.collect_profile <port> <duration_in_ms>
+```
+
+By default, the resulting trace information is dumped into a temporary directory
+but this can be overridden by passing in `--log_dir=<directory of choice>`. 
+Also, by default, the program will prompt you to open a link to
+`ui.perfetto.dev`. When you open the link, the Perfetto UI will load the trace
+file and open a visualizer. This feature is disabled by passing in
+`--no_perfetto_link` into the command. Alternatively, you can also point
+Tensorboard to the `log_dir` to analyze the trace (see the
+"Tensorboard Profiling" section below).
+
 ## TensorBoard profiling
 
 [TensorBoard's
@@ -113,13 +177,12 @@ from a running program.
 
    ```python
    import jax.profiler
-   server = jax.profiler.start_server(9999)
+   jax.profiler.start_server(9999)
    ```
 
     This starts the profiler server that TensorBoard connects to. The profiler
-    server must be running before you move on to the next step. It will remain
-    alive and listening until the object returned by `start_server()` is
-    destroyed.
+    server must be running before you move on to the next step. When you're done
+    using the server, you can call `jax.profiler.stop_server()` to shut it down.
 
     If you'd like to profile a snippet of a long-running program (e.g. a long
     training loop), you can put this at the beginning of the program and start

@@ -70,13 +70,14 @@ extensions = [
     'sphinx_autodoc_typehints',
     'myst_nb',
     "sphinx_remove_toctrees",
+    'sphinx_copybutton',
     'jax_extensions',
 ]
 
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3/', None),
     'numpy': ('https://numpy.org/doc/stable/', None),
-    'scipy': ('https://docs.scipy.org/doc/scipy-1.8.0/html-scipyorg/', None),
+    'scipy': ('https://docs.scipy.org/doc/scipy-1.8.1/', None),
 }
 
 suppress_warnings = [
@@ -116,7 +117,7 @@ exclude_patterns = [
     # Ignore markdown source for notebooks; myst-nb builds from the ipynb
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
-    'design_notes/type_promotion.md',
+    'jep/9407-type-promotion.md',
     # TODO: revert to jax-101/*.md once 08-pjit has a notebook
     'jax-101/01-jax-basics.md',
     'jax-101/02-jitting.md',
@@ -158,6 +159,8 @@ html_theme = 'sphinx_book_theme'
 html_theme_options = {
     'logo_only': True,
     'show_toc_level': 2,
+    'repository_url': 'https://github.com/google/jax',
+    'use_repository_button': True,     # add a "link to repository" button
 }
 
 # The name of an image file (relative to this directory) to place at the top
@@ -182,24 +185,27 @@ html_static_path = ['_static']
 # html_sidebars = {}
 
 # -- Options for myst ----------------------------------------------
-jupyter_execute_notebooks = "force"
-execution_allow_errors = False
-execution_fail_on_error = True  # Requires https://github.com/executablebooks/MyST-NB/pull/296
+myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
+myst_enable_extensions = ['dollarmath']
+nb_execution_mode = "force"
+nb_execution_allow_errors = False
+nb_merge_streams = True
 
 # Notebook cell execution timeout; defaults to 30.
-execution_timeout = 100
+nb_execution_timeout = 100
 
 # List of patterns, relative to source directory, that match notebook
 # files that will not be executed.
-execution_excludepatterns = [
+nb_execution_excludepatterns = [
     # Slow notebook: long time to load tf.ds
     'notebooks/neural_network_with_tfds_data.*',
     # Slow notebook
     'notebooks/Neural_Network_and_Data_Loading.*',
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*',
-    # TODO(jakevdp): enable execution on these
-    'design_notes/type_promotion.*',
+    # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
+    'jep/9407-type-promotion.*',
+    # TODO(jakevdp): enable execution on the following if possible:
     'jax-101/*',
     'notebooks/xmap_tutorial.*',
 ]

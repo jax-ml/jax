@@ -1,5 +1,11 @@
 name: CI
 
+# We test all supported Python versions as follows:
+# - 3.7  : Documentation build
+# - 3.8  : Part of Matrix
+# - 3.9  : Part of Matrix with NumPy dispatch
+# - 3.10 : Part of Matrix
+
 on:
   # Trigger the workflow on push or pull request,
   # but only for the main branch
@@ -16,16 +22,16 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Cancel previous
-        uses: styfle/cancel-workflow-action@0.9.1
+        uses: styfle/cancel-workflow-action@0.10.0
         with:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/head/main'}}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Set up Python 3.8
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v4
         with:
           python-version: 3.8
-      - uses: pre-commit/action@v2.0.3
+      - uses: pre-commit/action@v3.0.0
 
   build:
     name: "build ${{ matrix.name-prefix }} (py ${{ matrix.python-version }} on ${{ matrix.os }}, x64=${{ matrix.enable-x64}})"
@@ -35,29 +41,39 @@ jobs:
       matrix:
         include:
           - name-prefix: "with 3.8"
-            python-version: 3.8
+            python-version: "3.8"
             os: ubuntu-latest
             enable-x64: 0
+            prng-upgrade: 0
             package-overrides: "none"
             num_generated_cases: 1
             use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
-            python-version: 3.9
+            python-version: "3.9"
             os: ubuntu-latest
             enable-x64: 1
+            prng-upgrade: 1
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 1
             use-latest-jaxlib: false
+          - name-prefix: "with 3.10"
+            python-version: "3.10"
+            os: ubuntu-latest
+            enable-x64: 0
+            prng-upgrade: 0
+            package-overrides: "none"
+            num_generated_cases: 1
+            use-latest-jaxlib: false
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.9.1
+      uses: styfle/cancel-workflow-action@0.10.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/head/main'}}
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     - name: Get pip cache dir
@@ -66,7 +82,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "::set-output name=dir::$(pip cache dir)"
     - name: pip cache
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -88,11 +104,14 @@ jobs:
       env:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
+        JAX_ENABLE_CUSTOM_PRNG: ${{ matrix.prng-upgrade }}
         JAX_ENABLE_CHECKS: true
+        JAX_SKIP_SLOW_TESTS: true
       run: |
         pip install -e .
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
+        echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         pytest -n auto --tb=short tests examples
 
@@ -105,13 +124,13 @@ jobs:
         python-version: [3.7]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.9.1
+      uses: styfle/cancel-workflow-action@0.10.0
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/head/main'}}
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
     - name: Get pip cache dir
@@ -120,7 +139,7 @@ jobs:
         python -m pip install --upgrade pip wheel
         echo "::set-output name=dir::$(pip cache dir)"
     - name: pip cache
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: ${{ steps.pip-cache.outputs.dir }}
         key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py', '**/requirements.txt', '**/test-requirements.txt') }}
@@ -134,4 +153,4 @@ jobs:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
       run: |
         pytest -n 1 --tb=short docs
-        pytest -n 1 --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/gda_serialization
+        pytest -n 1 --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/gda_serialization --ignore=jax/collect_profile.py

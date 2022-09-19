@@ -78,11 +78,11 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
       logging.warning("Found no JAX error but expected JAX limitations: %s in "
                       "harness: %s",
                       [u.description for u in jax_unimpl], harness.fullname)
-      # We assert that we don't have too strict limitations. This assert can
-      # fail if somebody fixes a JAX or XLA limitation. In that case, you should
-      # find and remove the Limitation in primitive_harness. Alternatively,
-      # uncomment this assert and ping an OWNER of primitive_harness.
-      # self.assertEmpty(msg)
+      # We do not fail the test if we have too many limitations. If you want
+      # to find extraneous limitations, uncomment this assert and run the test
+      # on all platforms.
+      # self.assertEmpty(("Found no JAX error but expected JAX limitations: "
+      #                  f"{[u.description for u in jax_unimpl]} in harness: {harness.fullname}"))
 
   def test_generate_primitives_coverage_doc(self):
     harnesses = primitive_harness.all_harnesses
@@ -92,7 +92,7 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
 
     def unique_hash(h: primitive_harness.Harness, l: primitive_harness.Limitation):
       return (h.group_name, l.description, l.devices,
-              tuple([np.dtype(d).name for d in l.dtypes]))
+              tuple(np.dtype(d).name for d in l.dtypes))
 
     unique_limitations: Dict[Any, Tuple[primitive_harness.Harness,
                                         primitive_harness.Limitation]] = {}

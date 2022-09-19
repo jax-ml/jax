@@ -16,14 +16,15 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, _constant_like, inf, where
+from jax._src.numpy.lax_numpy import _promote_args_inexact, inf, where
 
 
 @_wraps(osp_stats.pareto.logpdf, update_doc=False)
 def logpdf(x, b, loc=0, scale=1):
   x, b, loc, scale = _promote_args_inexact("pareto.logpdf", x, b, loc, scale)
-  one = _constant_like(x, 1)
+  one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.div(scale, b))
   log_probs = lax.neg(lax.add(normalize_term, lax.mul(lax.add(b, one), lax.log(scaled_x))))

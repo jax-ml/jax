@@ -15,6 +15,7 @@
 from functools import partial
 import itertools
 import unittest
+import warnings
 
 import numpy as np
 
@@ -30,7 +31,12 @@ from jax.config import config
 
 # We use TensorFlow and PIL as reference implementations.
 try:
-  import tensorflow as tf
+  # TODO(jakevdp): remove this warning filter when keras requirement is updated.
+  # Warning comes form PIL>=9.1.0 with keras<2.10.0
+  with warnings.catch_warnings():
+    warnings.filterwarnings('ignore', category=DeprecationWarning,
+                            message=".*is deprecated and will be removed in Pillow 10.*")
+    import tensorflow as tf
 except ImportError:
   tf = None
 
@@ -100,10 +106,10 @@ class ImageTest(jtu.JaxTestCase):
     args_maker = lambda: (rng(image_shape, dtype),)
     def pil_fn(x):
       pil_methods = {
-        "nearest": PIL_Image.NEAREST,
-        "bilinear": PIL_Image.BILINEAR,
-        "bicubic": PIL_Image.BICUBIC,
-        "lanczos3": PIL_Image.LANCZOS,
+        "nearest": PIL_Image.Resampling.NEAREST,
+        "bilinear": PIL_Image.Resampling.BILINEAR,
+        "bicubic": PIL_Image.Resampling.BICUBIC,
+        "lanczos3": PIL_Image.Resampling.LANCZOS,
       }
       img = PIL_Image.fromarray(x.astype(np.float32))
       out = np.asarray(img.resize(target_shape[::-1], pil_methods[method]),
@@ -316,7 +322,7 @@ class ImageTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "antialias={}".format(antialias),
+      {"testcase_name": f"antialias={antialias}",
        "antialias": antialias}
       for antialias in [True, False]))
   def testScaleAndTranslateJITs(self, antialias):
@@ -349,7 +355,7 @@ class ImageTest(jtu.JaxTestCase):
     self.assertAllClose(output, expected, atol=2e-03)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "antialias={}".format(antialias),
+      {"testcase_name": f"antialias={antialias}",
        "antialias": antialias}
       for antialias in [True, False]))
   def testScaleAndTranslateGradFinite(self, antialias):
@@ -382,6 +388,13 @@ class ImageTest(jtu.JaxTestCase):
     translate_out = jax.grad(translate_fn)(translation_a)
     self.assertTrue(jnp.all(jnp.isfinite(translate_out)))
 
+  def testScaleAndTranslateNegativeDims(self):
+    data = jnp.full((3, 3), 0.5)
+    actual = jax.image.scale_and_translate(
+      data, (5, 5), (-2, -1), jnp.ones(2), jnp.zeros(2), "linear")
+    expected = jax.image.scale_and_translate(
+      data, (5, 5), (0, 1), jnp.ones(2), jnp.zeros(2), "linear")
+    self.assertAllClose(actual, expected)
 
   def testResizeWithUnusualShapes(self):
     x = jnp.ones((3, 4))

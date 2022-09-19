@@ -30,9 +30,11 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import ops
+
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src.lax import lax as lax_internal
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -616,6 +618,22 @@ class IndexingTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.named_parameters(
+      {"testcase_name": f"_{dtype}", "dtype": dtype}
+      for dtype in jtu.dtypes.unsigned + jtu.dtypes.integer)
+  def testIndicesNormalizationByType(self, dtype):
+    x = jnp.arange(10)
+    jaxpr = jax.make_jaxpr(x.__getitem__)(jnp.arange(3, dtype=dtype))
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    if np.issubdtype(dtype, np.unsignedinteger):
+      # Unsigned integers should not require lt, add, and select.
+      self.assertEqual(primitives, [lax.convert_element_type_p, lax.broadcast_in_dim_p, lax.gather_p])
+    else:
+      # May or may not contain convert_element_type.
+      self.assertIn(len(primitives), [5, 6])
+      self.assertEqual(primitives[:3], [lax.lt_p, lax.add_p, lax.select_n_p])
+      self.assertEqual(primitives[-2:], [lax.broadcast_in_dim_p, lax.gather_p])
+
+  @parameterized.named_parameters(
       {"testcase_name": "{}_inshape={}_indexer={}"
        .format(name, jtu.format_shape_dtype_string(shape, dtype), indexer),
        "shape": shape, "dtype": dtype, "indexer": indexer}
@@ -848,6 +866,15 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertNotIn('gather', str(jaxpr))
 
+    jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+    jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
   def testIndexingEmptyDimension(self):
     # Issue 2671: XLA error when indexing into dimension of size 0
     x = jnp.ones((2, 0))
@@ -933,7 +960,7 @@ class IndexingTest(jtu.JaxTestCase):
       jnp.array([7, 7, 1, 2, 1, 4, 5, 7, 7, 7], jnp.int32))
 
   def testIndexingWeakTypes(self):
-    x = lax._convert_element_type(jnp.arange(5), int, weak_type=True)
+    x = lax_internal._convert_element_type(jnp.arange(5), float, weak_type=True)
 
     a = x.at[0].set(1.0)
     self.assertEqual(a.dtype, x.dtype)
@@ -946,6 +973,67 @@ class IndexingTest(jtu.JaxTestCase):
     c = x.at[0].mul(1.0)
     self.assertEqual(c.dtype, x.dtype)
     self.assertTrue(dtypes.is_weakly_typed(c))
+
+  def testIndexingTypePromotion(self):
+    def _check(x_type, y_type):
+      x = jnp.arange(5, dtype=x_type)
+      y = y_type(0)
+      out = x.at[0].set(y)
+      self.assertEqual(x.dtype, out.dtype)
+
+    @jtu.ignore_warning(category=np.ComplexWarning,
+                        message="Casting complex values to real")
+    def _check_warns(x_type, y_type, msg):
+      with self.assertWarnsRegex(FutureWarning, msg):
+        _check(x_type, y_type)
+
+    def _check_raises(x_type, y_type, msg):
+      with self.assertRaisesRegex(ValueError, msg):
+        _check(x_type, y_type)
+
+    # Matching dtypes are always OK
+    _check(jnp.int32, jnp.int32)
+    _check(jnp.float32, jnp.float32)
+    _check(jnp.complex64, jnp.complex64)
+
+    # Weakly-typed y values promote.
+    _check(jnp.int32, int)
+    _check(jnp.float32, int)
+    _check(jnp.float32, float)
+    _check(jnp.complex64, int)
+    _check(jnp.complex64, float)
+    _check(jnp.complex64, complex)
+
+    # in standard promotion mode, strong types can promote.
+    msg = "scatter inputs have incompatible types"
+    with jax.numpy_dtype_promotion('standard'):
+      _check(jnp.int32, jnp.int16)
+      _check(jnp.float32, jnp.float16)
+      _check(jnp.float32, jnp.int32)
+      _check(jnp.complex64, jnp.int32)
+      _check(jnp.complex64, jnp.float32)
+
+      # TODO(jakevdp): make these _check_raises
+      _check_warns(jnp.int16, jnp.int32, msg)
+      _check_warns(jnp.int32, jnp.float32, msg)
+      _check_warns(jnp.int32, jnp.complex64, msg)
+      _check_warns(jnp.float16, jnp.float32, msg)
+      _check_warns(jnp.float32, jnp.complex64, msg)
+
+    # in strict promotion mode, strong types do not promote.
+    msg = "Input dtypes .* have no available implicit dtype promotion path"
+    with jax.numpy_dtype_promotion('strict'):
+      _check_raises(jnp.int32, jnp.int16, msg)
+      _check_raises(jnp.float32, jnp.float16, msg)
+      _check_raises(jnp.float32, jnp.int32, msg)
+      _check_raises(jnp.complex64, jnp.int32, msg)
+      _check_raises(jnp.complex64, jnp.float32, msg)
+
+      _check_raises(jnp.int16, jnp.int32, msg)
+      _check_raises(jnp.int32, jnp.float32, msg)
+      _check_raises(jnp.int32, jnp.complex64, msg)
+      _check_raises(jnp.float16, jnp.float32, msg)
+      _check_raises(jnp.float32, jnp.complex64, msg)
 
 
 def _broadcastable_shapes(shape):
@@ -960,6 +1048,21 @@ def _broadcastable_shapes(shape):
           yield [1] + s
   for x in f(list(reversed(shape))):
     yield list(reversed(x))
+
+
+# TODO(jakevdp): move this implementation to jax.dtypes & use in scatter?
+def _can_cast(from_, to):
+  with jax.numpy_dtype_promotion('standard'):
+    return lax.dtype(to) == dtypes.result_type(from_, to)
+
+
+def _compatible_dtypes(op, dtype, inexact=False):
+  if op == UpdateOps.ADD:
+    return [dtype]
+  elif inexact:
+    return [dt for dt in float_dtypes if _can_cast(dt, dtype)]
+  else:
+    return [dt for dt in all_dtypes if _can_cast(dt, dtype)]
 
 
 class UpdateOps(enum.Enum):
@@ -1033,7 +1136,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for op in s(UpdateOps)
     for dtype in s(UpdateOps.dtypes(op))
     for update_shape in s(_broadcastable_shapes(update_shape))
-    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes)
+    for update_dtype in s(_compatible_dtypes(op, dtype))
     for mode in s(MODES))))
   def testStaticIndexing(self, shape, dtype, update_shape, update_dtype,
                          indexer, op, mode):
@@ -1041,8 +1144,9 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
-    self._CompileAndCheck(jax_fn, args_maker)
+    with jtu.strict_promotion_if_dtypes_match([dtype, update_dtype]):
+      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
+      self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -1056,16 +1160,17 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for op in s(UpdateOps)
     for dtype in s(UpdateOps.dtypes(op))
     for update_shape in s(_broadcastable_shapes(update_shape))
-    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes))))
+    for update_dtype in s(_compatible_dtypes(op, dtype)))))
   def testAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                            indexer, op):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y,
-                                             unique_indices=True)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
-    self._CompileAndCheck(jax_fn, args_maker)
+                                           unique_indices=True)
+    with jtu.strict_promotion_if_dtypes_match([dtype, update_dtype]):
+      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
+      self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -1079,17 +1184,18 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for op in s(UpdateOps)
     for dtype in s(UpdateOps.dtypes(op))
     for update_shape in s(_broadcastable_shapes(update_shape))
-    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes))))
+    for update_dtype in s(_compatible_dtypes(op, dtype)))))
   def testAdvancedIndexingSorted(self, shape, dtype, update_shape, update_dtype,
-                           indexer, op):
+                                 indexer, op):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(
       op, indexer, x, y, indices_are_sorted=True, unique_indices=True)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True,
-                            tol=_update_tol(op))
-    self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
+    with jtu.strict_promotion_if_dtypes_match([dtype, update_dtype]):
+      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, check_dtypes=True,
+                              tol=_update_tol(op))
+      self._CompileAndCheck(jax_fn, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -1103,15 +1209,16 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for op in s(UpdateOps)
     for dtype in s(UpdateOps.dtypes(op))
     for update_shape in s(_broadcastable_shapes(update_shape))
-    for update_dtype in s([dtype] if op == UpdateOps.ADD else all_dtypes))))
+    for update_dtype in s(_compatible_dtypes(op, dtype)))))
   def testMixedAdvancedIndexing(self, shape, dtype, update_shape, update_dtype,
                                 indexer, op):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype), rng(update_shape, update_dtype)]
     np_fn = lambda x, y: UpdateOps.np_fn(op, indexer, x, y)
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y)
-    self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
-    self._CompileAndCheck(jax_fn, args_maker)
+    with jtu.strict_promotion_if_dtypes_match([dtype, update_dtype]):
+      self._CheckAgainstNumpy(np_fn, jax_fn, args_maker, tol=_update_tol(op))
+      self._CompileAndCheck(jax_fn, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list({
       "testcase_name":
@@ -1122,7 +1229,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
        "op": op, "mode": mode,
-  } for mode in MODES
+  } for mode in [None] + MODES
     for name, index_specs in (
       STATIC_INDEXING_TESTS if mode == "promise_in_bounds" else
       STATIC_INDEXING_TESTS + STATIC_INDEXING_OUT_OF_BOUNDS_TESTS)
@@ -1130,14 +1237,16 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     for op in [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE]
     for dtype in float_dtypes
     for update_shape in _broadcastable_shapes(update_shape)
-    for update_dtype in ([dtype] if op == UpdateOps.ADD else float_dtypes)))
+    for update_dtype in _compatible_dtypes(op, dtype, inexact=True)))
   def testStaticIndexingGrads(self, shape, dtype, update_shape, update_dtype,
                               indexer, op, mode):
     rng = jtu.rand_default(self.rng())
-    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode)
+    jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y, mode=mode,
+    unique_indices=True)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
-    check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
+    with jtu.strict_promotion_if_dtypes_match([dtype, update_dtype]):
+      check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
 
   @parameterized.named_parameters(jtu.named_cases_from_sampler(lambda s: ({
       "testcase_name": "{}_inshape={}_indexer={}_update={}_op={}".format(
@@ -1145,21 +1254,27 @@ class IndexedUpdateTest(jtu.JaxTestCase):
           jtu.format_shape_dtype_string(update_shape, update_dtype), op.name),
        "shape": shape, "dtype": dtype, "indexer": indexer,
        "update_shape": update_shape, "update_dtype": update_dtype,
-       "op": op
-  } for name, index_specs in s(ADVANCED_INDEXING_TESTS_NO_REPEATS)
+       "op": op, "unique_indices": unique_indices,
+  } for unique_indices in s([False, True])
+    for name, index_specs in s(
+      ADVANCED_INDEXING_TESTS_NO_REPEATS if unique_indices
+      else ADVANCED_INDEXING_TESTS)
     for shape, indexer, update_shape in s(index_specs)
-    for op in s([UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE])
+    for op in s(
+      [UpdateOps.ADD, UpdateOps.MUL, UpdateOps.UPDATE] if unique_indices
+      else [UpdateOps.ADD])
     for dtype in s(float_dtypes)
     for update_shape in s(_broadcastable_shapes(update_shape))
-    for update_dtype in s([dtype] if op == UpdateOps.ADD else float_dtypes))))
+    for update_dtype in s(_compatible_dtypes(op, dtype, inexact=True)))))
   def testAdvancedIndexingGrads(self, shape, dtype, update_shape, update_dtype,
-                                indexer, op):
+                                indexer, op, unique_indices):
     rng = jtu.rand_default(self.rng())
     jax_fn = lambda x, y: UpdateOps.jax_fn(op, indexer, x, y,
-                                           unique_indices=True)
+                                           unique_indices=unique_indices)
     x = rng(shape, dtype)
     y = rng(update_shape, update_dtype)
-    check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
+    with jtu.strict_promotion_if_dtypes_match([dtype, update_dtype]):
+      check_grads(jax_fn, (x, y), 2, rtol=1e-3, atol=1e-3, eps=1.)
 
   def testIndexMulGradFailsIfNotUnique(self):
     y = jnp.ones((10,), jnp.int32)
@@ -1176,7 +1291,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     # testAdvancedIndexing compares against NumPy, and as a result doesn't check
     # repeated indices. This test is just a simple manual check, based on
     # https://www.tensorflow.org/api_docs/python/tf/math/segment_sum
-    data = np.array([5, 1, 7, 2, 3, 4, 1, 3])
+    data = np.array([5, 1, 7, 2, 3, 4, 1, 3], dtype=float)
     segment_ids = np.array([0, 0, 0, 1, 2, 2, 3, 3])
 
     ans = jnp.zeros(np.max(segment_ids) + 1).at[segment_ids].add(data)
@@ -1226,6 +1341,49 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     val, grad = jax.value_and_grad(fn)(data, segment_ids)
     self.assertAllClose(val, np.array(0., np.float32))
     self.assertAllClose(grad, np.array([0., 0.], np.float32))
+
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list({
+        "testcase_name": "_{}_{}_num_segments={}_bucket_size={}".format(
+          jtu.format_shape_dtype_string(shape, dtype),
+          reducer.__name__, num_segments, bucket_size),
+        "dtype": dtype, "shape": shape,
+        "reducer": reducer, "op": op, "identity": identity,
+        "num_segments": num_segments, "bucket_size": bucket_size}
+      for dtype in [np.bool_]
+      for shape in [(8,), (7, 4), (6, 4, 2)]
+      for bucket_size in [None, 2]
+      for num_segments in [None, 1, 3])
+    for reducer, op, identity in [
+      (ops.segment_min, np.minimum, True),
+      (ops.segment_max, np.maximum, False),
+    ]))
+  def testSegmentReduceBoolean(self, shape, dtype, reducer, op, identity, num_segments, bucket_size):
+    rng = jtu.rand_default(self.rng())
+    idx_rng = jtu.rand_int(self.rng(), low=-2, high=3)
+    args_maker = lambda: [rng(shape, dtype), idx_rng(shape[:1], jnp.int32)]
+
+    if np.issubdtype(dtype, np.integer):
+      if np.isposinf(identity):
+        identity = np.iinfo(dtype).max
+      elif np.isneginf(identity):
+        identity = np.iinfo(dtype).min
+
+    jnp_fun = lambda data, segment_ids: reducer(
+      data, segment_ids, num_segments=num_segments, bucket_size=bucket_size)
+
+    def np_fun(data, segment_ids):
+      size = num_segments if num_segments is not None else (segment_ids.max() + 1)
+      out = np.full((size,) + shape[1:], identity, dtype)
+      for i, val in zip(segment_ids, data):
+        if 0 <= i < size:
+          out[i] = op(out[i], val).astype(dtype)
+      return out
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    if num_segments is not None:
+      self._CompileAndCheck(jnp_fun, args_maker)
 
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
@@ -1287,7 +1445,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     self.assertEmpty(caught_warnings)
 
   @parameterized.named_parameters(jtu.cases_from_list({
-      "testcase_name": "idx={}".format(idx), "idx": idx, "idx_type": idx_type}
+      "testcase_name": f"idx={idx}", "idx": idx, "idx_type": idx_type}
     for idx, idx_type in [
       ([0], "array"),
       ([0, 0], "array"),

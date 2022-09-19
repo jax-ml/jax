@@ -17,18 +17,19 @@ import numpy as np
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, _constant_like
+from jax._src.numpy.lax_numpy import _promote_args_inexact
 
 
 @_wraps(osp_stats.t.logpdf, update_doc=False)
 def logpdf(x, df, loc=0, scale=1):
   x, df, loc, scale = _promote_args_inexact("t.logpdf", x, df, loc, scale)
-  two = _constant_like(x, 2)
+  two = _lax_const(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   df_over_two = lax.div(df, two)
-  df_plus_one_over_two = lax.add(df_over_two, _constant_like(x, 0.5))
-  normalize_term_const = lax.mul(lax.mul(scale, scale), _constant_like(x, np.pi))
+  df_plus_one_over_two = lax.add(df_over_two, _lax_const(x, 0.5))
+  normalize_term_const = lax.mul(lax.mul(scale, scale), _lax_const(x, np.pi))
   normalize_term_tmp = lax.div(lax.log(lax.mul(normalize_term_const, df)), two)
   normalize_term = lax.sub(lax.add(lax.lgamma(df_over_two), normalize_term_tmp),
                            lax.lgamma(df_plus_one_over_two))

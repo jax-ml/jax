@@ -18,6 +18,7 @@ from absl.testing import absltest
 import jax.numpy as jnp
 from jax.tools import jax_to_ir
 from jax._src import test_util as jtu
+from jax.config import config
 
 try:
   import tensorflow as tf
@@ -89,9 +90,14 @@ class JaxToIRTest(absltest.TestCase):
     ])
 
     # Check that tf debug txt contains a broadcast, add, and multiply.
-    self.assertIn('name: "BroadcastTo"', tf_text)
-    self.assertIn('name: "AddV2"', tf_text)
-    self.assertIn('name: "Mul"', tf_text)
+    if config.jax_experimental_name_stack:
+      self.assertIn('BroadcastTo', tf_text)
+      self.assertIn('AddV2', tf_text)
+      self.assertIn('Mul', tf_text)
+    else:
+      self.assertIn('name: "BroadcastTo"', tf_text)
+      self.assertIn('name: "AddV2"', tf_text)
+      self.assertIn('name: "Mul"', tf_text)
 
     # Check that we can re-import our graphdef.
     gdef = tf.compat.v1.GraphDef()

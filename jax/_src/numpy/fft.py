@@ -16,6 +16,7 @@
 import operator
 import numpy as np
 
+from jax import dtypes
 from jax import lax
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
@@ -24,7 +25,7 @@ from jax._src.numpy import lax_numpy as jnp
 
 
 def _fft_norm(s, func_name, norm):
-  if norm is None or norm == "backward":
+  if norm == "backward":
     return 1
   elif norm == "ortho":
     return jnp.sqrt(jnp.prod(s)) if func_name.startswith('i') else 1/jnp.sqrt(jnp.prod(s))
@@ -55,7 +56,7 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
 
   if len(axes) != len(set(axes)):
     raise ValueError(
-        "%s does not support repeated axes. Got axes %s." % (full_name, axes))
+        f"{full_name} does not support repeated axes. Got axes {axes}.")
 
   if len(axes) > 3:
     # XLA does not support FFTs over more than 3 dimensions
@@ -86,7 +87,10 @@ def _fft_core(func_name, fft_type, a, s, axes, norm):
         s += [max(0, 2 * (a.shape[axes[-1]] - 1))]
     else:
       s = [a.shape[axis] for axis in axes]
-  transformed = lax.fft(a, fft_type, tuple(s)) * _fft_norm(jnp.array(s), func_name, norm)
+  transformed = lax.fft(a, fft_type, tuple(s))
+  if norm is not None:
+    transformed *= _fft_norm(
+        jnp.array(s, dtype=transformed.dtype), func_name, norm)
 
   if orig_axes is not None:
     transformed = jnp.moveaxis(transformed, axes, orig_axes)
@@ -198,6 +202,7 @@ def irfft2(a, s=None, axes=(-2,-1), norm=None):
 
 @_wraps(np.fft.fftfreq)
 def fftfreq(n, d=1.0):
+  dtype = dtypes.canonicalize_dtype(jnp.float_)
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.fftfreq only takes an int. "
@@ -208,26 +213,27 @@ def fftfreq(n, d=1.0):
           "The d argument of jax.numpy.fft.fftfreq only takes a single value. "
           "Got d = %s." % list(d))
 
-  k = jnp.zeros(n)
+  k = jnp.zeros(n, dtype=dtype)
   if n % 2 == 0:
     # k[0: n // 2 - 1] = jnp.arange(0, n // 2 - 1)
-    k = k.at[0: n // 2].set( jnp.arange(0, n // 2))
+    k = k.at[0: n // 2].set( jnp.arange(0, n // 2, dtype=dtype))
 
     # k[n // 2:] = jnp.arange(-n // 2, -1)
-    k = k.at[n // 2:].set( jnp.arange(-n // 2, 0))
+    k = k.at[n // 2:].set( jnp.arange(-n // 2, 0, dtype=dtype))
 
   else:
     # k[0: (n - 1) // 2] = jnp.arange(0, (n - 1) // 2)
-    k = k.at[0: (n - 1) // 2 + 1].set(jnp.arange(0, (n - 1) // 2 + 1))
+    k = k.at[0: (n - 1) // 2 + 1].set(jnp.arange(0, (n - 1) // 2 + 1, dtype=dtype))
 
     # k[(n - 1) // 2 + 1:] = jnp.arange(-(n - 1) // 2, -1)
-    k = k.at[(n - 1) // 2 + 1:].set(jnp.arange(-(n - 1) // 2, 0))
+    k = k.at[(n - 1) // 2 + 1:].set(jnp.arange(-(n - 1) // 2, 0, dtype=dtype))
 
   return k / (d * n)
 
 
 @_wraps(np.fft.rfftfreq)
 def rfftfreq(n, d=1.0):
+  dtype = dtypes.canonicalize_dtype(jnp.float_)
   if isinstance(n, (list, tuple)):
     raise ValueError(
           "The n argument of jax.numpy.fft.rfftfreq only takes an int. "
@@ -239,10 +245,10 @@ def rfftfreq(n, d=1.0):
           "Got d = %s." % list(d))
 
   if n % 2 == 0:
-    k = jnp.arange(0, n // 2 + 1)
+    k = jnp.arange(0, n // 2 + 1, dtype=dtype)
 
   else:
-    k = jnp.arange(0, (n - 1) // 2 + 1)
+    k = jnp.arange(0, (n - 1) // 2 + 1, dtype=dtype)
 
   return k / (d * n)
 

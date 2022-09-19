@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import scipy.signal as osp_signal
+from functools import partial
 import operator
 import warnings
 
 import numpy as np
+import scipy.signal as osp_signal
 
 import jax
 import jax.numpy.fft
 from jax import lax
+from jax._src import dtypes
 from jax._src.numpy.lax_numpy import _check_arraylike
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg
-from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
 from jax._src.third_party.scipy import signal_helper
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
@@ -146,7 +147,7 @@ def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=None):
       Npts = bp[m + 1] - bp[m]
       A = jnp.vstack([
         jnp.ones(Npts, dtype=data.dtype),
-        jnp.arange(1, Npts + 1, dtype=data.dtype) / Npts
+        jnp.arange(1, Npts + 1, dtype=data.dtype) / Npts.astype(data.dtype)
       ]).T
       sl = slice(bp[m], bp[m + 1])
       coef, *_ = linalg.lstsq(A, data[sl])
@@ -160,12 +161,12 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
   if x.dtype.kind == 'i':
     x = x.astype(win.dtype)
 
+  *batch_shape, signal_length = x.shape
   # Created strided array of data segments
   if nperseg == 1 and noverlap == 0:
     result = x[..., np.newaxis]
   else:
     step = nperseg - noverlap
-    *batch_shape, signal_length = x.shape
     batch_shape = tuple(batch_shape)
     x = x.reshape((int(np.prod(batch_shape)), signal_length))[..., np.newaxis]
     result = jax.lax.conv_general_dilated_patches(
@@ -178,6 +179,8 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
   result = detrend_func(result)
 
   # Apply window by multiplication
+  if jnp.iscomplexobj(win):
+    result, = _promote_dtypes_complex(result)
   result = win.reshape((1,) * len(batch_shape) + (1, nperseg)) * result
 
   # Perform the fft on last axis. Zero-pads automatically
@@ -256,6 +259,27 @@ def _spectral_helper(x, y,
                                     "axis of windowed-FFT")
   axis = canonicalize_axis(axis, x.ndim)
 
+  if y is None:
+    _check_arraylike('spectral_helper', x)
+    x, = _promote_dtypes_inexact(x)
+    outershape = tuple_delete(x.shape, axis)
+  else:
+    if mode != 'psd':
+      raise ValueError("two-argument mode is available only when mode=='psd'")
+    _check_arraylike('spectral_helper', x, y)
+    x, y = _promote_dtypes_inexact(x, y)
+    if x.ndim != y.ndim:
+      raise ValueError("two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
+    # Check if we can broadcast the outer axes together
+    try:
+      outershape = jnp.broadcast_shapes(tuple_delete(x.shape, axis),
+                                        tuple_delete(y.shape, axis))
+    except ValueError as err:
+      raise ValueError('x and y cannot be broadcast together.') from err
+
+  result_dtype = dtypes.to_complex_dtype(x.dtype)
+  freq_dtype = np.finfo(result_dtype).dtype
+
   if nperseg is not None:  # if specified by user
     nperseg = jax.core.concrete_or_error(int, nperseg,
                                          "nperseg of windowed-FFT")
@@ -263,7 +287,7 @@ def _spectral_helper(x, y,
       raise ValueError('nperseg must be a positive integer')
   # parse window; if array like, then set nperseg = win.shape
   win, nperseg = signal_helper._triage_segments(
-      window, nperseg, input_length=x.shape[axis])
+      window, nperseg, input_length=x.shape[axis], dtype=x.dtype)
 
   if noverlap is None:
     noverlap = nperseg // 2
@@ -276,58 +300,30 @@ def _spectral_helper(x, y,
     nfft = jax.core.concrete_or_error(int, nfft,
                                       "nfft of windowed-FFT")
 
-  _check_arraylike("_spectral_helper", x)
-  x = jnp.asarray(x)
-
-  if y is None:
-    outdtype = jax.dtypes.canonicalize_dtype(np.result_type(x, np.complex64))
-  else:
-    _check_arraylike("_spectral_helper", y)
-    y = jnp.asarray(y)
-    outdtype = jax.dtypes.canonicalize_dtype(
-        np.result_type(x, y, np.complex64))
-    if mode != 'psd':
-      raise ValueError("two-argument mode is available only when mode=='psd'")
-    if x.ndim != y.ndim:
-      raise ValueError(
-          "two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
-
-    # Check if we can broadcast the outer axes together
-    try:
-      outershape = jnp.broadcast_shapes(tuple_delete(x.shape, axis),
-                                        tuple_delete(y.shape, axis))
-    except ValueError as e:
-      raise ValueError('x and y cannot be broadcast together.') from e
-
   # Special cases for size == 0
   if y is None:
     if x.size == 0:
-      return jnp.zeros(x.shape), jnp.zeros(x.shape), jnp.zeros(x.shape)
+      return jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, result_dtype)
   else:
     if x.size == 0 or y.size == 0:
-      outshape = tuple_insert(
-          outershape, min([x.shape[axis], y.shape[axis]]), axis)
-      emptyout = jnp.zeros(outshape)
-      return emptyout, emptyout, emptyout
+      shape = tuple_insert(outershape, min([x.shape[axis], y.shape[axis]]), axis)
+      return jnp.zeros(shape, freq_dtype), jnp.zeros(shape, freq_dtype), jnp.zeros(shape, result_dtype)
 
   # Move time-axis to the end
-  if x.ndim > 1:
-    if axis != -1:
-      x = jnp.moveaxis(x, axis, -1)
-      if y is not None and y.ndim > 1:
-        y = jnp.moveaxis(y, axis, -1)
+  x = jnp.moveaxis(x, axis, -1)
+  if y is not None and y.ndim > 1:
+    y = jnp.moveaxis(y, axis, -1)
 
   # Check if x and y are the same length, zero-pad if necessary
-  if y is not None:
-    if x.shape[-1] != y.shape[-1]:
-      if x.shape[-1] < y.shape[-1]:
-        pad_shape = list(x.shape)
-        pad_shape[-1] = y.shape[-1] - x.shape[-1]
-        x = jnp.concatenate((x, jnp.zeros(pad_shape)), -1)
-      else:
-        pad_shape = list(y.shape)
-        pad_shape[-1] = x.shape[-1] - y.shape[-1]
-        y = jnp.concatenate((y, jnp.zeros(pad_shape)), -1)
+  if y is not None and x.shape[-1] != y.shape[-1]:
+    if x.shape[-1] < y.shape[-1]:
+      pad_shape = list(x.shape)
+      pad_shape[-1] = y.shape[-1] - x.shape[-1]
+      x = jnp.concatenate((x, jnp.zeros_like(x, shape=pad_shape)), -1)
+    else:
+      pad_shape = list(y.shape)
+      pad_shape[-1] = x.shape[-1] - y.shape[-1]
+      y = jnp.concatenate((y, jnp.zeros_like(x, shape=pad_shape)), -1)
 
   if nfft < nperseg:
     raise ValueError('nfft must be greater than or equal to nperseg.')
@@ -346,19 +342,15 @@ def _spectral_helper(x, y,
     # Pad to integer number of windowed segments
     # I.e make x.shape[-1] = nperseg + (nseg-1)*nstep, with integer nseg
     nadd = (-(x.shape[-1]-nperseg) % nstep) % nperseg
-    zeros_shape = list(x.shape[:-1]) + [nadd]
-    x = jnp.concatenate((x, jnp.zeros(zeros_shape)), axis=-1)
+    x = jnp.concatenate((x, jnp.zeros_like(x, shape=(*x.shape[:-1], nadd))), axis=-1)
     if y is not None:
-      zeros_shape = list(y.shape[:-1]) + [nadd]
-      y = jnp.concatenate((y, jnp.zeros(zeros_shape)), axis=-1)
+      y = jnp.concatenate((y, jnp.zeros_like(x, shape=(*y.shape[:-1], nadd))), axis=-1)
 
   # Handle detrending and window functions
   if not detrend_type:
-    def detrend_func(d):
-      return d
-  elif not hasattr(detrend_type, '__call__'):
-    def detrend_func(d):
-      return detrend(d, type=detrend_type, axis=-1)
+    detrend_func = lambda d: d
+  elif not callable(detrend_type):
+    detrend_func = partial(detrend, type=detrend_type, axis=-1)
   elif axis != -1:
     # Wrap this function so that it receives a shape that it could
     # reasonably expect to receive.
@@ -369,9 +361,6 @@ def _spectral_helper(x, y,
   else:
     detrend_func = detrend_type
 
-  if np.result_type(win, np.complex64) != outdtype:
-    win = win.astype(outdtype)
-
   # Determine scale
   if scaling == 'density':
     scale = 1.0 / (fs * (win * win).sum())
@@ -381,6 +370,7 @@ def _spectral_helper(x, y,
     raise ValueError(f'Unknown scaling: {scaling}')
   if mode == 'stft':
     scale = jnp.sqrt(scale)
+  scale, = _promote_dtypes_complex(scale)
 
   # Determine onesided/ two-sided
   if return_onesided:
@@ -393,17 +383,18 @@ def _spectral_helper(x, y,
     sides = 'twosided'
 
   if sides == 'twosided':
-    freqs = jax.numpy.fft.fftfreq(nfft, 1/fs)
+    freqs = jax.numpy.fft.fftfreq(nfft, 1/fs).astype(freq_dtype)
   elif sides == 'onesided':
-    freqs = jax.numpy.fft.rfftfreq(nfft, 1/fs)
+    freqs = jax.numpy.fft.rfftfreq(nfft, 1/fs).astype(freq_dtype)
 
   # Perform the windowed FFTs
-  result = _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides)
+  result = _fft_helper(x, win, detrend_func,
+                       nperseg, noverlap, nfft, sides)
 
   if y is not None:
     # All the same operations on the y data
-    result_y = _fft_helper(y, win, detrend_func, nperseg, noverlap, nfft,
-                           sides)
+    result_y = _fft_helper(y, win, detrend_func,
+                           nperseg, noverlap, nfft, sides)
     result = jnp.conjugate(result) * result_y
   elif mode == 'psd':
     result = jnp.conjugate(result) * result
@@ -415,11 +406,11 @@ def _spectral_helper(x, y,
     result = result.at[..., 1:end].mul(2)
 
   time = jnp.arange(nperseg / 2, x.shape[-1] - nperseg / 2 + 1,
-                    nperseg - noverlap) / fs
+                    nperseg - noverlap, dtype=freq_dtype) / fs
   if boundary is not None:
     time -= (nperseg / 2) / fs
 
-  result = result.astype(outdtype)
+  result = result.astype(result_dtype)
 
   # All imaginary parts are zero anyways
   if y is None and mode != 'stft':
@@ -435,13 +426,11 @@ def _spectral_helper(x, y,
 def stft(x, fs=1.0, window='hann', nperseg=256, noverlap=None, nfft=None,
          detrend=False, return_onesided=True, boundary='zeros', padded=True,
          axis=-1):
-  freqs, time, Zxx = _spectral_helper(x, None, fs, window, nperseg, noverlap,
-                                      nfft, detrend, return_onesided,
-                                      scaling='spectrum', axis=axis,
-                                      mode='stft', boundary=boundary,
-                                      padded=padded)
-
-  return freqs, time, Zxx
+  return _spectral_helper(x, None, fs, window, nperseg, noverlap,
+                          nfft, detrend, return_onesided,
+                          scaling='spectrum', axis=axis,
+                          mode='stft', boundary=boundary,
+                          padded=padded)
 
 
 _csd_description = """
@@ -492,3 +481,136 @@ def welch(x, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
                    axis=axis, average=average)
 
   return freqs, Pxx.real
+
+
+def _overlap_and_add(x, step_size):
+  """Utility function compatible with tf.signal.overlap_and_add.
+
+  Args:
+    x: An array with `(..., frames, frame_length)`-shape.
+    step_size: An integer denoting overlap offsets. Must be less than
+      `frame_length`.
+
+  Returns:
+    An array with `(..., output_size)`-shape containing overlapped signal.
+  """
+  _check_arraylike("_overlap_and_add", x)
+  step_size = jax.core.concrete_or_error(int, step_size,
+                                        "step_size for overlap_and_add")
+  if x.ndim < 2:
+    raise ValueError('Input must have (..., frames, frame_length) shape.')
+
+  *batch_shape, nframes, segment_len = x.shape
+  flat_batchsize = np.prod(batch_shape, dtype=np.int64)
+  x = x.reshape((flat_batchsize, nframes, segment_len))
+  output_size = step_size * (nframes - 1) + segment_len
+  nstep_per_segment = 1 + (segment_len - 1) // step_size
+
+  # Here, we use shorter notation for axes.
+  # B: batch_size, N: nframes, S: nstep_per_segment,
+  # T: segment_len divided by S
+
+  padded_segment_len = nstep_per_segment * step_size
+  x = jnp.pad(x, ((0, 0), (0, 0), (0, padded_segment_len - segment_len)))
+  x = x.reshape((flat_batchsize, nframes, nstep_per_segment, step_size))
+
+  # For obtaining shifted signals, this routine reinterprets flattened array
+  # with a shrinked axis.  With appropriate truncation/ padding, this operation
+  # pushes the last padded elements of the previous row to the head of the
+  # current row.
+  # See implementation of `overlap_and_add` in Tensorflow for details.
+  x = x.transpose((0, 2, 1, 3))  # x: (B, S, N, T)
+  x = jnp.pad(x, ((0, 0), (0, 0), (0, nframes), (0, 0)))  # x: (B, S, N*2, T)
+  shrinked = x.shape[2] - 1
+  x = x.reshape((flat_batchsize, -1))
+  x = x[:, :(nstep_per_segment * shrinked * step_size)]
+  x = x.reshape((flat_batchsize, nstep_per_segment, shrinked * step_size))
+
+  # Finally, sum shifted segments, and truncate results to the output_size.
+  x = x.sum(axis=1)[:, :output_size]
+  return x.reshape(tuple(batch_shape) + (-1,))
+
+
+@_wraps(osp_signal.istft)
+def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
+          input_onesided=True, boundary=True, time_axis=-1, freq_axis=-2):
+  # Input validation
+  _check_arraylike("istft", Zxx)
+  if Zxx.ndim < 2:
+    raise ValueError('Input stft must be at least 2d!')
+  freq_axis = canonicalize_axis(freq_axis, Zxx.ndim)
+  time_axis = canonicalize_axis(time_axis, Zxx.ndim)
+  if freq_axis == time_axis:
+    raise ValueError('Must specify differing time and frequency axes!')
+
+  Zxx = jnp.asarray(Zxx, dtype=jax.dtypes.canonicalize_dtype(
+      np.result_type(Zxx, np.complex64)))
+
+  n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
+               else Zxx.shape[freq_axis])
+
+  nperseg = jax.core.concrete_or_error(int, nperseg or n_default,
+                                       "nperseg: segment length of STFT")
+  if nperseg < 1:
+    raise ValueError('nperseg must be a positive integer')
+
+  if nfft is None:
+    nfft = n_default
+    if input_onesided and nperseg == n_default + 1:
+      nfft += 1  # Odd nperseg, no FFT padding
+  else:
+    nfft = jax.core.concrete_or_error(int, nfft, "nfft of STFT")
+  if nfft < nperseg:
+    raise ValueError(
+        f'FFT length ({nfft}) must be longer than nperseg ({nperseg}).')
+
+  noverlap = jax.core.concrete_or_error(int, noverlap or nperseg // 2,
+                                        "noverlap of STFT")
+  if noverlap >= nperseg:
+    raise ValueError('noverlap must be less than nperseg.')
+  nstep = nperseg - noverlap
+
+  # Rearrange axes if necessary
+  if time_axis != Zxx.ndim - 1 or freq_axis != Zxx.ndim - 2:
+    outer_idxs = tuple(
+        idx for idx in range(Zxx.ndim) if idx not in {time_axis, freq_axis})
+    Zxx = jnp.transpose(Zxx, outer_idxs + (freq_axis, time_axis))
+
+  # Perform IFFT
+  ifunc = jax.numpy.fft.irfft if input_onesided else jax.numpy.fft.ifft
+  # xsubs: [..., T, N], N is the number of frames, T is the frame length.
+  xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg, :]
+
+  # Get window as array
+  if isinstance(window, (str, tuple)):
+    win = osp_signal.get_window(window, nperseg)
+    win = jnp.asarray(win, dtype=xsubs.dtype)
+  else:
+    win = jnp.asarray(window)
+    if len(win.shape) != 1:
+      raise ValueError('window must be 1-D')
+    if win.shape[0] != nperseg:
+      raise ValueError(f'window must have length of {nperseg}')
+  xsubs *= win.sum()  # This takes care of the 'spectrum' scaling
+
+  # make win broadcastable over xsubs
+  win = win.reshape((1, ) * (xsubs.ndim - 2) + win.shape + (1,))
+  x = _overlap_and_add((xsubs * win).swapaxes(-2, -1), nstep)
+  win_squared = jnp.repeat((win * win), xsubs.shape[-1], axis=-1)
+  norm = _overlap_and_add(win_squared.swapaxes(-2, -1), nstep)
+
+  # Remove extension points
+  if boundary:
+    x = x[..., nperseg//2:-(nperseg//2)]
+    norm = norm[..., nperseg//2:-(nperseg//2)]
+  x /= jnp.where(norm > 1e-10, norm, 1.0)
+
+  # Put axes back
+  if x.ndim > 1:
+    if time_axis != Zxx.ndim - 1:
+      if freq_axis < time_axis:
+        time_axis -= 1
+      x = jnp.moveaxis(x, -1, time_axis)
+
+  time = jnp.arange(x.shape[0], dtype=np.finfo(x.dtype).dtype) / fs
+  return time, x

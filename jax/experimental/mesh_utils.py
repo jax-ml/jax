@@ -1,4 +1,3 @@
-# Lint as: python3
 # Copyright 2021 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,12 +15,13 @@
 """Utils for building a device mesh."""
 
 import itertools
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from absl import logging
 import jax
 import numpy as np
 
+_TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
 
@@ -63,47 +63,57 @@ _TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
     },
 }
 
+# Physical ordering of core IDs in a tray that creates a ring
+_TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
 
-def _create_device_mesh_for_tpu_v4(
-    physical_mesh: np.ndarray, mesh_shape: Sequence[int]
-) -> Tuple[np.ndarray, Tuple[Tuple[int, ...], ...]]:
-  """Creates a performant device mesh for jax.experimental.maps.mesh.
 
-  Creates a device mesh for a given physical mesh and logical mesh that allows
-  for fast XLA collectives for use with jax.experimental.maps.mesh.
+def _create_device_mesh_for_nd_torus(
+    physical_mesh: np.ndarray, mesh_shape: Sequence[int],
+) -> Tuple[np.ndarray, List[Tuple[int, ...]]]:
+  """Assigns logical parallelism axes to physical axes of an N-D torus network.
 
-  Given a logical mesh `mesh_shape` and a physical topology `physical_mesh`, we
-  need to map each logical mesh axis to one or more physical axes. We want to
-  preferentially map the logical axes with the highest network intensity (the
-  highest collective communication costs) to the physical axes with the highest
-  network bandwidth.
+  Given logical parallelism axes with sizes in `mesh_shape` and devices in an
+  N-dimensional torus network represented by `physical_mesh`, maps each logical
+  axis to one or more physical axes. Prefer to map more-performance-sensitive
+  logical axes to larger numbers of physical axes to maximize the bandwidth
+  available to them. Also prefer to assign logical axes to multiple physical
+  axes of the same size (e.g., a 2D square) rather than multiple physical axes
+  of different sizes when possible.
+
+  Note that this routine will never split a physical axis over more than one
+  logical axis (which would reduce total usable bandwidth but may sometimes be
+  desired anyway). As a result, it will error out in cases where this is
+  necessary to produce a valid mapping.
 
   Let's use a concrete example to explain the concepts and considerations.
 
-  As an example, suppose the mesh_shape is [replica, data, mdl] where batch dim
-  is split over [replica, data] and model dims are split over either data or
-  mdl axis, then replica has the least network intensity and mdl the highest.
+  As an example, suppose the logical mesh is [data, model], for data and model
+  parallelism respectively. Also suppose that data parallelism is less
+  performance sensitive than model parallelism. Consider a 3D TPU pod slice of
+  shape 4x4x16, represented by a physical mesh of shape (4, 4, 16).
 
-  For a TPU pod, due to uniform ICI bandwidth, a physical mesh of 4x4x16 will
-  have uniform bandwidth on any of the three axes. However, the 2D x-y plane of
-  4x4 may have faster XLA collective implementations. Suppose the mesh_shape is
-  [1, 16, 16], we may want the mdl axis to be mapped to 2x2 x-y plane rather
-  than the single axis of size 16. To account for this, we preferentially map to
-  2D plane first when considering higher network intensity logical axis.
+  A TPU pod slice has equal bandwidth along all axes with wraparound links, but
+  a 2D plane of size 4x4 may have faster XLA collective implementations than a
+  non-square plane or a 1D subgroup. If the mesh_shape is [16, 16], we may want
+  the more performance sensitive `model` axis to be mapped to the 4x4 XY plane.
 
   Args:
-    physical_mesh: a np.ndarray with the shape of the physical topology.
-    mesh_shape: shape of logical mesh, ordered by increasing network-intensity
-      e.g. [replica, data, mdl] or [data, mdl] where mdl has the most network
-      communication requirements.
+    physical_mesh: a np.ndarray of devices in the shape of the N-D torus
+      physical topology.
+    mesh_shape: shape of the logical mesh (size of the various logical
+      parallelism axes), with axes ordered by increasing network intensity.
+    prefer_symmetric: whether to prefer to assign a logical axis to multiple
+      physical axes of the same size rather than axes of different sizes.
 
   Returns:
-    A device mesh with mesh_shape as its shape.
-    An assignment map each logical mesh axis to a subset of physical axes.
+    An np.ndarray of devices in the shape of the logical mesh (mesh_shape), with
+      each logical parallelism axis mapped to one or more physical mesh axes.
+    The axis assignment (a list of length num_logical_axes, whose elements
+      are tuples representing physical axis indices).
   """
   # Remaining physical axes to be assigned to logical axes.
   assignable_physical_mesh = list(physical_mesh.shape)
-  # Map each logical axis to a subsets of physical axes.
+  # Map each logical axis to a subset of physical axes.
   assignment: List[Tuple[int, ...]] = [() for _ in mesh_shape]
 
   # Assign logical axes from highest network intensity to lowest.
@@ -111,20 +121,19 @@ def _create_device_mesh_for_tpu_v4(
   # reverse it first.
   for logical_axis_index, logical_axis_size in reversed(
       list(enumerate(mesh_shape))):
-    # Preferentially map to 2D subplane first for higher bandwidth.
-    for num_axes in range(2, 0, -1):
+    # Preferentially map to more physical axes first for higher bandwidth.
+    for num_axes in range(3, 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
       axes = itertools.combinations(assignable_physical_mesh, num_axes)
       indices = itertools.combinations(
           range(len(assignable_physical_mesh)), num_axes)
-      # Go through all candidates, 2D plane first.
       for c_axes, c_indices in zip(axes, indices):
         # TODO(zhangqiaorjc): Due to limitations in XLA, 2D collectives only
         # implemented for square 2D plane. Mapping a physical axis to two
         # logical axes might be slower for non-square 2D plane, e.g., map 32 to
         # 4x8 or a single axis. If XLA 2D collectives support non-square plane
         # soon, we can continue to preferentially map to 2D plane in general,
-        # otherwise, we should avoid non-square 2D plane.
+        # otherwise, we should treat non-square 2D plane and 1D submesh equally.
         if np.product(c_axes) == logical_axis_size:
           assignment[logical_axis_index] = c_indices
           # Zero the assigned physical axes.
@@ -147,8 +156,7 @@ def _create_device_mesh_for_tpu_v4(
   for x in assignment:
     for y in x:
       transpose.append(int(y))
-  return physical_mesh.transpose(transpose).reshape(mesh_shape), tuple(
-      assignment)
+  return physical_mesh.transpose(transpose).reshape(mesh_shape), assignment
 
 
 def _bounds_from_last_device(last_device) -> Sequence[int]:
@@ -161,37 +169,32 @@ def _bounds_from_last_device(last_device) -> Sequence[int]:
   return x + 1, y + 1, z + 1, last_device.core_on_chip + 1
 
 
-def _jax_devices_order_normalized(
-    jax_local_devices_from_process_0: Sequence[Any],
-    jax_devices: Sequence[Any]) -> np.ndarray:
-  r"""Normalize jax.devices() to an order untiled by host and minor in z.
+def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
+  r"""Rearrange TPU devices in a slice into a physical mesh.
 
   Args:
-    jax_local_devices_from_process_0: A list of jax devices, which is a
-      flattened list from jax.local_devices(process_index=0).
-    jax_devices: A list of jax devices, which is a flattened list from
-      jax.devices().
+    jax_devices: A list of JAX devices in a TPU slice in process-tiled z, y, x,
+      core order, e.g. from jax.devices().
 
   Returns:
-    A np.ndarray of jax devices with shape [global_x, global_y, global_z].
-
+    A np.ndarray of JAX devices with shape [global_x, global_y, global_z]. On
+      v2 and v3, global_z is instead cores_per_chip (i.e., 2).
   """
-  local_topology = _bounds_from_last_device(
-      jax_local_devices_from_process_0[-1])
-  # h_x, h_y can be 2x2 or 1x1 depending on tasks_per_host=4 or 1
-  h_x, h_y, _, cores_per_chip = local_topology
-  assert cores_per_chip == 1
-  physical_topology = _bounds_from_last_device(jax_devices[-1])
-  g_x, g_y, g_z, cores_per_chip = physical_topology
-  assert cores_per_chip == 1
-  assert g_x % h_x == 0 and g_y % h_y == 0
-
-  jax_devices_array = np.array(jax_devices).reshape(
-      (g_z, g_y // h_y, g_x // h_x, h_y, h_x, cores_per_chip))
-  jax_devices_array = jax_devices_array.transpose(0, 1, 3, 2, 4, 5)
-  jax_devices_array = jax_devices_array.reshape((g_z, g_y, g_x))
-  # Transpose to be [global_x, global_y, global_z]
-  return jax_devices_array.transpose()
+  device_kind = jax_devices[0].device_kind
+  def sort_key(device):
+    x, y, z = device.coords
+    core = device.core_on_chip
+    if device_kind == _TPU_V4:
+      if core != 0:
+        raise ValueError(
+            'Creating meshes for TPU v4 requires one device per chip')
+      return (x, y, z)
+    elif device_kind in (_TPU_V2, _TPU_V3):
+      assert z == 0
+      return (x, y, core)
+  sorted_devices = sorted(jax_devices, key=sort_key)
+  x, y, *_ = _bounds_from_last_device(sorted_devices[-1])
+  return np.array(sorted_devices).reshape((x, y, -1))
 
 
 # jekbradbury's famous trick for creating contiguous submeshes (where available)
@@ -213,14 +216,18 @@ def _transpose_trick(physical_mesh: np.ndarray,
   return physical_mesh.transpose(*_TRANSPOSE_TRICKS[topology][mesh_shape])
 
 
-def create_device_mesh(mesh_shape: Sequence[int],
-                       contiguous_submeshes: bool = False) -> np.ndarray:
-  """Creates a performant device mesh for jax.experimental.maps.mesh.
+def create_device_mesh(
+    mesh_shape: Sequence[int],
+    devices: Optional[Sequence[Any]] = None, *,
+    contiguous_submeshes: bool = False) -> np.ndarray:
+  """Creates a performant device mesh for jax.experimental.maps.Mesh.
 
   Args:
     mesh_shape: shape of logical mesh, ordered by increasing network-intensity
       e.g. [replica, data, mdl] where mdl has the most network communication
       requirements.
+    devices: optionally, the devices to construct a mesh for. Defaults to
+      jax.devices().
     contiguous_submeshes: if True, this function will attempt to create a mesh
       where each process's local devices form a contiguous submesh. This is
       required when passing non-GlobalDeviceArrays to `pjit` (see the
@@ -230,37 +237,88 @@ def create_device_mesh(mesh_shape: Sequence[int],
       this function can't produce a suitable mesh.
 
   Returns:
-    A np.ndarray of jax global devices with mesh_shape as its shape that can be
-    fed into jax.experimental.maps.mesh with good collective performance.
-
+    A np.ndarray of JAX devices with mesh_shape as its shape that can be fed
+    into jax.experimental.maps.Mesh with good collective performance.
   """
-  process_0_devices = jax.local_devices(process_index=0)
-  global_devices = jax.devices()
-  device_kind = global_devices[-1].device_kind
-  return _create_device_mesh(process_0_devices, global_devices, device_kind,
-                             mesh_shape, contiguous_submeshes)
-
-# Break out core logic for easier testing
-def _create_device_mesh(process_0_devices, global_devices, device_kind,
-                        mesh_shape: Sequence[int],
-                        contiguous_submeshes: bool = False) -> np.ndarray:
-  # TODO(zhangqiaorjc): Handle TPU versions other than v4 more generally.
-  if device_kind == _TPU_V3:
-    device_mesh = np.asarray(global_devices).reshape(mesh_shape)
-    if mesh_shape[-1] == 8:
-      logging.info('Re-order TPUv3 device mesh for better performance.')
-      perm = np.array([0, 1, 2, 3, 6, 7, 4, 5])
-      device_mesh = device_mesh[:, :, perm]
-    return device_mesh
+  if devices is None:
+    devices = jax.devices()
+  if np.prod(mesh_shape) != len(devices):
+    raise ValueError(f'Number of devices {len(devices)} must equal the product '
+                     f'of mesh_shape {mesh_shape}')
+  device_kind = devices[-1].device_kind
+  if device_kind in (_TPU_V2, _TPU_V3):
+    if len(devices) == 8:
+      logging.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
+      device_mesh = np.asarray(devices)
+      device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
+      device_mesh = device_mesh.reshape(mesh_shape)
+      return device_mesh
+    elif mesh_shape[-1] == 8:
+      device_mesh = np.asarray(devices).reshape(mesh_shape)
+      logging.info('Reordering mesh to physical ring order on each TPU v2/v3 tray.')
+      perm = np.array(_TRAY_RING_ORDER)
+      device_mesh = device_mesh[..., perm]
+      return device_mesh
+    else:
+      # TODO(skye): implement 2D mesh_shape logic here:
+      # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
+      # (possibly replaces above mesh_shape[-1] == 8 case)
+      return np.asarray(devices).reshape(mesh_shape)
   elif device_kind == _TPU_V4:
-    physical_mesh = _jax_devices_order_normalized(
-        process_0_devices, global_devices)
+    physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
-    device_mesh, assignment = _create_device_mesh_for_tpu_v4(
+    device_mesh, assignment = _create_device_mesh_for_nd_torus(
         physical_mesh, mesh_shape)
-    logging.info('_create_device_mesh_for_tpu_v4 assignment: %s', assignment)
+    logging.info('_create_device_mesh_for_nd_torus assignment: %s', assignment)
     return device_mesh
   else:
-    device_mesh = np.asarray(global_devices).reshape(mesh_shape)
+    device_mesh = np.asarray(devices).reshape(mesh_shape)
     return device_mesh
+
+def create_hybrid_device_mesh(mesh_shape: Sequence[int],
+                              dcn_mesh_shape: Sequence[int],
+                              devices: Optional[Sequence[Any]] = None, *,
+                              process_is_granule: bool = False) -> np.ndarray:
+  """Creates a device mesh for hybrid (e.g., ICI and DCN) parallelism.
+
+  Args:
+    mesh_shape: shape of the logical mesh for the faster/inner network, ordered
+      by increasing network intensity, e.g. [replica, data, mdl] where mdl has
+      the most network communication requirements.
+    dcn_mesh_shape: shape of the logical mesh for the slower/outer network,
+      in the same order as mesh_shape.
+    devices: optionally, the devices to construct a mesh for. Defaults to
+      jax.devices().
+    process_is_granule: if True, this function will treat processes as the units
+      of the slower/outer network. Otherwise it will look for slice_index
+      attributes on devices and use slices as the units. Enabling this is meant
+      as a fallback for platforms (e.g., GPU) that don't set slice_index.
+
+  Returns:
+    A np.ndarray of JAX devices with mesh_shape * dcn_mesh_shape as its shape
+    that can be fed into jax.experimental.maps.Mesh for hybrid parallelism.
+  """
+  if devices is None:
+    devices = jax.devices()
+  attr = 'process_index' if process_is_granule else 'slice_index'
+  assert hasattr(devices[0], attr)
+  granule_id, granules = 0, []
+  while True:
+    granule = [dev for dev in devices if getattr(dev, attr) == granule_id]
+    if granule:
+      granules.append(granule)
+      granule_id += 1
+    else:
+      break
+  if np.prod(dcn_mesh_shape) != len(granules):
+    raise ValueError(
+        'Number of slices must equal the product of dcn_mesh_shape')
+  per_granule_meshes = [create_device_mesh(mesh_shape, granule)
+                        for granule in granules]
+  # TODO(jekbradbury): handle non-uniform DCN topologies
+  granule_mesh = np.arange(len(granules)).reshape(dcn_mesh_shape)
+  blocks = np.vectorize(
+    lambda i: per_granule_meshes[i], otypes=[object])(granule_mesh)
+  device_mesh = np.block(blocks.tolist())
+  return device_mesh

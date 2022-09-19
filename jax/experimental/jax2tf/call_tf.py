@@ -33,8 +33,11 @@ from jax import dtypes
 from jax import tree_util
 from jax._src import util
 from jax._src import ad_util
-from jax._src.lax.lax import _device_put_raw
+from jax.interpreters import mlir
 from jax.interpreters import xla
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 
@@ -43,7 +46,6 @@ import tensorflow as tf  # type: ignore[import]
 
 map = util.safe_map
 zip = util.safe_zip
-xops = xla_client._xla.ops  # type: ignore
 
 TfConcreteFunction = Any
 
@@ -102,7 +104,7 @@ def call_tf(callable_tf: Callable) -> Callable:
       if any(not core.is_constant_dim(d) for d in a_jax.shape):
         msg = ("call_tf cannot be applied to shape-polymorphic arguments. "
                f"Found argument shape: {a_jax.shape}. "
-               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
         raise ValueError(msg)
 
       return tf.TensorSpec(a_jax.shape, a_tf_dtype)
@@ -217,7 +219,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
-    return _device_put_raw(np.asarray(res_tf))
+    return jax.device_put(np.asarray(res_tf))
 
   return list(map(_res_tf_to_jax, res_tf_flat))
 
@@ -237,15 +239,12 @@ def _call_tf_abstract_eval(*_,
 call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
-def _call_tf_translation_rule(ctx, avals_in, avals_out, *args_op,
-                              function_flat_tf,
-                              args_flat_sig_tf,
-                              **_):
+def _call_tf_lowering(ctx, *args_op, function_flat_tf, args_flat_sig_tf, **_):
   # This will most likely hit the cache, because we used it for abstract_eval
   code_gen, _ = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,  # type: ignore
                                           code_gen_optional=False)
   assert code_gen is not None
-  return code_gen(ctx.builder, args_op)
+  return code_gen(ctx.module_context, args_op)
 
 
 @functools.lru_cache(maxsize=128)
@@ -253,8 +252,8 @@ def _code_generator_and_avals(
     function_flat_tf,
     args_flat_sig_tf,
     code_gen_optional=False
-) -> Tuple[Optional[Callable[[xla.XlaBuilder, Sequence[xla.XlaOp]],
-                             Sequence[xla.XlaOp]]],
+) -> Tuple[Optional[Callable[[mlir.ModuleContext, Sequence[ir.Value]],
+                             Sequence[ir.Value]]],
            Sequence[core.ShapedArray]]:
   # Returns and caches a code generator (taking a builder and the
   # XlaOps for the arguments) and a sequence of result abstract shapes.
@@ -300,7 +299,7 @@ def _code_generator_and_avals(
     msg = (
         "call_tf works best with a TensorFlow function that does not capture "
         "variables or tensors from the context. "
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion. "
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion. "
         f"The following captures were found {concrete_function_flat_tf.captured_inputs}")
     logging.warning(msg)
     for inp in concrete_function_flat_tf.captured_inputs:
@@ -342,7 +341,7 @@ def _code_generator_and_avals(
       msg = ("Error compiling TensorFlow function. call_tf can used " +
              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
              "compileable functions with static output shapes. " +
-             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg) from e
 
   xla_comp = xla_client.XlaComputation(func_tf_hlo)
@@ -366,7 +365,7 @@ def _code_generator_and_avals(
            f"{expected_parameter_avals}. Perhaps the TensorFlow function " +
            "has shape-influencing inputs, and thus needs to be recompiled " +
            "for each value of some inputs. " +
-           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
     raise ValueError(msg)
 
   # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
@@ -376,7 +375,7 @@ def _code_generator_and_avals(
              f"{res_shape}. call_tf can used " +
              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
              "compileable functions with static output shapes. " +
-             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call-tf for a discussion.")
+             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg)
 
     res_dtype = res_shape.numpy_dtype()
@@ -393,30 +392,36 @@ def _code_generator_and_avals(
 
   result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
 
-  def code_gen(builder: xla.XlaBuilder, args_op: Sequence[xla.XlaOp]
-              ) -> Sequence[xla.XlaOp]:
-    captured_ops = [xops.Constant(builder, np.asarray(inp))
-                    for inp in captured_inputs]
+  def code_gen(ctx: mlir.ModuleContext, args_op: Sequence[ir.Value]
+              ) -> Sequence[ir.Value]:
+    captured_ops = tuple(mlir.ir_constant(np.asarray(inp),
+                                          canonicalize_types=False)
+                         for inp in captured_inputs)
+    submodule = mlir.xla_computation_to_mhlo_module(xla_comp)
+    symtab = ir.SymbolTable(submodule.operation)
+    callee_result_types = symtab["main"].type.results
+    fn = mlir.merge_mhlo_modules(ctx.module, f"call_tf_{function_flat_tf.name}",
+                                 submodule)
+    call = func_dialect.CallOp(callee_result_types,
+                               ir.FlatSymbolRefAttr.get(fn),
+                               tuple(args_op) + captured_ops)
+    if result_shape.is_tuple():
+      flat_results = [mhlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
+                      for i in range(len(result_shapes))]
+    else:
+      flat_results = call.results
 
-    res_tf = xops.Call(builder, xla_comp, args_op + tuple(captured_ops))  # type: ignore
-    def post_process_result(idx: int, res_aval: core.ShapedArray, res_shape: xla.XlaShape):
-      res_op = res_tf
-      if result_shape.is_tuple():
-        res_op = xops.GetTupleElement(res_tf, idx)
+    outputs = []
+    for op, res_aval, res_shape in zip(flat_results, result_avals,
+                                       result_shapes):
       if res_aval.dtype != res_shape.numpy_dtype():
-        res_op = xops.ConvertElementType(
-            res_op,
-            new_element_type=xla.dtype_to_primitive_type(res_aval.dtype))
-      return res_op
-
-    return [
-        post_process_result(i, res_aval, res_shape)
-        for i, (res_aval, res_shape) in enumerate(zip(result_avals,
-                                                      result_shapes))]
+        op = mhlo.ConvertOp(mlir.aval_to_ir_type(res_aval), op).result
+      outputs.append(op)
+    return outputs
 
   return code_gen, result_avals
 
-xla.register_translation(call_tf_p, _call_tf_translation_rule)
+mlir.register_lowering(call_tf_p, _call_tf_lowering)
 
 TfVal = jax2tf_internal.TfVal
 def _jax2tf_call_tf(*args: TfVal,

@@ -14,6 +14,8 @@
 
 import os
 
+running_in_cloud_tpu_vm = False
+
 def cloud_tpu_init():
   """Automatically sets Cloud TPU topology and other env vars.
 
@@ -30,6 +32,7 @@ def cloud_tpu_init():
   This will not set any env vars if a single topology-related env var is already
   set.
   """
+  global running_in_cloud_tpu_vm
   try:
     # pylint: disable=import-outside-toplevel
     # pytype: disable=import-error
@@ -41,8 +44,11 @@ def cloud_tpu_init():
     # TPU environment. Exit early if we're not running on Cloud TPU.
     return
 
+  running_in_cloud_tpu_vm = True
+
   libtpu.configure_library_path()
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
+  os.environ['TPU_ML_PLATFORM'] = 'JAX'
 
   # If the user has set any topology-related env vars, don't set any
   # automatically.
@@ -56,23 +62,8 @@ def cloud_tpu_init():
   ]):
     return
 
-  # pylint: disable=import-outside-toplevel
-  # pytype: disable=import-error
-  import requests
-  # pytype: enable=import-error
-  # pylint: enable=import-outside-toplevel
-
-  # Based on https://github.com/tensorflow/tensorflow/pull/40317
-  gce_metadata_endpoint = 'http://' + os.environ.get('GCE_METADATA_IP',
-                                                     'metadata.google.internal')
-  def get_metadata(key):
-    return requests.get(
-        f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
-        headers={'Metadata-Flavor': 'Google'}).text
-
   worker_id = get_metadata('agent-worker-number')
   accelerator_type = get_metadata('accelerator-type')
-  worker_network_endpoints = get_metadata('worker-network-endpoints')
 
   accelerator_type_to_host_bounds = {
       'v2-8': '1,1,1',
@@ -91,9 +82,34 @@ def cloud_tpu_init():
   }
 
   os.environ['CLOUD_TPU_TASK_ID'] = worker_id
-  os.environ['TPU_CHIPS_PER_HOST_BOUNDS'] = '2,2,1'
-  os.environ['TPU_HOST_BOUNDS'] = accelerator_type_to_host_bounds[
-      accelerator_type]
-  os.environ['TPU_MESH_CONTROLLER_ADDRESS'] = worker_network_endpoints.split(
-      ',')[0].split(':')[2] + ':8476'
-  os.environ['TPU_MESH_CONTROLLER_PORT'] = '8476'
+
+  # If v4 TPU don't set any topology related flags, libtpu will set these values.
+  if not accelerator_type.startswith('v4-'):
+    os.environ['TPU_CHIPS_PER_HOST_BOUNDS'] = '2,2,1'
+    os.environ['TPU_HOST_BOUNDS'] = accelerator_type_to_host_bounds[
+        accelerator_type]
+
+
+def get_metadata(key):
+  import requests  # pytype: disable=import-error
+  import time  # pytype: disable=import-error
+  # Based on https://github.com/tensorflow/tensorflow/pull/40317
+  gce_metadata_endpoint = 'http://' + os.environ.get(
+      'GCE_METADATA_IP', 'metadata.google.internal')
+
+  retry_count = 0
+  retrySeconds = 0.500
+  api_resp = None
+
+  while retry_count < 6:
+    api_resp = requests.get(
+        f'{gce_metadata_endpoint}/computeMetadata/v1/instance/attributes/{key}',
+        headers={'Metadata-Flavor': 'Google'})
+    if api_resp.status_code == 200:
+      break
+    retry_count += 1
+    time.sleep(retrySeconds)
+
+  if api_resp is None:
+    raise RuntimeError(f"Getting metadata['{key}'] failed for 6 tries")
+  return api_resp.text

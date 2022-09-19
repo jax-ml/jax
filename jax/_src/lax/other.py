@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union, cast as type_cast
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import prod
 from jax._src.lax import lax
@@ -125,7 +125,7 @@ def conv_general_dilated_local(
     lhs_dilation: Optional[Sequence[int]] = None,
     rhs_dilation: Optional[Sequence[int]] = None,
     dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
-    precision: Optional[lax.PrecisionLike] = None
+    precision: lax.PrecisionLike = None
 ) -> jnp.ndarray:
   """General n-dimensional unshared convolution operator with optional dilation.
 
@@ -195,9 +195,12 @@ def conv_general_dilated_local(
   If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
   (for a 2D convolution).
   """
-  lhs_precision = (precision[0]
-                   if (isinstance(precision, tuple) and len(precision) == 2)
-                   else precision)
+  c_precision = lax.canonicalize_precision(precision)
+  lhs_precision = type_cast(
+      Optional[lax.PrecisionType],
+      (c_precision[0]
+       if (isinstance(c_precision, tuple) and len(c_precision) == 2)
+       else c_precision))
 
   patches = conv_general_dilated_patches(
       lhs=lhs,

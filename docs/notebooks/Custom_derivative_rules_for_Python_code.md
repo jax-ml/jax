@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.13.6
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3
   name: python3
@@ -127,7 +127,7 @@ print(grad(f)(2., 3.))
 
 ## Example problems
 
-To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over a few examples. A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in [the next section](#scrollTo=Dr0aNkBslfQf).
+To get an idea of what problems `jax.custom_jvp` and `jax.custom_vjp` are meant to solve, let's go over a few examples. A more thorough introduction to the `jax.custom_jvp` and `jax.custom_vjp` APIs is in the next section.
 
 +++ {"id": "AR02eyd1GQhC"}
 
@@ -570,7 +570,8 @@ A limitation to this approach is that the argument `f` can't close over any valu
 
 ### Use `jax.custom_jvp` to define forward-mode (and, indirectly, reverse-mode) rules
 
-Here's a canonical basic example of using `jax.custom_jvp`:
+Here's a canonical basic example of using `jax.custom_jvp`, where the comments use
+[Haskell-like type signatures](https://wiki.haskell.org/Type_signature):
 
 ```{code-cell} ipython3
 :id: nVkhbIFAOGZk

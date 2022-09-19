@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-# flake8: noqa: F401
 from jax._src.api_util import (
   argnums_partial,
   donation_vector,

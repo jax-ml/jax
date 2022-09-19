@@ -156,7 +156,7 @@ EOF
         ],
         python_version = "PY3",
         deps = deps + [
-            "//third_party/py/jax/jaxlib",
+            "//third_party/py/absl:app",
             jax_to_ir_rule,
         ],
     )

@@ -14,6 +14,7 @@
 
 from absl.testing import absltest, parameterized
 import numpy as np
+import scipy
 import scipy.optimize
 
 from jax import numpy as jnp
@@ -67,11 +68,11 @@ def zakharovFromIndices(x, ii):
 class TestBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
+    {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
      "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
-    for func_and_init in [(rosenbrock, np.zeros(2)),
-                          (himmelblau, np.zeros(2)),
+    for func_and_init in [(rosenbrock, np.zeros(2, dtype='float32')),
+                          (himmelblau, np.ones(2, dtype='float32')),
                           (matyas, np.ones(2) * 6.),
                           (eggholder, np.ones(2) * 100.)]))
   def test_minimize(self, maxiter, func_and_init):
@@ -104,7 +105,7 @@ class TestBFGS(jtu.JaxTestCase):
   @jtu.skip_on_flag('jax_enable_x64', False)
   def test_zakharov(self):
     def zakharov_fn(x):
-      ii = jnp.arange(1, len(x) + 1, step=1)
+      ii = jnp.arange(1, len(x) + 1, step=1, dtype=x.dtype)
       answer = zakharovFromIndices(x=x, ii=ii)
       return answer
 
@@ -143,7 +144,7 @@ class TestBFGS(jtu.JaxTestCase):
 class TestLBFGS(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_func={}_maxiter={}".format(func_and_init[0].__name__, maxiter),
+    {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
      "maxiter": maxiter, "func_and_init": func_and_init}
     for maxiter in [None]
     for func_and_init in [(rosenbrock, np.zeros(2)),
@@ -208,8 +209,8 @@ class TestLBFGS(jtu.JaxTestCase):
     complex_dim = 5
 
     f_re = rosenbrock(jnp)
-    init_re = jnp.zeros((2 * complex_dim,))
-    expect_re = jnp.ones((2 * complex_dim,))
+    init_re = jnp.zeros((2 * complex_dim,), dtype=complex)
+    expect_re = jnp.ones((2 * complex_dim,), dtype=complex)
 
     def f(z):
       x_re = jnp.concatenate([jnp.real(z), jnp.imag(z)])

@@ -357,7 +357,7 @@ Some standouts:
 1. [In-place mutating updates of
    arrays](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#in-place-updates), like `x[i] += y`, aren't supported, but [there are functional alternatives](https://jax.readthedocs.io/en/latest/jax.ops.html). Under a `jit`, those functional alternatives will reuse buffers in-place automatically.
 1. [Random numbers are
-   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/google/jax/blob/main/design_notes/prng.md).
+   different](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers), but for [good reasons](https://github.com/google/jax/blob/main/docs/design_notes/prng.md).
 1. If you're looking for [convolution
    operators](https://jax.readthedocs.io/en/latest/notebooks/convolutions.html),
    they're in the `jax.lax` package.
@@ -388,15 +388,19 @@ Some standouts:
 
 JAX is written in pure Python, but it depends on XLA, which needs to be
 installed as the `jaxlib` package. Use the following instructions to install a
-binary package with `pip`, or to build JAX from source.
+binary package with `pip` or `conda`, or to [build JAX from
+source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 We support installing or building `jaxlib` on Linux (Ubuntu 16.04 or later) and
-macOS (10.12 or later) platforms. Windows users can use JAX on CPU and GPU via
-the
-[Windows Subsystem for Linux](https://docs.microsoft.com/en-us/windows/wsl/about).
-There is some initial native Windows support, but since it is still somewhat
-immature, there are no binary releases and it must be
-[built from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
+macOS (10.12 or later) platforms.
+
+Windows users can use JAX on CPU and GPU via the [Windows Subsystem for
+Linux](https://docs.microsoft.com/en-us/windows/wsl/about). In addition, there
+is some initial community-driven native Windows support, but since it is still
+somewhat immature, there are no official binary releases and it must be [built
+from source for Windows](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-jaxlib-from-source-on-windows).
+For an unofficial discussion of native Windows builds, see also the [Issue #5795
+thread](https://github.com/google/jax/issues/5795).
 
 ### pip installation: CPU
 
@@ -409,7 +413,9 @@ pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2010` wheels.
+`manylinux2014` wheels.
+**These `pip` installations do not work with Windows, and may fail silently; see
+[above](#installation).**
 
 ### pip installation: GPU (CUDA)
 
@@ -422,13 +428,10 @@ package.
 
 JAX provides pre-built CUDA-compatible wheels for **Linux only**,
 with CUDA 11.1 or newer, and CuDNN 8.0.5 or newer. Other combinations of
-operating system, CUDA, and CuDNN are possible, but require building from
-source.
+operating system, CUDA, and CuDNN are possible, but require [building from
+source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 * CUDA 11.1 or newer is *required*.
-  * You may be able to use older CUDA versions if you build from source, but
-    there are known bugs in CUDA in all CUDA versions older than 11.1, so we
-    do not ship prebuilt binaries for older CUDA versions.
 * The supported cuDNN versions for the prebuilt wheels are:
   * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
     installation is new enough, since it supports additional functionality.
@@ -451,9 +454,12 @@ Next, run
 ```bash
 pip install --upgrade pip
 # Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
-pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_releases.html  # Note: wheels only available on linux.
+# Note: wheels only available on linux.
+pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
+**These `pip` installations do not work with Windows, and may fail silently; see
+[above](#installation).**
 
 The jaxlib version must correspond to the version of the existing CUDA
 installation you want to use. You can specify a particular CUDA and CuDNN
@@ -463,10 +469,10 @@ version for jaxlib explicitly:
 pip install --upgrade pip
 
 # Installs the wheel compatible with Cuda >= 11.4 and cudnn >= 8.2
-pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install "jax[cuda11_cudnn82]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 # Installs the wheel compatible with Cuda >= 11.1 and cudnn >= 8.0.5
-pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+pip install "jax[cuda11_cudnn805]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 You can find your CUDA version with the command:
@@ -506,6 +512,36 @@ jax.tools.colab_tpu.setup_tpu()
 Colab TPU runtimes use an older TPU architecture than Cloud TPU VMs, so installing `jax[tpu]` should be avoided on Colab.
 If for any reason you would like to update the jax & jaxlib libraries on a Colab TPU runtime, follow the CPU instructions above (i.e. install `jax[cpu]`).
 
+### Conda installation
+
+There is a community-supported Conda build of `jax`. To install using `conda`,
+simply run
+
+```bash
+conda install jax -c conda-forge
+```
+
+To install on a machine with an NVidia GPU, run
+```bash
+conda install jax cuda-nvcc -c conda-forge -c nvidia
+```
+
+Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
+JAX requires. You must therefore either install the `cuda-nvcc` package from
+the `nvidia` channel, or install CUDA on your machine separately so that `ptxas`
+is in your path. The channel order above is important (`conda-forge` before
+`nvidia`). We are working on simplifying this.
+
+If you would like to override which release of CUDA is used by JAX, or to
+install the CUDA build on a machine without GPUs, follow the instructions in the
+[Tips & tricks](https://conda-forge.org/docs/user/tipsandtricks.html#installing-cuda-enabled-packages-like-tensorflow-and-pytorch)
+section of the `conda-forge` website.
+
+See the `conda-forge`
+[jaxlib](https://github.com/conda-forge/jaxlib-feedstock#installing-jaxlib) and
+[jax](https://github.com/conda-forge/jax-feedstock#installing-jax) repositories
+for more details.
+
 ### Building JAX from source
 See [Building JAX from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
@@ -535,7 +571,7 @@ To cite this repository:
   author = {James Bradbury and Roy Frostig and Peter Hawkins and Matthew James Johnson and Chris Leary and Dougal Maclaurin and George Necula and Adam Paszke and Jake Vander{P}las and Skye Wanderman-{M}ilne and Qiao Zhang},
   title = {{JAX}: composable transformations of {P}ython+{N}um{P}y programs},
   url = {http://github.com/google/jax},
-  version = {0.2.5},
+  version = {0.3.13},
   year = {2018},
 }
 ```

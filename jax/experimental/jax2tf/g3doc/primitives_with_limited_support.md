@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2021-12-06*
+*Last generated on (YYYY-MM-DD): 2022-08-17*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -66,14 +66,10 @@ More detailed information can be found in the
 | cholesky | TF test skipped: Not implemented in JAX: unimplemented | float16 | cpu, gpu | compiled, eager, graph |
 | clamp | TF test skipped: Not implemented in JAX: unimplemented | bool, complex | cpu, gpu, tpu | compiled, eager, graph |
 | conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type not implemented for integers | int16, int32, int8 | gpu | compiled, eager, graph |
-| conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type=c128 not implemented | complex64 | tpu | compiled, eager, graph |
-| conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type=f64 not implemented | bfloat16, float16, float32 | tpu | compiled, eager, graph |
-| conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type=i64 not implemented | int16, int32, int8 | tpu | compiled, eager, graph |
 | digamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | div | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
+| dot_general | TF error: Numeric comparison disabled: Large tolerances when upcasting with preferred_element_type on CPU (b/241740367) | all | cpu, gpu, tpu | compiled, eager, graph |
 | dot_general | TF error: Numeric comparison disabled: Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598) | bfloat16, complex64, float16, float32 | gpu | compiled, eager, graph |
-| dot_general | TF test skipped: Not implemented in JAX: preferred_element_type=c128 not implemented | complex64 | tpu | compiled, eager, graph |
-| dot_general | TF test skipped: Not implemented in JAX: preferred_element_type=i64 not implemented | int16, int32, int8 | tpu | compiled, eager, graph |
 | dot_general | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF test skipped: Not implemented in JAX: only supported on CPU in JAX | all | gpu, tpu | compiled, eager, graph |
 | eig | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu | compiled, eager, graph |
@@ -81,13 +77,11 @@ More detailed information can be found in the
 | eig | TF error: function not compilable | all | cpu | compiled |
 | eigh | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | eigh | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
-| erf | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
-| erfc | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
-| fft | TF error: TF function not compileable | complex128, float64 | cpu, gpu | compiled |
+| fft | TF error: TF function not compileable | float64 | cpu, gpu | compiled |
+| fft | TF error: TF function not compileable for IFFT and IRFFT | complex128 | cpu, gpu | compiled |
 | igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
-| integer_pow | TF error: op not defined for dtype | int16, int8, unsigned | cpu, gpu | graph |
 | lgamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | lu | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
 | nextafter | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu, tpu | compiled, eager, graph |
@@ -102,12 +96,13 @@ More detailed information can be found in the
 | scatter_mul | TF test skipped: Not implemented in JAX: unimplemented | bool | cpu, gpu, tpu | compiled, eager, graph |
 | select_and_gather_add | TF error: jax2tf unimplemented for 64-bit inputs because the current implementation relies on packing two values into a single value. This can be fixed by using a variadic XlaReduceWindow, when available | float64 | cpu, gpu | compiled, eager, graph |
 | select_and_scatter_add | TF test skipped: Not implemented in JAX: works only for 2 or more inactive dimensions | all | tpu | compiled, eager, graph |
-| svd | TF test skipped: Not implemented in JAX: complex not implemented. Works in JAX for CPU and GPU with custom kernels | complex | tpu | compiled, eager, graph |
+| svd | TF error: Numeric comparison disabled: Large numerical discrepancy | float16 | tpu | compiled, eager, graph |
 | svd | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | svd | TF error: function not compilable. Implemented using `tf.linalg.svd` and `tf.linalg.adjoint` | complex | cpu, gpu | compiled |
 | svd | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
+| svd | TF error: op not defined for dtype | complex | tpu | compiled, graph |
 | triangular_solve | TF test skipped: Not implemented in JAX: unimplemented | float16 | gpu | compiled, eager, graph |
-| triangular_solve | TF error: op not defined for dtype | bfloat16 | cpu, gpu, tpu | compiled, eager, graph |
+| triangular_solve | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | triangular_solve | TF error: op not defined for dtype | float16 | cpu, gpu | eager, graph |
 
 ## Generated summary of primitives with known numerical discrepancies in Tensorflow
@@ -141,8 +136,11 @@ with jax2tf. The following table lists that cases when this does not quite hold:
 | max | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | min | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | pow | custom numeric comparison | complex | cpu, gpu, tpu | eager, graph |
+| random_split | Returns JAX key arrays, so compare underlying base array | all | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_window_add | Numeric comparison disabled: Large deviations on TPU for enable_xla=False | float16, float32 | tpu | compiled, eager, graph |
 | sort | Numeric comparison disabled: TODO: TF non-stable multiple-array sort | all | gpu | compiled, eager, graph |
-| svd | custom numeric comparison when compute_uv | all | cpu, gpu | compiled, eager, graph |
+| svd | custom numeric comparison when compute_uv on CPU/GPU | all | cpu, gpu | compiled, eager, graph |
+| svd | custom numeric comparison when compute_uv on TPU | complex, float32, float64 | tpu | compiled, eager, graph |
 | top_k | Produces different results when the array contains `inf` and `NaN` (they are sorted differently in TF vs. XLA). | floating | cpu, gpu, tpu | eager, graph |
 
 ## Updating the documentation

@@ -83,7 +83,7 @@ def benchmark(f: Callable[[], Any], iters: Optional[int] = None,
 
 
 def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
-                    name: str, target_total_secs: int = None):
+                    name: str, target_total_secs: Optional[int] = None):
   """Benchmarks a function for several combinations of parameters.
 
   Prints the summarized results in a table..
@@ -101,7 +101,7 @@ def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
   times = []
   for params in params_list:
     f = prepare(**params)
-    subname = name + "".join("_%s=%s" % (n, _param_str(p))
+    subname = name + "".join(f"_{n}={_param_str(p)}"
                              for n, p in params.items())
     times.append(benchmark(f, name=subname,
                            target_total_secs=target_total_secs))
@@ -126,7 +126,7 @@ def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
 
   if FLAGS.export_dir:
     filename = _export_results(data_header, data, FLAGS.export_dir, name)
-    print("Wrote %s results to %s" % (name, filename))
+    print(f"Wrote {name} results to {filename}")
     print()
 
 

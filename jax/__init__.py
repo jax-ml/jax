@@ -29,8 +29,6 @@ except Exception as exc:
   del _warn
 del _cloud_tpu_init
 
-# flake8: noqa: F401
-
 # Confusingly there are two things named "config": the module and the class.
 # We want the exported object to be the class, so we first import the module
 # to make sure a later import doesn't overwrite the class.
@@ -43,11 +41,14 @@ from jax._src.config import (
   check_tracer_leaks as check_tracer_leaks,
   checking_leaks as checking_leaks,
   enable_custom_prng as enable_custom_prng,
+  enable_custom_vjp_by_custom_transpose as enable_custom_vjp_by_custom_transpose,
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
+  default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
+  numpy_dtype_promotion as numpy_dtype_promotion,
   numpy_rank_promotion as numpy_rank_promotion,
   jax2tf_associative_scan_reductions as jax2tf_associative_scan_reductions,
   transfer_guard as transfer_guard,
@@ -56,15 +57,16 @@ from jax._src.config import (
   transfer_guard_device_to_host as transfer_guard_device_to_host,
 )
 from .core import eval_context as ensure_compile_time_eval
+from jax._src.environment_info import print_environment_info as print_environment_info
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
+  effects_barrier,
   block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
+  clear_backends as clear_backends,
   closure_convert as closure_convert,
-  Compiled as Compiled,
   curry,  # TODO(phawkins): update users to avoid this.
-  custom_ivjp as custom_ivjp,
   custom_gradient as custom_gradient,
   custom_jvp as custom_jvp,
   custom_vjp as custom_vjp,
@@ -84,7 +86,6 @@ from jax._src.api import (
   host_count as host_count,
   host_id as host_id,
   host_ids as host_ids,
-  invertible as invertible,
   jacobian as jacobian,
   jacfwd as jacfwd,
   jacrev as jacrev,
@@ -92,44 +93,45 @@ from jax._src.api import (
   jvp as jvp,
   local_device_count as local_device_count,
   local_devices as local_devices,
-  Lowered as Lowered,
   linearize as linearize,
   linear_transpose as linear_transpose,
   make_jaxpr as make_jaxpr,
-  mask as mask,
   named_call as named_call,
+  named_scope as named_scope,
   pmap as pmap,
   process_count as process_count,
   process_index as process_index,
+  pure_callback as pure_callback,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat as remat,
-  shapecheck as shapecheck,
   ShapedArray as ShapedArray,
   ShapeDtypeStruct as ShapeDtypeStruct,
-  # TODO(phawkins): hide tree* functions from jax, update callers to use
-  # jax.tree_util.
-  treedef_is_leaf,
-  tree_flatten,
-  tree_leaves,
-  tree_map,
-  tree_multimap,
-  tree_structure,
-  tree_transpose,
-  tree_unflatten,
   value_and_grad as value_and_grad,
   vjp as vjp,
   vmap as vmap,
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation as xla_computation,
 )
-from jax.experimental.maps import soft_pmap as soft_pmap
 from jax.version import __version__ as __version__
+from jax.version import __version_info__ as __version_info__
+
+from jax._src.tree_util import (
+  tree_map as tree_map,
+  # TODO(jakevdp): remove these deprecated routines after October 2022
+  _deprecated_treedef_is_leaf as treedef_is_leaf,
+  _deprecated_tree_flatten as tree_flatten,
+  _deprecated_tree_leaves as tree_leaves,
+  _deprecated_tree_structure as tree_structure,
+  _deprecated_tree_transpose as tree_transpose,
+  _deprecated_tree_unflatten as tree_unflatten,
+)
 
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
 from jax import abstract_arrays as abstract_arrays
 from jax import api_util as api_util
 from jax import distributed as distributed
+from jax import debug as debug
 from jax import dtypes as dtypes
 from jax import errors as errors
 from jax import image as image
@@ -139,7 +141,10 @@ from jax import numpy as numpy
 from jax import ops as ops
 from jax import profiler as profiler
 from jax import random as random
+from jax import stages as stages
 from jax import tree_util as tree_util
 from jax import util as util
 
 import jax.lib  # TODO(phawkins): remove this export.
+
+del jax._src

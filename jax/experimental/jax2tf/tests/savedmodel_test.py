@@ -241,6 +241,41 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     res_restored = restored_f(*args)
     self.assertAllClose(res, res_restored)
 
+  def test_pytree(self):
+    def f_jax(params, x):
+      # params is a dict
+      return x @ params["w"] + params["b"]
+
+    x = np.ones((2, 3), dtype=np.float32)
+    params = dict(w=np.ones((3, 4), dtype=np.float32),
+                  b=np.ones((2, 4), dtype=np.float32))
+    res_jax = f_jax(params, x)
+    f_tf = jax2tf.convert(f_jax)
+
+    res_tf = f_tf(params, x)
+    self.assertAllClose(res_jax, res_tf.numpy())
+
+    restored_f, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=(params, x),
+                                                                  save_gradients=True)
+    self.assertAllClose(restored_f(params, x).numpy(), res_tf.numpy())
+
+    # Gradients for the converted function
+    params_v = tf.nest.map_structure(tf.Variable, params)
+    with tf.GradientTape() as tape:
+      res = f_tf(params_v, x)
+      loss = tf.reduce_sum(res)
+      g_tf = tape.gradient(loss, params_v)
+
+    params_v = tf.nest.map_structure(tf.Variable, params)
+    with tf.GradientTape() as tape:
+      res = restored_f(params_v, x)
+      loss = tf.reduce_sum(res)
+      g_restored_f = tape.gradient(loss, params_v)
+
+    self.assertAllClose(g_tf["w"].numpy(), g_restored_f["w"].numpy())
+    self.assertAllClose(g_tf["b"].numpy(), g_restored_f["b"].numpy())
+
+
   def test_xla_context_preserved_slice(self):
     arr = np.arange(10, dtype=np.float32)
     def f_jax(arr):

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.13.6
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3
   language: python
@@ -42,7 +42,7 @@ _Forked from_ `neural_network_and_data_loading.ipynb`
 
 ![JAX](https://raw.githubusercontent.com/google/jax/main/images/jax_logo_250px.png)
 
-Let's combine everything we showed in the [quickstart notebook](https://colab.research.google.com/github/google/jax/blob/main/notebooks/quickstart.ipynb) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
+Let's combine everything we showed in the [quickstart notebook](https://jax.readthedocs.io/en/latest/notebooks/quickstart.html) to train a simple neural network. We will first specify and train a simple MLP on MNIST using JAX for the computation. We will use `tensorflow/datasets` data loading API to load images and labels (because it's pretty great, and the world doesn't need yet another data loading library :P).
 
 Of course, you can use JAX with any API that is compatible with NumPy to make specifying the model a bit more plug-and-play. Here, just for explanatory purposes, we won't use any neural network libraries or special APIs for building our model.
 

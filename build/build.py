@@ -83,47 +83,47 @@ def check_numpy_version(python_bin_path):
   version = shell(
       [python_bin_path, "-c", "import numpy as np; print(np.__version__)"])
   numpy_version = tuple(map(int, version.split(".")[:2]))
-  if numpy_version < (1, 19):
-    print("ERROR: JAX requires NumPy 1.19 or newer, found " + version + ".")
+  if numpy_version < (1, 20):
+    print("ERROR: JAX requires NumPy 1.20 or newer, found " + version + ".")
     sys.exit(-1)
   return version
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/5.0.0/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/5.1.1/"
 BazelPackage = collections.namedtuple("BazelPackage",
                                       ["base_uri", "file", "sha256"])
 bazel_packages = {
     ("Linux", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.0.0-linux-x86_64",
+            file="bazel-5.1.1-linux-x86_64",
             sha256=
-            "399eedb225cff7a13f9f027f7ea2aad02ddb668a8eb89b1d975d222e4dc12ed9"),
+            "5e126060d9169b462a18e97435356c3b3712d20fdbef9ac7609016838a90e7d3"),
     ("Linux", "aarch64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.0.0-linux-arm64",
+            file="bazel-5.1.1-linux-arm64",
             sha256=
-            "4a88b8f48cac3bf6fe657332631c36b4d255628c87bd77eb3159f4eb166f5e66"),
+            "a590a28608772e779efc0c29bb678cd2a150deb27a9f8c557cc1d2b131a779ef"),
     ("Darwin", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.0.0-darwin-x86_64",
+            file="bazel-5.1.1-darwin-x86_64",
             sha256=
-            "60558f06b9410b15602d6f41a294cec2cb69436c6e64d72ea78f42056373b8b9"),
+            "91d8958fffd3077c32466a03300b7eba3b680588688f11d378ccbf2ae9000753"),
     ("Darwin", "arm64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.0.0-darwin-arm64",
+            file="bazel-5.1.1-darwin-arm64",
             sha256=
-            "86ba0e31b61b675afdfe393bd3b02e12b8fe1196eb5ea045da86f067547fe90f"),
+            "4fad9d066436ccca022578192be9fcc330d833799833c549683949939b3ce717"),
     ("Windows", "AMD64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-5.0.0-windows-x86_64.exe",
+            file="bazel-5.1.1-windows-x86_64.exe",
             sha256=
-            "452217bcc4f8153c521fd985256316cd0bcad869fd192e1afd406dcb16f880d6"),
+            "03061f1e9aac1966155ca402dcd1075c6493dfe85df72aa2cf3e12fcaa258d90"),
 }
 
 
@@ -135,7 +135,7 @@ def download_and_verify_bazel():
 
   if not os.access(package.file, os.X_OK):
     uri = (package.base_uri or BAZEL_BASE_URI) + package.file
-    sys.stdout.write("Downloading bazel from: {}\n".format(uri))
+    sys.stdout.write(f"Downloading bazel from: {uri}\n")
 
     def progress(block_count, block_size, total_size):
       if total_size <= 0:
@@ -185,7 +185,7 @@ def get_bazel_paths(bazel_path_flag):
 
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found. Also,
-  checks Bazel's version is at least newer than 5.0.0
+  checks Bazel's version is at least newer than 5.1.1
 
   A manual version check is needed only for really old bazel versions.
   Newer bazel releases perform their own version check against .bazelversion
@@ -194,11 +194,11 @@ def get_bazel_path(bazel_path_flag):
   """
   for path in filter(None, get_bazel_paths(bazel_path_flag)):
     version = get_bazel_version(path)
-    if version is not None and version >= (5, 0, 0):
+    if version is not None and version >= (5, 1, 1):
       return path, ".".join(map(str, version))
 
   print("Cannot find or download a suitable version of bazel."
-        "Please install bazel >= 5.0.0.")
+        "Please install bazel >= 5.1.1.")
   sys.exit(-1)
 
 
@@ -213,11 +213,13 @@ def get_bazel_version(bazel_path):
   return tuple(int(x) for x in match.group(1).split("."))
 
 
-def write_bazelrc(python_bin_path=None, remote_build=None,
-                  cuda_toolkit_path=None, cudnn_install_path=None,
-                  cuda_version=None, cudnn_version=None, rocm_toolkit_path=None,
-                  cpu=None, cuda_compute_capabilities=None,
-                  rocm_amdgpu_targets=None):
+def write_bazelrc(*, python_bin_path, remote_build,
+                  cuda_toolkit_path, cudnn_install_path,
+                  cuda_version, cudnn_version, rocm_toolkit_path,
+                  cpu, cuda_compute_capabilities,
+                  rocm_amdgpu_targets, bazel_options, target_cpu_features,
+                  wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
+                  enable_tpu, enable_remote_tpu, enable_rocm):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -263,6 +265,32 @@ def write_bazelrc(python_bin_path=None, remote_build=None,
     else:
       f.write("build --distinct_host_configuration=false\n")
 
+    for o in bazel_options:
+      f.write(f"build {o}\n")
+    if target_cpu_features == "release":
+      if wheel_cpu == "x86_64":
+        f.write("build --config=avx_windows\n" if is_windows()
+                else "build --config=avx_posix\n")
+    elif target_cpu_features == "native":
+      if is_windows():
+        print("--target_cpu_features=native is not supported on Windows; ignoring.")
+      else:
+        f.write("build --config=native_arch_posix\n")
+
+    if enable_mkl_dnn:
+      f.write("build --config=mkl_open_source_only\n")
+    if enable_cuda:
+      f.write("build --config=cuda\n")
+      if not enable_nccl:
+        f.write("build --config=nonccl\n")
+    if enable_tpu:
+      f.write("build --config=tpu\n")
+    if enable_remote_tpu:
+      f.write("build --//build:enable_remote_tpu=true\n")
+    if enable_rocm:
+      f.write("build --config=rocm\n")
+      if not enable_nccl:
+        f.write("build --config=nonccl\n")
 
 BANNER = r"""
      _   _  __  __
@@ -291,7 +319,7 @@ def _parse_string_as_bool(s):
   elif lower == "false":
     return False
   else:
-    raise ValueError("Expected either 'true' or 'false'; got {}".format(s))
+    raise ValueError(f"Expected either 'true' or 'false'; got {s}")
 
 
 def add_boolean_argument(parser, name, default=False, help_str=None):
@@ -343,7 +371,11 @@ def main():
   add_boolean_argument(
       parser,
       "enable_tpu",
-      help_str="Should we build with Cloud TPU support enabled?")
+      help_str="Should we build with Cloud TPU VM support enabled?")
+  add_boolean_argument(
+      parser,
+      "enable_remote_tpu",
+      help_str="Should we build with remote Cloud TPU support enabled?")
   add_boolean_argument(
       parser,
       "enable_rocm",
@@ -358,7 +390,7 @@ def main():
       parser,
       "remote_build",
       default=False,
-      help_str="Should we build with RBE.")
+      help_str="Should we build with RBE (Remote Build Environment)?")
   parser.add_argument(
       "--cuda_path",
       default=None,
@@ -379,11 +411,11 @@ def main():
   # update the list in .bazelrc, which is used for wheel builds.
   parser.add_argument(
       "--cuda_compute_capabilities",
-      default="3.5,5.2,6.0,7.0,8.0",
+      default=None,
       help="A comma-separated list of CUDA compute capabilities to support.")
   parser.add_argument(
       "--rocm_amdgpu_targets",
-      default="gfx900,gfx906,gfx90",
+      default="gfx900,gfx906,gfx908,gfx90a,gfx1030",
       help="A comma-separated list of ROCm amdgpu targets to support.")
   parser.add_argument(
       "--rocm_path",
@@ -406,6 +438,11 @@ def main():
       default=None,
       help="CPU platform to target. Default is the same as the host machine. "
            "Currently supported values are 'darwin_arm64' and 'darwin_x86_64'.")
+  add_boolean_argument(
+      parser,
+      "configure_only",
+      default=False,
+      help_str="If true, writes a .bazelrc file but does not build jaxlib.")
   args = parser.parse_args()
 
   if is_windows() and args.enable_cuda:
@@ -427,6 +464,7 @@ def main():
       "darwin_arm64": "arm64",
       "darwin_x86_64": "x86_64",
       "ppc": "ppc64le",
+      "aarch64": "aarch64",
   }
   # TODO(phawkins): support other bazel cpu overrides.
   wheel_cpu = (wheel_cpus[args.target_cpu] if args.target_cpu is not None
@@ -438,17 +476,17 @@ def main():
   print(f"Bazel version: {bazel_version}")
 
   python_bin_path = get_python_bin_path(args.python_bin_path)
-  print("Python binary path: {}".format(python_bin_path))
+  print(f"Python binary path: {python_bin_path}")
   python_version = get_python_version(python_bin_path)
   print("Python version: {}".format(".".join(map(str, python_version))))
   check_python_version(python_version)
 
   numpy_version = check_numpy_version(python_bin_path)
-  print("NumPy version: {}".format(numpy_version))
+  print(f"NumPy version: {numpy_version}")
 
   print("MKL-DNN enabled: {}".format("yes" if args.enable_mkl_dnn else "no"))
-  print("Target CPU: {}".format(wheel_cpu))
-  print("Target CPU features: {}".format(args.target_cpu_features))
+  print(f"Target CPU: {wheel_cpu}")
+  print(f"Target CPU features: {args.target_cpu_features}")
 
   cuda_toolkit_path = args.cuda_path
   cudnn_install_path = args.cudnn_path
@@ -456,23 +494,25 @@ def main():
   print("CUDA enabled: {}".format("yes" if args.enable_cuda else "no"))
   if args.enable_cuda:
     if cuda_toolkit_path:
-      print("CUDA toolkit path: {}".format(cuda_toolkit_path))
+      print(f"CUDA toolkit path: {cuda_toolkit_path}")
     if cudnn_install_path:
-      print("CUDNN library path: {}".format(cudnn_install_path))
-    print("CUDA compute capabilities: {}".format(args.cuda_compute_capabilities))
+      print(f"CUDNN library path: {cudnn_install_path}")
+    if args.cuda_compute_capabilities is not None:
+      print(f"CUDA compute capabilities: {args.cuda_compute_capabilities}")
     if args.cuda_version:
-      print("CUDA version: {}".format(args.cuda_version))
+      print(f"CUDA version: {args.cuda_version}")
     if args.cudnn_version:
-      print("CUDNN version: {}".format(args.cudnn_version))
+      print(f"CUDNN version: {args.cudnn_version}")
     print("NCCL enabled: {}".format("yes" if args.enable_nccl else "no"))
 
   print("TPU enabled: {}".format("yes" if args.enable_tpu else "no"))
+  print("Remote TPU enabled: {}".format("yes" if args.enable_remote_tpu else "no"))
 
   print("ROCm enabled: {}".format("yes" if args.enable_rocm else "no"))
   if args.enable_rocm:
     if rocm_toolkit_path:
-      print("ROCm toolkit path: {}".format(rocm_toolkit_path))
-    print("ROCm amdgpu targets: {}".format(args.rocm_amdgpu_targets))
+      print(f"ROCm toolkit path: {rocm_toolkit_path}")
+    print(f"ROCm amdgpu targets: {args.rocm_amdgpu_targets}")
 
   write_bazelrc(
       python_bin_path=python_bin_path,
@@ -485,41 +525,31 @@ def main():
       cpu=args.target_cpu,
       cuda_compute_capabilities=args.cuda_compute_capabilities,
       rocm_amdgpu_targets=args.rocm_amdgpu_targets,
+      bazel_options=args.bazel_options,
+      target_cpu_features=args.target_cpu_features,
+      wheel_cpu=wheel_cpu,
+      enable_mkl_dnn=args.enable_mkl_dnn,
+      enable_cuda=args.enable_cuda,
+      enable_nccl=args.enable_nccl,
+      enable_tpu=args.enable_tpu,
+      enable_remote_tpu=args.enable_remote_tpu,
+      enable_rocm=args.enable_rocm,
   )
+
+  if args.configure_only:
+    return
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
 
-  config_args = args.bazel_options
-  if args.target_cpu_features == "release":
-    if wheel_cpu == "x86_64":
-      config_args += ["--config=avx_windows" if is_windows()
-                      else "--config=avx_posix"]
-  elif args.target_cpu_features == "native":
-    if is_windows():
-      print("--target_cpu_features=native is not supported on Windows; ignoring.")
-    else:
-      config_args += ["--config=native_arch_posix"]
-
-  if args.enable_mkl_dnn:
-    config_args += ["--config=mkl_open_source_only"]
-  if args.enable_cuda:
-    config_args += ["--config=cuda"]
-    if not args.enable_nccl:
-      config_args += ["--config=nonccl"]
-  if args.enable_tpu:
-    config_args += ["--config=tpu"]
-  if args.enable_rocm:
-    config_args += ["--config=rocm"]
-    config_args += ["--config=nonccl"]
 
   command = ([bazel_path] + args.bazel_startup_options +
-    ["run", "--verbose_failures=true"] + config_args +
+    ["run", "--verbose_failures=true"] +
     [":build_wheel", "--",
     f"--output_path={output_path}",
     f"--cpu={wheel_cpu}"])
   print(" ".join(command))
   shell(command)
-  shell([bazel_path, "shutdown"])
+  shell([bazel_path] + args.bazel_startup_options + ["shutdown"])
 
 
 if __name__ == "__main__":

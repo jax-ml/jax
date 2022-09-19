@@ -20,7 +20,7 @@
 #       extension: .py
 #       format_name: light
 #       format_version: '1.5'
-#       jupytext_version: 1.13.6
+#       jupytext_version: 1.14.1
 #   kernelspec:
 #     display_name: Python 3
 #     name: python3
@@ -92,11 +92,16 @@ def mul(x, y): return bind1(mul_p, x, y)
 def neg(x): return bind1(neg_p, x)
 def sin(x): return bind1(sin_p, x)
 def cos(x): return bind1(cos_p, x)
-def reduce_sum(x, axis=None): return bind1(reduce_sum_p, x, axis=axis)
 def greater(x, y): return bind1(greater_p, x, y)
 def less(x, y): return bind1(less_p, x, y)
 def transpose(x, perm): return bind1(transpose_p, x, perm=perm)
 def broadcast(x, shape, axes): return bind1(broadcast_p, x, shape=shape, axes=axes)
+def reduce_sum(x, axis=None):
+  if axis is None:
+    axis = tuple(range(np.ndim(x)))
+  if type(axis) is int:
+    axis = (axis,)
+  return bind1(reduce_sum_p, x, axis=axis)
 
 def bind1(prim, *args, **params):
   out, = bind(prim, *args, **params)
@@ -237,7 +242,7 @@ def swap(f): return lambda x, y: f(y, x)
 # +
 class ShapedArray:
   array_abstraction_level = 1
-  shape: Tuple[int]
+  shape: Tuple[int, ...]
   dtype: np.dtype
 
   def __init__(self, shape, dtype):
@@ -711,7 +716,7 @@ register_pytree_node(dict,
 class PyTreeDef(NamedTuple):
   node_type: NodeType
   node_metadata: Hashable
-  child_treedefs: Tuple['PyTreeDef']
+  child_treedefs: Tuple['PyTreeDef', ...]
 
 class Leaf: pass
 leaf = Leaf()
@@ -873,8 +878,8 @@ vmap_rules[neg_p] = partial(vectorized_unop_batching_rule, neg)
 
 def reduce_sum_batching_rule(axis_size, vals_in, dims_in, *, axis):
   (x,), (x_bdim,) = vals_in, dims_in
-  new_axis = axis + (x_bdim <= axis)
-  out_bdim = x_bdim - (new_axis < x_bdim)
+  new_axis = tuple(ax + (x_bdim <= ax) for ax in axis)
+  out_bdim = x_bdim - sum(ax < x_bdim for ax in axis)
   return [reduce_sum(x, new_axis)], [out_bdim]
 vmap_rules[reduce_sum_p] = reduce_sum_batching_rule
 
@@ -1271,8 +1276,10 @@ abstract_eval_rules[sin_p] = vectorized_unop_abstract_eval
 abstract_eval_rules[cos_p] = vectorized_unop_abstract_eval
 abstract_eval_rules[neg_p] = vectorized_unop_abstract_eval
 
-def reduce_sum_abstract_eval(x: ShapedArray, *, axis: int) -> List[ShapedArray]:
-  new_shape = [d for i, d in enumerate(x.shape) if i != axis]
+def reduce_sum_abstract_eval(x: ShapedArray, *, axis: Tuple[int, ...]
+                             ) -> List[ShapedArray]:
+  axis_ = set(axis)
+  new_shape = [d for i, d in enumerate(x.shape) if i not in axis_]
   return [ShapedArray(tuple(new_shape), x.dtype)]
 abstract_eval_rules[reduce_sum_p] = reduce_sum_abstract_eval
 
@@ -1549,7 +1556,8 @@ def xla_call_impl(*args, jaxpr: Jaxpr, num_consts: int):
 impl_rules[xla_call_p] = xla_call_impl
 
 @lru_cache()
-def xla_callable(hashable_jaxpr: IDHashable, hashable_consts: Tuple[IDHashable]):
+def xla_callable(hashable_jaxpr: IDHashable,
+                 hashable_consts: Tuple[IDHashable, ...]):
   jaxpr: Jaxpr = hashable_jaxpr.val
   typecheck_jaxpr(jaxpr)
   consts = [x.val for x in hashable_consts]
@@ -1612,7 +1620,7 @@ input_handlers = {ty: default_input_handler for ty in
 
 def handle_result(aval: ShapedArray, buf):
   del aval  # Unused for now
-  return buf.to_py()
+  return np.asarray(buf)
 
 xla_translations = {}
 
@@ -1643,7 +1651,7 @@ def reduce_sum_translation(c, in_avals, in_vals, *, axis):
   subc = xc.XlaBuilder('add')
   shape = _xla_shape(ShapedArray((), x_aval.dtype))
   xops.Add(xops.Parameter(subc, 0, shape), xops.Parameter(subc, 1, shape))
-  return [xops.Reduce(c, [x], [zero], subc.build(), [axis])]
+  return [xops.Reduce(c, [x], [zero], subc.build(), axis)]
 xla_translations[reduce_sum_p] = reduce_sum_translation
 
 def broadcast_translation(c, in_avals, in_vals, *, shape, axes):
@@ -1825,9 +1833,9 @@ class DeviceArray:
   shape = property(lambda self: self.aval.shape)
   ndim  = property(lambda self: self.aval.ndim)
 
-  def __array__(self): return self.buf.to_py()
-  def __repr__(self):  return repr(self.buf.to_py())
-  def __str__(self):   return str(self.buf.to_py())
+  def __array__(self): return np.asarray(self.buf)
+  def __repr__(self):  return repr(np.asarray(self.buf))
+  def __str__(self):   return str(np.asarray(self.buf))
 
   _neg = staticmethod(neg)
   _add = staticmethod(add)
@@ -1877,7 +1885,9 @@ pp_rules[xla_call_p] = pprint_xla_call
 # ### `linearize`
 #
 # In the case of `linearize`, we want to stage out the linear part of a `jvp`
-# computation. That is, if we have `jvp : (a -> b) -> (a, T a) -> (b, T b)`,
+# computation. That is, in terms of
+# [Haskell-like type signatures](https://wiki.haskell.org/Type_signature),
+# if we have `jvp : (a -> b) -> (a, T a) -> (b, T b)`,
 # then we write `linearize : (a -> b) -> a -> (b, T a -o T b)`, using `T a` to
 # mean "the tangent type of `a`" and using the "lollipop" `-o` rather than the
 # arrow `->` to indicate a _linear_ function. We define the semantics of
@@ -2201,8 +2211,9 @@ def tracers_to_jaxpr(tracers_in: List[PartialEvalTracer],
       var = constid_to_var.get(id(val))
       if var is None:
         aval = raise_to_shaped(get_aval(val))
-        var = tracer_to_var[id(t)] = constid_to_var[id(val)] = Var(aval)
+        var = constid_to_var[id(val)] = Var(aval)
         constvar_to_val[var] = val
+      tracer_to_var[id(t)] = var
     elif isinstance(t.recipe, JaxprEqnRecipe):
       if id(t.recipe) not in processed_eqns:
         eqns.append(recipe_to_eqn(tracer_to_var, t.recipe))
@@ -2555,6 +2566,11 @@ def add_transpose_rule(cts, x, y):
   z_bar, = cts
   return [z_bar, z_bar]
 transpose_rules[add_p] = add_transpose_rule
+
+def reduce_sum_transpose_rule(cts, x, *, axis):
+  y_bar, = cts
+  return [broadcast(y_bar, x.aval.shape, axis)]
+transpose_rules[reduce_sum_p] = reduce_sum_transpose_rule
 
 def xla_call_transpose_rule(cts, *invals, jaxpr, num_consts):
   del num_consts  # Unused
@@ -2956,7 +2972,7 @@ print(out)
 # Transposition is a fairly straightforward application of `transpose_jaxpr`:
 
 def cond_transpose_rule(cts, pred, *invals, true_jaxpr, false_jaxpr):
-  undef_primals = tuple([type(x) is UndefPrimal for x in invals])
+  undef_primals = tuple(type(x) is UndefPrimal for x in invals)
   true_jaxpr, true_consts = transpose_jaxpr(true_jaxpr, undef_primals)
   false_jaxpr, false_consts = transpose_jaxpr(false_jaxpr, undef_primals)
   true_jaxpr, false_jaxpr = _join_jaxpr_consts(

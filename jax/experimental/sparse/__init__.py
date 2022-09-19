@@ -24,7 +24,8 @@ Batched-coordinate (BCOO) sparse matrices
 -----------------------------------------
 The main high-level sparse object currently available in JAX is the :class:`BCOO`,
 or *batched coordinate* sparse array, which offers a compressed storage format compatible
-with JAX functions.
+with JAX transformations, in particular JIT (e.g. :func:`jax.jit`), batching
+(e.g. :func:`jax.vmap`) and autodiff (e.g. :func:`jax.grad`).
 
 Here is an example of creating a sparse array from a dense array:
 
@@ -182,25 +183,33 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
      -0.670236    0.03132951 -0.05356663]
 """
 
-# flake8: noqa: F401
 from jax.experimental.sparse.ad import (
     grad as grad,
     value_and_grad as value_and_grad,
 )
 from jax.experimental.sparse.bcoo import (
     bcoo_broadcast_in_dim as bcoo_broadcast_in_dim,
+    bcoo_concatenate as bcoo_concatenate,
     bcoo_dot_general as bcoo_dot_general,
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
     bcoo_dot_general_sampled_p as bcoo_dot_general_sampled_p,
+    bcoo_dynamic_slice as bcoo_dynamic_slice,
     bcoo_extract as bcoo_extract,
     bcoo_extract_p as bcoo_extract_p,
     bcoo_fromdense as bcoo_fromdense,
     bcoo_fromdense_p as bcoo_fromdense_p,
+    bcoo_multiply_dense as bcoo_multiply_dense,
+    bcoo_multiply_sparse as bcoo_multiply_sparse,
+    bcoo_update_layout as bcoo_update_layout,
     bcoo_reduce_sum as bcoo_reduce_sum,
-    bcoo_rdot_general as bcoo_rdot_general,
-    bcoo_spdot_general as bcoo_spdot_general,
+    bcoo_reshape as bcoo_reshape,
+    bcoo_slice as bcoo_slice,
+    bcoo_sort_indices as bcoo_sort_indices,
+    bcoo_sort_indices_p as bcoo_sort_indices_p,
     bcoo_spdot_general_p as bcoo_spdot_general_p,
+    bcoo_sum_duplicates as bcoo_sum_duplicates,
+    bcoo_sum_duplicates_p as bcoo_sum_duplicates_p,
     bcoo_todense as bcoo_todense,
     bcoo_todense_p as bcoo_todense_p,
     bcoo_transpose as bcoo_transpose,
@@ -210,12 +219,15 @@ from jax.experimental.sparse.bcoo import (
 
 from jax.experimental.sparse.api import (
     empty as empty,
+    eye as eye,
     todense as todense,
     todense_p as todense_p,
 )
 
 from jax.experimental.sparse.util import (
     CuSparseEfficiencyWarning as CuSparseEfficiencyWarning,
+    SparseEfficiencyError as SparseEfficiencyError,
+    SparseEfficiencyWarning as SparseEfficiencyWarning,
 )
 
 from jax.experimental.sparse.coo import (
@@ -248,3 +260,5 @@ from jax.experimental.sparse.transform import (
     sparsify as sparsify,
     SparseTracer as SparseTracer,
 )
+
+from jax.experimental.sparse import linalg

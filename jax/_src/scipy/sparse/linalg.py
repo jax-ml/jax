@@ -18,11 +18,14 @@ import operator
 
 import numpy as np
 import jax.numpy as jnp
+from jax import device_put
+from jax import lax
 from jax import scipy as jsp
-from jax import lax, device_put
-from jax.tree_util import (tree_leaves, tree_map, tree_multimap, tree_structure,
+from jax.tree_util import (tree_leaves, tree_map, tree_structure,
                            tree_reduce, Partial)
+
 from jax._src import dtypes
+from jax._src.lax import lax as lax_internal
 from jax._src.util import safe_map as map
 
 
@@ -49,11 +52,11 @@ def _vdot_real_part(x, y):
 
 
 def _vdot_real_tree(x, y):
-  return sum(tree_leaves(tree_multimap(_vdot_real_part, x, y)))
+  return sum(tree_leaves(tree_map(_vdot_real_part, x, y)))
 
 
 def _vdot_tree(x, y):
-  return sum(tree_leaves(tree_multimap(partial(
+  return sum(tree_leaves(tree_map(partial(
     jnp.vdot, precision=lax.Precision.HIGHEST), x, y)))
 
 
@@ -70,9 +73,9 @@ def _div(tree, scalar):
   return tree_map(partial(lambda v: v / scalar), tree)
 
 
-_add = partial(tree_multimap, operator.add)
-_sub = partial(tree_multimap, operator.sub)
-_dot_tree = partial(tree_multimap, _dot)
+_add = partial(tree_map, operator.add)
+_sub = partial(tree_map, operator.sub)
+_dot_tree = partial(tree_map, _dot)
 
 
 @Partial
@@ -89,8 +92,12 @@ def _normalize_matvec(f):
       raise ValueError(
           f'linear operator must be a square matrix, but has shape: {f.shape}')
     return partial(_dot, f)
+  elif hasattr(f, '__matmul__'):
+    if hasattr(f, 'shape') and len(f.shape) != 2 or f.shape[0] != f.shape[1]:
+      raise ValueError(
+          f'linear operator must be a square matrix, but has shape: {f.shape}')
+    return partial(operator.matmul, f)
   else:
-    # TODO(shoyer): handle sparse arrays?
     raise TypeError(
         f'linear operator must be either a function or ndarray: {f}')
 
@@ -105,24 +112,25 @@ def _cg_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
 
   def cond_fun(value):
     _, r, gamma, _, k = value
-    rs = gamma if M is _identity else _vdot_real_tree(r, r)
+    rs = gamma.real if M is _identity else _vdot_real_tree(r, r)
     return (rs > atol2) & (k < maxiter)
 
   def body_fun(value):
     x, r, gamma, p, k = value
     Ap = A(p)
-    alpha = gamma / _vdot_real_tree(p, Ap)
+    alpha = gamma / _vdot_real_tree(p, Ap).astype(dtype)
     x_ = _add(x, _mul(alpha, p))
     r_ = _sub(r, _mul(alpha, Ap))
     z_ = M(r_)
-    gamma_ = _vdot_real_tree(r_, z_)
+    gamma_ = _vdot_real_tree(r_, z_).astype(dtype)
     beta_ = gamma_ / gamma
     p_ = _add(z_, _mul(beta_, p))
     return x_, r_, gamma_, p_, k + 1
 
   r0 = _sub(b, A(x0))
   p0 = z0 = M(r0)
-  gamma0 = _vdot_real_tree(r0, z0)
+  dtype = jnp.result_type(*tree_leaves(p0))
+  gamma0 = _vdot_real_tree(r0, z0).astype(dtype)
   initial_value = (x0, r0, gamma0, p0, 0)
 
   x_final, *_ = lax.while_loop(cond_fun, body_fun, initial_value)
@@ -159,18 +167,18 @@ def _bicgstab_solve(A, b, x0=None, *, maxiter, tol=1e-5, atol=0.0, M=_identity):
     shat = M(s)
     t = A(shat)
     omega_ = _vdot_tree(t, s) / _vdot_tree(t, t)  # make cases?
-    x_ = tree_multimap(partial(jnp.where, exit_early),
-                       _add(x, _mul(alpha_, phat)),
-                       _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
-                       )
-    r_ = tree_multimap(partial(jnp.where, exit_early),
-                       s, _sub(s, _mul(omega_, t)))
+    x_ = tree_map(partial(jnp.where, exit_early),
+                  _add(x, _mul(alpha_, phat)),
+                  _add(x, _add(_mul(alpha_, phat), _mul(omega_, shat)))
+                  )
+    r_ = tree_map(partial(jnp.where, exit_early),
+                  s, _sub(s, _mul(omega_, t)))
     k_ = jnp.where((omega_ == 0) | (alpha_ == 0), -11, k + 1)
     k_ = jnp.where((rho_ == 0), -10, k_)
     return x_, r_, rhat, alpha_, omega_, rho_, p_, q_, k_
 
   r0 = _sub(b, A(x0))
-  rho0 = alpha0 = omega0 = lax._convert_element_type(
+  rho0 = alpha0 = omega0 = lax_internal._convert_element_type(
       1, *dtypes._lattice_result_type(*tree_leaves(b)))
   initial_value = (x0, r0, r0, alpha0, omega0, rho0, r0, r0, 0)
 
@@ -238,10 +246,10 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Parameters
   ----------
-  A: ndarray or function
+  A: ndarray, function, or matmul-compatible object
       2D array or function that calculates the linear map (matrix-vector
-      product) ``Ax`` when called like ``A(x)``. ``A`` must represent a
-      hermitian, positive definite matrix, and must return array(s) with the
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A`` must represent
+      a hermitian, positive definite matrix, and must return array(s) with the
       same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
@@ -257,7 +265,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Other Parameters
   ----------------
-  x0 : array
+  x0 : array or tree of arrays
       Starting guess for the solution. Must have the same structure as ``b``.
   tol, atol : float, optional
       Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
@@ -266,7 +274,7 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   maxiter : integer
       Maximum number of iterations.  Iteration will stop after maxiter
       steps even if the specified tolerance has not been achieved.
-  M : ndarray or function
+  M : ndarray, function, or matmul-compatible object
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
@@ -290,13 +298,16 @@ def _safe_normalize(x, thresh=None):
   taken to be 0, and the normalized x to be the zero vector.
   """
   norm = _norm(x)
-  dtype = jnp.result_type(*tree_leaves(x))
+  dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(x))
+  dtype = dtypes.canonicalize_dtype(dtype)
   if thresh is None:
     thresh = jnp.finfo(norm.dtype).eps
   thresh = thresh.astype(dtype).real
 
   use_norm = norm > thresh
-  normalized_x = tree_map(lambda y: jnp.where(use_norm, y / norm, 0.0), x)
+
+  norm_cast = lax_internal._convert_element_type(norm, dtype, weak_type)
+  normalized_x = tree_map(lambda y: jnp.where(use_norm, y / norm_cast, 0.0), x)
   norm = jnp.where(use_norm, norm, 0.0)
   return normalized_x, norm
 
@@ -305,7 +316,7 @@ def _project_on_columns(A, v):
   """
   Returns A.T.conj() @ v.
   """
-  v_proj = tree_multimap(
+  v_proj = tree_map(
       lambda X, y: _einsum("...n,...->n", X.conj(), y), A, v,
   )
   return tree_reduce(operator.add, v_proj)
@@ -343,9 +354,10 @@ def _iterative_classical_gram_schmidt(Q, x, xnorm, max_iterations=2):
 
   # This assumes that Q's leaves all have the same dimension in the last
   # axis.
-  r = jnp.zeros((tree_leaves(Q)[0].shape[-1]))
+  Q0 = tree_leaves(Q)[0]
+  r = jnp.zeros(Q0.shape[-1], dtype=Q0.dtype)
   q = x
-  xnorm_scaled = xnorm / jnp.sqrt(2)
+  xnorm_scaled = xnorm / jnp.sqrt(2.0)
 
   def body_function(carry):
     k, q, r, qnorm_scaled = carry
@@ -361,7 +373,7 @@ def _iterative_classical_gram_schmidt(Q, x, xnorm, max_iterations=2):
     def qnorm(carry):
       k, _, q, qnorm_scaled = carry
       _, qnorm = _safe_normalize(q)
-      qnorm_scaled = qnorm / jnp.sqrt(2)
+      qnorm_scaled = qnorm / jnp.sqrt(2.0)
       return (k, False, q, qnorm_scaled)
 
     init = (k, True, q, qnorm_scaled)
@@ -388,7 +400,8 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   subspace is declared to have been found, in which case in which case the new
   vector is taken to be the zero vector.
   """
-  eps = jnp.finfo(jnp.result_type(*tree_leaves(V))).eps
+  dtype = jnp.result_type(*tree_leaves(V))
+  eps = jnp.finfo(dtype).eps
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]
   v = M(A(v))
@@ -397,9 +410,9 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
 
   tol = eps * v_norm_0
   unit_v, v_norm_1 = _safe_normalize(v, thresh=tol)
-  V = tree_multimap(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
+  V = tree_map(lambda X, y: X.at[..., k + 1].set(y), V, unit_v)
 
-  h = h.at[k + 1].set(v_norm_1)
+  h = h.at[k + 1].set(v_norm_1.astype(dtype))
   H = H.at[k, :].set(h)
   breakdown = v_norm_1 == 0.
   return V, H, breakdown
@@ -419,7 +432,7 @@ def _givens_rotation(a, b):
   b_zero = abs(b) == 0
   a_lt_b = abs(a) < abs(b)
   t = -jnp.where(a_lt_b, a, b) / jnp.where(a_lt_b, b, a)
-  r = lax.rsqrt(1 + abs(t) ** 2)
+  r = lax.rsqrt(1 + abs(t) ** 2).astype(t.dtype)
   cs = jnp.where(b_zero, 1, jnp.where(a_lt_b, r * t, r))
   sn = jnp.where(b_zero, 0, jnp.where(a_lt_b, r, r * t))
   return cs, sn
@@ -465,7 +478,7 @@ def _gmres_incremental(A, b, x0, unit_residual, residual_norm, ptol, restart, M)
 
   givens = jnp.zeros((restart, 2), dtype=dtype)
   beta_vec = jnp.zeros((restart + 1), dtype=dtype)
-  beta_vec = beta_vec.at[0].set(residual_norm)
+  beta_vec = beta_vec.at[0].set(residual_norm.astype(dtype))
 
   def loop_cond(carry):
     k, err, _, _, _, _ = carry
@@ -499,7 +512,7 @@ def _lstsq(a, b):
   # faster than jsp.linalg.lstsq
   a2 = _dot(a.T.conj(), a)
   b2 = _dot(a.T.conj(), b)
-  return jsp.linalg.solve(a2, b2, sym_pos=True)
+  return jsp.linalg.solve(a2, b2, assume_a='pos')
 
 
 def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
@@ -519,7 +532,9 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
       unit_residual,
   )
   dtype, weak_type = dtypes._lattice_result_type(*tree_leaves(b))
-  H = lax._convert_element_type(jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
+  dtype = dtypes.canonicalize_dtype(dtype)
+  H = lax_internal._convert_element_type(
+      jnp.eye(restart, restart + 1, dtype=dtype), weak_type=weak_type)
 
   def loop_cond(carry):
     _, _, breakdown, k = carry
@@ -533,7 +548,7 @@ def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):
   carry = (V, H, False, 0)
   V, H, _, _ = lax.while_loop(loop_cond, arnoldi_process, carry)
 
-  beta_vec = jnp.zeros_like(H, shape=(restart + 1,)).at[0].set(residual_norm)
+  beta_vec = jnp.zeros_like(H, shape=(restart + 1,)).at[0].set(residual_norm.astype(dtype))
   y = _lstsq(H.T, beta_vec)
   dx = tree_map(lambda X: _dot(X[..., :-1], y), V)
 
@@ -588,10 +603,10 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   Parameters
   ----------
-  A: ndarray or function
+  A: ndarray, function, or matmul-compatible object
       2D array or function that calculates the linear map (matrix-vector
-      product) ``Ax`` when called like ``A(x)``. ``A`` must return array(s) with
-      the same structure and shape as its argument.
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A``
+      must return array(s) with the same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -606,7 +621,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
 
   Other Parameters
   ----------------
-  x0 : array, optional
+  x0 : array or tree of arrays, optional
       Starting guess for the solution. Must have the same structure as ``b``.
       If this is unspecified, zeroes are used.
   tol, atol : float, optional
@@ -627,7 +642,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
       starting from the solution found at the last iteration. If GMRES
       halts or is very slow, decreasing this parameter may help.
       Default is infinite.
-  M : ndarray or function
+  M : ndarray, function, or matmul-compatible object
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed
@@ -705,11 +720,11 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Parameters
   ----------
-  A : function
-      Function that calculates the matrix-vector product ``Ax`` when called
-      like ``A(x)``. ``A`` can represent any general (nonsymmetric) linear
-      operator, and must return array(s) with the same structure and shape as its
-      argument.
+  A: ndarray, function, or matmul-compatible object
+      2D array or function that calculates the linear map (matrix-vector
+      product) ``Ax`` when called like ``A(x)`` or ``A @ x``. ``A`` can represent
+      any general (nonsymmetric) linear operator, and function must return array(s)
+      with the same structure and shape as its argument.
   b : array or tree of arrays
       Right hand side of the linear system representing a single vector. Can be
       stored as an array or Python container of array(s) with any shape.
@@ -724,7 +739,7 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
 
   Other Parameters
   ----------------
-  x0 : array
+  x0 : array or tree of arrays
       Starting guess for the solution. Must have the same structure as ``b``.
   tol, atol : float, optional
       Tolerances for convergence, ``norm(residual) <= max(tol*norm(b), atol)``.
@@ -733,7 +748,7 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   maxiter : integer
       Maximum number of iterations.  Iteration will stop after maxiter
       steps even if the specified tolerance has not been achieved.
-  M : function
+  M : ndarray, function, or matmul-compatible object
       Preconditioner for A.  The preconditioner should approximate the
       inverse of A.  Effective preconditioning dramatically improves the
       rate of convergence, which implies that fewer iterations are needed

@@ -1,4 +1,3 @@
-
 jax.numpy package
 =================
 
@@ -15,24 +14,24 @@ cannot follow NumPy exactly.
   in-place cannot be implemented in JAX. However, often JAX is able to provide
   an alternative API that is purely functional. For example, instead of in-place
   array updates (:code:`x[i] = y`), JAX provides an alternative pure indexed
-  update function :code:`x.at[i].set(y)`.
+  update function :code:`x.at[i].set(y)` (see :attr:`ndarray.at`).
 
-* Relatedly, some NumPy functions return views of arrays when possible (examples
-  are :func:`numpy.transpose` and :func:`numpy.reshape`). JAX versions of such
-  functions will return copies instead, although such copies can often be optimized
+* Relatedly, some NumPy functions often return views of arrays when possible
+  (examples are :func:`transpose` and :func:`reshape`). JAX versions of such
+  functions will return copies instead, although such are often optimized
   away by XLA when sequences of operations are compiled using :func:`jax.jit`.
 
 * NumPy is very aggressive at promoting values to :code:`float64` type. JAX
   sometimes is less aggressive about type promotion (See :ref:`type-promotion`).
 
-A small number of NumPy operations that have data-dependent output shapes are
-incompatible with :func:`jax.jit` compilation. The XLA compiler requires that
-shapes of arrays be known at compile time. While it would be possible to provide
-a JAX implementation of an API such as :func:`numpy.nonzero`, we would be unable
-to JIT-compile it because the shape of its output depends on the contents of the
-input data.
+* Some NumPy routines have data-dependent output shapes (examples include
+  :func:`unique` and :func:`nonzero`). Because the XLA compiler requires array
+  shapes to be known at compile time, such operations are not compatible with
+  JIT. For this reason, JAX adds an optional ``size`` argument to such functions
+  which may be specified statically in order to use them with JIT.
 
-Not every function in NumPy is implemented; contributions are welcome!
+Nearly all applicable NumPy functions are implemented in the ``jax.numpy``
+namespace; they are listed below.
 
 .. Generate the list below as follows:
    >>> import jax.numpy, numpy
@@ -43,13 +42,9 @@ Not every function in NumPy is implemented; contributions are welcome!
    # sorted() function.
 
 .. autosummary::
-   :toctree: _autosummary
-
-   ndarray.at
-
-.. autosummary::
   :toctree: _autosummary
 
+    ndarray.at
     abs
     absolute
     add
@@ -118,6 +113,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     conj
     conjugate
     convolve
+    copy
     copysign
     corrcoef
     correlate
@@ -134,9 +130,9 @@ Not every function in NumPy is implemented; contributions are welcome!
     degrees
     delete
     diag
-    diagflat
     diag_indices
     diag_indices_from
+    diagflat
     diagonal
     diff
     digitize
@@ -168,22 +164,29 @@ Not every function in NumPy is implemented; contributions are welcome!
     fliplr
     flipud
     float_
+    float_power
     float16
     float32
     float64
     floating
-    float_power
     floor
     floor_divide
     fmax
     fmin
     fmod
     frexp
+    frombuffer
+    fromfile
+    fromfunction
+    fromiter
+    fromstring
+    from_dlpack
     full
     full_like
     gcd
-    get_printoptions
+    generic
     geomspace
+    get_printoptions
     gradient
     greater
     greater_equal
@@ -268,6 +271,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     moveaxis
     msort
     multiply
+    nan_to_num
     nanargmax
     nanargmin
     nancumprod
@@ -302,6 +306,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     poly
     polyadd
     polyder
+    polydiv
     polyfit
     polyint
     polymul
@@ -384,6 +389,7 @@ Not every function in NumPy is implemented; contributions are welcome!
     triu_indices_from
     true_divide
     trunc
+    uint
     uint16
     uint32
     uint64
@@ -468,6 +474,30 @@ on a single device. Like :class:`numpy.ndarray`, most users will not need to
 instantiate :class:`DeviceArray` objects manually, but rather will create them via
 :mod:`jax.numpy` functions like :func:`~jax.numpy.array`, :func:`~jax.numpy.arange`,
 :func:`~jax.numpy.linspace`, and others listed above.
+
+Copying and Serialization
+~~~~~~~~~~~~~~~~~~~~~~~~~
+:class:`~jax.numpy.DeviceArray`` objects are designed to work seamlessly with Python
+standard library tools where appropriate.
+
+With the built-in :mod:`copy` module, when :func:`copy.copy` or :func:`copy.deepcopy`
+encounder a :class:`~jax.numpy.DeviceArray`, it is equivalent to calling the
+:meth:`~jaxlib.xla_extension.DeviceArray.copy` method, which will create a copy of
+the buffer on the same device as the original array. This will work correctly within
+traced/JIT-compiled code, though copy operations may be elided by the compiler
+in this context.
+
+When the built-in :mod:`pickle` module encounters a :class:`~jax.numpy.DeviceArray`,
+it will be serialized via a compact bit representation in a similar manner to pickled
+:class:`numpy.ndarray` objects. When unpickled, the result will be a new
+:class:`~jax.numpy.DeviceArray` object *on the default device.*
+This is because in general, pickling and unpickling may take place in different runtime
+environments, and there is no general way to map the device IDs of one runtime
+to the device IDs of another. If :mod:`pickle` is used in traced/JIT-compiled code,
+it will result in a :class:`~jax.errors.ConcretizationTypeError`.
+
+Class Reference
+~~~~~~~~~~~~~~~
 
 .. autoclass:: jax.numpy.DeviceArray
 

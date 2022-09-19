@@ -134,6 +134,9 @@ LAX_GRAD_OPS = [
                    dtypes=grad_complex_dtypes),
     grad_test_spec(lax.cbrt, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_float_dtypes, tol={np.float64: 3e-5}),
+    grad_test_spec(lax.logistic, nargs=1, order=2,
+                   rng_factory=jtu.rand_default,
+                   dtypes=grad_inexact_dtypes),
 
     grad_test_spec(lax.add, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
@@ -212,7 +215,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(itertools.chain.from_iterable(
       jtu.cases_from_list(
-          {"testcase_name": "_{}_{}".format(rec.op.__name__, special_value),
+          {"testcase_name": f"_{rec.op.__name__}_{special_value}",
            "op": rec.op, "special_value": special_value, "tol": rec.tol}
           for special_value in rec.values)
       for rec in LAX_GRAD_SPECIAL_VALUE_TESTS))
@@ -502,9 +505,12 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       {"testcase_name": "_inshape={}_pads={}"
        .format(jtu.format_shape_dtype_string(shape, dtype), pads),
        "shape": shape, "dtype": dtype, "pads": pads}
-      for shape in [(2, 3)]
       for dtype in float_dtypes
-      for pads in [[(1, 2, 1), (0, 1, 0)], [(-1, 0, 0), (-1, 0, 2)]]))
+      for shape, paddings in [
+        [(), [()]],
+        ((2, 3), [[(1, 2, 1), (0, 1, 0)], [(-1, 0, 0), (-1, 0, 2)]]),
+      ]
+      for pads in paddings))
   def testPadGrad(self, shape, dtype, pads):
     rng = jtu.rand_small(self.rng())
     operand = rng(shape, dtype)
@@ -525,6 +531,26 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     dimensions = [0, 1]
     check_grads(rev, (np.array([[6., 5., 4.], [3., 2., 1.]]),), 2,
                 rtol={np.float32: 3e-3})
+
+  def testPowSecondDerivative(self):
+    # https://github.com/google/jax/issues/12033
+    x, y = 4.0, 0.0
+    expected = ((0.0, 1/x), (1/x, np.log(x) ** 2))
+
+    with self.subTest("jacfwd"):
+      result_fwd = jax.jacfwd(jax.jacfwd(lax.pow, (0, 1)), (0, 1))(x, y)
+      self.assertAllClose(result_fwd, expected)
+
+    with self.subTest("jacrev"):
+      result_rev = jax.jacrev(jax.jacrev(lax.pow, (0, 1)), (0, 1))(x, y)
+      self.assertAllClose(result_rev, expected)
+
+    with self.subTest("zero to the zero"):
+      result = jax.grad(lax.pow)(0.0, 0.0)
+      # TODO(jakevdp) special-case zero in a way that doesn't break other cases
+      # See https://github.com/google/jax/pull/12041#issuecomment-1222766191
+      # self.assertEqual(result, 0.0)
+      self.assertAllClose(result, np.nan)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}".format(
@@ -612,6 +638,37 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
     dus = lambda y: lax.dynamic_update_slice(operand, y, start_indices)
     check_grads(dus, (update,), 2, ["fwd", "rev"], eps=1.)
+
+  def testDynamicSliceValueAndGrad(self):
+    # Regression test for https://github.com/google/jax/issues/10984
+    # Issue arose due to an out-of-range negative index.
+    rng = jtu.rand_default(self.rng())
+    shape = (5, 5)
+    axis = 0
+    index = -(shape[axis] + 3)
+    def f(x):
+      return lax.dynamic_index_in_dim(x, index, axis).sum()
+    x = rng(shape, np.float32)
+
+    result1 = f(x)
+    result2, _ = jax.value_and_grad(f, 0)(x)
+    self.assertAllClose(result1, result2)
+
+  def testDynamicUpdateSliceValueAndGrad(self):
+    # Regression test for https://github.com/google/jax/issues/10984
+    # Issue arose due to an out-of-range negative index.
+    rng = jtu.rand_default(self.rng())
+    shape = (5, 5)
+    axis = 0
+    index = -(shape[axis] + 3)
+    def f(x, y):
+      return lax.dynamic_update_index_in_dim(x, y, index, axis).sum()
+    x = rng(shape, np.float32)
+    y = rng([1 for s in shape], np.float32)
+
+    result1 = f(x, y)
+    result2, _ = jax.value_and_grad(f, 0)(x, y)
+    self.assertAllClose(result1, result2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}".format(
@@ -1057,19 +1114,24 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   # TODO(mattjj): make this a more systematic test
   def testRemainder(self):
-    rng = self.rng()
-    x = rng.uniform(-0.9, 9, size=(3, 4))
-    y = rng.uniform(0.7, 1.9, size=(3, 1))
-    assert not set(np.unique(x)) & set(np.unique(y))
-    # TODO(jakevdp) try to make these tolerances tighter.
-    tol = 1e-1
-    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
+    def gen_x(rng, size):
+      return rng.uniform(-9, 9, size=size)
+
+    def gen_y(rng, size):
+      # avoid values near zero because gradients diverge
+      return rng.uniform(0.1, 5, size=size) * rng.choice([-1, 1], size=size)
 
     rng = self.rng()
-    x = rng.uniform(-0.9, 9, size=(1, 4))
-    y = rng.uniform(0.7, 1.9, size=(3, 4))
+    x = gen_x(rng, (5, 8))
+    y = gen_y(rng, (1, 8))
     assert not set(np.unique(x)) & set(np.unique(y))
-    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"], tol, tol)
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"])
+
+    rng = self.rng()
+    x = gen_x(rng, (1, 8))
+    y = gen_y(rng, (5, 8))
+    assert not set(np.unique(x)) & set(np.unique(y))
+    check_grads(lax.rem, (x, y), 2, ["fwd", "rev"])
 
   def testHigherOrderGradientOfReciprocal(self):
     # Regression test for https://github.com/google/jax/issues/3136

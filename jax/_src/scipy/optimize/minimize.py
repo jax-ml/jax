@@ -30,7 +30,7 @@ class OptimizeResults(NamedTuple):
     fun: final function value.
     jac: final jacobian array.
     hess_inv: final inverse Hessian estimate.
-    nfev: integer number of funcation calls used.
+    nfev: integer number of function calls used.
     njev: integer number of gradient evaluations.
     nit: integer number of iterations of the optimization algorithm.
   """
@@ -125,4 +125,4 @@ def minimize(
                            njev=results.ngev,
                            nit=results.k)
 
-  raise ValueError("Method {} not recognized".format(method))
+  raise ValueError(f"Method {method} not recognized")

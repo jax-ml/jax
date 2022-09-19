@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
-
 from jax._src.numpy.fft import (
   ifft as ifft,
   ifft2 as ifft2,

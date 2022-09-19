@@ -14,12 +14,13 @@
 
 from contextlib import contextmanager
 import inspect
+import io
 import functools
 from functools import partial
 import re
 import os
 import textwrap
-from typing import Dict, List, Generator, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -30,19 +31,25 @@ from absl.testing import parameterized
 import numpy as np
 import numpy.random as npr
 
+import jax
 from jax._src import api
 from jax import core
 from jax._src import dtypes as _dtypes
 from jax import lax
 from jax._src.config import flags, bool_env, config
 from jax._src.util import prod, unzip2
-from jax.tree_util import tree_multimap, tree_all, tree_map, tree_reduce
+from jax.tree_util import tree_map, tree_all
 from jax._src.lib import xla_bridge
 from jax._src import dispatch
+from jax._src.public_test_util import (  # noqa: F401
+    _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
 from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.experimental.maps import mesh, Mesh
+from jax.experimental.maps import Mesh
 
+# This submodule includes private test utilities that are not exported to
+# jax.test_util. Functionality appearing here is for internal use only, and
+# may be changed or removed at any time and without any deprecation cycle.
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -71,23 +78,15 @@ flags.DEFINE_bool(
 )
 
 flags.DEFINE_string(
-  'test_targets', '',
+  'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
 flags.DEFINE_string(
-  'exclude_test_targets', '',
+  'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-
-EPS = 1e-4
-
-def _dtype(x):
-  return (getattr(x, 'dtype', None) or
-          np.dtype(_dtypes.python_scalar_dtypes.get(type(x), None)) or
-          np.asarray(x).dtype)
-
 
 def num_float_bits(dtype):
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
@@ -134,64 +133,6 @@ def is_sequence(x):
   else:
     return True
 
-_default_tolerance = {
-  _dtypes.float0: 0,
-  np.dtype(np.bool_): 0,
-  np.dtype(np.int8): 0,
-  np.dtype(np.int16): 0,
-  np.dtype(np.int32): 0,
-  np.dtype(np.int64): 0,
-  np.dtype(np.uint8): 0,
-  np.dtype(np.uint16): 0,
-  np.dtype(np.uint32): 0,
-  np.dtype(np.uint64): 0,
-  np.dtype(_dtypes.bfloat16): 1e-2,
-  np.dtype(np.float16): 1e-3,
-  np.dtype(np.float32): 1e-6,
-  np.dtype(np.float64): 1e-15,
-  np.dtype(np.complex64): 1e-6,
-  np.dtype(np.complex128): 1e-15,
-}
-
-def default_tolerance():
-  if device_under_test() != "tpu":
-    return _default_tolerance
-  tol = _default_tolerance.copy()
-  tol[np.dtype(np.float32)] = 1e-3
-  tol[np.dtype(np.complex64)] = 1e-3
-  return tol
-
-default_gradient_tolerance = {
-  np.dtype(_dtypes.bfloat16): 1e-1,
-  np.dtype(np.float16): 1e-2,
-  np.dtype(np.float32): 2e-3,
-  np.dtype(np.float64): 1e-5,
-  np.dtype(np.complex64): 1e-3,
-  np.dtype(np.complex128): 1e-5,
-}
-
-def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
-  if a.dtype == b.dtype == _dtypes.float0:
-    np.testing.assert_array_equal(a, b, err_msg=err_msg)
-    return
-  a = a.astype(np.float32) if a.dtype == _dtypes.bfloat16 else a
-  b = b.astype(np.float32) if b.dtype == _dtypes.bfloat16 else b
-  kw = {}
-  if atol: kw["atol"] = atol
-  if rtol: kw["rtol"] = rtol
-  with np.errstate(invalid='ignore'):
-    # TODO(phawkins): surprisingly, assert_allclose sometimes reports invalid
-    # value errors. It should not do that.
-    np.testing.assert_allclose(a, b, **kw, err_msg=err_msg)
-
-def tolerance(dtype, tol=None):
-  tol = {} if tol is None else tol
-  if not isinstance(tol, dict):
-    return tol
-  tol = {np.dtype(key): value for key, value in tol.items()}
-  dtype = _dtypes.canonicalize_dtype(np.dtype(dtype))
-  return tol.get(dtype, default_tolerance()[dtype])
-
 def _normalize_tolerance(tol):
   tol = tol or 0
   if isinstance(tol, dict):
@@ -207,167 +148,18 @@ def join_tolerance(tol1, tol2):
     out[k] = max(v, tol1.get(k, 0))
   return out
 
-def _assert_numpy_close(a, b, atol=None, rtol=None, err_msg=''):
-  a, b = np.asarray(a), np.asarray(b)
-  assert a.shape == b.shape
-  atol = max(tolerance(a.dtype, atol), tolerance(b.dtype, atol))
-  rtol = max(tolerance(a.dtype, rtol), tolerance(b.dtype, rtol))
-  _assert_numpy_allclose(a, b, atol=atol * a.size, rtol=rtol * b.size,
-                         err_msg=err_msg)
 
 def check_eq(xs, ys, err_msg=''):
   assert_close = partial(_assert_numpy_allclose, err_msg=err_msg)
-  tree_all(tree_multimap(assert_close, xs, ys))
-
-def check_close(xs, ys, atol=None, rtol=None, err_msg=''):
-  assert_close = partial(_assert_numpy_close, atol=atol, rtol=rtol,
-                         err_msg=err_msg)
-  tree_all(tree_multimap(assert_close, xs, ys))
-
-def _check_dtypes_match(xs, ys):
-  def _assert_dtypes_match(x, y):
-    if config.x64_enabled:
-      assert _dtype(x) == _dtype(y)
-    else:
-      assert (_dtypes.canonicalize_dtype(_dtype(x)) ==
-              _dtypes.canonicalize_dtype(_dtype(y)))
-  tree_all(tree_multimap(_assert_dtypes_match, xs, ys))
+  tree_all(tree_map(assert_close, xs, ys))
 
 
-def inner_prod(xs, ys):
-  def contract(x, y):
-    return np.real(np.dot(np.conj(x).reshape(-1), y.reshape(-1)))
-  return tree_reduce(np.add, tree_multimap(contract, xs, ys))
-
-
-def _safe_subtract(x, y, *, dtype):
-  """Subtraction that with `inf - inf == 0` semantics."""
-  with np.errstate(invalid='ignore'):
-    return np.where(np.equal(x, y), np.array(0, dtype),
-                    np.subtract(x, y, dtype=dtype))
-
-add = partial(tree_multimap, lambda x, y: np.add(x, y, dtype=_dtype(x)))
-sub = partial(tree_multimap, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
-safe_sub = partial(tree_multimap,
-                   lambda x, y: _safe_subtract(x, y, dtype=_dtype(x)))
-conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
-
-def scalar_mul(xs, a):
-  def mul(x):
-    dtype = _dtype(x)
-    return np.multiply(x, np.array(a, dtype=dtype), dtype=dtype)
-  return tree_map(mul, xs)
-
-
-def rand_like(rng, x):
-  shape = np.shape(x)
-  dtype = _dtype(x)
-  randn = lambda: np.asarray(rng.randn(*shape), dtype=dtype)
-  if _dtypes.issubdtype(dtype, np.complexfloating):
-    return randn() + dtype.type(1.0j) * randn()
-  else:
-    return randn()
-
-
-def numerical_jvp(f, primals, tangents, eps=EPS):
-  delta = scalar_mul(tangents, eps)
-  f_pos = f(*add(primals, delta))
-  f_neg = f(*sub(primals, delta))
-  return scalar_mul(safe_sub(f_pos, f_neg), 0.5 / eps)
-
-
-def _merge_tolerance(tol, default):
-  if tol is None:
-    return default
-  if not isinstance(tol, dict):
-    return tol
-  out = default.copy()
-  for k, v in tol.items():
-    out[np.dtype(k)] = v
-  return out
-
-
-def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
-  atol = _merge_tolerance(atol, default_gradient_tolerance)
-  rtol = _merge_tolerance(rtol, default_gradient_tolerance)
-  rng = np.random.RandomState(0)
-  tangent = tree_map(partial(rand_like, rng), args)
-  v_out, t_out = f_jvp(args, tangent)
-  _check_dtypes_match(v_out, t_out)
-  v_out_expected = f(*args)
-  _check_dtypes_match(v_out, v_out_expected)
-  t_out_expected = numerical_jvp(f, args, tangent, eps=eps)
-  # In principle we should expect exact equality of v_out and v_out_expected,
-  # but due to nondeterminism especially on GPU (e.g., due to convolution
-  # autotuning) we only require "close".
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
-              err_msg=f'{err_msg} primal' if err_msg else 'primal')
-  check_close(t_out, t_out_expected, atol=atol, rtol=rtol,
-              err_msg=f'{err_msg} tangent' if err_msg else 'tangent')
-
-
-def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
-  atol = _merge_tolerance(atol, default_gradient_tolerance)
-  rtol = _merge_tolerance(rtol, default_gradient_tolerance)
-  _rand_like = partial(rand_like, np.random.RandomState(0))
-  v_out, vjpfun = f_vjp(*args)
-  v_out_expected = f(*args)
-  check_close(v_out, v_out_expected, atol=atol, rtol=rtol,
-              err_msg=f'{err_msg} primal' if err_msg else 'primal')
-  tangent = tree_map(_rand_like, args)
-  tangent_out = numerical_jvp(f, args, tangent, eps=eps)
-  cotangent = tree_map(_rand_like, v_out)
-  cotangent_out = conj(vjpfun(conj(cotangent)))
-  ip = inner_prod(tangent, cotangent_out)
-  ip_expected = inner_prod(tangent_out, cotangent)
-  check_close(ip, ip_expected, atol=atol, rtol=rtol,
-              err_msg=(f'{err_msg} cotangent projection'
-                       if err_msg else 'cotangent projection'))
-
-
-def check_grads(f, args, order,
-                modes=("fwd", "rev"), atol=None, rtol=None, eps=None):
-  """Check gradients from automatic differentiation against finite differences.
-
-  Gradients are only checked in a single randomly chosen direction, which
-  ensures that the finite difference calculation does not become prohibitively
-  expensive even for large input/output spaces.
-
-  Args:
-    f: function to check at ``f(*args)``.
-    args: tuple of argument values.
-    order: forward and backwards gradients up to this order are checked.
-    modes: lists of gradient modes to check ('fwd' and/or 'rev').
-    atol: absolute tolerance for gradient equality.
-    rtol: relative tolerance for gradient equality.
-    eps: step size used for finite differences.
-
-  Raises:
-    AssertionError: if gradients do not match.
-  """
-  args = tuple(args)
-  eps = eps or EPS
-
-  _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
-  _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
-
-  def _check_grads(f, args, order, err_msg=''):
-    if "fwd" in modes:
-      fwd_msg = f'JVP of {err_msg}' if err_msg else 'JVP'
-      _check_jvp(f, partial(api.jvp, f), args, err_msg=fwd_msg)
-      if order > 1:
-        _check_grads(partial(api.jvp, f), (args, args), order - 1, fwd_msg)
-
-    if "rev" in modes:
-      rev_msg = f'VJP of {err_msg}' if err_msg else 'VJP'
-      _check_vjp(f, partial(api.vjp, f), args, err_msg=rev_msg)
-      if order > 1:
-        def f_vjp(*args):
-          out_primal_py, vjp_py = api.vjp(f, *args)
-          return vjp_py(out_primal_py)
-        _check_grads(f_vjp, args, order - 1, rev_msg)
-
-  _check_grads(f, args, order)
+@contextmanager
+def capture_stdout() -> Generator[Callable[[], str], None, None]:
+  with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
+    def _read() -> str:
+      return fp.getvalue()
+    yield _read
 
 
 @contextmanager
@@ -377,7 +169,15 @@ def count_device_put():
 
   def device_put_and_count(*args, **kwargs):
     count[0] += 1
-    return device_put(*args, **kwargs)
+    # device_put handlers might call `dispatch.device_put` (e.g. on an
+    # underlying payload or several). We only want to count these
+    # recursive puts once, so we skip counting more than the outermost
+    # one in such a call stack.
+    dispatch.device_put = device_put
+    try:
+      return device_put(*args, **kwargs)
+    finally:
+      dispatch.device_put = device_put_and_count
 
   dispatch.device_put = device_put_and_count
   try:
@@ -402,24 +202,17 @@ def count_jit_and_pmap_compiles():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
-  xla_jaxpr_subcomp = xla.jaxpr_subcomp
   mlir_jaxpr_subcomp = mlir.jaxpr_subcomp
   count = [0]
-
-  def xla_jaxpr_subcomp_and_count(*args, **kwargs):
-    count[0] += 1
-    return xla_jaxpr_subcomp(*args, **kwargs)
 
   def mlir_jaxpr_subcomp_and_count(*args, **kwargs):
     count[0] += 1
     return mlir_jaxpr_subcomp(*args, **kwargs)
 
-  xla.jaxpr_subcomp = xla_jaxpr_subcomp_and_count
   mlir.jaxpr_subcomp = mlir_jaxpr_subcomp_and_count
   try:
     yield count
   finally:
-    xla.jaxpr_subcomp = xla_jaxpr_subcomp
     mlir.jaxpr_subcomp = mlir_jaxpr_subcomp
 
 @contextmanager
@@ -429,9 +222,6 @@ def assert_num_jit_and_pmap_compilations(times):
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
                          f"but executed {count[0]}")
-
-def device_under_test():
-  return FLAGS.jax_test_dut or xla_bridge.get_backend().platform
 
 def if_device_under_test(device_type: Union[str, Sequence[str]],
                          if_true, if_false):
@@ -464,14 +254,17 @@ def is_device_rocm():
 def is_device_cuda():
   return xla_bridge.get_backend().platform_version.startswith('cuda')
 
+def is_device_tpu_v4():
+  return jax.devices()[0].device_kind == "TPU v4"
+
 def _get_device_tags():
-  """returns a set of tags definded for the device under test"""
+  """returns a set of tags defined for the device under test"""
   if is_device_rocm():
-    device_tags = set([device_under_test(), "rocm"])
+    device_tags = {device_under_test(), "rocm"}
   elif is_device_cuda():
-    device_tags = set([device_under_test(), "cuda"])
+    device_tags = {device_under_test(), "cuda"}
   else:
-    device_tags = set([device_under_test()])
+    device_tags = {device_under_test()}
   return device_tags
 
 def skip_on_devices(*disabled_devices):
@@ -529,12 +322,20 @@ def format_test_name_suffix(opname, shapes, dtypes):
 
 # We use special symbols, represented as singleton objects, to distinguish
 # between NumPy scalars, Python scalars, and 0-D arrays.
-class ScalarShape(object):
+class ScalarShape:
   def __len__(self): return 0
+  def __getitem__(self, i): raise IndexError(f"index {i} out of range.")
 class _NumpyScalar(ScalarShape): pass
 class _PythonScalar(ScalarShape): pass
 NUMPY_SCALAR_SHAPE = _NumpyScalar()
 PYTHON_SCALAR_SHAPE = _PythonScalar()
+
+
+# Some shape combinations don't make sense.
+def is_valid_shape(shape, dtype):
+  if shape == PYTHON_SCALAR_SHAPE:
+    return dtype == np.dtype(type(np.array(0, dtype=dtype).item()))
+  return True
 
 
 def _dims_of_shape(shape):
@@ -586,9 +387,9 @@ def _format_shape_dtype_string(shape, dtype):
     return 'py' + dtype_str(dtype)
   elif type(shape) is tuple:
     shapestr = ','.join(str(dim) for dim in shape)
-    return '{}[{}]'.format(dtype_str(dtype), shapestr)
+    return f'{dtype_str(dtype)}[{shapestr}]'
   elif type(shape) is int:
-    return '{}[{},]'.format(dtype_str(dtype), shape)
+    return f'{dtype_str(dtype)}[{shape},]'
   else:
     raise TypeError(type(shape))
 
@@ -624,9 +425,17 @@ def rand_fullrange(rng, standardize_nans=False):
   """Random numbers that span the full range of available bits."""
   def gen(shape, dtype, post=lambda x: x):
     dtype = np.dtype(dtype)
-    size = dtype.itemsize * np.prod(_dims_of_shape(shape))
+    size = dtype.itemsize * np.prod(_dims_of_shape(shape), dtype=int)
     vals = rng.randint(0, np.iinfo(np.uint8).max, size=size, dtype=np.uint8)
-    vals = post(vals).view(dtype).reshape(shape)
+    vals = post(vals).view(dtype)
+    if shape is PYTHON_SCALAR_SHAPE:
+      # Sampling from the full range of the largest available uint type
+      # leads to overflows in this case; sample from signed ints instead.
+      if dtype == np.uint64:
+        vals = vals.astype(np.int64)
+      elif dtype == np.uint32 and not config.x64_enabled:
+        vals = vals.astype(np.int32)
+    vals = vals.reshape(shape)
     # Non-standard NaNs cause errors in numpy equality assertions.
     if standardize_nans and np.issubdtype(dtype, np.floating):
       vals[np.isnan(vals)] = np.nan
@@ -815,20 +624,19 @@ def check_raises(thunk, err_type, msg):
     thunk()
     assert False
   except err_type as e:
-    assert str(e).startswith(msg), "\n{}\n\n{}\n".format(e, msg)
+    assert str(e).startswith(msg), f"\n{e}\n\n{msg}\n"
 
 def check_raises_regexp(thunk, err_type, pattern):
   try:
     thunk()
     assert False
   except err_type as e:
-    assert re.match(pattern, str(e)), "{}\n\n{}\n".format(e, pattern)
+    assert re.match(pattern, str(e)), f"{e}\n\n{pattern}\n"
 
 
 def iter_eqns(jaxpr):
   # TODO(necula): why doesn't this search in params?
-  for eqn in jaxpr.eqns:
-    yield eqn
+  yield from jaxpr.eqns
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from iter_eqns(subjaxpr)
 
@@ -837,7 +645,7 @@ def assert_dot_precision(expected_precision, fun, *args):
   precisions = [eqn.params['precision'] for eqn in iter_eqns(jaxpr.jaxpr)
                 if eqn.primitive == lax.dot_general_p]
   for precision in precisions:
-    msg = "Unexpected precision: {} != {}".format(expected_precision, precision)
+    msg = f"Unexpected precision: {expected_precision} != {precision}"
     if isinstance(precision, tuple):
       assert precision[0] == expected_precision, msg
       assert precision[1] == expected_precision, msg
@@ -864,7 +672,7 @@ def cases_from_gens(*gens):
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
   for size in sizes:
     for i in range(cases_per_size):
-      yield ('_{}_{}'.format(size, i),) + tuple(gen(size) for gen in gens)
+      yield (f'_{size}_{i}',) + tuple(gen(size) for gen in gens)
 
 def named_cases_from_sampler(gen):
   seen = set()
@@ -917,6 +725,7 @@ class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
   _default_config = {
     'jax_enable_checks': True,
+    'jax_numpy_dtype_promotion': 'strict',
     'jax_numpy_rank_promotion': 'raise',
     'jax_traceback_filtering': 'off',
   }
@@ -1014,7 +823,7 @@ class JaxTestCase(parameterized.TestCase):
       # Print it so we can copy-and-paste it into the test
       print(f"Found\n{what}\n")
     self.assertMultiLineEqual(expected_clean, what_clean,
-                              msg="Found\n{}\nExpecting\n{}".format(what, expected))
+                              msg=f"Found\n{what}\nExpecting\n{expected}")
 
   def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
                        rtol=None, atol=None, check_cache_misses=True):
@@ -1073,13 +882,28 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
+_CPP_JIT_IMPLEMENTATION = functools.partial(api._jit, True)
+_CPP_JIT_IMPLEMENTATION._name = "cpp"
+_PYTHON_JIT_IMPLEMENTATION = functools.partial(api._jit, False)
+_PYTHON_JIT_IMPLEMENTATION._name = "python"
+_NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
+_NOOP_JIT_IMPLEMENTATION._name = "noop"
+
+JIT_IMPLEMENTATION = (
+  _CPP_JIT_IMPLEMENTATION,
+  _PYTHON_JIT_IMPLEMENTATION,
+  _NOOP_JIT_IMPLEMENTATION,
+)
 
 class BufferDonationTestCase(JaxTestCase):
   assertDeleted = lambda self, x: self._assertDeleted(x, True)
   assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
 
   def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
+    if hasattr(x, "_arrays"):
+      for buffer in x._arrays:
+        self.assertEqual(buffer.is_deleted(), deleted)
+    elif hasattr(x, "device_buffer"):
       self.assertEqual(x.device_buffer.is_deleted(), deleted)
     else:
       for buffer in x.device_buffers:
@@ -1105,8 +929,8 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   local_devices = list(api.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)
-  with mesh(mesh_devices, axis_names):
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
+  with Mesh(mesh_devices, axis_names):
     yield
 
 def with_mesh_from_kwargs(f):
@@ -1224,3 +1048,13 @@ class _LazyDtypes:
 
 
 dtypes = _LazyDtypes()
+
+
+def strict_promotion_if_dtypes_match(dtypes):
+  """
+  Context manager to enable strict promotion if all dtypes match,
+  and enable standard dtype promotion otherwise.
+  """
+  if all(dtype == dtypes[0] for dtype in dtypes):
+    return jax.numpy_dtype_promotion('strict')
+  return jax.numpy_dtype_promotion('standard')

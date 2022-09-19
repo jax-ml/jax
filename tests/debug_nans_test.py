@@ -14,7 +14,7 @@
 
 """Tests for --debug_nans."""
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 import jax
 import numpy as np
@@ -28,6 +28,7 @@ import jax._src.lib
 
 from jax.config import config
 config.parse_flags_with_absl()
+
 
 class DebugNaNsTest(jtu.JaxTestCase):
 
@@ -80,21 +81,22 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = 0. / A
       ans.block_until_ready()
 
-  def testCallDeoptimized(self):
-    for jit in [api._python_jit, api._cpp_jit]:
+  @parameterized.named_parameters(jtu.cases_from_list(
+    {"testcase_name": f"_jit={jit._name}", "jit": jit}
+    for jit in jtu.JIT_IMPLEMENTATION))
+  def testCallDeoptimized(self, jit):
+    @jit
+    def f(x):
+      return jax.lax.cond(
+          x == 1, lambda _: np.nan, lambda _: 2., operand=None)
 
-      @jit
-      def f(x):
-        return jax.lax.cond(
-            x == 1, lambda _: np.nan, lambda _: 2., operand=None)
-
-      # This makes sure, when using the C++ jit, that the Python code has been
-      # run to compile, and the next call won't go through `cache_miss`.
-      f(2)
-      # 'cond' not 'xla_call'
-      msg = r"invalid value \(nan\) encountered in cond"
-      with self.assertRaisesRegex(FloatingPointError, msg):
-        f(1)
+    # This makes sure, when using the C++ jit, that the Python code has been
+    # run to compile, and the next call won't go through `cache_miss`.
+    f(2)
+    # 'cond' not 'xla_call'
+    msg = r"invalid value \(nan\) encountered in cond"
+    with self.assertRaisesRegex(FloatingPointError, msg):
+      f(1)
 
   def testPmap(self):
     pmap_funcs = [api._python_pmap, api._cpp_pmap]
@@ -130,7 +132,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
         out_axes=['i'],
         axis_resources={'i': 'x'})
 
-    with jax.experimental.maps.mesh(np.array(jax.local_devices()[:1]), ('x',)):
+    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
       with self.assertRaisesRegex(
           FloatingPointError,
           r"invalid value \(nan\) encountered in parallel computation"):
@@ -138,13 +140,12 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
     if jax.device_count() >= 2:
-      with jax.experimental.maps.mesh(np.array(jax.local_devices()[:2]), ('x',)):
+      with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
         with self.assertRaises(FloatingPointError):
           ans = f(jnp.array([1., 0.]))
           ans.block_until_ready()
 
   @jtu.ignore_warning(message=".*is an experimental.*")
-  @jtu.skip_on_devices("cpu", "gpu")
   def testPjit(self):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
@@ -154,7 +155,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
                   in_axis_resources=p,
                   out_axis_resources=p)
 
-    with jax.experimental.maps.mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
@@ -191,21 +192,22 @@ class DebugInfsTest(jtu.JaxTestCase):
       ans = 1. / A
       ans.block_until_ready()
 
-  def testCallDeoptimized(self):
-    for jit in [api._python_jit, api._cpp_jit]:
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": f"_jit={jit._name}", "jit": jit}
+      for jit in jtu.JIT_IMPLEMENTATION))
+  def testCallDeoptimized(self, jit):
+    @jit
+    def f(x):
+      return jax.lax.cond(
+          x == 1, lambda _: np.inf, lambda _: 2., operand=None)
 
-      @jit
-      def f(x):
-        return jax.lax.cond(
-            x == 1, lambda _: np.inf, lambda _: 2., operand=None)
-
-      # This makes sure, when using the C++ jit, that the Python code has been
-      # run to compile, and the next call won't go through `cache_miss`.
-      f(2)
-      # 'cond' not 'xla_call'
-      msg = r"invalid value \(inf\) encountered in cond"
-      with self.assertRaisesRegex(FloatingPointError, msg):
-        f(1)
+    # This makes sure, when using the C++ jit, that the Python code has been
+    # run to compile, and the next call won't go through `cache_miss`.
+    f(2)
+    # 'cond' not 'xla_call'
+    msg = r"invalid value \(inf\) encountered in cond"
+    with self.assertRaisesRegex(FloatingPointError, msg):
+      f(1)
 
   def testDebugNansDoesntCorruptCaches(self):
     # https://github.com/google/jax/issues/6614
@@ -219,6 +221,17 @@ class DebugInfsTest(jtu.JaxTestCase):
          jax.grad(f)(0.)
       except FloatingPointError:
         pass
+
+  def testDebugNansDoesntReturnDeoptimizedResult(self):
+    @jax.jit
+    def f(x):
+      y = x + 2  # avoid trivial dispatch path by adding some eqn
+      return jnp.nan, y
+
+    with self.assertRaisesRegex(FloatingPointError, "de-optimized"):
+      with jax.debug_nans(True):
+        f(3)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

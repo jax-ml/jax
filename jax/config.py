@@ -14,5 +14,4 @@
 
 # TODO(phawkins): fix users of this alias and delete this file.
 
-# flake8: noqa: F401
 from jax._src.config import config

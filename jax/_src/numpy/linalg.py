@@ -18,37 +18,30 @@ from functools import partial
 import numpy as np
 import textwrap
 import operator
-from typing import Tuple, Union, cast
+from typing import Optional, Tuple, Union, cast
 
 from jax import jit, custom_jvp
 from jax import lax
+
+from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
-from jax._src import dtypes
-from jax._src.numpy.util import _wraps
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.util import _wraps, _promote_dtypes_inexact
 from jax._src.util import canonicalize_axis
 
-_T = lambda x: jnp.swapaxes(x, -1, -2)
-_H = lambda x: jnp.conjugate(jnp.swapaxes(x, -1, -2))
+
+def _T(x):
+  return jnp.swapaxes(x, -1, -2)
 
 
-def _promote_arg_dtypes(*args):
-  """Promotes `args` to a common inexact type."""
-  dtype, weak_type = dtypes._lattice_result_type(*args)
-  if not jnp.issubdtype(dtype, jnp.inexact):
-    dtype, weak_type = jnp.float_, False
-  dtype = dtypes.canonicalize_dtype(dtype)
-  args = [lax._convert_element_type(arg, dtype, weak_type) for arg in args]
-  if len(args) == 1:
-    return args[0]
-  else:
-    return args
+def _H(x):
+  return jnp.conjugate(jnp.swapaxes(x, -1, -2))
 
 
 @_wraps(np.linalg.cholesky)
 @jit
 def cholesky(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.cholesky(a)
 
 
@@ -56,7 +49,7 @@ def cholesky(a):
 @partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
 def svd(a, full_matrices: bool = True, compute_uv: bool = True,
         hermitian: bool = False):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   if hermitian:
     w, v = lax_linalg.eigh(a)
     s = lax.abs(v)
@@ -68,18 +61,18 @@ def svd(a, full_matrices: bool = True, compute_uv: bool = True,
       idxs = lax.rev(idxs, dimensions=[s.ndim - 1])
       sign = lax.rev(sign, dimensions=[s.ndim - 1])
       u = jnp.take_along_axis(w, idxs[..., None, :], axis=-1)
-      vh = _H(u * sign[..., None, :])
+      vh = _H(u * sign[..., None, :].astype(u.dtype))
       return u, s, vh
     else:
       return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])
 
-  return lax_linalg.svd(a, full_matrices, compute_uv)
+  return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 
 @_wraps(np.linalg.matrix_power)
 @partial(jit, static_argnames=('n',))
 def matrix_power(a, n):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
 
   if a.ndim < 2:
     raise TypeError("{}-dimensional array given. Array must be at least "
@@ -89,7 +82,7 @@ def matrix_power(a, n):
   try:
     n = operator.index(n)
   except TypeError as err:
-    raise TypeError("exponent must be an integer, got {}".format(n)) from err
+    raise TypeError(f"exponent must be an integer, got {n}") from err
 
   if n == 0:
     return jnp.broadcast_to(jnp.eye(a.shape[-2], dtype=a.dtype), a.shape)
@@ -117,34 +110,27 @@ def matrix_power(a, n):
 @_wraps(np.linalg.matrix_rank)
 @jit
 def matrix_rank(M, tol=None):
-  M = _promote_arg_dtypes(jnp.asarray(M))
-  if M.ndim > 2:
-    raise TypeError("array should have 2 or fewer dimensions")
+  M, = _promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim < 2:
     return jnp.any(M != 0).astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
-    tol = S.max() * np.max(M.shape) * jnp.finfo(S.dtype).eps
-  return jnp.sum(S > tol)
+    tol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
+  tol = jnp.expand_dims(tol, np.ndim(tol))
+  return jnp.sum(S > tol, axis=-1)
 
 
 @custom_jvp
-@_wraps(np.linalg.slogdet)
-@jit
-def slogdet(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+def _slogdet_lu(a):
   dtype = lax.dtype(a)
-  a_shape = jnp.shape(a)
-  if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
-    msg = "Argument to slogdet() must have shape [..., n, n], got {}"
-    raise ValueError(msg.format(a_shape))
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   is_zero = jnp.any(diag == jnp.array(0, dtype=dtype), axis=-1)
-  iota = lax.expand_dims(jnp.arange(a.shape[-1]), range(pivot.ndim - 1))
+  iota = lax.expand_dims(jnp.arange(a.shape[-1], dtype=pivot.dtype),
+                         range(pivot.ndim - 1))
   parity = jnp.count_nonzero(pivot != iota, axis=-1)
   if jnp.iscomplexobj(a):
-    sign = jnp.prod(diag / jnp.abs(diag), axis=-1)
+    sign = jnp.prod(diag / jnp.abs(diag).astype(diag.dtype), axis=-1)
   else:
     sign = jnp.array(1, dtype=dtype)
     parity = parity + jnp.count_nonzero(diag < 0, axis=-1)
@@ -153,22 +139,67 @@ def slogdet(a):
                   sign * jnp.array(-2 * (parity % 2) + 1, dtype=dtype))
   logdet = jnp.where(
       is_zero, jnp.array(-jnp.inf, dtype=dtype),
-      jnp.sum(jnp.log(jnp.abs(diag)), axis=-1))
+      jnp.sum(jnp.log(jnp.abs(diag)).astype(dtype), axis=-1))
   return sign, jnp.real(logdet)
 
-@slogdet.defjvp
+@custom_jvp
+def _slogdet_qr(a):
+  # Implementation of slogdet using QR decomposition. One reason we might prefer
+  # QR decomposition is that it is more amenable to a fast batched
+  # implementation on TPU because of the lack of row pivoting.
+  if jnp.issubdtype(lax.dtype(a), jnp.complexfloating):
+    raise NotImplementedError("slogdet method='qr' not implemented for complex "
+                              "inputs")
+  n = a.shape[-1]
+  a, taus = lax_linalg.geqrf(a)
+  # The determinant of a triangular matrix is the product of its diagonal
+  # elements. We are working in log space, so we compute the magnitude as the
+  # the trace of the log-absolute values, and we compute the sign separately.
+  log_abs_det = jnp.trace(jnp.log(jnp.abs(a)), axis1=-2, axis2=-1)
+  sign_diag = jnp.prod(jnp.sign(jnp.diagonal(a, axis1=-2, axis2=-1)), axis=-1)
+  # The determinant of a Householder reflector is -1. So whenever we actually
+  # made a reflection (tau != 0), multiply the result by -1.
+  sign_taus = jnp.prod(jnp.where(taus[..., :(n-1)] != 0, -1, 1), axis=-1).astype(sign_diag.dtype)
+  return sign_diag * sign_taus, log_abs_det
+
+@_wraps(
+    np.linalg.slogdet,
+    extra_params=textwrap.dedent("""
+      method: string, optional
+        One of ``lu`` or ``qr``, specifying whether the determinant should be
+        computed using an LU decomposition or a QR decomposition. Defaults to
+        LU decomposition if ``None``.
+    """))
+@partial(jit, static_argnames=('method',))
+def slogdet(a, *, method: Optional[str] = None):
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a_shape = jnp.shape(a)
+  if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
+    msg = "Argument to slogdet() must have shape [..., n, n], got {}"
+    raise ValueError(msg.format(a_shape))
+
+  if method is None or method == "lu":
+    return _slogdet_lu(a)
+  elif method == "qr":
+    return _slogdet_qr(a)
+  else:
+    raise ValueError(f"Unknown slogdet method '{method}'. Supported methods "
+                     "are 'lu' (`None`), and 'qr'.")
+
 def _slogdet_jvp(primals, tangents):
   x, = primals
   g, = tangents
   sign, ans = slogdet(x)
   ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
   if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
-    sign_dot = (ans_dot - np.real(ans_dot)) * sign
-    ans_dot = np.real(ans_dot)
+    sign_dot = (ans_dot - jnp.real(ans_dot).astype(ans_dot.dtype)) * sign
+    ans_dot = jnp.real(ans_dot)
   else:
     sign_dot = jnp.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
 
+_slogdet_lu.defjvp(_slogdet_jvp)
+_slogdet_qr.defjvp(_slogdet_jvp)
 
 def _cofactor_solve(a, b):
   """Equivalent to det(a)*solve(a, b) for nonsingular mat.
@@ -212,8 +243,8 @@ def _cofactor_solve(a, b):
   Returns:
     det(a) and cofactor(a)^T*b, aka adjugate(a)*b
   """
-  a = _promote_arg_dtypes(jnp.asarray(a))
-  b = _promote_arg_dtypes(jnp.asarray(b))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  b, = _promote_dtypes_inexact(jnp.asarray(b))
   a_shape = jnp.shape(a)
   b_shape = jnp.shape(b)
   a_ndims = len(a_shape)
@@ -234,7 +265,8 @@ def _cofactor_solve(a, b):
   lu = jnp.broadcast_to(lu, batch_dims + lu.shape[-2:])
   # Compute (partial) determinant, ignoring last diagonal of LU
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
-  iota = lax.expand_dims(jnp.arange(a_shape[-1]), range(pivots.ndim - 1))
+  iota = lax.expand_dims(jnp.arange(a_shape[-1], dtype=pivots.dtype),
+                         range(pivots.ndim - 1))
   parity = jnp.count_nonzero(pivots != iota, axis=-1)
   sign = jnp.asarray(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
@@ -278,7 +310,7 @@ def _det_3x3(a):
 @_wraps(np.linalg.det)
 @jit
 def det(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
   if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
     return _det_2x2(a)
@@ -286,7 +318,7 @@ def det(a):
     return _det_3x3(a)
   elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
     sign, logdet = slogdet(a)
-    return sign * jnp.exp(logdet)
+    return sign * jnp.exp(logdet).astype(sign.dtype)
   else:
     msg = "Argument to _det() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
@@ -301,12 +333,16 @@ def _det_jvp(primals, tangents):
 
 
 @_wraps(np.linalg.eig, lax_description="""
-This differs from ``numpy.linalg.eig`` in that the return type of
-``jax.numpy.linalg.eig`` is always ``complex64`` for 32-bit input,
+This differs from :func:`numpy.linalg.eig` in that the return type of
+:func:`jax.numpy.linalg.eig` is always ``complex64`` for 32-bit input,
 and ``complex128`` for 64-bit input.
+
+At present, non-symmetric eigendecomposition is only implemented on the CPU
+backend. However eigendecomposition for symmetric/Hermitian matrices is
+implemented more widely (see :func:`jax.numpy.linalg.eigh`).
 """)
 def eig(a):
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.eig(a, compute_left_eigenvectors=False)
 
 
@@ -325,10 +361,10 @@ def eigh(a, UPLO=None, symmetrize_input=True):
   elif UPLO == "U":
     lower = False
   else:
-    msg = "UPLO must be one of None, 'L', or 'U', got {}".format(UPLO)
+    msg = f"UPLO must be one of None, 'L', or 'U', got {UPLO}"
     raise ValueError(msg)
 
-  a = _promote_arg_dtypes(jnp.asarray(a))
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower, symmetrize_input=symmetrize_input)
   return w, v
 
@@ -353,14 +389,14 @@ def pinv(a, rcond=None):
   a = jnp.conj(a)
   if rcond is None:
     max_rows_cols = max(a.shape[-2:])
-    rcond = 10. * max_rows_cols * jnp.finfo(a.dtype).eps
+    rcond = 10. * max_rows_cols * jnp.array(jnp.finfo(a.dtype).eps)
   rcond = jnp.asarray(rcond)
   u, s, vh = svd(a, full_matrices=False)
   # Singular values less than or equal to ``rcond * largest_singular_value``
   # are set to zero.
   rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
   cutoff = rcond * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
-  s = jnp.where(s > cutoff, s, jnp.inf)
+  s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
   res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
   return lax.convert_element_type(res, a.dtype)
 
@@ -399,7 +435,7 @@ def inv(a):
 @partial(jit, static_argnames=('ord', 'axis', 'keepdims'))
 def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
          keepdims=False):
-  x = _promote_arg_dtypes(jnp.asarray(x))
+  x, = _promote_dtypes_inexact(jnp.asarray(x))
   x_shape = jnp.shape(x)
   ndim = len(x_shape)
 
@@ -432,11 +468,19 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
       # code has slightly different type promotion semantics, so we need a
       # special case too.
       return jnp.sum(jnp.abs(x), axis=axis, keepdims=keepdims)
+    elif isinstance(ord, str):
+      msg = f"Invalid order '{ord}' for vector norm."
+      if ord == "inf":
+        msg += "Use 'jax.numpy.inf' instead."
+      if ord == "-inf":
+        msg += "Use '-jax.numpy.inf' instead."
+      raise ValueError(msg)
     else:
       abs_x = jnp.abs(x)
-      ord = lax._const(abs_x, ord)
+      ord = lax_internal._const(abs_x, ord)
+      ord_inv = lax_internal._const(abs_x, 1. / ord)
       out = jnp.sum(abs_x ** ord, axis=axis, keepdims=keepdims)
-      return jnp.power(out, 1. / ord)
+      return jnp.power(out, ord_inv)
 
   elif num_axes == 2:
     row_axis, col_axis = cast(Tuple[int, ...], axis)
@@ -470,32 +514,33 @@ def norm(x, ord=None, axis : Union[None, Tuple[int, ...], int] = None,
       elif ord == -2:
         reducer = jnp.amin
       else:
-        reducer = jnp.sum
+        # `sum` takes an extra dtype= argument, unlike `amax` and `amin`.
+        reducer = jnp.sum  # type: ignore[assignment]
       y = reducer(svd(x, compute_uv=False), axis=-1)
       if keepdims:
-        result_shape = list(x_shape)
-        result_shape[axis[0]] = 1
-        result_shape[axis[1]] = 1
-        y = jnp.reshape(y, result_shape)
+        y = jnp.expand_dims(y, axis)
       return y
     else:
-      raise ValueError("Invalid order '{}' for matrix norm.".format(ord))
+      raise ValueError(f"Invalid order '{ord}' for matrix norm.")
   else:
     raise ValueError(
-        "Invalid axis values ({}) for jnp.linalg.norm.".format(axis))
+        f"Invalid axis values ({axis}) for jnp.linalg.norm.")
 
 
 @_wraps(np.linalg.qr)
 @partial(jit, static_argnames=('mode',))
 def qr(a, mode="reduced"):
+  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  if mode == "raw":
+    a, taus = lax_linalg.geqrf(a)
+    return _T(a), taus
   if mode in ("reduced", "r", "full"):
     full_matrices = False
   elif mode == "complete":
     full_matrices = True
   else:
-    raise ValueError("Unsupported QR decomposition mode '{}'".format(mode))
-  a = _promote_arg_dtypes(jnp.asarray(a))
-  q, r = lax_linalg.qr(a, full_matrices)
+    raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
+  q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
     return r
   return q, r
@@ -504,14 +549,14 @@ def qr(a, mode="reduced"):
 @_wraps(np.linalg.solve)
 @jit
 def solve(a, b):
-  a, b = _promote_arg_dtypes(jnp.asarray(a), jnp.asarray(b))
+  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   return lax_linalg._solve(a, b)
 
 
 def _lstsq(a, b, rcond, *, numpy_resid=False):
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
-  a, b = _promote_arg_dtypes(a, b)
+  a, b = _promote_dtypes_inexact(a, b)
   if a.shape[0] != b.shape[0]:
     raise ValueError("Leading dimensions of input arrays must match")
   b_orig_ndim = b.ndim
@@ -530,9 +575,9 @@ def _lstsq(a, b, rcond, *, numpy_resid=False):
   else:
     rcond = jnp.where(rcond < 0, jnp.finfo(dtype).eps, rcond)
   u, s, vt = svd(a, full_matrices=False)
-  mask = s >= rcond * s[0]
+  mask = s >= jnp.array(rcond, dtype=s.dtype) * s[0]
   rank = mask.sum()
-  safe_s = jnp.where(mask, s, 1)
+  safe_s = jnp.where(mask, s, 1).astype(a.dtype)
   s_inv = jnp.where(mask, 1 / safe_s, 0)[:, jnp.newaxis]
   uTb = jnp.matmul(u.conj().T, b, precision=lax.Precision.HIGHEST)
   x = jnp.matmul(vt.conj().T, s_inv * uTb, precision=lax.Precision.HIGHEST)

@@ -26,7 +26,6 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge, xla_client
-xops = xla_client.ops
 xc = xla_client
 xb = xla_bridge
 
@@ -109,7 +108,7 @@ class ConcreteSparseArray(AbstractSparseArray):
   pass
 
 def sparse_array_result_handler(device, aval):
-  def build_sparse_array(data_buf, indices_buf):
+  def build_sparse_array(_, data_buf, indices_buf):
     data = device_array.make_device_array(aval.data_aval, device, data_buf)
     indices = device_array.make_device_array(aval.indices_aval, device, indices_buf)
     return SparseArray(aval, data, indices)
@@ -122,16 +121,7 @@ def sparse_array_shape_handler(a):
   )
 
 def sparse_array_device_put_handler(a, device):
-  return (
-    xb.get_device_backend(device).buffer_from_pyval(a.data, device),
-    xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
-  )
-
-def sparse_array_constant_handler(c, val, canonicalize_dtypes):
-  return (
-    xla.pyval_to_ir_constant(val.data, canonicalize_dtypes),
-    xla.pyval_to_ir_constant(val.indices, canonicalize_dtypes)
-  )
+  return (*dispatch.device_put(a.data, device), *dispatch.device_put(a.indices, device))
 
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
@@ -141,7 +131,6 @@ dispatch.device_put_handlers[SparseArray] = sparse_array_device_put_handler
 dispatch.result_handlers[AbstractSparseArray] = sparse_array_result_handler
 dispatch.num_buffers_handlers[AbstractSparseArray] = lambda _: 2
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
-xla.register_constant_handler(SparseArray, sparse_array_constant_handler)
 
 def sparse_array_mlir_type_handler(a):
   return (
@@ -163,12 +152,8 @@ def _sp_indices_impl(mat):
 def _sp_indices_abstract_eval(mat):
   return mat.indices_aval
 
-def _sp_indices_translation_rule(ctx, avals_in, avals_out, data, indices):
-  return [indices]
-
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
-xla.register_translation(sp_indices_p, _sp_indices_translation_rule)
 
 def _sp_indices_mhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[1]]
@@ -185,12 +170,8 @@ def _sp_data_impl(mat):
 def _sp_data_abstract_eval(mat):
   return mat.data_aval
 
-def _sp_data_translation_rule(ctx, avals_in, avals_out, data, indices):
-  return [data]
-
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
-xla.register_translation(sp_data_p, _sp_data_translation_rule)
 
 def _sp_data_mhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[0]]
@@ -210,11 +191,6 @@ def _identity_impl(mat):
 def _identity_abstract_eval(mat):
   return AbstractSparseArray(mat.shape, mat.dtype, mat.index_dtype, mat.nnz)
 
-xla.register_translation(
-    identity_p, xla.lower_fun(_identity_impl, multiple_results=False,
-                              new_style=True))
-
-
 mlir.register_lowering(
     identity_p, mlir.lower_fun(_identity_impl, multiple_results=False))
 
@@ -233,8 +209,8 @@ def _split_abstract_eval(mat):
   m = AbstractSparseArray(mat.shape, mat.dtype, mat.index_dtype, mat.nnz)
   return m, m
 
-xla.register_translation(
-    split_p, xla.lower_fun(_split_impl, multiple_results=True, new_style=True))
+mlir.register_lowering(
+    split_p, mlir.lower_fun(_split_impl, multiple_results=True))
 
 def make_sparse_array(rng, shape, dtype, nnz=0.2):
   mat = rng(shape, dtype)
@@ -298,7 +274,7 @@ xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 class CustomObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_compile={}_primitive={}".format(compile, primitive),
+      {"testcase_name": f"_compile={compile}_primitive={primitive}",
        "compile": compile, "primitive": primitive}
       for primitive in [True, False]
       for compile in [True, False]))
@@ -318,7 +294,7 @@ class CustomObjectTest(jtu.JaxTestCase):
     self.assertAllClose(M.indices, M2.indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_compile={}".format(compile),
+      {"testcase_name": f"_compile={compile}",
        "compile": compile}
       for compile in [True, False]))
   def testSparseSplit(self, compile):
@@ -337,7 +313,7 @@ class CustomObjectTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.indices, MM.indices)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_compile={}_primitive={}".format(compile, primitive),
+      {"testcase_name": f"_compile={compile}_primitive={primitive}",
        "compile": compile, "primitive": primitive}
       for primitive in [True, False]
       for compile in [True, False]))
@@ -350,7 +326,7 @@ class CustomObjectTest(jtu.JaxTestCase):
     lax.fori_loop(0, 10, body_fun, M)
 
   @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_attr={}".format(attr), "attr": attr}
+      {"testcase_name": f"_attr={attr}", "attr": attr}
       for attr in ["data", "indices"]))
   def testSparseAttrAccess(self, attr):
     rng = jtu.rand_default(self.rng())

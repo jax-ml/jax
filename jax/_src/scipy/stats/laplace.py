@@ -15,14 +15,15 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, _constant_like
+from jax._src.numpy.lax_numpy import _promote_args_inexact
 
 
 @_wraps(osp_stats.laplace.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("laplace.logpdf", x, loc, scale)
-  two = _constant_like(x, 2)
+  two = _lax_const(x, 2)
   linear_term = lax.div(lax.abs(lax.sub(x, loc)), scale)
   return lax.neg(lax.add(linear_term, lax.log(lax.mul(two, scale))))
 
@@ -33,9 +34,9 @@ def pdf(x, loc=0, scale=1):
 @_wraps(osp_stats.laplace.cdf, update_doc=False)
 def cdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("laplace.cdf", x, loc, scale)
-  half = _constant_like(x, 0.5)
-  one = _constant_like(x, 1)
-  zero = _constant_like(x, 0)
+  half = _lax_const(x, 0.5)
+  one = _lax_const(x, 1)
+  zero = _lax_const(x, 0)
   diff = lax.div(lax.sub(x, loc), scale)
   return lax.select(lax.le(diff, zero),
                     lax.mul(half, lax.exp(diff)),

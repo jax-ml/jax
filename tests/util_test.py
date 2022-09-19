@@ -16,8 +16,11 @@ from absl.testing import absltest
 
 from jax import linear_util as lu
 from jax._src import test_util as jtu
+import unittest
 
 from jax.config import config
+from jax._src.util import weakref_lru_cache
+from jax._src.lib import xla_extension_version
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -63,6 +66,32 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(dict(three=6, four=8), scaled_kwargs)
     self.assertEqual(2, out_thunk())
 
+  def test_weakref_lru_cache(self):
+    @weakref_lru_cache
+    def example_cached_fn(key):
+      return object()
+
+    class Key:
+      def __init__(self):
+        # Make a GC loop.
+        self.ref_loop = [self]
+
+    stable_keys = [Key() for _ in range(2049)]
+    for i in range(10000):
+      example_cached_fn(stable_keys[i % len(stable_keys)])
+      example_cached_fn(Key())
+
+  @unittest.skipIf(xla_extension_version < 95,
+                   "Test requires jaxlib 0.3.19 or newer")
+  def test_weakref_lru_cache_asan_problem(self):
+
+    @weakref_lru_cache
+    def reference_loop_generator(x):
+      return x
+
+    for _ in range(4097):
+      reference_loop_generator(lambda x: x)
+
 
 if __name__ == "__main__":
-    absltest.main(testLoader=jtu.JaxTestLoader())
+  absltest.main(testLoader=jtu.JaxTestLoader())

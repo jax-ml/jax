@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax.scipy.stats import bernoulli as bernoulli
 from jax.scipy.stats import beta as beta
 from jax.scipy.stats import cauchy as cauchy
@@ -22,6 +21,7 @@ from jax.scipy.stats import gamma as gamma
 from jax.scipy.stats import geom as geom
 from jax.scipy.stats import laplace as laplace
 from jax.scipy.stats import logistic as logistic
+from jax.scipy.stats import multinomial as multinomial
 from jax.scipy.stats import multivariate_normal as multivariate_normal
 from jax.scipy.stats import nbinom as nbinom
 from jax.scipy.stats import norm as norm
@@ -31,3 +31,5 @@ from jax.scipy.stats import t as t
 from jax.scipy.stats import uniform as uniform
 from jax.scipy.stats import chi2 as chi2
 from jax.scipy.stats import betabinom as betabinom
+from jax.scipy.stats import gennorm as gennorm
+from jax._src.scipy.stats.kde import gaussian_kde as gaussian_kde

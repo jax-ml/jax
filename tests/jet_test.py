@@ -37,8 +37,8 @@ def jvp_taylor(fun, primals, series):
   order, = set(map(len, series))
   primals = tuple(jnp.asarray(p) for p in primals)
   def composition(eps):
-    taylor_terms = [sum([eps ** (i+1) * terms[i] / fact(i + 1)
-                         for i in range(len(terms))]) for terms in series]
+    taylor_terms = [sum(eps ** (i+1) * terms[i] / fact(i + 1)
+                         for i in range(len(terms))) for terms in series]
     nudged_args = [(x + t).astype(x.dtype) for x, t in zip(primals, taylor_terms)]
     return fun(*nudged_args)
   primal_out = fun(*primals)
@@ -57,6 +57,10 @@ class JetTest(jtu.JaxTestCase):
 
   def check_jet(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                 check_dtypes=True):
+    # Convert to jax arrays to ensure dtype canonicalization.
+    primals = jax.tree_util.tree_map(jnp.asarray, primals)
+    series = jax.tree_util.tree_map(jnp.asarray, series)
+
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
 
@@ -68,6 +72,9 @@ class JetTest(jtu.JaxTestCase):
 
   def check_jet_finite(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                        check_dtypes=True):
+    # Convert to jax arrays to ensure dtype canonicalization.
+    primals = jax.tree_util.tree_map(jnp.asarray, primals)
+    series = jax.tree_util.tree_map(jnp.asarray, series)
 
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
@@ -181,7 +188,7 @@ class JetTest(jtu.JaxTestCase):
     primals = (primal_in, )
     series = (terms_in, )
 
-    y, terms = jax.experimental.jet._expit_taylor(primals, series)
+    y, terms = jax.experimental.jet._logistic_taylor(primals, series)
     expected_y, expected_terms = jvp_taylor(jax.scipy.special.expit, primals, series)
 
     atol = 1e-4
@@ -276,7 +283,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_tanh(self):       self.unary_check(jnp.tanh, lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
-  def test_expit(self):      self.unary_check(jax.scipy.special.expit, lims=[-100, 100], order=5)
+  def test_logistic(self):   self.unary_check(lax.logistic, lims=[-100, 100], order=5)
   @jtu.skip_on_devices("tpu")
   def test_expit2(self):     self.expit_check(lims=[-500, 500], order=5)
   @jtu.skip_on_devices("tpu")
@@ -370,7 +377,9 @@ class JetTest(jtu.JaxTestCase):
     terms_x = [rng.randn(*x.shape) for _ in range(order)]
     terms_y = [rng.randn(*y.shape) for _ in range(order)]
     series_in = (terms_b, terms_x, terms_y)
-    self.check_jet(jnp.where, primals, series_in, rtol=5e-4)
+    # Since this nudges bool inputs, we need to allow promotion to float.
+    with jax.numpy_dtype_promotion('standard'):
+      self.check_jet(jnp.where, primals, series_in, rtol=5e-4)
 
   def test_inst_zero(self):
     def f(x):

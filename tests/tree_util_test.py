@@ -14,17 +14,19 @@
 
 import collections
 import functools
+import pickle
 import re
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
+import jax
 from jax import tree_util
 from jax import flatten_util
 from jax._src import test_util as jtu
 from jax._src.lib import pytree as pytree
-from jax._src.tree_util import _process_pytree, prefix_errors
+from jax._src.tree_util import prefix_errors
 import jax.numpy as jnp
 
 
@@ -39,7 +41,7 @@ ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 class ANamedTupleSubclass(ATuple):
   pass
 
-class AnObject(object):
+class AnObject:
 
   def __init__(self, x, y, z):
     self.x = x
@@ -53,7 +55,7 @@ class AnObject(object):
     return hash((self.x, self.y, self.z))
 
   def __repr__(self):
-    return "AnObject({},{},{})".format(self.x, self.y, self.z)
+    return f"AnObject({self.x},{self.y},{self.z})"
 
 tree_util.register_pytree_node(AnObject, lambda o: ((o.x, o.y), o.z),
                                lambda z, xy: AnObject(xy[0], xy[1], z))
@@ -65,7 +67,7 @@ class Special:
     self.y = y
 
   def __repr__(self):
-    return "Special(x={}, y={})".format(self.x, self.y)
+    return f"Special(x={self.x}, y={self.y})"
 
   def tree_flatten(self):
     return ((self.x, self.y), None)
@@ -140,11 +142,10 @@ TREE_STRINGS = (
     "PyTreeDef((*, *))",
     "PyTreeDef(((*, *), [*, (*, None, *)]))",
     "PyTreeDef([*])",
-    ("PyTreeDef([*, CustomNode(namedtuple[<class '__main__.ATuple'>], [(*, "
-     "CustomNode(namedtuple[<class '__main__.ATuple'>], [*, None])), {'baz': "
-     "*}])])"),
-    "PyTreeDef([CustomNode(<class '__main__.AnObject'>[[4, 'foo']], [*, None])])",
-    "PyTreeDef(CustomNode(<class '__main__.Special'>[None], [*, *]))",
+    ("PyTreeDef([*, CustomNode(namedtuple[ATuple], [(*, "
+     "CustomNode(namedtuple[ATuple], [*, None])), {'baz': *}])])"),
+    "PyTreeDef([CustomNode(AnObject[[4, 'foo']], [*, None])])",
+    "PyTreeDef(CustomNode(Special[None], [*, *]))",
     "PyTreeDef({'a': *, 'b': *})",
 )
 
@@ -210,12 +211,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(p1.func, p2.func)
     self.assertEqual(hash(p1.func), hash(p2.func))
 
-  @parameterized.parameters(*(TREES + LEAVES))
-  def testRoundtripViaBuild(self, inputs):
-    xs, tree = _process_pytree(tuple, inputs)
-    actual = tree_util.build_tree(tree, xs)
-    self.assertEqual(actual, inputs)
-
   def testChildren(self):
     _, tree = tree_util.tree_flatten(((1, 2, 3), (4,)))
     _, c0 = tree_util.tree_flatten((0, 0, 0))
@@ -231,11 +226,18 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(treedef1.num_leaves, treedef2.num_leaves)
     self.assertEqual(treedef1.num_nodes, treedef2.num_nodes)
 
-  @unittest.skipIf(pytree_version < 1, "Requires jaxlib 0.1.76")
   def testTreedefTupleComparesEqual(self):
     # https://github.com/google/jax/issues/9066
     self.assertEqual(tree_util.tree_structure((3,)),
                      tree_util.treedef_tuple((tree_util.tree_structure(3),)))
+
+  def testFlattenOrder(self):
+    flat1, _ = tree_util.tree_flatten([0, ((1, 2), 3, (4, (5, 6, 7))), 8, 9])
+    flat2, _ = tree_util.tree_flatten([0, ((1, 2), 3, (4, (5, 6, 7))), 8, 9])
+    flat3, _ = tree_util.tree_flatten([0, ((1, (2, 3)), (4, (5, 6, 7))), 8, 9])
+    self.assertEqual(flat1, list(range(10)))
+    self.assertEqual(flat2, list(range(10)))
+    self.assertEqual(flat3, list(range(10)))
 
   def testFlattenUpTo(self):
     _, tree = tree_util.tree_flatten([(1, 2), None, ATuple(foo=3, bar=7)])
@@ -244,18 +246,18 @@ class TreeTest(jtu.JaxTestCase):
     }, (3, 4)), None, ATuple(foo=(11, 9), bar=None)])
     self.assertEqual(out, [{"foo": 7}, (3, 4), (11, 9), None])
 
-  def testTreeMultimap(self):
+  def testTreeMap(self):
     x = ((1, 2), (3, 4, 5))
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
-    out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y)
+    out = tree_util.tree_map(lambda *xs: tuple(xs), x, y)
     self.assertEqual(out, (((1, [3]), (2, None)),
                            ((3, {"foo": "bar"}), (4, 7), (5, [5, 6]))))
 
-  def testTreeMultimapWithIsLeafArgument(self):
+  def testTreeMapWithIsLeafArgument(self):
     x = ((1, 2), [3, 4, 5])
     y = (([3], None), ({"foo": "bar"}, 7, [5, 6]))
-    out = tree_util.tree_multimap(lambda *xs: tuple(xs), x, y,
-                                  is_leaf=lambda n: isinstance(n, list))
+    out = tree_util.tree_map(lambda *xs: tuple(xs), x, y,
+                             is_leaf=lambda n: isinstance(n, list))
     self.assertEqual(out, (((1, [3]), (2, None)),
                            (([3, 4, 5], ({"foo": "bar"}, 7, [5, 6])))))
 
@@ -359,6 +361,7 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(expected, actual)
 
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
+  @unittest.skipIf(pytree_version < 2, "Requires jaxlib 0.3.15")
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
@@ -366,6 +369,13 @@ class TreeTest(jtu.JaxTestCase):
 
   def testTreeDefWithEmptyDictStringRepresentation(self):
     self.assertEqual(str(tree_util.tree_structure({})), "PyTreeDef({})")
+
+  @parameterized.parameters(*TREES)
+  @unittest.skipIf(pytree_version < 3, "Requires jaxlib 0.3.16")
+  def testPickleRoundTrip(self, tree):
+    treedef = tree_util.tree_structure(tree)
+    treedef_restored = pickle.loads(pickle.dumps(treedef))
+    self.assertEqual(treedef, treedef_restored)
 
 
 class RavelUtilTest(jtu.JaxTestCase):
@@ -386,6 +396,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
+  @jax.numpy_dtype_promotion('standard')  # Explicitly exercises implicit dtype promotion.
   def testMixedFloatInt(self):
     tree = [jnp.array([3], jnp.int32),
             jnp.array([[1., 2.], [3., 4.]], jnp.float32)]
@@ -394,6 +405,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
+  @jax.numpy_dtype_promotion('standard')  # Explicitly exercises implicit dtype promotion.
   def testMixedIntBool(self):
     tree = [jnp.array([0], jnp.bool_),
             jnp.array([[1, 2], [3, 4]], jnp.int32)]
@@ -402,6 +414,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     tree_ = unravel(raveled)
     self.assertAllClose(tree, tree_, atol=0., rtol=0.)
 
+  @jax.numpy_dtype_promotion('standard')  # Explicitly exercises implicit dtype promotion.
   def testMixedFloatComplex(self):
     tree = [jnp.array([1.], jnp.float32),
             jnp.array([[1, 2 + 3j], [3, 4]], jnp.complex64)]
@@ -425,6 +438,7 @@ class RavelUtilTest(jtu.JaxTestCase):
     x_ = unravel(y)
     self.assertEqual(x_.dtype, y.dtype)
 
+  @jax.numpy_dtype_promotion('standard')  # Explicitly exercises implicit dtype promotion.
   def testDtypeMonomorphicUnravel(self):
     # https://github.com/google/jax/issues/7809
     x1 = jnp.arange(10, dtype=jnp.float32)
@@ -529,6 +543,14 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
 
   def test_no_errors(self):
     () = prefix_errors((1, 2), ((11, 12, 13), 2))
+
+  def test_different_structure_no_children(self):
+    e, = prefix_errors({}, {'a': []})
+    expected = ("pytree structure error: different numbers of pytree children "
+                "at key path\n"
+                "    in_axes tree root")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
 
 
 if __name__ == "__main__":

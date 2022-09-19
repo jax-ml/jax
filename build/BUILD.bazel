@@ -14,45 +14,47 @@
 
 # JAX is Autograd and XLA
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", "if_not_windows", "if_windows")
+load("//jaxlib:jax.bzl", "if_windows")
 
 licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
+
+bool_flag(
+    name = "enable_remote_tpu",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "remote_tpu_enabled",
+    flag_values = {
+        ":enable_remote_tpu": "True",
+    },
+)
 
 py_binary(
     name = "build_wheel",
     srcs = ["build_wheel.py"],
     data = [
         "LICENSE.txt",
-        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
         "//jaxlib",
+        "//jaxlib:README.md",
         "//jaxlib:setup.py",
         "//jaxlib:setup.cfg",
-        "//jaxlib:cpu_feature_guard.so",
-        "//jaxlib:_lapack.so",
-        "//jaxlib:_pocketfft.so",
-        "//jaxlib/mlir:builtin_dialect",
-        "//jaxlib/mlir:ir",
-        "//jaxlib/mlir:mhlo_dialect",
-        "//jaxlib/mlir:standard_dialect",
-        "//jaxlib:pocketfft_flatbuffers_py",
+        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
-    ]) + if_not_windows([
-        "@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client",
-    ]) + if_cuda([
-        "//jaxlib:gpu_support",
-        "//jaxlib:_cublas",
-        "//jaxlib:_cusolver",
-        "//jaxlib:_cusparse",
-        "//jaxlib:_cuda_linalg",
-        "//jaxlib:_cuda_prng",
+    ]) + select({
+        ":remote_tpu_enabled": ["@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client"],
+        "//conditions:default": [],
+    }) + if_cuda([
+        "//jaxlib/cuda:cuda_gpu_support",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([
-        "//jaxlib:rocblas_kernels",
+        "//jaxlib/rocm:rocm_gpu_support",
     ]),
     deps = ["@bazel_tools//tools/python/runfiles"],
 )

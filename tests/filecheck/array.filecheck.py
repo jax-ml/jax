@@ -23,9 +23,10 @@ import jax
 from jax import lax
 import numpy as np
 
+from jax._src.lax import lax as lax_internal
+
 from jax.tests.filecheck.jax_filecheck_helpers import print_ir
 
-jax.config.update("jax_enable_mlir", True)
 jax.config.update("jax_enable_x64", True)
 
 
@@ -60,7 +61,7 @@ def main(_):
   # CHECK: mhlo.add
   # CHECK: tensor<3xi32>
   print_ir(np.empty([2, 3, 7], np.int32))(
-      partial(lax._reduce_sum, axes=(0, 2)))
+      partial(lax_internal._reduce_sum, axes=(0, 2)))
 
   # CHECK-LABEL: TEST: reshape int32[2,3,7]
   # CHECK: mhlo.reshape
@@ -94,7 +95,7 @@ def main(_):
       partial(lax.squeeze, dimensions=(1,)))
 
   # CHECK-LABEL: TEST: top_k int32[2,7]
-  # CHECK: xla_fallback_top_k
+  # CHECK: chlo.top_k
   # CHECK: tensor<2x7xi32>
   print_ir(np.empty([2, 7], np.int32))(partial(lax.top_k, k=7))
 

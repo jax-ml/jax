@@ -35,7 +35,7 @@ def _download(url, filename):
   out_file = path.join(_DATA, filename)
   if not path.isfile(out_file):
     urllib.request.urlretrieve(url, out_file)
-    print("downloaded {} to {}".format(url, _DATA))
+    print(f"downloaded {url} to {_DATA}")
 
 
 def _partial_flatten(x):

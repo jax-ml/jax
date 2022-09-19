@@ -21,8 +21,10 @@ import jax
 from jax.tree_util import PyTreeDef
 from jax.experimental import maps
 from jax.experimental.pjit import pjit, FROM_GDA
-from jax.interpreters.sharded_jit import PartitionSpec as P
+from jax.interpreters.pxla import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
+from jax._src import distributed
+from jax._src import config as config_internal
 import numpy as np
 
 
@@ -66,9 +68,9 @@ def broadcast_one_to_all(in_tree: PyTreeDef,
   def post_pmap(x):
     return jax.device_get(x)[0]
 
-  in_tree = jax.tree_map(pre_pmap, in_tree)
+  in_tree = jax.tree_util.tree_map(pre_pmap, in_tree)
   in_tree = jax.device_get(_psum(in_tree))
-  return jax.tree_map(post_pmap, in_tree)
+  return jax.tree_util.tree_map(post_pmap, in_tree)
 
 
 def sync_global_devices(name: str):
@@ -77,7 +79,7 @@ def sync_global_devices(name: str):
   assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
 
 
-def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
+def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
   """Gather data from across processes.
 
   Args:
@@ -93,7 +95,7 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
     Pytress of arrays where the data is gathered from all hosts.
       * If the input is a GDA, then the data is fully replicated.
       * If the input is non-GDA, then the output shape is dependent on the
-        `titled` argument. If its False, then the output will be stacked else
+        `tiled` argument. If its False, then the output will be stacked else
         concatenated.
       * If the input is non-GDA and scalar, then the output will be stacked.
   """
@@ -101,8 +103,8 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
   def _pjit(inp):
     if isinstance(inp, GlobalDeviceArray):
       if inp.is_fully_replicated:
-        return inp.local_data(0).to_py()
-      global_mesh = inp._global_mesh
+        return np.asarray(inp.local_data(0))
+      global_mesh = inp.mesh
       in_axis_resources = FROM_GDA
     else:
       # DA/SDA/np.array will be sharded based on global_mesh.local_mesh.
@@ -111,22 +113,69 @@ def process_allgather(in_tree: PyTreeDef, titled: bool = False) -> PyTreeDef:
                                                 jax.local_device_count())
       global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
       in_axis_resources = P('processes')
-      if inp.ndim == 0 or not titled:
+      if inp.ndim == 0 or not tiled:
         inp = np.expand_dims(inp, axis=0)
 
-    with maps.mesh(global_mesh.devices, global_mesh.axis_names):
+    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
       out = pjit(lambda x: x, in_axis_resources=in_axis_resources,
                  out_axis_resources=None)(inp)
-    return out.local_data(0).to_py()
+    return np.asarray(out.local_data(0))
 
-  with jax._src.config.parallel_functions_output_gda(True):
-    return jax.tree_map(_pjit, in_tree)
+  with config_internal.parallel_functions_output_gda(True):
+    return jax.tree_util.tree_map(_pjit, in_tree)
 
 
 def assert_equal(in_tree, fail_message: str = ''):
   """Verifies that all the hosts have the same tree of values."""
   expected = broadcast_one_to_all(in_tree)
   if not jax.tree_util.tree_all(
-      jax.tree_map(lambda *x: np.all(np.equal(*x)), in_tree, expected)):
+      jax.tree_util.tree_map(lambda *x: np.all(np.equal(*x)), in_tree, expected)):
     raise AssertionError(
         f'{fail_message} Expected: {expected}; got: {in_tree}.')
+
+
+def reached_preemption_sync_point(step_id: int) -> bool:
+  """Determine whether all hosts have reached a preemption sync step.
+
+  When any host receive a preemption notice, the notice will be propagated to
+  all hosts and trigger a synchronization protocol in background. The
+  synchronization protocol calculates the maximum step ids from all hosts, and
+  uses the next step id (i.e., max + 1) as the safe step to save a checkpoint.
+  All hosts should continue training more steps until this method returns True,
+  indicating that the `step_id` is equal to the safe step and the hosts should
+  start saving a checkpoint. This feature requires enabling
+  `jax.config.jax_coordination_service`.
+
+  To use this API, all hosts must start training from the same step and call at
+  every training step. Example usage:
+
+  ```
+  def should_save(step_id: int) -> bool:
+
+    # Should save an on-demand checkpoint for preemption
+    if multihost_utils.reached_preemption_sync_point(step_id):
+      return True
+
+    # Should save a regular checkpoint
+    return step_id - last_saved_checkpoint_step >= save_interval_steps
+  ```
+
+  Preemption notice is provided by the cluster scheduler to notify the
+  application in advance before it gets evicted. By default, we use SIGTERM as
+  the signal for preemption notice.
+
+  TODO(b/230630494): Add instructions for customized preemption notice.
+
+  Returns:
+    A boolean indicating whether all hosts have reached a synchronization step
+    after some hosts are preempted.
+
+  Raises:
+    RuntimeError: if preemption sync manager has not been inititialized.
+  """
+  if distributed.global_state.client is None:
+    return False
+  sync_manager = distributed.global_state.preemption_sync_manager
+  if sync_manager is None:
+    raise RuntimeError("Preemption sync manager has not been initialized.")
+  return sync_manager.reached_sync_point(step_id)

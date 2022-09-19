@@ -219,7 +219,7 @@ class EinsumTest(jtu.JaxTestCase):
 
   # these tests are based on https://github.com/dask/dask/pull/3412/files
   @parameterized.named_parameters(
-      {"testcase_name": "_{}_dtype={}".format(einstr, dtype.__name__),
+      {"testcase_name": f"_{einstr}_dtype={dtype.__name__}",
       "einstr": einstr, "dtype": dtype}
       for einstr in [
           'abc,bad->abcd',

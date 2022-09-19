@@ -17,14 +17,15 @@ import numpy as np
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, _constant_like
+from jax._src.numpy.lax_numpy import _promote_args_inexact
 
 
 @_wraps(osp_stats.cauchy.logpdf, update_doc=False)
 def logpdf(x, loc=0, scale=1):
   x, loc, scale = _promote_args_inexact("cauchy.logpdf", x, loc, scale)
-  pi = _constant_like(x, np.pi)
+  pi = _lax_const(x, np.pi)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.mul(pi, scale))
   return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))

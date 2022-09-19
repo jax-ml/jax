@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax._src.lax.lax import (
   DotDimensionNumbers as DotDimensionNumbers,
   Precision as Precision,
@@ -22,11 +21,6 @@ from jax._src.lax.lax import (
   abs_p as abs_p,
   acos as acos,
   acos_p as acos_p,
-  acosh as acosh,
-  acosh_p as acosh_p,
-  abs as abs,
-  abs_p as abs_p,
-  acos as acos,
   acosh as acosh,
   acosh_p as acosh_p,
   add as add,
@@ -82,8 +76,8 @@ from jax._src.lax.lax import (
   conj as conj,
   conj_p as conj_p,
   convert_element_type as convert_element_type,
-  _convert_element_type as _convert_element_type,
   convert_element_type_p as convert_element_type_p,
+  copy_p as copy_p,
   cos as cos,
   cos_p as cos_p,
   cosh as cosh,
@@ -145,8 +139,11 @@ from jax._src.lax.lax import (
   log1p as log1p,
   log1p_p as log1p_p,
   log_p as log_p,
+  logistic as logistic,
+  logistic_p as logistic_p,
   lt as lt,
   lt_p as lt_p,
+  make_bint as make_bint,
   max as max,
   max_p as max_p,
   min as min,
@@ -188,6 +185,7 @@ from jax._src.lax.lax import (
   reduce_precision_p as reduce_precision_p,
   reduce_prod_p as reduce_prod_p,
   reduce_sum_p as reduce_sum_p,
+  reduce_xor_p as reduce_xor_p,
   regularized_incomplete_beta_p as regularized_incomplete_beta_p,
   rem as rem,
   rem_p as rem_p,
@@ -247,13 +245,6 @@ from jax._src.lax.lax import (
   xor_p as xor_p,
   zeros_like_array as zeros_like_array,
 )
-from jax._src.lax.lax import (
-  _reduce_sum, _reduce_max, _reduce_min, _reduce_or, _reduce_and,
-  _float, _complex, _input_dtype,
-  _const, _eq_meet, _broadcasting_select,
-  _check_user_dtype_supported, _one, _zero,
-  _upcast_fp16_for_computation, _broadcasting_shape_rule,
-  _eye, _tri, _delta, _ones, _zeros, _dilate_shape)
 from jax._src.lax.slicing import (
   GatherDimensionNumbers as GatherDimensionNumbers,
   GatherScatterMode as GatherScatterMode,
@@ -300,12 +291,6 @@ from jax._src.lax.convolution import (
   conv_with_general_padding as conv_with_general_padding,
 )
 from jax._src.lax.windowed_reductions import (
-  _reduce_window_sum,
-  _reduce_window_max,
-  _reduce_window_min,
-  _reduce_window_prod,
-  _select_and_gather_add,
-  _select_and_scatter_add,
   reduce_window as reduce_window,
   reduce_window_max_p as reduce_window_max_p,
   reduce_window_min_p as reduce_window_min_p,
@@ -346,6 +331,7 @@ from jax._src.lax.fft import (
 )
 from jax._src.lax.parallel import (
   all_gather as all_gather,
+  all_gather_p as all_gather_p,
   all_to_all as all_to_all,
   all_to_all_p as all_to_all_p,
   axis_index as axis_index,
@@ -368,6 +354,11 @@ from jax._src.lax.parallel import (
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
   conv_general_dilated_patches as conv_general_dilated_patches
+)
+from jax._src.lax.ann import (
+  approx_max_k as approx_max_k,
+  approx_min_k as approx_min_k,
+  approx_top_k_p as approx_top_k_p
 )
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 from jax.lax import linalg as linalg

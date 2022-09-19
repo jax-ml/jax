@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.13.6
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3
   language: python
@@ -435,12 +435,12 @@ def make_alpha(cmap):
   return mpl.colors.ListedColormap(my_cmap)
 my_cmap = make_alpha(plt.cm.viridis)
 fig = plt.figure()
-ax = fig.gca(projection='3d')
+ax = fig.add_subplot(projection='3d')
 ax.scatter(x.ravel(), y.ravel(), z.ravel(), c=data.ravel(), cmap=my_cmap)
 ax.axis('off')
 ax.set_title('input')
 fig = plt.figure()
-ax = fig.gca(projection='3d')
+ax = fig.add_subplot(projection='3d')
 ax.scatter(x.ravel(), y.ravel(), z.ravel(), c=out.ravel(), cmap=my_cmap)
 ax.axis('off')
 ax.set_title('3D conv output');

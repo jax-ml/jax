@@ -22,7 +22,7 @@ class TestLineSearch(jtu.JaxTestCase):
     phi0 = phi(0)
     derphi0 = derphi(0)
     derphi1 = derphi(s)
-    msg = "s = %s; phi(0) = %s; phi(s) = %s; phi'(0) = %s; phi'(s) = %s; %s" % (
+    msg = "s = {}; phi(0) = {}; phi(s) = {}; phi'(0) = {}; phi'(s) = {}; {}".format(
       s, phi0, phi1, derphi0, derphi1, err_msg)
 
     self.assertTrue(phi1 <= phi0 + c1 * s * derphi0, "Wolfe 1 failed: " + msg)
@@ -62,7 +62,7 @@ class TestLineSearch(jtu.JaxTestCase):
   # -- Generic scalar searches
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_name={}".format(name), "name": name}
+    {"testcase_name": f"_name={name}", "name": name}
     for name in ['_scalar_func_1',
                  '_scalar_func_2',
                  '_scalar_func_3']))
@@ -81,12 +81,12 @@ class TestLineSearch(jtu.JaxTestCase):
       self.assertAllClose(phi1, phi(s), check_dtypes=False, atol=1e-6)
       if derphi1 is not None:
         self.assertAllClose(derphi1, derphi(s), check_dtypes=False, atol=1e-6)
-      self.assert_wolfe(s, phi, derphi, err_msg="%s %g" % (name, old_phi0))
+      self.assert_wolfe(s, phi, derphi, err_msg=f"{name} {old_phi0:g}")
 
   # -- Generic line searches
 
   @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_name={}".format(name), "name": name}
+    {"testcase_name": f"_name={name}", "name": name}
     for name in ['_line_func_1',
                  '_line_func_2']))
   def test_line_search_wolfe2(self, name):
@@ -130,7 +130,7 @@ class TestLineSearch(jtu.JaxTestCase):
     # |x + s| <= c2 * |x|
     f = lambda x: jnp.dot(x, x)
     fp = lambda x: 2 * x
-    p = jnp.array([1, 0])
+    p = jnp.array([1.0, 0.0])
 
     # Smallest s satisfying strong Wolfe conditions for these arguments is 30
     x = -60 * p

@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.13.6
+    jupytext_version: 1.14.1
 kernelspec:
   display_name: Python 3
   language: python
@@ -70,9 +70,8 @@ for function transformation.
 
 To get a first look at Jaxprs, consider the `make_jaxpr` transformation. `make_jaxpr` is essentially a "pretty-printing" transformation:
 it transforms a function into one that, given example arguments, produces a Jaxpr representation of its computation.
-Although we can't generally use the Jaxprs that it returns, it is useful for debugging and introspection.
-Let's use it to look at how some example Jaxprs
-are structured.
+`make_jaxpr` is useful for debugging and introspection.
+Let's use it to look at how some example Jaxprs are structured.
 
 ```{code-cell} ipython3
 :id: RSxEiWi-EeYW
@@ -139,7 +138,7 @@ The way we'll implement this is by (1) tracing `f` into a Jaxpr, then (2) interp
 
 ### 1. Tracing a function
 
-We can't use `make_jaxpr` for this, because we need to pull out constants created during the trace to pass into the Jaxpr. However, we can write a function that does something very similar to `make_jaxpr`.
+Let's use `make_jaxpr` to trace a function into a Jaxpr.
 
 ```{code-cell} ipython3
 :id: BHkg_3P1pXJj
@@ -155,8 +154,8 @@ from jax._src.util import safe_map
 
 +++ {"id": "CpTml2PTrzZ4"}
 
-This function first flattens its arguments into a list, which are the abstracted and wrapped as partial values. The `jax.make_jaxpr` function is used to then trace a function into a Jaxpr
-from a list of partial value inputs.
+`jax.make_jaxpr` returns a *closed* Jaxpr, which is a Jaxpr that has been bundled with
+the constants (`literals`) from the trace.
 
 ```{code-cell} ipython3
 :id: Tc1REN5aq_fH
@@ -165,7 +164,7 @@ def f(x):
   return jnp.exp(jnp.tanh(x))
 
 closed_jaxpr = jax.make_jaxpr(f)(jnp.ones(5))
-print(closed_jaxpr)
+print(closed_jaxpr.jaxpr)
 print(closed_jaxpr.literals)
 ```
 
@@ -195,7 +194,6 @@ def eval_jaxpr(jaxpr, consts, *args):
     env[var] = val
 
   # Bind args and consts to environment
-  write(core.unitvar, core.unit)
   safe_map(write, jaxpr.invars, args)
   safe_map(write, jaxpr.constvars, consts)
 
@@ -225,7 +223,7 @@ eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.literals, jnp.ones(5))
 
 Notice that `eval_jaxpr` will always return a flat list even if the original function does not.
 
-Furthermore, this interpreter does not handle `subjaxprs`, which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/main/jax/core.py)) to see the edge cases that this interpreter does not cover.
+Furthermore, this interpreter does not handle higher-order primitives (like `jit` and `pmap`), which we will not cover in this guide. You can refer to `core.eval_jaxpr` ([link](https://github.com/google/jax/blob/main/jax/core.py)) to see the edge cases that this interpreter does not cover.
 
 +++ {"id": "0vb2ZoGrCMM4"}
 
@@ -262,9 +260,8 @@ inverse_registry[lax.tanh_p] = jnp.arctanh
 def inverse(fun):
   @wraps(fun)
   def wrapped(*args, **kwargs):
-    # Since we assume unary functions, we won't
-    # worry about flattening and
-    # unflattening arguments
+    # Since we assume unary functions, we won't worry about flattening and
+    # unflattening arguments.
     closed_jaxpr = jax.make_jaxpr(fun)(*args, **kwargs)
     out = inverse_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.literals, *args)
     return out[0]
@@ -289,7 +286,6 @@ def inverse_jaxpr(jaxpr, consts, *args):
   def write(var, val):
     env[var] = val
   # Args now correspond to Jaxpr outvars
-  write(core.unitvar, core.unit)
   safe_map(write, jaxpr.outvars, args)
   safe_map(write, jaxpr.constvars, consts)
 
@@ -298,9 +294,8 @@ def inverse_jaxpr(jaxpr, consts, *args):
     #  outvars are now invars 
     invals = safe_map(read, eqn.outvars)
     if eqn.primitive not in inverse_registry:
-      raise NotImplementedError("{} does not have registered inverse.".format(
-          eqn.primitive
-      ))
+      raise NotImplementedError(
+          f"{eqn.primitive} does not have registered inverse.")
     # Assuming a unary function 
     outval = inverse_registry[eqn.primitive](*invals)
     safe_map(write, eqn.invars, [outval])

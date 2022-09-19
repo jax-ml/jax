@@ -28,13 +28,18 @@ from jax import core
 from jax import lax
 from jax import numpy as jnp
 from jax import linear_util as lu
-from jax._src import test_util as jtu
-from jax._src.abstract_arrays import make_shaped_array
 from jax import jvp, linearize, vjp, jit, make_jaxpr
-from jax.core import UnshapedArray, ShapedArray
-from jax.tree_util import tree_flatten, tree_unflatten, tree_multimap, tree_reduce, tree_leaves
+from jax.core import UnshapedArray, ShapedArray, DBIdx
+from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
+                           tree_leaves)
+from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 
+from jax._src import util
+from jax._src import test_util as jtu
+from jax._src.abstract_arrays import make_shaped_array
+from jax._src.lax import lax as lax_internal
+from jax._src.lax import control_flow as lax_control_flow
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -44,6 +49,20 @@ __ = pe.PartialVal.unknown(ShapedArray((), np.float32))
 
 def call(f, *args):
   return jit(f)(*args)
+
+@util.curry
+def core_call(f, *args):
+  args, in_tree = tree_flatten(args)
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+  out = core.call_p.bind(f, *args)
+  return tree_unflatten(out_tree(), out)
+
+@util.curry
+def core_closed_call(f, *args):
+  args, in_tree = tree_flatten(args)
+  f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
+  out = core.closed_call_p.bind(f, *args)
+  return tree_unflatten(out_tree(), out)
 
 def simple_fun(x, y):
   return jnp.sin(x * y)
@@ -133,6 +152,12 @@ for ts in test_specs_base:
   test_specs.append(CallSpec(partial(jvp, ts.fun), (ts.args, ts.args)))
   test_specs.append(CallSpec(jit(ts.fun), ts.args))
   test_specs.append(CallSpec(jit(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_call(ts.fun), ts.args))
+  test_specs.append(CallSpec(core_call(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_call(core_call(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_closed_call(ts.fun), ts.args))
+  test_specs.append(CallSpec(core_closed_call(jit(ts.fun)), ts.args))
+  test_specs.append(CallSpec(core_closed_call(core_closed_call(ts.fun)), ts.args))
   test_specs.append(CallSpec(partial(jvp_unlinearized, ts.fun),
                              (ts.args, ts.args)))
 
@@ -146,16 +171,16 @@ def fwd_deriv(f):
 
 class CoreTest(jtu.JaxTestCase):
 
-  def test_tree_multimap(self):
+  def test_tree_map(self):
     xs = ({'a': 1}, [2, 3])
     ys = ({'a': 10}, [20, 30])
     ys_bad = ({'a': 10, 'b': 10}, [20, 30])
     zs = ({'a': 11}, [22, 33])
 
     f = lambda x, y: x + y
-    assert tree_multimap(f, xs, ys) == zs
+    assert tree_map(f, xs, ys) == zs
     try:
-      tree_multimap(f, xs, ys_bad)
+      tree_map(f, xs, ys_bad)
       assert False
     except (TypeError, ValueError):
       pass
@@ -169,7 +194,7 @@ class CoreTest(jtu.JaxTestCase):
     flat, treedef = tree_flatten(tree)
     assert flat == [1, 2, 3, 4, 5]
     tree2 = tree_unflatten(treedef, flat)
-    nodes_equal = tree_multimap(operator.eq, tree, tree2)
+    nodes_equal = tree_map(operator.eq, tree, tree2)
     assert tree_reduce(operator.and_, nodes_equal)
 
   @parameterized.named_parameters(
@@ -299,40 +324,35 @@ class CoreTest(jtu.JaxTestCase):
 
   def test_comparing_var(self):
     newsym = core.gensym()
-    a = newsym(core.abstract_unit)
-    b = newsym(core.abstract_unit)
-    c = newsym(core.abstract_unit)
+    a = newsym(core.ShapedArray((), np.dtype('int32')))
+    b = newsym(core.ShapedArray((), np.dtype('int32')))
+    c = newsym(core.ShapedArray((), np.dtype('int32')))
     assert a < b < c
     assert c > b > a
     assert a != b and b != c and a != c
 
   def test_var_ordering(self):
     newsym = core.gensym()
-    a = newsym(core.abstract_unit)
-    b = newsym(core.abstract_unit)
-    c = newsym(core.abstract_unit)
+    a = newsym(core.ShapedArray((), np.dtype('int32')))
+    b = newsym(core.ShapedArray((), np.dtype('int32')))
+    c = newsym(core.ShapedArray((), np.dtype('int32')))
     for ordering in it.permutations([a, b, c]):
       assert sorted(list(ordering)) == [a, b, c]
 
   def test_var_compared_by_identity(self):
-    a1 = core.gensym()(core.abstract_unit)
-    a2 = core.gensym()(core.abstract_unit)
+    a1 = core.gensym()(core.ShapedArray((), np.dtype('int32')))
+    a2 = core.gensym()(core.ShapedArray((), np.dtype('int32')))
     assert str(a1) == str(a2)
     assert a1 != a2
 
   def test_var_tree_flatten(self):
     newsym = core.gensym()
+    aval = core.ShapedArray((), np.dtype('int32'))
     a, b, c, d = (
-        newsym(core.abstract_unit), newsym(core.abstract_unit),
-        newsym(core.abstract_unit), newsym(core.abstract_unit))
+        newsym(aval), newsym(aval),
+        newsym(aval), newsym(aval))
     syms = {c: d, a: b}
     assert 'bd' == ''.join(map(str, tree_leaves(syms)))
-
-  def test_device_put_unit(self):
-    def f(x, y):
-      return x, 2 * y
-    args_maker = lambda: (core.unit, 1)
-    self._CompileAndCheck(f, args_maker)
 
   def test_concrete_array_string_representation(self):
     # https://github.com/google/jax/issues/5364
@@ -341,14 +361,45 @@ class CoreTest(jtu.JaxTestCase):
                                np.array([1], dtype=np.int32))),
         'ConcreteArray([1], dtype=int32)')
 
+  def test_dropvar_avals(self):
+    def f(x):
+      def body(c, _):
+        return c, None
+      (x1, x2), _ = jax.lax.scan(body, (x, x), None, length=1)
+      return [x2]
 
+    aval = core.ShapedArray((), jnp.dtype('int32'))
+    pval = pe.PartialVal.unknown(aval)
+    jaxpr, _, _ = pe.trace_to_jaxpr_nounits(lu.wrap_init(f), [pval], False)
+    dropvar, b = jaxpr.eqns[0].outvars
+    self.assertEqual(dropvar.aval, aval)
+
+  def test_input_residual_forwarding(self):
+    # https://github.com/google/jax/pull/11151
+    x = jnp.arange(3 * 4.).reshape(3, 4)
+    y = jnp.arange(4 * 3.).reshape(4, 3)
+
+    g = jax.jit(jnp.dot)
+
+    def f(y):
+      z, g_lin = jax.linearize(lambda y: g(x, y), y)
+      zdot = g_lin(y)
+      return z, zdot
+
+    jaxpr = jax.make_jaxpr(f)(y)
+    e1, e2 = jaxpr.jaxpr.eqns
+    self.assertLen(e1.outvars, 1)  # only primal out, no residuals
+    self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
+
+
+@jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    jax._src.lax.control_flow._initial_style_open_jaxpr.cache_clear()
-    jax._src.lax.control_flow._initial_style_jaxpr.cache_clear()
-    jax._src.lax.control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
+    lax_control_flow._initial_style_open_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxpr.cache_clear()
+    lax_control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
@@ -430,8 +481,8 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr.eqns[0].outvars[0].aval = make_shaped_array(jnp.int32(2))
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        r"Variable 'b' inconsistently typed as f32\[\], "
-        r"bound as i32\[\]\n\nin equation:\n\nb:i32\[\] = sin a",
+        r"Value for variable 'b' inconsistently typed as f32\[\] "
+        r"for let-binder of type i32\[\]\n\nin equation:\n\nb:i32\[\] = sin a",
         lambda: core.check_jaxpr(jaxpr))
 
     jaxpr = new_jaxpr()
@@ -439,8 +490,8 @@ class JaxprTypeChecks(jtu.JaxTestCase):
       np.ones((2, 3), dtype=jnp.float32))
     self.assertRaisesRegex(
         core.JaxprTypeError,
-        r"Variable 'b' inconsistently typed as f32\[\], "
-        r"bound as f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin a",
+        r"Value for variable 'b' inconsistently typed as f32\[\] "
+        r"for let-binder of type f32\[2,3\]\n\nin equation:\n\nb:f32\[2,3\] = sin a",
         lambda: core.check_jaxpr(jaxpr))
 
   def test_jaxpr_dropvar_from_jit_call(self):
@@ -515,20 +566,28 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
     self.assertFalse(core.typecompat(aval1, aval3))
 
+  def test_named_shape_comparision(self):
+    self.assertTrue(core.NamedShape(2, 3) == (2, 3))
+    self.assertFalse(core.NamedShape(2, i=3) == (2,))
+    self.assertFalse(core.NamedShape(2, i=3) == (2, 3))
+    self.assertFalse(core.NamedShape(2, i=3) == None)
+    self.assertFalse(core.NamedShape() == [])
 
+
+@jtu.with_config(jax_dynamic_shapes=True)
 class DynamicShapesTest(jtu.JaxTestCase):
 
   def test_staging_basic(self):
     n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
     @lu.wrap_init
     def f(x, y):
       return x, y
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
-                                            keep_inputs=[False, True, True])
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+      f, [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 3)
     self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
@@ -539,9 +598,9 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
 
   def test_staging_nested(self):
-    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
     @lu.wrap_init
     def f(x, y):
@@ -550,8 +609,8 @@ class DynamicShapesTest(jtu.JaxTestCase):
         return (x, w)
       return g(x, y, x, y)
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
-                                            keep_inputs=[False, True, True])
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+      f, [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
     self.assertEqual((jaxpr.invars[0],), jaxpr.invars[1].aval.shape)
@@ -574,10 +633,9 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
 
   def test_staging_nested_including_shape_arg(self):
-    # This test covers the _get_tracers_only_in_shapes logic in partial_eval.py.
-    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
     @lu.wrap_init
     def f(x, y):
@@ -586,8 +644,17 @@ class DynamicShapesTest(jtu.JaxTestCase):
         return (x, w)
       return g(x.shape[0], x, y, x, y)
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
-                                            keep_inputs=[False, True, True])
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+      f, [n, a, b], keep_inputs=[False, True, True])
+
+    # { lambda ; a:i32[] b:f32[a] c:f32[a]. let
+    #     d:f32[a] e:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; f:i32[] g:i32[] h:f32[f] i:f32[f] j:f32[f] k:f32[f]. let
+    #
+    #         in (h, k) }
+    #       name=g
+    #     ] a a b c b c
+    #   in (d, e) }
 
     self.assertLen(jaxpr.eqns, 1)
     eqn = jaxpr.eqns[0]
@@ -602,19 +669,19 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
 
   def test_staging_primitive_applications(self):
-    n = core.DShapedArray((), jnp.dtype('int32'), weak_type=False)
-    a = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
-    b = core.DShapedArray((n,), jnp.dtype('float32'), weak_type=False)
+    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
 
     @lu.wrap_init
     def f(x, y):
       z = lax.mul(x, y)
       w = lax.sin(z)
-      u = lax._reduce_sum(w, [0])
+      u = lax_internal._reduce_sum(w, [0])
       return (u,)
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(f, [n, a, b],
-                                            keep_inputs=[False, True, True])
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+      f, [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
     self.assertLen(jaxpr.eqns, 3)
@@ -624,6 +691,57 @@ class DynamicShapesTest(jtu.JaxTestCase):
 
     self.assertLen(jaxpr.outvars, 1)
     self.assertEqual(jaxpr.outvars[0].aval.shape, ())
+
+  def test_typecheck_staging_nested(self):
+    n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
+    m = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
+    a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
+    b = core.DShapedArray((DBIdx(1),), jnp.dtype('float32'), weak_type=False)
+
+    @lu.wrap_init
+    def f(a, b):
+      @jax.jit
+      def g(x): return x
+      return g(a),
+
+    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+      f, [n, m, a, b], keep_inputs=[False, False, True, True])
+    # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
+    #     e:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }
+    #       name=g
+    #     ] a c
+    #   in (e,) }
+    core.check_jaxpr(jaxpr)  # no problems here...
+
+    # Let's introduce a type error by applying the called jaxpr to arguments
+    # with types which aren't consistent with its input binders:
+    _, _, c, d = jaxpr.invars
+    jaxpr.eqns[0].invars[1] = d
+    # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
+    #     e:f32[a] = xla_call[
+    #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }
+    #       name=g
+    #     ] a d   !!! type error here !!!
+    #   in (e,) }
+    with self.assertRaisesRegex(TypeError, "passes operand"):
+      core.check_jaxpr(jaxpr)
+
+    # Restore the original jaxpr:
+    jaxpr.eqns[0].invars[1] = c
+    core.check_jaxpr(jaxpr)  # no problems here...
+
+    # Let's introduce another type error by setting the call result let binders
+    # to have the wrong type:
+    jaxpr.eqns[0].outvars[0] = core.Var(0, '', d.aval)
+    # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
+    #     e:f32[b] = xla_call[   !!! type error here !!!
+    #       call_jaxpr={ lambda ; f:i32[] g:f32[f]. let  in (g,) }
+    #       name=g
+    #     ] a c
+    #   in (h,) }
+    with self.assertRaisesRegex(TypeError, "inconsistently typed as"):
+      core.check_jaxpr(jaxpr)
 
 
 if __name__ == '__main__':

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
 from jax.scipy import interpolate as interpolate
 from jax.scipy import linalg as linalg
 from jax.scipy import ndimage as ndimage
@@ -21,3 +20,4 @@ from jax.scipy import sparse as sparse
 from jax.scipy import special as special
 from jax.scipy import stats as stats
 from jax.scipy import fft as fft
+from jax.scipy import cluster as cluster

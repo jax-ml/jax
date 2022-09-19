@@ -23,13 +23,14 @@ product, sparse matrix/matrix product) for two common sparse representations
 
 These routines have reference implementations defined via XLA scatter/gather
 operations that will work on any backend, although they are not particularly
-performant. On GPU runtimes built against CUDA 11.0 or newer, each operation is
-computed efficiently via cusparse.
+performant. On GPU runtimes built against CUDA 11.0/ROCm 5.0 or newer, each operation is
+computed efficiently via cusparse/hipsparse.
 
 Further down are some examples of potential high-level wrappers for sparse objects.
 (API should be considered unstable and subject to change).
 """
 from functools import partial
+import operator
 
 import jax
 from jax import core
@@ -41,7 +42,7 @@ from jax.experimental.sparse.csr import CSR, CSC
 from jax.experimental.sparse.util import _coo_extract
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import xla
+from jax.interpreters import mlir
 from jax._src import dtypes
 
 
@@ -99,8 +100,8 @@ def _todense_batching_rule(batched_args, batch_dims, *, tree):
 ad.primitive_jvps[todense_p] = _todense_jvp
 ad.primitive_transposes[todense_p] = _todense_transpose
 batching.primitive_batchers[todense_p] = _todense_batching_rule
-xla.register_translation(todense_p, xla.lower_fun(
-    _todense_impl, multiple_results=False, new_style=True))
+mlir.register_lowering(todense_p, mlir.lower_fun(
+    _todense_impl, multiple_results=False))
 
 
 def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
@@ -121,3 +122,31 @@ def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
                      f"must be one of {list(formats.keys())}")
   cls = formats[sparse_format]
   return cls._empty(shape, dtype=dtype, index_dtype=index_dtype, **kwds)
+
+
+def eye(N, M=None, k=0, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
+  """Create 2D sparse identity matrix.
+
+  Args:
+    N: int. Number of rows in the output.
+    M: int, optional. Number of columns in the output. If None, defaults to `N`.
+    k: int, optional. Index of the diagonal: 0 (the default) refers to the main
+       diagonal, a positive value refers to an upper diagonal, and a negative value
+       to a lower diagonal.
+    dtype: data-type, optional. Data-type of the returned array.
+    index_dtype: (optional) dtype of the index arrays.
+    format: string specifying the matrix format (e.g. ['bcoo']).
+    **kwds: additional keywords passed to the format-specific _empty constructor.
+
+  Returns:
+    I: two-dimensional sparse matrix with ones along the k-th diagonal.
+  """
+  formats = {'bcoo': BCOO, 'coo': COO, 'csr': CSR, 'csc': CSC}
+  if M is None:
+    M = N
+  N = core.concrete_or_error(operator.index, N)
+  M = core.concrete_or_error(operator.index, M)
+  k = core.concrete_or_error(operator.index, k)
+
+  cls = formats[sparse_format]
+  return cls._eye(M=M, N=N, k=k, dtype=dtype, index_dtype=index_dtype, **kwds)

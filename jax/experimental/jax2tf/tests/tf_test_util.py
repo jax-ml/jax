@@ -14,13 +14,14 @@
 
 import contextlib
 import dataclasses
-import logging
 import re
 import os
 
 from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from absl.testing import absltest
+from absl import logging
+
 import jax
 from jax import dtypes
 from jax import numpy as jnp
@@ -29,7 +30,6 @@ from jax import tree_util
 
 from jax.config import config
 from jax.experimental import jax2tf
-from jax.interpreters import masking
 from jax._src import util
 import jax._src.lib.xla_bridge
 import numpy as np
@@ -150,7 +150,8 @@ def ComputeTfValueAndGrad(tf_f: Callable, tf_args: Sequence,
   return f1(*args1)
 
 
-@jtu.with_config(jax_numpy_rank_promotion="allow")
+@jtu.with_config(jax_numpy_rank_promotion="allow",
+                 jax_numpy_dtype_promotion='standard')
 class JaxToTfTestCase(jtu.JaxTestCase):
 
   def setUp(self):
@@ -391,7 +392,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     """
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
                           enable_xla=enable_xla)
-    f_tf_func = tf.function(f_tf, autograph=False, input_signature=input_signature)
+    f_tf_func = tf.function(
+        f_tf, autograph=False, input_signature=input_signature)
     concrete_f_tf = f_tf_func.get_concrete_function(*input_signature)
     if expected_output_signature:
       # Strangely, output_shapes can be a single shape for a function with a
@@ -407,31 +409,21 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         self.assertEqual(tuple(expected.shape), tuple(found))
     return f_tf
 
-  def MakeInputSignature(self, *polymorphic_shapes):
-    """From a pytree of in_shape string specification, make a pytree of tf.TensorSpec.
-
-    Dimension variables are replaced with None.
-    """
-
-    def polymorphic_shape_to_tensorspec(poly_shape: str) -> tf.TensorSpec:
-      in_spec = masking.parse_spec(poly_shape)
-      return tf.TensorSpec(
-          tuple(
-              int(dim_spec) if dim_spec.is_constant else None
-              for dim_spec in in_spec),
-          dtype=tf.float32)
-
-    return tree_util.tree_multimap(polymorphic_shape_to_tensorspec, polymorphic_shapes)
-
   def CountLargeTfConstants(self, tf_fun: Callable, *args,
                             at_least=256):
     # A hacky way to count how many "large" constants are embedded in the
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    matches = re.findall(r"tensor_content\s*:\s*\"([^\"]+)\"", str(f_tf_graph))
-    large_matches = [m for m in matches if len(m) >= at_least]
-    return len(large_matches)
+    if config.jax2tf_default_experimental_native_lowering:
+      # This way of finding constants may be brittle, if the constant representation
+      # contains >. It seems tobe hex-encoded, so this may be safe.
+      large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
+    else:
+      # We cannot find the constants just with string matching because their
+      # representation may contain escaped "
+      large_consts = [n for n in f_tf_graph.node if n.op == "Const" and len(str(n)) >= at_least]
+    return len(large_consts)
 
   def CheckOpMetadata(self, jax_fun, x,
                       expected: Sequence[OpMetadataGraph],

@@ -18,6 +18,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import unittest
 from absl.testing import absltest
 
@@ -39,6 +40,14 @@ except ImportError:
   profiler_client = None
   tf_profiler = None
 
+TBP_ENABLED = False
+try:
+  import tensorboard_plugin_profile
+  del tensorboard_plugin_profile
+  TBP_ENABLED = True
+except ImportError:
+  pass
+
 config.parse_flags_with_absl()
 
 
@@ -52,10 +61,25 @@ class ProfilerTest(unittest.TestCase):
     self.profile_done = False
 
   @unittest.skipIf(not portpicker, "Test requires portpicker")
-  def testStartServer(self):
+  def testStartStopServer(self):
     port = portpicker.pick_unused_port()
     jax.profiler.start_server(port=port)
     del port
+    jax.profiler.stop_server()
+
+  @unittest.skipIf(not portpicker, "Test requires portpicker")
+  def testCantStartMultipleServers(self):
+    port = portpicker.pick_unused_port()
+    jax.profiler.start_server(port=port)
+    port = portpicker.pick_unused_port()
+    with self.assertRaisesRegex(
+        ValueError, "Only one profiler server can be active at a time."):
+      jax.profiler.start_server(port=port)
+    jax.profiler.stop_server()
+
+  def testCantStopServerBeforeStartingServer(self):
+    with self.assertRaisesRegex(ValueError, "No active profiler server."):
+      jax.profiler.stop_server()
 
   def testProgrammaticProfiling(self):
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -151,14 +175,14 @@ class ProfilerTest(unittest.TestCase):
     "Test requires tensorflow.profiler and portpicker")
   def testSingleWorkerSamplingMode(self, delay_ms=None):
     def on_worker(port, worker_start):
-      # Must keep return value `server` around.
-      server = jax.profiler.start_server(port)  # noqa: F841
+      jax.profiler.start_server(port)
       worker_start.set()
       x = jnp.ones((1000, 1000))
       while True:
         with jax.profiler.TraceAnnotation("atraceannotation"):
           jnp.dot(x, x.T).block_until_ready()
           if self.profile_done:
+            jax.profiler.stop_server()
             break
 
     def on_profile(port, logdir, worker_start):
@@ -172,7 +196,7 @@ class ProfilerTest(unittest.TestCase):
 
       # Request for 1000 milliseconds of profile.
       duration_ms = 1000
-      profiler_client.trace('localhost:{}'.format(port), logdir, duration_ms,
+      profiler_client.trace(f'localhost:{port}', logdir, duration_ms,
                             '', 1000, options)
       self.profile_done = True
 
@@ -188,6 +212,33 @@ class ProfilerTest(unittest.TestCase):
     thread_profiler.start()
     thread_profiler.join()
     thread_worker.join(120)
+    self._check_xspace_pb_exist(logdir)
+
+  @unittest.skipIf(
+      not (portpicker and profiler_client and tf_profiler and TBP_ENABLED),
+    "Test requires tensorflow.profiler, portpicker and "
+    "tensorboard_profile_plugin")
+  def test_remote_profiler(self):
+    port = portpicker.pick_unused_port()
+
+    logdir = absltest.get_default_test_tmpdir()
+    # Remove any existing log files.
+    shutil.rmtree(logdir, ignore_errors=True)
+    def on_profile():
+      os.system(
+          f"python -m jax.collect_profile {port} 500 --log_dir {logdir} "
+          "--no_perfetto_link")
+
+    thread_profiler = threading.Thread(
+        target=on_profile, args=())
+    thread_profiler.start()
+    jax.profiler.start_server(port)
+    start_time = time.time()
+    y = jnp.zeros((5, 5))
+    while time.time() - start_time < 3:
+      y = jnp.dot(y, y)
+    jax.profiler.stop_server()
+    thread_profiler.join()
     self._check_xspace_pb_exist(logdir)
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@
 
 import functools
 import operator
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional
 
 import jax
 from jax import core
@@ -71,7 +71,8 @@ class custom_vmap:
     out_flat = custom_vmap_p.bind(*consts, *args_flat,
                                   call=closed_call,
                                   rule=self.vmap_rule,
-                                  in_tree=in_tree)
+                                  in_tree=in_tree,
+                                  out_tree=out_tree())
     return tree_unflatten(out_tree(), out_flat)
 
 
@@ -85,29 +86,24 @@ def rule_name(rule):
   return getattr(rule, '__name__', '<unnamed rule>')
 
 def call_rule(rule, axis_size, in_batched, args):
-  outs, out_batched = rule(axis_size, ensure_list(in_batched), *args)
-  if not isinstance(outs, Sequence):
-    raise TypeError(
-        'custom vmap rule output values must be a sequence, '
-        f'rule ({rule_name(rule)}) returned {type(outs)}')
-  if not isinstance(out_batched, Sequence):
-    raise TypeError(
-        'custom vmap rule output batching specification must be a sequence, '
-        f'rule ({rule_name(rule)}) returned {type(out_batched)}')
-  return ensure_list(outs), ensure_list(out_batched)
+  return rule(axis_size, ensure_list(in_batched), *args)
 
-def check_vmap_rule_trees(rule, out_tree, out_batched_tree):
+def check_vmap_rule_trees(rule, original_out_tree, out_tree, out_batched_tree):
   if out_tree != out_batched_tree:
     raise ValueError(
-        'structure of output values and output batching specification returned '
+        'structure of output value and output batching specification returned '
         f'by custom vmap rule ({rule_name(rule)}) do not match.\n'
         f'Output values: {out_tree}\n'
         f'Batching spec: {out_batched_tree}')
+  if out_tree != original_out_tree:
+    raise ValueError(
+        f'structure of output returned by custom vmap rule ({rule_name(rule)}) '
+        'does not match that of original custom-vmapped function.\n'
+        f'Original output: {original_out_tree}\n'
+        f'Rule output: {out_tree}')
 
 # Like batching.bdim_at_front, but doesn't broadcast if not mapped
 def maybe_bdim_at_front(x, bdim):
-  if core.get_aval(x) is core.abstract_unit:
-    return core.unit
   if bdim is not_mapped:
     return x
   else:
@@ -119,7 +115,7 @@ def maybe_bdim_at_front(x, bdim):
 def vmap_unrestricted(f: lu.WrappedFun, *args, in_axes, axis_name, axis_size):
   f, out_axes = batching.batch_subtrace(f)
   f = batching._batch_outer(f, axis_name, axis_size, in_axes,
-                            batching.BatchTrace)
+                            batching.BatchTrace, None)
   outs = f.call_wrapped(*args)
   return outs, out_axes()
 
@@ -127,12 +123,12 @@ def vmap_unrestricted(f: lu.WrappedFun, *args, in_axes, axis_name, axis_size):
 ### custom_vmap_p rules
 
 
-def custom_vmap_impl(*args, call, rule, in_tree):
-  del rule, in_tree
+def custom_vmap_impl(*args, call, rule, in_tree, out_tree):
+  del rule, in_tree, out_tree
   return core.jaxpr_as_fun(call)(*args)
 
 
-def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree):
+def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree, out_tree):
   del call
   axis_size, = {x.shape[d] for x, d in zip(args_flat, dims) if d is not None}
   args_flat = map(maybe_bdim_at_front, args_flat, dims)
@@ -140,10 +136,10 @@ def custom_vmap_batching(args_flat, dims, *, call, rule, in_tree):
 
   args = tree_unflatten(in_tree, args_flat)
   in_batched = tree_unflatten(in_tree, flat_in_batched)
-  outs, out_batched = call_rule(rule, axis_size, in_batched, args)
-  flat_outs, tree1 = tree_flatten(outs)
+  out, out_batched = call_rule(rule, axis_size, in_batched, args)
+  flat_outs, tree1 = tree_flatten(out)
   flat_out_batched, tree2 = tree_flatten(out_batched)
-  check_vmap_rule_trees(rule, tree1, tree2)
+  check_vmap_rule_trees(rule, out_tree, tree1, tree2)
   flat_out_dims = [0 if b else not_mapped for b in flat_out_batched]
   return flat_outs, flat_out_dims
 
@@ -152,7 +148,7 @@ def custom_vmap_abstract_eval(*in_avals, call, **_):
   return call.out_avals
 
 
-def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree):
+def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
   def jvp_of_rule_rule(axis_size, in_batched, primals, tangents):
     in_batched_ps, in_batched_ts = in_batched
 
@@ -175,16 +171,16 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree):
     del tree_ps_ts2
 
     def to_jvp(*primals):
-      outs, out_batched = call_rule(rule, axis_size, mutually_batched, primals)
+      out, out_batched = call_rule(rule, axis_size, mutually_batched, primals)
       check_vmap_rule_trees(
-          rule, tree_structure(outs), tree_structure(out_batched))
+          rule, out_tree, tree_structure(out), tree_structure(out_batched))
       out_mutually_batched.store(out_batched)
-      return outs
+      return out
 
     def to_vmap_over_extra_batched_dims(primals, tangents):
       return jax.jvp(to_jvp, primals, tangents)
 
-    to_vmap_over_extra_batched_dims_flat, out_tree = flatten_fun_nokwargs(
+    to_vmap_over_extra_batched_dims_flat, out_tree2 = flatten_fun_nokwargs(
         lu.wrap_init(to_vmap_over_extra_batched_dims),
         tree_ps_ts)
 
@@ -203,9 +199,9 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree):
     flat_out_extra_batched_ts = [d is not not_mapped for d in flat_out_axes_t]
 
     out_ps, out_ts = tree_unflatten(
-        out_tree(), [*flat_out_ps, *flat_out_ts])
+        out_tree2(), [*flat_out_ps, *flat_out_ts])
     out_extra_batched_ps, out_extra_batched_ts = tree_unflatten(
-        out_tree(), [*flat_out_extra_batched_ps, *flat_out_extra_batched_ts])
+        out_tree2(), [*flat_out_extra_batched_ps, *flat_out_extra_batched_ts])
 
     out_batched_ps = tree_map(
         operator.or_, out_mutually_batched.val, out_extra_batched_ps)
@@ -217,9 +213,11 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree):
   tangents = map(ad.instantiate_zeros, tangents)
   jvp_call, _ = ad.jvp_jaxpr(call, [True] * len(primals), True)
   jvp_in_tree = treedef_tuple((in_tree, in_tree))
+  jvp_out_tree = treedef_tuple((out_tree, out_tree))
   outs = custom_vmap_p.bind(
       *primals, *tangents,
-      call=jvp_call, rule=jvp_of_rule_rule, in_tree=jvp_in_tree)
+      call=jvp_call, rule=jvp_of_rule_rule,
+      in_tree=jvp_in_tree, out_tree=jvp_out_tree)
   assert len(outs) % 2 == 0, len(outs)
   out_primals, out_tangents = util.split_list(outs, [len(outs) // 2])
   return out_primals, out_tangents
@@ -231,10 +229,7 @@ custom_vmap_p.def_impl(custom_vmap_impl)
 custom_vmap_p.def_abstract_eval(custom_vmap_abstract_eval)
 batching.primitive_batchers[custom_vmap_p] = custom_vmap_batching
 ad.primitive_jvps[custom_vmap_p] = custom_vmap_jvp
-xla.register_translation(custom_vmap_p,
-                         xla.lower_fun(custom_vmap_impl, new_style=True,
-                                       multiple_results=True),
-                         initial_style=True)
+xla.register_initial_style_primitive(custom_vmap_p)
 mlir.register_lowering(custom_vmap_p, mlir.lower_fun(
     custom_vmap_impl, multiple_results=True))
 
@@ -265,6 +260,6 @@ def sequential_vmap(f):
     mapped_args, bcast_args = tree_split(in_batched, list(args))
     out = jax.lax.map(to_map, mapped_args)
     out_batched = tree_map(lambda _: True, out)
-    return [out], [out_batched]
+    return out, out_batched
 
   return f

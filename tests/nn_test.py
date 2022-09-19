@@ -81,8 +81,14 @@ class NNFunctionsTest(jtu.JaxTestCase):
     self.assertAllClose(val, 1e4, check_dtypes=False)
 
   def testGluValue(self):
-    val = nn.glu(jnp.array([1.0, 0.0]))
+    val = nn.glu(jnp.array([1.0, 0.0]), axis=0)
     self.assertAllClose(val, jnp.array([0.5]))
+
+  @parameterized.parameters(False, True)
+  def testGeluIntType(self, approximate):
+    val_float = nn.gelu(jnp.array(-1.0), approximate=approximate)
+    val_int = nn.gelu(jnp.array(-1), approximate=approximate)
+    self.assertAllClose(val_float, val_int)
 
   @parameterized.parameters(False, True)
   def testGelu(self, approximate):
@@ -126,13 +132,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     self.assertAllClose(out_masked, out_filtered)
 
-  def testNormalizeWhereMask(self):
+  def testStandardizeWhereMask(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
     x_filtered = jnp.take(x, jnp.array([0, 2, 3]))
 
-    out_masked = jnp.take(nn.normalize(x, where=m), jnp.array([0, 2, 3]))
-    out_filtered = nn.normalize(x_filtered)
+    out_masked = jnp.take(nn.standardize(x, where=m), jnp.array([0, 2, 3]))
+    out_filtered = nn.standardize(x_filtered)
 
     self.assertAllClose(out_masked, out_filtered)
 

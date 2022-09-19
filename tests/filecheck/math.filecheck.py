@@ -26,7 +26,6 @@ import numpy as np
 
 from jax.tests.filecheck.jax_filecheck_helpers import print_ir
 
-jax.config.update("jax_enable_mlir", True)
 jax.config.update("jax_enable_x64", True)
 
 
@@ -47,27 +46,27 @@ def main(_):
   print_ir(np.float32(1))(lax.acos)
 
   # CHECK-LABEL: TEST: acosh float32[]
-  # CHECK: xla_fallback_acosh
+  # CHECK: chlo.acosh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.acosh)
 
   # CHECK-LABEL: TEST: asin float32[]
-  # CHECK: mhlo.atan2
+  # CHECK: chlo.asin
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1))(lax.asin)
 
   # CHECK-LABEL: TEST: asinh float32[]
-  # CHECK: xla_fallback_asinh
+  # CHECK: chlo.asinh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.asinh)
 
   # CHECK-LABEL: TEST: atan float32[]
-  # CHECK: mhlo.atan2
+  # CHECK: chlo.atan
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1))(lax.atan)
 
   # CHECK-LABEL: TEST: atanh float32[]
-  # CHECK: xla_fallback_atanh
+  # CHECK: chlo.atanh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.atanh)
 
@@ -82,7 +81,7 @@ def main(_):
   print_ir(np.float32(0))(lax.bessel_i0e)
 
   # CHECK-LABEL: TEST: bessel_i1e float32[]
-  # CHECK: xla_fallback_bessel_i1e
+  # CHECK: chlo.bessel_i1e
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.bessel_i1e)
 
@@ -183,7 +182,7 @@ def main(_):
   print_ir(np.float32(0))(lax.cos)
 
   # CHECK-LABEL: TEST: cosh float32[]
-  # CHECK: xla_fallback_cosh
+  # CHECK: chlo.cosh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.cosh)
 
@@ -198,40 +197,36 @@ def main(_):
   print_ir(np.float32(1), np.float32(2))(lax.div)
 
   # CHECK-LABEL: TEST: eq float32[] float32[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "EQ"
+  # CHECK: mhlo.compare EQ
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.eq)
 
   # CHECK-LABEL: TEST: eq complex128[] complex128[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "EQ"
+  # CHECK: mhlo.compare EQ
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<complex<f64>>
   print_ir(np.complex128(1), np.complex128(2))(lax.eq)
 
   # CHECK-LABEL: TEST: eq int64[] int64[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "SIGNED"
-  # CHECK-SAME: comparison_direction = "EQ"
+  # CHECK: mhlo.compare EQ
+  # CHECK-SAME: SIGNED
   # CHECK-SAME: tensor<i64>
   print_ir(np.int64(1), np.int64(2))(lax.eq)
 
   # CHECK-LABEL: TEST: eq uint16[] uint16[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "UNSIGNED"
-  # CHECK-SAME: comparison_direction = "EQ"
+  # CHECK: mhlo.compare EQ
+  # CHECK-SAME: UNSIGNED
   # CHECK-SAME: tensor<ui16>
   print_ir(np.uint16(1), np.uint16(2))(lax.eq)
 
   # CHECK-LABEL: TEST: erf float32[]
-  # CHECK: xla_fallback_erf
+  # CHECK: chlo.erf
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erf)
 
   # CHECK-LABEL: TEST: erfc float32[]
-  # CHECK: xla_fallback_erfc
+  # CHECK: chlo.erfc
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erfc)
 
@@ -256,16 +251,14 @@ def main(_):
   print_ir(np.empty((2, 3), jnp.bfloat16))(lax.floor)
 
   # CHECK-LABEL: TEST: ge float32[] float32[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "GE"
+  # CHECK: mhlo.compare GE
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.ge)
 
   # CHECK-LABEL: TEST: gt float32[] float32[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "GT"
+  # CHECK: mhlo.compare GT
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.gt)
 
@@ -301,9 +294,8 @@ def main(_):
   print_ir(np.float64(0))(lax.is_finite)
 
   # CHECK-LABEL: TEST: le float32[] float32[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "LE"
+  # CHECK: mhlo.compare LE
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.le)
 
@@ -323,9 +315,8 @@ def main(_):
   print_ir(np.float32(0))(lax.log1p)
 
   # CHECK-LABEL: TEST: lt float32[] float32[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "LT"
+  # CHECK: mhlo.compare LT
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.lt)
 
@@ -345,9 +336,8 @@ def main(_):
   print_ir(np.float32(1), np.float32(2))(lax.mul)
 
   # CHECK-LABEL: TEST: ne float32[] float32[]
-  # CHECK: mhlo.compare
-  # CHECK-SAME: compare_type = "FLOAT"
-  # CHECK-SAME: comparison_direction = "NE"
+  # CHECK: mhlo.compare NE
+  # CHECK-SAME: FLOAT
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.ne)
 
@@ -418,7 +408,7 @@ def main(_):
   # CHECK-SAME: tensor<ui32>
   print_ir(np.uint32(0), np.uint32(0))(lax.shift_left)
 
-    # CHECK-LABEL: TEST: shift_right_arithmetic uint8[] uint8[]
+  # CHECK-LABEL: TEST: shift_right_arithmetic uint8[] uint8[]
   # CHECK: mhlo.shift_right_arithmetic
   # CHECK-SAME: tensor<ui8>
   print_ir(np.uint8(0), np.uint8(0))(lax.shift_right_arithmetic)
@@ -444,7 +434,7 @@ def main(_):
   print_ir(np.float32(0))(lax.sin)
 
   # CHECK-LABEL: TEST: sinh float32[]
-  # CHECK: xla_fallback_sinh
+  # CHECK: chlo.sinh
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.sinh)
 
@@ -459,10 +449,8 @@ def main(_):
   print_ir(jnp.bfloat16(0))(lax.sqrt)
 
   # CHECK-LABEL: TEST: tan float16[]
-  # CHECK: mhlo.sine
-  # CHECK-SAME: tensor<f32>
-  # CHECK: mhlo.cosine
-  # CHECK-SAME: tensor<f32>
+  # CHECK: chlo.tan
+  # CHECK-SAME: tensor<f16>
   print_ir(np.float16(0))(lax.tan)
 
   # CHECK-LABEL: TEST: tanh float32[]

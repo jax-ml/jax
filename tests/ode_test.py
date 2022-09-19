@@ -165,8 +165,8 @@ class ODETest(jtu.JaxTestCase):
     ans = jax.grad(g)(2.)  # don't crash
     expected = jax.grad(f, 0)(2., 0.1) + jax.grad(f, 0)(2., 0.2)
 
-    atol = {jnp.float64: 5e-15}
-    rtol = {jnp.float64: 2e-15}
+    atol = {jnp.float32: 1e-5, jnp.float64: 5e-15}
+    rtol = {jnp.float32: 1e-5, jnp.float64: 2e-15}
     self.assertAllClose(ans, expected, check_dtypes=False, atol=atol, rtol=rtol)
 
   @jtu.skip_on_devices("tpu", "gpu")
@@ -238,7 +238,7 @@ class ODETest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/8757
 
     def dy_dt(y, t, alpha):
-      return alpha * y * jnp.exp(-t)
+      return alpha * y * jnp.exp(-t).astype(y.dtype)
 
     def f(y0, ts, alpha):
       return odeint(dy_dt, y0, ts, alpha).real
@@ -248,7 +248,10 @@ class ODETest(jtu.JaxTestCase):
     ts = jnp.linspace(0., 1., 11)
     tol = 1e-1 if jtu.num_float_bits(np.float64) == 32 else 1e-3
 
-    jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
+    # During the backward pass, this ravels all parameters into a single array
+    # such that dtype promotion is unavoidable.
+    with jax.numpy_dtype_promotion('standard'):
+      jtu.check_grads(f, (y0, ts, alpha), modes=["rev"], order=2, atol=tol, rtol=tol)
 
 
 if __name__ == '__main__':

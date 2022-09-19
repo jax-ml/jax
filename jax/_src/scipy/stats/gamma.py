@@ -15,16 +15,16 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import (_promote_args_inexact, _constant_like,
-                                      where, inf)
+from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
 from jax.scipy.special import gammaln, xlogy
 
 
 @_wraps(osp_stats.gamma.logpdf, update_doc=False)
 def logpdf(x, a, loc=0, scale=1):
   x, a, loc, scale = _promote_args_inexact("gamma.logpdf", x, a, loc, scale)
-  one = _constant_like(x, 1)
+  one = _lax_const(x, 1)
   y = lax.div(lax.sub(x, loc), scale)
   log_linear_term = lax.sub(xlogy(lax.sub(a, one), y), y)
   shape_terms = lax.add(gammaln(a), lax.log(scale))

@@ -19,21 +19,19 @@ import sys
 from typing import List, Optional
 
 import jax
-from jax.experimental.compilation_cache.file_system_cache import FileSystemCache
-import jax._src.lib
+from jax.experimental.compilation_cache.gfile_cache import GFileCache
+from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
 from absl import logging
 
 _cache = None
 
-def initialize_cache(path, max_cache_size_bytes=32 * 2**30):
+def initialize_cache(path):
   """Creates a global cache object. Should only be called once per process.
-
-     max_cache_sixe defaults to 32GiB.
   """
   global _cache
   assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
-  _cache = FileSystemCache(path, max_cache_size_bytes)
+  _cache = GFileCache(path)
   logging.warning("Initialized persistent compilation cache at %s", path)
 
 def get_executable(xla_computation, compile_options, backend) -> Optional[xla_client.Executable]:
@@ -85,7 +83,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
       ("compile_options",
        lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
       ("jax_lib version",
-       lambda hash_obj: hash_obj.update(bytes(jax._src.lib.version_str.encode('utf-8')))),
+       lambda hash_obj: hash_obj.update(bytes(jaxlib_version_str.encode('utf-8')))),
       ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags", _hash_xla_flags),
   ]
@@ -105,17 +103,22 @@ def _hash_computation(hash_obj, xla_computation):
   #   num_consts=0 ]"
   # TODO(skye): in theory this could cause us to scrub meaningful binary proto
   # data. Do something more robust.
-  if isinstance(xla_computation, str):
-    serialized_hlo = xla_computation.encode()  # MLIR module
+  if isinstance(xla_computation, bytes):
+    serialized_hlo = xla_computation  # MLIR module bytecode
+  elif isinstance(xla_computation, str):
+    serialized_hlo = xla_computation.encode()  # MLIR module text
   else:
     serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  assert len(dir(compile_options_obj)) == 31,(f"Unexpected number of CompileOption fields: "
-                                              f"{len(dir(compile_options_obj))}. This likely: means that an extra "
-                                              f"field was added, and this function needs to be updated.")
+  # TODO(phawkins): simplify this code when jaxlib >= 0.3.16 is the minimum.
+  expected_num_compile_options = 33 if xla_client._version >= 84 else 32
+  assert len(dir(compile_options_obj)) == expected_num_compile_options, (
+      f"Unexpected number of CompileOption fields: "
+      f"{len(dir(compile_options_obj))}. This likely: means that an extra "
+      f"field was added, and this function needs to be updated.")
 
   if compile_options_obj.argument_layouts is not None:
     map(lambda shape: hash_obj.update(shape.to_serialized_proto()),
@@ -125,11 +128,15 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   _hash_bool(hash_obj, compile_options_obj.tuple_arguments)
   _hash_int(hash_obj, compile_options_obj.num_replicas)
   _hash_int(hash_obj, compile_options_obj.num_partitions)
+  _hash_int(hash_obj, compile_options_obj.profile_version)
   if compile_options_obj.device_assignment is not None:
     hash_obj.update(compile_options_obj.device_assignment.serialize())
+  # TODO(phawkins): simplify this code when jaxlib >= 0.3.16 is the minimum.
+  if xla_client._version >= 84:
+    _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 31
+  expected_options = 34
   assert len(dir(executable_obj)) == expected_options, (
         f"Unexpected number of executable_build_options fields: "
         f"{len(dir(executable_obj))}. This likely means that an extra "
@@ -142,6 +149,14 @@ def _hash_executable_build_options(hash_obj, executable_obj):
   if executable_obj.device_assignment is not None:
     hash_obj.update(executable_obj.device_assignment.serialize())
   _hash_bool(hash_obj, executable_obj.use_spmd_partitioning)
+  _hash_bool(hash_obj, executable_obj.use_auto_spmd_partitioning)
+  if executable_obj.use_auto_spmd_partitioning:
+    if executable_obj.auto_spmd_partitioning_mesh_shape is not None:
+      hash_obj.update(
+          executable_obj.auto_spmd_partitioning_mesh_shape.serialize())
+    if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
+      hash_obj.update(
+          executable_obj.auto_spmd_partitioning_mesh_ids.serialize())
   _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
 
 def _hash_debug_options(hash_obj, debug_obj):

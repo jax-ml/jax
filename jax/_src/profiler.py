@@ -14,41 +14,72 @@
 
 from contextlib import contextmanager
 from functools import wraps
+import glob
+import gzip
+import http.server
+import json
+import os
+import socketserver
 import threading
-from typing import Callable, Optional
 import warnings
 
+from typing import Callable, Optional
+
+from absl import logging
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 
+_profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
+
 
 def start_server(port: int):
-  """Starts a profiler server on port `port`.
+  """Starts the profiler server on port `port`.
 
   Using the "TensorFlow profiler" feature in `TensorBoard
   <https://www.tensorflow.org/tensorboard>`_ 2.2 or newer, you can
   connect to the profiler server and sample execution traces that show CPU,
   GPU, and/or TPU device activity.
-
-  Returns a profiler server object. The server remains alive and listening until
-  the server object is destroyed.
   """
-  return xla_client.profiler.start_server(port)
+  global _profiler_server
+  if _profiler_server is not None:
+    raise ValueError("Only one profiler server can be active at a time.")
+
+  # Make sure backends are initialized before creating a profiler
+  # session. Otherwise on Cloud TPU, libtpu may not be initialized before
+  # creating the tracer, which will cause the TPU tracer initialization to
+  # fail and no TPU operations will be included in the profile.
+  # NOTE(skyewm): I'm not sure this is necessary for start_server (is definitely
+  # is for start_trace), but I'm putting it here to be safe.
+  xla_bridge.get_backend()
+
+  _profiler_server = xla_client.profiler.start_server(port)
+  return _profiler_server
 
 
-class _ProfileState(object):
+def stop_server():
+  """Stops the running profiler server."""
+  global _profiler_server
+  if _profiler_server is None:
+    raise ValueError("No active profiler server.")
+  _profiler_server = None # Should destroy the profiler server
+
+
+class _ProfileState:
   def __init__(self):
     self.profile_session = None
     self.log_dir = None
+    self.create_perfetto_link = False
+    self.create_perfetto_trace = False
     self.lock = threading.Lock()
 
 _profile_state = _ProfileState()
 
 
-def start_trace(log_dir):
+def start_trace(log_dir, create_perfetto_link: bool = False,
+                create_perfetto_trace: bool = False):
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -64,14 +95,93 @@ def start_trace(log_dir):
   Args:
     log_dir: The directory to save the profiler trace to (usually the
       TensorBoard log directory).
+    create_perfetto_link: A boolean which, if true, creates and prints link to
+      the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
+      block until the link is opened and Perfetto loads the trace.
+    create_perfetto_trace: A boolean which, if true, additionally dumps a
+      ``perfetto_trace.json.gz`` file that is compatible for upload with the
+      Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
+      generated if ``create_perfetto_link`` is true. This could be useful if you
+      want to generate a Perfetto-compatible trace without blocking the
+      processs.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is not None:
       raise RuntimeError("Profile has already been started. "
                          "Only one profile may be run at a time.")
+    # Make sure backends are initialized before creating a profiler
+    # session. Otherwise on Cloud TPU, libtpu may not be initialized before
+    # creating the tracer, which will cause the TPU tracer initialization to
+    # fail and no TPU operations will be included in the profile.
+    xla_bridge.get_backend()
+
     _profile_state.profile_session = xla_client.profiler.ProfilerSession()
+    _profile_state.create_perfetto_link = create_perfetto_link
+    _profile_state.create_perfetto_trace = (
+        create_perfetto_trace or create_perfetto_link)
     _profile_state.log_dir = log_dir
 
+
+def _write_perfetto_trace_file(log_dir):
+  # Navigate to folder with the latest trace dump to find `trace.json.jz`
+  curr_path = os.path.abspath(log_dir)
+  root_trace_folder = os.path.join(curr_path, "plugins", "profile")
+  trace_folders = [os.path.join(root_trace_folder, trace_folder) for
+      trace_folder in os.listdir(root_trace_folder)]
+  latest_folder = max(trace_folders, key=os.path.getmtime)
+  trace_jsons = glob.glob(os.path.join(latest_folder, "*.trace.json.gz"))
+  if len(trace_jsons) != 1:
+    raise ValueError(f"Invalid trace folder: {latest_folder}")
+  trace_json, = trace_jsons
+
+  logging.info("Loading trace.json.gz and removing its metadata...")
+  # Perfetto doesn't like the `metadata` field in `trace.json` so we remove
+  # it.
+  # TODO(sharadmv): speed this up by updating the generated `trace.json`
+  # to not include metadata if possible.
+  with gzip.open(trace_json, "rb") as fp:
+    trace = json.load(fp)
+    del trace["metadata"]
+  filename = "perfetto_trace.json.gz"
+  perfetto_trace = os.path.join(latest_folder, filename)
+  logging.info("Writing perfetto_trace.json.gz...")
+  with gzip.open(perfetto_trace, "w") as fp:
+    fp.write(json.dumps(trace).encode("utf-8"))
+  return perfetto_trace
+
+class _PerfettoServer(http.server.SimpleHTTPRequestHandler):
+  """Handles requests from `ui.perfetto.dev` for the `trace.json`"""
+
+  def end_headers(self):
+    self.send_header('Access-Control-Allow-Origin', '*')
+    return super().end_headers()
+
+  def do_GET(self):
+    self.server.last_request = self.path
+    return super().do_GET()
+
+  def do_POST(self):
+    self.send_error(404, "File not found")
+
+def _host_perfetto_trace_file(path):
+  # ui.perfetto.dev looks for files hosted on `127.0.0.1:9001`. We set up a
+  # TCP server that is hosting the `perfetto_trace.json.gz` file.
+  port = 9001
+  orig_directory = os.path.abspath(os.getcwd())
+  directory, filename = os.path.split(path)
+  try:
+    os.chdir(directory)
+    socketserver.TCPServer.allow_reuse_address = True
+    with socketserver.TCPServer(('127.0.0.1', port), _PerfettoServer) as httpd:
+      url = f"https://ui.perfetto.dev/#!/?url=http://127.0.0.1:{port}/{filename}"
+      print(f"Open URL in browser: {url}")
+
+      # Once ui.perfetto.dev acquires trace.json from this server we can close
+      # it down.
+      while httpd.__dict__.get('last_request') != '/' + filename:
+        httpd.handle_request()
+  finally:
+    os.chdir(orig_directory)
 
 def stop_trace():
   """Stops the currently-running profiler trace.
@@ -83,12 +193,18 @@ def stop_trace():
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     _profile_state.profile_session.stop_and_export(_profile_state.log_dir)
+    if _profile_state.create_perfetto_trace:
+      abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
+      if _profile_state.create_perfetto_link:
+        _host_perfetto_trace_file(abs_filename)
     _profile_state.profile_session = None
+    _profile_state.create_perfetto_link = False
+    _profile_state.create_perfetto_trace = False
     _profile_state.log_dir = None
 
 
 @contextmanager
-def trace(log_dir):
+def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -103,8 +219,17 @@ def trace(log_dir):
   Args:
     log_dir: The directory to save the profiler trace to (usually the
       TensorBoard log directory).
+    create_perfetto_link: A boolean which, if true, creates and prints link to
+      the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
+      block until the link is opened and Perfetto loads the trace.
+    create_perfetto_trace: A boolean which, if true, additionally dumps a
+      ``perfetto_trace.json.gz`` file that is compatible for upload with the
+      Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
+      generated if ``create_perfetto_link`` is true. This could be useful if you
+      want to generate a Perfetto-compatible trace without blocking the
+      processs.
   """
-  start_trace(log_dir)
+  start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
   try:
     yield
   finally:
@@ -126,15 +251,6 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   event occurs while the process is being traced.
   """
   pass
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-class TraceContext(TraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "TraceContext has been renamed to TraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
 
 
 class StepTraceAnnotation(TraceAnnotation):
@@ -161,15 +277,6 @@ class StepTraceAnnotation(TraceAnnotation):
 
   def __init__(self, name: str, **kwargs):
     super().__init__(name, _r=1, **kwargs)
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-class StepTraceContext(StepTraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "StepTraceContext has been renamed to StepTraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
 
 
 def annotate_function(func: Callable, name: Optional[str] = None,
@@ -206,14 +313,6 @@ def annotate_function(func: Callable, name: Optional[str] = None,
       return func(*args, **kwargs)
     return wrapper
   return wrapper
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-def trace_function(*args, **kwargs):
-  warnings.warn(
-      "trace_function has been renamed to annotate_function. This alias "
-      "will eventually be removed; please update your code.")
-  return annotate_function(*args, **kwargs)
 
 
 

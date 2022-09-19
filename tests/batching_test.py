@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import lax
 from jax._src.lax import parallel
@@ -500,7 +501,7 @@ class BatchingTest(jtu.JaxTestCase):
     self.assertAllClose(per_example, per_example_direct)
 
   @parameterized.named_parameters(
-    {"testcase_name": "_op={}".format(name), "op": op, "unit": unit}
+    {"testcase_name": f"_op={name}", "op": op, "unit": unit}
     for name, op, unit in [("max", lax.max, -jnp.inf), ("min", lax.min, jnp.inf)])
   def testMinMaxPool(self, op, unit):
     W = jnp.array(self.rng().randn(3, 3, 1, 5), dtype=np.float32)
@@ -918,6 +919,7 @@ class BatchingTest(jtu.JaxTestCase):
     _ = hessian(f)(R)  # don't crash on UnshapedArray
 
   def testIssue489(self):
+    # https://github.com/google/jax/issues/489
     def f(key):
       def body_fn(uk):
         key = uk[1]
@@ -1090,10 +1092,10 @@ class BatchingTest(jtu.JaxTestCase):
         np.arange(5), 7)
 
   def testAxisIndex(self):
-    x = np.arange(10)
+    x = np.arange(10, dtype='int32')
     self.assertAllClose(
       vmap(lambda x: x - lax.axis_index('i'), axis_name='i')(x),
-      x - np.arange(x.shape[0]))
+      x - np.arange(x.shape[0], dtype='int32'))
 
   def testCollectivePdot(self):
     def f(x, y):
@@ -1279,6 +1281,17 @@ class BatchingTest(jtu.JaxTestCase):
     vector = jax.numpy.array([1., 2.])
     ans = vmapped_gradients_fn(vector)  # doesn't crash
     self.assertAllClose(ans, jnp.ones(2), check_dtypes=False)
+
+  def testBatchingPreservesWeakType(self):
+    # Regression test for https://github.com/google/jax/issues/10025
+    x = jnp.ravel(1)
+    self.assertTrue(dtypes.is_weakly_typed(x))
+    @vmap
+    def f(x):
+      self.assertTrue(dtypes.is_weakly_typed(x), f"{x} is not weakly-typed")
+      return x
+    y = f(x)
+    self.assertTrue(dtypes.is_weakly_typed(y))
 
 
 Array = Any

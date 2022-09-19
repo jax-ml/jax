@@ -16,7 +16,8 @@
 import scipy.stats as osp_stats
 
 from jax import lax
-from jax._src.numpy.lax_numpy import _promote_args_inexact, _constant_like, where, inf
+from jax._src.lax.lax import _const as _lax_const
+from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
 from jax._src.numpy.util import _wraps
 from jax._src.scipy.special import gammaln, xlogy
 
@@ -25,7 +26,7 @@ from jax._src.scipy.special import gammaln, xlogy
 def logpmf(k, n, p, loc=0):
     """JAX implementation of scipy.stats.nbinom.logpmf."""
     k, n, p, loc = _promote_args_inexact("nbinom.logpmf", k, n, p, loc)
-    one = _constant_like(k, 1)
+    one = _lax_const(k, 1)
     y = lax.sub(k, loc)
     comb_term = lax.sub(
         lax.sub(gammaln(lax.add(y, n)), gammaln(n)), gammaln(lax.add(y, one))

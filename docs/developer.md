@@ -42,23 +42,23 @@ To build `jaxlib` from source, you must also install some prerequisites:
   are installed.
 
   See below for Windows build instructions.
-* Python packages: `numpy`, `six`, `wheel`.
-
-  The `six` package is required for during the jaxlib build only, and is not
-  required at install time.
+* Python packages: `numpy`, `wheel`.
 
 You can install the necessary Python dependencies using `pip`:
 
 ```
-pip install numpy six wheel
+pip install numpy wheel
 ```
 
-To build `jaxlib` with CUDA support, you can run:
+To build `jaxlib` without CUDA GPU or TPU support (CPU only), you can run:
 
 ```
-python build/build.py --enable_cuda
+python build/build.py
 pip install dist/*.whl  # installs jaxlib (includes XLA)
 ```
+
+To build `jaxlib` with CUDA support, use `python build/build.py --enable_cuda`;
+to build with TPU support, use `python build/build.py --enable_tpu`.
 
 See `python build/build.py --help` for configuration options, including ways to
 specify the paths to CUDA and CUDNN, which you must have installed. Here
@@ -66,12 +66,27 @@ specify the paths to CUDA and CUDNN, which you must have installed. Here
 may need to use `python3` instead. By default, the wheel is written to the
 `dist/` subdirectory of the current directory.
 
-To build `jaxlib` without CUDA GPU support (CPU only), drop the `--enable_cuda`:
+### Building jaxlib from source with a modified TensorFlow repository.
 
-```
-python build/build.py
-pip install dist/*.whl  # installs jaxlib (includes XLA)
-```
+JAX depends on XLA, whose source code is in the
+[Tensorflow GitHub repository](https://github.com/tensorflow/tensorflow).
+By default JAX uses a pinned copy of the TensorFlow repository, but we often
+want to use a locally-modified copy of XLA when working on JAX. There are two
+ways to do this:
+
+* use Bazel's `override_repository` feature, which you can pass as a command
+  line flag to `build.py` as follows:
+
+  ```
+  python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
+  ```
+* modify the `WORKSPACE` file in the root of the JAX source tree to point to
+  a different TensorFlow tree.
+
+To contribute changes back to XLA, send PRs to the TensorFlow repository.
+
+The version of XLA pinned by JAX is regularly updated, but is updated in
+particular before each `jaxlib` release.
 
 ### Additional Notes for Building `jaxlib` from source on Windows
 
@@ -81,6 +96,9 @@ If you need to build with CUDA enabled, follow the
 [CUDA Installation Guide](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
 to set up a CUDA environment.
 
+JAX builds use symbolic links, which require that you activate
+[Developer Mode](https://docs.microsoft.com/en-us/windows/apps/get-started/enable-your-device-for-development).
+
 You can either install Python using its
 [Windows installer](https://www.python.org/downloads/), or if you prefer, you
 can use [Anaconda](https://docs.anaconda.com/anaconda/install/windows/)
@@ -88,7 +106,7 @@ or [Miniconda](https://docs.conda.io/en/latest/miniconda.html#windows-installers
 to set up a Python environment.
 
 Some targets of Bazel use bash utilities to do scripting, so [MSYS2](https://www.msys2.org)
-is needed. See [Installing Bazel on Windows](https://docs.bazel.build/versions/master/install-windows.html#installing-compilers-and-language-runtimes)
+is needed. See [Installing Bazel on Windows](https://bazel.build/install/windows#install-compilers)
 for more details. Install the following packages:
 
 ```
@@ -129,24 +147,70 @@ sets up symbolic links from site-packages into the repository.
 
 # Running the tests
 
-To run all the JAX tests, we recommend using `pytest-xdist`, which can run tests in
-parallel. First, install `pytest-xdist` and `pytest-benchmark` by running
-`pip install -r build/test-requirements.txt`.
+There are two supported mechanisms for running the JAX tests, either using Bazel
+or using pytest.
+
+## Using Bazel
+
+First, configure the JAX build by running:
+```
+python build/build.py --configure_only
+```
+
+You may pass additional options to `build.py` to configure the build; see the
+`jaxlib` build documentation for details.
+
+By default the Bazel build runs the JAX tests using `jaxlib` built form source.
+To run JAX tests, run:
+
+```
+bazel test //tests:cpu_tests //tests:backend_independent_tests
+```
+
+`//tests:gpu_tests` and `//tests:tpu_tests` are also available, if you have the necessary hardware.
+
+To use a preinstalled `jaxlib` instead of building `jaxlib` from source, run
+
+```
+bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
+```
+
+
+A number of test behaviors can be controlled using environment variables (see
+below). Environment variables may be passed to JAX tests using the
+`--test_env=FLAG=value` flag to Bazel.
+
+## Using pytest
+
+To run all the JAX tests using `pytest`, we recommend using `pytest-xdist`,
+which can run tests in parallel. First, install `pytest-xdist` and
+`pytest-benchmark` by running `pip install -r build/test-requirements.txt`.
 Then, from the repository root directory run:
 
 ```
 pytest -n auto tests
 ```
 
-JAX generates test cases combinatorially, and you can control the number of
-cases that are generated and checked for each test (default is 10). The automated tests
-currently use 25:
+## Controlling test behavior
 
+JAX generates test cases combinatorially, and you can control the number of
+cases that are generated and checked for each test (default is 10) using the
+`JAX_NUM_GENERATED_CASES` environment variable. The automated tests
+currently use 25 by default.
+
+For example, one might write
 ```
+# Bazel
+bazel test //tests/... --test_env=JAX_NUM_GENERATED_CASES=25`
+```
+or
+```
+# pytest
 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
 ```
 
-The automated tests also run the tests with default 64-bit floats and ints:
+The automated tests also run the tests with default 64-bit floats and ints
+(`JAX_ENABLE_X64`):
 
 ```
 JAX_ENABLE_X64=1 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
@@ -161,7 +225,7 @@ file directly to see more detailed information about the cases being run:
 python tests/lax_numpy_test.py --num_generated_cases=5
 ```
 
-You can skip a few tests known as slow, by passing environment variable
+You can skip a few tests known to be slow, by passing environment variable
 JAX_SKIP_SLOW_TESTS=1.
 
 To specify a particular set of tests to run from a test file, you can pass a string
@@ -174,15 +238,20 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
-Note that to run the full pmap tests on a (multi-core) CPU-only machine, you
-can run:
-
+## Doctests
+JAX uses pytest in doctest mode to test the code examples within the documentation.
+You can run this using
 ```
-pytest tests/pmap_tests.py
+pytest docs
 ```
-
-I.e. don't use the `-n auto` option, since that effectively runs each test on a
-single-core worker.
+Additionally, JAX runs pytest in `doctest-modules` mode to ensure code examples in
+function docstrings will run correctly. You can run this locally using, for example:
+```
+pytest --doctest-modules jax/_src/numpy/lax_numpy.py
+```
+Keep in mind that there are several files that are marked to be skipped when the
+doctest command is run on the full package; you can see the details in
+[`ci-build.yaml`](https://github.com/google/jax/blob/main/.github/workflows/ci-build.yaml)
 
 # Type checking
 
@@ -199,7 +268,7 @@ on all staged files in your git repository, automatically using the same mypy ve
 in the GitHub CI:
 
 ```
-$ pre-commit run mypy
+pre-commit run mypy
 ```
 
 # Linting
@@ -217,7 +286,7 @@ on all staged files in your git repository, automatically using the same flake8 
 the GitHub tests:
 
 ```
-$ pre-commit run flake8
+pre-commit run flake8
 ```
 
 # Update documentation
@@ -233,7 +302,7 @@ sphinx-build -b html docs docs/build/html -j auto
 This can take a long time because it executes many of the notebooks in the documentation source;
 if you'd prefer to build the docs without executing the notebooks, you can run:
 ```
-sphinx-build -b html -D jupyter_execute_notebooks=off docs docs/build/html -j auto
+sphinx-build -b html -D nb_execution_mode=off docs docs/build/html -j auto
 ```
 You can then see the generated documentation in `docs/build/html/index.html`.
 
@@ -265,24 +334,25 @@ For making smaller changes to the text content of the notebooks, it is easiest t
 ### Syncing notebooks
 
 After editing either the ipynb or md versions of the notebooks, you can sync the two versions
-using [jupytext](https://jupytext.readthedocs.io/) by running:
+using [jupytext](https://jupytext.readthedocs.io/) by running `jupytext --sync` on the updated
+notebooks; for example:
 
 ```
-$ jupytext --sync docs/notebooks/*
+pip install jupytext==1.13.8
+jupytext --sync docs/notebooks/quickstart.ipynb
 ```
 
-Be sure to use the version of jupytext specified in
+The jupytext version should match that specified in
 [.pre-commit-config.yaml](https://github.com/google/jax/blob/main/.pre-commit-config.yaml).
 
-Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the correct jupytext version:
+To check that the markdown and ipynb files are properly synced, you may use the
+[pre-commit](https://pre-commit.com/) framework to perform the same check used
+by the github CI:
 
 ```
-$ pre-commit run jupytext
+git add docs -u  # pre-commit runs on files in git staging.
+pre-commit run jupytext
 ```
-
-See the pre-commit framework documentation for information on how to set your local git
-environment to execute this automatically.
 
 ### Creating new notebooks
 
@@ -290,7 +360,7 @@ If you are adding a new notebook to the documentation and would like to use the 
 command discussed here, you can set up your notebook for jupytext by using the following command:
 
 ```
-$ jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
+jupytext --set-formats ipynb,md:myst path/to/the/notebook.ipynb
 ```
 
 This works by adding a `"jupytext"` metadata field to the notebook file which specifies the

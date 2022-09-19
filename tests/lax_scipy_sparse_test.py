@@ -27,7 +27,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax.tree_util import register_pytree_node_class
 import jax.scipy.sparse.linalg
-import jax._src.scipy.sparse.linalg
+import jax._src.scipy.sparse.linalg as sp_linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -62,6 +62,15 @@ scipy_bicgstab = partial(solver, scipy.sparse.linalg.bicgstab)
 def rand_sym_pos_def(rng, shape, dtype):
   matrix = np.eye(N=shape[0], dtype=dtype) + rng(shape, dtype)
   return matrix @ matrix.T.conj()
+
+
+class CustomOperator:
+  def __init__(self, A):
+    self.A = A
+    self.shape = self.A.shape
+
+  def __matmul__(self, x):
+    return self.A @ x
 
 
 class LaxBackedScipyTests(jtu.JaxTestCase):
@@ -125,7 +134,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_shape={}".format(jtu.format_shape_dtype_string(shape, dtype)),
+       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
        "shape": shape, "dtype": dtype}
       for shape in [(2, 2)]
       for dtype in float_types + complex_types))
@@ -163,6 +172,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertEqual(expected.keys(), actual.keys())
     self.assertAlmostEqual(expected["a"], actual["a"], places=6)
     self.assertAlmostEqual(expected["b"], actual["b"], places=6)
+
+  @jtu.skip_on_devices('tpu')
+  def test_cg_matmul(self):
+    A = CustomOperator(2 * jnp.eye(3))
+    b = jnp.arange(9.0).reshape(3, 3)
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.cg(A, b)
+    self.assertAllClose(expected, actual)
 
   def test_cg_errors(self):
     A = lambda x: x
@@ -266,7 +283,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
-    tol = shape[0] * jnp.finfo(dtype).eps
+    tol = shape[0] * float(jnp.finfo(dtype).eps)
     x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol,
                                                M=M)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
@@ -291,7 +308,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     solution = rng(shape[1:], dtype)
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
-    tol = shape[0] * jnp.finfo(A.dtype).eps
+    tol = shape[0] * float(jnp.finfo(A.dtype).eps)
     x, info = jax.scipy.sparse.linalg.bicgstab(A, b, tol=tol, atol=tol, M=M)
     using_x64 = solution.dtype.kind in {np.float64, np.complex128}
     solution_tol = 1e-8 if using_x64 else 1e-4
@@ -312,6 +329,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def test_bicgstab_weak_types(self):
     x, _ = jax.scipy.sparse.linalg.bicgstab(lambda x: x, 1.0)
     self.assertTrue(dtypes.is_weakly_typed(x))
+
+  @jtu.skip_on_devices('tpu')
+  def test_bicgstab_matmul(self):
+    A = CustomOperator(2 * jnp.eye(3))
+    b = jnp.arange(9.0).reshape(3, 3)
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.bicgstab(A, b)
+    self.assertAllClose(expected, actual)
 
   # GMRES
   @parameterized.named_parameters(jtu.cases_from_list(
@@ -386,7 +411,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
     restart = shape[-1]
-    tol = shape[0] * jnp.finfo(dtype).eps
+    tol = shape[0] * float(jnp.finfo(dtype).eps)
     x, info = jax.scipy.sparse.linalg.gmres(A, b, tol=tol, atol=tol,
                                             restart=restart,
                                             M=M, solve_method=solve_method)
@@ -417,7 +442,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     M = self._fetch_preconditioner(preconditioner, A, rng=rng)
     b = matmul_high_precision(A, solution)
     restart = shape[-1]
-    tol = shape[0] * jnp.finfo(A.dtype).eps
+    tol = shape[0] * float(jnp.finfo(A.dtype).eps)
     x, info = jax.scipy.sparse.linalg.gmres(A, b, tol=tol, atol=tol,
                                             restart=restart,
                                             M=M, solve_method=solve_method)
@@ -435,6 +460,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertEqual(expected.keys(), actual.keys())
     self.assertAlmostEqual(expected["a"], actual["a"], places=5)
     self.assertAlmostEqual(expected["b"], actual["b"], places=5)
+
+  @jtu.skip_on_devices('tpu')
+  def test_gmres_matmul(self):
+    A = CustomOperator(2 * jnp.eye(3))
+    b = jnp.arange(9.0).reshape(3, 3)
+    expected = b / 2
+    actual, _ = jax.scipy.sparse.linalg.gmres(A, b)
+    self.assertAllClose(expected, actual)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
@@ -462,7 +495,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     n = shape[0]
     x0 = rng(shape[:1], dtype)
     Q = np.zeros((n, n + 1), dtype=dtype)
-    Q[:, 0] = x0/jnp.linalg.norm(x0)
+    Q[:, 0] = x0 / jnp.linalg.norm(x0).astype(dtype)
     Q = jnp.array(Q)
     H = jnp.eye(n, n + 1, dtype=dtype)
 
@@ -470,7 +503,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     def A_mv(x):
       return matmul_high_precision(A, x)
     for k in range(n):
-      Q, H, _ = jax._src.scipy.sparse.linalg._kth_arnoldi_iteration(
+      Q, H, _ = sp_linalg._kth_arnoldi_iteration(
           k, A_mv, M, Q, H)
     QA = matmul_high_precision(Q[:, :n].conj().T, A)
     QAQ = matmul_high_precision(QA, Q[:, :n])

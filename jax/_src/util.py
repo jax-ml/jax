@@ -16,14 +16,19 @@
 import functools
 from functools import partial
 import itertools as it
+from collections import namedtuple
 import operator
 import types
-from typing import (Any, Callable, Iterable, List, Tuple, Generic, TypeVar, Set,
-                    Iterator, Sequence)
+import threading
+from typing import (Any, Callable, Dict, Iterable, List, Tuple, Generic,
+                    TypeVar, Set, Iterator, Sequence, Optional)
+import weakref
 
 from absl import logging
 import numpy as np
 
+from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.config import config
 
 Seq = Sequence
@@ -33,17 +38,20 @@ T = TypeVar("T")
 def safe_zip(*args):
   n = len(args[0])
   for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(zip(*args))
 
 def safe_map(f, *args):
   args = list(map(list, args))
   n = len(args[0])
   for arg in args[1:]:
-    assert len(arg) == n, 'length mismatch: {}'.format(list(map(len, args)))
+    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(map(f, *args))
 
 def unzip2(xys):
+  """Unzip sequence of length-2 tuples into two tuples."""
+  # Note: we deliberately don't use zip(*xys) because it is lazily evaluated,
+  # is too permissive about inputs, and does not guarantee a length-2 output.
   xs = []
   ys = []
   for x, y in xys:
@@ -52,6 +60,9 @@ def unzip2(xys):
   return tuple(xs), tuple(ys)
 
 def unzip3(xyzs):
+  """Unzip sequence of length-3 tuples into three tuples."""
+  # Note: we deliberately don't use zip(*xyzs) because it is lazily evaluated,
+  # is too permissive about inputs, and does not guarantee a length-3 output.
   xs = []
   ys = []
   zs = []
@@ -158,9 +169,10 @@ def toposort(end_nodes):
         childless_nodes.append(parent)
       else:
         child_counts[id(parent)] -= 1
+  sorted_nodes = sorted_nodes[::-1]
 
-  check_toposort(sorted_nodes[::-1])
-  return sorted_nodes[::-1]
+  check_toposort(sorted_nodes)
+  return sorted_nodes
 
 def check_toposort(nodes):
   visited = set()
@@ -215,6 +227,87 @@ def cache(max_size=4096):
   return wrap
 
 memoize = cache(max_size=None)
+
+CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
+
+def weakref_lru_cache(call: Callable, maxsize=2048):
+  """
+  Least recently used cache decorator with weakref support.
+
+  The cache will take a weakref to the first argument of the wrapped function
+  and strong refs to all subsequent operations. In all other respects it should
+  behave similar to `functools.lru_cache`.
+  """
+  if xla_extension_version >= 87:
+    return xc.weakref_lru_cache(config._trace_context, call, maxsize)
+  cache: Dict[Any, Any] = {}
+  hits = misses = 0
+  lock = threading.Lock()
+
+  def remove_key(tctx, args, kwargs, weak_arg):
+    k = (weak_arg, tctx, args, kwargs)
+    try:
+      # This has a chance to race with the iteration in next(iter(cache)),
+      # but we cannot lock because GC can get triggered synchronously inside
+      # a critical section and will not relinquish control until the callback
+      # has finished. This would lead to a deadlock between this weakref
+      # cleanup function and any function below which locks.
+      del cache[k]
+    except KeyError:
+      pass
+
+  def wrapped(weak_arg, *args, **kwargs):
+    nonlocal hits, misses
+    if config.jax_check_tracer_leaks:
+      return call(weak_arg, *args, **kwargs)
+    kwargs_key = tuple(kwargs.items())
+    tctx = config._trace_context()
+    k = (weakref.ref(weak_arg,
+         functools.partial(remove_key, tctx, args, kwargs_key)),
+         tctx, args, kwargs_key)
+    with lock:
+      if k in cache:
+        hits += 1
+        result = cache[k]
+        # del and reinsert to bump key in the insertion order.
+        del cache[k]
+        cache[k] = result
+        return result
+      misses += 1
+    result = call(weak_arg, *args, **kwargs)
+    with lock:
+      cache[k] = result
+      num_errors = 0
+      while len(cache) > maxsize:
+        try:
+          del_k = next(iter(cache))
+          # This happens if a weakref callback happens between iter and
+          # next. Just ignore the error. WeakKeyDictionary handles this
+          # by deferring the deletes, but that has a chance at leaking,
+          # and this solution is easier.
+        except RuntimeError:
+          num_errors += 1
+          if num_errors > len(cache):
+            # This must be some other problem.
+            raise
+          else:
+            continue
+        del cache[del_k]
+      return result
+
+  def cache_info():
+    with lock:
+      return CacheInfo(hits, misses, maxsize, len(cache))
+
+  def cache_clear():
+    nonlocal hits, misses
+    with lock:
+      hits = misses = 0
+      cache.clear()
+
+  wrapped.cache_info = cache_info
+  wrapped.cache_clear = cache_clear
+  return wrapped
 
 def prod(xs):
   out = 1
@@ -277,7 +370,21 @@ def get_module_functions(module):
 def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
-def extend_name_stack(stack, name=''):
+def new_name_stack(name: str = ''):
+  if config.jax_experimental_name_stack:
+    from jax._src import source_info_util
+    name_stack = source_info_util.NameStack()
+    if name:
+      name_stack = name_stack.extend(name)
+    return name_stack
+  return name + '/'
+
+def extend_name_stack(stack, name: str):
+  if config.jax_experimental_name_stack:
+    from jax._src import source_info_util
+    assert isinstance(stack, source_info_util.NameStack), stack
+    return stack.extend(name)
+  assert isinstance(stack, str)
   return stack + name + '/'
 
 def canonicalize_axis(axis, num_dims) -> int:
@@ -337,18 +444,6 @@ def tuple_insert(t, idx, val):
 def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
-
-# TODO(mattjj): replace with dataclass when Python 2 support is removed
-def taggedtuple(name, fields) -> Callable[..., Any]:
-  """Lightweight version of namedtuple where equality depends on the type."""
-  def __new__(cls, *xs):
-    return tuple.__new__(cls, (cls,) + xs)
-  def __repr__(self):
-    return '{}{}'.format(name, tuple.__str__(self[1:]))
-  class_namespace = {'__new__' : __new__, '__repr__': __repr__}
-  for i, f in enumerate(fields):
-    class_namespace[f] = property(operator.itemgetter(i+1))  # type: ignore
-  return type(name, (tuple,), class_namespace)
 
 class HashableFunction:
   """Decouples function equality and hash from its identity.
@@ -443,3 +538,18 @@ class OrderedSet(Generic[T]):
 
   def __contains__(self, elt: T) -> bool:
     return elt in self.elts_set
+
+
+class HashableWrapper:
+  x: Any
+  hash: Optional[int]
+  def __init__(self, x):
+    self.x = x
+    try: self.hash = hash(x)
+    except: self.hash = None
+  def __hash__(self):
+    return self.hash if self.hash is not None else id(self.x)
+  def __eq__(self, other):
+    if not isinstance(other, HashableWrapper):
+      return False
+    return self.x == other.x if self.hash is not None else self.x is other.x
