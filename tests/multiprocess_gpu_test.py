@@ -109,10 +109,14 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, universal_newlines=True))
 
-    for proc in subprocesses:
-      out, _ = proc.communicate()
-      self.assertEqual(proc.returncode, 0)
-      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+    try:
+      for proc in subprocesses:
+        out, _ = proc.communicate()
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+    finally:
+      for proc in subprocesses:
+        proc.kill()
 
   @unittest.skipIf(xla_extension_version < 91,
                    "Test requires jaxlib 0.3.17 or newer")
@@ -148,10 +152,14 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, universal_newlines=True))
 
-    for proc in subprocesses:
-      out, _ = proc.communicate()
-      self.assertEqual(proc.returncode, 0)
-      self.assertEqual(out, f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]')
+    try:
+      for proc in subprocesses:
+        out, _ = proc.communicate()
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]')
+    finally:
+      for proc in subprocesses:
+        proc.kill()
 
 @unittest.skipIf(
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
