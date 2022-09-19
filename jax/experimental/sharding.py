@@ -70,6 +70,13 @@ class Sharding(metaclass=abc.ABCMeta):
                      global_shape: Shape) -> Optional[Index]:
     return self.devices_indices_map(global_shape)[device]
 
+  @functools.lru_cache(maxsize=4096)
+  def addressable_devices_indices_map(
+      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    process_index = xb.process_index()
+    return {d: ind for d, ind in self.devices_indices_map(global_shape).items()
+            if d.process_index == process_index}
+
 
 @pxla.use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
 class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):

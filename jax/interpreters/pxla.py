@@ -3075,7 +3075,6 @@ def _get_input_metadata(
   from jax.experimental.sharding import MeshPspecSharding
 
   shardings, input_indices, input_avals = [], [], []
-  process_index = xb.process_index()
   for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
     if is_global:
       aval = gaval
@@ -3097,8 +3096,7 @@ def _get_input_metadata(
         index = tuple((slice(None),) * aval.ndim
                       for _ in range(len(sharding.addressable_devices)))  # type: ignore
       else:
-        index = tuple(ind for d, ind in sharding.devices_indices_map(aval.shape).items()
-                      if d.process_index == process_index)  # type: ignore
+        index = tuple(sharding.addressable_devices_indices_map(aval.shape).values())  # type: ignore
 
     shardings.append(sharding)
     input_indices.append(index)

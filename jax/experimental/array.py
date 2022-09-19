@@ -16,8 +16,7 @@ from __future__ import annotations
 
 import operator as op
 import numpy as np
-from typing import (Sequence, Tuple, Callable, Union, Optional, cast, List,
-                    NamedTuple, Mapping, TYPE_CHECKING)
+from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax import core
 from jax._src import abstract_arrays
@@ -511,7 +510,7 @@ def _array_pmap_shard_arg(x, devices, indices, mode):
   # If the sharding of Array does not match pmap's sharding then take the slow
   # path which is similar to what SDA does. This slow path reroute only happens
   # for `pmap`.
-  x_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
+  x_indices = tuple(x.sharding.addressable_devices_indices_map(x.shape).values())
   if indices == x_indices:
     return [buf if buf.device() == d else buf.copy_to_device(d)
             for buf, d in safe_zip(x._arrays, devices)]
@@ -526,7 +525,8 @@ def _array_rest_shard_arg(x, devices, indices, mode):
       # `pxla._shard_device_array` is used since it has `_multi_slice` in the
       # implementation which is jitted. Eventually it calls back here and the
       # recursion happens.
-      if len(devices) == 1:
+      x_indices = tuple(x.sharding.addressable_devices_indices_map(x.shape).values())
+      if x_indices == indices:
         return [buf if buf.device() == d else buf.copy_to_device(d)
                 for buf, d in safe_zip(x._arrays, devices)]
       return pxla._shard_device_array(x, devices, indices, mode)
