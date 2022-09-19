@@ -263,8 +263,8 @@ class TestFixedPoint(jtu.JaxTestCase):
                 func, x0, args, xtol, maxiter, method=method
             )
 
-            self.assertAllClose(jax_res, scipy_res)
-            self.assertAllClose(jax_res, expected_res)
+            self.assertAllClose(jax_res, scipy_res, atol=1e-10)
+            self.assertAllClose(jax_res, expected_res, atol=1e-10)
 
         # Methods only supported by jax
         for method in ("newton",):
@@ -272,7 +272,7 @@ class TestFixedPoint(jtu.JaxTestCase):
                 func, x0, args, xtol, maxiter, method=method
             )
 
-            self.assertAllClose(jax_res, expected_res)
+            self.assertAllClose(jax_res, expected_res, atol=1e-10)
 
     @parameterized.named_parameters(
         jtu.cases_from_list(
@@ -316,12 +316,12 @@ class TestFixedPoint(jtu.JaxTestCase):
             fixed_point_del2_res, fixed_point_del2_g = fixed_point_del2_v_and_g(x)
             fixed_point_newton_res, fixed_point_newton_g = fixed_point_newton_v_and_g(x)
 
-            self.assertAllClose(sqrt_res, fixed_point_iteration_res)
-            self.assertAllClose(sqrt_g, fixed_point_iteration_g)
-            self.assertAllClose(sqrt_res, fixed_point_del2_res)
-            self.assertAllClose(sqrt_g, fixed_point_del2_g)
-            self.assertAllClose(sqrt_res, fixed_point_newton_res)
-            self.assertAllClose(sqrt_g, fixed_point_newton_g)
+            self.assertAllClose(sqrt_res, fixed_point_iteration_res, atol=1e-10)
+            self.assertAllClose(sqrt_g, fixed_point_iteration_g, atol=1e-10)
+            self.assertAllClose(sqrt_res, fixed_point_del2_res, atol=1e-10)
+            self.assertAllClose(sqrt_g, fixed_point_del2_g, atol=1e-10)
+            self.assertAllClose(sqrt_res, fixed_point_newton_res, atol=1e-10)
+            self.assertAllClose(sqrt_g, fixed_point_newton_g, atol=1e-10)
 
     @parameterized.named_parameters(
         jtu.cases_from_list(
@@ -343,7 +343,7 @@ class TestFixedPoint(jtu.JaxTestCase):
             jax_res = jax.scipy.optimize.fixed_point(
                 newton_sqrt, x0, (x0,), xtol, maxiter, method=method
             )
-            self.assertAllClose(jax_res, expected_res)
+            self.assertAllClose(jax_res, expected_res, atol=1e-10)
 
 
 if __name__ == "__main__":
