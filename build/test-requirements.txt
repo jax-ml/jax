@@ -5,3 +5,4 @@ pillow>=9.1.0
 pytest-benchmark
 pytest-xdist
 wheel
+rich

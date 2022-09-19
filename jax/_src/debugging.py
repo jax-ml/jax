@@ -17,7 +17,7 @@ import functools
 import string
 import sys
 
-from typing import Callable, Any
+from typing import Any, Dict, Callable, Sequence, Set, Tuple
 
 from jax import core
 from jax import tree_util
@@ -26,6 +26,8 @@ from jax._src import ad_checkpoint
 from jax._src import custom_derivatives
 from jax._src import lib as jaxlib
 from jax._src import util
+from jax.config import config
+from jax.experimental.sharding import Sharding
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
@@ -33,6 +35,18 @@ from jax.interpreters import partial_eval as pe
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 import jax.numpy as jnp
+
+# pytype: disable=import-error
+try:
+  import rich
+  import rich.align
+  import rich.box
+  import rich.padding
+  import rich.table
+  RICH_ENABLED = True
+except:
+  RICH_ENABLED = False
+# pytype: enable=import-error
 
 DebugEffect = enum.Enum('DebugEffect', ['PRINT', 'ORDERED_PRINT'])
 
@@ -230,3 +244,93 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
 
   debug_callback(functools.partial(_format_print_callback, fmt), *args,
                  **kwargs, ordered=ordered)
+
+def _slice_to_chunk_idx(size: int, slc: slice) -> int:
+  if slc.stop == slc.start == None:
+    return 0
+  slice_size = slc.stop - slc.start
+  assert slc.start % slice_size == 0
+  assert size % slice_size == 0
+  return slc.start // slice_size
+
+def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
+                       use_color: bool = False, scale: float = 1.):
+  """Visualizes a `Sharding`."""
+  if not RICH_ENABLED:
+    raise ValueError("`visualize_sharding` requires `rich` to be installed.")
+  if use_color:
+    # TODO(sharadmv): Implement color in the visualizer
+    raise NotImplementedError
+  if len(shape) > 2 or len(shape) < 1:
+    raise ValueError(
+        "`visualize_sharding` only works for shapes with 1 and 2 dimensions.")
+
+  base_height = int(10 * scale)
+  aspect_ratio = (shape[1] if len(shape) == 2 else 1) / shape[0]
+  base_width = int(base_height * aspect_ratio)
+  height_to_width_ratio = 2.5
+
+  # Grab the device kind from the first device
+  device_kind = next(iter(sharding.device_set)).device_kind.upper()
+
+  device_indices_map = sharding.devices_indices_map(tuple(shape))
+  slices: Dict[Tuple[int, ...], Set[int]] = {}
+  heights: Dict[Tuple[int, ...], int] = {}
+  widths: Dict[Tuple[int, ...], int] = {}
+  for dev, slcs in device_indices_map.items():
+    chunk_idxs = tuple(map(_slice_to_chunk_idx, shape, slcs))
+    if slcs is None:
+      raise NotImplementedError
+    if len(slcs) == 2:
+      vert, horiz = slcs
+      vert_size  = ((vert.stop  - vert.start ) if vert.stop  is not None
+                    else shape[0])
+      horiz_size = ((horiz.stop - horiz.start) if horiz.stop is not None
+                    else shape[1])
+      chunk_height = vert_size / shape[0] * base_height
+      chunk_width = (
+          horiz_size / shape[1] * base_width *
+          height_to_width_ratio)
+      heights[chunk_idxs] = int(chunk_height)
+      widths[chunk_idxs] = int(chunk_width)
+      slices.setdefault(chunk_idxs, set()).add(dev.id)
+    else:
+      # In the 1D case, we set the height to 1.
+      horiz, = slcs
+      vert = slice(0, 1, None)
+      horiz_size = (
+          (horiz.stop - horiz.start) if horiz.stop is not None else shape[0])
+      heights[(0, *chunk_idxs)] = 1
+      widths[(0, *chunk_idxs)]  = int(horiz_size / shape[0] * base_width)
+      slices.setdefault((0, *chunk_idxs), set()).add(dev.id)
+  num_rows = max([a[0] for a in slices.keys()]) + 1
+  if len(list(slices.keys())[0]) == 1:
+    num_cols = 1
+  else:
+    num_cols = max([a[1] for a in slices.keys()]) + 1
+
+  table = rich.table.Table(show_header=False, show_lines=True, padding=0,
+                           highlight=True, pad_edge=False,
+                           box=rich.box.SQUARE)
+  for i in range(num_rows):
+    col = []
+    for j in range(num_cols):
+      entry = f"{device_kind} "+",".join([str(s) for s in sorted(slices[i, j])])
+      width, height = widths[i, j], heights[i, j]
+      left_padding, remainder = divmod(width - len(entry), 2)
+      right_padding = left_padding + remainder
+      top_padding, remainder = divmod(height - 1, 2)
+      bottom_padding = top_padding + remainder
+      padding = (top_padding, right_padding, bottom_padding, left_padding)
+      padding = tuple(max(x, 0) for x in padding)  # type: ignore
+      col.append(
+          rich.padding.Padding(
+            rich.align.Align(entry, "center", vertical="middle"), padding))
+    table.add_row(*col)
+  rich.get_console().print(table, end='\n\n')
+
+def visualize_array_sharding(arr, **kwargs):
+  """Visualizes an array's sharding."""
+  if not config.jax_array:
+    raise NotImplementedError("`visualize_array_sharding` not implemented.")
+  return visualize_sharding(arr.shape, arr.sharding, **kwargs)
