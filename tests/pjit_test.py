@@ -1090,8 +1090,12 @@ class PJitTest(jtu.BufferDonationTestCase):
         pjit_f(jnp.array([1, 2, 3]))
 
 
-@jax_array(False)
 class GDAPjitTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if config.jax_array:
+      self.skipTest('GDA and Array cannot be enabled together.')
 
   def test_pjit_gda_single_output(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
