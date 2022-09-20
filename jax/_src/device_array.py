@@ -295,6 +295,11 @@ for device_array in [DeviceArray]:
 
   setattr(device_array, "__reduce__", __reduce__)
 
+  def sharding(self):
+    return jax.sharding.SingleDeviceSharding(self.device())
+
+  setattr(device_array, "sharding", sharding)
+
   setattr(device_array, "__str__", partialmethod(_forward_to_value, str))
   setattr(device_array, "__bool__", partialmethod(_forward_to_value, bool))
   setattr(device_array, "__nonzero__", partialmethod(_forward_to_value, bool))
