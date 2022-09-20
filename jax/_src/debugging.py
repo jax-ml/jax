@@ -41,6 +41,7 @@ try:
   import rich
   import rich.align
   import rich.box
+  import rich.console
   import rich.padding
   import rich.table
   RICH_ENABLED = True
@@ -254,7 +255,8 @@ def _slice_to_chunk_idx(size: int, slc: slice) -> int:
   return slc.start // slice_size
 
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
-                       use_color: bool = False, scale: float = 1.):
+                       use_color: bool = False, scale: float = 1.,
+                       min_width: int = 9, max_width: int = 80):
   """Visualizes a `Sharding`."""
   if not RICH_ENABLED:
     raise ValueError("`visualize_sharding` requires `rich` to be installed.")
@@ -271,7 +273,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   height_to_width_ratio = 2.5
 
   # Grab the device kind from the first device
-  device_kind = next(iter(sharding.device_set)).device_kind.upper()
+  device_kind = next(iter(sharding.device_set)).platform.upper()
 
   device_indices_map = sharding.devices_indices_map(tuple(shape))
   slices: Dict[Tuple[int, ...], Set[int]] = {}
@@ -312,14 +314,16 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   table = rich.table.Table(show_header=False, show_lines=True, padding=0,
                            highlight=True, pad_edge=False,
                            box=rich.box.SQUARE)
+  console = rich.console.Console(width=max_width)
   for i in range(num_rows):
     col = []
     for j in range(num_cols):
       entry = f"{device_kind} "+",".join([str(s) for s in sorted(slices[i, j])])
       width, height = widths[i, j], heights[i, j]
-      left_padding, remainder = divmod(width - len(entry), 2)
+      width = min(max(width, min_width), max_width)
+      left_padding, remainder = divmod(width - len(entry) - 2, 2)
       right_padding = left_padding + remainder
-      top_padding, remainder = divmod(height - 1, 2)
+      top_padding, remainder = divmod(height - 2, 2)
       bottom_padding = top_padding + remainder
       padding = (top_padding, right_padding, bottom_padding, left_padding)
       padding = tuple(max(x, 0) for x in padding)  # type: ignore
@@ -327,7 +331,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
           rich.padding.Padding(
             rich.align.Align(entry, "center", vertical="middle"), padding))
     table.add_row(*col)
-  rich.get_console().print(table, end='\n\n')
+  console.print(table, end='\n\n')
 
 def visualize_array_sharding(arr, **kwargs):
   """Visualizes an array's sharding."""
