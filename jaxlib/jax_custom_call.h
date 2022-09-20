@@ -7,6 +7,7 @@ extern "C" {
 
 #include <stdint.h>
 
+const char* JAX_CUSTOM_CALL_CPU = "jax_custom_call_cpu";
 
 struct JaxCustomCallStatus;
 

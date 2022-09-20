@@ -40,7 +40,7 @@ py_library(
         ":version",
         ":xla_client",
     ],
-    data = [":xla_extension"],
+    data = [":xla_extension", "jax_custom_call.h"],
     deps = [
         ":cpu_feature_guard",
         "//jaxlib/cpu:_ducc_fft",

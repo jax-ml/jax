@@ -252,6 +252,11 @@ def prepare_wheel(sources_path):
     copy_to_jaxlib("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so")
     patch_copy_tpu_client_py(jaxlib_dir)
 
+  jaxlib_include_dir = os.path.join(jaxlib_dir, "include")
+  os.makedirs(jaxlib_include_dir)
+
+  copy_to_jaxlib("__main__/jaxlib/jax_custom_call.h", dst_dir=jaxlib_include_dir)
+
 
 def edit_jaxlib_version(sources_path):
   version_regex = re.compile(r'__version__ = \"(.*)\"')
