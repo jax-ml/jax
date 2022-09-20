@@ -17,7 +17,7 @@ import functools
 import string
 import sys
 
-from typing import Any, Dict, Callable, Sequence, Set, Tuple
+from typing import Any, Dict, Callable, Sequence, Set, Tuple, Union
 
 from jax import core
 from jax import tree_util
@@ -254,6 +254,11 @@ def _slice_to_chunk_idx(size: int, slc: slice) -> int:
   assert size % slice_size == 0
   return slc.start // slice_size
 
+def _raise_to_slice(slc: Union[slice, int]):
+  if isinstance(slc, int):
+    return slice(slc, slc + 1)
+  return slc
+
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        use_color: bool = False, scale: float = 1.,
                        min_width: int = 9, max_width: int = 80):
@@ -280,6 +285,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   heights: Dict[Tuple[int, ...], int] = {}
   widths: Dict[Tuple[int, ...], int] = {}
   for dev, slcs in device_indices_map.items():
+    slcs = tuple(map(_raise_to_slice, slcs))
     chunk_idxs = tuple(map(_slice_to_chunk_idx, shape, slcs))
     if slcs is None:
       raise NotImplementedError

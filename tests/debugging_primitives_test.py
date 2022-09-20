@@ -24,6 +24,7 @@ from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.experimental import sharding
+from jax.interpreters import pxla
 from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
@@ -1002,6 +1003,49 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     ├──────────────────────────────────────────────────────────────────────────────┤
     │                               CPU 28,29,30,31                                │
     └──────────────────────────────────────────────────────────────────────────────┘
+    """)
+    self.assertEqual(output(), expected)
+
+  def test_visualize_pmap_sharding(self):
+    ss = pxla.ShardingSpec(
+        sharding=(pxla.Unstacked(8),),
+        mesh_mapping=(pxla.ShardedAxis(0),))
+    sd = sharding.PmapSharding(self._create_devices(8), ss)
+    shape = (8,)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌───────┬───────┬───────┬───────┬───────┬───────┬───────┬───────┐
+    │ CPU 0 │ CPU 1 │ CPU 2 │ CPU 3 │ CPU 4 │ CPU 5 │ CPU 6 │ CPU 7 │
+    └───────┴───────┴───────┴───────┴───────┴───────┴───────┴───────┘
+    """)
+    self.assertEqual(output(), expected)
+
+    ss = pxla.ShardingSpec(
+        sharding=(pxla.Unstacked(8), pxla.NoSharding()),
+        mesh_mapping=(pxla.ShardedAxis(0),))
+    sd = sharding.PmapSharding(self._create_devices(8), ss)
+    shape = (8, 2)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌───────┐
+    │ CPU 0 │
+    ├───────┤
+    │ CPU 1 │
+    ├───────┤
+    │ CPU 2 │
+    ├───────┤
+    │ CPU 3 │
+    ├───────┤
+    │ CPU 4 │
+    ├───────┤
+    │ CPU 5 │
+    ├───────┤
+    │ CPU 6 │
+    ├───────┤
+    │ CPU 7 │
+    └───────┘
     """)
     self.assertEqual(output(), expected)
 
