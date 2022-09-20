@@ -20,7 +20,7 @@ from collections import OrderedDict, abc
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
                     NamedTuple, Union, Sequence)
 from warnings import warn
-from functools import wraps, partial, partialmethod
+from functools import wraps, partial, partialmethod, lru_cache
 from enum import Enum
 
 from jax import numpy as jnp
@@ -1811,6 +1811,17 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
 def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                                           global_axis_sizes, in_axes_flat,
                                           in_positional_semantics, args_flat):
+  @lru_cache()
+  def _check_sharding(in_sharding, xmap_sharding, ndim, arr_flavor):
+    if not pxla.are_op_shardings_equal(
+        in_sharding._to_xla_op_sharding(ndim),
+        xmap_sharding._to_xla_op_sharding(ndim)):
+      raise ValueError(
+          f"Got an input {arr_flavor} to xmap with different partitioning than "
+          "specified in xmap. The partitioning must match. "
+          f"Got {arr_flavor} spec: {in_sharding.spec} and "
+          f"xmap spec: {xmap_sharding.spec}")
+
   mesh_in_axes = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
@@ -1825,15 +1836,16 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                          f"Got xmap mesh: {resource_env.physical_mesh},\n"
                          f"{arr_flavor} mesh: {mesh}")
 
-      array_mapping = pxla._get_array_mapping(
-          arg.mesh_axes if arr_flavor == 'GDA' else arg.sharding.spec)
-      if array_mapping != xmap_array_mapping:
-        raise ValueError(
-            f"Got an input {arr_flavor} to xmap with different partitioning than "
-            "specified in xmap. The partitioning must match. "
-            f"Got {arr_flavor} spec: {pxla.array_mapping_to_axis_resources(array_mapping)} and "
-            f"xmap spec: {pxla.array_mapping_to_axis_resources(xmap_array_mapping)} "
-            f"for {arr_flavor}: {arg}")
+      if arr_flavor == 'GDA':
+        s = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+      else:
+        s = arg.sharding
+      xmap_sharding = pxla._create_mesh_pspec_sharding(
+          mesh, pxla.array_mapping_to_axis_resources(xmap_array_mapping))
+      # This check is cached because comparing OpSharding is expensive during
+      # dispatch and if the shardings are the same, then there is no need to
+      # compare twice.
+      _check_sharding(s, xmap_sharding, arg.ndim, arr_flavor)
 
 
 # TODO: We should relax this at least for "constructor primitives"

@@ -989,8 +989,12 @@ class NamedNNTest(XMapTestCase):
                         atol=1e-4, rtol=2e-2)
 
 
-@jax_config.jax_array(False)
 class XMapGDATest(XMapTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if config.jax_array:
+      self.skipTest('GDA and Array cannot be enabled together.')
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_basic(self):
@@ -1122,6 +1126,27 @@ class XMapGDATest(XMapTestCase):
           ('Got an input GDA to xmap with different partitioning than '
            'specified in xmap. The partitioning must match.')):
         f(gda_obj)
+
+  def test_gda_from_pjit_with_xmap_sharding_mismatch(self):
+    global_mesh = jtu.create_global_mesh((8, 1), ('x', 'y'))
+    global_input_shape = (8, 2)
+    mesh_axes = P('x', 'y')
+    input_data = np.arange(
+        prod(global_input_shape)).reshape(global_input_shape)
+    gda_obj = global_device_array.GlobalDeviceArray.from_callback(
+        global_input_shape, global_mesh, mesh_axes, lambda idx: input_data[idx])
+    with jax_config.parallel_functions_output_gda(True):
+      with global_mesh:
+        out = pjit(lambda x: x, in_axis_resources=P('x', 'y'),
+                   out_axis_resources=P('x', 'y'))(gda_obj)
+
+        xmap_out = maps.xmap(
+            lambda x: x,
+            in_axes=({0: "a", 1: "b"}),
+            out_axes=({0: "a", 1: "b"}),
+            axis_resources={"a": "x", "b": "y"})(out)  # doesn't crash
+        self.assertArraysEqual(xmap_out, input_data)
+
 
 
 class XMapArrayTest(XMapTestCase):
