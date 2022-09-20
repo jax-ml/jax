@@ -62,8 +62,8 @@ if jaxlib.version < (0, 3, 15):
   disabled_backends.append("tpu")
 
 class DummyDevice:
-  def __init__(self, device_kind, id):
-    self.device_kind = device_kind
+  def __init__(self, platform, id):
+    self.platform = platform
     self.id = id
 
 class DebugPrintTest(jtu.JaxTestCase):
@@ -881,9 +881,9 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     self.assertEqual(output(), _format_multiline("""
-    ┌─────┐
-    │CPU 0│
-    └─────┘
+    ┌───────┐
+    │ CPU 0 │
+    └───────┘
     """))
 
   def test_trivial_sharding_with_scale(self):
@@ -892,11 +892,11 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     sd = sharding.MeshPspecSharding(mesh, pspec)
     shape = (5,)
     with jtu.capture_stdout() as output:
-      debugging.visualize_sharding(shape, sd, scale=3.5)
+      debugging.visualize_sharding(shape, sd, scale=8.)
     self.assertEqual(output(), _format_multiline("""
-    ┌───────┐
-    │ CPU 0 │
-    └───────┘
+    ┌──────────────┐
+    │    CPU 0     │
+    └──────────────┘
     """))
 
   def test_full_sharding(self):
@@ -907,23 +907,23 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
-    ┌──────┬──────┬──────┬──────┐
-    │CPU 0 │CPU 1 │CPU 2 │CPU 3 │
-    ├──────┼──────┼──────┼──────┤
-    │CPU 4 │CPU 5 │CPU 6 │CPU 7 │
-    ├──────┼──────┼──────┼──────┤
-    │CPU 8 │CPU 9 │CPU 10│CPU 11│
-    ├──────┼──────┼──────┼──────┤
-    │CPU 12│CPU 13│CPU 14│CPU 15│
-    ├──────┼──────┼──────┼──────┤
-    │CPU 16│CPU 17│CPU 18│CPU 19│
-    ├──────┼──────┼──────┼──────┤
-    │CPU 20│CPU 21│CPU 22│CPU 23│
-    ├──────┼──────┼──────┼──────┤
-    │CPU 24│CPU 25│CPU 26│CPU 27│
-    ├──────┼──────┼──────┼──────┤
-    │CPU 28│CPU 29│CPU 30│CPU 31│
-    └──────┴──────┴──────┴──────┘
+    ┌───────┬───────┬───────┬───────┐
+    │ CPU 0 │ CPU 1 │ CPU 2 │ CPU 3 │
+    ├───────┼───────┼───────┼───────┤
+    │ CPU 4 │ CPU 5 │ CPU 6 │ CPU 7 │
+    ├───────┼───────┼───────┼───────┤
+    │ CPU 8 │ CPU 9 │CPU 10 │CPU 11 │
+    ├───────┼───────┼───────┼───────┤
+    │CPU 12 │CPU 13 │CPU 14 │CPU 15 │
+    ├───────┼───────┼───────┼───────┤
+    │CPU 16 │CPU 17 │CPU 18 │CPU 19 │
+    ├───────┼───────┼───────┼───────┤
+    │CPU 20 │CPU 21 │CPU 22 │CPU 23 │
+    ├───────┼───────┼───────┼───────┤
+    │CPU 24 │CPU 25 │CPU 26 │CPU 27 │
+    ├───────┼───────┼───────┼───────┤
+    │CPU 28 │CPU 29 │CPU 30 │CPU 31 │
+    └───────┴───────┴───────┴───────┘
     """)
     self.assertEqual(output(), expected)
 
@@ -936,23 +936,23 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
-    ┌─────────────────────────┐
-    │       CPU 0,1,2,3       │
-    ├─────────────────────────┤
-    │       CPU 4,5,6,7       │
-    ├─────────────────────────┤
-    │      CPU 8,9,10,11      │
-    ├─────────────────────────┤
-    │     CPU 12,13,14,15     │
-    ├─────────────────────────┤
-    │     CPU 16,17,18,19     │
-    ├─────────────────────────┤
-    │     CPU 20,21,22,23     │
-    ├─────────────────────────┤
-    │     CPU 24,25,26,27     │
-    ├─────────────────────────┤
-    │     CPU 28,29,30,31     │
-    └─────────────────────────┘
+    ┌───────────────────────┐
+    │      CPU 0,1,2,3      │
+    ├───────────────────────┤
+    │      CPU 4,5,6,7      │
+    ├───────────────────────┤
+    │     CPU 8,9,10,11     │
+    ├───────────────────────┤
+    │    CPU 12,13,14,15    │
+    ├───────────────────────┤
+    │    CPU 16,17,18,19    │
+    ├───────────────────────┤
+    │    CPU 20,21,22,23    │
+    ├───────────────────────┤
+    │    CPU 24,25,26,27    │
+    ├───────────────────────┤
+    │    CPU 28,29,30,31    │
+    └───────────────────────┘
     """)
     self.assertEqual(output(), expected)
 
@@ -962,18 +962,46 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
-    ┌────────────┬────────────┐
-    │            │            │
-    │            │            │
-    │            │            │
-    │            │            │
-    │CPU 0,2,4,6 │CPU 1,3,5,7 │
-    │            │            │
-    │            │            │
-    │            │            │
-    │            │            │
-    │            │            │
-    └────────────┴────────────┘
+    ┌───────────┬───────────┐
+    │           │           │
+    │           │           │
+    │           │           │
+    │           │           │
+    │CPU 0,2,4,6│CPU 1,3,5,7│
+    │           │           │
+    │           │           │
+    │           │           │
+    │           │           │
+    └───────────┴───────────┘
+    """)
+    self.assertEqual(output(), expected)
+
+  def test_visualize_wide_array(self):
+    shape = (128, 10000)
+    mesh = maps.Mesh(self._create_devices((8, 4)), ['x', 'y'])
+
+    pspec = pjit.PartitionSpec('x', None)
+    sd = sharding.MeshPspecSharding(mesh, pspec)
+    with jtu.capture_stdout() as output:
+      debugging.visualize_sharding(shape, sd)
+    expected = _format_multiline("""
+    ┌──────────────────────────────────────────────────────────────────────────────┐
+    │                                 CPU 0,1,2,3                                  │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                                 CPU 4,5,6,7                                  │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                                CPU 8,9,10,11                                 │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                               CPU 12,13,14,15                                │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                               CPU 16,17,18,19                                │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                               CPU 20,21,22,23                                │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                               CPU 24,25,26,27                                │
+    ├──────────────────────────────────────────────────────────────────────────────┤
+    │                               CPU 28,29,30,31                                │
+    └──────────────────────────────────────────────────────────────────────────────┘
     """)
     self.assertEqual(output(), expected)
 
