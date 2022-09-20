@@ -550,6 +550,9 @@ class Tracer:
   def __iter__(self):
     return iter(self.aval._iter(self))
 
+  def __reversed__(self):
+    return iter(self[::-1])
+
   def __len__(self):
     return self.aval._len(self)
 
@@ -617,6 +620,7 @@ class Tracer:
   def __complex__(self): return self.aval._complex(self)
   def __copy__(self): return self.aval._copy(self)
   def __deepcopy__(self, memo): return self.aval._deepcopy(self, memo)
+  def __round__(self, ndigits=None): return self.aval._round(self, ndigits)
 
   # raises a useful error on attempts to pickle a Tracer.
   def __reduce__(self):

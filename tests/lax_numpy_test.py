@@ -1731,20 +1731,35 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           atol=tol, rtol=tol)
 
-  def testOperatorRound(self):
+  @parameterized.named_parameters(
+    {"testcase_name": f"_jit={jit}", "jit": jit} for jit in [True, False])
+  def testOperatorRound(self, jit):
+    jround = jax.jit(round, static_argnums=1) if jit else round
     self.assertAllClose(round(np.float32(7.532), 1),
-                        round(jnp.float32(7.5), 1))
+                        jround(jnp.float32(7.5), 1))
     self.assertAllClose(round(np.float32(1.234), 2),
-                        round(jnp.float32(1.234), 2))
+                        jround(jnp.float32(1.234), 2))
     self.assertAllClose(round(np.float32(1.234)),
-                        round(jnp.float32(1.234)), check_dtypes=False)
+                        jround(jnp.float32(1.234)), check_dtypes=False)
     self.assertAllClose(round(np.float32(7.532), 1),
-                        round(jnp.array(7.5, jnp.float32), 1))
+                        jround(jnp.array(7.5, jnp.float32), 1))
     self.assertAllClose(round(np.float32(1.234), 2),
-                        round(jnp.array(1.234, jnp.float32), 2))
+                        jround(jnp.array(1.234, jnp.float32), 2))
     self.assertAllClose(round(np.float32(1.234)),
-                        round(jnp.array(1.234, jnp.float32)),
+                        jround(jnp.array(1.234, jnp.float32)),
                         check_dtypes=False)
+
+  @parameterized.named_parameters(
+    {"testcase_name": f"_shape={shape}", "shape": shape}
+    for shape in [(5,), (5, 2)])
+  def testOperatorReversed(self, shape):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, 'float32')]
+    np_fun = lambda x: np.array(list(reversed(x)))
+    jnp_fun = lambda x: jnp.array(list(reversed(x)))
+
+    self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_mode={}_padwidth={}_constantvalues={}".format(
