@@ -12,6 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__all__ = ['ndarray']
+import abc
 
-from jax._src.typing import Array as ndarray
+class Array(abc.ABC):
+  """Array base class for JAX
+
+  `jax.Array` is meant as the public interface for instance checks and type
+  annotation of JAX array objects.
+  """
+  # Note: no abstract methods are defined in this base class; the associated pyi
+  # file contains the type signature for static type checking.
+
+  # at property must be defined because we overwrite its docstring in lax_numpy.py
+  @property
+  def at(self):
+    raise NotImplementedError("property must be defined in subclasses")

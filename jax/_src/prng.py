@@ -16,7 +16,7 @@
 import abc
 from functools import partial
 import operator as op
-from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
+from typing import Callable, Hashable, Iterator, NamedTuple, Sequence
 
 import numpy as np
 
@@ -42,6 +42,7 @@ from jax._src.lax import utils as lax_utils
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.numpy import lax_numpy
 import jax._src.pretty_printer as pp
+from jax._src.typing import Array
 from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
 
 from jax._src.lib import gpu_prng
@@ -94,7 +95,7 @@ class PRNGImpl(NamedTuple):
 
 # -- PRNG key arrays
 
-def _check_prng_key_data(impl, key_data: jnp.ndarray):
+def _check_prng_key_data(impl, key_data: Array):
   ndim = len(impl.key_shape)
   if not all(hasattr(key_data, attr) for attr in ['ndim', 'shape', 'dtype']):
     raise TypeError("JAX encountered invalid PRNG key data: expected key_data "
@@ -136,9 +137,9 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   """
 
   impl: PRNGImpl
-  _base_array: jnp.ndarray
+  _base_array: Array
 
-  def __init__(self, impl, key_data: Any):
+  def __init__(self, impl, key_data: Array):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self.impl = impl

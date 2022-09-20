@@ -29,17 +29,16 @@ from jax._src.config import config
 from jax._src.util import prod, safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
-from jax._src.numpy.ndarray import ndarray
+from jax._src import typing
+from jax._src.typing import ArrayLike, Shape
 from jax.interpreters import pxla, xla, mlir
 from jax.experimental.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
 
-Shape = Tuple[int, ...]
 Device = xc.Device
 DeviceArray = xc.Buffer
 Index = Tuple[slice, ...]
-ArrayLike = Union[np.ndarray, DeviceArray]
 
 
 class Shard:
@@ -95,7 +94,7 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 
 @pxla.use_cpp_class(xc.Array if xc._version >= 92 else None)
-class Array:
+class Array(typing.Array):
   # TODO(yashkatariya): Add __slots__ here.
 
   @pxla.use_cpp_method
@@ -166,7 +165,7 @@ class Array:
             f"not used in the specified sharding {self.sharding}") from e
 
   @property
-  def shape(self) -> Shape:
+  def shape(self) -> Tuple[int, ...]:
     return self.aval.shape
 
   @property
@@ -480,7 +479,7 @@ xla.canonicalize_dtype_handlers[Array] = pxla.identity
 api_util._shaped_abstractify_handlers[Array] = op.attrgetter('aval')
 ad_util.jaxval_adders[Array] = lax_internal.add
 ad_util.jaxval_zeros_likers[Array] = lax_internal.zeros_like_array
-ndarray.register(Array)
+typing.Array.register(Array)
 
 
 def _array_mlir_constant_handler(val, canonicalize_types=True):

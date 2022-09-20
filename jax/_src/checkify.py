@@ -37,6 +37,7 @@ from jax._src import source_info_util, traceback_util
 from jax._src.lax import control_flow as cf
 from jax._src.config import config
 from jax import lax
+from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, unzip2, split_list, safe_map,
                            safe_zip)
 
@@ -62,9 +63,9 @@ def setnewattr(obj, name, val):
 
 ## Error value data type and functional assert.
 
-Bool = Union[bool, core.Tracer]
-Int = Union[int, core.Tracer]
-Payload = Union[np.ndarray, jnp.ndarray, core.Tracer]
+Bool = Union[bool, Array]
+Int = Union[int, Array]
+Payload = Union[np.ndarray, Array]
 
 # For now, the payload needs to be a fixed-size array: 3 int32s, used for the
 # OOB message.

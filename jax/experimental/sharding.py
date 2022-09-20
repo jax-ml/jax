@@ -21,11 +21,11 @@ from jax._src.util import safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
+from jax._src.typing import Shape
 from jax.interpreters import pxla, mlir
 
 import numpy as np
 
-Shape = Tuple[int, ...]
 Device = xc.Device
 Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
@@ -338,7 +338,7 @@ class PmapSharding(XLACompatibleSharding):
         break
     if sharded_dim is None:
       return global_shape
-    return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
+    return (*global_shape[:sharded_dim], *global_shape[sharded_dim+1:])
 
 
 # TODO(yashkatariya): Remove this when minimum_jaxlib version is 0.3.17

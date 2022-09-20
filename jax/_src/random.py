@@ -84,7 +84,7 @@ def _return_prng_keys(was_wrapped, key):
     return prng.random_unwrap(key) if was_wrapped else key
 
 
-def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> jnp.ndarray:
+def _random_bits(key: prng.PRNGKeyArray, bit_width, shape) -> Array:
   assert isinstance(key, prng.PRNGKeyArray)
   return prng.random_bits(key, bit_width=bit_width, shape=shape)
 
@@ -578,7 +578,7 @@ def _normal_real(key, shape, dtype) -> jnp.ndarray:
   lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
   hi = np.array(1., dtype)
   u = uniform(key, shape, dtype, lo, hi)  # type: ignore[arg-type]
-  return np.array(np.sqrt(2), dtype) * lax.erf_inv(u)
+  return lax.mul(np.array(np.sqrt(2), dtype), lax.erf_inv(u))
 
 
 def multivariate_normal(key: KeyArray,

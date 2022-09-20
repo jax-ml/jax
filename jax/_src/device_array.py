@@ -30,6 +30,7 @@ from jax._src import dtypes
 from jax._src import profiler
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
+from jax._src.typing import Array
 
 ### device-persistent data
 
@@ -332,7 +333,9 @@ class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
 
+Array.register(DeviceArray)
 device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
   core.pytype_aval_mappings[_device_array] = abstract_arrays.canonical_concrete_aval
+  Array.register(_device_array)

@@ -82,6 +82,8 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
                            split_dict, unzip2)
+from jax._src import typing
+from jax._src.typing import Shape
 
 if TYPE_CHECKING:
   from jax.experimental.sharding import MeshPspecSharding, XLACompatibleSharding
@@ -150,7 +152,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   Unfortunately the semantics are not very well described in the proto spec, but the code here might help:
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
-  mesh_shape = cast(Tuple[int, ...], self.mesh_shape)
+  mesh_shape = cast(Shape, self.mesh_shape)
   mesh = _get_logical_mesh_ids(self.mesh_shape)
 
   sharded_axes = {}  # maps sharded axis identifiers to mesh axis indices to which they're mapped
@@ -227,7 +229,7 @@ def _get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int]
 
 
 def _op_sharding_to_numpy_indices(
-    op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+    op_sharding: xc.OpSharding, shape: Shape,
     num_devices: int) -> np.ndarray:
   indices = np.empty(num_devices, dtype=np.object_)
 
@@ -262,13 +264,13 @@ def _op_sharding_to_numpy_indices(
   return indices
 
 
-def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Shape,
                            num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
   indices = _op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
   return tuple(indices.flat)
 
 
-def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
+def sharding_spec_indices(self, shape: Shape) -> np.ndarray:
   """Returns NumPy-style indices corresponding to a sharding spec.
 
   Args:
@@ -346,7 +348,7 @@ ShardingSpec.__repr__ = sharding_spec_repr  # type: ignore
 # Do not pollute the namespace
 del sharding_spec_mesh_shape, sharding_spec_indices, sharding_spec_repr
 
-def spec_to_indices(shape: Tuple[int, ...],
+def spec_to_indices(shape: Shape,
                     spec: ShardingSpec) -> Tuple[Index, ...]:
   """Returns numpy-style indices corresponding to a sharding spec.
 
@@ -689,6 +691,7 @@ if _USE_CPP_SDA:
   _SDA_BASE_CLASS = pmap_lib.ShardedDeviceArrayBase  # type: ignore
 else:
   _SDA_BASE_CLASS: Type[device_array.DeviceArray] = device_array.DeviceArray  # type: ignore
+typing.Array.register(_SDA_BASE_CLASS)
 
 
 class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
@@ -932,7 +935,7 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args,
                   in_axes: Sequence[Optional[int]],
                   out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                   donated_invars: Sequence[bool],
-                  global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+                  global_arg_shapes: Sequence[Optional[Shape]]):
   if (config.jax_disable_jit and config.jax_eager_pmap and
       global_axis_size is None and not any(d for d in donated_invars) and
       not all(g is not None for g in global_arg_shapes)):
@@ -971,7 +974,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
                in_axes: Sequence[Optional[int]],
                out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                donated_invars: Sequence[bool],
-               global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+               global_arg_shapes: Sequence[Optional[Shape]]):
   # TODO(sharadmv,mattjj): implement these cases
   if any(d for d in donated_invars):
     raise NotImplementedError("Buffer donation not supported in eager pmap.")
@@ -1187,7 +1190,7 @@ def parallel_callable(fun: lu.WrappedFun,
                       in_axes: Sequence[Optional[int]],
                       out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                       donated_invars: Sequence[bool],
-                      global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+                      global_arg_shapes: Sequence[Optional[Shape]],
                       *avals):
   pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
@@ -1248,7 +1251,7 @@ def find_replicas(jaxpr, axis_size, global_axis_size):
 def stage_parallel_callable(
     pci: ParallelCallableInfo,
     fun: lu.WrappedFun,
-    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+    global_arg_shapes: Sequence[Optional[Shape]]):
   sharded_avals = tuple(
       shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
@@ -1312,7 +1315,7 @@ def lower_parallel_callable(
     in_axes: Iterable[Optional[int]],
     out_axes_thunk: Callable[[], Sequence[Optional[int]]],
     donated_invars: Sequence[bool],
-    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+    global_arg_shapes: Sequence[Optional[Shape]],
     avals: Sequence[core.AbstractValue]):
   if devices is not None and len(devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
@@ -1650,7 +1653,7 @@ def check_multihost_collective_allowlist(jaxpr):
     raise TypeError(msg.format(", ".join(map(str, bad_collectives))))
 
 
-PartitionsOrReplicated = Optional[Tuple[int, ...]]
+PartitionsOrReplicated = Optional[Shape]
 
 class PartitionInfo(NamedTuple):
   arg_parts: Optional[Tuple[PartitionsOrReplicated, ...]]
