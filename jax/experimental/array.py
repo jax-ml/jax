@@ -96,7 +96,18 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 @pxla.use_cpp_class(xc.Array if xc._version >= 92 else None)
 class Array:
+  """Experimental unified Array type.
+
+  This Python implementation will eventually be replaced by a C++ implementation.
+  """
   # TODO(yashkatariya): Add __slots__ here.
+
+  aval: core.ShapedArray
+  _sharding: Sharding
+  _arrays: List[DeviceArray]
+  _committed: bool
+  _skip_checks: bool
+  _npy_value: Optional[np.ndarray]
 
   @pxla.use_cpp_method
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
@@ -110,8 +121,7 @@ class Array:
     # code handling `self._arrays` simpler.
     # TODO(yashkatariya): This will be slower as it will happen during
     # `__init__` on single controller environment. Make it lazy.
-    self._arrays: List[DeviceArray] = [a if isinstance(a, DeviceArray) else a._arrays[0]
-                                       for a in arrays]
+    self._arrays = [a if isinstance(a, DeviceArray) else a._arrays[0] for a in arrays]
     # See https://jax.readthedocs.io/en/latest/faq.html#controlling-data-and-computation-placement-on-devices
     # for what committed means.
     self._committed = committed
