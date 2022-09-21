@@ -12,14 +12,12 @@ struct Info {
 
 // Cannot use C++ objects in the call!
 // Instead of passing a `Status`, we could pass an API object.
-//void add_one(JaxCustomCallApi* api, void* descriptor, CUstream* stream, void** inputs, void** outputs) {
-void add_one(/*JaxCustomCallApi* api, */void* descriptor, void** inputs, void** outputs) {
+extern "C" void add_one(JaxFFI_API* api, JaxFFIStatus* status, void* descriptor, void** inputs, void** outputs) {
   // descriptor could be pointer memory or string?
-  Info* info = (Info*) descriptor;
-  std::cout << "Info: " << info->n << std::endl;
+  // Info* info = (Info*) descriptor;
+  // std::cout << "Info: " << info->n << std::endl;
   // *outputs[0] = *inputs[0] + info->n;
-  // const char error[] = "bad";
-  // JaxCustomCallStatusSetFailure(api->status, error, sizeof(error));
+  JaxFFIStatusSetFailure(api, status, "bad");
 }
 
 PYBIND11_MODULE(add_one_lib, m) {

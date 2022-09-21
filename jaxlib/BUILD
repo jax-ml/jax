@@ -174,5 +174,7 @@ pybind_extension(
     srcs = ["jax_custom_call.cc"],
     deps = [
       "@pybind11",
+      "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+      "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
     ],
 )

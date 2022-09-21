@@ -2,6 +2,8 @@
 
 #include <optional>
 #include <pybind11/pybind11.h>
+#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
+#include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 struct JaxFFIStatus {
   std::optional<std::string> message;
@@ -35,5 +37,11 @@ std::optional<std::string> JaxFFIStatusGetMessage(JaxFFIStatus* status) {
 
 PYBIND11_MODULE(_jax_custom_call, m) {
 }
+
+void JaxFFICallWrapper(void* output, void** inputs, XlaCustomCallStatus* status) {
+}
+
+XLA_CPU_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("jax_ffi_call",
+                                             &JaxFFICallWrapper);
 
 }
