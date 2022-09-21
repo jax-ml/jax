@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from . import _jax_custom_call
+from ._jax_custom_call import get_jax_ffi_call_wrapper

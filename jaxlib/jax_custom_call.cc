@@ -29,19 +29,23 @@ void *JaxFFI_API_Table[] = {
   (void *)&JaxFFIStatusSetFailureFn
 };
 
+namespace py = pybind11;
+
 namespace jax {
 
 std::optional<std::string> JaxFFIStatusGetMessage(JaxFFIStatus* status) {
   return status->message;
 }
 
+extern "C" void JaxFFICallWrapper(void* output, void** inputs,
+                                  XlaCustomCallStatus* status) {
+}
+
 PYBIND11_MODULE(_jax_custom_call, m) {
+  m.def("get_jax_ffi_call_wrapper", []() {
+    return py::capsule(reinterpret_cast<void*>(&JaxFFICallWrapper),
+                       "xla._CUSTOM_CALL_TARGET");
+  });
 }
 
-void JaxFFICallWrapper(void* output, void** inputs, XlaCustomCallStatus* status) {
-}
-
-XLA_CPU_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("jax_ffi_call",
-                                             &JaxFFICallWrapper);
-
-}
+}  // jax

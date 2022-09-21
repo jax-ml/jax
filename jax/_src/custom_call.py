@@ -9,7 +9,11 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 
-# from jax._src.lib import custom_call_lib  # TODO: implement this
+from jax._src.lib import custom_call_lib
+from jax._src.lib import xla_client as xc
+
+jax_ffi_call_wrapper = custom_call_lib.get_jax_ffi_call_wrapper()
+xc.register_cpu_custom_call_target("jax_ffi_call", jax_ffi_call_wrapper)
 
 custom_call_p = core.Primitive("jax_custom_call")
 custom_call_p.multiple_results = True

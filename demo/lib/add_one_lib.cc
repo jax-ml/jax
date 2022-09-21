@@ -22,7 +22,7 @@ extern "C" void add_one(JaxFFI_API* api, JaxFFIStatus* status, void* descriptor,
 
 PYBIND11_MODULE(add_one_lib, m) {
   m.def("get_function", []() {
-    return py::capsule(reinterpret_cast<void*>(add_one), JAX_CUSTOM_CALL_CPU);
+    return py::capsule(reinterpret_cast<void*>(add_one), JAX_FFI_CALL_CPU);
   });
   m.def("get_descriptor", [](float n) {
     Info* info = new Info();
