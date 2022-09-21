@@ -434,6 +434,12 @@ for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
 def _shard_device_array(x, devices, indices, mode):
+  # TODO(yashkatariya,parkers): Remove this workaround and fix _multi_slice
+  # which goes into infinite recursion when operations are done on xc.Buffer
+  # and aval is added to it (with weak_type=False). If weak_type=True, then it
+  # doesn't hang.
+  if x.ndim == 0:
+    return device_put(np.asarray(x), devices, replicate=True)
   start_indices, limit_indices, removed_dims = unzip3(
       _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
