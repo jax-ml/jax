@@ -3,27 +3,37 @@
 #include <optional>
 #include <pybind11/pybind11.h>
 
-struct JaxCustomCallStatus {
+struct JaxFFIStatus {
   std::optional<std::string> message;
 };
 
-void JaxCustomCallStatusSetSuccess(JaxCustomCallStatus* status) {
+int JAX_FFI_V1 = 1;
+
+int JaxFFIVersionFn() {
+  return JAX_FFI_V1;
+}
+
+void JaxFFIStatusSetSuccessFn(JaxFFIStatus* status) {
   status->message = std::nullopt;
 }
 
-void JaxCustomCallStatusSetFailure(JaxCustomCallStatus* status,
-                                   const char* message, size_t message_len) {
-  status->message = std::string(message, strnlen(message, message_len));
+void JaxFFIStatusSetFailureFn(JaxFFIStatus* status, const char* message) {
+  status->message = std::string(message);
 }
+
+void *JaxFFI_API_Table[] = {
+  (void *)&JaxFFIVersionFn,
+  (void *)&JaxFFIStatusSetSuccessFn,
+  (void *)&JaxFFIStatusSetFailureFn
+};
 
 namespace jax {
 
-std::optional<std::string> JaxCustomCallStatusGetMessage(
-    JaxCustomCallStatus* status) {
+std::optional<std::string> JaxFFIStatusGetMessage(JaxFFIStatus* status) {
   return status->message;
 }
 
-
 PYBIND11_MODULE(_jax_custom_call, m) {
 }
+
 }

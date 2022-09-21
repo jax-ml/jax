@@ -1,24 +1,28 @@
 #ifndef JAX_CUSTOM_CALL_H_
 #define JAX_CUSTOM_CALL_H_
 
+#include <cstddef>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <stdint.h>
+#define JaxFFIVersion() \
+        ((*((void (*)())(api[0])))())
+#define JaxFFIStatusSetSuccess(api, status) \
+        ((*((void (*)(JaxFFIStatus*))(api[1])))(status))
+#define JaxFFIStatusSetFailure(api, status) \
+        ((*((void (*)(JaxFFIStatus*, const char*))(api[2])))(status, msg))
 
-const char* JAX_CUSTOM_CALL_CPU = "jax_custom_call_cpu";
+struct JaxFFIStatus;
 
-struct JaxCustomCallStatus;
+typedef void* JaxFFI_API;
 
-struct JaxCustomCallApi {
-  JaxCustomCallStatus* status;
-};
-
-void JaxCustomCallStatusSetSuccess(JaxCustomCallStatus* status);
-
-void JaxCustomCallStatusSetFailure(JaxCustomCallStatus* status,
-                                   const char* message, uint32_t message_len);
+/*
+void add_one(JaxFFI_API* api, JaxFFIStatus* status, ...) {
+  JaxFFIStatusSetFailure(api, status, "...");
+}
+*/
 
 #ifdef __cplusplus
 }  // extern "C"
