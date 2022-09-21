@@ -32,7 +32,7 @@ def _custom_call_lowering_rule(ctx: mlir.LoweringRuleContext, *in_nodes,
   ctx.module_context.add_keepalive(keepalive)
   out = mhlo.CustomCallOp(
             [out_type], in_nodes,
-            call_target_name=ir.StringAttr.get("jax_custom_call"),
+            call_target_name=ir.StringAttr.get("jax_ffi_call"),
             has_side_effect=ir.BoolAttr.get(False),
             backend_config=ir.StringAttr.get(custom_call_descriptor),
             api_version=ir.IntegerAttr.get(i32_type, 2),
