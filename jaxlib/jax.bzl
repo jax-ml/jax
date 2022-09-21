@@ -54,7 +54,7 @@ def py_library_providing_imports_info(*, name, lib_rule = native.py_library, **k
 def py_extension(name, srcs, copts, deps):
     pybind_extension(name, srcs = srcs, copts = copts, deps = deps, module_name = name)
 
-def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
+def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_symbol_prefixes = []):
     """Workaround DLL building issue.
 
     1. cc_binary with linkshared enabled cannot produce DLL with symbol
@@ -88,6 +88,10 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         target_compatible_with = ["@platforms//os:windows"],
     )
 
+    # say filtered_symbol_prefixes == ["mlir", "chlo"], then construct the regex
+    # pattern as "^\\s*(mlir|clho)" to use grep
+    pattern = "^\\s*(" + "|".join(exported_symbol_prefixes) + ")"
+
     # filtered def_file, only the needed symbols are included
     filtered_def_name = name + ".filtered.def"
     filtered_def_file = out + ".def"
@@ -95,7 +99,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         name = filtered_def_name,
         srcs = [full_def_name],
         outs = [filtered_def_file],
-        cmd = """echo 'LIBRARY {}\nEXPORTS ' > $@ && grep '^\\W*mlir' $(location :{}) >> $@""".format(out, full_def_name),
+        cmd = """echo 'LIBRARY {}\nEXPORTS ' > $@ && grep -E '{}' $(location :{}) >> $@""".format(out, pattern, full_def_name),
         target_compatible_with = ["@platforms//os:windows"],
     )
 

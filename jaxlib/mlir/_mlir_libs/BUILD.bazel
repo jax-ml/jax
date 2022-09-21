@@ -203,5 +203,10 @@ cc_binary(
 windows_cc_shared_mlir_library(
     name = "jaxlib_mlir_capi_dll",
     out = "jaxlib_mlir_capi.dll",
+    exported_symbol_prefixes = [
+        "mlir",
+        "chlo",
+        "stablehlo",
+    ],
     deps = [":jaxlib_mlir_capi_objects"],
 )
