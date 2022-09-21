@@ -176,23 +176,45 @@ def jit_big_matmul(state):
     f(x).block_until_ready()
 
 
-def jit_simple_many_args_dispatch(n, state):
-  args = [jax.device_put(i) for i in range(n)]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
-  x = f(args)
-  x.block_until_ready()
-
-  while state:
+@google_benchmark.register
+@google_benchmark.option.arg_names(['num_args', 'jax_array'])
+@google_benchmark.option.args([10, False])
+@google_benchmark.option.args([10, True])
+@google_benchmark.option.args([100, False])
+@google_benchmark.option.args([100, True])
+@google_benchmark.option.args([1000, False])
+@google_benchmark.option.args([1000, True])
+@google_benchmark.option.args([2000, False])
+@google_benchmark.option.args([2000, True])
+def jit_simple_many_args_dispatch(state):
+  with jax_config.jax_array(state.range(1)):
+    args = [jax.device_put(i) for i in range(state.range(0))]
+    f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
     x = f(args)
-  x.block_until_ready()
+    x.block_until_ready()
 
-def jit_simple_many_args(n, state):
-  args = [jax.device_put(i) for i in range(n)]
-  f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
-  f(args).block_until_ready()
+    while state:
+      x = f(args)
+    x.block_until_ready()
 
-  while state:
+@google_benchmark.register
+@google_benchmark.option.arg_names(['num_args', 'jax_array'])
+@google_benchmark.option.args([10, False])
+@google_benchmark.option.args([10, True])
+@google_benchmark.option.args([100, False])
+@google_benchmark.option.args([100, True])
+@google_benchmark.option.args([1000, False])
+@google_benchmark.option.args([1000, True])
+@google_benchmark.option.args([2000, False])
+@google_benchmark.option.args([2000, True])
+def jit_simple_many_args(state):
+  with jax_config.jax_array(state.range(1)):
+    args = [jax.device_put(i) for i in range(state.range(0))]
+    f = jax.jit(lambda xs: functools.reduce(operator.add, xs))
     f(args).block_until_ready()
+
+    while state:
+      f(args).block_until_ready()
 
 def jit_simple_pruned_args_dispatch(n, state):
   args = [jax.device_put(i) for i in range(n)]
@@ -217,10 +239,6 @@ def jit_simple_pruned_args(n, state):
 benchmarks = []
 for n in [10, 100, 1000, 2000]:
   benchmarks += [
-      google_benchmark.register(partial(jit_simple_many_args_dispatch, n),
-                                name=f"jit_simple_many_args_dispatch_{n}"),
-      google_benchmark.register(partial(jit_simple_many_args, n),
-                                name=f"jit_simple_many_args_{n}"),
       google_benchmark.register(partial(jit_simple_pruned_args_dispatch, n),
                                 name=f"jit_simple_pruned_args_dispatch_{n}"),
       google_benchmark.register(partial(jit_simple_pruned_args, n),
