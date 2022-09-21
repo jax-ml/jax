@@ -36,6 +36,11 @@ class State:
                  process_id: Optional[int] = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
+    num_processes = (num_processes or os.environ.get('JAX_NUM_PROCESSES', None))
+    process_id = (process_id or os.environ.get('JAX_PROCESS_ID', None))
+
+    num_processes = (num_processes and int(num_processes))
+    process_id = (process_id and int(process_id))
 
     if cloud_tpu_init.running_in_cloud_tpu_vm:
       worker_endpoints = cloud_tpu_init.get_metadata(
@@ -117,8 +122,10 @@ def initialize(coordinator_address: Optional[str] = None,
     * it performs health checking, ensuring that all processes shut down if any process dies, and
     * it is used for distributed checkpointing.
 
-  If you are using GPU, you must provide the ``coordinator_address``,
-  ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
+  If you are using GPU, you must either set the ``JAX_COORDINATOR_ADDRESS``,
+  ``JAX_NUM_PROCESSES``, and ``JAX_PROCESS_ID`` environment variables, or provide
+  the ``coordinator_address``, ``num_processes``, and ``process_id`` arguments to
+  :func:`~jax.distributed.initialize`.
 
   If you are using TPU, all arguments are optional: if omitted, they
   will be chosen automatically from the Cloud TPU metadata.
@@ -128,16 +135,21 @@ def initialize(coordinator_address: Optional[str] = None,
       process should launch a coordinator service. The choice of
       port does not matter, so long as the port is available on the coordinator
       and all processes agree on the port.
-      May be ``None`` only on TPU, in which case it will be chosen automatically.
-    num_processes: Number of processes. May be ``None`` only on TPU, in
-      which case it will be chosen automatically based on the TPU slice.
+      May be ``None`` if the ``JAX_COORDINATOR_ADDRESS`` environment variable is
+      set, or on TPU, in which case it will be chosen automatically.
+    num_processes: Number of processes. May be ``None`` if the ``JAX_NUM_PROCESSES``
+      environment variable is set, or on TPU, in which case it will be chosen
+      automatically based on the TPU slice.
     process_id: The ID number of the current process. The ``process_id`` values across
       the cluster must be a dense range ``0``, ``1``, ..., ``num_processes - 1``.
-      May be ``None`` only on TPU; if ``None`` it will be chosen from the TPU slice
-      metadata.
+      May be ``None`` if the ``JAX_PROCESS_ID``environment variable is set, or on
+      TPU; if ``None`` and on TPU it will be chosen from the TPU slice metadata.
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once.
+    ValueError: If not all of the arguments have been supplied and the remaining
+      arguments cannot be filled in from the environment or the Cloud TPU
+      metadata.
 
   Example:
 

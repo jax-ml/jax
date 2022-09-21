@@ -61,10 +61,14 @@ The API {func}`jax.distributed.initialize` takes several arguments, namely:
   * `coordinator_address`: the IP address of process 0 in your cluster, together
     with a port available on that process. Process 0 will start a JAX service
     exposed via that IP address and port, to which the other processes in the
-    cluster will connect.
-  * `num_processes`: the number of processes in the cluster
+    cluster will connect. You can set its default value by setting the
+    `JAX_COORDINATOR_ADDRESS` environment variable, in which case
+    you can pass in `None` for it.
+  * `num_processes`: the number of processes in the cluster. You can set its
+    default value by setting the `JAX_NUM_PROCESSES` environment variable.
   * `process_id`: the ID number of this process, in the range `[0 ..
-  num_processes)`.
+    num_processes)`. You can set its default value by setting the `JAX_PROCESS_ID`
+    environment variable.
 
 For example on GPU, a typical usage is:
 
@@ -76,15 +80,21 @@ jax.distributed.initialize(coordinator_address="192.168.0.1:1234",
                            process_id=0)
 ```
 
-On Cloud TPU, you can simply call {func}`jax.distributed.initialize()` with no
-arguments. Default values for the arguments will be chosen automatically using
-the TPU pod metadata:
+On Cloud TPU, or if you have set all three of the `JAX_COORDINATOR_ADDRESS`,
+`JAX_NUM_PROCESSES`, and `JAX_PROCESS_ID` environment variables, you can simply
+call {func}`jax.distributed.initialize()` with no arguments. On TPU, default
+values for the arguments will be chosen automatically using the TPU pod
+metadata:
 
 ```python
 import jax
 
 jax.distributed.initialize()
 ```
+
+If you call {func}`jax.distributed.initialize()` with some or all arguments
+omitted and the remaining arguments cannot be filled in from the environment
+or the Cloud TPU metadata, it will raise {class}`ValueError`.
 
 On TPU at present calling {func}`jax.distributed.initialize` is optional, but
 recommanded since it enables additional checkpointing and health checking features.
