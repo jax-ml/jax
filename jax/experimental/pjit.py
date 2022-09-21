@@ -55,7 +55,7 @@ from jax._src import util
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wrap_name, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
-    merge_lists)
+    merge_lists, partition_list)
 
 class _FromGdaSingleton:
   pass
@@ -346,15 +346,26 @@ def pjit(fun: Callable,
     if not config.jax_array:
       canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
           canonicalized_in_shardings_flat, args_flat)
+
+    jaxpr_, consts_ = jaxpr.jaxpr, jaxpr.consts
+    jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.outvars))
+    _, args_flat = partition_list(used_inputs, args_flat)
+    _, canonicalized_in_shardings_flat = partition_list(
+        used_inputs, canonicalized_in_shardings_flat)
+    _, donated_invars = partition_list(used_inputs, donated_invars)
+    _, in_positional_semantics = partition_list(
+        used_inputs, in_positional_semantics)
+    jaxpr = core.ClosedJaxpr(jaxpr_, consts_)
+
     # in_shardings and out_shardings here are all OpShardingSharding.
     params = dict(
         jaxpr=jaxpr,
-        in_shardings=canonicalized_in_shardings_flat,
-        out_shardings=canonicalized_out_shardings_flat,
+        in_shardings=tuple(canonicalized_in_shardings_flat),
+        out_shardings=tuple(canonicalized_out_shardings_flat),
         resource_env=resource_env,
-        donated_invars=donated_invars,
+        donated_invars=tuple(donated_invars),
         name=getattr(flat_fun, '__name__', '<unnamed function>'),
-        in_positional_semantics=in_positional_semantics,
+        in_positional_semantics=tuple(in_positional_semantics),
         out_positional_semantics=out_positional_semantics)
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
