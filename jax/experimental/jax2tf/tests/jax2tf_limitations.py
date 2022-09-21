@@ -765,6 +765,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
             expect_tf_error=False,
             modes=("eager", "graph"),
             skip_comparison=True),
+        custom_numeric(dtypes=dtypes.bfloat16, tol=2e-2)
     ] + list(cls._pow_test_util(harness))
 
   @classmethod

@@ -1662,7 +1662,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
           w,
           cov),
       "shape": shape, "dtype": dtype, "deg": deg,
-      "rcond": rcond, "full": full, "w":w, "cov":cov}
+      "rcond": rcond, "full": full, "w": w, "cov": cov}
       for dtype in [dt for dt in float_dtypes if dt not in [jnp.float16, jnp.bfloat16]]
       for shape in [shape for shape in one_dim_array_shapes if shape != (1,)]
       for deg in [1, 2, 3]
@@ -3081,7 +3081,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return q, r
 
     args_maker = lambda: [rng(a_shape, dtype), rng(b_shape, dtype)]
-    tol = {np.float16: 2e-1, np.float32: 5e-2, np.float64: 1e-13}
+    tol = {
+        dtypes.bfloat16: 2e-1,
+        np.float16: 2e-1,
+        np.float32: 5e-2,
+        np.float64: 1e-13
+    }
 
     jnp_compile = jnp.polydiv # Without trim_leading_zeros (trim_zeros make it unable to be compiled by XLA)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
@@ -3378,9 +3383,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
 
     if numpy_version < (1, 24):
-        np_fun = _promote_like_jnp(lambda *args: np.stack(*args, axis=axis).astype(out_dtype))
+      np_fun = _promote_like_jnp(lambda *args: np.stack(*args, axis=axis).astype(out_dtype))
     else:
-        np_fun = _promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype, casting='unsafe'))
+      np_fun = _promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype, casting='unsafe'))
 
     jnp_fun = partial(jnp.stack, axis=axis, dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
@@ -3411,9 +3416,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
 
     if numpy_version < (1, 24) or op == "dstack":
-        np_fun = _promote_like_jnp(lambda *args: getattr(np, op)(*args).astype(out_dtype))
+      np_fun = _promote_like_jnp(lambda *args: getattr(np, op)(*args).astype(out_dtype))
     else:
-        np_fun = partial(_promote_like_jnp(getattr(np, op)), dtype=out_dtype)
+      np_fun = partial(_promote_like_jnp(getattr(np, op)), dtype=out_dtype)
 
     jnp_fun = partial(getattr(jnp, op), dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
