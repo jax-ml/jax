@@ -12,8 +12,8 @@ struct Info {
 
 extern "C" void add_one(JaxFFI_API* api, JaxFFIStatus* status, void* descriptor, void** inputs, void** outputs) {
   Info* info = (Info*) descriptor;
-  float* output = (float*) outputs[0];
   float* input = (float*) inputs[0];
+  float* output = (float*) outputs[0];
   *output = *input + info->n;
   if (info->n < 0) {
     JaxFFIStatusSetFailure(api, status, "Info must be >= 0");
