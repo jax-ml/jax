@@ -13,3 +13,4 @@
 # limitations under the License.
 
 from ._jax_custom_call import get_jax_ffi_call_wrapper
+from ._jax_custom_call import make_descriptor

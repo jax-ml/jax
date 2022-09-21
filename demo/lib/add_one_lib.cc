@@ -10,14 +10,14 @@ struct Info {
 };
 // TODO: upgrade XLA CPU custom call to use serialization not pointer (common case is string)
 
-// Cannot use C++ objects in the call!
-// Instead of passing a `Status`, we could pass an API object.
 extern "C" void add_one(JaxFFI_API* api, JaxFFIStatus* status, void* descriptor, void** inputs, void** outputs) {
-  // descriptor could be pointer memory or string?
-  // Info* info = (Info*) descriptor;
-  // std::cout << "Info: " << info->n << std::endl;
-  // *outputs[0] = *inputs[0] + info->n;
-  JaxFFIStatusSetFailure(api, status, "bad");
+  Info* info = (Info*) descriptor;
+  float* output = (float*) outputs[0];
+  float* input = (float*) inputs[0];
+  *output = *input + info->n;
+  if (info->n < 0) {
+    JaxFFIStatusSetFailure(api, status, "Info must be >= 0");
+  }
 }
 
 PYBIND11_MODULE(add_one_lib, m) {
