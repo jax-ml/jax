@@ -876,7 +876,7 @@ config.define_bool_state(
 
 config.define_bool_state(
     name='jax_unique_mhlo_module_names',
-    default=True,
+    default=False,
     help='Enables the generation of unique MHLO module names. This is useful '
     'to clients that expect modules to have unique names (e.g, trace data).')
 
