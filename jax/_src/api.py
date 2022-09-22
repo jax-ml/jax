@@ -123,6 +123,11 @@ flags.DEFINE_bool(
     "A flag enabling the C++ jax.pmap fast path. Until the default "
     "is switched to True, the feature is not supported and possibly broken "
     "(e.g. it may use unreleased code from jaxlib.")
+flags.DEFINE_bool(
+    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", False),
+    "A flag enabling the C++ pjit fast path. Until the default "
+    "is switched to True, the feature is not supported and possibly broken "
+    "(e.g. it may use unreleased code from jaxlib.")
 
 
 def _nan_check_posthook(fun, args, kwargs, output):

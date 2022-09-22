@@ -16,9 +16,10 @@ import dataclasses
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Callable, Sequence, Tuple, Union, cast, List, Optional, Iterable
+from typing import Any, Callable, Sequence, Tuple, Union, cast, List, Optional, Iterable, NamedTuple
 import itertools as it
 from functools import partial, lru_cache
+import threading
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
@@ -28,7 +29,7 @@ from jax.experimental.sharding import (
 from jax import core
 from jax import linear_util as lu
 from jax import stages
-from jax._src.api import _check_callable, _check_arg, local_devices
+from jax._src.api import _check_callable, _check_arg, local_devices, FLAGS
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
@@ -121,6 +122,73 @@ def _check_all_or_none_unspecified(axis_resources, name):
                        f'Make sure that every entry in {name} is '
                        '`pjit._UNSPECIFIED`.')
   return unspecified
+
+def _python_pjit_helper(infer_params, *args, **kwargs):
+  args_flat, _, params, _, out_tree, _ = infer_params(*args, **kwargs)
+  for arg in args_flat:
+    _check_arg(arg)
+  out_flat = pjit_p.bind(*args_flat, **params)
+  outs = tree_unflatten(out_tree, out_flat)
+  return outs, out_flat, out_tree
+
+def _python_pjit(fun: Callable, infer_params):
+
+  @wraps(fun)
+  def wrapped(*args, **kwargs):
+    return _python_pjit_helper(infer_params, *args, **kwargs)[0]
+
+  return wrapped
+
+class _PjitFastpathData(NamedTuple):
+  xla_executable: xla.XlaExecutable
+  out_pytree_def: Any
+  in_shardings: Sequence[Any]
+  out_shardings: Sequence[Any]
+  out_avals: Sequence[Any]
+  out_committed: Sequence[bool]
+
+class _MostRecentPjitCallExecutable(threading.local):
+  def __init__(self):
+    self.value = None
+
+_most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
+
+def _cpp_pjit(fun: Callable, infer_params, static_argnums):
+
+  def cache_miss(*args, **kwargs):
+    global _most_recent_pjit_call_executable
+
+    outs, out_flat, out_tree = _python_pjit_helper(infer_params, *args, **kwargs)
+
+    executable = _most_recent_pjit_call_executable.value
+    _most_recent_pjit_call_executable.value = None
+
+    use_fastpath = (
+        executable is not None and
+        isinstance(executable, pxla.MeshExecutable) and
+        isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+        not executable.unsafe_call.has_unordered_effects and
+        not executable.unsafe_call.has_host_callbacks and
+        all(isinstance(x, xc.Array) for x in out_flat)
+    )
+
+    if use_fastpath:
+      out_avals = [o.aval for o in out_flat]
+      out_committed = [o._committed for o in out_flat]
+      fastpath_data = _PjitFastpathData(executable.xla_executable,
+                                        out_tree,
+                                        executable._in_shardings,
+                                        executable._out_shardings, out_avals,
+                                        out_committed)
+    else:
+      fastpath_data = None
+
+
+    return outs, fastpath_data
+
+  cpp_pjit_f = xc._xla.pjit(fun, cache_miss, static_argnums)
+
+  return wraps(fun)(cpp_pjit_f)
 
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
@@ -359,13 +427,10 @@ def pjit(fun: Callable,
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
-  @wraps(fun)
-  def wrapped(*args, **kwargs):
-    args_flat, _, params, _, out_tree, _ = infer_params(*args, **kwargs)
-    for arg in args_flat:
-      _check_arg(arg)
-    out = pjit_p.bind(*args_flat, **params)
-    return tree_unflatten(out_tree, out)
+  if FLAGS.experimental_cpp_pjit and xc._version >= 95:
+    wrapped = _cpp_pjit(fun, infer_params, static_argnums)
+  else:
+    wrapped = _python_pjit(fun, infer_params)
 
   def lower(*args, _global_avals=False, **kwargs):
     (_, flat_local_in_avals, params, in_tree, out_tree,
@@ -838,6 +903,9 @@ def _pjit_call_impl(*args, jaxpr,
                     in_shardings, out_shardings, resource_env,
                     donated_invars, name,
                     in_positional_semantics, out_positional_semantics):
+
+  global _most_recent_pjit_call_executable
+
   if config.jax_array:
     in_shardings = _resolve_in_shardings(args, in_shardings, out_shardings,
                                          resource_env.physical_mesh)
@@ -851,6 +919,7 @@ def _pjit_call_impl(*args, jaxpr,
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, in_is_global).compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
+  _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
     pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_shardings)
@@ -880,7 +949,7 @@ class SameDeviceAssignmentTuple:
   device_assignment: Optional[XLADeviceAssignment]
 
   def __hash__(self):
-    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, OpShardingSharding) else s
+    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, OpShardingSharding) else s # type: ignore
                            for s in self.shardings)
     if self.device_assignment is None:
       return hash(shardings_hash)
@@ -935,14 +1004,14 @@ def _pjit_lower_cached(
     in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
         Tuple[MeshShardingMinusUnspecified, ...], tuple(
             MeshPspecSharding._from_parsed_pspec(
-                mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0])
+                mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0]) # type: ignore
             if isinstance(i, OpShardingSharding) else i
             for i in in_shardings
     ))
     out_shardings: Tuple[MeshSharding, ...] = cast(  # type: ignore[no-redef]
         Tuple[MeshSharding, ...], tuple(
             MeshPspecSharding._from_parsed_pspec(
-                mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0])
+                mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0]) # type: ignore
             if isinstance(o, OpShardingSharding) else o
             for o in out_shardings
     ))

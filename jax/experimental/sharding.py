@@ -157,14 +157,19 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
+@pxla.use_cpp_class(xc.MeshPspecSharding if xc._version >= 95 else None)
 class MeshPspecSharding(XLACompatibleSharding):
 
+  @pxla.use_cpp_method
   def __init__(
       self, mesh: pxla.Mesh, spec: pxla.PartitionSpec, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
+    self._parsed_pspec = _parsed_pspec
+    self._preprocess()
 
+  def _preprocess(self):
     # This split exists because you can pass `_parsed_pspec` that has been
     # modified from the original. For example: Adding extra dimension to
     # axis_resources for vmap handlers. In such cases you need to preserve the
@@ -172,12 +177,10 @@ class MeshPspecSharding(XLACompatibleSharding):
     # PartitionSpec is inferred from the parsed pspec in this case.
     # TODO(yaskatariya): Remove this and replace this with a normalized
     # representation of Parsed Pspec
-    if _parsed_pspec is None:
+    if self._parsed_pspec is None:
       from jax.experimental import pjit
       self._parsed_pspec, _, _, _ = pjit._prepare_axis_resources(
           self.spec, "MeshPspecSharding spec")
-    else:
-      self._parsed_pspec = _parsed_pspec
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
 
@@ -256,8 +259,10 @@ def _get_replicated_op_sharding():
   return proto
 
 
+@pxla.use_cpp_class(xc.SingleDeviceSharding if xc._version >= 95 else None)
 class SingleDeviceSharding(XLACompatibleSharding):
 
+  @pxla.use_cpp_method
   def __init__(self, device: Device):
     self._device = device
 
@@ -349,8 +354,10 @@ def _hash_op_sharding(op: xc.OpSharding):
                op.type, op.replicate_on_last_tile_dim, tuple(op.last_tile_dims)))
 
 
+@pxla.use_cpp_class(xc.OpShardingSharding if xc._version >= 95 else None)
 class OpShardingSharding(XLACompatibleSharding):
 
+  @pxla.use_cpp_method
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
     self._devices = tuple(devices)
     self._op_sharding = op_sharding

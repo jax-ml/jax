@@ -26,6 +26,7 @@ from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla
+from jax.experimental import array
 from jax.experimental import sharding
 from jax.experimental import pjit as pjit_lib
 import jax.numpy as jnp
@@ -626,6 +627,74 @@ def bench_slicing_compilation2(state):
   x = jnp.arange(3)
   while state:
     jax.jit(lambda x: (x[:1], x[1:2], x[2:3])).lower(x).compile()
+
+
+def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit):
+  spec = pjit_lib.PartitionSpec('x')
+  mesh = jtu.create_global_mesh((num_devices,), ('x',))
+  s = sharding.MeshPspecSharding(mesh, spec)
+  inp_data = np.arange(num_devices).astype(np.float32)
+  x = array.make_array_from_callback(inp_data.shape, s, lambda idx: inp_data[idx])
+
+  x = [x for _ in range(num_args)]
+
+  prev_state = jax_config.FLAGS.experimental_cpp_pjit
+  jax_config.FLAGS.experimental_cpp_pjit = cpp_jit
+
+  in_axis_resources = sharding.MeshPspecSharding(mesh, spec)
+  out_axis_resources = sharding.MeshPspecSharding(mesh, spec)
+
+  f = pjit_lib.pjit(
+      lambda x: jax.tree_map(lambda x: x + 1, x),
+      in_axis_resources=in_axis_resources,
+      out_axis_resources=out_axis_resources)
+
+  x = f(x)
+
+  while state:
+    x = f(x)
+
+  jax_config.FLAGS.experimental_cpp_pjit = prev_state
+
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
+@google_benchmark.option.args([1, False])
+@google_benchmark.option.args([1, True])
+@google_benchmark.option.args([10, False])
+@google_benchmark.option.args([10, True])
+@google_benchmark.option.args([100, False])
+@google_benchmark.option.args([100, True])
+@jax_config.jax_array(True)
+def pjit_simple_1_device(state):
+  pjit_simple_benchmark(
+      state, num_devices=1, num_args=state.range(0), cpp_jit=state.range(1))
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
+@google_benchmark.option.args([1, False])
+@google_benchmark.option.args([1, True])
+@google_benchmark.option.args([10, False])
+@google_benchmark.option.args([10, True])
+@google_benchmark.option.args([100, False])
+@google_benchmark.option.args([100, True])
+@jax_config.jax_array(True)
+def pjit_simple_4_device(state):
+  pjit_simple_benchmark(
+      state, num_devices=4, num_args=state.range(0), cpp_jit=state.range(1))
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
+@google_benchmark.option.args([1, False])
+@google_benchmark.option.args([1, True])
+@google_benchmark.option.args([10, False])
+@google_benchmark.option.args([10, True])
+@google_benchmark.option.args([100, False])
+@google_benchmark.option.args([100, True])
+@jax_config.jax_array(True)
+def pjit_simple_4000_device(state):
+  pjit_simple_benchmark(
+      state, num_devices=4000, num_args=state.range(0), cpp_jit=state.range(1))
 
 
 if __name__ == "__main__":

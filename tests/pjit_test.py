@@ -24,6 +24,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
 
+import concurrent.futures
+
 import jax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
@@ -2288,6 +2290,45 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out3.sharding.devices_indices_map(shape)
     cache_info3 = OpShardingSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+
+
+class ArrayCppPjitTest(ArrayPjitTest):
+
+  def setUp(self):
+    super().setUp()
+    self.jax_array = config.jax_array
+    self.cpp_pjit = config.FLAGS.experimental_cpp_pjit
+    config.update('experimental_cpp_pjit', True)
+    config.update('jax_array', True)
+
+  def tearDown(self):
+    config.update('experimental_cpp_pjit', self.cpp_pjit)
+    config.update('jax_array', self.jax_array)
+    super().tearDown()
+
+  def test_concurrent_cpp_pjit(self):
+    global_mesh = jtu.create_global_mesh((1,), ('x',))
+    sharding = MeshPspecSharding(global_mesh, P('x',))
+    n = 10
+    with global_mesh:
+      fs = [pjit(lambda x, i: x + i, static_argnums=1) for _ in range(n)]
+
+      def _invoke_with_mesh_twice(arg_tuple):
+        f, x, i = arg_tuple
+        with global_mesh:
+          f(x, i)
+          return f(x, i)
+
+      xs = [
+          array.make_array_from_callback(
+              (i,), sharding, lambda idx: np.arange(i, dtype=np.float32))
+          for i in range(n)
+      ]
+      with concurrent.futures.ThreadPoolExecutor() as executor:
+        ys = executor.map(_invoke_with_mesh_twice,
+                          [(fs[i], x, i) for i, x in enumerate(xs)])
+      for i, x, y in zip(range(n), xs, ys):
+        self.assertAllClose(x + i, y)
 
 
 class TempSharding(Sharding):
