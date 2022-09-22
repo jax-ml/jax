@@ -304,13 +304,14 @@ def pjit(fun: Callable,
 
   >>> import jax
   >>> import jax.numpy as jnp
+  >>> import numpy as np
   >>> from jax.experimental.maps import Mesh
   >>> from jax.experimental.pjit import PartitionSpec, pjit
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
   >>> f = pjit(lambda x: jax.numpy.convolve(x, jnp.asarray([0.5, 1.0, 0.5]), 'same'),
   ...         in_axis_resources=None, out_axis_resources=PartitionSpec('devices'))
-  >>> with Mesh(jax.devices(), ('devices',)):
+  >>> with Mesh(np.array(jax.devices()), ('devices',)):
   ...   print(f(x))  # doctest: +SKIP
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
