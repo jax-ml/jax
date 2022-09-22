@@ -632,7 +632,10 @@ def _lower_native_and_run(fun_jax: Callable,
   logging.vlog(2, f"XlaCallModule {mhlo_module_text}")
 
   # Figure out the result types and shapes
-  out_avals = lowered.compile_args["out_avals"]
+  if config.jax_array:
+    out_avals = lowered.compile_args["global_out_avals"]
+  else:
+    out_avals = lowered.compile_args["out_avals"]
   # TODO(necula): handle d being InDBIdx
   out_shapes = tuple(
       tuple(d if type(d) is int else None

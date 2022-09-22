@@ -669,10 +669,19 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   # all the other arguments stored as attributes.
 
   def arg_spec(x):
+    from jax.experimental.sharding import PmapSharding
     # like xla.arg_spec but duck-types on x.shape and x.dtype
     aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
-    device = getattr(x, '_device', None)
-    return aval, device
+    if jax.config.jax_array:
+      if hasattr(x, 'sharding'):
+        if isinstance(x.sharding, PmapSharding):
+          return aval, None
+        return aval, (x.sharding if x._committed else None)
+      else:
+        return aval, None
+    else:
+      device = getattr(x, '_device', None)
+      return aval, device
 
   @api_boundary
   def lower(*args, **kwargs) -> stages.Lowered:
@@ -699,11 +708,18 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
       if abstracted_axes:
         raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
       in_avals, _ = unzip2(arg_specs_and_devices)
-    computation = dispatch.lower_xla_callable(
-        flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
-        keep_unused, *arg_specs_and_devices)
-    return stages.Lowered.from_flat_info(
-        computation, in_tree, in_avals, donate_argnums, out_tree())
+    if jax.config.jax_array:
+      computation = dispatch.sharded_lowering(
+          flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
+          keep_unused, *arg_specs_and_devices)
+      return stages.Lowered.from_flat_info(
+          computation, in_tree, in_avals, donate_argnums, out_tree())
+    else:
+      computation = dispatch.lower_xla_callable(
+          flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
+          keep_unused, *arg_specs_and_devices)
+      return stages.Lowered.from_flat_info(
+          computation, in_tree, in_avals, donate_argnums, out_tree())
 
   return lower
 

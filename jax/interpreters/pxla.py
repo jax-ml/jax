@@ -2672,6 +2672,7 @@ def lower_sharding_computation(
     in_is_global: Sequence[bool],
     keep_unused: bool,
     committed: bool,
+    always_lower: bool,
     inp_device_assignment: Optional[Sequence[xc.Device]] = None):
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -2742,7 +2743,7 @@ def lower_sharding_computation(
   # Computations that only produce constants and/or only rearrange their inputs,
   # which are often produced from partial evaluation, don't need compilation,
   # and don't need to evaluate their arguments.
-  if (not (jaxpr.effects or has_outfeed) and
+  if (not always_lower and not (jaxpr.effects or has_outfeed) and
       (not jaxpr.eqns and all(kept_outputs) or not jaxpr.outvars) and
       all(_is_unspecified(o) for o in out_shardings) and  # type: ignore
       not hasattr(backend, "compile_replicated")):  # this means 'not pathways'
@@ -3135,19 +3136,21 @@ def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
 
 
 class MeshExecutable(stages.XlaExecutable):
-  __slots__ = ['xla_executable', 'unsafe_call', '_input_avals',
-               '_in_shardings', '_out_shardings', '_auto_spmd_lowering']
+  __slots__ = ['xla_executable', 'unsafe_call', 'in_avals',
+               '_in_shardings', '_out_shardings', '_auto_spmd_lowering',
+               '_kept_var_idx']
 
-  def __init__(self, xla_executable, unsafe_call, input_avals,
-               in_shardings, out_shardings, auto_spmd_lowering):
+  def __init__(self, xla_executable, unsafe_call, in_avals,
+               in_shardings, out_shardings, auto_spmd_lowering, kept_var_idx):
     self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
-    # input_avals is a list of global and local avals. Aval is global if input
-    # is a GDA else local.
-    self._input_avals = input_avals
+    # in_avals is a list of global and local avals. Aval is global if input
+    # is a GDA or jax.Array else local.
+    self.in_avals = in_avals
     self._in_shardings = in_shardings
     self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
+    self._kept_var_idx = kept_var_idx
 
   @staticmethod
   def from_hlo(name: str,
@@ -3281,7 +3284,8 @@ class MeshExecutable(stages.XlaExecutable):
                                         bool(host_callbacks), kept_var_idx)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
-                          in_shardings, out_shardings, auto_spmd_lowering)
+                          in_shardings, out_shardings, auto_spmd_lowering,
+                          kept_var_idx)
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, global_in_avals, global_out_avals,
@@ -3307,7 +3311,7 @@ class MeshExecutable(stages.XlaExecutable):
     unsafe_call = partial(_execute_trivial, jaxpr, consts, handle_ins,
                           handle_outs, kept_var_idx)
     return MeshExecutable(None, unsafe_call, global_in_avals, in_shardings,
-                          out_shardings, False)
+                          out_shardings, False, kept_var_idx)
 
   # -- stages.XlaExecutable overrides
 
@@ -3315,11 +3319,12 @@ class MeshExecutable(stages.XlaExecutable):
     return self.xla_executable
 
   def call(self, *args):
-    arg_avals = map(xla.abstractify, args)
-    ref_avals = self._input_avals
+    kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
+    arg_avals = map(xla.abstractify, kept_args)
+    ref_avals = self.in_avals
     dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
     # Check the GDA sharding and the input sharding.
-    _check_gda_or_array_xla_sharding_match(args, self._in_shardings)
+    _check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
 
 

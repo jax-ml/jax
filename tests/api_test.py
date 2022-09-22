@@ -55,6 +55,7 @@ from jax.interpreters import pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
 from jax.experimental import array, sharding
+from jax.experimental import pjit
 from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
@@ -970,6 +971,15 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   def test_jit_lower_compile_trivial(self):
     def f(x): return x
+    out = self.jit(f).lower(1.).compile()(4.)
+    self.assertAllClose(out, 4.)
+
+  def test_jit_lower_compile_sharding_computation(self):
+    if not config.jax_array:
+      self.skipTest('with_sharding_constraint only works with the Array path '
+                    'in jit.')
+    s = sharding.SingleDeviceSharding(jax.devices()[0])
+    def f(x): return pjit.with_sharding_constraint(x, s)
     out = self.jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
 

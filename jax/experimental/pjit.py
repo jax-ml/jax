@@ -1031,7 +1031,7 @@ def _pjit_lower_cached(
     return pxla.lower_sharding_computation(
         fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
         jaxpr.in_avals, in_is_global=in_is_global, keep_unused=True,
-        committed=True)
+        committed=True, always_lower=False)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,

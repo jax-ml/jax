@@ -309,8 +309,8 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
   return committed, da, in_shardings
 
 
-def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
-                     *arg_specs):
+def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
+                     keep_unused, *arg_specs):
   # TODO(yashkatariya): Remove the local imports from here when the functions
   # in pxla.py move to dispatch.py or a utils file.
   from jax.interpreters import pxla
@@ -353,15 +353,16 @@ def sharded_lowering(fun, device, backend, name, donated_invars, keep_unused,
       fun, 'jit', name, in_shardings, pjit._UNSPECIFIED,
       donated_invars, in_avals,
       in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      committed=committed, inp_device_assignment=inp_device_assignment).compile(
-          _allow_propagation_to_outputs=True).unsafe_call
+      committed=committed, always_lower=always_lower,
+      inp_device_assignment=inp_device_assignment)
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                            donated_invars, keep_unused, *arg_specs):
   if config.jax_array:
-    return sharded_lowering(fun, device, backend, name,
-                            donated_invars, keep_unused, *arg_specs)
+    computation = sharded_lowering(fun, device, backend, name, donated_invars,
+                                   False, keep_unused, *arg_specs)
+    return computation.compile(_allow_propagation_to_outputs=True).unsafe_call
   else:
     return lower_xla_callable(fun, device, backend, name, donated_invars, False,
                               keep_unused, *arg_specs).compile().unsafe_call
