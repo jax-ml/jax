@@ -1073,6 +1073,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for discont in [None, "pi", 2]
       for period in ["2pi", "pi"]
       for axis in list(range(-len(shape), len(shape)))))
+  @jtu.skip_on_devices('gpu')
   def testUnwrap(self, shape, dtype, axis, discont, period):
     if numpy_version < (1, 21) and period != "2pi":
       self.skipTest("numpy < 1.21 does not support the period argument to unwrap()")
