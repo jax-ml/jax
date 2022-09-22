@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"id": "18AF5Ab4p6VL"}
 
-**Copyright 2018 Google LLC.**
+**Copyright 2018 The JAX Authors.**
 
 Licensed under the Apache License, Version 2.0 (the "License");
 
