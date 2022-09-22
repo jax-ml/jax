@@ -110,10 +110,16 @@ class Error:
     return None
 
   def throw(self):
-    """Throw ValueError with error message if error happened."""
-    err = self.get()
-    if err:
-      raise ValueError(err)
+    check_error(self)
+
+  def __str__(self):
+    return f'Error({self.get()})'
+
+
+def raise_error(error):
+  err = error.get()
+  if err:
+    raise ValueError(err)
 
 
 register_pytree_node(Error,
@@ -142,7 +148,6 @@ class CheckifyTracer(core.Tracer):
   def __init__(self, trace, val):
     self._trace = trace
     self.val = val
-    core.get_aval(val), val
   aval = property(lambda self: core.get_aval(self.val))
   full_lower = lambda self: self
 
@@ -457,6 +462,10 @@ def check_error(error: Error) -> None:
   >>> # can re-checkify
   >>> error, _ = checkify.checkify(with_inner_jit)(-1)
   """
+  if not isinstance(error, Error):
+    raise ValueError('check_error takes an Error as argument, '
+                     f'got type {type(error)} instead.')
+
   if np.shape(error.err):
     err, code, payload = _reduce_any_error(error.err, error.code, error.payload)
   else:
@@ -470,7 +479,7 @@ assert_p.multiple_results = True  # zero results
 
 @assert_p.def_impl
 def assert_impl(err, code, payload, *, msgs):
-  Error(err, code, msgs, payload).throw()
+  raise_error(Error(err, code, msgs, payload))
   return []
 
 CheckEffect = object()
@@ -564,7 +573,7 @@ def div_error_check(error, enabled_errors, x, y):
   """Checks for division by zero and NaN."""
   if ErrorCategory.DIV in enabled_errors:
     any_zero = jnp.any(jnp.equal(y, 0))
-    msg = f'divided by zero at {summary()}'
+    msg = f'division by zero at {summary()}'
     error = assert_func(error, any_zero, msg, None)
   return nan_error_check(lax.div_p, error, enabled_errors, x, y)
 error_checks[lax.div_p] = div_error_check
