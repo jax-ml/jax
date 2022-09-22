@@ -378,6 +378,12 @@ class Array:
     self._check_if_deleted()
     return self._arrays
 
+  def addressable_data(self, index: int) -> Array:
+    self._check_if_deleted()
+    db = pxla._set_aval(self._arrays[index])
+    return Array(db.aval, SingleDeviceSharding(db.device()), [db],
+                 committed=self._committed, _skip_checks=True)
+
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()

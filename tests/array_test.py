@@ -116,7 +116,7 @@ class JaxArrayTest(jtu.JaxTestCase):
        [0, 1, 2, 3, 4, 5, 6, 7], True),
   )
   def test_array_2d_shard(self, mesh_axes, expected_index, expected_shard_shape,
-                        expected_replica_ids, expected_is_fully_replicated):
+                          expected_replica_ids, expected_is_fully_replicated):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     s = sharding.MeshPspecSharding(global_mesh, mesh_axes)
@@ -130,10 +130,19 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertListEqual([i.device.id for i in arr.addressable_shards],
                          [0, 1, 2, 3, 4, 5, 6, 7])
     self.assertEqual(arr.is_fully_replicated(), expected_is_fully_replicated)
-    for s in arr.addressable_shards:
+    for i, s in enumerate(arr.addressable_shards):
       self.assertEqual(s.data.aval,
                        jax.ShapedArray(expected_shard_shape, s.data.dtype))
       self.assertArraysEqual(s.data, global_input_data[s.index])
+      self.assertArraysEqual(s.data, arr.addressable_data(i))
+
+  def test_addressable_data(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    shape = (8, 2)
+    s = sharding.MeshPspecSharding(global_mesh, P(None))
+    arr, inp_data = create_array(shape, s)
+    for i in range(len(arr)):
+      self.assertArraysEqual(inp_data, arr.addressable_data(i))
 
   def test_array_delete(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))

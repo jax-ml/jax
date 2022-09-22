@@ -929,7 +929,8 @@ def _pjit_lower_cached(
   # Convert to `MeshPspecSharding` when `jax_array` is not enabled. This is
   # because GDA/SDA/DA are dependent on mesh for generating outputs.
   # MeshPspecSharding is required for host-local inputs too.
-  if not config.jax_array:
+  any_auto = pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings))
+  if not config.jax_array or any_auto:
     mesh = resource_env.physical_mesh
     in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
         Tuple[MeshShardingMinusUnspecified, ...], tuple(
@@ -948,8 +949,7 @@ def _pjit_lower_cached(
 
   # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
   # because `xmap` only supports SPMDAxisContext right now.
-  if (pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings)) or
-      dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
+  if (any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
     return pxla.lower_mesh_computation(
       fun, 'pjit', name, resource_env.physical_mesh,
       in_shardings, out_shardings, donated_invars,
