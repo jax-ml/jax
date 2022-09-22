@@ -339,23 +339,22 @@ def pjit(fun: Callable,
         hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
         tuple(isinstance(a, GDA) for a in args_flat), resource_env)
 
-    jaxpr, canonicalized_out_shardings_flat = _pjit_jaxpr(
+    jaxpr, canonicalized_out_shardings_flat, used_inputs = _pjit_jaxpr(
         flat_fun, hashable_pytree(out_shardings), global_in_avals,
         HashableFunction(out_tree, closure=()))
 
-    if not config.jax_array:
-      canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
-          canonicalized_in_shardings_flat, args_flat)
-
-    jaxpr_, consts_ = jaxpr.jaxpr, jaxpr.consts
-    jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.outvars))
+    # handle dce's input pruning
     _, args_flat = partition_list(used_inputs, args_flat)
     _, canonicalized_in_shardings_flat = partition_list(
         used_inputs, canonicalized_in_shardings_flat)
     _, donated_invars = partition_list(used_inputs, donated_invars)
     _, in_positional_semantics = partition_list(
         used_inputs, in_positional_semantics)
-    jaxpr = core.ClosedJaxpr(jaxpr_, consts_)
+    del used_inputs
+
+    if not config.jax_array:
+      canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
+          canonicalized_in_shardings_flat, args_flat)
 
     # in_shardings and out_shardings here are all OpShardingSharding.
     params = dict(
@@ -559,6 +558,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   return tuple(global_in_avals), canonicalized_in_shardings_flat
 
 
+# TODO(mattjj): this should not be an lu.cache...
 @lu.cache
 def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   prev_positional_val = maps._positional_semantics.val
@@ -582,8 +582,12 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
       for o, aval in safe_zip(out_shardings_flat, global_out_avals)
   )
 
+  jaxpr_, consts_ = jaxpr.jaxpr, jaxpr.consts
+  jaxpr_, used_inputs = pe.dce_jaxpr(jaxpr_, [True] * len(jaxpr_.outvars))
+  jaxpr = pe.ClosedJaxpr(jaxpr_, consts_)
+
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
-  return _ListWithW([jaxpr, canonicalized_out_shardings_flat])
+  return _ListWithW([jaxpr, canonicalized_out_shardings_flat, used_inputs])
 
 
 def pjit_check_aval_sharding(
