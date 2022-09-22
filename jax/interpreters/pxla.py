@@ -2277,7 +2277,10 @@ class Mesh(ContextDecorator):
   devices: np.ndarray
   axis_names: Tuple[MeshAxisName, ...]
 
-  def __init__(self, devices: np.ndarray, axis_names: Sequence[MeshAxisName]):
+  def __init__(self, devices: Union[np.ndarray, Sequence[xc.Device]],
+               axis_names: Sequence[MeshAxisName]):
+    if not isinstance(devices, np.ndarray):
+      devices = np.array(devices)
     assert devices.ndim == len(axis_names)
     # TODO: Make sure that devices are unique? At least with the quick and
     #       dirty check that the array size is not larger than the number of
