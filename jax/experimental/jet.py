@@ -334,6 +334,7 @@ deflinear(lax.reduce_sum_p)
 deflinear(lax.reduce_window_sum_p)
 deflinear(lax.fft_p)
 deflinear(dispatch.device_put_p)
+deflinear(lax.copy_p)
 
 def _cumulative_jet_rule(primals_in, series_in, *, axis: int, reverse: bool,
                          combine_fn: Callable):
@@ -697,3 +698,39 @@ def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
   series_out = [bind(d1, scatter_indices, d2) for d1, _, d2 in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.scatter_add_p] = _scatter_add_rule
+
+def _scatter_mul_rule(primals_in, series_in, *, update_jaxpr, update_consts,
+                      dimension_numbers, indices_are_sorted, unique_indices,
+                      mode):
+  bind = partial(lax.scatter_mul_p.bind, update_jaxpr=update_jaxpr,
+                 update_consts=update_consts, dimension_numbers=dimension_numbers,
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices, mode=mode)
+
+  scatter_add_bind = partial(lax.scatter_add_p.bind, update_jaxpr=update_jaxpr,
+                             update_consts=update_consts,
+                             dimension_numbers=dimension_numbers,
+                             indices_are_sorted=indices_are_sorted,
+                             unique_indices=unique_indices, mode=mode)
+
+  operand, scatter_indices, updates = primals_in
+  operand_terms, _, updates_terms = series_in
+  u = [operand] + operand_terms
+  w = [updates] + updates_terms
+  v = [None] * len(u)
+
+  def scale(k, j): return 1. / (fact(k - j) * fact(j))
+  for k in range(0, len(v)):
+    running_sum = 0
+    for j in range(0, k + 1):
+      if k - j == 0:
+        # if using primal value of updates, do scatter_mul
+        running_sum += scale(k, j) * bind(u[j], scatter_indices, w[k - j])
+      else:
+        # if using series value of updates,
+        # zero out all components of output not affect by updates
+        running_sum += scale(k, j) * lax.mul(u[j], scatter_add_bind(lax.zeros_like_array(u[j]), scatter_indices, w[k - j]))
+    v[k] = fact(k) * running_sum
+  primal_out, *series_out = v
+  return primal_out, series_out
+jet_rules[lax.scatter_mul_p] = _scatter_mul_rule
