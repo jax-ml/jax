@@ -477,6 +477,7 @@ jax_test(
         "tpu": [
             "cpu:8",
             "noasan",  # Times out.
+            "nodebug",  # Times out.
             "notsan",  # Times out.
         ],
     },
@@ -535,9 +536,10 @@ jax_test(
     srcs = ["pmap_test.py"],
     backend_tags = {
         "tpu": [
-            "noasan",
-            "notsan",
-        ],  # Times out under asan/tsan.
+            "noasan",  # Times out.
+            "nodebug",  # Times out.
+            "notsan",  # Times out.
+        ],
     },
     pjrt_c_api_bypass = True,
     shard_count = {
