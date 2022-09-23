@@ -3438,6 +3438,15 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertIsInstance(ys, FooArray)
     self.assertEqual(ys.shape, (3, 2, 1))
 
+  def test_xla_reverse_bug(self):
+    # Regression test for b/248295786
+    # This was an XLA bug related to an incorrect optimization of reverse
+    def f(x):
+      y = jnp.array([2, 5])
+      return lax.rev(x * y, (0,))
+    x = jnp.array([1, 2])
+    self.assertArraysEqual(f(x), jax.jit(f)(x))
+
   # TODO(frostig,mattjj): more polymorphic primitives tests
 
 if __name__ == '__main__':
