@@ -694,7 +694,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     else:
       spec = pjit.PartitionSpec('dev')
       out_spec = pjit.PartitionSpec()
-    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=out_spec)
     with mesh:
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
@@ -1048,6 +1048,60 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     └───────┘
     """)
     self.assertEqual(output(), expected)
+
+class InspectShardingTest(jtu.JaxTestCase):
+
+  def test_inspect_sharding_is_called_in_pjit(self):
+
+    if jaxlib.xla_extension_version < 94:
+      raise unittest.SkipTest("Inspect sharding not supported.")
+
+    is_called = False
+    def _cb(sd):
+      nonlocal is_called
+      is_called = True
+      self.assertIsInstance(sd, sharding.Sharding)
+      self.assertLen(sd.device_set, len(jax.devices()))
+
+    def f(x):
+      debugging.inspect_array_sharding(x, callback=_cb)
+      return jnp.square(x)
+
+    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    if config.jax_array:
+      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+    else:
+      spec = pjit.PartitionSpec('dev')
+      out_spec = pjit.PartitionSpec()
+    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=out_spec)
+    with mesh:
+      f(np.arange(8, dtype=jnp.int32))
+    self.assertTrue(is_called)
+
+  def test_inspect_sharding_is_called_in_jit(self):
+
+    if jaxlib.xla_extension_version < 94:
+      raise unittest.SkipTest("Inspect sharding not supported.")
+
+    if not config.jax_array:
+      raise unittest.SkipTest("jax_array to work inside of `jit`.")
+
+    is_called = False
+    def _cb(sd):
+      nonlocal is_called
+      is_called = True
+      self.assertIsInstance(sd, sharding.Sharding)
+      self.assertLen(sd.device_set, 1)
+
+    def f(x):
+      debugging.inspect_array_sharding(x, callback=_cb)
+      return jnp.square(x)
+
+    f = jax.jit(f)
+    f(np.arange(8, dtype=jnp.int32))
+    self.assertTrue(is_called)
+
 
 if not rich:
   del VisualizeShardingTest
