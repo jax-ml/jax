@@ -62,6 +62,7 @@ from jax.tree_util import tree_flatten, tree_map
 
 from jax._src import abstract_arrays
 from jax._src import api_util
+from jax._src import basearray
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
@@ -689,6 +690,7 @@ if _USE_CPP_SDA:
   _SDA_BASE_CLASS = pmap_lib.ShardedDeviceArrayBase  # type: ignore
 else:
   _SDA_BASE_CLASS: Type[device_array.DeviceArray] = device_array.DeviceArray  # type: ignore
+basearray.Array.register(_SDA_BASE_CLASS)
 
 
 class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore

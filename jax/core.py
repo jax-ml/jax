@@ -50,6 +50,7 @@ from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import DimSize, Shape
+from jax._src import typing
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
@@ -530,9 +531,10 @@ def escaped_tracer_error(tracer, detail=None):
     msg += f'Detail: {detail}'
   return UnexpectedTracerError(msg)
 
-class Tracer:
+
+class Tracer(typing.Array):
   __array_priority__ = 1000
-  __slots__ = ['_trace', '__weakref__', '_line_info']
+  __slots__ = ['_trace', '_line_info']
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
@@ -555,6 +557,10 @@ class Tracer:
 
   def __len__(self):
     return self.aval._len(self)
+
+  @property
+  def at(self):
+    return self.aval.at.fget(self)
 
   @property
   def aval(self):

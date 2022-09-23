@@ -30,6 +30,9 @@ from typing import Any, Sequence, Union
 from typing_extensions import Protocol
 import numpy as np
 
+from jax._src.basearray import Array
+
+
 class HasDTypeAttribute(Protocol):
   dtype: DType
 
@@ -51,11 +54,7 @@ Shape = Sequence[DimSize]
 
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
-# future non-standard array types like KeyArray and BInt.
-# For now we set it to Any; in the future this will be more restrictive
-# (see https://github.com/google/jax/pull/11859)
-# TODO(jakevdp): make this conform to the JEP 12049 plan.
-Array = Any
+# future non-standard array types like KeyArray and BInt. It is imported above.
 
 # ArrayLike is a Union of all objects that can be implicitly converted to a standard
 # JAX array (i.e. not including future non-standard array types like KeyArray and BInt).

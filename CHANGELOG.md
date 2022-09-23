@@ -15,6 +15,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
     {jax-issue}`#7733`) is stable and public. See [the
     overview](https://jax.readthedocs.io/en/latest/aot.html) and the API docs
     for {mod}`jax.stages`.
+  * Introduced {class}`jax.Array`, intended to be used for both `isinstance` checks
+    and type annotations for array types in JAX. Notice that this included some subtle
+    changes to how `isinstance` works for {class}`jax.numpy.ndarray` for jax-internal
+    objects, as {class}`jax.numpy.ndarray` is now a simple alias of {class}`jax.Array`.
 * Breaking changes
   * `jax._src` is no longer imported into the from the public `jax` namespace.
     This may break users that were using JAX internals.

@@ -18,6 +18,7 @@ repos:
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
+    exclude: jax/_src/basearray.py  # Use pyi instead
     additional_dependencies: [types-requests==2.27.16, jaxlib==0.3.5]
 
 - repo: https://github.com/mwouts/jupytext
