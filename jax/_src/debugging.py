@@ -404,7 +404,7 @@ def _raise_to_slice(slc: Union[slice, int]):
 def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        use_color: bool = False, scale: float = 1.,
                        min_width: int = 9, max_width: int = 80):
-  """Visualizes a `Sharding`."""
+  """Visualizes a ``Sharding`` using ``rich``."""
   if not RICH_ENABLED:
     raise ValueError("`visualize_sharding` requires `rich` to be installed.")
   if use_color:
@@ -490,11 +490,11 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
 
   The policy for when ``callback`` is called is *as early as possible* when the
   sharding information is available. This means if ``inspect_array_callback`` is
-  called without any transformations, The callback will happen immediately
+  called without any transformations, the callback will happen immediately
   since we have the array and its sharding readily available. Inside of a
   ``jax.jit``, the callback will happen at lowering time, meaning you can
-  trigger the callback using the AOT API( ``jit(f).lower(...)``). When inside of
-  a ``pjit``, the callback happens **at compile time** since the sharding is
+  trigger the callback using the AOT API (``jit(f).lower(...)``). When inside of
+  a ``pjit``, the callback happens *at compile time* since the sharding is
   determined by XLA. You can trigger the callback by using JAX's AOT API
   (``pjit(f).lower(...).compile()``). In all cases, the callback will be
   triggered by running the function, since running a function entails lowering
@@ -505,7 +505,7 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
 
   Args:
     value: A Pytree of JAX arrays.
-    callback: A callable that takes in a `Sharding` and doesn't return a value.
+    callback: A callable that takes in a ``Sharding`` and doesn't return a value.
 
   In the following example, we print out the sharding of an intermediate value
   in a ``pjit``-ted computation:
