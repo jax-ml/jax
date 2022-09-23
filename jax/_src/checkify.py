@@ -489,17 +489,47 @@ CheckEffect = object()
 def assert_abstract_eval(err, code, payload, *, msgs):
   return [], {CheckEffect}
 
-def assert_lowering_rule(*a, **k):
-  # TODO(lenamartens): actually throw an error through emit_python_callable
-  # TODO(lenamartens) add in-depth error explanation to link to in module docs.
-  raise ValueError('Cannot abstractly evaluate a checkify.check which was not'
-                   ' functionalized. This probably means you tried to stage'
-                   ' (jit/scan/pmap/...) a `check` without functionalizing it'
-                   ' through `checkify.checkify`.'
-                   )
-mlir.register_lowering(assert_p, assert_lowering_rule)
+# TODO(lenamartens) add in-depth error explanation to link to in module docs.
+functionalization_error = ValueError(
+    'Cannot abstractly evaluate a checkify.check which was not'
+    ' functionalized. This probably means you tried to stage'
+    ' (jit/scan/pmap/...) a `check` without functionalizing it'
+    ' through `checkify.checkify`.'
+    )
+
+def python_err(msgs, err, code, payload):
+  error = Error(err, code, msgs, payload)
+  check_error(error)
+  return []
+
+def assert_lowering_rule(ctx, err, code, payload, *, msgs):
+  if not config.jax_experimental_unsafe_xla_runtime_errors:
+    raise functionalization_error
+
+  out_op, token_out, keep_alive = mlir.emit_python_callback(
+      ctx, callback=lambda *a: python_err(msgs, *a),
+      token=ctx.tokens_in.get(CheckEffect)[0],
+      operands=[err, code, payload],
+      operand_avals=list(ctx.avals_in),
+      result_avals=list(ctx.avals_out),
+      has_side_effect=True)
+  ctx.set_tokens_out(ctx.tokens_in.update_tokens(
+      mlir.TokenSet({CheckEffect: token_out})))
+  ctx.module_context.add_keepalive(keep_alive)
+  return out_op
+
+def assert_lowering_rule_unsupported(*a, **k):
+  raise functionalization_error
+
+mlir.register_lowering(assert_p, assert_lowering_rule_unsupported,
+                       platform='tpu')
+mlir.register_lowering(assert_p, assert_lowering_rule,
+                       platform='cpu')
+mlir.register_lowering(assert_p, assert_lowering_rule,
+                       platform='gpu')
 mlir.lowerable_effects.add(CheckEffect)
 cf.allowed_effects.add(CheckEffect)
+core.ordered_effects.add(CheckEffect)
 
 
 def assert_batching_rule(batched_args, batch_dims, *, msgs):

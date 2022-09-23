@@ -910,12 +910,13 @@ config.define_bool_state(
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
 config.define_bool_state(
-    name='jax_unsafe_xla_runtime_errors',
+    name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
     help=('Enable XLA runtime errors for jax.experimental.checkify.checks '
-          'on CPU and GPU. These errors are async, might get lost and not '
-          'very readable but they DO crash the computation and enable you '
-          'to write jittable checks without needing to checkify.')
+          'on CPU and GPU. These errors are async, might get lost and are not '
+          'very readable. But, they crash the computation and enable you '
+          'to write jittable checks without needing to checkify. Does not '
+          'work under pmap/pjit.')
 )
 
 @contextlib.contextmanager

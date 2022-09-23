@@ -22,6 +22,7 @@ import numpy as np
 import jax
 from jax import lax
 import jax._src.test_util as jtu
+from jax._src.lib import xla_extension
 from jax.config import config
 from jax.experimental import checkify
 from jax.experimental import pjit
@@ -904,6 +905,27 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([6., 2., -4.]))
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "value needs to be less than 6")
+
+class LowerableChecksTest(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    self.prev = config.jax_experimental_unsafe_xla_runtime_errors
+    config.update("jax_experimental_unsafe_xla_runtime_errors", True)
+
+  def tearDown(self):
+    config.update("jax_experimental_unsafe_xla_runtime_errors", self.prev)
+    super().tearDown()
+
+  @jtu.skip_on_devices("tpu")
+  def test_jit(self):
+    @jax.jit
+    def f(x):
+      checkify.check(x > 0, "x needs to be positive")
+      return x
+
+    with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
+                                "x needs to be positive"):
+      f(-1.)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
