@@ -2120,7 +2120,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for dtype in default_dtypes
     for shape in array_shapes
     for arg_type in ["splat", "value"]
-    for perm in [None, tuple(np.random.RandomState(0).permutation(np.zeros(shape).ndim))]))
+    for perm in [None, tuple(np.random.RandomState(0).permutation(np.zeros(shape).ndim)),
+                 tuple(np.random.RandomState(0).permutation(np.zeros(shape).ndim) - np.zeros(shape).ndim)]))
   def testTransposeTuple(self, shape, dtype, perm, arg_type):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
