@@ -2908,6 +2908,11 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(out_of_sync_parsed_pspec.get_partition_spec(),
                      P(('x',), ('y',)))
 
+  def test_mesh_with_list_devices(self):
+    mesh = maps.Mesh(jax.devices(), ('x',))
+    self.assertIsInstance(mesh.devices, np.ndarray)
+    self.assertEqual(mesh.size, jax.device_count())
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
