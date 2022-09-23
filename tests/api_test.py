@@ -6920,6 +6920,22 @@ class CustomJVPTest(jtu.JaxTestCase):
     grad_ref = jax.grad(g_ref)(0.1)
     self.assertAllClose(grad, grad_ref, check_dtypes=False)
 
+  def test_nondiff_arg_tracer_error(self):
+    # https://github.com/google/jax/issues/9374
+    @partial(api.custom_jvp, nondiff_argnums=(0,))
+    def f(x, y):
+      return x * y
+    f.defjvp(lambda x, primals, tangents: x)
+
+    @jit
+    def g(x, y):
+      return f(x, y)
+
+    with self.assertRaisesRegex(ValueError, "custom_jvp"):
+      _ = g(2, 3.)
+    with self.assertRaisesRegex(ValueError, "custom_jvp"):
+      _ = api.grad(g, 1)(2., 3.)
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
@@ -7247,9 +7263,9 @@ class CustomVJPTest(jtu.JaxTestCase):
     def g(x, y):
       return f(x, y)
 
-    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
+    with self.assertRaisesRegex(ValueError, "custom_vjp"):
       _ = g(2, 3.)
-    with self.assertRaisesRegex(UnexpectedTracerError, "custom_vjp"):
+    with self.assertRaisesRegex(ValueError, "custom_vjp"):
       _ = api.grad(g, 1)(2., 3.)
 
   def test_vmap_axes(self):
