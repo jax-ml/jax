@@ -1899,15 +1899,12 @@ class DynamicJaxprTrace(core.Trace):
 custom_staging_rules: Dict[Primitive, Callable] = {}
 
 def _memoize(thunk):
-  if config.jax_check_tracer_leaks:
-    return thunk
-
   cell = []
-  saved_state = core.thread_local_state.trace_state.copy()
+  saved_state = [core.thread_local_state.trace_state.copy()]
   def memoized():
     if not cell:
       prev_state = core.thread_local_state.trace_state
-      core.thread_local_state.trace_state = saved_state
+      core.thread_local_state.trace_state = saved_state.pop()
       try:
         cell.append(thunk())
       finally:

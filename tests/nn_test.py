@@ -211,6 +211,32 @@ class NNFunctionsTest(jtu.JaxTestCase):
     with jax.checking_leaks():
       fwd()  # doesn't crash
 
+  def testCustomJVPLeak2(self):
+    # https://github.com/google/jax/issues/8171
+    # The above test uses jax.nn.sigmoid, as in the original #8171, but that
+    # function no longer actually has a custom_jvp! So we inline the old def.
+
+    @jax.custom_jvp
+    def sigmoid(x):
+      one = jnp.float32(1)
+      return jax.lax.div(one, jax.lax.add(one, jax.lax.exp(jax.lax.neg(x))))
+    sigmoid.defjvps(lambda g, ans, x: g * ans * (jnp.float32(1) - ans))
+
+    @jax.jit
+    def fwd():
+      a = jnp.array(1., 'float32')
+
+      def f(hx, _):
+        hx = jax.nn.relu(hx + a)
+        return hx, None
+
+      hx = jnp.array(0., 'float32')
+      jax.lax.scan(f, hx, None, length=2)
+
+    with jax.checking_leaks():
+      fwd()  # doesn't crash
+
+
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",
   ["name", "initializer", "shapes", "dtypes"])

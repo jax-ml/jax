@@ -3502,6 +3502,14 @@ class APITest(jtu.JaxTestCase):
         return t(y)
       s(3)  # doesn't crash
 
+  def test_leak_checker_internal_error(self):
+    def apply_fn(inp):
+      fn = jax.checkpoint(lambda x: jax.nn.relu(1.0 * x))
+      return jax.vjp(fn, inp)
+
+    with jax.check_tracer_leaks():
+      jax.jit(apply_fn)(1.0)  # don't crash
+
   def test_default_backend(self):
     first_local_device = api.local_devices()[0]
     self.assertEqual(first_local_device.platform, api.default_backend())
