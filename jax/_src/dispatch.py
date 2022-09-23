@@ -826,11 +826,10 @@ def needs_check_special():
 def check_special(name, bufs):
   if needs_check_special():
     for buf in bufs:
-      _check_special(name, buf.xla_shape(), buf)
+      _check_special(name, buf.dtype, buf)
 
-def _check_special(name, xla_shape, buf):
-  assert not xla_shape.is_tuple()
-  if dtypes.issubdtype(xla_shape.element_type(), np.inexact):
+def _check_special(name, dtype, buf):
+  if dtypes.issubdtype(dtype, np.inexact):
     if config.jax_debug_nans and np.any(np.isnan(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
     if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
