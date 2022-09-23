@@ -1077,8 +1077,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if numpy_version < (1, 21) and period != "2pi":
       self.skipTest("numpy < 1.21 does not support the period argument to unwrap()")
     special_vals = {"pi": np.pi, "2pi": 2 * np.pi}
-    period = special_vals.get(period, period)
+    period = dtype(special_vals.get(period, period))
     discont = special_vals.get(discont, discont)
+    if discont and dtype == dtypes.bfloat16:
+      discont = dtype(discont)
 
     rng = jtu.rand_default(self.rng())
 
