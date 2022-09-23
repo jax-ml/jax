@@ -1,4 +1,4 @@
-FROM ubuntu:bionic
+FROM ubuntu:focal
 MAINTAINER Reza Rahimi <reza.rahimi@amd.com>
 
 ARG ROCM_DEB_REPO=http://repo.radeon.com/rocm/apt/5.2/
@@ -82,8 +82,7 @@ RUN add-apt-repository ppa:deadsnakes/ppa && \
     python3-pip \
     python3.9-distutils
 
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.6 1 && \
-     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
 
 RUN pip3 install --upgrade --force-reinstall setuptools pip
   
