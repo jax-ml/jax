@@ -244,9 +244,10 @@ def gather(operand: Array, start_indices: Array,
       integers with length equal to `ndim(operand)`.
     indices_are_sorted: whether `indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices in ``operand`` are
-      guaranteed to not overlap with each other. If true, may improve
-      performance on some backends.
+    unique_indices: whether the elements gathered from ``operand`` are
+      guaranteed not to overlap with each other. If ``True``, this may improve
+      performance on some backends. JAX does not check this promise: if
+      the elements overlap the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to ``'clip'``,
       indices are clamped so that the slice is within bounds, and when
       set to ``'fill'`` or ``'drop'`` gather returns a slice full of
@@ -339,9 +340,10 @@ def scatter_add(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -385,9 +387,10 @@ def scatter_mul(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -431,9 +434,10 @@ def scatter_min(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -477,9 +481,10 @@ def scatter_max(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -531,9 +536,10 @@ def scatter_apply(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -590,9 +596,10 @@ def scatter(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
