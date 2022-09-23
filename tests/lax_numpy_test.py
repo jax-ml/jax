@@ -5518,7 +5518,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         {"testcase_name": "_shape={}_dtype={}_rowvar={}".format(
             shape, dtype.__name__, rowvar),
          "shape": shape, "dtype": dtype, "rowvar": rowvar}
-        for shape in [(5,), (10, 5), (3, 10)]
+        for shape in [(5,), (10, 5), (4, 10)]
         for dtype in number_dtypes
         for rowvar in [True, False]))
   def testCorrCoef(self, shape, dtype, rowvar):
