@@ -227,7 +227,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       a = jnp.array(1., 'float32')
 
       def f(hx, _):
-        hx = jax.nn.relu(hx + a)
+        hx = sigmoid(hx + a)
         return hx, None
 
       hx = jnp.array(0., 'float32')
