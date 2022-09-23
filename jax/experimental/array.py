@@ -94,6 +94,12 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   return jnp_value
 
 
+def _single_device_array_from_buf(buf, committed):
+  db = pxla._set_aval(buf)
+  return Array(db.aval, SingleDeviceSharding(db.device()), [db],
+               committed=committed, _skip_checks=True)
+
+
 @pxla.use_cpp_class(xc.Array if xc._version >= 92 else None)
 class Array:
   """Experimental unified Array type.
@@ -264,7 +270,7 @@ class Array:
           buf_idx = None
         if buf_idx is not None:
           buf = self._arrays[buf_idx]
-          aval = core.ShapedArray(buf.xla_shape().dimensions(), self.dtype)
+          aval = core.ShapedArray(buf.shape, self.dtype)
           return Array(aval, SingleDeviceSharding(buf.device()), [buf],
                        committed=False, _skip_checks=True)
       return lax_numpy._rewriting_take(self, idx)
@@ -367,7 +373,7 @@ class Array:
   def device_buffer(self) -> DeviceArray:
     self._check_if_deleted()
     if len(self._arrays) == 1:
-      return self._arrays[0]
+      return _single_device_array_from_buf(self._arrays[0], self._committed)
     raise ValueError('Length of buffers is greater than 1. Please use '
                      '`.device_buffers` instead.')
 
@@ -376,26 +382,22 @@ class Array:
   @property
   def device_buffers(self) -> Sequence[DeviceArray]:
     self._check_if_deleted()
-    return self._arrays
+    return [_single_device_array_from_buf(a, self._committed)
+            for a in self._arrays]
 
   def addressable_data(self, index: int) -> Array:
     self._check_if_deleted()
-    db = pxla._set_aval(self._arrays[index])
-    return Array(db.aval, SingleDeviceSharding(db.device()), [db],
-                 committed=self._committed, _skip_checks=True)
+    return _single_device_array_from_buf(self._arrays[index], self._committed)
 
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
     out = []
     for db in self._arrays:
-      db = pxla._set_aval(db)
-      device = db.device()
       # Wrap the device arrays in `Array` until C++ returns an Array instead
       # of a DA.
-      array = Array(db.aval, SingleDeviceSharding(device), [db],
-                    committed=self._committed, _skip_checks=True)
-      out.append(Shard(device, self.sharding, self.shape, array))
+      array = _single_device_array_from_buf(db, self._committed)
+      out.append(Shard(db.device(), self.sharding, self.shape, array))
     return out
 
   def delete(self):

@@ -426,6 +426,18 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertNotEqual(a.data.unsafe_buffer_pointer(),
                           c.data.unsafe_buffer_pointer())
 
+  def test_array_device_buffer(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, _ = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+
+    for a in arr.device_buffers:
+      self.assertIsInstance(a, array.Array)
+
+    x = jnp.array([1, 2, 3])
+    self.assertIsInstance(x.device_buffer, array.Array)
+
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
