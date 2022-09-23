@@ -59,6 +59,9 @@ from etils import epath
 
 if TYPE_CHECKING:
   from jax.experimental.array import Array
+  from jax.experimental.sharding import Sharding
+else:
+  Sharding = Any
 
 FLAGS = flags.FLAGS
 
@@ -89,21 +92,23 @@ _on_exit = False
 
 ### op-by-op execution
 
-ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
+ArgSpec = Tuple[core.AbstractValue, Union[Optional[Device], Optional[Sharding]]]
 
 def arg_spec(x: Any) -> ArgSpec:
   from jax.experimental.sharding import PmapSharding
-
   aval = xla.abstractify(x)
+  return aval, _arg_spec2(x)
+
+def _arg_spec2(x: Any) -> Union[Optional[Device], Optional[Sharding]]:
   try:
     if config.jax_array:
       if isinstance(x.sharding, PmapSharding):
-        return aval, None
-      return aval, (x.sharding if x._committed else None)
+        return None
+      return x.sharding if x._committed else None
     else:
-      return aval, x._device
+      return x._device
   except:
-    return aval, None
+    return None
 
 
 def apply_primitive(prim, *args, **params):
@@ -225,11 +230,8 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
   del inline  # Only used at tracing time
   if fun.in_type is None:
     arg_specs = unsafe_map(arg_spec, args)
-  else:
-    # fun.in_type is used for dynamic shapes.
-    if config.jax_array:
-      raise NotImplementedError('Dynamic shapes do not work with Array.')
-    arg_specs = [(None, getattr(x, '_device', None)) for x in args]
+  else:  # fun.in_type is used for dynamic shapes
+    arg_specs = [(None, _arg_spec2(x)) for x in args]
   compiled_fun = xla_callable(fun, device, backend, name, donated_invars,
                               keep_unused, *arg_specs)
   try:
@@ -677,6 +679,12 @@ def _input_handler(backend: Backend,
   assert config.jax_dynamic_shapes
 
   # Precompute how to grab implicit inputs from explicit inputs' axis sizes.
+  # in_type = [(i32[], False), (f32[DBIdx(0)], True)]
+  #
+  # n:i32[]  x:f32[5,n] y:f32[n]
+  #
+  # [(i32[], False), (f32[5, DBIdx(0)], True), (f32[DBIdx(0)], True)]
+
   which_explicit = which_explicit or [True] * len(in_avals)
   implicit_idxs = {i for i, ex in enumerate(which_explicit) if not ex}
   implicit_args_from_axes: List[Tuple[int, int, int]] = []
@@ -688,6 +696,21 @@ def _input_handler(backend: Backend,
   assert {i for i, _, _ in implicit_args_from_axes} == implicit_idxs
 
   # Precompute which input values are needed for output types.
+  # { lambda n:i32[] x:f32[n] . let
+  #     y:f32[] = reduce_sum [axis=0] x
+  #   in (y,) }
+  #
+  # { lambda n:i32[] x:f32[5, n] . let
+  #     y:f32[n] = reduce_sum [axis=0] x
+  #   in (y,) : (f32[n],) }
+  #  out_type = [(f32[InDBIdx(0)], True)]
+  #
+  # { lambda n:i32[] . let
+  #     m:i32[] = mul 2 n
+  #     y:i32[m] = iota m
+  #   in (m, y) : (m:i32[], y:i32[m],) }
+  #  out_type = [(i32[], False), (f32[OutDBIdx(0)], True)]
+  #
   inputs_needed_for_out_types = out_type and [
       d.val for aval, _ in out_type if type(aval) is core.DShapedArray  # type: ignore
       for d in aval.shape if type(d) is core.InDBIdx]

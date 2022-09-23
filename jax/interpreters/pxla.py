@@ -2704,11 +2704,19 @@ def lower_sharding_computation(
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
   # 1. Trace to jaxpr and preprocess/verify it
+  if fun.in_type is None:
+    in_type = tuple(unsafe_zip(global_in_avals, itertools.repeat(True)))
+    fun = lu.annotate(fun, in_type)
+  else:
+    assert global_in_avals == (None,) * len(global_in_avals)
+    global_in_avals = [aval for aval, _ in fun.in_type]
+
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                  "in {elapsed_time} sec"):
-    jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-        fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
-  kept_outputs = [True] * len(global_out_avals)
+    jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
+        fun, debug_info=pe.debug_info_final(fun, api_name))
+  global_out_avals, kept_outputs = unzip2(out_type)
+  breakpoint()
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
