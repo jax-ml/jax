@@ -219,7 +219,8 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
-                  enable_tpu, enable_remote_tpu, enable_rocm):
+                  enable_tpu, enable_remote_tpu, enable_rocm,
+                  enable_plugin_device):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -291,6 +292,8 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=rocm\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
+    if enable_plugin_device:
+      f.write("build --config=plugin_device\n")
 
 BANNER = r"""
      _   _  __  __
@@ -386,6 +389,11 @@ def main():
       default=True,
       help_str="Should we build with NCCL enabled? Has no effect for non-CUDA "
                "builds.")
+  add_boolean_argument(
+      parser,
+      "enable_plugin_device",
+      default=False,
+      help_str="Should we build with a plugin device enable?")
   add_boolean_argument(
       parser,
       "remote_build",
@@ -514,6 +522,8 @@ def main():
       print(f"ROCm toolkit path: {rocm_toolkit_path}")
     print(f"ROCm amdgpu targets: {args.rocm_amdgpu_targets}")
 
+  print("Plugin device enabled: {}".format("yes" if args.enable_plugin_device else "no"))
+
   write_bazelrc(
       python_bin_path=python_bin_path,
       remote_build=args.remote_build,
@@ -534,6 +544,7 @@ def main():
       enable_tpu=args.enable_tpu,
       enable_remote_tpu=args.enable_remote_tpu,
       enable_rocm=args.enable_rocm,
+      enable_plugin_device=args.enable_plugin_device,
   )
 
   if args.configure_only:
