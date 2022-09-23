@@ -285,7 +285,6 @@ namespace; they are listed below.
     nanquantile
     nanstd
     nansum
-    nan_to_num
     nanvar
     ndarray
     ndim
