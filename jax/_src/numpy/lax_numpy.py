@@ -528,6 +528,7 @@ view of the input.
 def transpose(a, axes=None):
   _stackable(a) or _check_arraylike("transpose", a)
   axes = np.arange(ndim(a))[::-1] if axes is None else axes
+  axes = tuple(_canonicalize_axis(i, ndim(a)) for i in axes)
   return lax.transpose(a, axes)
 
 
