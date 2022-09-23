@@ -6,10 +6,11 @@ jax.debug package
 
 .. automodule:: jax.debug
 
-Debugging utilities
---------------------------
+Runtime value debugging utilities
+---------------------------------
 
-:doc:`debugging/print_breakpoint` describes how to make use of JAX's debugging features.
+:doc:`debugging/print_breakpoint` describes how to make use of JAX's runtime value
+debugging features.
 
 .. autosummary::
   :toctree: _autosummary
@@ -17,3 +18,16 @@ Debugging utilities
   callback
   print
   breakpoint
+
+Sharding debugging utilities
+----------------------------
+
+Functions that enable inspecting and visualizing array shardings inside (and outside)
+staged functions.
+
+.. autosummary::
+  :toctree: _autosummary
+
+  inspect_array_sharding
+  visualize_array_sharding
+  visualize_sharding
