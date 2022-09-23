@@ -732,7 +732,8 @@ class BCOOTest(jtu.JaxTestCase):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     n_sparse = M.ndim - n_batch - n_dense
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
     data_jit, indices_jit = jit(partial(sparse_bcoo._bcoo_fromdense, nse=nse, n_batch=n_batch, n_dense=n_dense))(M)
     self.assertArraysEqual(data, data_jit)
@@ -758,7 +759,8 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_todense_ad(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
     todense = partial(sparse_bcoo._bcoo_todense, indices=indices, spinfo=BCOOInfo(shape))
@@ -780,7 +782,8 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_fromdense_ad(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
 
     def fromdense(M):
       return sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)[0]
@@ -823,7 +826,8 @@ class BCOOTest(jtu.JaxTestCase):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     n_sparse = M.ndim - n_batch - n_dense
-    nse = int(sparse.bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
 
     fromdense = partial(sparse_bcoo._bcoo_fromdense, nse=nse, n_dense=n_dense)
     todense = partial(sparse_bcoo._bcoo_todense, spinfo=BCOOInfo(shape[n_batch:]))
@@ -852,7 +856,8 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_extract(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse)
     data2 = sparse.bcoo_extract(indices, M)
     self.assertArraysEqual(data, data2)
@@ -890,7 +895,8 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_extract_ad(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
     extract = partial(sparse.bcoo_extract, indices)
@@ -914,7 +920,8 @@ class BCOOTest(jtu.JaxTestCase):
     rng = self.rng()
     sprng = rand_sparse(rng)
     M = sprng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
     permutation = np.concatenate([
@@ -1022,7 +1029,8 @@ class BCOOTest(jtu.JaxTestCase):
     sprng = rand_sparse(self.rng())
 
     M = sprng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
     permutation = np.concatenate([
@@ -1070,7 +1078,8 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_todense_partial_batch(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
     M1 = sparse_bcoo._bcoo_todense(data, indices[:1], spinfo=BCOOInfo(M.shape))
@@ -1094,7 +1103,8 @@ class BCOOTest(jtu.JaxTestCase):
     def args_maker():
       lhs = rng_sparse(props.lhs_shape, props.dtype)
       rhs = rng(props.rhs_shape, props.dtype)
-      nse = int(sparse_bcoo._bcoo_nse(lhs, n_batch=props.n_batch, n_dense=props.n_dense))
+      nse = sparse.util._count_stored_elements(lhs, n_batch=props.n_batch,
+                                               n_dense=props.n_dense)
       data, indices = sparse_bcoo._bcoo_fromdense(lhs, nse=nse, n_batch=props.n_batch, n_dense=props.n_dense)
       return data, indices, lhs, rhs
 
@@ -1141,7 +1151,7 @@ class BCOOTest(jtu.JaxTestCase):
     def args_maker():
       lhs = rng_sparse(lhs_shape, dtype)
       rhs = rng(rhs_shape, dtype)
-      nse = int(sparse_bcoo._bcoo_nse(lhs, n_batch=0, n_dense=0))
+      nse = sparse.util._count_stored_elements(lhs, n_batch=0, n_dense=0)
       lhs_bcoo = sparse_bcoo.bcoo_fromdense(lhs, nse=nse, index_dtype=jnp.int32)
       return lhs_bcoo, lhs, rhs
 
@@ -1186,7 +1196,8 @@ class BCOOTest(jtu.JaxTestCase):
     def args_maker():
       lhs = rng_sparse(lhs_shape, dtype)
       rhs = rng(rhs_shape, dtype)
-      nse = int(sparse_bcoo._bcoo_nse(lhs, n_batch=n_batch, n_dense=0))
+      nse = sparse.util._count_stored_elements(lhs, n_batch=n_batch,
+                                               n_dense=0)
       lhs_bcoo = sparse_bcoo.bcoo_fromdense(lhs, n_batch=n_batch, nse=nse,
                                             index_dtype=jnp.int32)
       return lhs_bcoo, lhs, rhs
@@ -1243,7 +1254,8 @@ class BCOOTest(jtu.JaxTestCase):
     rng_sparse = rand_sparse(self.rng())
     lhs = rng_sparse(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(lhs, n_batch=n_batch, n_dense=0))
+    nse = sparse.util._count_stored_elements(lhs, n_batch=n_batch,
+                                             n_dense=0)
     lhs_bcoo = sparse_bcoo.bcoo_fromdense(lhs, n_batch=n_batch, nse=nse,
                                             index_dtype=jnp.int32)
     dimension_numbers = ((lhs_contracting, rhs_contracting), ([], []))
@@ -1334,7 +1346,8 @@ class BCOOTest(jtu.JaxTestCase):
     def args_maker():
       lhs = rng_sparse(lhs_shape, props.dtype)
       rhs = rng(rhs_shape, props.dtype)
-      nse = int(sparse_bcoo._bcoo_nse(rhs, n_batch=props.n_batch, n_dense=props.n_dense))
+      nse = sparse.util._count_stored_elements(rhs, n_batch=props.n_batch,
+                                               n_dense=props.n_dense)
       data, indices = sparse_bcoo._bcoo_fromdense(
           rhs, nse=nse, n_batch=props.n_batch, n_dense=props.n_dense)
       return data, indices, lhs, rhs
@@ -1377,7 +1390,8 @@ class BCOOTest(jtu.JaxTestCase):
     rng_sparse = rand_sparse(self.rng())
 
     X = rng_sparse(lhs_shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(X, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(X, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(X, nse=nse, n_batch=n_batch, n_dense=n_dense)
     Y = rng(rhs_shape, dtype)
 
@@ -1419,7 +1433,8 @@ class BCOOTest(jtu.JaxTestCase):
     rng_sparse = rand_sparse(self.rng())
 
     X = rng_sparse(lhs_shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(X, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(X, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(X, nse=nse, n_batch=n_batch, n_dense=n_dense)
     Y = rng(rhs_shape, dtype)
 
@@ -1971,7 +1986,8 @@ class BCOOTest(jtu.JaxTestCase):
   def test_bcoo_reduce_sum(self, shape, dtype, n_batch, n_dense, axes):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = int(sparse_bcoo._bcoo_nse(M, n_batch=n_batch, n_dense=n_dense))
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
     data_out, indices_out, shape_out = sparse_bcoo._bcoo_reduce_sum(
         data, indices, spinfo=BCOOInfo(shape), axes=axes)
@@ -2537,6 +2553,44 @@ class SparseSolverTest(jtu.JaxTestCase):
 
     self.assertAllClose(a @ x, b, rtol=1e-2)
     self._CompileAndCheck(sparse_solve, args_maker)
+
+
+class SparseUtilTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "dtype_{}_nbatch={}_ndense={}_nse={}".format(
+          dtype, n_batch, n_dense, expected_nse),
+       "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
+       "expected_nse": expected_nse}
+      for n_batch, n_dense, expected_nse in
+      [(0, 0, 4), (1, 0, 2), (0, 1, 2), (2, 0, 1), (1, 1, 1), (0, 2, 1)]
+      for dtype in all_dtypes))
+  def test_count_stored_elements(self, dtype, n_batch, n_dense, expected_nse):
+    """Test counting nse."""
+    mat = np.array([[1, 0, 2, 0], [0, 0, 0, 0], [0, 3, 0, 4]], dtype=dtype)
+    actual_nse = sparse.util._count_stored_elements(
+        mat, n_batch=n_batch, n_dense=n_dense)
+    self.assertEqual(expected_nse, actual_nse)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "dtype_{}_nbatch={}_ndense={}_nse={}".format(
+          dtype, n_batch, n_dense, expected_nse),
+       "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
+       "expected_nse": expected_nse}
+      for n_batch, n_dense, expected_nse in
+      [(0, 0, 14), (1, 0, np.array([6, 8])), (0, 1, 9),
+       (2, 0, np.array([[3, 3], [4, 4]]))]
+      for dtype in all_dtypes))
+  def test_count_stored_elements_per_batch(self, dtype, n_batch, n_dense,
+                                           expected_nse):
+    """Test counting nse."""
+    mat = np.array([[[[1, 0, 0, 0], [0, 0, 0, 0], [0, 2, 0, 3]],
+                     [[0, 1, 2, 0], [0, 0, 0, 0], [0, 0, 0, 3]]],
+                    [[[1, 0, 2, 0], [0, 0, 0, 0], [0, 3, 0, 4]],
+                     [[0, 0, 0, 1], [0, 0, 2, 0], [3, 0, 0, 4]]]], dtype=dtype)
+    actual_nse = sparse.util._count_stored_elements_per_batch(
+        mat, n_batch=n_batch, n_dense=n_dense)
+    self.assertArraysEqual(expected_nse, actual_nse)
 
 
 if __name__ == "__main__":

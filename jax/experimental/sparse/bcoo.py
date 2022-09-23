@@ -29,7 +29,7 @@ from jax import tree_util
 from jax import vmap
 from jax.config import config
 from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.util import _safe_asarray, CuSparseEfficiencyWarning, SparseEfficiencyError, SparseEfficiencyWarning
+from jax.experimental.sparse.util import _count_stored_elements, _safe_asarray, CuSparseEfficiencyWarning, SparseEfficiencyError, SparseEfficiencyWarning
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
@@ -75,14 +75,6 @@ def broadcasting_vmap(fun, in_axes=0, out_axes=0):
 
 #----------------------------------------------------------------------
 # BCOO primitives: batched extension of COO.
-
-def _bcoo_nse(mat, n_batch=0, n_dense=0):
-  mat = jnp.asarray(mat)
-  mask = (mat != 0)
-  if n_dense > 0:
-    mask = mask.any([-(i + 1) for i in range(n_dense)])
-  mask = mask.sum(list(range(n_batch, mask.ndim)))
-  return mask.max()
 
 def _bcoo_set_nse(mat, nse):
   """Return a copy of `mat` with the specified nse.
@@ -261,9 +253,9 @@ bcoo_fromdense_p = core.Primitive('bcoo_fromdense')
 bcoo_fromdense_p.multiple_results = True
 
 _TRACED_NSE_ERROR = """
-The error arose for the nse argument of bcoo_fromdense. In order for BCOO.fromdense()
-to be used in traced/compiled code, you must pass a concrete value to the nse
-(number of specified elements) argument.
+The error arose for the nse argument of bcoo_fromdense. In order for
+BCOO.fromdense() to be used in traced/compiled code, you must pass a concrete
+value to the nse (number of stored elements) argument.
 """
 
 def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32):
@@ -281,7 +273,7 @@ def bcoo_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
   """
   mat = jnp.asarray(mat)
   if nse is None:
-    nse = _bcoo_nse(mat, n_batch, n_dense)
+    nse = _count_stored_elements(mat, n_batch, n_dense)
   nse = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
   return BCOO(_bcoo_fromdense(mat, nse=nse, n_batch=n_batch, n_dense=n_dense,
                               index_dtype=index_dtype),

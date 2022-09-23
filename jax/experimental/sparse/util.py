@@ -34,6 +34,12 @@ class CuSparseEfficiencyWarning(SparseEfficiencyWarning):
 # utilities
 # TODO: possibly make these primitives, targeting cusparse rountines
 #       csr2coo/coo2csr/SPDDMM
+
+def _asarray_or_float0(arg):
+  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
+    return arg
+  return jnp.asarray(arg)
+
 @jax.jit
 def _csr_to_coo(indices, indptr):
   """Given CSR (indices, indptr) return COO (row, col)"""
@@ -47,6 +53,19 @@ def _coo_extract(row, col, mat):
   """Extract values of dense matrix mat at given COO indices."""
   return mat[row, col]
 
+def _count_stored_elements_per_batch(mat, n_batch=0, n_dense=0):
+  """Return per-batch number of stored elements (nse) of a dense matrix."""
+  mat = jnp.asarray(mat)
+  mask = (mat != 0)
+  if n_dense > 0:
+    mask = mask.any([-(i + 1) for i in range(n_dense)])
+  mask = mask.sum(list(range(n_batch, mask.ndim)))
+  return mask
+
+def _count_stored_elements(mat, n_batch=0, n_dense=0):
+  """Return the number of stored elements (nse) of the given dense matrix."""
+  return int(_count_stored_elements_per_batch(mat, n_batch, n_dense).max())
+
 def _is_pytree_placeholder(*args):
   # Returns True if the arguments are consistent with being a placeholder within
   # pytree validation.
@@ -57,11 +76,6 @@ def _is_aval(*args):
 
 def _is_arginfo(*args):
   return all(isinstance(arg, stages.ArgInfo) for arg in args)
-
-def _asarray_or_float0(arg):
-  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
-    return arg
-  return jnp.asarray(arg)
 
 def _safe_asarray(args):
   if _is_pytree_placeholder(*args) or _is_aval(*args) or _is_arginfo(*args):
