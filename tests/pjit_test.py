@@ -2889,8 +2889,7 @@ class UtilTest(jtu.JaxTestCase):
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
-    self.assertEqual(id(next_op_sharding_sharding._op_sharding),
-                     id(op_sharding_sharding._op_sharding))
+    self.assertEqual(id(next_op_sharding_sharding), id(op_sharding_sharding))
 
   def test_get_partition_spec(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
