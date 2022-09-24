@@ -3113,15 +3113,15 @@ def _get_op_sharding_shardings_from_executable(
   from jax.experimental import pjit
   from jax.experimental.sharding import OpShardingSharding, SingleDeviceSharding
 
-  in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
-
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`. In that case,
   # just return SingleDeviceShardings since we know the computation is running
   # only on 1 device.
-  if not in_op_shardings and not out_op_shardings and len(device_assignment) == 1:
+  if len(device_assignment) == 1:
     return ([SingleDeviceSharding(device_assignment[0]) for _ in range(num_in_avals)],
             [SingleDeviceSharding(device_assignment[0]) for _ in range(num_out_avals)])
+
+  in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
 
   return ([OpShardingSharding(device_assignment, i) for i in in_op_shardings],
           [OpShardingSharding(device_assignment, o) for o in out_op_shardings])
