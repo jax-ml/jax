@@ -153,6 +153,13 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
         's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
         'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
+      ) if jtu.is_device_cuda() else (
+        'import jax, os; '
+        f'jax.config.update("jax_rocm_visible_devices", "{visible_devices}"); '
+        'jax.distributed.initialize('
+        'f\'localhost:{os.environ["JAX_PORT"]}\', '
+        'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+        'print(f\'{jax.local_device_count()},{jax.device_count()}\', end=""); '
       )
       args = [sys.executable, "-c", program]
       subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
@@ -162,7 +169,9 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       for proc in subprocesses:
         out, _ = proc.communicate()
         self.assertEqual(proc.returncode, 0)
-        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]')
+        self.assertEqual(out,
+          f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]' if jtu.is_device_cuda() else
+          f'{num_gpus_per_task},{num_gpus}')
     finally:
       for proc in subprocesses:
         proc.kill()
