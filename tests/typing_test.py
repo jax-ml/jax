@@ -17,13 +17,17 @@ Typing tests
 This test is meant to be both a runtime test and a static type annotation test,
 so it should be checked with pytype/mypy as well as being run with pytest.
 """
-from typing import Union
+from typing import Any, Optional, Union
 
 import jax
+from jax import core
+from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src import typing
 from jax import lax
 import jax.numpy as jnp
+
+from jax.experimental.array import Array as ArrayImpl
 
 from absl.testing import absltest
 import numpy as np
@@ -98,9 +102,6 @@ class TypingTest(jtu.JaxTestCase):
     self.assertArraysEqual(out9, jnp.float32(0))
 
   def testArrayInstanceChecks(self):
-    # TODO(jakevdp): enable this test when `typing.Array` instance checks are implemented.
-    self.skipTest("Test is broken for now.")
-
     def is_array(x: typing.ArrayLike) -> Union[bool, typing.Array]:
       return isinstance(x, typing.Array)
 
@@ -112,6 +113,21 @@ class TypingTest(jtu.JaxTestCase):
     self.assertTrue(jax.jit(is_array)(x))
     self.assertTrue(jnp.all(jax.vmap(is_array)(x)))
 
+  def testAnnotations(self):
+    # This test is mainly meant for static type checking: we want to ensure that
+    # Tracer and ArrayImpl are valid as array.Array.
+    with jax_config.jax_array(True):
+      def f(x: Any) -> Optional[typing.Array]:
+        if isinstance(x, core.Tracer):
+          return x
+        elif isinstance(x, ArrayImpl):
+          return x
+        else:
+          return None
+
+      x = jnp.arange(10)
+      y = f(x)
+      self.assertArraysEqual(x, y)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

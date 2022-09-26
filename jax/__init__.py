@@ -35,6 +35,8 @@ del _cloud_tpu_init
 from jax import config as _config_module
 del _config_module
 
+from jax._src.basearray import Array as Array
+
 from jax._src.config import (
   config as config,
   enable_checks as enable_checks,

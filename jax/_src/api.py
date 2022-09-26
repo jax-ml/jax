@@ -612,8 +612,7 @@ def _cpp_jit(
     # to know whether `jax.jit(f)(x)` will execute or trace, it's not enough to
     # inspect the argument x, we actually do need to execute it and look at the
     # outputs that could be tracers (if f is capturing `Tracer` by closure).
-    execute: Optional[functools.partial] = (
-        dispatch.xla_callable.most_recent_entry())
+    execute = dispatch.xla_callable.most_recent_entry()
 
     fastpath_data = None
 

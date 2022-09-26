@@ -22,6 +22,7 @@ from jax import core
 from jax._src import abstract_arrays
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import basearray
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
@@ -29,7 +30,7 @@ from jax._src.config import config
 from jax._src.util import prod, safe_zip
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
-from jax._src.numpy.ndarray import ndarray
+from jax._src.typing import ArrayLike
 from jax.interpreters import pxla, xla, mlir
 from jax.experimental.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
@@ -39,7 +40,6 @@ Shape = Tuple[int, ...]
 Device = xc.Device
 DeviceArray = xc.Buffer
 Index = Tuple[slice, ...]
-ArrayLike = Union[np.ndarray, DeviceArray]
 
 
 class Shard:
@@ -101,7 +101,7 @@ def _single_device_array_from_buf(buf, committed):
 
 
 @pxla.use_cpp_class(xc.Array if xc._version >= 92 else None)
-class Array:
+class Array(basearray.Array):
   """Experimental unified Array type.
 
   This Python implementation will eventually be replaced by a C++ implementation.
@@ -498,7 +498,9 @@ xla.canonicalize_dtype_handlers[Array] = pxla.identity
 api_util._shaped_abstractify_handlers[Array] = op.attrgetter('aval')
 ad_util.jaxval_adders[Array] = lax_internal.add
 ad_util.jaxval_zeros_likers[Array] = lax_internal.zeros_like_array
-ndarray.register(Array)
+if xc._version >= 92:
+  # TODO(jakevdp) replace this with true inheritance at the C++ level.
+  basearray.Array.register(Array)
 
 
 def _array_mlir_constant_handler(val, canonicalize_types=True):

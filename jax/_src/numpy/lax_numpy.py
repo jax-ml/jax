@@ -3601,12 +3601,12 @@ def take_along_axis(arr, indices, axis: Optional[int],
       j += 1
 
 
-  gather_indices = lax.concatenate(gather_indices, dimension=j)
+  gather_indices_arr = lax.concatenate(gather_indices, dimension=j)
   dnums = lax.GatherDimensionNumbers(
     offset_dims=tuple(offset_dims),
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
-  return lax.gather(arr, gather_indices, dnums, tuple(slice_sizes),
+  return lax.gather(arr, gather_indices_arr, dnums, tuple(slice_sizes),
                     mode="fill" if mode is None else mode)
 
 ### Indexing
