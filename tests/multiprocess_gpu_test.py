@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -96,33 +97,35 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     os.environ["JAX_PORT"] = str(port)
     os.environ["NUM_TASKS"] = str(num_tasks)
 
-    subprocesses = []
-    for task in range(num_tasks):
-      env = os.environ.copy()
-      env["TASK"] = str(task)
-      env["CUDA_VISIBLE_DEVICES"] = ",".join(
-          str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-      args = [
-          sys.executable,
-          "-c",
-          ('import jax, os; '
-           'jax.distributed.initialize('
-               'f\'localhost:{os.environ["JAX_PORT"]}\', '
-               'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-           'print(f\'{jax.local_device_count()},{jax.device_count()}\', end="")'
-          )
-      ]
-      subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, universal_newlines=True))
+    with contextlib.ExitStack() as exit_stack:
+      subprocesses = []
+      for task in range(num_tasks):
+        env = os.environ.copy()
+        env["TASK"] = str(task)
+        env["CUDA_VISIBLE_DEVICES"] = ",".join(
+            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+        args = [
+            sys.executable,
+            "-c",
+            ('import jax, os; '
+            'jax.distributed.initialize('
+                'f\'localhost:{os.environ["JAX_PORT"]}\', '
+                'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+            'print(f\'{jax.local_device_count()},{jax.device_count()}\', end="")'
+            )
+        ]
+        proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, universal_newlines=True)
+        subprocesses.append(exit_stack.enter_context(proc))
 
-    try:
-      for proc in subprocesses:
-        out, _ = proc.communicate()
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
-    finally:
-      for proc in subprocesses:
-        proc.kill()
+      try:
+        for proc in subprocesses:
+          out, _ = proc.communicate()
+          self.assertEqual(proc.returncode, 0)
+          self.assertEqual(out, f'{num_gpus_per_task},{num_gpus}')
+      finally:
+        for proc in subprocesses:
+          proc.kill()
 
   @unittest.skipIf(xla_extension_version < 91,
                    "Test requires jaxlib 0.3.17 or newer")
@@ -139,33 +142,35 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     os.environ["JAX_PORT"] = str(port)
     os.environ["NUM_TASKS"] = str(num_tasks)
 
-    subprocesses = []
-    for task in range(num_tasks):
-      env = os.environ.copy()
-      env["TASK"] = str(task)
-      visible_devices = ",".join(
-          str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-      program = (
-        'import jax, os; '
-        f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
-        'jax.distributed.initialize('
-        'f\'localhost:{os.environ["JAX_PORT"]}\', '
-        'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-        's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
-        'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
-      )
-      args = [sys.executable, "-c", program]
-      subprocesses.append(subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, universal_newlines=True))
+    with contextlib.ExitStack() as exit_stack:
+      subprocesses = []
+      for task in range(num_tasks):
+        env = os.environ.copy()
+        env["TASK"] = str(task)
+        visible_devices = ",".join(
+            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+        program = (
+          'import jax, os; '
+          f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
+          'jax.distributed.initialize('
+          'f\'localhost:{os.environ["JAX_PORT"]}\', '
+          'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+          's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
+          'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
+        )
+        args = [sys.executable, "-c", program]
+        proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, universal_newlines=True)
+        subprocesses.append(exit_stack.enter_context(proc))
 
-    try:
-      for proc in subprocesses:
-        out, _ = proc.communicate()
-        self.assertEqual(proc.returncode, 0)
-        self.assertEqual(out, f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]')
-    finally:
-      for proc in subprocesses:
-        proc.kill()
+      try:
+        for proc in subprocesses:
+          out, _ = proc.communicate()
+          self.assertEqual(proc.returncode, 0)
+          self.assertEqual(out, f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]')
+      finally:
+        for proc in subprocesses:
+          proc.kill()
 
 @unittest.skipIf(
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
