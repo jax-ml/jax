@@ -2897,8 +2897,10 @@ def einsum(*operands, out=None, optimize='optimal', precision=None,
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
 
-  if (_use_xeinsum or isinstance(operands[0], str) and '{' in operands[0]):
-    return lax.xeinsum(*operands)
+  spec = operands[0] if isinstance(operands[0], str) else None
+
+  if (_use_xeinsum or spec is not None and '{' in spec):
+    return jax.named_call(lax.xeinsum, name=spec)(*operands)
 
   optimize = 'optimal' if optimize is True else optimize
   # using einsum_call=True here is an internal api for opt_einsum
@@ -2917,7 +2919,10 @@ def einsum(*operands, out=None, optimize='optimal', precision=None,
         *operands, einsum_call=True, use_blas=True, optimize=optimize)
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
-  return _einsum(operands, contractions, precision)
+
+  _einsum_computation = jax.named_call(
+      _einsum, name=spec) if spec is not None else _einsum
+  return _einsum_computation(operands, contractions, precision)
 
 # Enable other modules to override einsum_contact_path.
 # Indexed by the type of the non constant dimension
@@ -4319,7 +4324,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     nd = ndim(a)
     axis = tuple(_canonicalize_axis(ax, nd) for ax in axis)
     if len(set(axis)) != len(axis):
-        raise ValueError('repeated axis')
+      raise ValueError('repeated axis')
     for ax in axis:
       keepdim[ax] = 1
 
@@ -4421,7 +4426,7 @@ def _quantile(a, q, axis, interpolation, keepdims, squash_nans):
     raise ValueError(f"interpolation={interpolation!r} not recognized")
   if keepdims and keepdim:
     if q_ndim > 0:
-        keepdim = (shape(q)[0],) + keepdim
+      keepdim = (shape(q)[0],) + keepdim
     result = reshape(result,  keepdim)
   return lax.convert_element_type(result, a.dtype)
 
@@ -4592,7 +4597,7 @@ def _nbytes(arr):
 
 
 def _itemsize(arr):
-    return _dtype(arr).itemsize
+  return _dtype(arr).itemsize
 
 
 def _clip(number, min=None, max=None, out=None):  # noqa: F811
