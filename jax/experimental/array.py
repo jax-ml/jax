@@ -477,6 +477,7 @@ class Array(basearray.Array):
 setattr(Array, "__hash__", None)
 setattr(Array, "__array_priority__", 100)
 
+
 def make_array_from_callback(shape: Shape, sharding: Sharding,
                              data_callback: Callable[[Optional[Index]], ArrayLike]) -> Array:
   device_to_index_map = sharding.devices_indices_map(shape)
@@ -488,6 +489,14 @@ def make_array_from_callback(shape: Shape, sharding: Sharding,
       device_put(data_callback(device_to_index_map[device]), device)
       for device in sharding.addressable_devices
   ]
+  aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
+  return Array(aval, sharding, arrays, committed=True)
+
+
+def make_array_from_single_device_arrays(shape: Shape, sharding: Sharding,
+                                         arrays: Sequence[Array]) -> Array:
+  # All input arrays should be committed. Checking it is expensive on
+  # single-controller systems.
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
   return Array(aval, sharding, arrays, committed=True)
 
