@@ -86,7 +86,7 @@ zip, unsafe_zip = safe_zip, zip
 def _is_array_or_tracer(operand: Any) -> bool:
   if config.jax_array:
     from jax.experimental import array  # pylint: disable=g-import-not-at-top
-    return isinstance(operand, (core.Tracer, array.Array))
+    return isinstance(operand, (core.Tracer, array.ArrayImpl))
   else:
     return isinstance(operand, (core.Tracer, device_array.DeviceArray))
 
@@ -944,8 +944,6 @@ def transpose(operand: ArrayLike, permutation: Sequence[int]) -> Array:
   <https://www.tensorflow.org/xla/operation_semantics#transpose>`_
   operator.
   """
-  from jax.experimental import array
-
   permutation = tuple(operator.index(d) for d in permutation)
   if permutation == tuple(range(np.ndim(operand))) and _is_array_or_tracer(operand):
     return type_cast(Array, operand)

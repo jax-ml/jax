@@ -1452,8 +1452,7 @@ class LaxTest(jtu.JaxTestCase):
     if jit:
       op = jax.jit(op)
     result = op(operand)
-    expected_type = array.Array if config.jax_array else jnp.DeviceArray
-    self.assertIsInstance(result, expected_type)
+    self.assertIsInstance(result, jax.Array)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_inshape={}_outshape={}".format(
@@ -2915,10 +2914,7 @@ class LazyConstantTest(jtu.JaxTestCase):
     if jit:
       op = jax.jit(op)
     result = op(input_type(value))
-    if config.jax_array:
-      assert isinstance(result, array.Array)
-    else:
-      assert isinstance(result, jnp.DeviceArray)
+    assert isinstance(result, jax.Array)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_dtype_in={}_dtype_out={}".format(
@@ -3212,13 +3208,13 @@ class FooArray:
   ndim = property(lambda self: self.data.ndim - 1)
 
 def device_put_foo_array(x: FooArray, device):
-  if isinstance(x.data, array.Array):
+  if isinstance(x.data, array.ArrayImpl):
     return array._device_put_array(x.data, device)
   return dispatch._device_put_array(x.data, device)
 
 def shard_foo_array_handler(x, devices, indices, mode):
   device, = devices
-  if isinstance(x.data, array.Array):
+  if isinstance(x.data, array.ArrayImpl):
     return array._device_put_array(x.data, device)
   return dispatch._device_put_array(x.data, device)
 

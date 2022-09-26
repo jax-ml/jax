@@ -79,7 +79,7 @@ numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 def _check_instance(self, x):
   if config.jax_array:
-    self.assertIsInstance(x, array.Array)
+    self.assertIsInstance(x, array.ArrayImpl)
   else:
     self.assertIsInstance(x, device_array.DeviceArray)
 

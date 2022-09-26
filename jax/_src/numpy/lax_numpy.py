@@ -78,7 +78,7 @@ from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis)
-from jax.experimental.array import Array
+from jax.experimental.array import ArrayImpl
 
 newaxis = None
 
@@ -1876,7 +1876,7 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
   # We can't use the ndarray class because we need to handle internal buffers
   # (See https://github.com/google/jax/issues/8950)
-  ndarray_types = (device_array.DeviceArray, core.Tracer, Array)
+  ndarray_types = (device_array.DeviceArray, core.Tracer, ArrayImpl)
 
   if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
@@ -4772,7 +4772,7 @@ _NOT_IMPLEMENTED = ['argpartition']
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
-_JAX_ARRAY_TYPES = (device_array.DeviceArray, core.Tracer, Array)
+_JAX_ARRAY_TYPES = (device_array.DeviceArray, core.Tracer, ArrayImpl)
 _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
@@ -4811,7 +4811,7 @@ def _multi_slice(arr,
 def _unstack(x):
   return [lax.index_in_dim(x, i, keepdims=False) for i in range(x.shape[0])]
 setattr(device_array.DeviceArray, "_unstack", _unstack)
-setattr(Array, '_unstack', _unstack)
+setattr(ArrayImpl, '_unstack', _unstack)
 
 def _chunk_iter(x, size):
   if size > x.shape[0]:
@@ -4823,7 +4823,7 @@ def _chunk_iter(x, size):
     if tail:
       yield lax.dynamic_slice_in_dim(x, num_chunks * size, tail)
 setattr(device_array.DeviceArray, "_chunk_iter", _chunk_iter)
-setattr(Array, '_chunk_iter', _chunk_iter)
+setattr(ArrayImpl, '_chunk_iter', _chunk_iter)
 
 # Syntactic sugar for scatter operations.
 class _IndexUpdateHelper:
@@ -5150,7 +5150,7 @@ def _set_device_array_base_attributes(device_array, include=None, exclude=None):
   maybe_setattr("clip", _clip)
 
 _set_device_array_base_attributes(device_array.DeviceArray)
-_set_device_array_base_attributes(Array, exclude={'__getitem__'})
+_set_device_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
 
 
 def _set_device_array_attributes(device_array):
@@ -5167,4 +5167,4 @@ for t in device_array.device_array_types:
   _set_device_array_attributes(t)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
 _set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)
-_set_device_array_attributes(Array)
+_set_device_array_attributes(ArrayImpl)

@@ -1167,7 +1167,7 @@ class XMapArrayTest(XMapTestCase):
               axis_resources={"a": "x", "b": "y"})
 
         out = f(input_array)
-        self.assertIsInstance(out, array.Array)
+        self.assertIsInstance(out, array.ArrayImpl)
         self.assertEqual(out.shape, (8, 2))
         self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
         self.assertDictEqual(out.sharding.mesh.shape, {'x': 4, 'y': 2})
@@ -1191,14 +1191,14 @@ class XMapArrayTest(XMapTestCase):
         expected_matrix_mul = np.diagonal(input_data @ input_data.T)
         out1, out2 = f(a1, a2)
 
-        self.assertIsInstance(out1, array.Array)
+        self.assertIsInstance(out1, array.ArrayImpl)
         self.assertEqual(out1.shape, (8,))
         self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
         self.assertDictEqual(out1.sharding.mesh.shape, {'x': 4, 'y': 2})
         for s in out1.addressable_shards:
           self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
 
-        self.assertIsInstance(out2, array.Array)
+        self.assertIsInstance(out2, array.ArrayImpl)
         self.assertEqual(out2.shape, (8,))
         self.assertEqual(out2.addressable_shards[0].data.shape, (4,))
         self.assertDictEqual(out2.sharding.mesh.shape, {'x': 4, 'y': 2})

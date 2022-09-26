@@ -26,7 +26,6 @@ import numpy as np
 import jax
 from jax._src import dtypes
 from jax import numpy as jnp
-from jax.experimental import array
 
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -74,13 +73,6 @@ _EXPECTED_CANONICALIZE_X32[np.longlong] = np.int32
 def identity(x):
   """A named identity function for use in tests"""
   return x
-
-
-def _check_instance(self, x):
-  if config.jax_array:
-    self.assertIsInstance(x, array.Array)
-  else:
-    self.assertIsInstance(x, jnp.DeviceArray)
 
 
 class DtypesTest(jtu.JaxTestCase):
@@ -231,7 +223,7 @@ class DtypesTest(jtu.JaxTestCase):
   def testScalarInstantiation(self, scalar_type):
     a = scalar_type(1)
     self.assertEqual(a.dtype, jnp.dtype(scalar_type))
-    _check_instance(self, a)
+    self.assertIsInstance(a, jax.Array)
     self.assertEqual(0, jnp.ndim(a))
     self.assertIsInstance(np.dtype(scalar_type).type(1), scalar_type)
 

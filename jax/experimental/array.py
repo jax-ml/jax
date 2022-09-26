@@ -18,6 +18,7 @@ import operator as op
 import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
+import jax
 from jax import core
 from jax._src import abstract_arrays
 from jax._src import ad_util
@@ -55,7 +56,7 @@ class Shard:
   """
 
   def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
-               data: Optional[Array] = None):
+               data: Optional[ArrayImpl] = None):
     self.device = device
     self._sharding = sharding
     self._global_shape = global_shape
@@ -96,12 +97,12 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 def _single_device_array_from_buf(buf, committed):
   db = pxla._set_aval(buf)
-  return Array(db.aval, SingleDeviceSharding(db.device()), [db],
-               committed=committed, _skip_checks=True)
+  return ArrayImpl(db.aval, SingleDeviceSharding(db.device()), [db],
+                   committed=committed, _skip_checks=True)
 
 
-@pxla.use_cpp_class(xc.Array if xc._version >= 92 else None)
-class Array(basearray.Array):
+@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 96 else None)
+class ArrayImpl(basearray.Array):
   """Experimental unified Array type.
 
   This Python implementation will eventually be replaced by a C++ implementation.
@@ -117,7 +118,7 @@ class Array(basearray.Array):
 
   @pxla.use_cpp_method
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
-               arrays: Union[Sequence[DeviceArray], Sequence[Array]],
+               arrays: Union[Sequence[DeviceArray], Sequence[ArrayImpl]],
                committed: bool, _skip_checks: bool = False):
     # NOTE: the actual implementation of the constructor is moved to C++.
 
@@ -271,8 +272,8 @@ class Array(basearray.Array):
         if buf_idx is not None:
           buf = self._arrays[buf_idx]
           aval = core.ShapedArray(buf.shape, self.dtype)
-          return Array(aval, SingleDeviceSharding(buf.device()), [buf],
-                       committed=False, _skip_checks=True)
+          return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
+                           committed=False, _skip_checks=True)
       return lax_numpy._rewriting_take(self, idx)
     else:
       # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
@@ -385,7 +386,7 @@ class Array(basearray.Array):
     return [_single_device_array_from_buf(a, self._committed)
             for a in self._arrays]
 
-  def addressable_data(self, index: int) -> Array:
+  def addressable_data(self, index: int) -> ArrayImpl:
     self._check_if_deleted()
     return _single_device_array_from_buf(self._arrays[index], self._committed)
 
@@ -474,12 +475,12 @@ class Array(basearray.Array):
     return cast(np.ndarray, self._npy_value)
 
 # explicitly set to be unhashable. Same as what device_array.py does.
-setattr(Array, "__hash__", None)
-setattr(Array, "__array_priority__", 100)
+setattr(ArrayImpl, "__hash__", None)
+setattr(ArrayImpl, "__array_priority__", 100)
 
-
-def make_array_from_callback(shape: Shape, sharding: Sharding,
-                             data_callback: Callable[[Optional[Index]], ArrayLike]) -> Array:
+def make_array_from_callback(
+    shape: Shape, sharding: Sharding,
+    data_callback: Callable[[Optional[Index]], ArrayLike]) -> ArrayImpl:
   device_to_index_map = sharding.devices_indices_map(shape)
   # Use addressable_devices here instead of `_addressable_device_assignment`
   # because `_addressable_device_assignment` is only available on
@@ -490,32 +491,32 @@ def make_array_from_callback(shape: Shape, sharding: Sharding,
       for device in sharding.addressable_devices
   ]
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
-  return Array(aval, sharding, arrays, committed=True)
+  return ArrayImpl(aval, sharding, arrays, committed=True)
 
 
-def make_array_from_single_device_arrays(shape: Shape, sharding: Sharding,
-                                         arrays: Sequence[Array]) -> Array:
+def make_array_from_single_device_arrays(
+    shape: Shape, sharding: Sharding, arrays: Sequence[ArrayImpl]) -> ArrayImpl:
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
-  return Array(aval, sharding, arrays, committed=True)
+  return ArrayImpl(aval, sharding, arrays, committed=True)
 
 
-core.pytype_aval_mappings[Array] = abstract_arrays.canonical_concrete_aval
-xla.pytype_aval_mappings[Array] = op.attrgetter('aval')
-xla.canonicalize_dtype_handlers[Array] = pxla.identity
-api_util._shaped_abstractify_handlers[Array] = op.attrgetter('aval')
-ad_util.jaxval_adders[Array] = lax_internal.add
-ad_util.jaxval_zeros_likers[Array] = lax_internal.zeros_like_array
-if xc._version >= 92:
+core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
+xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
+xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
+api_util._shaped_abstractify_handlers[ArrayImpl] = op.attrgetter('aval')
+ad_util.jaxval_adders[ArrayImpl] = lax_internal.add
+ad_util.jaxval_zeros_likers[ArrayImpl] = lax_internal.zeros_like_array
+if xc._version >= 96:
   # TODO(jakevdp) replace this with true inheritance at the C++ level.
-  basearray.Array.register(Array)
+  basearray.Array.register(ArrayImpl)
 
 
 def _array_mlir_constant_handler(val, canonicalize_types=True):
   return mlir.ir_constants(val._value,
                            canonicalize_types=canonicalize_types)
-mlir.register_constant_handler(Array, _array_mlir_constant_handler)
+mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
 
 def _device_put_array(x, device: Optional[Device]):
@@ -529,7 +530,7 @@ def _device_put_array(x, device: Optional[Device]):
     # Round trip via host if x is sharded. SDA also does a round trip via host.
     return dispatch._device_put_array(x._value, device)
 
-dispatch.device_put_handlers[Array] = _device_put_array
+dispatch.device_put_handlers[ArrayImpl] = _device_put_array
 
 
 def _array_pmap_shard_arg(x, devices, indices, mode):
@@ -586,7 +587,7 @@ def _array_shard_arg(x, devices, indices, mode):
     return _array_pmap_shard_arg(x, devices, indices, mode)
   else:
     return _array_rest_shard_arg(x, devices, indices, mode)
-pxla.shard_arg_handlers[Array] = _array_shard_arg
+pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
 def _array_global_result_handler(global_aval, out_sharding, committed,
@@ -596,8 +597,8 @@ def _array_global_result_handler(global_aval, out_sharding, committed,
   if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed, is_out_sharding_from_xla)
-  return lambda bufs: Array(global_aval, out_sharding, bufs,
-                            committed=committed, _skip_checks=True)
+  return lambda bufs: ArrayImpl(global_aval, out_sharding, bufs,
+                                committed=committed, _skip_checks=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.AbstractToken, pxla.OutputType.Array)] = lambda *_: lambda *_: core.token
@@ -608,7 +609,7 @@ def _array_local_result_handler(aval, sharding, indices):
   if core.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
-  return lambda bufs: Array(aval, sharding, bufs, committed=True,
-                            _skip_checks=True)
+  return lambda bufs: ArrayImpl(aval, sharding, bufs, committed=True,
+                                _skip_checks=True)
 pxla.local_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_local_result_handler
 pxla.local_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_local_result_handler

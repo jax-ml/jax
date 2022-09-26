@@ -39,7 +39,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
-from jax.experimental.array import Array
+from jax.experimental.array import ArrayImpl
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.sharding import MeshPspecSharding
 from jax.interpreters import mlir
@@ -1826,7 +1826,7 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
       axis_resources, resource_env, global_axis_sizes,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
-    if isinstance(arg, (GlobalDeviceArray, Array)):
+    if isinstance(arg, (GlobalDeviceArray, ArrayImpl)):
       arr_flavor = 'GDA' if isinstance(arg, GlobalDeviceArray) else 'Array'
       if arr_flavor == 'Array' and not isinstance(arg.sharding, MeshPspecSharding):
         continue

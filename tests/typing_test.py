@@ -27,7 +27,7 @@ from jax._src import typing
 from jax import lax
 import jax.numpy as jnp
 
-from jax.experimental.array import Array as ArrayImpl
+from jax.experimental.array import ArrayImpl
 
 from absl.testing import absltest
 import numpy as np

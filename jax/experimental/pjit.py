@@ -169,7 +169,7 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
         isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
         not executable.unsafe_call.has_unordered_effects and
         not executable.unsafe_call.has_host_callbacks and
-        all(isinstance(x, xc.Array) for x in out_flat)
+        all(isinstance(x, xc.ArrayImpl) for x in out_flat)
     )
 
     if use_fastpath:
@@ -428,7 +428,7 @@ def pjit(fun: Callable,
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
-  if FLAGS.experimental_cpp_pjit and xc._version >= 95:
+  if FLAGS.experimental_cpp_pjit and xc._version >= 96:
     wrapped = _cpp_pjit(fun, infer_params, static_argnums)
   else:
     wrapped = _python_pjit(fun, infer_params)

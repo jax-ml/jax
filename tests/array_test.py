@@ -191,7 +191,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
-    self.assertIsInstance(arr, array.Array)
+    self.assertIsInstance(arr, array.ArrayImpl)
     self.assertTrue(dispatch.is_single_device_sharding(arr.sharding))
     self.assertEqual(arr._committed, False)
 
@@ -199,13 +199,13 @@ class JaxArrayTest(jtu.JaxTestCase):
     a = jnp.array([1, 2, 3])
     b = jnp.array([4, 5, 6])
     arr = jax.jit(lambda x, y: x + y)(a, b)
-    self.assertIsInstance(arr, array.Array)
+    self.assertIsInstance(arr, array.ArrayImpl)
     self.assertArraysEqual(arr, np.array([5, 7, 9]))
     self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
   def test_jnp_array_jnp_add(self):
     arr = jnp.add(jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
-    self.assertIsInstance(arr, array.Array)
+    self.assertIsInstance(arr, array.ArrayImpl)
     self.assertArraysEqual(arr, np.array([5, 7, 9]))
     self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
@@ -213,7 +213,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     a = jnp.array([1, 2, 3])
     b = jnp.array([4, 5, 6])
     arr = a + b
-    self.assertIsInstance(arr, array.Array)
+    self.assertIsInstance(arr, array.ArrayImpl)
     self.assertArraysEqual(arr, np.array([5, 7, 9]))
     self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
 
@@ -279,13 +279,13 @@ class JaxArrayTest(jtu.JaxTestCase):
         ValueError,
         r'Expected 8 per-device arrays \(this is how many devices are addressable '
         r'by the sharding\), but got 4'):
-      array.Array(jax.ShapedArray(shape, np.float32), s, bufs[:4], committed=True)
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs[:4], committed=True)
 
     with self.assertRaisesRegex(
         ValueError,
         r'Expected 8 per-device arrays \(this is how many devices are addressable '
         r'by the sharding\), but got 16'):
-      array.Array(jax.ShapedArray(shape, np.float32), s, bufs + bufs, committed=True)
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs + bufs, committed=True)
 
   def test_arrays_not_in_device_assignment(self):
     if jax.device_count() < 4:
@@ -299,7 +299,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         ValueError,
         "Some per-device arrays are placed on devices {2, 3}, which are "
         "not used in the specified sharding"):
-      array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y"), (2, 2)),
@@ -334,7 +334,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         ValueError,
         "Input buffers to `Array` must have matching dtypes. "
         "Got int32, expected float32"):
-      array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   def test_array_iter_pmap_sharding(self):
     if jax.device_count() < 2:
@@ -347,7 +347,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     sin_x = iter(np.sin(x))
     for i, j in zip(iter(y), sin_x):
-      self.assertIsInstance(i, array.Array)
+      self.assertIsInstance(i, array.ArrayImpl)
       self.assertArraysAllClose(i, j)
 
   def test_array_iter_pmap_sharding_last_dim_sharded(self):
@@ -433,10 +433,10 @@ class JaxArrayTest(jtu.JaxTestCase):
         input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
 
     for a in arr.device_buffers:
-      self.assertIsInstance(a, array.Array)
+      self.assertIsInstance(a, array.ArrayImpl)
 
     x = jnp.array([1, 2, 3])
-    self.assertIsInstance(x.device_buffer, array.Array)
+    self.assertIsInstance(x.device_buffer, array.ArrayImpl)
 
 
 @jtu.with_config(jax_array=True)
@@ -539,8 +539,8 @@ class ShardingTest(jtu.JaxTestCase):
 
   def test_is_subclass(self):
     # array version of api_test.py::APITest::test_is_subclass
-    self.assertTrue(issubclass(array.Array, jnp.ndarray))
-    self.assertFalse(issubclass(array.Array, np.ndarray))
+    self.assertTrue(issubclass(array.ArrayImpl, jnp.ndarray))
+    self.assertFalse(issubclass(array.ArrayImpl, np.ndarray))
 
 
 if __name__ == '__main__':

@@ -113,7 +113,7 @@ def simulated_cached_fun(s):
 
 def _check_instance(self, x):
   if config.jax_array:
-    self.assertIsInstance(x, array.Array)
+    self.assertIsInstance(x, array.ArrayImpl)
   else:
     self.assertIsInstance(x, pxla.ShardedDeviceArray)
 
@@ -404,7 +404,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = (x + 1) * 2
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
-    self.assertIsInstance(actual, array.Array)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 2)
     self.assertAllClose(np.asarray(actual._arrays[0]), expected,
                         check_dtypes=False)
@@ -433,7 +433,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     expected = (x + 1) * 2
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
-    self.assertIsInstance(actual, array.Array)
+    self.assertIsInstance(actual, array.ArrayImpl)
     self.assertLen(actual.addressable_shards, 2)
     self.assertAllClose(np.asarray(actual._arrays[0]), expected,
                         check_dtypes=False)
@@ -1539,7 +1539,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
                   for ip in compiled.input_shardings]
         out = compiled(*inputs)
-        self.assertIsInstance(out, array.Array)
+        self.assertIsInstance(out, array.ArrayImpl)
         self.assertArraysEqual(out._value, input_data)
 
 
@@ -1646,7 +1646,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                   for ip in compiled.input_shardings]
         out1, out2 = compiled(*inputs)
         for o in [out1, out2]:
-          self.assertIsInstance(o, array.Array)
+          self.assertIsInstance(o, array.ArrayImpl)
           self.assertArraysEqual(o._value, input_data)
 
   @unittest.skip('The error is not raised yet. Enable this back once we raise '
@@ -1696,7 +1696,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     expected_matrix_mul = input_data @ input_data.T
 
     out = f(input_array)
-    self.assertIsInstance(out, array.Array)
+    self.assertIsInstance(out, array.ArrayImpl)
     self.assertEqual(out.shape, (8, 8))
     self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
     for s in out.addressable_shards:
@@ -1723,7 +1723,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       expected_matrix_mul = input_data @ input_data.T
 
       out = f(input_array)
-      self.assertIsInstance(out, array.Array)
+      self.assertIsInstance(out, array.ArrayImpl)
       self.assertEqual(out.shape, (8, 8))
       self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
       for s in out.addressable_shards:
@@ -1744,7 +1744,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         # Since no in_axis_resources is provided, pjit will assume that
         # the numpy input is fully replicated over the mesh.
         out = f(input_data)
-        self.assertIsInstance(out, array.Array)
+        self.assertIsInstance(out, array.ArrayImpl)
         for s in out.addressable_shards:
           self.assertEqual(s.data.shape, (2, 1))
           self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
@@ -1763,7 +1763,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
                  out_axis_resources=MeshPspecSharding(
                      global_mesh, P('x', 'y')))
         out = f(input_data)
-        self.assertIsInstance(out, array.Array)
+        self.assertIsInstance(out, array.ArrayImpl)
         for s in out.addressable_shards:
           self.assertEqual(s.data.shape, (2, 1))
           self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
@@ -1773,7 +1773,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_unspecified_out_axis_resources(self):
 
     def _checks(out, input_data):
-      self.assertIsInstance(out, array.Array)
+      self.assertIsInstance(out, array.ArrayImpl)
       self.assertIsInstance(out.sharding, OpShardingSharding)
       self.assertEqual(out.shape, (8, 2))
       self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
@@ -1826,25 +1826,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out_tree = f((a1, (a2, (a3, a4))))
     (out1, out2, out3, out4), _ = jax.tree_util.tree_flatten(out_tree)
 
-    self.assertIsInstance(out1, array.Array)
+    self.assertIsInstance(out1, array.ArrayImpl)
     self.assertEqual(out1.shape, (8, 2))
     self.assertEqual(out1.addressable_shards[0].data.shape, s1_shape)
     for s in out1.addressable_shards:
       self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-    self.assertIsInstance(out2, array.Array)
+    self.assertIsInstance(out2, array.ArrayImpl)
     self.assertEqual(out2.shape, (8, 2))
     self.assertEqual(out2.addressable_shards[0].data.shape, s2_shape)
     for s in out2.addressable_shards:
       self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-    self.assertIsInstance(out3, array.Array)
+    self.assertIsInstance(out3, array.ArrayImpl)
     self.assertEqual(out3.shape, (8, 2))
     self.assertEqual(out3.addressable_shards[0].data.shape, s3_shape)
     for s in out3.addressable_shards:
       self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
 
-    self.assertIsInstance(out4, array.Array)
+    self.assertIsInstance(out4, array.ArrayImpl)
     self.assertEqual(out4.shape, (8, 2))
     self.assertEqual(out4.addressable_shards[0].data.shape, s4_shape)
     for s in out4.addressable_shards:
@@ -1879,7 +1879,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         out = pjit(
             lambda x: x,
             in_axis_resources=MeshPspecSharding(global_mesh, P('x' ,'y')))(input_array)
-        self.assertIsInstance(out, array.Array)
+        self.assertIsInstance(out, array.ArrayImpl)
 
   def test_no_input_output(self):
     with jax_array(True):
@@ -1918,7 +1918,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
             in_axis_resources=MeshPspecSharding(global_mesh, P('x' ,'y')))
         compiled = f.lower(aval, aval).compile()
         out = compiled(a1, a1)
-        self.assertIsInstance(out, array.Array)
+        self.assertIsInstance(out, array.ArrayImpl)
         self.assertArraysEqual(out._value, input_data @ input_data.T)
 
         with self.assertRaisesRegex(
@@ -2045,11 +2045,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def add(x, y):
       return x + y
     out = add(a, b)
-    self.assertIsInstance(out, array.Array)
+    self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, a + b)
 
     out2 = add(out, out)
-    self.assertIsInstance(out2, array.Array)
+    self.assertIsInstance(out2, array.ArrayImpl)
     self.assertArraysEqual(out2, 2 * (a + b))
 
   @jax_array(True)
@@ -2061,7 +2061,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x @ x.T
 
     out = mul(a)
-    self.assertIsInstance(out, array.Array)
+    self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, a @ a.T)
 
   @jax_array(True)
@@ -2107,7 +2107,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     a = jnp.array(16, dtype=jnp.float32)
     f = lambda x: x
     out = jax.grad(pjit(f))(a)
-    self.assertIsInstance(out, array.Array)
+    self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, jax.grad(f)(a))
 
   @jax_array(True)
@@ -2137,7 +2137,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # is correct.
     bufs = [jax.device_put(inp_data[s.device_indices(d, shape)], d)
             for d in jax.local_devices()]
-    arr = array.Array(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+    arr = array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
     f = pjit(lambda x: x, out_axis_resources=s)
     out = f(arr)
@@ -2225,7 +2225,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     inp = np.arange(prod(shape), dtype=np.int32).reshape(shape)
-    arr = array.Array(
+    arr = array.ArrayImpl(
         jax.ShapedArray(shape, np.int32), MeshPspecSharding(mesh, P(None)),
         [jax.device_put(inp, d) for d in mesh.devices.flat], committed=False)
     with self.assertRaisesRegex(

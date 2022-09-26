@@ -873,10 +873,10 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
 def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
-  from jax.experimental.array import Array
+  from jax.experimental.array import ArrayImpl
 
   candidates = defaultdict(list)
-  if isinstance(x, Array):
+  if isinstance(x, ArrayImpl):
     bufs = x._arrays
     arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
   else:
@@ -1002,7 +1002,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
     with jax.disable_jit(False):
       donate_argnums_ = donate_argnums
-      if isinstance(outval, (ShardedDeviceArray, jax.experimental.array.Array)):
+      if isinstance(outval, (ShardedDeviceArray, jax.experimental.array.ArrayImpl)):
         # We don't want to donate if it's already sharded.
         donate_argnums_ = ()
       out = jax.pmap(
@@ -3349,7 +3349,7 @@ def _out_shardings_for_trivial(
       device_assignment, sharding._get_replicated_op_sharding())
   shardings: Dict[core.Var, sharding.XLACompatibleSharding] = {}
   for constvar, constval in zip(jaxpr.constvars, consts):
-    if isinstance(constval, array.Array):
+    if isinstance(constval, array.ArrayImpl):
       shardings[constvar] = constval.sharding
   map(shardings.setdefault, jaxpr.invars, in_shardings)
   return [rep if isinstance(x, core.Literal) else shardings.get(x, rep)
@@ -3374,7 +3374,7 @@ def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
 
 def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
   from jax.experimental.global_device_array import GlobalDeviceArray
-  from jax.experimental.array import Array
+  from jax.experimental.array import ArrayImpl
 
   @lru_cache(maxsize=4096)
   def _cached_check(arg_sharding, in_xla_sharding, arg_type, ndim, committed):
@@ -3387,7 +3387,7 @@ def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
           f"xla sharding: {in_xla_sharding}")
 
   for arg, xs in safe_zip(args, in_xla_shardings):
-    if not isinstance(arg, (GlobalDeviceArray, Array)):
+    if not isinstance(arg, (GlobalDeviceArray, ArrayImpl)):
       continue
     if isinstance(arg, GlobalDeviceArray):
       _cached_check(_create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes), xs,

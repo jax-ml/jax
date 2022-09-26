@@ -134,7 +134,7 @@ class CheckpointTest(jtu.JaxTestCase):
         [pspec, P('x'), P(None)],
         tspecs)
 
-    self.assertIsInstance(m1, array.Array)
+    self.assertIsInstance(m1, array.ArrayImpl)
     self.assertArraysEqual(np.asarray(m1.addressable_shards[0].data),
                            np.array([[0], [2]]))
     self.assertArraysEqual(np.asarray(m1.addressable_shards[1].data),
@@ -142,7 +142,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
     self.assertEqual(m1.dtype, np.int32)
 
-    self.assertIsInstance(m2, array.Array)
+    self.assertIsInstance(m2, array.ArrayImpl)
     self.assertArraysEqual(np.asarray(m2.addressable_shards[0].data),
                            np.array([[16, 17], [18, 19]]))
     self.assertArraysEqual(np.asarray(m2.addressable_shards[1].data),
@@ -150,7 +150,7 @@ class CheckpointTest(jtu.JaxTestCase):
     self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
 
-    self.assertIsInstance(m3, array.Array)
+    self.assertIsInstance(m3, array.ArrayImpl)
     for i, s in enumerate(m3.addressable_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)

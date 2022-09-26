@@ -497,7 +497,7 @@ def _cpp_jit_clear_cache(self):
 
 def _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
   use_fastpath = (
-      xc._version >= 92 and
+      xc._version >= 96 and
       # This is if we have already executed this code-path (most-recent entry
       # has been reset to None). Thus, we do not support the fast-path.
       execute is not None and
@@ -506,7 +506,7 @@ def _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
       not execute.ordered_effects and
       not execute.has_unordered_effects and
       not execute.has_host_callbacks and
-      all(isinstance(x, xc.Array) for x in out_flat) and
+      all(isinstance(x, xc.ArrayImpl) for x in out_flat) and
       # Not supported: dynamic shapes
       not jax.config.jax_dynamic_shapes
       # TODO(chky): Check sharding is SingleDeviceSharding
@@ -2215,7 +2215,7 @@ def _cpp_pmap(
         # sufficient, but we use the more general `DeviceArray`.
         all(
             isinstance(x, device_array.DeviceArray) or
-            xc._version >= 94 and isinstance(x, xc.Array) for x in out_flat))
+            xc._version >= 96 and isinstance(x, xc.ArrayImpl) for x in out_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
@@ -2871,7 +2871,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     if config.jax_array:
       from jax.experimental import array, sharding
       sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
-      return array.Array(
+      return array.ArrayImpl(
           stacked_aval,
           sharding.PmapSharding(np.array(devices), sharding_spec),
           buffers, committed=True, _skip_checks=True)
@@ -2926,7 +2926,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     if config.jax_array:
       from jax.experimental import array, sharding
       sharding_spec = pxla._create_pmap_sharding_spec(aval)
-      return array.Array(
+      return array.ArrayImpl(
           aval, sharding.PmapSharding(np.array(devices), sharding_spec),
           [buf, *rest_bufs], committed=True, _skip_checks=True)
     else:

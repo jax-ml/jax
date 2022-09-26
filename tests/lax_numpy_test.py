@@ -2783,7 +2783,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     out = jnp.concatenate([np_input])
     if config.jax_array:
-      self.assertIs(type(out), array.Array)
+      self.assertIs(type(out), array.ArrayImpl)
     else:
       self.assertTrue(device_array.type_is_device_array(out))
 
@@ -4154,8 +4154,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArrayOutputsDeviceArrays(self):
     if config.jax_array:
-      assert type(jnp.array([])) is array.Array
-      assert type(jnp.array(np.array([]))) is array.Array
+      assert type(jnp.array([])) is array.ArrayImpl
+      assert type(jnp.array(np.array([]))) is array.ArrayImpl
     else:
       assert device_array.type_is_device_array(jnp.array([]))
       assert device_array.type_is_device_array(jnp.array(np.array([])))
@@ -4164,7 +4164,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       def __array__(self, dtype=None):
         return np.array([], dtype=dtype)
     if config.jax_array:
-      assert type(jnp.array(NDArrayLike())) is array.Array
+      assert type(jnp.array(NDArrayLike())) is array.ArrayImpl
     else:
       assert device_array.type_is_device_array(jnp.array(NDArrayLike()))
 

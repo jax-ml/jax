@@ -556,7 +556,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f_ans = f(x, y)
     self.assertAllClose(f_ans, f_expected)
     if config.jax_array:
-      self.assertIsInstance(f_ans, array.Array)
+      self.assertIsInstance(f_ans, array.ArrayImpl)
       sharding_spec = f_ans.sharding.sharding_spec
     else:
       self.assertIsInstance(f_ans, pxla.ShardedDeviceArray)
@@ -571,7 +571,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     g_ans = g(x, y)
     self.assertAllClose(g_ans, g_expected)
     if config.jax_array:
-      self.assertIsInstance(g_ans, array.Array)
+      self.assertIsInstance(g_ans, array.ArrayImpl)
       sharding_spec = g_ans.sharding.sharding_spec
     else:
       self.assertIsInstance(g_ans, pxla.ShardedDeviceArray)
@@ -722,7 +722,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertIsInstance(y, jnp.ndarray)
     if config.jax_array:
-      self.assertIsInstance(y, array.Array)
+      self.assertIsInstance(y, array.ArrayImpl)
     else:
       self.assertIsInstance(y, pxla.ShardedDeviceArray)
       self.assertIsInstance(y, device_array.DeviceArray)
@@ -730,7 +730,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(y, 2 * x, check_dtypes=False)
     z = f(y)
     if config.jax_array:
-      self.assertIsInstance(z, array.Array)
+      self.assertIsInstance(z, array.ArrayImpl)
     else:
       self.assertIsInstance(z, pxla.ShardedDeviceArray)
       self.assertIsInstance(z, device_array.DeviceArray)
@@ -740,7 +740,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # test that we can pass in a regular DeviceArray
     y = f(device_put(x))
     if config.jax_array:
-      self.assertIsInstance(y, array.Array)
+      self.assertIsInstance(y, array.ArrayImpl)
     else:
       self.assertIsInstance(y, pxla.ShardedDeviceArray)
       self.assertIsInstance(y, device_array.DeviceArray)
@@ -1606,7 +1606,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     y = f(x)
     self.assertIsInstance(y, jnp.ndarray)
     if config.jax_array:
-      self.assertIsInstance(y, array.Array)
+      self.assertIsInstance(y, array.ArrayImpl)
     else:
       self.assertIsInstance(y, pxla.ShardedDeviceArray)
 
@@ -2585,7 +2585,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     self.assertIsNone(sharded_x._npy_value)
 
     if config.jax_array:
-      arr_type = array.Array
+      arr_type = array.ArrayImpl
     else:
       arr_type = device_array.DeviceArray
 
@@ -2595,7 +2595,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.Array, '_arrays')
+      ('array', True, array.ArrayImpl, '_arrays')
   )
   def test_device_put_sharded(self, is_jax_array, array_type, buffer_attr):
     devices = jax.local_devices()
@@ -2611,7 +2611,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.Array, '_arrays')
+      ('array', True, array.ArrayImpl, '_arrays')
   )
   def test_device_put_sharded_pytree(self, is_jax_array, array_type, buffer_attr):
     devices = jax.local_devices()
@@ -2632,7 +2632,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.Array, '_arrays')
+      ('array', True, array.ArrayImpl, '_arrays')
   )
   def test_device_put_replicated(self, is_jax_array, array_type, buffer_attr):
     devices = jax.local_devices()
@@ -2648,7 +2648,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.Array, '_arrays')
+      ('array', True, array.ArrayImpl, '_arrays')
   )
   def test_device_put_replicated_pytree(self, is_jax_array, array_type, buffer_attr):
     devices = jax.local_devices()
@@ -2900,7 +2900,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     expected = input_data * input_data
 
-    self.assertIsInstance(out, array.Array)
+    self.assertIsInstance(out, array.ArrayImpl)
     for s in out.addressable_shards:
       self.assertArraysEqual(s.data._arrays[0], expected[s.index])
     self.assertArraysEqual(out, expected)
@@ -2918,8 +2918,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     with jax_config.jax_array(True):
       out1, out2 = f(input_array, input_array)
 
-    self.assertIsInstance(out1, array.Array)
-    self.assertIsInstance(out2, array.Array)
+    self.assertIsInstance(out1, array.ArrayImpl)
+    self.assertIsInstance(out2, array.ArrayImpl)
     for s1, s2 in safe_zip(out1.addressable_shards, out2.addressable_shards):
       self.assertArraysEqual(s1.data._arrays[0], input_data[s1.index])
       self.assertArraysEqual(s2.data._arrays[0], input_data[s2.index])
@@ -2942,8 +2942,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     with jax_config.jax_array(True):
       out1, out2 = f(a1, a2)
 
-    self.assertIsInstance(out1, array.Array)
-    self.assertIsInstance(out2, array.Array)
+    self.assertIsInstance(out1, array.ArrayImpl)
+    self.assertIsInstance(out2, array.ArrayImpl)
     self.assertEqual(out1.shape, (2,))
     self.assertEqual(out2.shape, (dc, dc, 2))
     for i, (s1, s2) in enumerate(safe_zip(out1.addressable_shards, out2.addressable_shards)):

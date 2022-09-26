@@ -40,10 +40,10 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
       owns.
   """
   from jax.experimental import array
-  if not isinstance(x, (device_array.DeviceArray, array.Array)):
+  if not isinstance(x, (device_array.DeviceArray, array.ArrayImpl)):
     raise TypeError("Argument to to_dlpack must be a DeviceArray or Array, got {}"
                     .format(type(x)))
-  if isinstance(x, array.Array):
+  if isinstance(x, array.ArrayImpl):
     assert len(x._arrays) == 1
     buf = x._arrays[0]
   else:

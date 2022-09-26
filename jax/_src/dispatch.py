@@ -57,8 +57,6 @@ import jax._src.util as util
 from jax._src.util import flatten, unflatten
 from etils import epath
 
-if TYPE_CHECKING:
-  from jax.experimental.array import Array
 
 FLAGS = flags.FLAGS
 
@@ -750,10 +748,10 @@ class SimpleResultHandler:
 
 def maybe_create_array_from_da(buf, aval, device):
   if config.jax_array:
-    from jax.experimental.array import Array
+    from jax.experimental.array import ArrayImpl
     from jax.experimental.sharding import SingleDeviceSharding
-    return Array(aval, SingleDeviceSharding(buf.device()), [buf],
-                 committed=(device is not None), _skip_checks=True)
+    return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
+                     committed=(device is not None), _skip_checks=True)
   else:
     return device_array.make_device_array(aval, device, buf)
 
@@ -1222,7 +1220,7 @@ def _copy_device_array_to_device(
   return device_array.make_device_array(x.aval, device, moved_buf)
 
 
-def _copy_array_to_device(x: Array, device: Optional[xc.Device]) -> Array:
+def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Array:
   """Copies `Array`s with SingleDeviceSharding to a different device."""
   from jax.experimental import array, sharding
 
@@ -1246,7 +1244,7 @@ def _copy_array_to_device(x: Array, device: Optional[xc.Device]) -> Array:
     # buffers from different XLA backends are passed through the host.
     backend = xb.get_device_backend(device)
     moved_buf = backend.buffer_from_pyval(np.asarray(buf), device)
-  return array.Array(
+  return array.ArrayImpl(
       x.aval, sharding.SingleDeviceSharding(moved_buf.device()), [moved_buf],
       committed=(device is not None))
 
@@ -1257,7 +1255,7 @@ def _device_put_impl(x, device: Optional[Device] = None):
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
 
-  if type(x) is array.Array and isinstance(x.sharding, sharding.SingleDeviceSharding):
+  if type(x) is array.ArrayImpl and isinstance(x.sharding, sharding.SingleDeviceSharding):
     return _copy_array_to_device(x, device)
 
   try:

@@ -55,8 +55,8 @@ async def create_async_array_from_callback(
 
   dbs = [jax.device_put(array, device)
          for array, device in zip(local_arrays, addressable_da)]
-  aval = jax.ShapedArray(global_shape, dbs[0].dtype)
-  return array.Array(aval, inp_sharding, dbs, committed=True)
+  return array.make_array_from_single_device_arrays(
+      global_shape, inp_sharding, dbs)
 
 
 async def create_async_gda_from_callback(
@@ -86,7 +86,7 @@ def _get_metadata(arr):
     dtype = 'bfloat16'
   else:
     dtype = np.dtype(arr.dtype).str
-  if isinstance(arr, array.Array):
+  if isinstance(arr, array.ArrayImpl):
     local_shape = arr._arrays[0].shape
   else:
     local_shape = arr.local_data(0).shape
@@ -150,7 +150,7 @@ class _LimitInFlightBytes:
 
 
 async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
-  if (isinstance(arr_inp, array.Array) and jax.process_count() > 1 and
+  if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
       arr_inp.is_fully_addressable()):
     raise ValueError('Passing fully addressable Arrays to a multi-host '
                      'serialization is not allowed.')
@@ -187,7 +187,7 @@ async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
       else:
         await write_future.commit
 
-  if isinstance(arr_inp, array.Array):
+  if isinstance(arr_inp, array.ArrayImpl):
     local_shards = arr_inp.addressable_shards
   else:
     local_shards = arr_inp.local_shards
