@@ -73,7 +73,6 @@ from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      process_count, host_id, host_ids,
                                      host_count, default_backend)
 from jax.ad_checkpoint import checkpoint_policies, checkpoint as new_checkpoint
-from jax._src.ad_checkpoint import _remat_static_argnums
 from jax.core import ShapedArray, raise_to_shaped
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
