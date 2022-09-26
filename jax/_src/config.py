@@ -909,6 +909,16 @@ config.define_bool_state(
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
+config.define_bool_state(
+    name='jax_experimental_unsafe_xla_runtime_errors',
+    default=False,
+    help=('Enable XLA runtime errors for jax.experimental.checkify.checks '
+          'on CPU and GPU. These errors are async, might get lost and are not '
+          'very readable. But, they crash the computation and enable you '
+          'to write jittable checks without needing to checkify. Does not '
+          'work under pmap/pjit.')
+)
+
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:
   """Indicates that the current context is an explicit device_put*() call."""
