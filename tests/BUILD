@@ -257,35 +257,10 @@ jax_test(
     ],
 )
 
-py_test(
-    name = "jax_jit_test_x32",
-    srcs = ["jax_jit_test.py"],
-    main = "jax_jit_test.py",
-    visibility = ["//visibility:private"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
-)
-
-py_test(
-    name = "jax_jit_test_x64",
-    srcs = ["jax_jit_test.py"],
-    args = ["--jax_enable_x64=true"],
-    main = "jax_jit_test.py",
-    visibility = ["//visibility:private"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
-)
-
-test_suite(
+jax_test(
     name = "jax_jit_test",
-    tests = [
-        "jax_jit_test_x32",
-        "jax_jit_test_x64",
-    ],
+    srcs = ["jax_jit_test.py"],
+    main = "jax_jit_test.py",
 )
 
 py_test(
