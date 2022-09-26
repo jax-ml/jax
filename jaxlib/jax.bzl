@@ -48,7 +48,7 @@ def py_deps(_package):
 jax_extra_deps = []
 jax2tf_deps = []
 
-def py_library_providing_imports_info(*, name, lib_rule = native.py_library, **kwargs):
+def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
     lib_rule(name = name, **kwargs)
 
 def py_extension(name, srcs, copts, deps):
