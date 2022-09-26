@@ -217,6 +217,9 @@ from jax.experimental.sparse.bcoo import (
     BCOO as BCOO,
 )
 
+from jax.experimental.sparse.bcsr import (
+    BCSR as BCSR,
+)
 from jax.experimental.sparse.api import (
     empty as empty,
     eye as eye,

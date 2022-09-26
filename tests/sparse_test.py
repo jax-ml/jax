@@ -2275,6 +2275,18 @@ class SparseGradTest(jtu.JaxTestCase):
 
 
 class SparseObjectTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(
+    {"testcase_name": f"_{cls.__name__}", "cls": cls}
+    for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO, sparse.BCSR])
+  def test_pytree_flattening(self, cls):
+    sparse_format = cls.__name__.lower()
+    M = sparse.empty((2, 4), sparse_format=sparse_format)
+    self.assertIsInstance(M, cls)
+    buffers, tree = tree_util.tree_flatten(M)
+    M_out = tree_util.tree_unflatten(tree, buffers)
+    self.assertEqual(M.dtype, M_out.dtype)
+    self.assertEqual(M.shape, M_out.shape)
+    self.assertEqual(M.nse, M_out.nse)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_{cls.__name__}", "cls": cls}

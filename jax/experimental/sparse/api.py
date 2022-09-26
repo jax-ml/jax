@@ -37,6 +37,7 @@ from jax import core
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.bcoo import BCOO
+from jax.experimental.sparse.bcsr import BCSR
 from jax.experimental.sparse.coo import COO
 from jax.experimental.sparse.csr import CSR, CSC
 from jax.experimental.sparse.util import _coo_extract
@@ -116,7 +117,7 @@ def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
   Returns:
     mat: empty sparse matrix.
   """
-  formats = {'bcoo': BCOO, 'coo': COO, 'csr': CSR, 'csc': CSC}
+  formats = {'bcsr': BCSR, 'bcoo': BCOO, 'coo': COO, 'csr': CSR, 'csc': CSC}
   if sparse_format not in formats:
     raise ValueError(f"sparse_format={sparse_format!r} not recognized; "
                      f"must be one of {list(formats.keys())}")
