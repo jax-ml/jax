@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
+## jax 0.3.19
+
+## jaxlib 0.3.19
+
 ## jax 0.3.18 (Sep 26, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.17...jax-v0.3.18).
 * Changes
@@ -25,9 +29,6 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * `jax.soft_pmap` has been deleted. Please use `pjit` or `xmap` instead.
     `jax.soft_pmap` is undocumented. If it were documented, a deprecation period
     would have been provided.
-
-## jaxlib 0.3.18 (Sep 26, 2022)
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...jaxlib-v0.3.18).
 
 ## jax 0.3.17 (Aug 31, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...jax-v0.3.17).
