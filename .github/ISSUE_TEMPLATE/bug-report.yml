@@ -48,5 +48,14 @@ body:
     placeholder: CPU/GPU/TPU
 - type: input
   attributes:
-    label: Additional System Info
+    label: Additional system info
     placeholder: Python version, OS (Linux/Mac/Windows/WSL), etc.
+- type: textarea
+  attributes:
+    label: NVIDIA GPU info
+    description: >-
+      If you are using an NVIDIA GPU, what is the output of the `nvidia-smi` command?
+    placeholder: |
+      ```
+      ...
+      ```
