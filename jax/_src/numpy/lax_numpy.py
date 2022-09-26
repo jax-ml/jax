@@ -3621,7 +3621,10 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   if (arr.ndim > 0 and isinstance(idx, (int, np.integer)) and
       not isinstance(idx, (bool, np.bool_)) and isinstance(arr.shape[0], int)):
     if 0 <= idx < arr.shape[0]:
-      return lax.index_in_dim(arr, idx, keepdims=False)
+      if _any(isinstance(d, core.Tracer) for d in arr.shape[1:]):
+        return lax.dynamic_index_in_dim(arr, idx, keepdims=False)
+      else:
+        return lax.index_in_dim(arr, idx, keepdims=False)
   if (arr.ndim > 0 and isinstance(arr.shape[0], int) and
       isinstance(idx, slice) and
       (type(idx.start) is int or idx.start is None) and

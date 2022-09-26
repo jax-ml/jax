@@ -1456,10 +1456,9 @@ def _iter(tracer):
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
     n = int(tracer.shape[0])
-    # return (index_in_dim(tracer, i, keepdims=False) for i in range(n))
-    return iter([slicing.index_in_dim(tracer, i, keepdims=False)
-                 for i in range(n)])
+    return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
 ShapedArray._iter = staticmethod(_iter)
+core.DShapedArray._iter = staticmethod(_iter)
 
 # Add some ad handlers that use (or could use) lax primitives
 
@@ -2884,6 +2883,8 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
   return [lhs, pp.text(" = ", annotation=annotation), *rhs]
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
+  if dyn_shape: raise NotImplementedError
+  del dyn_shape
   if not any(isinstance(d, core.BInt) for d in shape):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions)
