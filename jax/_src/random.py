@@ -938,11 +938,9 @@ def _gamma_one(key: KeyArray, alpha, log_space):
   # in floating point underflow; for this reason we compute it in log space if
   # specified by the `log_space` argument:
   #   log[Gamma(alpha)] ~ log[Gamma(alpha + 1)] + log[Uniform()] / alpha
-  # Note that log[Uniform()] ~ Exponential(), but the exponential() function is
-  # computed via log[1 - Uniform()] to avoid taking log(0). We want the generated
-  # sequence to match between log_space=True and log_space=False, so we avoid this
-  # for now to maintain backward compatibility with the original implementation.
-  # TODO(jakevdp) should we change the convention to avoid -inf in log-space?
+  # Note that log[Uniform()] ~ -Exponential(), but to avoid problems at x=0
+  # exponential is computed in terms of log[1 - Uniform()]; we must account for this
+  # so that log-space and non-log-space samples match.
   boost_mask = lax.ge(alpha, one)
   alpha_orig = alpha
   alpha = lax.select(boost_mask, alpha, lax.add(alpha, one))
@@ -982,11 +980,19 @@ def _gamma_one(key: KeyArray, alpha, log_space):
   u_boost = uniform(subkey, (), dtype=dtype)
   _, _, V, _ = lax.while_loop(_cond_fn, _body_fn, (key, zero, one, _lax_const(alpha, 2)))
   if log_space:
+    if config.jax_random_future:
+      # Use log(1 - uniform) to avoid problems with log(0).
+      log_u_boost = lax.log1p(-u_boost)
+    else:
+      log_u_boost = lax.log(u_boost)
     # TODO(jakevdp): there are negative infinities here due to issues mentioned above. How should
     # we handle those?
-    log_boost = lax.select(boost_mask, zero, lax.mul(lax.log(u_boost), lax.div(one, alpha_orig)))
+    log_boost = lax.select(boost_mask, zero, lax.mul(log_u_boost, lax.div(one, alpha_orig)))
     return lax.add(lax.add(lax.log(d), lax.log(V)), log_boost)
   else:
+    if config.jax_random_future:
+      # Use 1 - uniform to correspond to log-space computation.
+      u_boost = 1 - u_boost
     boost = lax.select(boost_mask, one, lax.pow(u_boost, lax.div(one, alpha_orig)))
     z = lax.mul(lax.mul(d, V), boost)
     return lax.select(lax.eq(z, zero), jnp.finfo(z.dtype).tiny, z)

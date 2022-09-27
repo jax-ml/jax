@@ -98,18 +98,10 @@ _RANDOM_VALUES_CASES = [
     np.array([False, True, True, True, False]), skip_on_x64=True),
   RandomValuesCase("bernoulli", "rbg", (5,), None, {'p': 0.5},
     np.array([True, True, True, True, True]), skip_on_x64=True),
-  RandomValuesCase("beta", "threefry2x32", (5,), np.float32, {'a': 0.8, 'b': 0.9},
-    np.array([0.533685, 0.843179, 0.063495, 0.573444, 0.459514], dtype='float32')),
-  RandomValuesCase("beta", "rbg", (5,), np.float32, {'a': 0.8, 'b': 0.9},
-    np.array([0.841308, 0.669989, 0.731763, 0.985127, 0.022745], dtype='float32')),
   RandomValuesCase("cauchy", "threefry2x32", (5,), np.float32, {},
     np.array([ -0.088416, -10.169713, 3.49677, -1.18056, 0.34556], dtype='float32'), rtol=1E-5),
   RandomValuesCase("cauchy", "rbg", (5,), np.float32, {},
     np.array([0.008389, 0.108793, -0.031826, -0.01876, 0.963218], dtype='float32')),
-  RandomValuesCase("dirichlet", "threefry2x32", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
-    np.array([[0.556287, 0.304219, 0.139494], [0.15221 , 0.632251, 0.21554]], dtype='float32')),
-  RandomValuesCase("dirichlet", "rbg", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
-    np.array([[0.024769, 0.002189, 0.973041], [0.326, 0.00244, 0.67156]], dtype='float32')),
   RandomValuesCase("double_sided_maxwell", "threefry2x32", (5,), np.float32, {"loc": 1, "scale": 2},
     np.array([-2.408914, -3.370437, 3.235352, -0.907734, -1.708732], dtype='float32'), skip_on_x64=True),
   RandomValuesCase("double_sided_maxwell", "rbg", (5,), np.float32, {"loc": 1, "scale": 2},
@@ -118,10 +110,6 @@ _RANDOM_VALUES_CASES = [
     np.array([0.526067, 0.043046, 0.039932, 0.46427 , 0.123886], dtype='float32')),
   RandomValuesCase("exponential", "rbg", (5,), np.float32, {},
     np.array([0.231303, 0.684814, 0.017181, 0.089552, 0.345087], dtype='float32')),
-  RandomValuesCase("gamma", "threefry2x32", (5,), np.float32, {'a': 0.8},
-    np.array([0.332641, 0.10187 , 1.816109, 0.023457, 0.487853], dtype='float32')),
-  RandomValuesCase("gamma", "rbg", (5,), np.float32, {'a': 0.8},
-    np.array([0.235293, 0.446747, 0.146372, 0.79252 , 0.294762], dtype='float32')),
   RandomValuesCase("gumbel", "threefry2x32", (5,), np.float32, {},
     np.array([2.06701, 0.911726, 0.145736, 0.185427, -0.00711], dtype='float32')),
   RandomValuesCase("gumbel", "rbg", (5,), np.float32, {},
@@ -130,10 +118,6 @@ _RANDOM_VALUES_CASES = [
     np.array([0.578939, -0.204902, 0.555733, 0.911053, -0.96456], dtype='float32')),
   RandomValuesCase("laplace", "rbg", (5,), np.float32, {},
     np.array([-2.970422, 1.925082, -0.757887, -4.444797, 0.561983], dtype='float32')),
-  RandomValuesCase("loggamma", "threefry2x32", (5,), np.float32, {'a': 0.8},
-    np.array([-0.899633, -0.424083, 0.631593, 0.102374, -1.07189], dtype='float32')),
-  RandomValuesCase("loggamma", "rbg", (5,), np.float32, {'a': 0.8},
-    np.array([-1.333825, 0.287259, -0.343074, -0.998258, -0.773598], dtype='float32')),
   RandomValuesCase("logistic", "threefry2x32", (5,), np.float32, {},
     np.array([0.19611, -1.709053, -0.274093, -0.208322, -1.675489], dtype='float32')),
   RandomValuesCase("logistic", "rbg", (5,), np.float32, {},
@@ -178,6 +162,45 @@ _RANDOM_VALUES_CASES = [
   RandomValuesCase("weibull_min", "rbg", (5,), np.float32, {"scale": 1, "concentration": 1},
     np.array([1.370903, 0.086532, 0.061688, 3.407599, 0.215077], dtype='float32')),
 ]
+
+if config.jax_random_future:
+  _RANDOM_VALUES_CASES.extend([
+    RandomValuesCase("beta", "threefry2x32", (5,), np.float32, {'a': 0.8, 'b': 0.9},
+      np.array([0.13259 , 0.824893, 0.948363, 0.964155, 0.235448], dtype='float32')),
+    RandomValuesCase("beta", "rbg", (5,), np.float32, {'a': 0.8, 'b': 0.9},
+      np.array([0.93215 , 0.833959, 0.121902, 0.270003, 0.429541], dtype='float32')),
+    RandomValuesCase("dirichlet", "threefry2x32", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
+      np.array([[0.003128, 0.009694, 0.987178], [0.025938, 0.479091, 0.494971]], dtype='float32')),
+    RandomValuesCase("dirichlet", "rbg", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
+      np.array([[0.080742, 0.525493, 0.393765], [0.006837, 0.804796, 0.188366]], dtype='float32')),
+    RandomValuesCase("loggamma", "threefry2x32", (5,), np.float32, {'a': 0.8},
+      np.array([ 0.240559, -3.575443, -0.450946, -2.161372, -2.943277], dtype='float32')),
+    RandomValuesCase("loggamma", "rbg", (5,), np.float32, {'a': 0.8},
+      np.array([-0.107021, -0.809968, -0.25546 , -1.212273, -1.946579], dtype='float32')),
+    RandomValuesCase("gamma", "threefry2x32", (5,), np.float32, {'a': 0.8},
+      np.array([0.824221, 1.724476, 0.502882, 5.386132, 0.685543], dtype='float32')),
+    RandomValuesCase("gamma", "rbg", (5,), np.float32, {'a': 0.8},
+      np.array([0.994946, 0.519941, 1.754347, 0.479223, 1.16932 ], dtype='float32')),
+  ])
+else:
+  _RANDOM_VALUES_CASES.extend([
+    RandomValuesCase("beta", "threefry2x32", (5,), np.float32, {'a': 0.8, 'b': 0.9},
+      np.array([0.533685, 0.843179, 0.063495, 0.573444, 0.459514], dtype='float32')),
+    RandomValuesCase("beta", "rbg", (5,), np.float32, {'a': 0.8, 'b': 0.9},
+      np.array([0.841308, 0.669989, 0.731763, 0.985127, 0.022745], dtype='float32')),
+    RandomValuesCase("dirichlet", "threefry2x32", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
+      np.array([[0.556287, 0.304219, 0.139494], [0.15221 , 0.632251, 0.21554]], dtype='float32')),
+    RandomValuesCase("dirichlet", "rbg", (2,), np.float32, {'alpha': np.array([0.5, 0.6, 0.7], dtype='float32')},
+      np.array([[0.024769, 0.002189, 0.973041], [0.326, 0.00244, 0.67156]], dtype='float32')),
+    RandomValuesCase("loggamma", "threefry2x32", (5,), np.float32, {'a': 0.8},
+      np.array([-0.899633, -0.424083, 0.631593, 0.102374, -1.07189], dtype='float32')),
+    RandomValuesCase("loggamma", "rbg", (5,), np.float32, {'a': 0.8},
+      np.array([-1.333825, 0.287259, -0.343074, -0.998258, -0.773598], dtype='float32')),
+    RandomValuesCase("gamma", "threefry2x32", (5,), np.float32, {'a': 0.8},
+      np.array([0.332641, 0.10187 , 1.816109, 0.023457, 0.487853], dtype='float32')),
+    RandomValuesCase("gamma", "rbg", (5,), np.float32, {'a': 0.8},
+      np.array([0.235293, 0.446747, 0.146372, 0.79252 , 0.294762], dtype='float32')),
+  ])
 
 
 class PrngTest(jtu.JaxTestCase):
@@ -870,18 +893,18 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   def testDirichletSmallAlpha(self, dtype=np.float32):
     # Regression test for https://github.com/google/jax/issues/9896
-    key = self.seed_prng(0)
+    key = self.seed_prng(123)
     alpha = 0.0001 * jnp.ones(3)
     samples = random.dirichlet(key, alpha, shape=(100,), dtype=dtype)
 
     # Check that results lie on the simplex.
     self.assertAllClose(samples.sum(1), jnp.ones(samples.shape[0]),
-                        check_dtypes=False, rtol=1E-5)
+                        check_dtypes=False, rtol=1E-4)
 
     # Check that results contain 1 in one of the dimensions:
     # this is highly likely to be true when alpha is small.
     self.assertAllClose(samples.max(1), jnp.ones(samples.shape[0]),
-                        check_dtypes=False, rtol=1E-5)
+                        check_dtypes=False, rtol=1E-4)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": f"_dtype={np.dtype(dtype).name}", "dtype": dtype}
@@ -917,7 +940,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for a in [0.1, 1., 10.]
       for dtype in jtu.dtypes.floating))
   def testGamma(self, a, dtype):
-    key = self.seed_prng(0)
+    key = self.seed_prng(42)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
     crand = jax.jit(rand)
 
