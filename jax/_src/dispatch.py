@@ -78,6 +78,7 @@ Device = xc.Device
 Buffer = xe.Buffer
 
 XlaExecutable = xc.Executable
+CompileOptions = xc.CompileOptions
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -1016,6 +1017,10 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
 
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
+
+  if FLAGS.jax_dump_ir_to:
+    _dump_ir_to_file(module_name, mlir.module_to_string(computation))
+
   # Convert ir.Module to a string representation, unless the
   # back-end expliclity flags the ability to handle a module directly
   # (avoiding the overhead of back and forth conversions)
@@ -1036,23 +1041,57 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("gpu")
   if cc.is_initialized() and backend.platform in supported_platforms:
-    cached_executable = cc.get_executable(serialized_computation,
-                                          compile_options, backend)
+    cached_executable = _cache_read(serialized_computation, module_name,
+                                    compile_options, backend)
     if cached_executable is not None:
-      logging.info('Persistent compilation cache hit for %s.', module_name)
+      logging.info("Persistent compilation cache hit for '%s'", module_name)
       return cached_executable
     else:
       compiled = backend_compile(backend, serialized_computation,
                                  compile_options, host_callbacks)
-      cc.put_executable(module_name, serialized_computation, compile_options,
-                        compiled, backend)
+      _cache_write(serialized_computation, module_name,  compile_options,
+                   backend, compiled)
       return compiled
 
-  if FLAGS.jax_dump_ir_to:
-    _dump_ir_to_file(module_name, mlir.module_to_string(computation))
   return backend_compile(backend, serialized_computation, compile_options,
                          host_callbacks)
 
+def _cache_read(computation: Union[str, bytes, ir.Module],
+                module_name: str,
+                compile_options: CompileOptions,
+                backend: Backend) -> Optional[XlaExecutable]:
+  """Looks up `computation` in the persisent compilation cache."""
+  # Avoid import cycle between jax and jax.experimental
+  from jax.experimental.compilation_cache import compilation_cache as cc
+
+  try:
+    return cc.get_executable(computation, compile_options, backend)
+  except Exception as ex:
+    if config.jax_raise_persistent_cache_errors:
+      raise
+    warnings.warn(
+        f"Error reading persistent compilation cache entry for "
+        f"'{module_name}': {type(ex).__name__}: {ex}")
+    return None
+
+def _cache_write(computation: Union[str, bytes, ir.Module],
+                 module_name: str,
+                 compile_options: CompileOptions,
+                 backend: Backend,
+                 compiled: XlaExecutable):
+  """Writes `computation` to the persistent compilation cache."""
+  # Avoid import cycle between jax and jax.experimental
+  from jax.experimental.compilation_cache import compilation_cache as cc
+
+  try:
+    cc.put_executable(module_name, computation, compile_options, compiled,
+                      backend)
+  except Exception as ex:
+    if config.jax_raise_persistent_cache_errors:
+      raise
+    warnings.warn(
+        f"Error writing persistent compilation cache entry for "
+        f"'{module_name}': {type(ex).__name__}: {ex}")
 
 def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):
   buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
