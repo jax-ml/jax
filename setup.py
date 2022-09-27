@@ -61,7 +61,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
-    package_data={'jax': ['py.typed']},
+    package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
     python_requires='>=3.7',
     install_requires=[
         'absl-py',
