@@ -90,7 +90,7 @@ _on_exit = False
 ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
-  from jax.experimental.sharding import PmapSharding
+  from jax._src.sharding import PmapSharding
 
   aval = xla.abstractify(x)
   try:
@@ -285,7 +285,7 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
   # TODO(yashkatariya): Remove this entire function when backend and device are
   # removed as arguments on jit.
 
-  from jax.experimental import sharding
+  from jax._src import sharding
 
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
@@ -311,8 +311,9 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
                      keep_unused, *arg_specs):
   # TODO(yashkatariya): Remove the local imports from here when the functions
   # in pxla.py move to dispatch.py or a utils file.
+  from jax._src import sharding
   from jax.interpreters import pxla
-  from jax.experimental import pjit, sharding
+  from jax.experimental import pjit
 
   in_avals, in_shardings = util.unzip2(arg_specs)
 
@@ -369,7 +370,7 @@ xla_callable = lu.cache(_xla_callable_uncached)
 
 
 def is_single_device_sharding(sharding) -> bool:
-  from jax.experimental.sharding import PmapSharding
+  from jax._src.sharding import PmapSharding
   # Special case PmapSharding here because PmapSharding maps away an axis
   # and needs to be handled separately.
   return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
@@ -748,8 +749,8 @@ class SimpleResultHandler:
 
 def maybe_create_array_from_da(buf, aval, device):
   if config.jax_array:
-    from jax.experimental.array import ArrayImpl
-    from jax.experimental.sharding import SingleDeviceSharding
+    from jax._src.array import ArrayImpl
+    from jax._src.sharding import SingleDeviceSharding
     return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
                      committed=(device is not None), _skip_checks=True)
   else:
@@ -1222,7 +1223,7 @@ def _copy_device_array_to_device(
 
 def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Array:
   """Copies `Array`s with SingleDeviceSharding to a different device."""
-  from jax.experimental import array, sharding
+  from jax._src import array, sharding
 
   if device is None:
     # no copying to be done because there's no target specified
@@ -1250,7 +1251,7 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
 
 
 def _device_put_impl(x, device: Optional[Device] = None):
-  from jax.experimental import array, sharding
+  from jax._src import array, sharding
 
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)

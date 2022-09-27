@@ -49,7 +49,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.util import prod, safe_zip
-from jax.experimental import array
+from jax._src import array
 
 from jax.config import config
 config.parse_flags_with_absl()

@@ -35,8 +35,8 @@ from jax import core
 from jax.core import NamedShape
 from jax.experimental import maps
 from jax.experimental import global_device_array
-from jax.experimental import array
-from jax.experimental.sharding import MeshPspecSharding
+from jax._src import array
+from jax._src.sharding import MeshPspecSharding
 from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.experimental.pjit import PartitionSpec as P
 from jax.experimental.maps import xmap, serial_loop, SerialLoop

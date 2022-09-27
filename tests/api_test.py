@@ -54,7 +54,7 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
-from jax.experimental import array, sharding
+from jax._src import array, sharding
 from jax.experimental import pjit
 from jax._src import config as jax_config
 from jax._src import custom_derivatives

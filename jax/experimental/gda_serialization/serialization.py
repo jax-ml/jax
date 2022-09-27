@@ -26,8 +26,8 @@ import jax
 from jax._src import distributed
 from jax._src.config import config
 from jax.experimental import global_device_array as gda
-from jax.experimental import array
-from jax.experimental import sharding
+from jax._src import array
+from jax._src import sharding
 from jax.experimental.maps import Mesh
 import jax.numpy as jnp
 import numpy as np

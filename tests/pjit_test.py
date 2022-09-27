@@ -40,8 +40,8 @@ from jax.experimental import maps
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
-from jax.experimental import array
-from jax.experimental.sharding import MeshPspecSharding, Sharding, OpShardingSharding
+from jax._src import array
+from jax._src.sharding import MeshPspecSharding, Sharding, OpShardingSharding
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    FROM_GDA, AUTO)

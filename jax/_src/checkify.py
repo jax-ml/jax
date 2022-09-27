@@ -31,7 +31,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.experimental.sharding import OpShardingSharding
+from jax._src.sharding import OpShardingSharding
 from jax.tree_util import tree_flatten, tree_unflatten, register_pytree_node
 from jax._src import source_info_util, traceback_util
 from jax._src.lax import control_flow as cf

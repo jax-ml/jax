@@ -26,8 +26,8 @@ from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla
-from jax.experimental import array
-from jax.experimental import sharding
+from jax._src import array
+from jax._src import sharding
 from jax.experimental import pjit as pjit_lib
 import jax.numpy as jnp
 import numpy as np

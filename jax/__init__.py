@@ -114,6 +114,12 @@ from jax._src.api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation as xla_computation,
 )
+
+from jax._src.array import (
+    make_array_from_single_device_arrays as make_array_from_single_device_arrays,
+    make_array_from_callback as make_array_from_callback,
+)
+
 from jax.version import __version__ as __version__
 from jax.version import __version_info__ as __version_info__
 
@@ -143,6 +149,7 @@ from jax import numpy as numpy
 from jax import ops as ops
 from jax import profiler as profiler
 from jax import random as random
+from jax import sharding as sharding
 from jax import stages as stages
 from jax import tree_util as tree_util
 from jax import util as util

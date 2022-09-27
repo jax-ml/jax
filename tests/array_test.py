@@ -26,8 +26,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
 from jax._src.util import prod, safe_zip
 from jax.experimental import PartitionSpec as P
-from jax.experimental import sharding
-from jax.experimental import array
+from jax._src import sharding
+from jax._src import array
 from jax.experimental import maps
 
 from jax.config import config

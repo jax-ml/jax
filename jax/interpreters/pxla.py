@@ -85,7 +85,7 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            split_dict, unzip2)
 
 if TYPE_CHECKING:
-  from jax.experimental.sharding import MeshPspecSharding, XLACompatibleSharding
+  from jax._src.sharding import MeshPspecSharding, XLACompatibleSharding
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -873,7 +873,7 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(skye): is there a simpler way to rewrite this using sharding_spec?
 def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
-  from jax.experimental.array import ArrayImpl
+  from jax._src.array import ArrayImpl
 
   candidates = defaultdict(list)
   if isinstance(x, ArrayImpl):
@@ -974,6 +974,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
                out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                donated_invars: Sequence[bool],
                global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+  from jax._src import array
   # TODO(sharadmv,mattjj): implement these cases
   if any(d for d in donated_invars):
     raise NotImplementedError("Buffer donation not supported in eager pmap.")
@@ -1002,7 +1003,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
     with jax.disable_jit(False):
       donate_argnums_ = donate_argnums
-      if isinstance(outval, (ShardedDeviceArray, jax.experimental.array.ArrayImpl)):
+      if isinstance(outval, (ShardedDeviceArray, array.ArrayImpl)):
         # We don't want to donate if it's already sharded.
         donate_argnums_ = ()
       out = jax.pmap(
@@ -1636,7 +1637,7 @@ class PmapExecutable(stages.XlaExecutable):
 
 
 def _get_pmap_sharding(devices, specs):
-  from jax.experimental.sharding import PmapSharding
+  from jax._src.sharding import PmapSharding
 
   return [PmapSharding(devices, spec) for spec in specs]
 
@@ -1826,7 +1827,7 @@ class ResultsHandler:
 def _get_sharding_specs(
     shardings: Sequence[XLACompatibleSharding], avals: Sequence[ShapedArray]
 ) -> Sequence[ShardingSpec]:
-  from jax.experimental import sharding
+  from jax._src import sharding
 
   if all(isinstance(s, sharding.PmapSharding) for s in shardings):
     return [s.sharding_spec for s in shardings]  # type: ignore
@@ -1855,7 +1856,7 @@ def global_avals_to_results_handler(
     shardings: Sequence[XLACompatibleSharding],
     committed: bool,
     are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
-  from jax.experimental.sharding import MeshPspecSharding
+  from jax._src.sharding import MeshPspecSharding
 
   if config.jax_parallel_functions_output_gda or config.jax_array:
     handlers = [
@@ -3078,7 +3079,7 @@ def _get_input_metadata(
     in_shardings: Sequence[XLACompatibleSharding], in_is_global: Sequence[bool]
 ) -> Tuple[Sequence[XLACompatibleSharding], Sequence[Tuple[Optional[Index], ...]],
            Sequence[ShapedArray]]:
-  from jax.experimental.sharding import MeshPspecSharding
+  from jax._src.sharding import MeshPspecSharding
 
   shardings, input_indices, input_avals = [], [], []
   for gaval, i, is_global in safe_zip(global_in_avals, in_shardings, in_is_global):
@@ -3113,7 +3114,7 @@ def _get_input_metadata(
 def _get_op_sharding_shardings_from_executable(
     xla_executable, device_assignment, num_in_avals, num_out_avals):
   from jax.experimental import pjit
-  from jax.experimental.sharding import OpShardingSharding, SingleDeviceSharding
+  from jax._src.sharding import OpShardingSharding, SingleDeviceSharding
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`. In that case,
@@ -3133,7 +3134,7 @@ def _get_op_sharding_shardings_from_executable(
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
   from jax.experimental import pjit
-  from jax.experimental.sharding import MeshPspecSharding
+  from jax._src.sharding import MeshPspecSharding
 
   in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
   return ([MeshPspecSharding(mesh, i) for i in in_pspec],
@@ -3343,8 +3344,8 @@ def _out_shardings_for_trivial(
   #   * if the output is a constant Array, get its .sharding attribute;
   #   * otherwise, the output is a literal or numpy.ndarray constant, so give it
   #     a replicated sharding
-  from jax.experimental import array
-  from jax.experimental import sharding
+  from jax._src import array
+  from jax._src import sharding
   rep = sharding.OpShardingSharding(
       device_assignment, sharding._get_replicated_op_sharding())
   shardings: Dict[core.Var, sharding.XLACompatibleSharding] = {}
@@ -3368,13 +3369,13 @@ def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args
 
 @lru_cache()
 def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
-  from jax.experimental.sharding import MeshPspecSharding
+  from jax._src.sharding import MeshPspecSharding
   return MeshPspecSharding(mesh, pspec, parsed_pspec)
 
 
 def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
   from jax.experimental.global_device_array import GlobalDeviceArray
-  from jax.experimental.array import ArrayImpl
+  from jax._src.array import ArrayImpl
 
   @lru_cache(maxsize=4096)
   def _cached_check(arg_sharding, in_xla_sharding, arg_type, ndim, committed):

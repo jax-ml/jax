@@ -39,7 +39,7 @@ from jax.interpreters import xla
 from jax.interpreters import mlir
 from jax.interpreters import batching
 from jax.interpreters import pxla
-from jax.experimental import array
+from jax._src import array
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src import dispatch
 from jax._src import dtypes

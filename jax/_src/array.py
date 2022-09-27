@@ -18,7 +18,6 @@ import operator as op
 import numpy as np
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
-import jax
 from jax import core
 from jax._src import abstract_arrays
 from jax._src import ad_util
@@ -33,7 +32,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
 from jax._src.typing import ArrayLike
 from jax.interpreters import pxla, xla, mlir
-from jax.experimental.sharding import (
+from jax._src.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
 

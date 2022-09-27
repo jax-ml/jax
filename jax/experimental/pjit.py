@@ -23,7 +23,7 @@ import threading
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
-from jax.experimental.sharding import (
+from jax._src.sharding import (
     MeshPspecSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
     XLADeviceAssignment)
 from jax import core

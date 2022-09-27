@@ -25,8 +25,7 @@ from jax import tree_util
 from jax import lax
 from jax import linear_util as lu
 from jax.config import config
-from jax.experimental.sharding import Sharding
-from jax.experimental.sharding import OpShardingSharding
+from jax._src.sharding import Sharding, OpShardingSharding
 from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import batching

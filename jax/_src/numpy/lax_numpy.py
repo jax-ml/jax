@@ -78,7 +78,7 @@ from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis)
-from jax.experimental.array import ArrayImpl
+from jax._src.array import ArrayImpl
 
 newaxis = None
 

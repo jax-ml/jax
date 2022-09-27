@@ -21,8 +21,8 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import config as jax_config
 from jax.config import config
-from jax.experimental import array
-from jax.experimental.sharding import MeshPspecSharding
+from jax._src import array
+from jax._src.sharding import MeshPspecSharding
 from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization

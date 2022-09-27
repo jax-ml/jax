@@ -31,7 +31,7 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax.experimental.sharding import (
+from jax._src.sharding import (
     MeshPspecSharding, PmapSharding, OpShardingSharding)
 
 from jax._src import dispatch

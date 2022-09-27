@@ -23,7 +23,7 @@ from jax import lax
 from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax.experimental import sharding
+from jax._src import sharding
 from jax.interpreters import pxla
 from jax._src import ad_checkpoint
 from jax._src import debugging

@@ -22,7 +22,7 @@ from jax._src.util import prod
 from jax.interpreters.pxla import PartitionSpec as P
 from jax.interpreters import pxla
 from jax.experimental import global_device_array as gda
-from jax.experimental.sharding import MeshPspecSharding
+from jax._src.sharding import MeshPspecSharding
 import numpy as np
 
 mesh_shapes_axes = [

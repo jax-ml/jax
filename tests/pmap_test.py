@@ -46,8 +46,8 @@ from jax._src.lib import xla_bridge
 from jax._src.util import prod, safe_map, safe_zip
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax.experimental import array
-from jax.experimental.sharding import PmapSharding
+from jax._src import array
+from jax._src.sharding import PmapSharding
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 
 from jax.config import config

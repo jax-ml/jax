@@ -667,7 +667,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   # all the other arguments stored as attributes.
 
   def arg_spec(x):
-    from jax.experimental.sharding import PmapSharding
+    from jax._src.sharding import PmapSharding
     # like xla.arg_spec but duck-types on x.shape and x.dtype
     aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
     if jax.config.jax_array:
@@ -2869,7 +2869,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     buffers = [buf for x, d in zip(xs, devices)
                for buf in dispatch.device_put(x, d)]
     if config.jax_array:
-      from jax.experimental import array, sharding
+      from jax._src import array, sharding
       sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
       return array.ArrayImpl(
           stacked_aval,
@@ -2924,7 +2924,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     if config.jax_array:
-      from jax.experimental import array, sharding
+      from jax._src import array, sharding
       sharding_spec = pxla._create_pmap_sharding_spec(aval)
       return array.ArrayImpl(
           aval, sharding.PmapSharding(np.array(devices), sharding_spec),

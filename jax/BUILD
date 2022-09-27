@@ -99,8 +99,6 @@ py_library_providing_imports_info(
         "experimental/maps.py",
         "experimental/pjit.py",
         "experimental/global_device_array.py",
-        "experimental/array.py",
-        "experimental/sharding.py",
         "experimental/multihost_utils.py",
         # until checkify is moved out of experimental
         "experimental/checkify.py",

@@ -30,7 +30,7 @@ from jax import random, tree_util
 from jax import numpy as jnp
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax.experimental import sharding
+from jax._src import sharding
 from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval

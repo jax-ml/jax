@@ -39,7 +39,7 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
       undefined behavior if the DLPack consumer writes to a buffer that JAX
       owns.
   """
-  from jax.experimental import array
+  from jax._src import array
   if not isinstance(x, (device_array.DeviceArray, array.ArrayImpl)):
     raise TypeError("Argument to to_dlpack must be a DeviceArray or Array, got {}"
                     .format(type(x)))

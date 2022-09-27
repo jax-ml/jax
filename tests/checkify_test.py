@@ -27,8 +27,8 @@ from jax.config import config
 from jax.experimental import checkify
 from jax.experimental import pjit
 from jax.experimental import maps
-from jax.experimental.sharding import MeshPspecSharding
-from jax.experimental import array
+from jax._src.sharding import MeshPspecSharding
+from jax._src import array
 from jax._src.checkify import CheckEffect
 import jax.numpy as jnp
 
