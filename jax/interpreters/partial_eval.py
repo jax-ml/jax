@@ -2095,7 +2095,9 @@ def infer_lambda_input_type(
   idxs, implicit_types = _collect_implicit(args, specs)
   implicit_sig = [(ty, False) for ty in implicit_types]
   explicit_sig = [(_arg_type(idxs, x, s), True) for x, s in zip(args, specs)]
-  return (*implicit_sig, *explicit_sig)
+  input_type = (*implicit_sig, *explicit_sig)
+  lu._check_input_type(input_type)
+  return input_type
 
 def _canonicalize_specs(
     ndims: Sequence[int], specs: Optional[Sequence[AbstractedAxesSpec]]
@@ -2143,6 +2145,7 @@ def _complete_specs(
              for x, spec in zip(args, specs))
   return specs
 
+
 def _collect_implicit(
     args: Sequence[Any], specs: List[Dict[int, AbstractedAxisName]]
   ) -> Tuple[Dict[AbstractedAxisName, DBIdx], List[AbstractValue]]:
@@ -2153,24 +2156,23 @@ def _collect_implicit(
   idxs: Dict[AbstractedAxisName, DBIdx] = {}
   implicit_types: List[AbstractValue] = []
   explicit_tracers: Dict[TracerId, int] = {}
-  counter = (DBIdx(i) for i in it.count())
+  counter = it.count()
 
   # Add implicit arguments to idxs.
-
   for explicit_idx, (x, spec) in enumerate(zip(args, specs)):
     for i, name in spec.items():
       if name not in idxs and id(x.shape[i]) not in explicit_tracers:
-        idxs[name] = next(counter)
+        idxs[name] = DBIdx(next(counter))
         implicit_types.append(raise_to_shaped(get_aval(x.shape[i])))
     if isinstance(x, Tracer):
-      explicit_tracers[id(x)] = explicit_idx
+      explicit_tracers.setdefault(id(x), explicit_idx)  # use the first
 
   # Now that we know the implicit args, add explicit args to idxs.
   offset = len(implicit_types)
   for x, spec in zip(args, specs):
     for i, name in spec.items():
       if id(x.shape[i]) in explicit_tracers:
-        idxs[name] = DBIdx(offset + explicit_tracers[id(x.shape[i])])
+        idxs.setdefault(name, DBIdx(offset + explicit_tracers[id(x.shape[i])]))
 
   return idxs, implicit_types
 

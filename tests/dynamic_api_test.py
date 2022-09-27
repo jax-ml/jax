@@ -1354,6 +1354,12 @@ class DynamicShapeTest(jtu.JaxTestCase):
     d, = jaxpr.eqns[0].outvars
     self.assertEqual(d.aval.shape, (a, a))
 
+  def test_inferring_valid_subjaxpr_type_add(self):
+    def f(x):
+      return x + x.shape[0]
+
+    jax.make_jaxpr(f, abstracted_axes=('n',))(jnp.arange(3))  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
