@@ -692,6 +692,12 @@ default_prng_impl = config.define_enum_state(
     help=('Select the default PRNG implementation, used when one is not '
           'explicitly provided at seeding time.'))
 
+random_future = config.define_bool_state(
+    name='jax_random_future',
+    default=False,
+    upgrade=True,
+    help=('enables future backward-incompatible behavior in jax.random.'))
+
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
     default=False,
