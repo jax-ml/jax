@@ -579,6 +579,66 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
     dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
          for ordered in [False, True]))
   @jtu.skip_on_devices(*disabled_backends)
+  def test_can_print_in_batched_while_cond(self, ordered):
+    def f(x):
+      def _cond(x):
+        debug_print("x: {x}", x=x, ordered=ordered)
+        return x < 5
+      def _body(x):
+        return x + 1
+      return lax.while_loop(_cond, _body, x)
+    with jtu.capture_stdout() as output:
+      jax.vmap(f)(jnp.arange(2))
+      jax.effects_barrier()
+    if ordered:
+      expected = _format_multiline("""
+      x: 0
+      x: 1
+      x: 1
+      x: 2
+      x: 2
+      x: 3
+      x: 3
+      x: 4
+      x: 4
+      x: 5
+      x: 5
+      x: 6
+      """)
+      self.assertEqual(output(), expected)
+    else:
+      # When the print is unordered, the `cond` is called an additional time
+      # after the `_body` runs, so we get more prints.
+      expected = _format_multiline("""
+      x: 0
+      x: 1
+      x: 0
+      x: 1
+      x: 1
+      x: 2
+      x: 1
+      x: 2
+      x: 2
+      x: 3
+      x: 2
+      x: 3
+      x: 3
+      x: 4
+      x: 3
+      x: 4
+      x: 4
+      x: 5
+      x: 4
+      x: 5
+      x: 5
+      x: 5
+      """)
+      self._assertLinesEqual(output(), expected)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
+         for ordered in [False, True]))
+  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_cond(self, ordered):
     def f(x):
       def true_fun(x):

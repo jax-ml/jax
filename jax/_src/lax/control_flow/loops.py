@@ -1439,7 +1439,11 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                           core.ordered_effects]
   if cond_ordered_effects:
     def cond(args):
-      return core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
+      # Pred can be batched
+      pred = core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
+      if batched:
+        pred = lax._reduce_or(pred, tuple(range(len(pred_aval.shape))))
+      return pred
     def body(args):
       return tuple(core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args))
     def new_cond(pred_args):
