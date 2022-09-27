@@ -407,6 +407,11 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("ptp", 1, number_dtypes, nonempty_shapes, jtu.rand_default, []),
 ]
 
+JAX_REDUCER_PROMOTE_INT_RECORDS = [
+    op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, []),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+]
+
 JAX_ARGMINMAX_RECORDS = [
     op_record("argmin", 1, default_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
     op_record("argmax", 1, default_dtypes, nonempty_shapes, jtu.rand_some_equal, []),
@@ -938,6 +943,49 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     tol = {jnp.bfloat16: 3E-2}
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @parameterized.named_parameters(itertools.chain.from_iterable(
+      jtu.cases_from_list(
+        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}_promote_integers={}".format(
+            rec.test_name.capitalize(),
+            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial, promote_integers),
+        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
+        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
+        "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact,
+        "promote_integers": promote_integers}
+        for shape in rec.shapes for dtype in rec.dtypes
+        for axis in list(range(-len(shape), len(shape))) + [None]
+        for initial in [0, 1] for keepdims in [False, True]
+        for promote_integers in [True, False]
+        if jtu.is_valid_shape(shape, dtype))
+      for rec in JAX_REDUCER_PROMOTE_INT_RECORDS))
+  def testReducerPromoteInt(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+                            keepdims, initial, inexact, promote_integers):
+    rng = rng_factory(self.rng())
+    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="Degrees of freedom <= 0 for slice.*")
+    @jtu.ignore_warning(category=np.ComplexWarning)
+    def np_fun(x):
+      x = np.asarray(x)
+      if inexact:
+        x = x.astype(dtypes.to_inexact_dtype(x.dtype))
+      x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
+      res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
+      res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
+      print(f"res.dtype = {res.dtype}")
+      if not promote_integers and dtypes.issubdtype(res.dtype, np.integer):
+        res = res.astype(dtypes.to_numeric_dtype(x.dtype))
+      return res
+
+    jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, promote_integers=promote_integers)
+    jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
+    args_maker = lambda: [rng(shape, dtype)]
+    tol = {jnp.bfloat16: 3E-2}
+    print(jnp_fun(*args_maker()))
+    print(np_fun(*args_maker()))
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
