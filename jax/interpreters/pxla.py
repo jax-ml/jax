@@ -1615,10 +1615,11 @@ class PmapExecutable(stages.XlaExecutable):
           pci.backend, xla_computation, compile_options, host_callbacks)
     handle_args = InputsHandler(
         compiled.local_devices(), in_shardings, input_indices, InputsHandlerMode.pmap)
-    execute_fun = ExecuteReplicated(compiled, pci.backend, handle_args,
-                                    handle_outs, unordered_effects,
-                                    ordered_effects, keepalive,
-                                    bool(host_callbacks), set(range(len(input_indices))))
+    execute_fun = ExecuteReplicated(compiled, "parallel computation",
+                                    pci.backend, handle_args, handle_outs,
+                                    unordered_effects, ordered_effects,
+                                    keepalive, bool(host_callbacks),
+                                    set(range(len(input_indices))))
     fingerprint = getattr(compiled, "fingerprint", None)
 
     return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
@@ -1977,17 +1978,18 @@ def partitioned_sharding_spec(num_partitions: int,
 
 class ExecuteReplicated:
   """The logic to shard inputs, execute a replicated model, returning outputs."""
-  __slots__ = ['xla_executable', 'backend', 'in_handler', 'out_handler',
+  __slots__ = ['xla_executable', 'name', 'backend', 'in_handler', 'out_handler',
                'has_unordered_effects', 'ordered_effects', 'keepalive',
                'has_host_callbacks', '_local_devices', 'kept_var_idx',
                '__weakref__']
 
-  def __init__(self, xla_executable, backend, in_handler: InputsHandler,
+  def __init__(self, xla_executable, name, backend, in_handler: InputsHandler,
                out_handler: ResultsHandler,
                unordered_effects: List[core.Effect],
                ordered_effects: List[core.Effect], keepalive: Any,
                has_host_callbacks: bool, kept_var_idx: Set[int]):
     self.xla_executable = xla_executable
+    self.name = name
     self.backend = backend
     self.in_handler = in_handler
     self.out_handler = out_handler
@@ -2047,7 +2049,7 @@ class ExecuteReplicated:
       for bufs in out_bufs:
         if xb.use_sharded_buffer and isinstance(bufs, xb.xla_client.ShardedBuffer):
           bufs = cast(xb.xla_client.ShardedBuffer, bufs).get_device_buffers()
-        dispatch.check_special("parallel computation", bufs)
+        dispatch.check_special(self.name, bufs)
     return self.out_handler(out_bufs)
 
 
@@ -3292,7 +3294,7 @@ class MeshExecutable(stages.XlaExecutable):
             kept_var_idx, bool(host_callbacks),
             from_lower_sharding_computation=True)
       else:
-        unsafe_call = ExecuteReplicated(xla_executable, backend, handle_args,
+        unsafe_call = ExecuteReplicated(xla_executable, name, backend, handle_args,
                                         handle_outs, unordered_effects,
                                         ordered_effects, keepalive,
                                         bool(host_callbacks), kept_var_idx)

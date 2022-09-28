@@ -135,7 +135,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
       with self.assertRaisesRegex(
           FloatingPointError,
-          r"invalid value \(nan\) encountered in parallel computation"):
+          r"invalid value \(nan\) encountered in xmap"):
         ans = f(jnp.array([0.]))
         ans.block_until_ready()
 
