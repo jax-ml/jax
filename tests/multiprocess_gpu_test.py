@@ -128,6 +128,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
   @unittest.skipIf(xla_extension_version < 91,
                    "Test requires jaxlib 0.3.17 or newer")
+  @jtu.skip_on_devices("rocm")
   def test_distributed_jax_cuda_visible_devices(self):
     """Test jax_cuda_visible_devices works in distributed settings."""
     if jax.devices()[0].platform != 'gpu':
