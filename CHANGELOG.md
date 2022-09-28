@@ -8,13 +8,17 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.20
+## jax 0.3.21
+
+## jaxlib 0.3.21
+
+## jax 0.3.20 (Sep 28, 2022)
 * Bug fixes:
   * Adds missing `.pyi` files that were missing from the previous release ({jax-issue}`#12536`).
   * Fixes an incompatibility between `jax` 0.3.19 and the libtpu version it pinned ({jax-issue}`#12550`). Requires jaxlib 0.3.20.
   * Fix incorrect `pip` url in `setup.py` comment ({jax-issue}`#12528`).
 
-## jaxlib 0.3.20
+## jaxlib 0.3.20 (Sep 28, 2022)
 * Bug fixes
   * Fixes support for limiting the visible CUDA devices via
    `jax_cuda_visible_devices` in distributed jobs. This functionality is needed for
