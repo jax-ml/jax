@@ -394,6 +394,7 @@ class GlobalDeviceArray:
   def local_shards(self) -> Sequence[Shard]:
     return self._create_local_shards()
 
+  @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     return self.local_shards
 
