@@ -19,14 +19,14 @@ import sys
 
 from setuptools import setup, find_packages
 
-_current_jaxlib_version = '0.3.15'
+_current_jaxlib_version = '0.3.20'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.3.15'
 _available_cuda_versions = ['11']
 _default_cuda_version = '11'
 _available_cudnn_versions = ['82', '805']
 _default_cudnn_version = '82'
-_libtpu_version = '0.1.dev20220926'
+_libtpu_version = '0.1.dev20220928'
 
 _dct = {}
 with open('jax/version.py') as f:
@@ -83,7 +83,7 @@ setup(
         'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [f'jaxlib=={_current_jaxlib_version}',
                 f'libtpu-nightly=={_libtpu_version}',
                 # Required by cloud_tpu_init.py
