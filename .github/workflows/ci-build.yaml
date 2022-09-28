@@ -45,6 +45,7 @@ jobs:
             os: ubuntu-latest
             enable-x64: 0
             prng-upgrade: 0
+            random-future: 0
             package-overrides: "none"
             num_generated_cases: 1
             use-latest-jaxlib: false
@@ -53,6 +54,7 @@ jobs:
             os: ubuntu-latest
             enable-x64: 1
             prng-upgrade: 1
+            random-future: 1
             # Test experimental NumPy dispatch
             package-overrides: "git+https://github.com/seberg/numpy-dispatch.git"
             num_generated_cases: 1
@@ -62,6 +64,7 @@ jobs:
             os: ubuntu-latest
             enable-x64: 0
             prng-upgrade: 0
+            random-future: 0
             package-overrides: "none"
             num_generated_cases: 1
             use-latest-jaxlib: false
@@ -105,6 +108,7 @@ jobs:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
         JAX_ENABLE_CUSTOM_PRNG: ${{ matrix.prng-upgrade }}
+        JAX_RANDOM_FUTURE: ${{ matrix.random-future }}
         JAX_ENABLE_CHECKS: true
         JAX_SKIP_SLOW_TESTS: true
       run: |
