@@ -3872,6 +3872,53 @@ class APITest(jtu.JaxTestCase):
     g = jax.jit(lambda x, y: x * y, static_argnums=-1)
     g(1, 2)  # doesn't crash
 
+  def test_fastpath_cache_confusion(self):
+    # https://github.com/google/jax/issues/12542
+    @jax.jit
+    def a(x):
+      return ()
+
+    @jax.jit
+    def b(x):
+      return a(x)
+
+
+    @jax.jit
+    def g(x):
+      return x, x
+
+    @jax.jit
+    def h(x):
+      return g(x)
+
+    jaxpr = jax.make_jaxpr(h)(7)
+    jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+
+    b(8)  # don't crash
+
+  def test_fastpath_cache_confusion2(self):
+    @jax.jit
+    def a():  # note nullary function, still staged out though
+      return ()
+
+    @jax.jit
+    def b(x):
+      return a()
+
+
+    @jax.jit
+    def g(x):
+      return x, x
+
+    @jax.jit
+    def h(x):
+      return g(x)
+
+    jaxpr = jax.make_jaxpr(h)(7)
+    jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+
+    b(8)  # don't crash
+
 
 @jtu.with_config(jax_experimental_subjaxpr_lowering_cache=True)
 class SubcallTraceCacheTest(jtu.JaxTestCase):
