@@ -394,6 +394,9 @@ class GlobalDeviceArray:
   def local_shards(self) -> Sequence[Shard]:
     return self._create_local_shards()
 
+  def addressable_shards(self) -> Sequence[Shard]:
+    return self.local_shards
+
   @property
   def global_shards(self) -> Sequence[Shard]:
     if self.mesh.size == len(self._local_devices):
@@ -439,6 +442,9 @@ class GlobalDeviceArray:
 
   def local_data(self, index) -> DeviceArray:
     return pxla._set_aval(self._device_buffers[index])
+
+  def addressable_data(self, index) -> DeviceArray:
+    return self.local_data(index)
 
   def block_until_ready(self):
     # self._sharded_buffer can be None if xla_extension_version < 90 or
