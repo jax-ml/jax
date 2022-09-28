@@ -310,7 +310,7 @@ class ArrayImpl(basearray.Array):
     return self.shape == self._arrays[0].shape
 
   def __repr__(self):
-    prefix = '{}('.format(self.__class__.__name__.lstrip('_'))
+    prefix = 'Array('
     if self.aval is not None and self.aval.weak_type:
       dtype_str = f'dtype={self.dtype.name}, weak_type=True)'
     else:

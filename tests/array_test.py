@@ -187,7 +187,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     input_shape = (8, 2)
     arr, _ = create_array(
         input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
-    repr(arr)  # doesn't crash
+    self.assertStartsWith(repr(arr), "Array(")
 
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
