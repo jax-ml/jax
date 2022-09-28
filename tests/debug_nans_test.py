@@ -94,7 +94,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     # run to compile, and the next call won't go through `cache_miss`.
     f(2)
     # 'cond' not 'xla_call'
-    msg = r"invalid value \(nan\) encountered in cond"
+    msg = r"invalid value \(nan\) encountered in jit(cond)"
     with self.assertRaisesRegex(FloatingPointError, msg):
       f(1)
 
@@ -205,7 +205,7 @@ class DebugInfsTest(jtu.JaxTestCase):
     # run to compile, and the next call won't go through `cache_miss`.
     f(2)
     # 'cond' not 'xla_call'
-    msg = r"invalid value \(inf\) encountered in cond"
+    msg = r"invalid value \(inf\) encountered in jit(cond)"
     with self.assertRaisesRegex(FloatingPointError, msg):
       f(1)
 
