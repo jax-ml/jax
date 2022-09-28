@@ -18,6 +18,8 @@ from typing import Optional
 import zlib
 
 import jax
+from jax._src import array
+from jax._src import sharding
 from jax.tree_util import PyTreeDef
 from jax.experimental import maps
 from jax.experimental.pjit import pjit, FROM_GDA
@@ -101,7 +103,11 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
   """
 
   def _pjit(inp):
-    if isinstance(inp, GlobalDeviceArray):
+    if isinstance(inp, array.ArrayImpl) and inp._committed:
+      reps = sharding.OpShardingSharding(inp.sharding._device_assignment,
+                                         sharding._get_replicated_op_sharding())
+      return pjit(lambda x: x, out_axis_resources=reps)(inp)
+    elif isinstance(inp, GlobalDeviceArray):
       if inp.is_fully_replicated:
         return np.asarray(inp.local_data(0))
       global_mesh = inp.mesh
@@ -119,10 +125,13 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
     with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
       out = pjit(lambda x: x, in_axis_resources=in_axis_resources,
                  out_axis_resources=None)(inp)
-    return np.asarray(out.local_data(0))
+    return np.asarray(out.addressable_data(0))
 
-  with config_internal.parallel_functions_output_gda(True):
-    return jax.tree_util.tree_map(_pjit, in_tree)
+  if jax.config.jax_array:
+    return jax.tree_map(_pjit, in_tree)
+  else:
+    with config_internal.parallel_functions_output_gda(True):
+      return jax.tree_map(_pjit, in_tree)
 
 
 def assert_equal(in_tree, fail_message: str = ''):
