@@ -9,11 +9,19 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.20
+* Bug fixes:
+  * Adds missing `.pyi` files that were missing from the previous release ({jax-issue}`#12536`).
+  * Fixes an incompatibility between `jax` 0.3.19 and the libtpu version it pinned ({jax-issue}`#12550`). Requires jaxlib 0.3.20.
+  * Fix incorrect `pip` url in `setup.py` comment ({jax-issue}`#12528`).
 
 ## jaxlib 0.3.20
+* Bug fixes
+  * Fixes support for limiting the visible CUDA devices via
+   `jax_cuda_visible_devices` in distributed jobs. This functionality is needed for
+   the JAX/SLURM integration on GPU ({jax-issue}`#12533`).
 
 ## jax 0.3.19 (Sep 27, 2022)
-* Fixed required jaxlib version
+* Fixes required jaxlib version.
 
 ## jax 0.3.18 (Sep 26, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.17...jax-v0.3.18).
