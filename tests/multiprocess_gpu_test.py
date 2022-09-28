@@ -94,13 +94,12 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
-    os.environ["JAX_PORT"] = str(port)
-    os.environ["NUM_TASKS"] = str(num_tasks)
-
     with contextlib.ExitStack() as exit_stack:
       subprocesses = []
       for task in range(num_tasks):
         env = os.environ.copy()
+        env["JAX_PORT"] = str(port)
+        env["NUM_TASKS"] = str(num_tasks)
         env["TASK"] = str(task)
         env["CUDA_VISIBLE_DEVICES"] = ",".join(
             str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
@@ -139,13 +138,12 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
-    os.environ["JAX_PORT"] = str(port)
-    os.environ["NUM_TASKS"] = str(num_tasks)
-
     with contextlib.ExitStack() as exit_stack:
       subprocesses = []
       for task in range(num_tasks):
         env = os.environ.copy()
+        env["JAX_PORT"] = str(port)
+        env["NUM_TASKS"] = str(num_tasks)
         env["TASK"] = str(task)
         visible_devices = ",".join(
             str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
@@ -167,7 +165,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         for proc in subprocesses:
           out, _ = proc.communicate()
           self.assertEqual(proc.returncode, 0)
-          self.assertEqual(out, f'{num_gpus_per_task},{num_gpus},[{num_gpus}.]')
+          self.assertRegex(out, f'{num_gpus_per_task},{num_gpus},\\[{num_gpus}.\\]$')
       finally:
         for proc in subprocesses:
           proc.kill()
