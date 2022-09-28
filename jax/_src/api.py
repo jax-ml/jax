@@ -537,6 +537,8 @@ def _device_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
       not execute.args[5] and not execute.args[6] and
       # Has no host callbacks
       not execute.args[8] and
+      # impl rule must have been called, i.e. top trace is an EvalTrace
+      isinstance(core.find_top_trace(args_flat), core.EvalTrace) and
       # Not supported: ShardedDeviceArray
       all(device_array.type_is_device_array(x) for x in out_flat) and
       # Not supported: dynamic shapes
