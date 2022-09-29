@@ -428,7 +428,7 @@ def permutation(key: KeyArray,
   if independent or np.ndim(x) == 1:
     return _shuffle(key, x, axis)
   ind = _shuffle(key, jnp.arange(x.shape[axis]), 0)  # type: ignore[union-attr]
-  return jnp.take(x, ind, axis)
+  return jnp.take(x, ind, axis, unique_indices=True)
 
 
 @partial(jit, static_argnums=(2,), inline=True)
