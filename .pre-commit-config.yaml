@@ -26,3 +26,13 @@ repos:
   hooks:
   - id: jupytext
     args: [--sync]
+
+-   repo: https://github.com/mattseymour/pre-commit-pytype
+    rev: '2020.10.8'
+    hooks:
+    -   id: pytype
+
+-   repo: https://github.com/necaris/pre-commit-pyright
+    rev: '1.1.53'
+    hooks:
+    -   id: pyright
