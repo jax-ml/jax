@@ -3437,18 +3437,35 @@ def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
   return swapaxes(unpacked, axis, -1)
 
 
-@_wraps(np.take, skip_params=['out'], lax_description="""\
-In the JAX version, the ``mode`` argument defaults to a special mode
-(``"fill"``) that returns invalid values (e.g., NaN) for out-of-bounds indices.
-See :attr:`jax.numpy.ndarray.at` for more discussion of out-of-bounds indexing
-in JAX.
+@_wraps(np.take, skip_params=['out'],
+        lax_description="""
+The JAX version adds several extra parameters, described below, which are forwarded
+to :func:`jax.lax.gather` for finer control over indexing.""",
+        extra_params="""
+mode : string, default="fill"
+    Out-of-bounds indexing mode. The default mode="fill" returns invalid values
+    (e.g. NaN) for out-of bounds indices. See :attr:`jax.numpy.ndarray.at` for
+    more discussion of out-of-bounds indexing in JAX.
+unique_indices : bool, default=False
+    If True, the implementation will assume that the indices are unique,
+    which can result in more efficient execution on some backends.
+indices_are_sorted : bool, default=False
+    If True, the implementation will assume that the indices are sorted in
+    ascending order, which can lead to more efficient execution on some backends.
+fill_value : optional
+    The fill value to return for out-of-bounds slices when mode is 'fill'. Ignored
+    otherwise. Defaults to NaN for inexact types, the largest negative value for
+    signed types, the largest positive value for unsigned types, and True for booleans.
 """)
-def take(a, indices, axis: Optional[int] = None, out=None, mode=None):
+def take(a, indices, axis: Optional[int] = None, out=None, mode=None,
+         unique_indices=False, indices_are_sorted=False, fill_value=None):
   return _take(a, indices, None if axis is None else operator.index(axis), out,
-               mode)
+               mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
+               fill_value=fill_value)
 
-@partial(jit, static_argnames=('axis', 'mode'))
-def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
+@partial(jit, static_argnames=('axis', 'mode', 'unique_indices', 'indices_are_sorted', 'fill_value'))
+def _take(a, indices, axis: Optional[int] = None, out=None, mode=None,
+          unique_indices=False, indices_are_sorted=False, fill_value=None):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.take is not supported.")
   _check_arraylike("take", a, indices)
@@ -3497,7 +3514,8 @@ def _take(a, indices, axis: Optional[int] = None, out=None, mode=None):
     start_index_map=(axis_idx,))
   return lax.gather(a, indices[..., None], dimension_numbers=dnums,
                     slice_sizes=tuple(slice_sizes),
-                    mode=gather_mode)
+                    mode=gather_mode, unique_indices=unique_indices,
+                    indices_are_sorted=indices_are_sorted, fill_value=fill_value)
 
 
 def _normalize_index(index, axis_size):

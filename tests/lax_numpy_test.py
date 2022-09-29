@@ -4861,6 +4861,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       jnp.take(jnp.ones((2, 0, 4), dtype=jnp.float32),
                jnp.array([0], jnp.int32), axis=1)
 
+  def testTakeOptionalArgs(self):
+    x = jnp.arange(5.0)
+    ind = jnp.array([0, 2, 4, 6])
+    expected = jnp.array([0.0, 2.0, 4.0, 10.0])
+    actual = jnp.take(x, ind, unique_indices=True,
+                      indices_are_sorted=True, fill_value=10.0)
+    self.assertArraysEqual(expected, actual)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_{}_index={}_axis={}".format(
           jtu.format_shape_dtype_string(x_shape, dtype),
