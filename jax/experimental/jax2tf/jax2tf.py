@@ -68,7 +68,7 @@ import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 from tensorflow.core.framework import attr_value_pb2  # type: ignore[import]
-from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
+from tensorflow.python.compiler.xla.experimental import xla_sharding  # type: ignore[import]
 from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
 # pylint: enable=g-direct-tensorflow-import
 

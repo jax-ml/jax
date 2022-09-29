@@ -263,7 +263,7 @@ you will not be able to compute the gradients of the function loaded from the Sa
 jax2tf supports JAX functions that use `jax.pjit`, for single-host meshes.
 The lowering is actually similar as for a `jax.jit`, except that the
 arguments and results will be wrapped with
-`tensorflow.compiler.xla.experimental.xla_sharding.XlaSharding` TensorFlow ops.
+`tensorflow.python.compiler.xla.experimental.xla_sharding.XlaSharding` TensorFlow ops.
 
 Note that when saving a model, the parameters to the model are wrapped with
 `tf.Variable` before calling the lowered function (see [above](#saved_model_with_parameters)),

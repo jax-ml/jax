@@ -149,7 +149,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/xla_data.proto#L601
   for details on the OpSharding proto.
   Unfortunately the semantics are not very well described in the proto spec, but the code here might help:
-  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/experimental/xla_sharding/xla_sharding.py
+  https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/compiler/xla/experimental/xla_sharding/xla_sharding.py
   """
   mesh_shape = cast(Tuple[int, ...], self.mesh_shape)
   mesh = _get_logical_mesh_ids(self.mesh_shape)
