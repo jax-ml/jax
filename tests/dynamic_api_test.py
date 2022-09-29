@@ -1360,6 +1360,37 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
     jax.make_jaxpr(f, abstracted_axes=('n',))(jnp.arange(3))  # doesn't crash
 
+  def test_slicing_basic_jaxpr(self):
+    def f(x):
+      return x[0]
+
+    jaxpr = jax.make_jaxpr(f, abstracted_axes=(None, 'n'))(jnp.zeros((3, 4)))
+    # { lambda ; a:i32[] b:f32[3,a]. let
+    #     c:f32[1,a] = dynamic_slice[slice_sizes=(1, None)] b 0 0 a
+    #     d:f32[a] = squeeze[dimensions=(0,)] c
+    #   in (d,) }
+    self.assertLen(jaxpr.jaxpr.invars, 2)
+    a, _ = jaxpr.jaxpr.invars
+    self.assertLen(jaxpr.jaxpr.outvars, 1)
+    d, = jaxpr.jaxpr.outvars
+    self.assertLen(d.aval.shape, 1)
+    self.assertEqual(d.aval.shape, (a,))
+
+  def test_slicing_basic_lower(self):
+    @partial(jax.jit, abstracted_axes=(None, 'n'))
+    def f(x):
+      return x[0]
+    f.lower(jnp.zeros((3, 4))).compiler_ir()  # doesn't crash
+
+  @unittest.skipIf(jtu.device_under_test() != 'iree', "iree test")
+  def test_slicing_basic_execute(self):
+    @partial(jax.jit, abstracted_axes=(None, 'n'))
+    def f(x):
+      return x[0]
+
+    y = f(jnp.arange(3 * 4).reshape(3, 4))
+    self.assertAllClose(y, jnp.array([0, 1, 2, 3]))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

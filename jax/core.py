@@ -1747,7 +1747,7 @@ def symbolic_equal_shape(s1: Shape, s2: Shape) -> bool:
 
 def greater_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   handler, ds = _dim_handler_and_canonical(d1, d2)
-  return handler.greater_equal(*ds)
+  return handler.symbolic_equal(*ds) or handler.greater_equal(*ds)
 
 def greater_equal_shape(s1: Shape, s2: Shape) -> bool:
   return all(map(greater_equal_dim, s1, s2))
