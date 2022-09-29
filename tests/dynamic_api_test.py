@@ -36,7 +36,9 @@ python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 
-@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
+# TODO(https://github.com/google/jax/issues/12291): Enable jax.Array
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
+                 jax_array=False)
 class DynamicShapeTest(jtu.JaxTestCase):
   def test_basic_staging(self):
     def f(x, _):

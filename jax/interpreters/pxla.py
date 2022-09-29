@@ -827,7 +827,7 @@ def _sda__getitem__(self, idx):
       buf_idx = None
     if buf_idx is not None:
       buf = self.device_buffers[buf_idx]
-      aval = ShapedArray(buf.xla_shape().dimensions(), self.aval.dtype)
+      aval = ShapedArray(buf.shape, self.aval.dtype)
       return device_array.make_device_array(aval, None, buf)
   return super(self.__class__, self).__getitem__(idx)
 

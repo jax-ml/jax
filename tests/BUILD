@@ -38,7 +38,6 @@ jax_test(
 jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
-    disable_configs = ["cpu_jax_array"],
     shard_count = 2,
 )
 
@@ -80,10 +79,6 @@ jax_test(
 jax_test(
     name = "custom_object_test",
     srcs = ["custom_object_test.py"],
-    # TODO(yashkatariya,mattjj,phawkins): Enable custom_object_test once
-    # `ExecuteReplicated` supports the use case of having more
-    # than 1 buffer on a single device.
-    disable_configs = ["cpu_jax_array"],
 )
 
 py_test(

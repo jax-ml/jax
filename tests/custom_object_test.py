@@ -271,6 +271,8 @@ dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
+# TODO(https://github.com/google/jax/issues/12104): Enable this
+@jtu.with_config(jax_array=False)
 class CustomObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
