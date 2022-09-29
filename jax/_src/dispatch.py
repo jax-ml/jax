@@ -91,13 +91,15 @@ ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
   from jax._src.sharding import PmapSharding
+  from jax.experimental import pjit
 
   aval = xla.abstractify(x)
   try:
     if config.jax_array:
       if isinstance(x.sharding, PmapSharding):
         return aval, None
-      return aval, (x.sharding if x._committed else None)
+      return aval, (pjit.to_op_sharding_sharding(x.sharding, x.ndim)  # type: ignore
+                    if x._committed else None)
     else:
       return aval, x._device
   except:

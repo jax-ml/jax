@@ -670,13 +670,15 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
 
   def arg_spec(x):
     from jax._src.sharding import PmapSharding
+    from jax.experimental import pjit
     # like xla.arg_spec but duck-types on x.shape and x.dtype
     aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
     if jax.config.jax_array:
       if hasattr(x, 'sharding'):
         if isinstance(x.sharding, PmapSharding):
           return aval, None
-        return aval, (x.sharding if x._committed else None)
+        return aval, (pjit.to_op_sharding_sharding(x.sharding, x.ndim)
+                      if x._committed else None)
       else:
         return aval, None
     else:
