@@ -139,6 +139,10 @@ def switch(index, branches: Sequence[Callable], *operands,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
+  if joined_effects:
+    # Raise index in case of effects to allow data-dependence-based discharging
+    # of those effects (even if they don't have an explicit data dependence).
+    index = core.raise_as_much_as_possible(index)
 
   linear = (False,) * (len(consts) + len(ops))
   out = cond_p.bind(
@@ -235,6 +239,10 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
         f'Effects not supported in `cond`: {disallowed_effects}')
 
   index = lax.convert_element_type(pred, np.int32)
+  if joined_effects:
+    # Raise index in case of effects to allow data-dependence-based discharging
+    # of those effects (even if they don't have an explicit data dependence).
+    index = core.raise_as_much_as_possible(index)
 
   linear = [False] * len(consts) + linear_ops
   out = cond_p.bind(
