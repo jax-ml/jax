@@ -55,6 +55,8 @@ class DistributedTest(jtu.JaxTestCase):
   # is fixed.
   @unittest.SkipTest
   def testInitializeAndShutdown(self):
+    if jtu.device_under_test() != 'gpu':
+      self.skipTest('Test only works with GPUs.')
     # Tests the public APIs. Since they use global state, we cannot use
     # concurrency to simulate multiple tasks.
     port = portpicker.pick_unused_port()
@@ -66,6 +68,8 @@ class DistributedTest(jtu.JaxTestCase):
 
   @parameterized.parameters([1, 2, 4])
   def testConcurrentInitializeAndShutdown(self, n):
+    if jtu.device_under_test() != 'gpu':
+      self.skipTest('Test only works with GPUs.')
     port = portpicker.pick_unused_port()
     def task(i):
       # We can't call the public APIs directly because they use global state.
@@ -86,7 +90,7 @@ class DistributedTest(jtu.JaxTestCase):
 class MultiProcessGpuTest(jtu.JaxTestCase):
 
   def test_gpu_distributed_initialize(self):
-    if jax.devices()[0].platform != 'gpu':
+    if jtu.device_under_test() != 'gpu':
       raise unittest.SkipTest('Tests only for GPU.')
 
     port = portpicker.pick_unused_port()
@@ -131,7 +135,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("rocm")
   def test_distributed_jax_cuda_visible_devices(self):
     """Test jax_cuda_visible_devices works in distributed settings."""
-    if jax.devices()[0].platform != 'gpu':
+    if jtu.device_under_test() != 'gpu':
       raise unittest.SkipTest('Tests only for GPU.')
 
     port = portpicker.pick_unused_port()
