@@ -86,17 +86,21 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
     if not _all(core.greater_equal_dim(shape[d], 1) for d in pos_dims):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
 
-  result_dtype = dtypes.canonicalize_dtype(dtype or dtypes.dtype(a))
+  result_dtype = dtype or dtypes.dtype(a)
 
-  # promote_integers=True matches NumPy's behavior for sum() and prod(), which promotes
-  # all int-like inputs to the widest available dtype.
   if dtype is None and promote_integers:
+    # Note: NumPy always promotes to 64-bit; jax instead promotes to the
+    # default dtype as defined by dtypes.int_ or dtypes.uint.
     if dtypes.issubdtype(result_dtype, np.bool_):
-      result_dtype = dtypes.canonicalize_dtype(np.int64)
+      result_dtype = dtypes.int_
     elif dtypes.issubdtype(result_dtype, np.unsignedinteger):
-      result_dtype = dtypes.canonicalize_dtype(np.uint64)
+      if np.iinfo(result_dtype).bits < np.iinfo(dtypes.uint).bits:
+        result_dtype = dtypes.uint
     elif dtypes.issubdtype(result_dtype, np.integer):
-      result_dtype = dtypes.canonicalize_dtype(np.int64)
+      if np.iinfo(result_dtype).bits < np.iinfo(dtypes.int_).bits:
+        result_dtype = dtypes.int_
+
+  result_dtype = dtypes.canonicalize_dtype(result_dtype)
 
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
     computation_dtype = _upcast_f16(result_dtype)
