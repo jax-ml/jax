@@ -592,6 +592,13 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     out = h(jnp.arange(4.), 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
 
+    @jax.jit
+    @functools.partial(jax.vmap)
+    def h(x, y):
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y)
+    out = h(jnp.arange(4.), jnp.arange(10., 14.))
+    np.testing.assert_allclose(out, np.sin(np.arange(4.)) + jnp.arange(10., 14.))
+
   def test_vmap_vectorized_callback(self):
 
     def cb(x):
