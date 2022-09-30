@@ -733,7 +733,7 @@ Similarly, for all values of ``x`` less than zero, the output is zero.
 Perturbing ``x`` does not change this output, so the gradient is zero.
 That leaves us with the tricky case of ``x=0``. Surely, if you perturb ``x`` upward,
 it will change the output, but this is problematic: an infinitesimal change in ``x``
-produces a finite change inthe function value, which implies the gradient is
+produces a finite change in the function value, which implies the gradient is
 undefined.
 Fortunately, there's another way for us to measure the gradient in this case: we
 perturb the function downward, in which case the output does not change, and so the
