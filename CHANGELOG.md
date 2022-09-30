@@ -9,6 +9,11 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.21
+* Changes
+  * The persistent compilation cache will now warn instead of raising an
+    exception on error ({jax-issue}`#12582`), so program execution can continue
+    if something goes wrong with the cache. Set
+    `JAX_RAISE_PERSISTENT_CACHE_ERRORS=true` to revert this behavior.
 
 ## jaxlib 0.3.21
 

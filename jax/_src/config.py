@@ -699,6 +699,16 @@ enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     help=('Enables an internal upgrade that implements `jax.custom_vjp` by '
           'reduction to `jax.custom_jvp` and `jax.custom_transpose`.'))
 
+raise_persistent_cache_errors = config.define_bool_state(
+    name='jax_raise_persistent_cache_errors',
+    default=False,
+    help=('If true, exceptions raised when reading or writing to the '
+          'persistent compilation cache will be allowed through, halting '
+          'program execution if not manually caught. If false, exceptions are '
+          'caught and raised as warnings, allowing program execution to '
+          'continue. Defaults to false so cache bugs or intermittent issues '
+          'are non-fatal.'))
+
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
     default=None,
