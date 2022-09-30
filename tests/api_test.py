@@ -6322,7 +6322,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         re.escape(
-            "Custom JVP rule must produce primal and tangent outputs "
+            "Custom JVP rule foo_jvp for function f "
+            "must produce primal and tangent outputs "
             "with equal container (pytree) structures, but got "
             "{} and {} respectively.".format(
                 tree_util.tree_structure((1,)),
@@ -6367,9 +6368,64 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         re.escape(
-            "Custom JVP rule must produce a pair (list or tuple of length two) "
-            "representing primal and tangent outputs, got 1.0"),
+            "Custom JVP rule foo_jvp for function f "
+            "must produce a pair (list or tuple of length two) "
+            "representing primal and tangent outputs, but got 1.0"),
         lambda: api.jvp(f, (2.,), (1.,)))
+
+  def test_jvp_rule_primal_out_type_doesnt_match_primal_error_message(self):
+    # https://github.com/lucidrains/flash-attention-jax/issues/7
+
+    def scan_apply(f, x):
+      y, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
+      return y
+
+    @jax.custom_jvp
+    def f(x):
+      return x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return (x, x), (xdot, xdot)
+
+    x = jnp.float32(1.)
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom JVP rule f_jvp for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal in value to the output of the "
+            "custom_jvp-decorated function f, and in particular of the "
+            "same container/pytree structure), but instead the JVP rule "
+            "output's first element had container/pytree structure:\n"
+            "    (float32[], float32[])\n"
+            "while the custom_jvp-decorated function f had output "
+            "container/pytree structure:\n"
+            "    float32[]."
+        ),
+        lambda: jax.jvp(lambda x: scan_apply(f, x), (x,), (x,)))
+
+    @f.defjvp
+    def f_jvp2(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return jnp.zeros((3, *x.shape), x.dtype), xdot
+
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom JVP rule f_jvp2 for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal in value to the output of the "
+            "custom_jvp-decorated function f, and in particular "
+            "with leaves of the same shape/dtype), but instead the JVP rule "
+            "output's first element had shapes/dtypes of:\n"
+            "    float32[3]\n"
+            "while the custom_jvp-decorated function f had output shapes/dtypes"
+            " of:\n"
+            "    float32[]"
+        ),
+        lambda: jax.jvp(lambda x: scan_apply(f, x), (x,), (x,)))
 
   def test_multiple_rule_invocations(self):
     @jax.custom_jvp
@@ -7360,6 +7416,67 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(foo_fwd, foo_bwd)
     with self.assertRaisesRegex(TypeError, "Custom VJP rule .* must produce a tuple"):
       api.grad(f)(3.)
+
+  def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
+    # https://github.com/lucidrains/flash-attention-jax/issues/7
+
+    def scan_apply(f, x):
+      y, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
+      return y
+
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return (x, x), None
+
+    def f_bwd(_, y_bar):
+      return (y_bar,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom VJP fwd rule f_fwd for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal to the output of the "
+            "custom_vjp-decorated function f) and the second element "
+            "represents residuals (i.e. values stored from the forward "
+            "pass for use on the backward pass), but instead the fwd rule "
+            "output's first element had container/pytree structure:\n"
+            "    (float32[], float32[])\n"
+            "while the custom_vjp-decorated function f had output "
+            "container/pytree structure:\n"
+            "    float32[]."
+        ),
+        lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
+
+    def f_fwd2(x):
+      return jnp.zeros((3, *x.shape), x.dtype), None
+
+    def f_bwd2(_, y_bar):
+      return (y_bar,)
+
+    f.defvjp(f_fwd2, f_bwd2)
+
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom VJP fwd rule f_fwd2 for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal to the output of the "
+            "custom_vjp-decorated function f) and the second element "
+            "represents residuals (i.e. values stored from the forward "
+            "pass for use on the backward pass), but instead the fwd rule "
+            "output's first element had shapes/dtypes of:\n"
+            "    float32[3]\n"
+            "while the custom_vjp-decorated function f had output "
+            "shapes/dtypes of:\n"
+            "    float32[]"
+        ),
+        lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
   def test_issue2511(self):
     arr = jnp.ones((5, 2, 2))
