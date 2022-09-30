@@ -81,13 +81,9 @@ jax_test(
     srcs = ["custom_object_test.py"],
 )
 
-py_test(
+jax_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
 )
 
 py_test(

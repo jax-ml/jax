@@ -150,7 +150,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = jax.experimental.PartitionSpec('x')
+    p = pjit.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
                   in_axis_resources=p,
                   out_axis_resources=p)
