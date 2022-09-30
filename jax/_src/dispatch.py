@@ -447,6 +447,28 @@ def lower_xla_callable(
                         event=JAXPR_TRACE_EVENT):
     jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
         fun, pe.debug_info_final(fun, "jit"))
+
+    error_msgs = None
+    if config.jax_debug_mode:
+      # circular import
+      from jax._src import checkify
+
+      new_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+      new_jaxpr, error_msgs = checkify.checkify_jaxpr(new_jaxpr,
+                                                      checkify.init_error,
+                                                      checkify.all_checks)
+      if error_msgs:
+        consts, jaxpr = new_jaxpr.consts, new_jaxpr.jaxpr
+        err = checkify.init_error
+        err_args = ((core.raise_to_shaped(core.get_aval(x)), True)
+                    for x in (err.err, err.code, err.payload))
+        out_type = (*err_args, *out_type)
+        donated_invars = [*[False]*3, *donated_invars]
+      else:
+        # If there's no messages, there's no checks. We don't need to run the
+        # checked jaxpr.
+        error_msgs = None
+
   out_avals, kept_outputs = util.unzip2(out_type)
 
   if any(isinstance(c, core.Tracer) for c in consts):
@@ -489,7 +511,8 @@ def lower_xla_callable(
         name, None, True, None, None, None, jaxpr=jaxpr, consts=consts,
         device=device, in_avals=abstract_args, out_avals=out_avals,
         has_unordered_effects=False, ordered_effects=[],
-        kept_var_idx=kept_var_idx, keepalive=None, host_callbacks=[])
+        kept_var_idx=kept_var_idx, keepalive=None, host_callbacks=[],
+        error_msgs=error_msgs)
 
   if not _on_exit:
     log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -528,7 +551,7 @@ def lower_xla_callable(
       in_avals=abstract_args, out_avals=out_avals,
       has_unordered_effects=bool(unordered_effects),
       ordered_effects=ordered_effects, kept_var_idx=kept_var_idx,
-      keepalive=keepalive, host_callbacks=host_callbacks)
+      keepalive=keepalive, host_callbacks=host_callbacks, error_msgs=error_msgs)
 
 
 def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
@@ -886,13 +909,26 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
 def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
                       input_handler: Optional[Callable],
                       output_buffer_counts: Sequence[int],
-                      result_handler: Callable, has_unordered_effects: bool,
-                      ordered_effects: List[core.Effect], kept_var_idx,
-                      has_host_callbacks: bool, *args):
+                      result_handler: Callable,
+                      has_unordered_effects: bool,
+                      ordered_effects: List[core.Effect],
+                      kept_var_idx,
+                      has_host_callbacks: bool,
+                      error_msgs,
+                      *args):
   device, = compiled.local_devices()
   args, env = input_handler(args) if input_handler else (args, None)
   in_flat = flatten(device_put(x, device) for i, x in enumerate(args)
                     if i in kept_var_idx)
+
+  if error_msgs is not None:
+    from jax._src import checkify
+    err = checkify.init_error
+    err_args = [input_handler(device_put(x, device))[0] if input_handler else
+                device_put(x, device)
+                for x in [err.err, err.code, err.payload]]
+    in_flat = [*flatten(err_args), *in_flat]
+
   if has_unordered_effects or ordered_effects or has_host_callbacks:
     in_flat, token_handler = _add_tokens(
         has_unordered_effects, ordered_effects, has_host_callbacks, device,
@@ -900,11 +936,18 @@ def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
     out_flat, runtime_token = compiled.execute_with_token(in_flat)
   else:
     out_flat = compiled.execute(in_flat)
+
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)
   if ordered_effects or has_unordered_effects or has_host_callbacks:
     out_bufs = token_handler(out_bufs, runtime_token)
-  return result_handler(env, out_bufs)
+
+  out_bufs = result_handler(env, out_bufs)
+  if error_msgs is not None:
+    pred, code, payload, *out_bufs = out_bufs
+    error = checkify.Error(pred, code, error_msgs, payload)
+    error.throw()
+  return out_bufs
 
 
 def _execute_replicated(name: str,
@@ -939,15 +982,26 @@ def _execute_replicated(name: str,
 def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
                      has_unordered_effects: bool,
                      ordered_effects: List[core.Effect], kept_var_idx,
-                     host_callbacks, *args):
+                     host_callbacks,
+                     error_msgs,
+                     *args):
   env: Dict[core.Var, Any]  = {}
+  if error_msgs is not None:
+    from jax._src import checkify
+    err = checkify.init_error
+    args = [*[err.err, err.code, err.payload], *args]
+
   pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
   map(env.setdefault, jaxpr.invars, pruned_args)
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
           for v in jaxpr.outvars]
-  return [_copy_device_array_to_device(x, device) if device_array.type_is_device_array(x)
+  outs = [_copy_device_array_to_device(x, device) if device_array.type_is_device_array(x)
           else h(None, *device_put(x, device)) for h, x in zip(handlers, outs)]
+  if error_msgs is not None:
+    # don't need to check error?
+    outs = outs[3:]
+  return outs
 
 
 class XlaComputation(stages.XlaLowering):
@@ -1188,7 +1242,8 @@ class XlaCompiledComputation(stages.XlaExecutable):
                            has_unordered_effects: bool,
                            ordered_effects: List[core.Effect],
                            kept_var_idx: Set[int], keepalive: Optional[Any],
-                           host_callbacks: List[Any]) -> XlaCompiledComputation:
+                           host_callbacks: List[Any],
+                           error_msgs: Optional[Any]) -> XlaCompiledComputation:
     sticky_device = device
     input_handler = _input_handler(backend, in_type, out_type)
     result_handler = _result_handler(backend, sticky_device, out_type)
@@ -1206,7 +1261,8 @@ class XlaCompiledComputation(stages.XlaExecutable):
     execute = _execute_compiled if nreps == 1 else _execute_replicated
     unsafe_call = partial(execute, name, compiled, input_handler, buffer_counts,  # type: ignore  # noqa: F811
                           result_handler, has_unordered_effects,
-                          ordered_effects, kept_var_idx, bool(host_callbacks))
+                          ordered_effects, kept_var_idx, bool(host_callbacks),
+                          error_msgs)
     return XlaCompiledComputation(compiled, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 
@@ -1224,12 +1280,14 @@ class XlaCompiledComputation(stages.XlaExecutable):
   def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals,
                          has_unordered_effects, ordered_effects, kept_var_idx,
                          keepalive: Optional[Any],
-                         host_callbacks: List[Any]) -> XlaCompiledComputation:
+                         host_callbacks: List[Any],
+                         error_msgs) -> XlaCompiledComputation:
     assert keepalive is None
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts, out_avals,
                           result_handlers, has_unordered_effects,
-                          ordered_effects, kept_var_idx, bool(host_callbacks))
+                          ordered_effects, kept_var_idx, bool(host_callbacks),
+                          error_msgs)
     return XlaCompiledComputation(None, in_avals, kept_var_idx, unsafe_call,
                                   keepalive)
 
