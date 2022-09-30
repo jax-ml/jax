@@ -15,7 +15,8 @@
 """Bazel macros used by the JAX build."""
 
 load("@org_tensorflow//tensorflow/tsl/platform/default:build_config.bzl", _pyx_library = "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _pybind_extension = "pybind_extension")
+load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows")
+load("@org_tensorflow//tensorflow:tensorflow.default.bzl", _pybind_extension = "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
