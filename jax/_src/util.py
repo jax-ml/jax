@@ -553,3 +553,16 @@ class HashableWrapper:
     if not isinstance(other, HashableWrapper):
       return False
     return self.x == other.x if self.hash is not None else self.x is other.x
+
+
+def is_sda_like(x):
+  from jax.interpreters import pxla
+  from jax._src.array import ArrayImpl
+  from jax.sharding import PmapSharding
+
+  if isinstance(x, pxla.ShardedDeviceArray):
+    return True
+  if isinstance(x, ArrayImpl):
+    return (x.is_fully_addressable() and (isinstance(x.sharding, PmapSharding) or
+                                          len(x.sharding.device_set) > 1))
+  return False
