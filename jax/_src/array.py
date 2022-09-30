@@ -100,12 +100,8 @@ def _single_device_array_from_buf(buf, committed):
                    committed=committed, _skip_checks=True)
 
 
-@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 96 else None)
+@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 97 else None)
 class ArrayImpl(basearray.Array):
-  """Experimental unified Array type.
-
-  This Python implementation will eventually be replaced by a C++ implementation.
-  """
   # TODO(yashkatariya): Add __slots__ here.
 
   aval: core.ShapedArray
@@ -133,17 +129,47 @@ class ArrayImpl(basearray.Array):
     self._committed = committed
     self._npy_value = None
 
-    if not _skip_checks or config.jax_enable_checks:
-      self._check()
-
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
     # (like pjit, xmap, etc).
-    if not _skip_checks:
-      self._rearrange()
+    if not _skip_checks or config.jax_enable_checks:
+      self._check_and_rearrange()
 
-  def _check(self):
+  def _check_and_rearrange(self):
+    for db in self._arrays:
+      if db.dtype != self.dtype:
+        raise ValueError(
+            "Input buffers to `Array` must have matching dtypes. "
+            f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
+
+    device_id_to_buffer = {db.device().id: db for db in self._arrays}
+
+    addressable_dev = self.sharding.addressable_devices
+    if len(self._arrays) != len(addressable_dev):
+      raise ValueError(
+          f"Expected {len(addressable_dev)} per-device arrays "
+          "(this is how many devices are addressable by the sharding), but "
+          f"got {len(self._arrays)}")
+
+    array_device_ids = set(device_id_to_buffer.keys())
+    addressable_device_ids = set(d.id for d in addressable_dev)
+    # Calculate a symmetric difference because the device ids between sharding
+    # and _arrays should match.
+    diff = set(array_device_ids) ^ set(addressable_device_ids)
+    if diff:
+      dev_in_sharding_not_in_arrays = set(addressable_device_ids) - set(array_device_ids)
+      dev_in_arrays_not_in_sharding = set(array_device_ids) - set(addressable_device_ids)
+      err_msg = (
+          "Addressable devices and per-device arrays devices do not match.")
+      if dev_in_sharding_not_in_arrays:
+        err_msg += (f" Sharding contains devices {dev_in_sharding_not_in_arrays} "
+                    "that are not present in per-device arrays.")
+      if dev_in_arrays_not_in_sharding:
+        err_msg += (f" Per-device arrays contain devices {dev_in_arrays_not_in_sharding} "
+                    "that are not present in the sharding.")
+      raise ValueError(err_msg)
+
     ss = self.sharding.shard_shape(self.shape)
     for db in self._arrays:
       if db.shape != ss:
@@ -151,35 +177,10 @@ class ArrayImpl(basearray.Array):
             f"Expected shard shape {ss} doesn't match the buffer "
             f"shape {db.shape} for buffer: {db}")
 
-    for db in self._arrays:
-      if db.dtype != self.dtype:
-        raise ValueError(
-            "Input buffers to `Array` must have matching dtypes. "
-            f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
-
-  def _rearrange(self):
     # Rearrange arrays based on the device assignment.
-    # TODO(yashkatariya): Add a similar check for shardings that are not
-    # XLACompatibleSharding. But leave the rearragement to XLACompatibleSharding
-    # only.
     if isinstance(self.sharding, XLACompatibleSharding):
       addressable_da = self.sharding._addressable_device_assignment
-      if len(self._arrays) != len(addressable_da):
-        raise ValueError(
-            f"Expected {len(addressable_da)} per-device arrays "
-            "(this is how many devices are addressable by the sharding), but "
-            f"got {len(self._arrays)}")
-      device_to_buffer = {db.device().id: db for db in self._arrays}
-      try:
-        self._arrays = [device_to_buffer[device.id]
-                        for device in addressable_da]
-      except KeyError as e:
-        array_device_ids = set(a.device().id for a in self._arrays)
-        addressable_device_ids = set(d.id for d in addressable_da)
-        diff = set(array_device_ids) - set(addressable_device_ids)
-        raise ValueError(
-            f"Some per-device arrays are placed on devices {diff}, which are "
-            f"not used in the specified sharding {self.sharding}") from e
+      self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
 
   @property
   def shape(self) -> Shape:

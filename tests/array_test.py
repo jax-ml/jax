@@ -293,13 +293,50 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.skipTest('Requires more than 4 devices')
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    # sharding device ids = {0, 1}
     s = sharding.MeshPspecSharding(mesh, P('x'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    # _arrays device ids = {2, 3}
     bufs = [jax.device_put(inp_data, d) for d in jax.devices()[2:4]]
     with self.assertRaisesRegex(
         ValueError,
-        "Some per-device arrays are placed on devices {2, 3}, which are "
-        "not used in the specified sharding"):
+        "Addressable devices and per-device arrays devices do not match. "
+        "Sharding contains devices {0, 1} that are not present in per-device "
+        "arrays. Per-device arrays contain devices {2, 3} that are not present "
+        "in the sharding."):
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+  def test_more_devices_in_sharding_than_arrays(self):
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    # Sharding device ids = {0, 1}
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    # _arrays device ids = {0, 0}
+    bufs = [jax.device_put(inp_data, jax.devices()[0]) for _ in range(2)]
+    with self.assertRaisesRegex(
+        ValueError,
+        "Addressable devices and per-device arrays devices do not match. "
+        r"Sharding contains devices \{1\} that are not present in per-device "
+        "arrays."):
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+  def test_different_devices_in_arrays_than_sharding(self):
+    if jax.device_count() < 3:
+      self.skipTest('Requires more than 3 devices')
+    shape = (8, 2)
+    mesh = maps.Mesh(np.array([jax.devices()[1], jax.devices()[2]]), ('x'))
+    # sharding device ids = {1, 2}
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    # _arrays device ids = {0, 1}
+    bufs = [jax.device_put(inp_data, d) for d in jax.devices()[:2]]
+    with self.assertRaisesRegex(
+        ValueError,
+        "Addressable devices and per-device arrays devices do not match. "
+        r"Sharding contains devices \{2\} that are not present in per-device "
+        r"arrays. Per-device arrays contain devices \{0\} that are not present "
+        "in the sharding."):
       array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   @parameterized.named_parameters(
