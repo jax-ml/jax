@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,8 @@
 import inspect
 import operator
 from functools import partial
-from typing import Any, Dict, Iterable, Sequence, Set, Tuple, Union, Optional
+from typing import (Any, Dict, Iterable, Sequence, Set, Tuple, Union, Optional,
+                    Callable)
 import warnings
 
 import numpy as np
@@ -36,6 +37,7 @@ map = safe_map
 
 def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
   """Ensure x is either an index or a tuple of indices."""
+  x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
     return operator.index(x)
   except TypeError:
@@ -43,6 +45,7 @@ def _ensure_index(x: Any) -> Union[int, Tuple[int, ...]]:
 
 def _ensure_index_tuple(x: Any) -> Tuple[int, ...]:
   """Convert x to a tuple of indices."""
+  x = core.concrete_or_error(None, x, "expected a static index or sequence of indices.")
   try:
     return (operator.index(x),)
   except TypeError:
@@ -262,7 +265,7 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
 
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
-                           args: Tuple[Any], *, allow_invalid: bool):
+                           args: Tuple[Any, ...], *, allow_invalid: bool):
   """Version of ``argnums_partial`` that checks hashability of static_argnums."""
   if not static_argnums:
     return f, args
@@ -425,7 +428,7 @@ def _dtype(x):
   except ValueError:
     return dtypes.result_type(getattr(x, 'dtype'))
 
-def shaped_abstractify(x):
+def _shaped_abstractify_slow(x):
   try:
     return core.raise_to_shaped(
       x if isinstance(x, core.AbstractValue) else core.get_aval(x))
@@ -434,8 +437,20 @@ def shaped_abstractify(x):
 
   weak_type = getattr(x, 'weak_type', False)
   named_shape = getattr(x, 'named_shape', {})
-  return core.ShapedArray(np.shape(x), _dtype(x), weak_type=weak_type,
+  if hasattr(x, 'dtype'):
+    dtype = dtypes.canonicalize_dtype(x.dtype)
+  else:
+    dtype = dtypes.result_type(x)  # TODO(frostig,mattjj): why this case?
+  return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
                           named_shape=named_shape)
+
+# TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
+def shaped_abstractify(x):
+  try:
+    return _shaped_abstractify_handlers[type(x)](x)
+  except KeyError:
+    return _shaped_abstractify_slow(x)
+_shaped_abstractify_handlers: Dict[Any, Callable[[Any], core.ShapedArray]] = {}
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

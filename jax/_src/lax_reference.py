@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -69,6 +69,7 @@ asinh = np.arcsinh
 acosh = np.arccosh
 atanh = np.arctanh
 
+def logistic(x): return 1 / (1 + np.exp(-x))
 def betainc(a, b, x): return scipy.special.betainc(a, b, x).astype(x.dtype)
 def lgamma(x): return scipy.special.gammaln(x).astype(x.dtype)
 def digamma(x): return scipy.special.digamma(x).astype(x.dtype)

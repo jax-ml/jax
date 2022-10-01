@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ import numpy as np
 import jax
 from jax import core
 from jax._src import dtypes
+from jax._src import stages
 import jax.numpy as jnp
 
 class SparseEfficiencyError(ValueError):
@@ -33,6 +34,12 @@ class CuSparseEfficiencyWarning(SparseEfficiencyWarning):
 # utilities
 # TODO: possibly make these primitives, targeting cusparse rountines
 #       csr2coo/coo2csr/SPDDMM
+
+def _asarray_or_float0(arg):
+  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
+    return arg
+  return jnp.asarray(arg)
+
 @jax.jit
 def _csr_to_coo(indices, indptr):
   """Given CSR (indices, indptr) return COO (row, col)"""
@@ -46,6 +53,19 @@ def _coo_extract(row, col, mat):
   """Extract values of dense matrix mat at given COO indices."""
   return mat[row, col]
 
+def _count_stored_elements_per_batch(mat, n_batch=0, n_dense=0):
+  """Return per-batch number of stored elements (nse) of a dense matrix."""
+  mat = jnp.asarray(mat)
+  mask = (mat != 0)
+  if n_dense > 0:
+    mask = mask.any([-(i + 1) for i in range(n_dense)])
+  mask = mask.sum(list(range(n_batch, mask.ndim)))
+  return mask
+
+def _count_stored_elements(mat, n_batch=0, n_dense=0):
+  """Return the number of stored elements (nse) of the given dense matrix."""
+  return int(_count_stored_elements_per_batch(mat, n_batch, n_dense).max())
+
 def _is_pytree_placeholder(*args):
   # Returns True if the arguments are consistent with being a placeholder within
   # pytree validation.
@@ -54,12 +74,10 @@ def _is_pytree_placeholder(*args):
 def _is_aval(*args):
   return all(isinstance(arg, core.AbstractValue) for arg in args)
 
-def _asarray_or_float0(arg):
-  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
-    return arg
-  return jnp.asarray(arg)
+def _is_arginfo(*args):
+  return all(isinstance(arg, stages.ArgInfo) for arg in args)
 
 def _safe_asarray(args):
-  if _is_pytree_placeholder(*args) or _is_aval(*args):
+  if _is_pytree_placeholder(*args) or _is_aval(*args) or _is_arginfo(*args):
     return args
   return map(_asarray_or_float0, args)

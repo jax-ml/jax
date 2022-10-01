@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2019 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ used in Keras and Sonnet.
 
 from jax._src.nn.initializers import (
   constant as constant,
+  Initializer as Initializer,
   delta_orthogonal as delta_orthogonal,
   glorot_normal as glorot_normal,
   glorot_uniform as glorot_uniform,

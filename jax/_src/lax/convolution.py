@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ from jax._src import dtypes
 from jax._src.lax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax._src import util
 import jax._src.lib
@@ -632,31 +631,6 @@ def _conv_general_dilated_batch_rule(
       out = _reshape_axis_into(out_spec[1], out_spec[1] + 1, out)
       return out, out_spec[1]
 
-def _conv_general_dilated_masking_rule(
-        padded_vals, logical_shapes, window_strides, padding, lhs_dilation,
-        rhs_dilation, dimension_numbers, feature_group_count, batch_group_count,
-        lhs_shape, rhs_shape, precision, preferred_element_type):
-  lhs, rhs = padded_vals
-  logical_lhs_shape, logical_rhs_shape = logical_shapes
-
-  o, i, *window_dimensions = dimension_numbers.rhs_spec
-  assert (np.all(np.take(rhs.shape, window_dimensions)
-                  == np.take(logical_rhs_shape, window_dimensions))), \
-              "Conv filter masking not yet implemented."
-
-  n, c, *padded_dimensions = dimension_numbers.lhs_spec
-
-  return conv_general_dilated(
-    lax._masked(lhs, logical_lhs_shape, padded_dimensions),
-    lax._masked(rhs, logical_rhs_shape, (i,)),
-    window_strides=window_strides, padding=padding,
-    lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation,
-    dimension_numbers=dimension_numbers,
-    feature_group_count=feature_group_count,
-    batch_group_count=batch_group_count,
-    precision=precision,
-    preferred_element_type=preferred_element_type)
-
 conv_general_dilated_p = lax.standard_primitive(
     _conv_general_dilated_shape_rule, _conv_general_dilated_dtype_rule,
     'conv_general_dilated')
@@ -666,8 +640,6 @@ ad.defbilinear(conv_general_dilated_p,
                _conv_general_dilated_transpose_rhs)
 batching.primitive_batchers[conv_general_dilated_p] = \
     _conv_general_dilated_batch_rule
-masking.masking_rules[conv_general_dilated_p] = \
-  _conv_general_dilated_masking_rule
 
 def _complex_mul(mul, x, y):
   # We use a trick for complex multiplication sometimes attributed to Gauss
@@ -728,24 +700,23 @@ def _conv_general_dilated_lower(
     output_feature_dimension=out_spec[1],
     output_spatial_dimensions=list(out_spec[2:]))
   num_spatial_dims = len(rhs_spec) - 2
+  if len(padding) == 0:
+    padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  if jax._src.lib.mlir_api_version < 24:
-    op = mhlo.ConvOp
-  else:
-    op = mhlo.ConvolutionOp
   return [
-      op(mlir.aval_to_ir_type(aval_out),
-         lhs,
-         rhs,
-         dimension_numbers=dnums,
-         feature_group_count=mlir.i64_attr(feature_group_count),
-         batch_group_count=mlir.i64_attr(batch_group_count),
-         window_strides=mlir.dense_int_elements(window_strides),
-         padding=mlir.dense_int_elements(padding),
-         lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-         rhs_dilation=mlir.dense_int_elements(rhs_dilation),
-         window_reversal=window_reversal,
-         precision_config=lax.precision_attr(precision)).result
+      mhlo.ConvolutionOp(
+        mlir.aval_to_ir_type(aval_out),
+        lhs,
+        rhs,
+        dimension_numbers=dnums,
+        feature_group_count=mlir.i64_attr(feature_group_count),
+        batch_group_count=mlir.i64_attr(batch_group_count),
+        window_strides=mlir.dense_int_elements(window_strides),
+        padding=mlir.dense_int_elements(padding),
+        lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+        rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+        window_reversal=window_reversal,
+        precision_config=lax.precision_attr(precision)).result
   ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
@@ -812,6 +783,9 @@ def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
 
   lhs_padded = np.add(lhs_shape[2:], np.sum(np.array(pads).reshape(-1, 2),
                                               axis=1))
+  if np.any(lhs_padded < 0):
+    raise ValueError("Negative padding is larger than the size of the corresponding dimension: "
+                     f"got padding={pads} for lhs_shape[2:]={lhs_shape[2:]}")
   out_space = core.stride_shape(lhs_padded, rhs_shape[2:], strides)
   out_space = np.maximum(0, out_space)
   if batch_group_count > 1:

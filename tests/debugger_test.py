@@ -1,4 +1,4 @@
-# Copyright 2022 Google LLC
+# Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import io
+import re
 import textwrap
 import unittest
 
@@ -20,10 +21,13 @@ from typing import IO, Sequence, Tuple
 from absl.testing import absltest
 import jax
 from jax.config import config
+from jax.experimental import maps
+from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 import jax.numpy as jnp
+import numpy as np
 
 config.parse_flags_with_absl()
 
@@ -55,6 +59,8 @@ disabled_backends = []
 if jaxlib.version < (0, 3, 15):
   disabled_backends.append("tpu")
 
+foo = 2
+
 class CliDebuggerTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -63,7 +69,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
     with self.assertRaises(SystemExit):
       f(2.)
@@ -75,13 +81,13 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
     f(2.)
     jax.effects_barrier()
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    (jaxdb) """)
+    Entering jdb:
+    (jdb) """)
     self.assertEqual(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -90,12 +96,16 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
+    if config.jax_array:
+      arr = "Array"
+    else:
+      arr = "DeviceArray"
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    (jaxdb) DeviceArray(2., dtype=float32)
-    (jaxdb) """)
+    Entering jdb:
+    (jdb) {arr}(2., dtype=float32)
+    (jdb) """).format(arr=arr)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
@@ -107,12 +117,12 @@ class CliDebuggerTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    (jaxdb) array(2., dtype=float32)
-    (jaxdb) """)
+    Entering jdb:
+    (jdb) array(2., dtype=float32)
+    (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
@@ -124,12 +134,12 @@ class CliDebuggerTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = x + 1.
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    (jaxdb) (array(2., dtype=float32), array(3., dtype=float32))
-    (jaxdb) """)
+    Entering jdb:
+    (jdb) (array(2., dtype=float32), array(3., dtype=float32))
+    (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
@@ -141,20 +151,20 @@ class CliDebuggerTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
     f(2.)
     jax.effects_barrier()
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    \(jaxdb\) > .*debugger_test\.py\([0-9]+\)
+    Entering jdb:
+    \(jdb\) > .*debugger_test\.py\([0-9]+\)
             @jax\.jit
             def f\(x\):
               y = jnp\.sin\(x\)
-    ->        debugger\.breakpoint\(stdin=stdin, stdout=stdout\)
+    ->        debugger\.breakpoint\(stdin=stdin, stdout=stdout, backend="cli"\)
               return y
     .*
-    \(jaxdb\) """)
+    \(jdb\) """)
     self.assertRegex(stdout.getvalue(), expected)
 
   @jtu.skip_on_devices(*disabled_backends)
@@ -164,11 +174,11 @@ class CliDebuggerTest(jtu.JaxTestCase):
     @jax.jit
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
     expected = _format_multiline(r"""
-    Entering jaxdb:.*
-    \(jaxdb\) Traceback:.*
+    Entering jdb:.*
+    \(jdb\) Traceback:.*
     """)
     f(2.)
     jax.effects_barrier()
@@ -180,7 +190,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
 
     @jax.jit
@@ -188,27 +198,27 @@ class CliDebuggerTest(jtu.JaxTestCase):
       y = f(x)
       return jnp.exp(y)
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    \(jaxdb\) > .*debugger_test\.py\([0-9]+\)
+    Entering jdb:
+    \(jdb\) > .*debugger_test\.py\([0-9]+\)
             def f\(x\):
               y = jnp\.sin\(x\)
-    ->        debugger\.breakpoint\(stdin=stdin, stdout=stdout\)
+    ->        debugger\.breakpoint\(stdin=stdin, stdout=stdout, backend="cli"\)
               return y
     .*
-    \(jaxdb\) > .*debugger_test\.py\([0-9]+\).*
+    \(jdb\) > .*debugger_test\.py\([0-9]+\).*
             @jax\.jit
             def g\(x\):
     ->        y = f\(x\)
               return jnp\.exp\(y\)
     .*
-    \(jaxdb\) array\(2\., dtype=float32\)
-    \(jaxdb\) > .*debugger_test\.py\([0-9]+\)
+    \(jdb\) array\(2\., dtype=float32\)
+    \(jdb\) > .*debugger_test\.py\([0-9]+\)
             def f\(x\):
               y = jnp\.sin\(x\)
-    ->        debugger\.breakpoint\(stdin=stdin, stdout=stdout\)
+    ->        debugger\.breakpoint\(stdin=stdin, stdout=stdout, backend="cli"\)
               return y
     .*
-    \(jaxdb\) """)
+    \(jdb\) """)
     g(jnp.array(2., jnp.float32))
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
@@ -219,20 +229,22 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = x + 1.
-      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=True)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=True,
+          backend="cli")
       return y
 
     @jax.jit
     def g(x):
       y = f(x) * 2.
-      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=True)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=True,
+          backend="cli")
       return jnp.exp(y)
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    (jaxdb) array(3., dtype=float32)
-    (jaxdb) Entering jaxdb:
-    (jaxdb) array(6., dtype=float32)
-    (jaxdb) """)
+    Entering jdb:
+    (jdb) array(3., dtype=float32)
+    (jdb) Entering jdb:
+    (jdb) array(6., dtype=float32)
+    (jdb) """)
     g(jnp.array(2., jnp.float32))
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
@@ -247,7 +259,8 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = x + 1.
-      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=ordered)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=ordered,
+          backend="cli")
       return 2. * y
 
     @jax.jit
@@ -256,11 +269,11 @@ class CliDebuggerTest(jtu.JaxTestCase):
       y = f(x)
       return jnp.exp(y)
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    (jaxdb) array(1., dtype=float32)
-    (jaxdb) Entering jaxdb:
-    (jaxdb) array(2., dtype=float32)
-    (jaxdb) """)
+    Entering jdb:
+    (jdb) array(1., dtype=float32)
+    (jdb) Entering jdb:
+    (jdb) array(2., dtype=float32)
+    (jdb) """)
     g(jnp.arange(2., dtype=jnp.float32))
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
@@ -273,7 +286,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
 
     def f(x):
       y = jnp.sin(x)
-      debugger.breakpoint(stdin=stdin, stdout=stdout)
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
 
     @jax.pmap
@@ -281,12 +294,143 @@ class CliDebuggerTest(jtu.JaxTestCase):
       y = f(x)
       return jnp.exp(y)
     expected = _format_multiline(r"""
-    Entering jaxdb:
-    \(jaxdb\) array\(.*, dtype=float32\)
-    \(jaxdb\) Entering jaxdb:
-    \(jaxdb\) array\(.*, dtype=float32\)
-    \(jaxdb\) """)
+    Entering jdb:
+    \(jdb\) array\(.*, dtype=float32\)
+    \(jdb\) Entering jdb:
+    \(jdb\) array\(.*, dtype=float32\)
+    \(jdb\) """)
     g(jnp.arange(2., dtype=jnp.float32))
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debugger_works_with_pjit(self):
+    if jax.default_backend() != "tpu":
+      raise unittest.SkipTest("`pjit` doesn't work with CustomCall.")
+    stdin, stdout = make_fake_stdin_stdout(["p y", "c"])
+
+    def f(x):
+      y = x + 1
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+      return y
+
+    def g(x):
+      y = f(x)
+      return jnp.exp(y)
+    g = pjit.pjit(g, in_axis_resources=pjit.PartitionSpec("dev"),
+                  out_axis_resources=pjit.PartitionSpec("dev"))
+    with maps.Mesh(np.array(jax.devices()), ["dev"]):
+      arr = (1 + np.arange(8)).astype(np.int32)
+      expected = _format_multiline(r"""
+      Entering jdb:
+      \(jdb\) {}
+      \(jdb\) """.format(re.escape(repr(arr))))
+      g(jnp.arange(8, dtype=jnp.int32))
+      jax.effects_barrier()
+      self.assertRegex(stdout.getvalue(), expected)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debugger_uses_local_before_global_scope(self):
+    stdin, stdout = make_fake_stdin_stdout(["p foo", "c"])
+
+    foo = "outer"
+
+    def f(x):
+      foo = "inner"
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+      del foo
+      return x
+
+    del foo
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) 'inner'
+    \(jdb\) """)
+    f(2.)
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_debugger_accesses_globals(self):
+    stdin, stdout = make_fake_stdin_stdout(["p foo", "c"])
+
+    @jax.jit
+    def g():
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) \*\*\* NameError: name 'foo' is not defined
+    \(jdb\) """)
+    g()
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+  @jtu.skip_on_devices(*disabled_backends)
+  def test_can_limit_num_frames(self):
+    stdin, stdout = make_fake_stdin_stdout(["u", "p x", "c"])
+
+    def g():
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli",
+                          num_frames=2)
+
+    @jax.jit
+    def f():
+      x = 2
+      g()
+      return x
+    _ = f()
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) .*
+    .*
+    .*
+    .*
+    .*
+    .*
+    .*
+    \(jdb\) 2
+    \(jdb\) """)
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+    stdin, stdout = make_fake_stdin_stdout(["u", "u", "c"])
+
+    def g2():
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli",
+                          num_frames=2)
+
+    @jax.jit
+    def f2():
+      x = 2
+      g2()
+      return x
+
+    expected = ".*At topmost frame.*"
+    _ = f2()
+    jax.effects_barrier()
+    self.assertRegex(stdout.getvalue(), expected)
+
+  def test_can_handle_dictionaries_with_unsortable_keys(self):
+    stdin, stdout = make_fake_stdin_stdout(["p x", "p weird_dict",
+                                            "p weirder_dict", "c"])
+
+    @jax.jit
+    def f():
+      weird_dict = {(lambda x: x): 2., (lambda x: x * 2): 3}
+      weirder_dict = {(lambda x: x): weird_dict}
+      x = 2.
+      debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
+      del weirder_dict
+      return x
+    expected = _format_multiline(r"""
+    Entering jdb:
+    \(jdb\) 2.0
+    \(jdb\) <cant_flatten>
+    \(jdb\) <cant_flatten>
+    \(jdb\) """)
+    _ = f()
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 

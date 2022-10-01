@@ -1,4 +1,4 @@
-# Copyright 2022 Google LLC
+# Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ from jax import lax
 from jax._src import api
 from jax._src import dtypes
 from jax._src.numpy.ndarray import ndarray
-from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _promote_dtypes_inexact, _where, _wraps
+from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _promote_dtypes_inexact, _promote_dtypes_numeric, _where, _wraps
 from jax._src.lax import lax as lax_internal
 from jax._src.util import canonicalize_axis as _canonicalize_axis, maybe_named_axis
 
@@ -62,7 +62,7 @@ def _upcast_f16(dtype):
 def _reduction(a, name, np_fun, op, init_val, has_identity=True,
                preproc=None, bool_op=None, upcast_f16_for_computation=False,
                axis=None, dtype=None, out=None, keepdims=False, initial=None,
-               where_=None, parallel_reduce=None):
+               where_=None, parallel_reduce=None, promote_integers=False):
   bool_op = bool_op or op
   # Note: we must accept out=None as an argument, because numpy reductions delegate to
   # object methods. For example `np.sum(x)` will call `x.sum()` if the `sum()` method
@@ -86,7 +86,18 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
     if not _all(core.greater_equal_dim(shape[d], 1) for d in pos_dims):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
 
-  result_dtype = dtypes.canonicalize_dtype(dtype or dtypes.dtype(np_fun(np.ones((), dtype=dtypes.dtype(a)))))
+  result_dtype = dtypes.canonicalize_dtype(dtype or dtypes.dtype(a))
+
+  # promote_integers=True matches NumPy's behavior for sum() and prod(), which promotes
+  # all int-like inputs to the widest available dtype.
+  if dtype is None and promote_integers:
+    if dtypes.issubdtype(result_dtype, np.bool_):
+      result_dtype = dtypes.canonicalize_dtype(np.int64)
+    elif dtypes.issubdtype(result_dtype, np.unsignedinteger):
+      result_dtype = dtypes.canonicalize_dtype(np.uint64)
+    elif dtypes.issubdtype(result_dtype, np.integer):
+      result_dtype = dtypes.canonicalize_dtype(np.int64)
+
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
     computation_dtype = _upcast_f16(result_dtype)
   else:
@@ -146,6 +157,9 @@ def _cast_to_bool(operand):
     warnings.filterwarnings("ignore", category=np.ComplexWarning)
     return lax.convert_element_type(operand, np.bool_)
 
+def _cast_to_numeric(operand):
+  return _promote_dtypes_numeric(operand)[0]
+
 
 def _ensure_optional_axes(x):
   def force(x):
@@ -159,34 +173,46 @@ def _ensure_optional_axes(x):
     force, x, "The axis argument must be known statically.")
 
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
-def _reduce_sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
-                dtype=None, out=None, keepdims=None, initial=None, where=None):
-  return _reduction(a, "sum", np.sum, lax.add, 0,
+# TODO(jakevdp) change promote_integers default to False
+_PROMOTE_INTEGERS_DOC = """
+promote_integers : bool, default=True
+    If True, then integer inputs will be promoted to the widest available integer
+    dtype, following numpy's behavior. If False, the result will have the same dtype
+    as the input. ``promote_integers`` is ignored if ``dtype`` is specified.
+"""
+
+
+@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
+def _reduce_sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+                out=None, keepdims=None, initial=None, where=None, promote_integers=True):
+  return _reduction(a, "sum", np.sum, lax.add, 0, preproc=_cast_to_numeric,
                     bool_op=lax.bitwise_or, upcast_f16_for_computation=True,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where, parallel_reduce=lax.psum)
+                    initial=initial, where_=where, parallel_reduce=lax.psum,
+                    promote_integers=promote_integers)
 
-@_wraps(np.sum, skip_params=['out'])
+@_wraps(np.sum, skip_params=['out'], extra_params=_PROMOTE_INTEGERS_DOC)
 def sum(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-        out=None, keepdims=None, initial=None, where=None):
+        out=None, keepdims=None, initial=None, where=None, promote_integers=True):
   return _reduce_sum(a, axis=_ensure_optional_axes(axis), dtype=dtype, out=out,
-                     keepdims=keepdims, initial=initial, where=where)
+                     keepdims=keepdims, initial=initial, where=where,
+                     promote_integers=promote_integers)
 
 
-@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'), inline=True)
-def _reduce_prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None,
-                 dtype=None, out=None, keepdims=None, initial=None, where=None):
-  return _reduction(a, "prod", np.prod, lax.mul, 1,
+@partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims', 'promote_integers'), inline=True)
+def _reduce_prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
+                 out=None, keepdims=None, initial=None, where=None, promote_integers=True):
+  return _reduction(a, "prod", np.prod, lax.mul, 1, preproc=_cast_to_numeric,
                     bool_op=lax.bitwise_and, upcast_f16_for_computation=True,
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
-                    initial=initial, where_=where)
+                    initial=initial, where_=where, promote_integers=promote_integers)
 
-@_wraps(np.prod, skip_params=['out'])
+@_wraps(np.prod, skip_params=['out'], extra_params=_PROMOTE_INTEGERS_DOC)
 def prod(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
-         out=None, keepdims=None, initial=None, where=None):
+         out=None, keepdims=None, initial=None, where=None, promote_integers=True):
   return _reduce_prod(a, axis=_ensure_optional_axes(axis), dtype=dtype,
-                      out=out, keepdims=keepdims, initial=initial, where=where)
+                      out=out, keepdims=keepdims, initial=initial, where=where,
+                      promote_integers=promote_integers)
 
 
 @partial(api.jit, static_argnames=('axis', 'keepdims'), inline=True)
@@ -277,7 +303,7 @@ def _mean(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, dtype=None,
     normalizer = sum(_broadcast_to(where, np.shape(a)), axis, dtype=dtype, keepdims=keepdims)
 
   if dtype is None:
-    dtype = dtypes._to_inexact_dtype(dtypes.dtype(a))
+    dtype = dtypes.to_inexact_dtype(dtypes.dtype(a))
   dtype = dtypes.canonicalize_dtype(dtype)
 
   return lax.div(
@@ -384,7 +410,7 @@ def _var_promote_types(a_dtype, dtype):
     computation_dtype = dtype
   else:
     if not dtypes.issubdtype(a_dtype, np.inexact):
-      dtype = dtypes._to_inexact_dtype(a_dtype)
+      dtype = dtypes.to_inexact_dtype(a_dtype)
       computation_dtype = dtype
     else:
       dtype = _complex_elem_type(a_dtype)

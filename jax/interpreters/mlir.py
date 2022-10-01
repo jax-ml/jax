@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,10 +35,13 @@ from jax import linear_util as lu
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src.lib import mlir_api_version
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src import source_info_util
@@ -94,6 +97,14 @@ def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
     return mhlo.ConcatenateOp([d, *ds], i64_attr(0)).result
 
 
+def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
+  """Side-effects on `ctx`"""
+  ctx_new = ctx.replace(**ctx_override_kwargs)
+  out = lowering_fun(ctx_new, *args)
+  ctx.set_tokens_out(ctx_new.tokens_out)
+  return out
+
+
 # IR Types
 
 # Non-canonicalized dtype to IR type mapping.
@@ -128,6 +139,8 @@ def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
 
 def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
                     ) -> Sequence[ir.Type]:
+  if core.is_opaque_dtype(aval.dtype):
+    return aval.dtype._rules.aval_to_ir_types(aval)
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
@@ -183,6 +196,9 @@ _constant_handlers : Dict[type, ConstantHandler] = {}
 
 def register_constant_handler(type_: type, handler_fun: ConstantHandler):
   _constant_handlers[type_] = handler_fun
+
+def get_constant_handler(type_: type) -> ConstantHandler:
+  return _constant_handlers[type_]
 
 def ir_constants(val: Any,
                  canonicalize_types: bool = True) -> Sequence[ir.Value]:
@@ -288,7 +304,7 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
 
 def _device_array_constant_handler(val, canonicalize_types):
-  return _ndarray_constant_handler(val.device_buffer.to_py(),
+  return _ndarray_constant_handler(np.asarray(val.device_buffer),
                                    canonicalize_types)
 for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
@@ -326,7 +342,10 @@ def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
   context = ir.Context()
   mhlo.register_mhlo_dialect(context)
-  chlo.register_chlo_dialect(context)
+  if mlir_api_version < 33:
+    chlo.register_chlo_dialect(context)
+  else:
+    chlo.register_dialect(context)
   return context
 
 
@@ -346,10 +365,21 @@ class SPMDAxisContext:
 
   @property
   def axis_env(self):
-    # TODO: Should we restrict the mesh to manual axes? This depends on the
-    # semantics of ReplicaId in partially manual computations, but I don't
-    # know what they are...
-    return xla.AxisEnv(nreps=1, names=(), sizes=())
+    # All collectives that touch axis_env should remember to set use_global_device_ids
+    # when this context is enabled!
+    if self.manual_axes != frozenset(self.mesh.axis_names):
+      raise NotImplementedError(
+          "Collectives in manually partitioned computations are only supported "
+          "when all mesh axes are partitioned manually (no partial automatic sharding). "
+          "Make sure that you mention all mesh axes in axis_resources!")
+    return self.unsafe_axis_env
+
+  @property
+  def unsafe_axis_env(self):
+    return xla.AxisEnv(
+        nreps=self.mesh.size,
+        names=self.mesh.axis_names,
+        sizes=tuple(self.mesh.shape.values()))
 
   def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
     return SPMDAxisContext(self.mesh, self.manual_axes | axes)
@@ -364,7 +394,23 @@ class ReplicaAxisContext:
   """
   axis_env: xla.AxisEnv
 
-AxisContext = Union[SPMDAxisContext, ReplicaAxisContext]
+
+@dataclasses.dataclass(frozen=True)
+class ShardingContext:
+  """A hardware axis context for parallel computations that use the sharding
+  interface.
+
+  This context also uses the GSPMD partitioner.
+  """
+  device_assignment: Sequence[xc.Device]
+
+  # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
+  @property
+  def axis_env(self):
+    return xla.AxisEnv(nreps=1, names=(), sizes=())
+
+
+AxisContext = Union[SPMDAxisContext, ReplicaAxisContext, ShardingContext]
 
 @dataclasses.dataclass
 class ModuleContext:
@@ -373,6 +419,7 @@ class ModuleContext:
   module: ir.Module
   ip: ir.InsertionPoint
   symbol_table: ir.SymbolTable
+  backend_or_name: Optional[Union[str, xb.XlaBackend]]
   platform: str
   axis_context: AxisContext
   name_stack: NameStack
@@ -382,6 +429,7 @@ class ModuleContext:
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: Dict[Any, func_dialect.FuncOp]
+  cached_call_jaxpr_lowerings: Dict[Any, func_dialect.FuncOp]
 
   @property
   def axis_env(self) -> xla.AxisEnv:
@@ -389,6 +437,7 @@ class ModuleContext:
 
   def __init__(
       self,
+      backend_or_name: Optional[Union[str, xb.XlaBackend]],
       platform: str,
       axis_context: AxisContext,
       name_stack: NameStack,
@@ -400,12 +449,15 @@ class ModuleContext:
       ip: Optional[ir.InsertionPoint] = None,
       symbol_table: Optional[ir.SymbolTable] = None,
       cached_primitive_lowerings: Optional[Dict[Any,
-                                                func_dialect.FuncOp]] = None):
+                                                func_dialect.FuncOp]] = None,
+      cached_call_jaxpr_lowerings: Optional[Dict[Any,
+                                                 func_dialect.FuncOp]] = None):
     assert platform is not None
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
     self.ip = ip or ir.InsertionPoint(self.module.body)
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
+    self.backend_or_name = backend_or_name
     self.platform = platform
     self.axis_context = axis_context
     self.name_stack = name_stack
@@ -414,6 +466,15 @@ class ModuleContext:
     self.channel_iterator = channel_iterator
     self.keepalives = keepalives
     self.host_callbacks = host_callbacks
+    self.cached_call_jaxpr_lowerings = ({}
+                                        if cached_call_jaxpr_lowerings is None
+                                        else cached_call_jaxpr_lowerings)
+
+  @property
+  def backend(self) -> xb.XlaBackend:
+    if self.backend_or_name is None or isinstance(self.backend_or_name, str):
+      return xb.get_backend(self.backend_or_name)
+    return self.backend_or_name
 
   def new_channel(self) -> int:
     return next(self.channel_iterator)
@@ -482,7 +543,6 @@ def flatten_lowering_ir_args(
 ) -> Sequence[Sequence[ir.Value]]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
-_module_unique_id = itertools.count()
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.ShapedArray,
@@ -522,6 +582,7 @@ def lower_jaxpr_to_module(
     jaxpr: core.ClosedJaxpr,
     unordered_effects: List[core.Effect],
     ordered_effects: List[core.Effect],
+    backend_or_name: Optional[Union[str, xb.XlaBackend]],
     platform: str,
     axis_context: AxisContext,
     name_stack: NameStack,
@@ -547,10 +608,13 @@ def lower_jaxpr_to_module(
     ]
   out_avals = jaxpr.out_avals
   if result_shardings is not None:
-    out_avals = [
-        sharded_aval(out_aval, out_sharding)
-        for out_aval, out_sharding in zip(out_avals, result_shardings)
-    ]
+    out_avals = []
+    for out_aval, out_sharding in zip(jaxpr.out_avals, result_shardings):
+      if (out_aval is not core.abstract_token and
+          core.is_opaque_dtype(out_aval.dtype)):
+        out_aval, = out_aval.dtype._rules.physical_avals(out_aval)
+      out_avals.append(sharded_aval(out_aval, out_sharding))
+
   platforms_with_donation = ("cuda", "rocm", "tpu")
   if platform in platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
@@ -571,16 +635,14 @@ def lower_jaxpr_to_module(
   # Create a keepalives list that will be mutated during the lowering.
   keepalives: List[Any] = []
   host_callbacks: List[Any] = []
-  ctx = ModuleContext(platform, axis_context, name_stack, keepalives,
-                      channel_iter, host_callbacks)
+  ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
+                      keepalives, channel_iter, host_callbacks)
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     module_name = _module_name_regex.sub("_", module_name)
-    # Some clients expect modules to have unique names, e.g., in trace data.
-    # This may or may not be a reasonable assumption.
     ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
-        f"{module_name}.{next(_module_unique_id)}")
+        module_name)
     unlowerable_effects = {eff for eff in jaxpr.effects
                            if eff not in lowerable_effects}
     if unlowerable_effects:
@@ -589,7 +651,8 @@ def lower_jaxpr_to_module(
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
         replace_tokens_with_dummy=True,
-        num_output_tokens=1 if unordered_effects else 0,
+        num_output_tokens=(
+          1 if (unordered_effects and not can_execute_with_token) else 0),
         replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
@@ -602,6 +665,12 @@ def module_to_string(module: ir.Module) -> str:
   module.operation.print(file=output, enable_debug_info=True,
                          print_generic_op_form=False)
   return output.getvalue()
+
+def module_to_bytecode(module: ir.Module) -> bytes:
+  output = io.BytesIO()
+  module.operation.write_bytecode(file=output)
+  return output.getvalue()
+
 
 def _set_up_aliases(avals_in, avals_out, donated_args):
   input_output_aliases = [None] * len(avals_in)
@@ -750,16 +819,19 @@ def lower_jaxpr_to_fun(
     token_types = [token_type() for _ in effects]
   input_types = [*token_types, *input_types]
   output_types = [*output_token_types, *token_types, *output_types]
-  if input_output_aliases:
+  if input_output_aliases is not None:
     token_input_output_aliases = [None] * num_tokens
     input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
-  if arg_shardings:
+    # Update the existing aliases to account for the new output values
+    input_output_aliases = [None if a is None else a + num_output_tokens +
+                            num_tokens for a in input_output_aliases]
+  if arg_shardings is not None:
     token_shardings = [None] * num_tokens
     arg_shardings = [*token_shardings, *arg_shardings]
-  if result_shardings:
+  if result_shardings is not None:
     token_shardings = [None] * (num_tokens + num_output_tokens)
     result_shardings = [*token_shardings, *result_shardings]
-  if replicated_args:
+  if replicated_args is not None:
     token_replicated_args = [False] * num_tokens
     replicated_args = [*token_replicated_args, *replicated_args]
   flat_input_types = util.flatten(input_types)
@@ -827,7 +899,8 @@ def lower_jaxpr_to_fun(
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
     if not use_sharding_annotations and ir_arg_shardings is not None:
-      flat_args = map(wrap_with_sharding_op, flat_args, ir_arg_shardings)
+      flat_args = [a if s is None else wrap_with_sharding_op(a, s)
+                   for a, s in zip(flat_args, ir_arg_shardings)]
 
     unflattened_args = util.unflatten(flat_args, map(len, input_types))
     # We separate out the token inputs and the usual inputs. The token inputs
@@ -864,8 +937,8 @@ def lower_jaxpr_to_fun(
         outs.append(out)
     flat_outputs = util.flatten(outs)
     if not use_sharding_annotations and ir_result_shardings is not None:
-      flat_outputs = map(wrap_with_sharding_op, flat_outputs,
-                         ir_result_shardings)
+      flat_outputs = [o if s is None else wrap_with_sharding_op(o, s)
+                      for o, s in zip(flat_outputs, ir_result_shardings)]
 
     func_dialect.ReturnOp(flat_outputs)
 
@@ -1015,7 +1088,6 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   def f_lowered(ctx, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
-    axis_env = ctx.module_context.axis_env
 
     if config.jax_dynamic_shapes:
       # We might be applying this function to arguments with dynamic shapes,
@@ -1031,11 +1103,10 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
                         if type(a) is core.DShapedArray else a, True)
                        for a in ctx.avals_in]
       wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
-      with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
     else:
-      with core.extend_axis_env_nd(zip(axis_env.names, axis_env.sizes)):
-        jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+      # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
     out, tokens = jaxpr_subcomp(
         ctx.module_context, jaxpr, ctx.tokens_in, _ir_consts(consts),
@@ -1046,15 +1117,30 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
   return f_lowered
 
 
+def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects):
+  if not call_jaxpr.consts:
+    # Cacheable.
+    key = (fn_name, call_jaxpr.jaxpr, tuple(effects))
+    try:
+      func_op = ctx.cached_call_jaxpr_lowerings[key]
+    except KeyError:
+      func_op = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects)
+      ctx.cached_call_jaxpr_lowerings[key] = func_op
+  else:
+    func_op = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects)
+  return func_op
+
+
 def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
                    avals_out, tokens_in, *args):
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   xla.check_backend_matches(backend, ctx.platform)
-  output_types = map(aval_to_ir_types, avals_out)
-  flat_output_types = util.flatten(output_types)
   effects = tokens_in.effects()
-  symbol_name = lower_jaxpr_to_fun(ctx, fn_name, call_jaxpr, effects).name.value
+  output_types = map(aval_to_ir_types, avals_out)
+  output_types = [token_type()] * len(effects) + output_types
+  flat_output_types = util.flatten(output_types)
+  symbol_name = _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects).name.value
   args = [*tokens_in.tokens(), *args]
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
@@ -1280,8 +1366,13 @@ def xla_fallback_lowering(prim: core.Primitive):
   @cache_lowering
   def fallback(ctx: LoweringRuleContext, *args, **params):
     module_ctx = ctx.module_context
+    axis_ctx = module_ctx.axis_context
+    if isinstance(axis_ctx, SPMDAxisContext):
+      axis_env = axis_ctx.unsafe_axis_env
+    else:
+      axis_env = module_ctx.axis_env
     xla_computation = xla.primitive_subcomputation(
-        module_ctx.platform, module_ctx.axis_env, prim, ctx.avals_in,
+        module_ctx.platform, axis_env, prim, ctx.avals_in,
         ctx.avals_out, **params)
     xla_module = xla_computation_to_mhlo_module(xla_computation)
     callee_name = merge_mhlo_modules(
@@ -1304,6 +1395,7 @@ def xla_fallback_lowering(prim: core.Primitive):
 
 register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
 
+DEVICE_TO_DEVICE_TYPE = 1
 SEND_TO_HOST_TYPE = 2
 RECV_FROM_HOST_TYPE = 3
 
@@ -1331,7 +1423,8 @@ def _dtype_to_xla_type_string(dtype: np.dtype) -> str:
   return _dtype_to_xla_type_string_map[dtype]
 
 def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
-                 aval: core.ShapedArray, name: str) -> ir.Value:
+                 aval: core.ShapedArray, name: str, *,
+                 sharding: Optional[xc.OpSharding] = None) -> ir.Value:
   channel_handle = mhlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   send_op = mhlo.SendOp(mhlo.TokenType.get(), [operand], token, channel_handle,
                         is_host_transfer=ir.BoolAttr.get(True))
@@ -1343,11 +1436,14 @@ def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_original_type=ir.StringAttr.get(dtype_str),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+  if sharding is not None:
+    set_sharding(send_op, sharding)
   return send_op.result
 
 
 def receive_from_host(channel: int, token: mhlo.TokenType,
-                      out_aval: core.ShapedArray, name: str) -> ir.Value:
+                      out_aval: core.ShapedArray, name: str, *,
+                      sharding: Optional[xc.OpSharding] = None) -> ir.Value:
   channel_handle = mhlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
   recv_op = mhlo.RecvOp([aval_to_ir_type(out_aval),
                          mhlo.TokenType.get()], token, channel_handle,
@@ -1360,70 +1456,145 @@ def receive_from_host(channel: int, token: mhlo.TokenType,
           _xla_host_transfer_handler_name=ir.StringAttr.get(str(name)),
           _xla_host_transfer_original_type=ir.StringAttr.get(dtype_str),
           _xla_host_transfer_rendezvous=ir.StringAttr.get(str(name))))
+  if sharding is not None:
+    set_sharding(recv_op, sharding)
   # Token should be at the end of the results
   result, token = recv_op.results
   return token, result
 
 
+def _emit_tpu_python_callback(
+    backend: xb.XlaBackend,
+    ctx: LoweringRuleContext,
+    callback,
+    token: Optional[Any],
+    operands: List[ir.Value],
+    operand_avals: List[core.ShapedArray],
+    operand_shapes: List[xc.Shape],
+    result_avals: List[core.ShapedArray],
+    result_shapes: List[xc.Shape],
+    *,
+    sharding: Optional[xc.OpSharding] = None
+) -> Tuple[List[ir.Value], Any, Any]:
+  token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
+  _wrapped_callback = callback
+
+  send_channels = []
+  if not operand_avals:
+    # If there are no operands to the callback, we need to insert a dummy send
+    # op or the callback will never be triggered!
+    # TODO(sharadmv,chky): Enable this fix in the runtime as opposed to in
+    # MHLO builder.
+    callback_without_args = _wrapped_callback
+    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+      del args
+      return callback_without_args()
+    send_channel = ctx.module_context.new_channel()
+    dummy_send_aval = core.ShapedArray((1,), np.float32)
+    dummy_send_val = ir_constant(np.zeros(1, np.float32))
+    operand_shapes = [*operand_shapes,
+                      xla.aval_to_xla_shapes(dummy_send_aval)[0]]
+    token = send_to_host(send_channel, token, dummy_send_val, dummy_send_aval,
+                         callback.__name__, sharding=sharding)
+    send_channels.append(send_channel)
+  else:
+    for operand, operand_aval in zip(operands, operand_avals):
+      if any(s == 0 for s in operand_aval.shape):
+        raise NotImplementedError(
+            "Callbacks with zero-dimensional values not supported on TPU.")
+      channel = ctx.module_context.new_channel()
+      token = send_to_host(channel, token, operand, operand_aval,
+                           callback.__name__, sharding=sharding)
+      send_channels.append(channel)
+
+  recv_channels = []
+  outputs = []
+  # `send-to-host`s can be interleaved by the transfer manager so we add in a
+  # dummy recv to sequence them (the recv can only happen after all the sends
+  # are done). We'd like to send back a 0-shaped array to avoid unnecessary
+  # copies but that currently doesn't work with the transfer
+  # manager as well.
+  # TODO(b/238239458): enable sending back a 0-dim array
+  # TODO(b/238239928): avoid interleaving sends in the transfer manager
+  if not result_avals:
+    callback_without_return_values = _wrapped_callback
+    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+      callback_without_return_values(*args)
+      return (np.zeros(1, np.float32),)
+    recv_channel = ctx.module_context.new_channel()
+    dummy_recv_aval = core.ShapedArray((1,), np.float32)
+    result_shapes = [*result_shapes,
+                     xla.aval_to_xla_shapes(dummy_recv_aval)[0]]
+    token, _ = receive_from_host(recv_channel, token, dummy_recv_aval,
+                                 callback.__name__, sharding=sharding)
+    recv_channels.append(recv_channel)
+  else:
+    for result_aval in result_avals:
+      if any(s == 0 for s in result_aval.shape):
+        raise NotImplementedError(
+            "Callbacks with zero-dimensional values not supported on TPU.")
+      channel = ctx.module_context.new_channel()
+      assert isinstance(result_aval, core.ShapedArray)
+      token, out = receive_from_host(channel, token, result_aval,
+                                     callback.__name__, sharding=sharding)
+      outputs.append(out)
+      recv_channels.append(channel)
+  opaque = backend.make_python_callback_from_host_send_and_recv(
+      _wrapped_callback, operand_shapes, result_shapes, send_channels,
+      recv_channels)
+  ctx.module_context.add_host_callback(opaque)
+  return outputs, token, opaque
+
+
 def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Optional[Any],
-    operands: List[ir.Value], operand_avals: List[core.AbstractValue],
-    result_avals: List[core.AbstractValue],
-    has_side_effect: bool) -> Tuple[List[ir.Value], Any, Any]:
-  """Creates an MHLO `CustomCallOp` that calls back to the provided function."""
+    operands: List[ir.Value], operand_avals: List[core.ShapedArray],
+    result_avals: List[core.ShapedArray],
+    has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None
+    ) -> Tuple[List[ir.Value], Any, Any]:
+  """Emits MHLO that calls back to a provided Python function."""
   platform = ctx.module_context.platform
-  if platform in {"tpu"} and jax._src.lib.version < (0, 3, 15):
+  if platform in {"tpu"} and jaxlib_version < (0, 3, 15):
     raise ValueError(
         "`EmitPythonCallback` on TPU only supported on jaxlib >= 0.3.15")
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")
-  backend = xb.get_backend(platform)
+  backend = ctx.module_context.backend
   result_shapes = util.flatten(
       [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
   operand_shapes = util.flatten(
       [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
+
+  # First we apply checks to ensure output shapes and dtypes match the expected
+  # ones.
+  def _wrapped_callback(*args):
+    out_vals = callback(*args)
+    if len(out_vals) != len(result_avals):
+      raise RuntimeError(
+          "Mismatched number of outputs from callback. "
+          "Expected: {}, Actual: {}".format(len(result_avals), len(out_vals)))
+    for i, (out_val, out_aval) in enumerate(zip(out_vals, result_avals)):
+      if out_val.shape != out_aval.shape:
+        raise RuntimeError(
+            f"Incorrect output shape for return value {i}: "
+            "Expected: {}, Actual: {}".format(out_aval.shape, out_val.shape))
+      if out_val.dtype != out_aval.dtype:
+        raise RuntimeError(
+            f"Incorrect output dtype for return value {i}: "
+            "Expected: {}, Actual: {}".format(out_aval.dtype, out_val.dtype))
+    return out_vals
+
   if platform == "tpu":
-    if result_avals:
-      raise NotImplementedError(
-          "Callback with return values not supported on TPU.")
-    token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
-    send_channels = []
-    for operand, operand_aval in zip(operands, operand_avals):
-      channel = ctx.module_context.new_channel()
-      token = send_to_host(channel, token, operand, operand_aval,
-                           callback.__name__)
-      send_channels.append(channel)
-    recv_channels = []
-    recv_channel = ctx.module_context.new_channel()
-
-    # `send-to-host`s can be interleaved by the transfer manager so we add in a
-    # dummy recv to sequence them (the recv can only happen after all the sends
-    # are done). We'd like to send back a 0-shaped array to avoid unnecessary
-    # copies but that currently doesn't work with the transfer
-    # manager as well.
-    # TODO(b/238239458): enable sending back a 0-dim array
-    # TODO(b/238239928): avoid interleaving sends in the transfer manager
-    def _wrapped_callback(*args, **kwargs):
-      callback(*args, **kwargs)
-      return (np.zeros(1, np.float32),)
-
-    dummy_recv_aval = core.ShapedArray((1,), np.float32)
-    result_shapes = [*result_shapes, xla.aval_to_xla_shapes(dummy_recv_aval)[0]]
-    token, _ = receive_from_host(recv_channel, token, dummy_recv_aval,
-                                 callback.__name__)
-    recv_channels.append(recv_channel)
-    opaque = backend.make_python_callback_from_host_send_and_recv(
-        _wrapped_callback, operand_shapes, result_shapes, send_channels,
-        recv_channels)
-    ctx.module_context.add_host_callback(opaque)
-    return [], token, opaque
+    return _emit_tpu_python_callback(backend, ctx, _wrapped_callback,  token,
+        operands, operand_avals, operand_shapes, result_avals, result_shapes,
+        sharding=sharding)
   result_types = util.flatten([aval_to_ir_types(aval) for aval in result_avals])
-  wrapped_callback = callback
   if token:
 
-    def wrapped_callback(token, *args):  # type: ignore
-      return tuple((token, *callback(*args)))
+    callback_without_token = _wrapped_callback
+    def _wrapped_callback(token, *args):  # type: ignore  # pylint: disable=function-redefined
+      return (token, *callback_without_token(*args))
 
     operand_shapes = [
         xla.aval_to_xla_shapes(core.abstract_token)[0], *operand_shapes
@@ -1434,7 +1605,7 @@ def emit_python_callback(
     operands = [token, *operands]
     result_types = [token_type()[0], *result_types]
   callback_descriptor, keepalive = (
-      backend.get_emit_python_callback_descriptor(wrapped_callback,
+      backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,
                                                   result_shapes))
   descriptor_operand = ir_constant(
@@ -1453,6 +1624,8 @@ def emit_python_callback(
       backend_config=ir.StringAttr.get(str(callback_descriptor)),
       operand_layouts=None,
       result_layouts=None)
+  if sharding is not None:
+    set_sharding(result, sharding)
   results = [
       mhlo.GetTupleElementOp(result, i32_attr(i)).result
       for i in range(len(result_types))
@@ -1460,6 +1633,21 @@ def emit_python_callback(
   if token:
     token, *results = results
   return results, token, keepalive
+
+def build_xla_computation_helper(
+    closed_jaxpr: core.ClosedJaxpr, *, name: str, platform: str,
+    backend_or_name: str, axis_context: AxisContext) -> xc.XlaComputation:
+  """Helper to generate pmap-style XLA computations for custom partitioners."""
+  if closed_jaxpr.effects:
+    raise NotImplementedError
+  lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
+      backend_or_name=backend_or_name, unordered_effects=[], ordered_effects=[],
+      name_stack=source_info_util.NameStack(),
+      donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
+      axis_context=axis_context, platform=platform)
+  return xc._xla.mlir.mlir_module_to_xla_computation(
+      module_to_string(lowering_result.module), use_tuple_args=False,
+      return_tuple=False)
 
 # Lax ops missing MLIR lowerings.
 # # TODO(b/203775215): these are missing from the cHLO dialect. Either add

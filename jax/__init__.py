@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,6 +35,8 @@ del _cloud_tpu_init
 from jax import config as _config_module
 del _config_module
 
+from jax._src.basearray import Array as Array
+
 from jax._src.config import (
   config as config,
   enable_checks as enable_checks,
@@ -57,12 +59,14 @@ from jax._src.config import (
   transfer_guard_device_to_host as transfer_guard_device_to_host,
 )
 from .core import eval_context as ensure_compile_time_eval
+from jax._src.environment_info import print_environment_info as print_environment_info
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   effects_barrier,
   block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
+  clear_backends as clear_backends,
   closure_convert as closure_convert,
   curry,  # TODO(phawkins): update users to avoid this.
   custom_gradient as custom_gradient,
@@ -94,15 +98,14 @@ from jax._src.api import (
   linearize as linearize,
   linear_transpose as linear_transpose,
   make_jaxpr as make_jaxpr,
-  mask as mask,
   named_call as named_call,
   named_scope as named_scope,
   pmap as pmap,
   process_count as process_count,
   process_index as process_index,
+  pure_callback as pure_callback,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat as remat,
-  shapecheck as shapecheck,
   ShapedArray as ShapedArray,
   ShapeDtypeStruct as ShapeDtypeStruct,
   value_and_grad as value_and_grad,
@@ -111,17 +114,21 @@ from jax._src.api import (
   xla,  # TODO(phawkins): update users to avoid this.
   xla_computation as xla_computation,
 )
-from jax.experimental.maps import soft_pmap as soft_pmap
+
+from jax._src.array import (
+    make_array_from_single_device_arrays as make_array_from_single_device_arrays,
+    make_array_from_callback as make_array_from_callback,
+)
+
 from jax.version import __version__ as __version__
 from jax.version import __version_info__ as __version_info__
 
-# TODO(jakevdp): remove these deprecated routines after October 2022
 from jax._src.tree_util import (
+  tree_map as tree_map,
+  # TODO(jakevdp): remove these deprecated routines after October 2022
   _deprecated_treedef_is_leaf as treedef_is_leaf,
   _deprecated_tree_flatten as tree_flatten,
   _deprecated_tree_leaves as tree_leaves,
-  _deprecated_tree_map as tree_map,
-  _deprecated_tree_multimap as tree_multimap,
   _deprecated_tree_structure as tree_structure,
   _deprecated_tree_transpose as tree_transpose,
   _deprecated_tree_unflatten as tree_unflatten,
@@ -132,6 +139,7 @@ from jax._src.tree_util import (
 from jax import abstract_arrays as abstract_arrays
 from jax import api_util as api_util
 from jax import distributed as distributed
+from jax import debug as debug
 from jax import dtypes as dtypes
 from jax import errors as errors
 from jax import image as image
@@ -141,8 +149,11 @@ from jax import numpy as numpy
 from jax import ops as ops
 from jax import profiler as profiler
 from jax import random as random
+from jax import sharding as sharding
 from jax import stages as stages
 from jax import tree_util as tree_util
 from jax import util as util
 
 import jax.lib  # TODO(phawkins): remove this export.
+
+del jax._src

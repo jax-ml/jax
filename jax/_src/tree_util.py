@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,8 +23,6 @@ import textwrap
 import warnings
 
 from jax._src.lib import pytree
-from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 
 from jax._src.util import safe_zip, unzip2
 
@@ -34,14 +32,15 @@ traceback_util.register_exclusion(__file__)
 T = TypeVar("T")
 U = TypeVar("U")
 
-if TYPE_CHECKING or xla_extension_version >= 78:
-  PyTreeDef = pytree.PyTreeDef
-else:
-  PyTreeDef = xla_extension.PyTreeDef  # pytype: disable=module-attr
+PyTreeDef = pytree.PyTreeDef
 
 
 def tree_flatten(tree, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Flattens a pytree.
+
+  The flattening order (i.e. the order of elements in the output list)
+  is deterministic, corresponding to a left-to-right depth-first tree
+  traversal.
 
   Args:
     tree: a pytree to flatten.
@@ -90,6 +89,9 @@ def treedef_children(treedef):
 def treedef_is_leaf(treedef):
   return treedef.num_nodes == 1
 
+def treedef_is_strict_leaf(treedef):
+  return treedef.num_nodes == 1 and treedef.num_leaves == 1
+
 def all_leaves(iterable, is_leaf: Optional[Callable[[Any], bool]] = None):
   """Tests whether all elements in the given iterable are all leaves.
 
@@ -122,7 +124,7 @@ def register_pytree_node(nodetype: Type[T],
                          unflatten_func: Callable[[_AuxData, _Children], T]):
   """Extends the set of types that are considered internal nodes in pytrees.
 
-  See `example usage <pytrees.html>`_.
+  See :ref:`example usage <pytrees>`.
 
   Args:
     nodetype: a Python type to treat as an internal pytree node.
@@ -196,12 +198,6 @@ def tree_map(f: Callable[..., Any], tree: Any, *rest: Any,
   leaves, treedef = tree_flatten(tree, is_leaf)
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
   return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
-
-def tree_multimap(*args, **kwargs):
-  """Deprecated alias of :func:`jax.tree_util.tree_map`"""
-  warnings.warn('jax.tree_util.tree_multimap() is deprecated. Please use jax.tree_util.tree_map() '
-                'instead as a drop-in replacement.', FutureWarning)
-  return tree_map(*args, **kwargs)
 
 def build_tree(treedef, xs):
   return treedef.from_iterable_tree(xs)
@@ -433,7 +429,7 @@ class FlattenedKeyPathEntry(KeyPathEntry):  # fallback
     return f'[<flat index {self.key}>]'
 
 def _child_keys(pytree: Any) -> List[KeyPathEntry]:
-  assert not treedef_is_leaf(tree_structure(pytree))
+  assert not treedef_is_strict_leaf(tree_structure(pytree))
   handler = _keypath_registry.get(type(pytree))
   if handler:
     return handler(pytree)
@@ -461,7 +457,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
                   is_leaf: Optional[Callable[[Any], bool]] = None,
                   ) -> Iterable[Callable[[str], ValueError]]:
   # A leaf is a valid prefix of any tree:
-  if treedef_is_leaf(tree_structure(prefix_tree, is_leaf=is_leaf)): return
+  if treedef_is_strict_leaf(tree_structure(prefix_tree, is_leaf=is_leaf)): return
 
   # The subtrees may disagree because their roots are of different types:
   if type(prefix_tree) != type(full_tree):
@@ -527,7 +523,8 @@ def _deprecate(f):
   @functools.wraps(f)
   def wrapped(*args, **kwargs):
     warnings.warn(f"jax.{f.__name__} is deprecated, and will be removed in a future release. "
-                  f"Use jax.tree_util.{f.__name__} instead.")
+                  f"Use jax.tree_util.{f.__name__} instead.",
+                  category=FutureWarning, stacklevel=2)
     return f(*args, **kwargs)
   return wrapped
 

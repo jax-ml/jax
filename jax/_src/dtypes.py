@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2019 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+import jax
 from jax._src.config import flags, config
 from jax._src.lib import xla_client
 
@@ -34,7 +35,7 @@ traceback_util.register_exclusion(__file__)
 FLAGS = flags.FLAGS
 
 # bfloat16 support
-bfloat16: type = xla_client.bfloat16
+bfloat16: type = xla_client.bfloat16  # pytype: disable=annotation-type-mismatch  # typed-numpy
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
@@ -68,15 +69,20 @@ _dtype_to_inexact = {
     ]
 }
 
+def to_numeric_dtype(dtype):
+  """Promotes a dtype into an numeric dtype, if it is not already one."""
+  dtype = np.dtype(dtype)
+  return np.dtype('int32') if dtype == np.dtype('bool') else dtype
 
-def _to_inexact_dtype(dtype):
+
+def to_inexact_dtype(dtype):
   """Promotes a dtype into an inexact dtype, if it is not already one."""
   dtype = np.dtype(dtype)
   return _dtype_to_inexact.get(dtype, dtype)
 
 
-def _to_complex_dtype(dtype):
-  ftype = _to_inexact_dtype(dtype)
+def to_complex_dtype(dtype):
+  ftype = to_inexact_dtype(dtype)
   if ftype in [np.dtype('float64'), np.dtype('complex128')]:
     return np.dtype('complex128')
   return np.dtype('complex64')
@@ -85,6 +91,8 @@ def _to_complex_dtype(dtype):
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled, dtype):
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
+  if jax.core.is_opaque_dtype(dtype):
+    return dtype
   try:
     dtype = np.dtype(dtype)
   except TypeError as e:

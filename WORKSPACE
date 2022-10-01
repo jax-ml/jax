@@ -7,10 +7,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 #    and update the sha256 with the result.
 http_archive(
     name = "org_tensorflow",
-    sha256 = "634e5ee7fba57ba8e1e6af18c8521d9849d631248979f0fa4824e772ecabdb79",
-    strip_prefix = "tensorflow-6e406f0bd8d08be3fa43daa306e8565cdb29a546",
+    sha256 = "f6e6eb23b97735f9f1e6e7a10310cb411739e119930eac4d0c29ca807ff1072b",
+    strip_prefix = "tensorflow-cfa43252f1a33252a25a54955ad3a5cbecb60e2c",
     urls = [
-        "https://github.com/tensorflow/tensorflow/archive/6e406f0bd8d08be3fa43daa306e8565cdb29a546.tar.gz",
+        "https://github.com/tensorflow/tensorflow/archive/cfa43252f1a33252a25a54955ad3a5cbecb60e2c.tar.gz",
     ],
 )
 
@@ -27,8 +27,8 @@ http_archive(
 #    path = "/path/to/tensorflow",
 # )
 
-load("//third_party/pocketfft:workspace.bzl", pocketfft = "repo")
-pocketfft()
+load("//third_party/ducc:workspace.bzl", ducc = "repo")
+ducc()
 
 # Initialize TensorFlow's external dependencies.
 load("@org_tensorflow//tensorflow:workspace3.bzl", "tf_workspace3")

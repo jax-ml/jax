@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Callable, Sequence, Tuple, Union, cast, List
+from typing import Any, Callable, Sequence, Tuple, Union, cast, List, Optional, Iterable, NamedTuple
 import itertools as it
-from functools import partial
+from functools import partial, lru_cache
+import threading
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
-from jax.experimental.sharding import MeshPspecSharding, Sharding
+from jax._src.sharding import (
+    MeshPspecSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
+    XLADeviceAssignment)
 from jax import core
 from jax import linear_util as lu
 from jax import stages
-from jax._src.api import _check_callable, _check_arg
+from jax._src.api import _check_callable, _check_arg, local_devices, FLAGS
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
@@ -44,13 +48,14 @@ from jax.interpreters.pxla import PartitionSpec
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, tree_structure, treedef_tuple)
 from jax._src.tree_util import prefix_errors
 from jax._src import util
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wrap_name, wraps,
-    distributed_debug_log, split_list, cache, tuple_insert, weakref_lru_cache,
+    distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
     merge_lists)
 
 class _FromGdaSingleton:
@@ -71,20 +76,14 @@ _is_auto = pxla._is_auto
 class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
-  def input_shardings(self) -> Sequence[pxla.PartitionSpec]:
-    args, kwargs = tree_unflatten(self.in_tree, [
-        pxla.array_mapping_to_axis_resources(i)
-        for i in self._executable._in_axes
-    ])  # pytype: disable=attribute-error
+  def input_shardings(self) -> Sequence[XLACompatibleSharding]:
+    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)    # pytype: disable=attribute-error
     assert not kwargs
     return args
 
   @pxla.maybe_cached_property
-  def output_shardings(self):
-    return tree_unflatten(self.out_tree, [
-        pxla.array_mapping_to_axis_resources(o)
-        for o in self._executable._out_axes
-    ])  # pytype: disable=attribute-error
+  def output_shardings(self) -> Sequence[XLACompatibleSharding]:
+    return tree_unflatten(self.out_tree, self._executable._out_shardings)  # pytype: disable=attribute-error
 
 
 class PjitLowered(stages.Lowered):
@@ -102,6 +101,12 @@ def _is_unspecified_or_from_gda_or_auto(x):
   return _is_from_gda(x) or _is_auto(x) or _is_unspecified(x)
 
 
+PjitSharding = Union[OpShardingSharding, _UnspecifiedValue, _AUTOAxisResource]
+PjitShardingMinusUnspecified = Union[OpShardingSharding, _AUTOAxisResource]
+MeshSharding = Union[MeshPspecSharding, _UnspecifiedValue, _AUTOAxisResource]
+MeshShardingMinusUnspecified = Union[MeshPspecSharding, _AUTOAxisResource]
+
+
 def _check_all_or_none_unspecified(axis_resources, name):
   if not axis_resources:
     return False
@@ -117,6 +122,73 @@ def _check_all_or_none_unspecified(axis_resources, name):
                        f'Make sure that every entry in {name} is '
                        '`pjit._UNSPECIFIED`.')
   return unspecified
+
+def _python_pjit_helper(infer_params, *args, **kwargs):
+  args_flat, _, params, _, out_tree, _ = infer_params(*args, **kwargs)
+  for arg in args_flat:
+    _check_arg(arg)
+  out_flat = pjit_p.bind(*args_flat, **params)
+  outs = tree_unflatten(out_tree, out_flat)
+  return outs, out_flat, out_tree
+
+def _python_pjit(fun: Callable, infer_params):
+
+  @wraps(fun)
+  def wrapped(*args, **kwargs):
+    return _python_pjit_helper(infer_params, *args, **kwargs)[0]
+
+  return wrapped
+
+class _PjitFastpathData(NamedTuple):
+  xla_executable: xla.XlaExecutable
+  out_pytree_def: Any
+  in_shardings: Sequence[Any]
+  out_shardings: Sequence[Any]
+  out_avals: Sequence[Any]
+  out_committed: Sequence[bool]
+
+class _MostRecentPjitCallExecutable(threading.local):
+  def __init__(self):
+    self.value = None
+
+_most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
+
+def _cpp_pjit(fun: Callable, infer_params, static_argnums):
+
+  def cache_miss(*args, **kwargs):
+    global _most_recent_pjit_call_executable
+
+    outs, out_flat, out_tree = _python_pjit_helper(infer_params, *args, **kwargs)
+
+    executable = _most_recent_pjit_call_executable.value
+    _most_recent_pjit_call_executable.value = None
+
+    use_fastpath = (
+        executable is not None and
+        isinstance(executable, pxla.MeshExecutable) and
+        isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+        not executable.unsafe_call.has_unordered_effects and
+        not executable.unsafe_call.has_host_callbacks and
+        all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+    )
+
+    if use_fastpath:
+      out_avals = [o.aval for o in out_flat]
+      out_committed = [o._committed for o in out_flat]
+      fastpath_data = _PjitFastpathData(executable.xla_executable,
+                                        out_tree,
+                                        executable._in_shardings,
+                                        executable._out_shardings, out_avals,
+                                        out_committed)
+    else:
+      fastpath_data = None
+
+
+    return outs, fastpath_data
+
+  cpp_pjit_f = xc._xla.pjit(fun, cache_miss, static_argnums)
+
+  return wraps(fun)(cpp_pjit_f)
 
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
@@ -232,13 +304,14 @@ def pjit(fun: Callable,
 
   >>> import jax
   >>> import jax.numpy as jnp
+  >>> import numpy as np
   >>> from jax.experimental.maps import Mesh
   >>> from jax.experimental.pjit import PartitionSpec, pjit
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
   >>> f = pjit(lambda x: jax.numpy.convolve(x, jnp.asarray([0.5, 1.0, 0.5]), 'same'),
   ...         in_axis_resources=None, out_axis_resources=PartitionSpec('devices'))
-  >>> with Mesh(jax.devices(), ('devices',)):
+  >>> with Mesh(np.array(jax.devices()), ('devices',)):
   ...   print(f(x))  # doctest: +SKIP
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
@@ -257,31 +330,10 @@ def pjit(fun: Callable,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_any_auto: bool
-  if not config.jax_array:
-    in_axis_resources, _, _, in_any_auto = _prepare_axis_resources(
-        in_axis_resources, "in_axis_resources")
-    out_axis_resources, _, _, _ = _prepare_axis_resources(
-        out_axis_resources, "out_axis_resources")
-  else:
-    if not _is_unspecified(in_axis_resources):
-      # `pjit.AUTO` is allowed partially in `in_axis_resources` i.e. you can
-      # put sharding instances and `pjit.AUTO` together.
-      if not all(isinstance(s, Sharding) or _is_auto(s)
-                 for s in tree_flatten(in_axis_resources)[0]):
-        raise ValueError('When `config.jax_array` flag is enabled, '
-                         'in_axis_resources should contain instances of '
-                         '`Sharding` or `pjit.AUTO`.')
-
-    # `out_axis_resources` should be instances of `Sharding` if it's not
-    # unspecified. For `AUTO` sharding, it can only be used with
-    # MeshPspecSharding.
-    if not _is_unspecified(out_axis_resources):
-      if not all(isinstance(s, Sharding) or _is_auto(s)
-                 for s in tree_flatten(out_axis_resources)[0]):
-        raise ValueError('When `config.jax_array` flag is enabled, '
-                         'out_axis_resources should contain instances of '
-                         '`Sharding` or `pjit.AUTO`.')
+  in_axis_resources, _, _, in_any_auto = _prepare_axis_resources(
+      in_axis_resources, "in_axis_resources")
+  out_axis_resources, _, _, _ = _prepare_axis_resources(
+      out_axis_resources, "out_axis_resources")
 
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -299,8 +351,13 @@ def pjit(fun: Callable,
     resource_env = pxla.thread_resources.env
     pjit_mesh = resource_env.physical_mesh
     if pjit_mesh.empty:
-      raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
-                         "it's defined at the call site?")
+      if config.jax_array:
+        # Don't enforce requiring a mesh when `jax_array` flag is enabled. But
+        # if mesh is not empty then pjit will respect it.
+        pass
+      else:
+        raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
+                           "it's defined at the call site?")
 
     f = lu.wrap_init(fun)
     f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
@@ -314,14 +371,21 @@ def pjit(fun: Callable,
       donated_invars = (False,) * len(args_flat)
 
     if config.jax_array:
-      in_shardings, out_shardings = _get_and_check_in_and_out_shardings(
-          args_flat, in_axis_resources, out_axis_resources, pjit_mesh, in_tree)
+      in_shardings = tree_map(
+          lambda x: _create_sharding_for_array(pjit_mesh, x), in_axis_resources)
+      out_shardings = tree_map(
+          lambda x: _create_sharding_for_array(pjit_mesh, x), out_axis_resources)
     else:
-      in_shardings = tree_map(lambda x: _create_mesh_pspec_sharding(pjit_mesh, x),
-                              in_axis_resources)
-      out_shardings = tree_map(lambda x: x if _is_unspecified(x) else
-                               _create_mesh_pspec_sharding(pjit_mesh, x), out_axis_resources)
-      _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
+      in_shardings = tree_map(
+          lambda x: _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x),
+          in_axis_resources)
+      out_shardings = tree_map(
+          lambda x: x if _is_unspecified(x) else
+          _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x), out_axis_resources)
+      # This check fails extrememly rarely and has a huge cost in the dispatch
+      # path. So hide it behind the jax_enable_checks flag.
+      if config.jax_enable_checks:
+        _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
 
     if not config.jax_array and in_any_auto and not _global_avals:
       raise ValueError('Auto sharding is only enabled for global inputs. '
@@ -340,23 +404,22 @@ def pjit(fun: Callable,
         if config.jax_parallel_functions_output_gda or config.jax_array else
         maps._positional_semantics.val)
 
-    global_in_avals, normalized_in_shardings_flat = _process_in_axis_resources(
+    global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
         hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
-        tuple(isinstance(a, GDA) for a in args_flat))
+        tuple(isinstance(a, GDA) for a in args_flat), resource_env)
 
-    jaxpr, normalized_out_shardings_flat = _pjit_jaxpr(
+    jaxpr, canonicalized_out_shardings_flat = _pjit_jaxpr(
         flat_fun, hashable_pytree(out_shardings), global_in_avals,
         HashableFunction(out_tree, closure=()))
 
     if not config.jax_array:
-      normalized_in_shardings_flat = tree_map(
-          _maybe_replace_from_gda_with_pspec, normalized_in_shardings_flat,
-          tuple(args_flat))
-
+      canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
+          canonicalized_in_shardings_flat, args_flat)
+    # in_shardings and out_shardings here are all OpShardingSharding.
     params = dict(
         jaxpr=jaxpr,
-        in_shardings=normalized_in_shardings_flat,
-        out_shardings=normalized_out_shardings_flat,
+        in_shardings=canonicalized_in_shardings_flat,
+        out_shardings=canonicalized_out_shardings_flat,
         resource_env=resource_env,
         donated_invars=donated_invars,
         name=getattr(flat_fun, '__name__', '<unnamed function>'),
@@ -365,17 +428,16 @@ def pjit(fun: Callable,
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
-  @wraps(fun)
-  def wrapped(*args, **kwargs):
-    args_flat, _, params, _, out_tree, _ = infer_params(*args, **kwargs)
-    for arg in args_flat:
-      _check_arg(arg)
-    out = pjit_p.bind(*args_flat, **params)
-    return tree_unflatten(out_tree, out)
+  if FLAGS.experimental_cpp_pjit and xc._version >= 96:
+    wrapped = _cpp_pjit(fun, infer_params, static_argnums)
+  else:
+    wrapped = _python_pjit(fun, infer_params)
 
   def lower(*args, _global_avals=False, **kwargs):
     (_, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params(*args, _global_avals=_global_avals, **kwargs)
+    if any(_is_unspecified(i) for i in params['in_shardings']):
+      raise ValueError("Please specify sharding on pjit's in_axis_resources.")
     in_is_global = _calc_is_global_sequence(
         params['in_positional_semantics'], params['in_shardings'])
     lowering = _pjit_lower(
@@ -403,38 +465,24 @@ def hashable_pytree(pytree):
                           closure=(treedef, vals))
 
 
-def _get_and_check_in_and_out_shardings(args_flat, pjit_in_shardings, out_shardings,
-                                        pjit_mesh, in_tree):
-  arg_in_shardings_flat = tuple(a.sharding if hasattr(a, 'sharding') else _UNSPECIFIED
-                                for a in args_flat)
-  arg_ndims = tuple(a.ndim for a in args_flat)
-
-  if _is_unspecified(pjit_in_shardings):
-    # If pjit_in_shardings is unspecified, then arg_in_shardings cannot have
-    # unspecified in them.
-    for a in arg_in_shardings_flat:
-      if _is_unspecified(a):
-        raise ValueError('Please specify sharding either on the arg or on '
-                         f'pjit. Found sharding {a} which is invalid.')
-    in_shardings_flat = arg_in_shardings_flat
-  else:
-    # This function is cached.
-    in_shardings_flat = _get_and_check_pjit_arg_shardings(
-        hashable_pytree(pjit_in_shardings), arg_in_shardings_flat, arg_ndims,
-        in_tree)
-
-  out_shardings_flat = tuple(tree_flatten(out_shardings)[0])
-  # Check if the device assignment is the same across inputs and outputs.
-  # This function is cached.
-  _check_array_device_assignment(pjit_mesh, in_shardings_flat + out_shardings_flat)
-
-  return tree_unflatten(in_tree, in_shardings_flat), out_shardings
-
-
-def _create_mesh_pspec_sharding(mesh, x):
+@lru_cache(maxsize=4096)
+def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
   if _is_unspecified_or_from_gda_or_auto(x):
     return x
-  return MeshPspecSharding(mesh, x.user_spec, x)
+  return pxla._create_mesh_pspec_sharding(mesh, x.user_spec, x)
+
+
+def _create_sharding_for_array(mesh, x):
+  if isinstance(x, XLACompatibleSharding) or _is_auto(x) or _is_unspecified(x):
+    return x
+  if mesh.empty:
+    raise RuntimeError("pjit requires a non-empty mesh! Is a mesh defined at "
+                       "the call site? Alternatively, provide a "
+                       "XLACompatibleSharding to pjit and then the "
+                       "mesh context manager is not required.")
+  # A nice user error is raised in _prepare_axis_resources.
+  assert isinstance(x, ParsedPartitionSpec)
+  return _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x)
 
 
 def flatten_axis_resources(what, tree, shardings, tupled_args):
@@ -499,22 +547,23 @@ class PytreeLeaf:
   def __repr__(self): return "pytree leaf"
 
 
-@cache()
+@lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
-                               in_tree, in_positional_semantics, is_gda):
+                               in_tree, in_positional_semantics, is_gda,
+                               resource_env):
   in_shardings_flat = flatten_axis_resources(
         "pjit in_axis_resources", in_tree, in_shardings_thunk(), tupled_args=True)
 
   # Fork here because the `Array` path is very simple and doesn't need all the
   # complexity below.
   if config.jax_array:
-    for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_auto(i): continue
-      pjit_check_aval_sharding(i, aval, "pjit arguments",
-                               allow_uneven_sharding=False)
+    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+                             allow_uneven_sharding=False)
     global_in_avals = local_in_avals
-    return tuple(global_in_avals), tuple(i if _is_auto(i) else i.normalize()
-                                         for i in in_shardings_flat)
+    canonicalized_shardings = tuple(
+        i if _is_auto(i) or _is_unspecified(i) else to_op_sharding_sharding(i, aval.ndim)
+        for i, aval in safe_zip(in_shardings_flat, global_in_avals))
+    return tuple(global_in_avals), canonicalized_shardings
 
   if not local_in_avals:
     assert not in_shardings_flat
@@ -543,22 +592,26 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     # Shapes should be checked against non canonicalized in_axis_resources.
     # For example, partitions of () and ((),) are not equivalent, since the
     # first one is a valid spec for a scalar value, while the second is not!
-    for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_from_gda(i) or _is_auto(i): continue
-      pjit_check_aval_sharding(i, aval, "pjit arguments",
-                               allow_uneven_sharding=False)
+    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+                             allow_uneven_sharding=False)
   else:
-    for aval, i in safe_zip(local_in_avals, in_shardings_flat):
-      if _is_from_gda(i) or _is_auto(i): continue
-      pjit_check_aval_sharding(i, aval, "pjit arguments",
-                               allow_uneven_sharding=False, local=True)
+    pjit_check_aval_sharding(
+        [i if _is_from_gda(i) or _is_auto(i) else
+         MeshPspecSharding(i.mesh.local_mesh, i.spec)
+         for i in in_shardings_flat],
+        local_in_avals, "pjit arguments", allow_uneven_sharding=False)
 
-  normalized_in_shardings_flat = tuple(
-      i if _is_from_gda(i) or _is_auto(i) else i.normalize() for i in in_shardings_flat)
+  # Local or global avals doesn't matter for converting to op sharding because
+  # the `ndim` does not change.
+  canonicalized_in_shardings_flat = tuple(
+      i if _is_from_gda(i) or _is_auto(i) else to_op_sharding_sharding(i, aval.ndim)
+      for i, aval in safe_zip(in_shardings_flat, local_in_avals))
 
-  global_in_avals = local_to_global(in_positional_semantics,
-                                    local_in_avals, normalized_in_shardings_flat)
-  return tuple(global_in_avals), normalized_in_shardings_flat
+  global_in_avals = local_to_global(
+      in_positional_semantics, local_in_avals, canonicalized_in_shardings_flat,
+      resource_env.physical_mesh)
+
+  return tuple(global_in_avals), canonicalized_in_shardings_flat
 
 
 @lu.cache
@@ -576,31 +629,48 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   out_shardings_flat = flatten_axis_resources(
       "pjit out_axis_resources", out_tree(), out_shardings_thunk(), tupled_args=False)
 
-  for aval, o in safe_zip(global_out_avals, out_shardings_flat):
-    if _is_unspecified(o) or _is_auto(o): continue
-    pjit_check_aval_sharding(o, aval, "pjit outputs", allow_uneven_sharding=False)
+  pjit_check_aval_sharding(out_shardings_flat, global_out_avals, "pjit outputs",
+                           allow_uneven_sharding=False)
 
-  normalized_out_shardings_flat = tuple(
-      o if _is_unspecified(o) or _is_auto(o) else o.normalize()
-      for o in out_shardings_flat
+  canonicalized_out_shardings_flat = tuple(
+      o if _is_unspecified(o) or _is_auto(o) else to_op_sharding_sharding(o, aval.ndim)
+      for o, aval in safe_zip(out_shardings_flat, global_out_avals)
   )
 
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
-  return _ListWithW([jaxpr, normalized_out_shardings_flat])
+  return _ListWithW([jaxpr, canonicalized_out_shardings_flat])
 
 
-# TODO(yashkatariya): Replace this with shape check against sharding which
-# uses OpSharding.tile_assignment_dimension.
 def pjit_check_aval_sharding(
-    sharding: MeshPspecSharding, aval, what_aval: str,
-    allow_uneven_sharding: bool, local: bool = False):
-  if local:
-    m = sharding.mesh.local_mesh
-  else:
-    m = sharding.mesh
-  _check_shapes_against_resources(
-      what_aval, m.is_multi_process, m.shape, [aval],
-      [sharding._parsed_pspec], allow_uneven_sharding)
+    shardings, flat_avals, what_aval: str, allow_uneven_sharding: bool):
+  for aval, s in zip(flat_avals, shardings):
+    if _is_unspecified_or_from_gda_or_auto(s):
+      continue
+    global_str = "" if s.is_fully_addressable else " global"
+    shape = aval.shape
+    try:
+      # Sharding interfaces can implement `is_compatible_aval` as an optional
+      # method to raise a more meaningful error.
+      if hasattr(s, 'is_compatible_aval'):
+        s.is_compatible_aval(shape)
+      else:
+        s._to_xla_op_sharding(len(shape))
+    except ValueError as e:
+      raise ValueError(f'One of {what_aval} is incompatible with its sharding '
+                       f'annotation {s}: {str(e)}')
+    # Use the `OpSharding` proto to find out how many ways each dimension of
+    # the aval is sharded. This approach will work across all
+    # XLACompatibleSharding.
+    op_sharding = s._to_xla_op_sharding(len(shape))
+    assert op_sharding is not None
+    num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(
+        cast(xc.OpSharding, op_sharding))
+    for i, size in enumerate(num_ways_dim_sharded):
+      if not allow_uneven_sharding and shape[i] % size != 0:
+        raise ValueError(f"One of {what_aval} was given the sharding "
+                         f"of {s}, which implies that "
+                         f"the{global_str} size of its dimension {i} should be "
+                         f"divisible by {size}, but it is equal to {shape[i]}")
 
 
 class SpecSync(IntEnum):
@@ -626,6 +696,15 @@ class ParsedPartitionSpec:
   @property
   def user_spec(self):
     return self.unsynced_user_spec(SpecSync.IN_SYNC)
+
+  def get_partition_spec(self) -> PartitionSpec:
+    if self.sync < SpecSync.IN_SYNC:
+      return _get_single_pspec(self)
+    else:
+      if isinstance(self.unsafe_user_spec, PartitionSpec):
+        return self.unsafe_user_spec
+      else:
+        return _get_single_pspec(self)
 
   def unsynced_user_spec(self, min_sync):
     if self.sync < min_sync:
@@ -726,14 +805,25 @@ def _prepare_axis_resources(axis_resources,
   # be 1 entry for that since _UNSPECIFIED is a private API.
   _check_all_or_none_unspecified(entries, arg_name)
   any_auto = pxla._check_if_any_auto(entries)
-  entries = [
-      (entry if _is_unspecified_or_from_gda_or_auto(entry)
-       else ParsedPartitionSpec.from_user_input(
+  new_entries = []
+  for entry in entries:
+    if _is_unspecified_or_from_gda_or_auto(entry):
+      if config.jax_array and _is_from_gda(entry):
+        raise ValueError('`FROM_GDA` cannot be set when config.jax_array is '
+                         'enabled. Leave in_axis_resources empty or populate '
+                         'it with shardings.')
+      new_entries.append(entry)
+    elif isinstance(entry, Sharding):
+      if not isinstance(entry, XLACompatibleSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not a '
+                         'subclass of XLACompatibleSharding.')
+      new_entries.append(entry)
+    else:
+      new_entries.append(ParsedPartitionSpec.from_user_input(
           entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
-      for entry in entries
-  ]
-  _check_unique_resources(entries, arg_name)
-  return tree_unflatten(treedef, entries), entries, treedef, any_auto
+
+  _check_unique_resources(new_entries, arg_name)
+  return tree_unflatten(treedef, new_entries), new_entries, treedef, any_auto
 
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gda):
@@ -744,7 +834,9 @@ def _check_resources_mismatch(in_axis_resources_flat, is_gda):
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
-    if _is_unspecified_or_from_gda_or_auto(arg_axis_resources): continue
+    if (_is_unspecified_or_from_gda_or_auto(arg_axis_resources) or
+        isinstance(arg_axis_resources, XLACompatibleSharding)):
+      continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
     resource_counts = Counter(it.chain.from_iterable(constrained_dims))
     if not resource_counts: continue
@@ -755,44 +847,70 @@ def _check_unique_resources(axis_resources, arg_name):
                          f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
                          f"has duplicate entries for {pxla.show_axes(multiple_uses)}")
 
-def _check_shapes_against_resources(what: str, is_global_shape: bool,
-                                    mesh_shape, flat_avals, flat_axis_resources,
-                                    allow_uneven_sharding: bool):
-  global_str = " global" if is_global_shape else ""
-  for aval, aval_axis_resources in zip(flat_avals, flat_axis_resources):
-    if _is_unspecified_or_from_gda_or_auto(aval_axis_resources):
-      continue
-    shape = aval.shape
-    if len(shape) < len(aval_axis_resources):
-      raise ValueError(f"One of {what} was given the resource assignment "
-                       f"of {aval_axis_resources.user_spec}, which implies that "
-                       f"it has a rank of at least {len(aval_axis_resources)}, "
-                       f"but it is {len(shape)}")
-    for i, axis_resources in enumerate(aval_axis_resources):
-      if axis_resources is None:
-        continue
-      try:
-        size = int(np.prod([mesh_shape[resource] for resource in axis_resources], dtype=np.int64))
-      except KeyError as e:
-        raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources.user_spec}, but resource axis "
-                         f"{e.args[0]} is undefined. Did you forget to declare the mesh?") from None
-      if not allow_uneven_sharding and shape[i] % size != 0:
-        raise ValueError(f"One of {what} was given the resource assignment "
-                         f"of {aval_axis_resources.user_spec}, which implies that "
-                         f"the{global_str} size of its dimension {i} should be "
-                         f"divisible by {size}, but it is equal to {shape[i]}")
-
 # -------------------- pjit rules --------------------
 
 pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
 
 
+def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
+  committed_arg_shardings = []
+  for a in args:
+    if hasattr(a, 'sharding'):
+      arg_s = a.sharding
+      if not isinstance(arg_s, XLACompatibleSharding):
+        raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
+                         'which is not a subclass of XLACompatibleSharding.')
+      if a._committed:
+        committed_arg_shardings.append(arg_s)
+
+  da = _get_and_check_device_assignment(
+      it.chain(
+          committed_arg_shardings, pjit_in_shardings, out_shardings),
+      pjit_mesh)
+
+  resolved_in_shardings = []
+  for arg, pjit_in_s in safe_zip(args, pjit_in_shardings):
+    arg_s, committed = ((arg.sharding, arg._committed)
+                        if hasattr(arg, 'sharding') else (_UNSPECIFIED, False))
+    if _is_unspecified(pjit_in_s):
+      if _is_unspecified(arg_s):
+        resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
+      else:
+        if committed:
+          resolved_in_shardings.append(to_op_sharding_sharding(
+              cast(XLACompatibleSharding, arg_s), arg.ndim))
+        else:
+          if dispatch.is_single_device_sharding(arg_s):
+            resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
+          else:
+            raise NotImplementedError('Having uncommitted Array sharded on '
+                                      'multiple devices is not supported.')
+    else:
+      if not _is_unspecified(arg_s):
+        if committed and not pxla.are_op_shardings_equal(
+            pjit_in_s._to_xla_op_sharding(arg.ndim),
+            arg_s._to_xla_op_sharding(arg.ndim)):
+          raise ValueError('Sharding passed to pjit does not match the sharding '
+                           'on the respective arg. '
+                           f'Got pjit sharding: {pjit_in_s},\n'
+                           f'arg sharding: {arg_s}')
+      resolved_in_shardings.append(pjit_in_s)
+
+  return tuple(resolved_in_shardings)
+
+
 def _pjit_call_impl(*args, jaxpr,
                     in_shardings, out_shardings, resource_env,
                     donated_invars, name,
                     in_positional_semantics, out_positional_semantics):
+
+  global _most_recent_pjit_call_executable
+
+  if config.jax_array:
+    in_shardings = _resolve_in_shardings(args, in_shardings, out_shardings,
+                                         resource_env.physical_mesh)
+
   in_is_global = _calc_is_global_sequence(in_positional_semantics, in_shardings)
   if config.jax_array and all(_is_unspecified(o) for o in out_shardings):
     _allow_propagation_to_outputs = True
@@ -802,9 +920,10 @@ def _pjit_call_impl(*args, jaxpr,
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, in_is_global).compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
+  _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
-    pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_axes)
+    pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_shardings)
   if config.jax_distributed_debug:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this
@@ -821,33 +940,99 @@ def _pjit_call_impl(*args, jaxpr,
   return compiled.unsafe_call(*args)
 pjit_p.def_impl(_pjit_call_impl)
 
-@weakref_lru_cache
+
+@dataclasses.dataclass(frozen=True)
+class SameDeviceAssignmentTuple:
+  shardings: Tuple[PjitSharding, ...]
+  # device_assignment is Optional because shardings can contain `AUTO` and in
+  # that case `mesh` is compulsory to be used. So in that case
+  # `_pjit_lower_cached` cache, resource_env will check against the devices.
+  device_assignment: Optional[XLADeviceAssignment]
+
+  def __hash__(self):
+    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, OpShardingSharding) else s # type: ignore
+                           for s in self.shardings)
+    if self.device_assignment is None:
+      return hash(shardings_hash)
+    else:
+      return hash((shardings_hash, *self.device_assignment))
+
+  def __eq__(self, other):
+    if not isinstance(other, SameDeviceAssignmentTuple):
+      return False
+    return (all(pxla.are_op_shardings_equal(s._op_sharding, o._op_sharding)
+                if isinstance(s, OpShardingSharding) and isinstance(o, OpShardingSharding)
+                else s == o
+                for s, o in safe_zip(self.shardings, other.shardings)) and
+            self.device_assignment == other.device_assignment)
+
+
 def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
+    *args, **kwargs):
+  da = _fast_path_get_device_assignment(it.chain(in_shardings, out_shardings))
+  in_shardings = SameDeviceAssignmentTuple(in_shardings, da)
+  out_shardings = SameDeviceAssignmentTuple(out_shardings, da)
+  return _pjit_lower_cached(jaxpr, in_shardings, out_shardings, *args, **kwargs)
+
+
+@weakref_lru_cache
+def _pjit_lower_cached(
+    jaxpr: core.ClosedJaxpr,
+    sdat_in_shardings: SameDeviceAssignmentTuple,
+    sdat_out_shardings: SameDeviceAssignmentTuple,
     resource_env,
     donated_invars,
     name: str,
     in_is_global: Sequence[bool]):
-  # in_shardings and out_shardings are canonicalized to avoid
-  # recompilation (since pjit_lower is cached) if its compiled with `None` but
-  # in the next call `P(None)` is passed. Those are the same thing so should be
-  # treat as equivalent and pjit_lower's cache shouldn't be invalidated.
-  in_axes = [get_array_mapping(i if _is_auto(i) else i._parsed_pspec)
-             for i in in_shardings]
-  out_axes = [get_array_mapping(o if _is_unspecified(o) or _is_auto(o) else o._parsed_pspec)
-              for o in out_shardings]
+  in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
+      Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
+  out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
+
   pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
   fun = lu.wrap_init(f)
-  # TODO(yashkatariya): Move `lower_mesh_computation` to use the `Sharding`
-  # interface too.
-  return pxla.lower_mesh_computation(
+
+  # Convert to `MeshPspecSharding` when `jax_array` is not enabled. This is
+  # because GDA/SDA/DA are dependent on mesh for generating outputs.
+  # MeshPspecSharding is required for host-local inputs too.
+  any_auto = pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings))
+  if not config.jax_array or any_auto:
+    mesh = resource_env.physical_mesh
+    in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
+        Tuple[MeshShardingMinusUnspecified, ...], tuple(
+            MeshPspecSharding._from_parsed_pspec(
+                mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0]) # type: ignore
+            if isinstance(i, OpShardingSharding) else i
+            for i in in_shardings
+    ))
+    out_shardings: Tuple[MeshSharding, ...] = cast(  # type: ignore[no-redef]
+        Tuple[MeshSharding, ...], tuple(
+            MeshPspecSharding._from_parsed_pspec(
+                mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0]) # type: ignore
+            if isinstance(o, OpShardingSharding) else o
+            for o in out_shardings
+    ))
+
+  # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
+  # because `xmap` only supports SPMDAxisContext right now.
+  if (any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
+    return pxla.lower_mesh_computation(
       fun, 'pjit', name, resource_env.physical_mesh,
-      in_axes, out_axes, donated_invars,
+      in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
+  else:
+    # Pass `in_is_global` here because this path is taken by both host local
+    # avals and global avals.
+    # TODO(yashkatariya): Don't set committed to True always. Infer that from
+    # the arguments just like dispatch.py in `sharded_lowering`.
+    return pxla.lower_sharding_computation(
+        fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
+        jaxpr.in_avals, in_is_global=in_is_global, keep_unused=True,
+        committed=True, always_lower=False)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
@@ -855,22 +1040,23 @@ def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
   if jaxpr.effects:
     raise NotImplementedError('Effects not supported in `pjit`.')
   return global_to_local(out_positional_semantics, jaxpr.out_avals,
-                         out_shardings), jaxpr.effects
+                         out_shardings, resource_env.physical_mesh), jaxpr.effects
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics):
-  if not isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext):
+  if not isinstance(ctx.module_context.axis_context,
+                    (mlir.SPMDAxisContext, mlir.ShardingContext)):
     raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
 
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   flat_output_types = util.flatten(output_types)
 
-  arg_shardings = [i._to_xla_op_sharding(aval.ndim)
+  arg_shardings = [None if _is_unspecified(i) else i._to_xla_op_sharding(aval.ndim)
                    for aval, i in safe_zip(ctx.avals_in, in_shardings)]
-  result_shardings = [o._to_xla_op_sharding(aval.ndim)
+  result_shardings = [None if _is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
                       for aval, o in safe_zip(ctx.avals_out, out_shardings)]
 
   sub_ctx = ctx.module_context.replace(
@@ -891,7 +1077,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(insert_axis,
+def _pjit_batcher(insert_axis, spmd_axis_name,
                   axis_size, axis_name, main_type,
                   vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings,
@@ -905,13 +1091,16 @@ def _pjit_batcher(insert_axis,
       jaxpr, axis_size, is_mapped_in,
       instantiate=False, axis_name=axis_name, main_type=main_type)
 
-  new_parts = (axis_name,) if insert_axis else ()
+  # `insert_axis` is set to True only for some `xmap` uses.
+  new_parts = (axis_name,) if insert_axis else (
+      () if spmd_axis_name is None else (spmd_axis_name,))
+  mesh = resource_env.physical_mesh
   in_shardings = tuple(
-      _pjit_batcher_for_sharding(i, 0, new_parts) if is_mapped else i
-      for is_mapped, i in zip(is_mapped_in, in_shardings))
+      _pjit_batcher_for_sharding(i, 0, new_parts, mesh, aval.ndim) if is_mapped else i
+      for is_mapped, i, aval in zip(is_mapped_in, in_shardings, new_jaxpr.in_avals))
   out_shardings = tuple(
-      _pjit_batcher_for_sharding(o, 0, new_parts) if is_mapped else o
-      for is_mapped, o in zip(is_mapped_out, out_shardings))
+      _pjit_batcher_for_sharding(o, 0, new_parts, mesh, aval.ndim) if is_mapped else o
+      for is_mapped, o, aval in zip(is_mapped_out, out_shardings, new_jaxpr.out_avals))
   vals_out = pjit_p.bind(
     *vals_in,
     jaxpr=new_jaxpr,
@@ -924,17 +1113,25 @@ def _pjit_batcher(insert_axis,
     out_positional_semantics=out_positional_semantics)
   dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
   return vals_out, dims_out
-batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
-pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
+batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
+batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
+pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
-# TODO(yashkatariya, apaszke): Remove this and replace this with `VmapSharding`.
-def _pjit_batcher_for_sharding(s, dim, val):
-  parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, val)
-  # Use `_from_parsed_pspec` because after you `insert_axis_partitions` the
-  # `sync` attribute changes. To make sure we preserve that, we need to pass
-  # that parsed partition spec when created the sharding instance.
-  # Inferring the `PartitiionSpec` from that is easy as done in the classmethod.
-  return MeshPspecSharding._from_parsed_pspec(s.mesh, parsed_pspec).normalize()
+def _pjit_batcher_for_sharding(
+    s: OpShardingSharding, dim: int, val: Tuple[str, ...], mesh, ndim: int):
+  if not val and xla_extension_version >= 83:
+    new_op = s._op_sharding.clone()
+    tad = list(new_op.tile_assignment_dimensions)
+    tad.insert(dim, 1)
+    new_op.tile_assignment_dimensions = tad
+    return OpShardingSharding(s._device_assignment, new_op)
+  else:
+    assert isinstance(s, OpShardingSharding)
+    assert not mesh.empty
+    parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
+    parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
+    mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
+    return OpShardingSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
 
 
 def _pjit_jvp(primals_in, tangents_in,
@@ -972,9 +1169,6 @@ def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        resource_env, donated_invars, name, in_positional_semantics,
                        out_positional_semantics):
-  # XXX: At the moment all residuals get fully replicated, which is extremely
-  #      wasteful and might quickly lead to OOM errors.
-  mesh = resource_env.physical_mesh
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
@@ -988,39 +1182,44 @@ def _pjit_partial_eval(trace, *in_tracers,
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
+  if config.jax_array:
+    residual_shardings = (_UNSPECIFIED,) * num_residuals
+  else:
+    # Using fast path to get the device assignment because mesh is used to
+    # create the shardings. So the device assignment is always the same.
+    da = _fast_path_get_device_assignment(it.chain(in_shardings, out_shardings))
+    residual_shardings = (OpShardingSharding.get_replicated(da),) * num_residuals
   # Compute the known outputs
   known_params = dict(
       jaxpr=known_jaxpr,
       in_shardings=keep_where(in_shardings, known_ins),
-      # TODO(yashkatariya): Remove the `MeshPspecSharding` creation here.
-      # This is done like this because all output
-      # shardings are that even in the `Array` codepath.
       out_shardings=(
-          keep_where(out_shardings, known_outs) +
-          (MeshPspecSharding(mesh, pxla.PartitionSpec(None)),) * num_residuals),
+          keep_where(out_shardings, known_outs) + residual_shardings),
       resource_env=resource_env,
       donated_invars=keep_where(donated_invars, known_ins),
       name=name,
       in_positional_semantics=keep_where(in_positional_semantics, known_ins),
       out_positional_semantics=out_positional_semantics)
 
-  if num_residuals:
-    in_is_global = _calc_is_global_sequence(
-        known_params['in_positional_semantics'], known_params['in_shardings'])
-    compiled = _pjit_lower(
-        known_params["jaxpr"], known_params["in_shardings"],
-        known_params["out_shardings"], known_params["resource_env"],
-        known_params["donated_invars"], known_params["name"],
-        in_is_global).compile(_allow_propagation_to_outputs=True,
-                              _allow_compile_replicated=False)
-    _, output_ppspec = _get_ppspec_from_executable(compiled.xla_executable, mesh)
-    residual_specs = tuple(output_ppspec[-num_residuals:])
-  else:
-    residual_specs = ()
-  residual_sharding = tuple(MeshPspecSharding._from_parsed_pspec(mesh, r)
-                            for r in residual_specs)
-  known_params['out_shardings'] = (
-      keep_where(out_shardings, known_outs) + residual_sharding)
+  # Skip this for Arrays because Arrays support UNSPECIFIED in out_shardings. So
+  # there is no need to find out the residual shardings from XLA here.
+  if not config.jax_array:
+    if num_residuals:
+      in_is_global = _calc_is_global_sequence(
+          known_params['in_positional_semantics'], known_params['in_shardings'])
+      compiled = _pjit_lower(
+          known_params["jaxpr"], known_params["in_shardings"],
+          known_params["out_shardings"], known_params["resource_env"],
+          known_params["donated_invars"], known_params["name"],
+          in_is_global).compile(_allow_propagation_to_outputs=True,
+                                _allow_compile_replicated=False)
+      _, out_op_shardings = _get_op_sharding_from_executable(compiled.xla_executable)
+      residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
+    else:
+      residual_op_shardings = ()
+    residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
+    known_params['out_shardings'] = (
+        keep_where(out_shardings, known_outs) + residual_shardings)
 
   all_known_outs = pjit_p.bind(
       *(pv.get_known() for pv in in_pvals if pv.is_known()),
@@ -1041,7 +1240,7 @@ def _pjit_partial_eval(trace, *in_tracers,
   # Prepare unknown tracers
   unknown_params = dict(
       jaxpr=unknown_jaxpr,
-      in_shardings=(keep_where(in_shardings, unknown_ins) + residual_sharding),
+      in_shardings=(keep_where(in_shardings, unknown_ins) + residual_shardings),
       out_shardings=keep_where(out_shardings, unknown_outs),
       resource_env=resource_env,
       donated_invars=(keep_where(donated_invars, unknown_ins) +
@@ -1055,7 +1254,8 @@ def _pjit_partial_eval(trace, *in_tracers,
       pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
       for aval in global_to_local(unknown_params["out_positional_semantics"],
                                   unknown_jaxpr.out_avals,
-                                  unknown_params["out_shardings"])
+                                  unknown_params["out_shardings"],
+                                  unknown_params["resource_env"].physical_mesh)
   ]
   eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
                           unknown_tracers_out,
@@ -1093,7 +1293,7 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
   if not config.jax_array:
     global_cts_in_avals = local_to_global(
         transpose_in_positional_semantics, global_cts_in_avals,
-        transpose_in_shardings)
+        transpose_in_shardings, resource_env.physical_mesh)
 
   transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
       body, global_cts_in_avals)
@@ -1139,15 +1339,33 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
   what = "pjit input"
   if resource_env.physical_mesh != params['resource_env'].physical_mesh:
     raise RuntimeError("Changing the physical mesh is not allowed inside pjit.")
+
   for aval, s in zip(jaxpr.in_avals, params['in_shardings']):
-    _check_resources_against_named_axes(what, aval, s._parsed_pspec, named_axis_resources)
+    if _is_unspecified(s) or _is_auto(s):
+      continue
+    elif hasattr(s, '_original_sharding'):
+      parsed_pspec = s._original_sharding._parsed_pspec
+    else:
+      parsed_pspec = parse_flatten_op_sharding(
+          s._op_sharding, resource_env.physical_mesh)[0]
+    _check_resources_against_named_axes(what, aval, parsed_pspec, named_axis_resources)
+
   pxla.resource_typecheck(
       jaxpr.jaxpr, resource_env, named_axis_resources,
       lambda: (f"a pjit'ed function {params['name']} "
                f"(pjit called at {source_info_util.summarize(source_info)})"))
+
   what = "pjit output"
   for aval, s in zip(jaxpr.out_avals, params['out_shardings']):
-    _check_resources_against_named_axes(what, aval, s._parsed_pspec, named_axis_resources)
+    if _is_unspecified(s) or _is_auto(s):
+      continue
+    elif hasattr(s, '_original_sharding'):
+      parsed_pspec = s._original_sharding._parsed_pspec
+    else:
+      parsed_pspec = parse_flatten_op_sharding(
+          s._op_sharding, resource_env.physical_mesh)[0]
+    _check_resources_against_named_axes(what, aval, parsed_pspec, named_axis_resources)
+
 pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 
@@ -1155,27 +1373,38 @@ pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
-  parsed_axis_resources, _, _, _ = _prepare_axis_resources(
+  axis_resources, _, _, _ = _prepare_axis_resources(
       axis_resources, "axis_resources", allow_unconstrained_dims=True)
   axis_resources_flat = tuple(
-      flatten_axes("with_sharding_constraint axis_resources",
-                   tree, parsed_axis_resources))
+      flatten_axes("with_sharding_constraint sharding", tree, axis_resources))
   resource_env = pxla.thread_resources.env
   mesh = resource_env.physical_mesh
 
-  sharding_flat = [MeshPspecSharding._from_parsed_pspec(mesh, a)
-                   for a in axis_resources_flat]
+  if config.jax_array:
+    sharding_flat = [_create_sharding_for_array(mesh, a)
+                     for a in axis_resources_flat]
+    unconstrained_dims = [
+        get_unconstrained_dims(s) if isinstance(s, MeshPspecSharding) else {}
+        for s in sharding_flat
+    ]
+  else:
+    sharding_flat = [pxla._create_mesh_pspec_sharding(mesh, a.user_spec, a)
+                     for a in axis_resources_flat]
+    # Calculate unconstrained_dims from MeshPspecSharding because that information
+    # is lost when converted to OpSharding. Bind unconstrained_dims to
+    # with_sharding_constraint primitive.
+    unconstrained_dims = [get_unconstrained_dims(s) for s in sharding_flat]
 
-  for xf, i in safe_zip(x_flat, sharding_flat):
-    pjit_check_aval_sharding(i, xf, "with_sharding_constraint arguments",
-                             allow_uneven_sharding=True)
+  pjit_check_aval_sharding(sharding_flat, x_flat, "with_sharding_constraint arguments",
+                           allow_uneven_sharding=True)
 
-  outs = [sharding_constraint_p.bind(xf, sharding=i.normalize(),
-                                     resource_env=resource_env)
-          for xf, i in safe_zip(x_flat, sharding_flat)]
+  outs = [sharding_constraint_p.bind(xf, sharding=to_op_sharding_sharding(i, xf.ndim),
+                                     resource_env=resource_env,
+                                     unconstrained_dims=ud)
+          for xf, i, ud in safe_zip(x_flat, sharding_flat, unconstrained_dims)]
   return tree_unflatten(tree, outs)
 
-def _sharding_constraint_impl(x, sharding, resource_env):
+def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
   # TODO(skye): can we also prevent this from being called in other
   # non-pjit contexts? (e.g. pmap, control flow)
   raise NotImplementedError(
@@ -1185,46 +1414,68 @@ sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
 sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(sharding_constraint_p,
-              lambda ct, _, sharding, resource_env: (
-                  sharding_constraint_p.bind(
-                      ct, sharding=sharding,
-                      resource_env=resource_env),))
+              lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 
 def _sharding_constraint_mhlo_lowering(ctx, x_node, *, sharding,
-                                       resource_env):
+                                       resource_env, unconstrained_dims):
   aval, = ctx.avals_in
-  assert isinstance(sharding, MeshPspecSharding)
+  axis_ctx = ctx.module_context.axis_context
+  # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
+  # MeshPspecSharding. So convert the OpShardingSharding to MeshPspecSharding
+  # and then convert it back with the added special axes.
+  if isinstance(axis_ctx, mlir.SPMDAxisContext):
+    mesh = resource_env.physical_mesh
+    parsed_pspec = parse_flatten_op_sharding(sharding._op_sharding, mesh)[0]
+    mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
+    sharding = OpShardingSharding(
+        mps._device_assignment, mps._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
       mlir.wrap_with_sharding_op(
           x_node,
-          sharding._to_xla_op_sharding(
-              aval.ndim, axis_ctx=ctx.module_context.axis_context),
-          unspecified_dims=get_unconstrained_dims(sharding))
+          sharding._to_xla_op_sharding(aval.ndim),
+          unspecified_dims=unconstrained_dims)
   ]
 mlir.register_lowering(sharding_constraint_p,
                        _sharding_constraint_mhlo_lowering)
 
 
-def _sharding_constraint_batcher(insert_axis, axis_size, axis_name, main_type,
-                                 vals_in, dims_in, sharding, resource_env):
+def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,
+                                 axis_name, main_type, vals_in, dims_in,
+                                 sharding, resource_env, unconstrained_dims):
   x, = vals_in
   d, = dims_in
   # None means unconstrained in ParsedPartitionSpec
-  new_parts = (axis_name,) if insert_axis else None
+  new_parts = (axis_name,) if insert_axis else (
+      None if spmd_axis_name is None else (spmd_axis_name,))
+  unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
+  if new_parts is None:
+    unconstrained_dims.add(d)
   y = sharding_constraint_p.bind(
       x,
-      sharding=_pjit_batcher_for_sharding(sharding, d, new_parts),
-      resource_env=resource_env)
+      sharding=_pjit_batcher_for_sharding(
+          sharding, d, new_parts, resource_env.physical_mesh, x.ndim),
+      resource_env=resource_env,
+      unconstrained_dims=unconstrained_dims)
   return y, d
-batching.axis_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, False)
-pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(_sharding_constraint_batcher, True)
+batching.spmd_axis_primitive_batchers[sharding_constraint_p] = partial(
+    _sharding_constraint_batcher, False)
+batching.axis_primitive_batchers[sharding_constraint_p] = partial(
+    _sharding_constraint_batcher, False, None)
+pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(
+    _sharding_constraint_batcher, True, None)
+
 
 def _resource_typing_sharding_constraint(avals, params, source_info,
                                          resource_env, named_axis_resources):
   aval, = avals
+  if hasattr(params['sharding'], '_original_sharding'):
+    parsed_pspec = params['sharding']._original_sharding._parsed_pspec
+  else:
+    parsed_pspec = parse_flatten_op_sharding(
+        params['sharding']._op_sharding, resource_env.physical_mesh)[0]
   _check_resources_against_named_axes(
-    "with_sharding_constraint input", aval,
-    params['sharding']._parsed_pspec, named_axis_resources)
+    "with_sharding_constraint input", aval, parsed_pspec, named_axis_resources)
+
 pxla.custom_resource_typing_rules[sharding_constraint_p] = \
     _resource_typing_sharding_constraint
 
@@ -1242,40 +1493,63 @@ def get_array_mapping(
                      if axes is not None for axis in axes)
 
 
+def to_op_sharding_sharding(s: XLACompatibleSharding, ndim: int) -> OpShardingSharding:
+  if isinstance(s, OpShardingSharding):
+    return s
+  op_sharding_sharding =  OpShardingSharding(
+      s._device_assignment, s._to_xla_op_sharding(ndim))
+  op_sharding_sharding._original_sharding = s
+  return op_sharding_sharding
+
+
 def get_unconstrained_dims(sharding: MeshPspecSharding):
   return {i for i, axes in enumerate(sharding._parsed_pspec)
           if axes is None}
 
 
-def global_to_local(positional_semantics, avals, shardings):
+def global_to_local(positional_semantics, avals, shardings, mesh):
   if config.jax_array:
     return avals
   if isinstance(positional_semantics, maps._PositionalSemantics):
     positional_semantics = [positional_semantics] * len(shardings)
-  return [
-      aval if ps == maps._PositionalSemantics.GLOBAL or
-      s._parsed_pspec.partitions == () else s.mesh._global_to_local(
-          get_array_mapping(s._parsed_pspec), aval)
-      for aval, s, ps in safe_zip(avals, shardings, positional_semantics)
-  ]
 
-def local_to_global(positional_semantics, avals, shardings):
+  out = []
+  for aval, s, ps in safe_zip(avals, shardings, positional_semantics):
+    if (ps == maps._PositionalSemantics.GLOBAL or
+        pxla.is_op_sharding_replicated(s._op_sharding)):
+      out.append(aval)
+    else:
+      # This path is only taken by host-local values. GDA, Array and fully
+      # replicated avals don't go through this code path. To convert global
+      # avals to host local avals, round trip it via MeshPspecSharding.
+      parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
+      out.append(mesh._global_to_local(get_array_mapping(parsed_pspec), aval))
+  return out
+
+
+def local_to_global(positional_semantics, avals, shardings, mesh):
   if config.jax_array:
     return avals
-  return [
-      aval if ps == maps._PositionalSemantics.GLOBAL or
-      s._parsed_pspec.partitions == () else s.mesh._local_to_global(
-          get_array_mapping(s._parsed_pspec), aval)
-      for aval, s, ps in safe_zip(avals, shardings, positional_semantics)
-  ]
+  out = []
+  for aval, s, ps in safe_zip(avals, shardings, positional_semantics):
+    if (ps == maps._PositionalSemantics.GLOBAL or
+        pxla.is_op_sharding_replicated(s._op_sharding)):
+      out.append(aval)
+    else:
+      # This path is only taken by host-local values. GDA, Array and fully
+      # replicated avals don't go through this code path. To convert host local
+      # avals to global avals, round trip it via MeshPspecSharding.
+      parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
+      out.append(mesh._local_to_global(get_array_mapping(parsed_pspec), aval))
+  return out
 
 
 def _calc_is_global_sequence(in_positional_semantics, in_shardings):
   if config.jax_array:
     return (True,) * len(in_positional_semantics)
-  return tuple(
-      ips == maps._PositionalSemantics.GLOBAL or i._parsed_pspec.partitions == ()
-      for ips, i in safe_zip(in_positional_semantics, in_shardings))
+  return tuple((ips == maps._PositionalSemantics.GLOBAL or
+                pxla.is_op_sharding_replicated(i._op_sharding))
+               for ips, i in safe_zip(in_positional_semantics, in_shardings))
 
 def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
   if isinstance(arg, GDA):
@@ -1283,33 +1557,47 @@ def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
   return maps._positional_semantics.val
 
 
+def _fast_path_get_device_assignment(
+    shardings: Iterable[PjitSharding]) -> Optional[XLADeviceAssignment]:
+  da = None
+  for i in shardings:
+    if _is_auto(i) or _is_unspecified(i):
+      continue
+    da = i._device_assignment  # type: ignore
+    break
+  return da
+
+
 def _maybe_replace_from_gda_with_pspec(
-    in_sharding_flat, arg) -> MeshPspecSharding:
-  if isinstance(arg, GDA):
-    if _is_auto(in_sharding_flat):
-      return in_sharding_flat
-    gda_cpspec = CanonicalizedParsedPartitionSpec(
-        ParsedPartitionSpec.from_user_input(arg.mesh_axes, arg_name="GDA spec"))
-    if (not _is_from_gda(in_sharding_flat) and
-        in_sharding_flat._parsed_pspec != gda_cpspec):
+    in_shardings_flat, args_flat) -> Sequence[XLACompatibleSharding]:
+
+  @lru_cache()
+  def _gda_check_and_get_sharding(
+      gda_sharding: MeshPspecSharding, in_sharding: OpShardingSharding, ndim: int):
+    if not _is_from_gda(in_sharding) and not pxla.are_op_shardings_equal(
+        gda_sharding._to_xla_op_sharding(ndim),
+        in_sharding._to_xla_op_sharding(ndim)):
       raise ValueError(
           f"Got an input GDA to pjit with different partitioning than specified in "
           "the in_axis_resources argument to pjit. The partitioning must match, or "
           "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. "
-          f"Got GDA spec: {gda_cpspec.user_spec} and "
-          f"pjit spec: {in_sharding_flat.spec} for GDA: {arg}")
-    # This is an optimization to return the original sharding if its not
-    # FROM_GDA.
-    if not _is_from_gda(in_sharding_flat):
-      return in_sharding_flat
-    return MeshPspecSharding(arg.mesh, arg.mesh_axes).normalize()
-  return in_sharding_flat
+          f"Got GDA sharding: {gda_sharding} and "
+          f"pjit sharding: {in_sharding._original_sharding}")  # type: ignore
+    return to_op_sharding_sharding(gda_sharding, ndim)
+
+  out = []
+  for in_sharding_flat, arg in safe_zip(in_shardings_flat, args_flat):
+    if _is_auto(in_sharding_flat):
+      out.append(in_sharding_flat)
+    elif isinstance(arg, GDA):
+      gda_sharding = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+      out.append(_gda_check_and_get_sharding(gda_sharding, in_sharding_flat, arg.ndim))
+    else:
+      out.append(in_sharding_flat)
+  return tuple(out)
 
 
-@cache()
-def _check_array_device_assignment(pjit_mesh, shardings):
-  if not shardings:
-    return
+def _get_and_check_device_assignment(shardings, pjit_mesh):
   first_device_assignment = None
   mesh_devices = list(pjit_mesh.devices.flat)
   for i in shardings:
@@ -1318,8 +1606,8 @@ def _check_array_device_assignment(pjit_mesh, shardings):
     # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
     # skipped.
     if first_device_assignment is None:
-      first_device_assignment = i._device_assignment()
-    arr_device_assignment = i._device_assignment()
+      first_device_assignment = i._device_assignment
+    arr_device_assignment = i._device_assignment
     if pjit_mesh.empty:
       # If mesh is empty, then check if all devices across shardings are
       # equal
@@ -1335,34 +1623,11 @@ def _check_array_device_assignment(pjit_mesh, shardings):
         raise ValueError("Pjit's devices and Array's devices should be equal. "
                          f"Got Pjit devices: {list(pjit_mesh.devices.flat)},\n "
                          f"Array devices: {arr_device_assignment}")
-
-@cache()
-def _get_and_check_pjit_arg_shardings(pjit_in_shardings, arg_in_shardings_flat,
-                                      arg_ndims, in_tree):
-  pjit_in_shardings_flat = flatten_axis_resources(
-      "pjit in_shardings", in_tree, pjit_in_shardings(), tupled_args=True)
-
-  out = []
-  for pjit_sharding, arg_sharding, ndim in safe_zip(
-      pjit_in_shardings_flat, arg_in_shardings_flat, arg_ndims):
-    # If the sharding of the arg is not known, replace it with the sharding on
-    # pjit.
-    if _is_unspecified(arg_sharding):
-      out.append(pjit_sharding)
-    elif _is_auto(pjit_sharding):
-      raise ValueError('Passing sharding on pjit and on args while using the '
-                       'auto spmd partitioner is not allowed. Please call the '
-                       'compiled object on the inputs.')
-    else:
-      if pjit_sharding._to_xla_op_sharding(ndim) != arg_sharding._to_xla_op_sharding(ndim):
-        raise ValueError('Sharding passed to pjit does not match the sharding '
-                         'on the respective arg. '
-                         f'Got pjit sharding: {pjit_sharding},\n'
-                         f'arg sharding: {arg_sharding}')
-      out.append(pjit_sharding)
-
-  assert not any(_is_unspecified(o) for o in out)
-  return tuple(out)
+  if first_device_assignment is None and not pjit_mesh.empty:
+    return mesh_devices
+  if first_device_assignment is None:
+    return [config.jax_default_device or local_devices()[0]]
+  return first_device_assignment
 
 
 def _maybe_check_pjit_gda_mesh(args, mesh):
@@ -1505,11 +1770,38 @@ def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
   else:
     raise AssertionError("Unhandled OpSharding type. Please open a bug report!")
 
+
+def _get_op_sharding(op_sharding) -> Sequence[xc.OpSharding]:
+  if op_sharding.type == xc.OpSharding.Type.TUPLE:
+    out: List[xc.OpSharding] = []
+    for s in op_sharding.tuple_shardings:
+      out.extend(_get_op_sharding(s))
+    return out
+  else:
+    return [op_sharding]
+
+
 _get_single_pspec = lambda p: pxla.array_mapping_to_axis_resources(
     cast(pxla.ArrayMapping, get_array_mapping(p)))
 
 def _get_partition_spec(ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[PartitionSpec]:
   return [_get_single_pspec(p) for p in ppspec]
+
+
+def _get_op_sharding_from_executable(
+    executable) -> Tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
+  in_op_shardings: List[xc.OpSharding] = []
+  parameter_shardings_from_xla = executable.hlo_modules()[0].spmd_parameters_shardings
+  if parameter_shardings_from_xla is not None:
+    for s in parameter_shardings_from_xla:
+      in_op_shardings.extend(_get_op_sharding(s))
+
+  out_op_shardings: List[xc.OpSharding] = []
+  output_shardings_from_xla = executable.hlo_modules()[0].spmd_output_sharding
+  if output_shardings_from_xla is not None:
+    out_op_shardings = _get_op_sharding(output_shardings_from_xla)  # type: ignore
+
+  return in_op_shardings, out_op_shardings
 
 
 def _get_ppspec_from_executable(executable, mesh) -> Tuple[Sequence[ParsedPartitionSpec], Sequence[ParsedPartitionSpec]]:
@@ -1522,7 +1814,7 @@ def _get_ppspec_from_executable(executable, mesh) -> Tuple[Sequence[ParsedPartit
   return in_ppspec, out_ppspec
 
 
-def _get_sharding_from_executable(
+def _get_pspec_from_executable(
     executable, mesh: pxla.Mesh
 ) -> Tuple[Tuple[PartitionSpec, ...], Tuple[PartitionSpec, ...]]:
   in_ppspec, out_ppspec = _get_ppspec_from_executable(executable, mesh)

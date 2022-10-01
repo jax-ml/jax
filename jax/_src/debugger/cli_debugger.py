@@ -1,4 +1,4 @@
-# Copyright 2022 Google LLC
+# Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,108 +14,19 @@
 from __future__ import annotations
 
 import cmd
-import dataclasses
-import inspect
+import pprint
 import sys
-import threading
 import traceback
 
-from typing import Any, Callable, Dict, IO, List, Optional
+from typing import Any, IO, List, Optional
 
-import numpy as np
-from jax import core
-from jax import tree_util
-from jax._src import debugging
-from jax._src import traceback_util
-from jax._src import util
-import jax.numpy as jnp
+from jax._src.debugger import core as debugger_core
 
+DebuggerFrame = debugger_core.DebuggerFrame
 
-@tree_util.register_pytree_node_class
-@dataclasses.dataclass(frozen=True)
-class DebuggerFrame:
-  """Encapsulates Python frame information."""
-  filename: str
-  locals: Dict[str, Any]
-  code_context: str
-  source: List[str]
-  lineno: int
-  offset: Optional[int]
-
-  def tree_flatten(self):
-    flat_locals, locals_tree = tree_util.tree_flatten(self.locals)
-    is_valid = [
-        isinstance(l, (core.Tracer, jnp.ndarray, np.ndarray))
-        for l in flat_locals
-    ]
-    invalid_locals, valid_locals = util.partition_list(is_valid, flat_locals)
-    return valid_locals, (is_valid, invalid_locals, locals_tree, self.filename,
-                          self.code_context, self.source, self.lineno,
-                          self.offset)
-
-  @classmethod
-  def tree_unflatten(cls, info, valid_locals):
-    (is_valid, invalid_locals, locals_tree, filename, code_context, source,
-     lineno, offset) = info
-    flat_locals = util.merge_lists(is_valid, invalid_locals, valid_locals)
-    locals_ = tree_util.tree_unflatten(locals_tree, flat_locals)
-    return DebuggerFrame(filename, locals_, code_context, source, lineno,
-                         offset)
-
-  @classmethod
-  def from_frameinfo(cls, frame_info) -> DebuggerFrame:
-    try:
-      _, start = inspect.getsourcelines(frame_info.frame)
-      source = inspect.getsource(frame_info.frame).split('\n')
-      offset = frame_info.lineno - start
-    except OSError:
-      source = []
-      offset = None
-    return DebuggerFrame(
-        filename=frame_info.filename,
-        locals=frame_info.frame.f_locals,
-        code_context=frame_info.code_context,
-        source=source,
-        lineno=frame_info.lineno,
-        offset=offset)
-
-
-debug_lock = threading.Lock()
-
-
-def breakpoint(*, ordered: bool = False, **kwargs):  # pylint: disable=redefined-builtin
-  """Enters a breakpoint at a point in a program."""
-  frame_infos = inspect.stack()
-  # Filter out internal frames
-  frame_infos = [
-      frame_info for frame_info in frame_infos
-      if traceback_util.include_frame(frame_info.frame)
-  ]
-  frames = [
-      DebuggerFrame.from_frameinfo(frame_info) for frame_info in frame_infos
-  ]
-  # Throw out first frame corresponding to this function
-  frames = frames[1:]
-  flat_args, frames_tree = tree_util.tree_flatten(frames)
-
-  def _breakpoint_callback(*flat_args):
-    frames = tree_util.tree_unflatten(frames_tree, flat_args)
-    thread_id = None
-    if threading.current_thread() is not threading.main_thread():
-      thread_id = threading.get_ident()
-    with debug_lock:
-      TextDebugger(frames, thread_id, **kwargs).run()
-
-  if ordered:
-    effect = debugging.DebugEffect.ORDERED_PRINT
-  else:
-    effect = debugging.DebugEffect.PRINT
-  debugging.debug_callback(_breakpoint_callback, effect, *flat_args)
-
-
-class TextDebugger(cmd.Cmd):
+class CliDebugger(cmd.Cmd):
   """A text-based debugger."""
-  prompt = '(jaxdb) '
+  prompt = '(jdb) '
   use_rawinput: bool = False
 
   def __init__(self, frames: List[DebuggerFrame], thread_id,
@@ -125,7 +36,7 @@ class TextDebugger(cmd.Cmd):
     self.frames = frames
     self.frame_index = 0
     self.thread_id = thread_id
-    self.intro = 'Entering jaxdb:'
+    self.intro = 'Entering jdb:'
 
   def current_frame(self):
     return self.frames[self.frame_index]
@@ -133,65 +44,116 @@ class TextDebugger(cmd.Cmd):
   def evaluate(self, expr):
     env = {}
     curr_frame = self.frames[self.frame_index]
+    env.update(curr_frame.globals)
     env.update(curr_frame.locals)
     return eval(expr, {}, env)
 
+  def default(self, arg):
+    """Evaluates an expression."""
+    try:
+      print(repr(self.evaluate(arg)), file=self.stdout)
+    except:
+      self._error_message()
+
   def print_backtrace(self):
-    self.stdout.write('Traceback:\n')
+    backtrace = []
+    backtrace.append('Traceback:')
     for frame in self.frames[::-1]:
-      self.stdout.write(f'  File "{frame.filename}", line {frame.lineno}\n')
+      backtrace.append(f'  File "{frame.filename}", line {frame.lineno}')
       if frame.offset is None:
-        self.stdout.write('    <no source>\n')
+        backtrace.append('    <no source>')
       else:
         line = frame.source[frame.offset]
-        self.stdout.write(f'    {line}\n')
+        backtrace.append(f'    {line.strip()}')
+    print("\n".join(backtrace), file=self.stdout)
 
   def print_context(self, num_lines=2):
     curr_frame = self.frames[self.frame_index]
-    self.stdout.write(f'> {curr_frame.filename}({curr_frame.lineno})\n')
+    context = []
+    context.append(f'> {curr_frame.filename}({curr_frame.lineno})')
     for i, line in enumerate(curr_frame.source):
       assert curr_frame.offset is not None
       if (curr_frame.offset - 1 - num_lines <= i <=
           curr_frame.offset + num_lines):
         if i == curr_frame.offset:
-          self.stdout.write(f'->  {line}\n')
+          context.append(f'->  {line}')
         else:
-          self.stdout.write(f'    {line}\n')
+          context.append(f'    {line}')
+    print("\n".join(context), file=self.stdout)
+
+  def _error_message(self):
+    exc_info = sys.exc_info()[:2]
+    msg = traceback.format_exception_only(*exc_info)[-1].strip()
+    print('***', msg, file=self.stdout)
 
   def do_p(self, arg):
+    """p expression
+    Evaluates and prints the value of an expression
+    """
     try:
-      self.stdout.write(repr(self.evaluate(arg)) + "\n")
-    except Exception:
-      traceback.print_exc(limit=1)
+      print(repr(self.evaluate(arg)), file=self.stdout)
+    except:
+      self._error_message()
 
-  def do_u(self, arg):
+  def do_pp(self, arg):
+    """pp expression
+    Evaluates and pretty-prints the value of an expression
+    """
+    try:
+      print(pprint.pformat(self.evaluate(arg)), file=self.stdout)
+    except:
+      self._error_message()
+
+  def do_up(self, _):
+    """u(p)
+    Move down a stack frame.
+    """
     if self.frame_index == len(self.frames) - 1:
-      self.stdout.write('At topmost frame.\n')
+      print('At topmost frame.', file=self.stdout)
     else:
       self.frame_index += 1
     self.print_context()
+  do_u = do_up
 
-  def do_d(self, arg):
+  def do_down(self, _):
+    """d(own)
+    Move down a stack frame.
+    """
     if self.frame_index == 0:
-      self.stdout.write('At bottommost frame.\n')
+      print('At bottommost frame.', file=self.stdout)
     else:
       self.frame_index -= 1
     self.print_context()
+  do_d = do_down
 
-  def do_l(self, arg):
+  def do_list(self, _):
+    """l(ist)
+    List source code for the current file.
+    """
     self.print_context(num_lines=5)
+  do_l = do_list
 
-  def do_ll(self, arg):
-    self.print_context(num_lines=5)
-
-  def do_c(self, arg):
+  def do_continue(self, _):
+    """c(ont(inue))
+    Continue the program's execution.
+    """
     return True
+  do_c = do_cont = do_continue
 
-  def do_EOF(self, arg):
+  def do_quit(self, _):
+    """q(uit)\n(exit)
+    Quit the debugger. The program is given an exit command.
+    """
     sys.exit(0)
+  do_q = do_EOF = do_exit = do_quit
 
-  def do_bt(self, arg):
+  def do_where(self, _):
+    """w(here)
+    Prints a stack trace with the most recent frame on the bottom.
+    'bt' is an alias for this command.
+    """
     self.print_backtrace()
+  do_w = do_bt = do_where
 
   def run(self):
     while True:
@@ -199,4 +161,9 @@ class TextDebugger(cmd.Cmd):
         self.cmdloop()
         break
       except KeyboardInterrupt:
-        self.stdout.write('--KeyboardInterrupt--\n')
+        print('--KeyboardInterrupt--', file=sys.stdout)
+
+def run_debugger(frames: List[DebuggerFrame], thread_id: Optional[int],
+                 **kwargs: Any):
+  CliDebugger(frames, thread_id, **kwargs).run()
+debugger_core.register_debugger("cli", run_debugger, -1)

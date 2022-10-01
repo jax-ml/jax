@@ -215,7 +215,7 @@ subsequent method call may return an incorrect result::
 What's happening here? The issue is that ``static_argnums`` relies on the hash of the object
 to determine whether it has changed between calls, and the default ``__hash__`` method
 for a user-defined class will not take into account the values of class attributes. That means
-that on the second function call, JAX has no way of knowing that the class attribues have
+that on the second function call, JAX has no way of knowing that the class attributes have
 changed, and uses the cached static value from the previous compilation.
 
 For this reason, if you are marking ``self`` arguments as static, it is important that you
@@ -582,7 +582,7 @@ Buffer donation
 (This feature is implemented only for TPU and GPU.)
 
 When JAX executes a computation it uses buffers on the device for all inputs and outputs.
-If you know than one of the inputs is not needed after the computation, and if it
+If you know that one of the inputs is not needed after the computation, and if it
 matches the shape and element type of one of the outputs, you can specify that you
 want the corresponding input buffer to be donated to hold an output. This will reduce
 the memory required for the execution by the size of the donated buffer.
@@ -700,7 +700,7 @@ If you define a function that processes the input using operations that depend o
 the relative ordering of inputs (e.g. ``max``, ``greater``, ``argsort``, etc.) then
 you may be surprised to find that the gradient is everywhere zero.
 Here is an example, where we define `f(x)` to be a step function that returns
-`0` when `x` is negative, and `1` when `x` is positive:
+`0` when `x` is negative, and `1` when `x` is positive::
 
   import jax
   import numpy as np
@@ -733,7 +733,7 @@ Similarly, for all values of ``x`` less than zero, the output is zero.
 Perturbing ``x`` does not change this output, so the gradient is zero.
 That leaves us with the tricky case of ``x=0``. Surely, if you perturb ``x`` upward,
 it will change the output, but this is problematic: an infinitesimal change in ``x``
-produces a finite change inthe function value, which implies the gradient is
+produces a finite change in the function value, which implies the gradient is
 undefined.
 Fortunately, there's another way for us to measure the gradient in this case: we
 perturb the function downward, in which case the output does not change, and so the

@@ -1,4 +1,4 @@
-# Copyright 2022 Google LLC
+# Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,4 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from jax._src.debugger.cli_debugger import breakpoint
+from jax._src.debugger.core import breakpoint
+from jax._src.debugger import cli_debugger
+from jax._src.debugger import colab_debugger
+from jax._src.debugger import web_debugger
+
+del cli_debugger  # For registration only
+del colab_debugger # For registration only
+del web_debugger # For registration only

@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,9 +18,6 @@ You likely do not mean to import this module! Stax is intended as an example
 library only. There are a number of other much more fully-featured neural
 network libraries for JAX, including `Flax`_ from Google, and `Haiku`_ from
 DeepMind.
-
-For an example of how to use Stax, see the `Stax Resnet-50 example`
-<https://github.com/google/jax/blob/main/examples/resnet50.py>`_.
 
 .. _Haiku: https://github.com/deepmind/dm-haiku
 .. _Flax: https://github.com/google/flax

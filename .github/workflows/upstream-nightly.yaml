@@ -1,5 +1,10 @@
 name: CI-Nightly
-# Adapted from https://github.com/pydata/xarray/blob/main/.github/workflows/upstream-dev-ci.yaml
+# This configures a github action that runs the JAX test suite against nightly development builds
+# of numpy and scipy, in order to catch issues with new package versions prior to their release.
+# Unlike our other CI, this is one that we expect to fail frequently, and so we don't run it against
+# every commit and PR in the repository. Rather, we run it on a schedule, and failures lead to an
+# issue being created or updated.
+# Portions of this adapted from https://github.com/pydata/xarray/blob/main/.github/workflows/upstream-dev-ci.yaml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -48,7 +53,7 @@ jobs:
             scipy
       - name: Install JAX
         run: |
-          pip install .[cpu]
+          pip install .[minimum-jaxlib]
       - name: Run tests
         if: success()
         id: status
@@ -62,7 +67,7 @@ jobs:
           echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
           pytest -n auto --tb=short -rf \
               --report-log output-${{ matrix.python-version }}-log.jsonl \
-              tests/lax_numpy_test.py \
+              tests \
               || (
                 echo '::set-output name=ARTIFACTS_AVAILABLE::true' && false
               )
@@ -97,21 +102,25 @@ jobs:
       - uses: actions/download-artifact@v3
         with:
           path: /tmp/workspace/logs
+      - name: install requirements
+        run: |
+          python -m pip install pytest
       - name: Move all log files into a single directory
         run: |
           rsync -a /tmp/workspace/logs/output-*/ ./logs
           ls -R ./logs
           cat logs/*.jsonl > pytest-logs.txt
+          python .github/workflows/parse_logs.py pytest-logs.txt --outfile=parsed-logs.txt
       - name: Report failures
         uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const pytest_logs = fs.readFileSync('pytest-logs.txt', 'utf8');
+            const parsed_logs = fs.readFileSync('parsed-logs.txt', 'utf8');
             const title = "⚠️ Nightly upstream-dev CI failed ⚠️"
             const workflow_url = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-            const issue_body = `[Workflow Run URL](${workflow_url})`
+            const issue_body = `[Workflow Run URL](${workflow_url})\n${parsed_logs}`
             // Run GraphQL query against GitHub API to find the most recent open issue used for reporting failures
             const query = `query($owner:String!, $name:String!, $creator:String!, $label:String!){
               repository(owner: $owner, name: $name) {

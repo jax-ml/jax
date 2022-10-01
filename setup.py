@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from distutils import spawn
+import subprocess
+import os
+import sys
+
 from setuptools import setup, find_packages
 
-_current_jaxlib_version = '0.3.14'
+_current_jaxlib_version = '0.3.20'
 # The following should be updated with each new jaxlib release.
-_latest_jaxlib_version_on_pypi = '0.3.14'
+_latest_jaxlib_version_on_pypi = '0.3.20'
 _available_cuda_versions = ['11']
 _default_cuda_version = '11'
 _available_cudnn_versions = ['82', '805']
 _default_cudnn_version = '82'
-_libtpu_version = '0.1.dev20220627'
+_libtpu_version = '0.1.dev20220928'
 
 _dct = {}
 with open('jax/version.py') as f:
@@ -29,22 +34,42 @@ with open('jax/version.py') as f:
 __version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
+with open('README.md') as f:
+  _long_description = f.read()
+
+if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
+  protoc = os.environ['PROTOC']
+else:
+  protoc = spawn.find_executable('protoc')
+
+def generate_proto(source):
+  if not protoc or not os.path.exists(source):
+    return
+  protoc_command = [protoc, '-I.', '--python_out=.', source]
+  if subprocess.call(protoc_command) != 0:
+    sys.exit(-1)
+
+generate_proto("jax/experimental/australis/executable.proto")
+generate_proto("jax/experimental/australis/petri.proto")
+
 setup(
     name='jax',
     version=__version__,
     description='Differentiate, compile, and transform Numpy code.',
+    long_description=_long_description,
+    long_description_content_type='text/markdown',
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
-    package_data={'jax': ['py.typed']},
+    package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
     python_requires='>=3.7',
     install_requires=[
         'absl-py',
-        'numpy>=1.19',
+        'numpy>=1.20',
         'opt_einsum',
         'scipy>=1.5',
         'typing_extensions',
-        'etils[epath]'
+        'etils[epath]',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
@@ -58,11 +83,14 @@ setup(
         'ci': [f'jaxlib=={_latest_jaxlib_version_on_pypi}'],
 
         # Cloud TPU VM jaxlib can be installed via:
-        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        # $ pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
         'tpu': [f'jaxlib=={_current_jaxlib_version}',
                 f'libtpu-nightly=={_libtpu_version}',
                 # Required by cloud_tpu_init.py
                 'requests'],
+
+        # $ pip install jax[australis]
+        'australis': ['protobuf>=3.13,<4'],
 
         # CUDA installations require adding jax releases URL; e.g.
         # Cuda installation defaulting to a CUDA and Cudnn version defined above.

@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -194,6 +194,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
     bcoo_dot_general_sampled_p as bcoo_dot_general_sampled_p,
+    bcoo_dynamic_slice as bcoo_dynamic_slice,
     bcoo_extract as bcoo_extract,
     bcoo_extract_p as bcoo_extract_p,
     bcoo_fromdense as bcoo_fromdense,
@@ -203,6 +204,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_update_layout as bcoo_update_layout,
     bcoo_reduce_sum as bcoo_reduce_sum,
     bcoo_reshape as bcoo_reshape,
+    bcoo_slice as bcoo_slice,
     bcoo_sort_indices as bcoo_sort_indices,
     bcoo_sort_indices_p as bcoo_sort_indices_p,
     bcoo_spdot_general_p as bcoo_spdot_general_p,
@@ -215,6 +217,9 @@ from jax.experimental.sparse.bcoo import (
     BCOO as BCOO,
 )
 
+from jax.experimental.sparse.bcsr import (
+    BCSR as BCSR,
+)
 from jax.experimental.sparse.api import (
     empty as empty,
     eye as eye,

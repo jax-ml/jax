@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@ import unittest
 from absl.testing import absltest
 
 import jax
-import jax._src.lib.xla_bridge
+import jax._src.lib.xla_bridge as xla_bridge
 from jax.config import config
 import jax._src.test_util as jtu
 
@@ -29,7 +29,7 @@ class HeapProfilerTest(unittest.TestCase):
   # not check functional correctness.
 
   def testBasics(self):
-    client = jax._src.lib.xla_bridge.get_backend()
+    client = xla_bridge.get_backend()
     _ = client.heap_profile()
 
     a = jax.device_put(1)

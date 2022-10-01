@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ from typing import List, Optional
 
 import jax
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
-import jax._src.lib
+from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
 from absl import logging
 
@@ -83,7 +83,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
       ("compile_options",
        lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
       ("jax_lib version",
-       lambda hash_obj: hash_obj.update(bytes(jax._src.lib.version_str.encode('utf-8')))),
+       lambda hash_obj: hash_obj.update(bytes(jaxlib_version_str.encode('utf-8')))),
       ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags", _hash_xla_flags),
   ]
@@ -103,15 +103,18 @@ def _hash_computation(hash_obj, xla_computation):
   #   num_consts=0 ]"
   # TODO(skye): in theory this could cause us to scrub meaningful binary proto
   # data. Do something more robust.
-  if isinstance(xla_computation, str):
-    serialized_hlo = xla_computation.encode()  # MLIR module
+  if isinstance(xla_computation, bytes):
+    serialized_hlo = xla_computation  # MLIR module bytecode
+  elif isinstance(xla_computation, str):
+    serialized_hlo = xla_computation.encode()  # MLIR module text
   else:
     serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 32
+  # TODO(phawkins): simplify this code when jaxlib >= 0.3.16 is the minimum.
+  expected_num_compile_options = 33 if xla_client._version >= 84 else 32
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
@@ -128,6 +131,9 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   _hash_int(hash_obj, compile_options_obj.profile_version)
   if compile_options_obj.device_assignment is not None:
     hash_obj.update(compile_options_obj.device_assignment.serialize())
+  # TODO(phawkins): simplify this code when jaxlib >= 0.3.16 is the minimum.
+  if xla_client._version >= 84:
+    _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
 
 def _hash_executable_build_options(hash_obj, executable_obj):
   expected_options = 34

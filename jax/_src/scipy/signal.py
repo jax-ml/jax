@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -277,7 +277,7 @@ def _spectral_helper(x, y,
     except ValueError as err:
       raise ValueError('x and y cannot be broadcast together.') from err
 
-  result_dtype = dtypes._to_complex_dtype(x.dtype)
+  result_dtype = dtypes.to_complex_dtype(x.dtype)
   freq_dtype = np.finfo(result_dtype).dtype
 
   if nperseg is not None:  # if specified by user

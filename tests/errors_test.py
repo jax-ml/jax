@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ from absl.testing import parameterized
 import jax
 from jax import core, grad, jit, vmap, lax
 import jax.numpy as jnp
+from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -40,7 +41,7 @@ def get_exception(etype, f):
 
 def check_filtered_stack_trace(test, etype, f, frame_patterns=(),
                                filter_mode="remove_frames"):
-  with jax._src.config.traceback_filtering(filter_mode):
+  with jax_config.traceback_filtering(filter_mode):
     test.assertRaises(etype, f)
     e = get_exception(etype, f)
   c = e.__cause__

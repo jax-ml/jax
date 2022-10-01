@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2019 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "tensorflow_py_deps",
+    "py_deps",
 )
 
 licenses(["notice"])
@@ -39,5 +39,5 @@ py_library(
     deps = [
         "//jax",
         "//jax/experimental/jax2tf",
-    ] + tensorflow_py_deps,
+    ] + py_deps("tensorflow"),
 )

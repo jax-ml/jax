@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ from collections import OrderedDict, abc
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
                     NamedTuple, Union, Sequence)
 from warnings import warn
-from functools import wraps, partial, partialmethod
+from functools import wraps, partial, partialmethod, lru_cache
 from enum import Enum
 
 from jax import numpy as jnp
@@ -39,8 +39,9 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
-from jax.experimental.array import Array
+from jax._src.array import ArrayImpl
 from jax.experimental.global_device_array import GlobalDeviceArray
+from jax._src.sharding import MeshPspecSharding
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
@@ -456,7 +457,6 @@ def xmap(fun: Callable,
     specified. This is in line with the current multi-host :py:func:`pmap`
     programming model.
   """
-  warn("xmap is an experimental feature and probably has bugs!")
   _check_callable(fun)
 
   if isinstance(in_axes, list) and not _is_axes_leaf(in_axes):
@@ -545,16 +545,16 @@ def xmap(fun: Callable,
       closure=(out_axes_entries, out_axes_treedef))
 
     if config.jax_array:
-      if any(not isinstance(a, Array) for a in args_flat):
-        raise ValueError('All arguments to pjit when `config.jax_array` is '
-                         'enabled should be `Array`s.')
       in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(
           _PositionalSemantics.GLOBAL
           if isinstance(a, GlobalDeviceArray) else _positional_semantics.val
           for a in args_flat)
-    out_positional_semantics = _positional_semantics.val
+    out_positional_semantics = (
+        _PositionalSemantics.GLOBAL
+        if config.jax_array or config.jax_parallel_functions_output_gda
+        else _positional_semantics.val)
 
     axis_resource_count = _get_axis_resource_count(
         frozen_axis_resources, resource_env, in_positional_semantics)
@@ -716,9 +716,13 @@ def make_xmap_callable(fun: lu.WrappedFun,
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
       tiling_method = pxla.TileVectorize()
+    in_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(i))
+                    for i in mesh_in_axes]
+    out_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(o))
+                     for o in mesh_out_axes]
     return pxla.lower_mesh_computation(
         f, 'xmap', name, mesh,
-        mesh_in_axes, mesh_out_axes, donated_invars,
+        in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, global_in_avals,
         tiling_method=tiling_method, in_is_global=in_is_global)
   else:
@@ -1070,7 +1074,7 @@ def _xmap_partial_eval_custom_params_updater(
   assert params_known['spmd_in_axes'] is None is params_known['spmd_out_axes']
   assert params_staged['spmd_in_axes'] is None is params_staged['spmd_out_axes']
 
-  # pruned inputs to jaxpr_known according to unks_in
+  # prune inputs to jaxpr_known according to unks_in
   donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
   in_axes_known, _ = pe.partition_list(unks_in, params_known['in_axes'])
   if num_res == 0:
@@ -1318,6 +1322,8 @@ def _xmap_lowering_rule(ctx, *args, **kwargs):
       return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
   elif isinstance(ctx.module_context.axis_context, mlir.ReplicaAxisContext):
     return _xmap_lowering_rule_replica(ctx, *args, **kwargs)
+  elif isinstance(ctx.module_context.axis_context, mlir.ShardingContext):
+    raise ValueError('ShardingContext cannot be used with xmap.')
   else:
     raise AssertionError("Unrecognized axis context type!")
 mlir.register_lowering(xmap_p, _xmap_lowering_rule)
@@ -1332,7 +1338,6 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   xla.check_backend_matches(backend, ctx.module_context.platform)
   # The only way for any of those two assertions to be violated is when xmap
   # is using the SPMD lowering, but then this rule shouldn't even trigger.
-  assert out_positional_semantics == _PositionalSemantics.LOCAL
   assert spmd_in_axes is None and spmd_out_axes is None
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes, in_positional_semantics)
@@ -1341,18 +1346,13 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
       axis_resources, resource_env, in_positional_semantics)
   if any(resource_count.distributed for resource_count in axis_resource_count.values()):
     raise NotImplementedError
-  local_axis_sizes = {
-      axis: axis_resource_count[axis].to_local(out_positional_semantics, global_size)
-      for axis, global_size in global_axis_sizes.items()
-  }
 
-  local_mesh = resource_env.physical_mesh.local_mesh
-  local_mesh_shape = local_mesh.shape
+  mesh = resource_env.physical_mesh
   mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
 
   local_avals = [pxla.tile_aval_nd(
-                    local_mesh_shape, aval_mesh_in_axes,
-                    _insert_aval_axes(v.aval, aval_in_axes, local_axis_sizes))
+                    mesh.shape, aval_mesh_in_axes,
+                    _insert_aval_axes(v.aval, aval_in_axes, global_axis_sizes))
                  for v, aval_in_axes, aval_mesh_in_axes
                  in zip(call_jaxpr.invars, in_axes, mesh_in_axes)]
   # We have to substitute before tracing, because we want the vectorized
@@ -1368,6 +1368,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   assert not consts
 
+  local_mesh_shape = mesh.local_mesh.shape
   tiled_ins = (
     mlir.lower_fun(partial(_tile, in_axes=arg_in_axes,
                            axis_sizes=local_mesh_shape),
@@ -1386,8 +1387,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')))
-  if vectorized_jaxpr.effects:
-    raise NotImplementedError('Cannot lower effectful `xmap`')
+  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+    raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(), (), *tiled_ins)
 
   outs = [
@@ -1451,8 +1452,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')))
-  if vectorized_jaxpr.effects:
-    raise NotImplementedError('Cannot lower effectful `xmap`')
+  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+    raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
       mlir.TokenSet(), (), *sharded_global_in_nodes)
 
@@ -1502,8 +1503,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
-  if vectorized_jaxpr.effects:
-    raise NotImplementedError('Cannot lower effectful `xmap`')
+  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+    raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
       mlir.TokenSet(), (), *([n] for n in global_in_nodes))
 
@@ -1810,27 +1811,41 @@ def _check_out_avals_vs_out_axes(out_avals: Sequence[core.AbstractValue],
 def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                                           global_axis_sizes, in_axes_flat,
                                           in_positional_semantics, args_flat):
+  @lru_cache()
+  def _check_sharding(in_sharding, xmap_sharding, ndim, arr_flavor):
+    if not pxla.are_op_shardings_equal(
+        in_sharding._to_xla_op_sharding(ndim),
+        xmap_sharding._to_xla_op_sharding(ndim)):
+      raise ValueError(
+          f"Got an input {arr_flavor} to xmap with different partitioning than "
+          "specified in xmap. The partitioning must match. "
+          f"Got {arr_flavor} spec: {in_sharding.spec} and "
+          f"xmap spec: {xmap_sharding.spec}")
+
   mesh_in_axes = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
-    if isinstance(arg, (GlobalDeviceArray, Array)):
+    if isinstance(arg, (GlobalDeviceArray, ArrayImpl)):
       arr_flavor = 'GDA' if isinstance(arg, GlobalDeviceArray) else 'Array'
+      if arr_flavor == 'Array' and not isinstance(arg.sharding, MeshPspecSharding):
+        continue
       mesh = arg.mesh if arr_flavor == 'GDA' else arg.sharding.mesh
       if mesh != resource_env.physical_mesh:
         raise ValueError(f"xmap's mesh and {arr_flavor}'s mesh should be equal. "
                          f"Got xmap mesh: {resource_env.physical_mesh},\n"
                          f"{arr_flavor} mesh: {mesh}")
 
-      array_mapping = pxla._get_array_mapping(
-          arg.mesh_axes if arr_flavor == 'GDA' else arg.sharding.spec)
-      if array_mapping != xmap_array_mapping:
-        raise ValueError(
-            f"Got an input {arr_flavor} to xmap with different partitioning than "
-            "specified in xmap. The partitioning must match. "
-            f"Got {arr_flavor} spec: {pxla.array_mapping_to_axis_resources(array_mapping)} and "
-            f"xmap spec: {pxla.array_mapping_to_axis_resources(xmap_array_mapping)} "
-            f"for {arr_flavor}: {arg}")
+      if arr_flavor == 'GDA':
+        s = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+      else:
+        s = arg.sharding
+      xmap_sharding = pxla._create_mesh_pspec_sharding(
+          mesh, pxla.array_mapping_to_axis_resources(xmap_array_mapping))
+      # This check is cached because comparing OpSharding is expensive during
+      # dispatch and if the shardings are the same, then there is no need to
+      # compare twice.
+      _check_sharding(s, xmap_sharding, arg.ndim, arr_flavor)
 
 
 # TODO: We should relax this at least for "constructor primitives"
@@ -1851,8 +1866,10 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 
 
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
-  from jax.experimental.pjit import sharding_constraint_p, ParsedPartitionSpec
-  from jax.experimental.sharding import MeshPspecSharding
+  from jax.experimental.pjit import (
+      sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
+      OpShardingSharding)
+
   rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
   if isinstance(jaxpr, core.ClosedJaxpr):
     return jaxpr.map_jaxpr(rec)
@@ -1866,11 +1883,16 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
     new_eqns.append(eqn.replace(
       outvars=tmp_outvars, params=dict(eqn.params, **new_jaxpr_params)))
     for outvar, tmpvar in zip(eqn.outvars, tmp_outvars):
+      mps = MeshPspecSharding._from_parsed_pspec(
+          resource_env.physical_mesh, ParsedPartitionSpec((), ()))
+      unconstrained_dims = get_unconstrained_dims(mps)
+      op_sharding_sharding = OpShardingSharding.get_replicated(
+          mps._device_assignment)
       new_eqns.append(core.JaxprEqn(
           [tmpvar], [outvar], sharding_constraint_p,
           dict(resource_env=resource_env,
-               sharding=MeshPspecSharding._from_parsed_pspec(
-                   resource_env.physical_mesh, ParsedPartitionSpec((), ()))),
+               sharding=op_sharding_sharding,
+               unconstrained_dims=unconstrained_dims),
           set(),
           eqn.source_info))
   return jaxpr.replace(eqns=new_eqns)
@@ -1888,29 +1910,6 @@ def _flatten_axes(what, tree, axes, tupled_args):
 class NoQuotesStr(str):
   __repr__ = str.__str__
 
-
-# -------- soft_pmap --------
-
-def soft_pmap(fun: Callable, axis_name: Optional[AxisName] = None, in_axes=0
-              ) -> Callable:
-  warn("soft_pmap is an experimental feature and probably has bugs!")
-  _check_callable(fun)
-  axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
-
-  if any(axis != 0 for axis in tree_leaves(in_axes)):
-    raise ValueError(f"soft_pmap in_axes leaves must be 0 or None, got {in_axes}")
-  proxy = object()
-  in_axes = _replace_nones(proxy, in_axes)
-  in_axes = tree_map(lambda i: {i: axis_name} if i is not proxy else {}, in_axes)
-
-
-  @wraps(fun)
-  def f_pmapped(*args, **kwargs):
-    mesh_devices = np.array(xb.local_devices())
-    with Mesh(mesh_devices, ['devices']):
-      return xmap(fun, in_axes=in_axes, out_axes={0: axis_name},
-                  axis_resources={axis_name: 'devices'})(*args, **kwargs)
-  return f_pmapped
 
 # -------- config flags --------
 

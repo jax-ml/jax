@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -381,7 +381,8 @@ class Config:
       axis_env_state = context.axis_env_state
     return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
-            self.jax_numpy_dtype_promotion, self.jax_default_device)
+            self.jax_numpy_dtype_promotion, self.jax_default_device,
+            self.jax_array)
 
 class NoDefault: pass
 no_default = NoDefault()
@@ -488,7 +489,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   `_update_thread_local_jit_state` in core.py to prevent circular imports.
   """
   dynamic_trace_state: Optional[Any] = None
-  axis_env_state: Optional[Hashable] = None
+  axis_env_state: Hashable = ()
   numpy_rank_promotion: Optional[str] = None
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
@@ -582,6 +583,15 @@ jax2tf_associative_scan_reductions = config.define_bool_state(
     )
 )
 
+jax2tf_default_experimental_native_lowering = config.define_bool_state(
+    name='jax2tf_default_experimental_native_lowering',
+    default=bool_env('JAX2TF_DEFAULT_EXPERIMENTAL_NATIVE_LOWERING', False),
+    help=(
+        'DO NOT USE, highly experimental. Sets the default value of the '
+        'experimental_native_lowering parameter to jax2tf.convert.'
+    )
+)
+
 jax_platforms = config.define_string_state(
     name='jax_platforms',
     default=None,
@@ -642,9 +652,20 @@ parallel_functions_output_gda = config.define_bool_state(
     default=False,
     help='If True, pjit will output GDAs.')
 
+def _update_jax_array_global(val):
+  if lib.xla_extension_version >= 92:
+    lib.jax_jit.global_state().jax_array = val
+
+def _update_jax_array_thread_local(val):
+  if lib.xla_extension_version >= 92:
+    lib.jax_jit.thread_local_state().jax_array = val
+
 jax_array = config.define_bool_state(
     name='jax_array',
     default=False,
+    upgrade=True,
+    update_global_hook = _update_jax_array_global,
+    update_thread_local_hook = _update_jax_array_thread_local,
     help=('If True, new pjit behavior will be enabled and `jax.Array` will be '
           'used.'))
 
@@ -677,6 +698,16 @@ enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     upgrade=True,
     help=('Enables an internal upgrade that implements `jax.custom_vjp` by '
           'reduction to `jax.custom_jvp` and `jax.custom_transpose`.'))
+
+raise_persistent_cache_errors = config.define_bool_state(
+    name='jax_raise_persistent_cache_errors',
+    default=False,
+    help=('If true, exceptions raised when reading or writing to the '
+          'persistent compilation cache will be allowed through, halting '
+          'program execution if not manually caught. If false, exceptions are '
+          'caught and raised as warnings, allowing program execution to '
+          'continue. Defaults to false so cache bugs or intermittent issues '
+          'are non-fatal.'))
 
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
@@ -860,21 +891,36 @@ config.define_bool_state(
     default=(lib.version >= (0, 3, 6)),
     help=('Enables using optimization-barrier op for lowering remat.'))
 
-# TODO(mattjj): remove after May 19 2022, NeurIPS submission deadline
-config.define_bool_state(
-    name='after_neurips',
-    default=True,
-    upgrade=True,
-    help='Gate changes until after NeurIPS 2022 deadline.')
-
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
-    default=False,
+    default=(lib.xla_extension_version >= 80),
     help=(
          'Use coordination service (experimental) instead of the default PjRT '
          'distributed runtime.'
     )
+)
+
+config.define_bool_state(
+    name='jax_experimental_subjaxpr_lowering_cache',
+    default=False,
+    help='Enable using a cache for lowering subjaxprs.')
+
+# TODO(sharadmv,mattjj): set default to True, then remove
+config.define_bool_state(
+    name='jax_eager_pmap',
+    default=True,
+    upgrade=True,
+    help='Enable eager-mode pmap when jax_disable_jit is activated.')
+
+config.define_bool_state(
+    name='jax_experimental_unsafe_xla_runtime_errors',
+    default=False,
+    help=('Enable XLA runtime errors for jax.experimental.checkify.checks '
+          'on CPU and GPU. These errors are async, might get lost and are not '
+          'very readable. But, they crash the computation and enable you '
+          'to write jittable checks without needing to checkify. Does not '
+          'work under pmap/pjit.')
 )
 
 @contextlib.contextmanager

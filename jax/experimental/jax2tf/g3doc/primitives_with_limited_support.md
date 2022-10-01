@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2022-05-09*
+*Last generated on (YYYY-MM-DD): 2022-08-17*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -68,6 +68,7 @@ More detailed information can be found in the
 | conv_general_dilated | TF test skipped: Not implemented in JAX: preferred_element_type not implemented for integers | int16, int32, int8 | gpu | compiled, eager, graph |
 | digamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
 | div | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
+| dot_general | TF error: Numeric comparison disabled: Large tolerances when upcasting with preferred_element_type on CPU (b/241740367) | all | cpu, gpu, tpu | compiled, eager, graph |
 | dot_general | TF error: Numeric comparison disabled: Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598) | bfloat16, complex64, float16, float32 | gpu | compiled, eager, graph |
 | dot_general | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF test skipped: Not implemented in JAX: only supported on CPU in JAX | all | gpu, tpu | compiled, eager, graph |
@@ -135,6 +136,8 @@ with jax2tf. The following table lists that cases when this does not quite hold:
 | max | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | min | May return different values when one of the values is NaN. JAX always returns NaN, while TF returns the value NaN is compared with. | all | cpu, gpu, tpu | compiled, eager, graph |
 | pow | custom numeric comparison | complex | cpu, gpu, tpu | eager, graph |
+| random_split | Returns JAX key arrays, so compare underlying base array | all | cpu, gpu, tpu | compiled, eager, graph |
+| reduce_window_add | Numeric comparison disabled: Large deviations on TPU for enable_xla=False | float16, float32 | tpu | compiled, eager, graph |
 | sort | Numeric comparison disabled: TODO: TF non-stable multiple-array sort | all | gpu | compiled, eager, graph |
 | svd | custom numeric comparison when compute_uv on CPU/GPU | all | cpu, gpu | compiled, eager, graph |
 | svd | custom numeric comparison when compute_uv on TPU | complex, float32, float64 | tpu | compiled, eager, graph |

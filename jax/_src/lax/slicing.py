@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 import enum
 from functools import partial
-from typing import Any, Callable, NamedTuple, Optional, Sequence, Union
+from typing import Any, Callable, NamedTuple, Optional, Sequence, Tuple, Union
 import weakref
 
 import numpy as np
@@ -26,7 +26,6 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax._src.lax.utils import (
@@ -50,6 +49,8 @@ Shape = core.Shape
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
+
+_dtype = partial(dtypes.dtype, canonicalize=True)
 
 
 def slice(operand: Array, start_indices: Sequence[int],
@@ -103,8 +104,13 @@ def dynamic_slice(operand: Array, start_indices: Sequence[Array],
                  [ 8,  9, 10, 11]], dtype=int32)
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
-  return dynamic_slice_p.bind(operand, *start_indices,
-                              slice_sizes=core.canonicalize_shape(slice_sizes))
+  if jax.config.jax_dynamic_shapes:
+    dynamic_sizes, static_sizes = lax._extract_tracers_dyn_shape(slice_sizes)
+  else:
+    dynamic_sizes = []
+    static_sizes = core.canonicalize_shape(slice_sizes)  # type: ignore
+  return dynamic_slice_p.bind(operand, *start_indices, *dynamic_sizes,
+                              slice_sizes=tuple(static_sizes))
 
 def dynamic_update_slice(operand: Array, update: Array,
                          start_indices: Array) -> Array:
@@ -172,9 +178,9 @@ class GatherDimensionNumbers(NamedTuple):
   implicit; there is always an index vector dimension and it must always be the
   last dimension. To gather scalar indices, add a trailing dimension of size 1.
   """
-  offset_dims: Sequence[int]
-  collapsed_slice_dims: Sequence[int]
-  start_index_map: Sequence[int]
+  offset_dims: Tuple[int, ...]
+  collapsed_slice_dims: Tuple[int, ...]
+  start_index_map: Tuple[int, ...]
 
 
 class GatherScatterMode(enum.Enum):
@@ -243,9 +249,10 @@ def gather(operand: Array, start_indices: Array,
       integers with length equal to `ndim(operand)`.
     indices_are_sorted: whether `indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices in ``operand`` are
-      guaranteed to not overlap with each other. If true, may improve
-      performance on some backends.
+    unique_indices: whether the elements gathered from ``operand`` are
+      guaranteed not to overlap with each other. If ``True``, this may improve
+      performance on some backends. JAX does not check this promise: if
+      the elements overlap the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to ``'clip'``,
       indices are clamped so that the slice is within bounds, and when
       set to ``'fill'`` or ``'drop'`` gather returns a slice full of
@@ -264,7 +271,7 @@ def gather(operand: Array, start_indices: Array,
   parsed_mode = GatherScatterMode.from_any(mode)
   if parsed_mode == GatherScatterMode.FILL_OR_DROP:
     if fill_value is None:
-      dtype = lax._dtype(operand)
+      dtype = _dtype(operand)
       if dtypes.issubdtype(dtype, np.inexact):
         fill_value = np.nan
       elif dtypes.issubdtype(dtype, np.signedinteger):
@@ -284,7 +291,6 @@ def gather(operand: Array, start_indices: Array,
       indices_are_sorted=bool(indices_are_sorted),
       mode=parsed_mode,
       fill_value=fill_value)
-
 
 
 class ScatterDimensionNumbers(NamedTuple):
@@ -339,9 +345,10 @@ def scatter_add(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -385,9 +392,10 @@ def scatter_mul(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -431,9 +439,10 @@ def scatter_min(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -477,9 +486,10 @@ def scatter_max(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -531,9 +541,10 @@ def scatter_apply(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -590,9 +601,10 @@ def scatter(
       relate.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
-    unique_indices: whether the indices to be updated in ``operand`` are
+    unique_indices: whether the elements to be updated in ``operand`` are
       guaranteed to not overlap with each other. If true, may improve performance on
-      some backends.
+      some backends. JAX does not check this promise: if the updated elements
+      overlap when ``unique_indices`` is ``True`` the behavior is undefined.
     mode: how to handle indices that are out of bounds: when set to 'clip',
       indices are clamped so that the slice is within bounds, and when
       set to 'fill' or 'drop' out-of-bounds updates are dropped. The behavior
@@ -612,15 +624,17 @@ def scatter(
 
 def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
   indices = lax.concatenate([lax.expand_dims(i, (1,)) for i in idxs], 1)
-  indices = indices % np.array([src.shape[ax] for ax in axes])
+  max_idx = lax.expand_dims(np.array([src.shape[ax] for ax in axes]),
+                            tuple(range(indices.ndim - 1)))
+  indices = indices % max_idx
   slice_sizes = list(src.shape)
   for ax in axes:
     slice_sizes[ax] = 1
   offset_dims = tuple(range(1, src.ndim - indices.shape[1] + 1))
   dnums = GatherDimensionNumbers(
       offset_dims=offset_dims,
-      collapsed_slice_dims=axes,
-      start_index_map=axes)
+      collapsed_slice_dims=tuple(axes),
+      start_index_map=tuple(axes))
   return gather(src, indices, dimension_numbers=dnums,
                 slice_sizes=tuple(slice_sizes))
 
@@ -675,7 +689,7 @@ def index_in_dim(operand: Array, index: int, axis: int = 0,
 def dynamic_slice_in_dim(operand: Array, start_index: Array,
                          slice_size: int, axis: int = 0) -> Array:
   """Convenience wrapper around dynamic_slice applying to one dimension."""
-  start_indices = [lax._zero(start_index)] * operand.ndim
+  start_indices = [np.zeros((), dtype=dtypes.dtype(start_index))] * operand.ndim
   slice_sizes = list(operand.shape)
 
   axis = int(axis)
@@ -737,22 +751,24 @@ def _slice_shape_rule(operand, *, start_indices, limit_indices, strides):
     msg = ("slice start_indices must be greater than or equal to zero, "
            "got start_indices of {}.")
     raise TypeError(msg.format(start_indices))
-  if not core.greater_equal_shape(limit_indices, start_indices):
-    msg = ("slice limit_indices must be greater than or equal to start_indices,"
-           " got start_indices {} and limit_indices {}.")
-    raise TypeError(msg.format(start_indices, limit_indices))
-  if strides is None:
-    strides = np.ones(operand.ndim, np.int32)
-  else:
-    lax._check_shapelike("slice", "strides", strides)
-    if len(strides) != operand.ndim:
-      msg = ("slice strides must have length equal to the number of dimensions "
-             "of the operand, got strides {} for operand shape {}.")
-      raise TypeError(msg.format(strides, operand.shape))
-    if not core.greater_equal_shape(strides, (0,) * len(strides)):
-      msg = "slice strides must be positive, got {}"
-      raise TypeError(msg.format(strides))
+  if not jax.config.jax_dynamic_shapes:
+    if not core.greater_equal_shape(limit_indices, start_indices):
+      msg = ("slice limit_indices must be greater than or equal to start_indices,"
+            " got start_indices {} and limit_indices {}.")
+      raise TypeError(msg.format(start_indices, limit_indices))
+  if strides is None or tuple(strides) == (1,) * len(operand.shape):
+    shape = [limit if type(start) is int and start == 0 else limit - start
+             for start, limit in zip(start_indices, limit_indices)]
+    return tuple(shape)
 
+  lax._check_shapelike("slice", "strides", strides)
+  if len(strides) != operand.ndim:
+    msg = ("slice strides must have length equal to the number of dimensions "
+            "of the operand, got strides {} for operand shape {}.")
+    raise TypeError(msg.format(strides, operand.shape))
+  if not core.greater_equal_shape(strides, (0,) * len(strides)):
+    msg = "slice strides must be positive, got {}"
+    raise TypeError(msg.format(strides))
   diff = core.diff_shape(limit_indices, start_indices)
   return core.stride_shape(diff, (1,) * len(diff), strides)
 
@@ -795,22 +811,16 @@ def _slice_batching_rule(batched_args, batch_dims, *, start_indices,
   out = slice(operand, new_start_indices, new_limit_indices, new_strides)
   return out, bdim
 
-def _slice_masking_rule(
-    padded_vals, logical_shapes, start_indices, limit_indices, strides):
-  operand, = padded_vals
-  strides = masking.padded_shape_as_value(strides) if strides else None
-  return slice(operand,
-               start_indices=masking.padded_shape_as_value(start_indices),
-               limit_indices=masking.padded_shape_as_value(limit_indices),
-               strides=strides)
-
 slice_p = standard_primitive(_slice_shape_rule, _input_dtype, 'slice')
 ad.deflinear2(slice_p, _slice_transpose_rule)
 batching.primitive_batchers[slice_p] = _slice_batching_rule
-masking.masking_rules[slice_p] = _slice_masking_rule
 
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
+  aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.slice_mlir(
+        ctx, x, start_indices, limit_indices, strides)
   return mhlo.SliceOp(x,
                       mlir.dense_int_elements(start_indices),
                       mlir.dense_int_elements(limit_indices),
@@ -852,8 +862,8 @@ def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
 def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
   tangent_out = tangents[0]
   if type(tangent_out) is not ad_util.Zero:
-    tangent_out = dynamic_slice(tangent_out, primals[1:], slice_sizes)
-  return dynamic_slice(primals[0], primals[1:], slice_sizes), tangent_out
+    tangent_out = dynamic_slice_p.bind(tangent_out, *primals[1:], slice_sizes=slice_sizes)
+  return dynamic_slice_p.bind(primals[0], *primals[1:], slice_sizes=slice_sizes), tangent_out
 
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
   assert ad.is_undefined_primal(operand)
@@ -863,7 +873,7 @@ def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
     return [ad_util.Zero(operand.aval)] + [None] * len(start_indices)
   else:
     zeros = lax.full(operand_shape, 0, operand_dtype)
-    return ([dynamic_update_slice(zeros, t, start_indices)] +
+    return ([dynamic_update_slice_p.bind(zeros, t, *start_indices)] +
             [None] * len(start_indices))
 
 def _batch_dynamic_slice_indices(indices, bdims):
@@ -899,6 +909,31 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
     slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True,
     mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None)
 
+def _dynamic_slice_staging_rule(trace, x, *starts_and_dyn_sizes, slice_sizes):
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.ndim])
+  if not dyn:
+    return trace.default_process_primitive(dynamic_slice_p, (x, *start_indices),
+                                           dict(slice_sizes=slice_sizes))
+  shape = lax._merge_dyn_shape(slice_sizes, dyn)
+  aval = core.DShapedArray(shape, x.dtype, False)
+  return lax._dyn_shape_staging_rule(trace, dynamic_slice_p, aval, x,
+                                     *starts_and_dyn_sizes,
+                                     slice_sizes=slice_sizes)
+
+def _dynamic_slice_typecheck_rule(x, *starts_and_dyn_sizes, slice_sizes):
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.aval.ndim])
+  if not dyn:
+    out_aval, effects = dynamic_slice_p.abstract_eval(
+        x.aval, *(d.aval for d in start_indices), slice_sizes=slice_sizes)
+    return [out_aval], effects
+  else:
+    # TODO(mattjj): perform more checks
+    out_shape = lax._merge_dyn_shape(slice_sizes, dyn)
+    out_shape = [d.val if type(d) is core.Literal else d for d in out_shape]
+    out_aval = core.DShapedArray(tuple(out_shape), x.aval.dtype,
+                                 x.aval.weak_type)
+    return [out_aval], core.no_effects
+
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
@@ -906,12 +941,36 @@ dynamic_slice_p = standard_primitive(
 ad.primitive_jvps[dynamic_slice_p] = _dynamic_slice_jvp
 ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
+pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
+core.custom_typechecks[dynamic_slice_p] = _dynamic_slice_typecheck_rule
 
-def _dynamic_slice_lower(ctx, x, *start_indices, slice_sizes):
-  return mhlo.DynamicSliceOp(x, start_indices,
-                             mlir.dense_int_elements(slice_sizes)).results
-
+def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
+  x_aval, *_ = ctx.avals_in
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
+  aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype) and dyn: raise NotImplementedError
+  if not dyn:
+    if core.is_opaque_dtype(aval_out.dtype):
+      return aval_out.dtype._rules.dynamic_slice_mlir(ctx, x, start_indices,
+                                                      slice_sizes)
+    return mhlo.DynamicSliceOp(x, start_indices,
+                               mlir.dense_int_elements(slice_sizes)).results
+  slice_sizes = lax._merge_dyn_shape(slice_sizes, dyn)
+  return mhlo.RealDynamicSliceOp(
+      mlir.aval_to_ir_type(aval_out), x,
+      mlir.shape_tensor(start_indices),
+      mlir.shape_tensor(slice_sizes),
+      mlir.shape_tensor([1] * len(slice_sizes))
+  ).results
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
+
+# def _getslice_lower(ctx, x, lo, hi):
+#   aval_out, = ctx.avals_out
+#   return mhlo.RealDynamicSliceOp(
+#       mlir.aval_to_ir_type(aval_out), x,
+#       mlir.shape_tensor([lo]), mlir.shape_tensor([hi]), mlir.shape_tensor([1])
+#   ).results
+# mlir.register_lowering(getslice_p, _getslice_lower)
 
 
 def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
@@ -946,13 +1005,13 @@ def _dynamic_update_slice_jvp(primals, tangents):
   operand, update = primals[:2]
   start_indices = primals[2:]
   g_operand, g_update = tangents[:2]
-  val_out = dynamic_update_slice(operand, update, start_indices)
+  val_out = dynamic_update_slice_p.bind(operand, update, *start_indices)
   if type(g_operand) is ad_util.Zero and type(g_update) is ad_util.Zero:
     tangent_out = ad_util.Zero.from_value(val_out)
   else:
     g_operand = ad.instantiate_zeros(g_operand)
     g_update = ad.instantiate_zeros(g_update)
-    tangent_out = dynamic_update_slice(g_operand, g_update, start_indices)
+    tangent_out = dynamic_update_slice_p.bind(g_operand, g_update, *start_indices)
   return val_out, tangent_out
 
 def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
@@ -965,11 +1024,11 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
     operand_t = ad_util.Zero(operand.aval) if ad.is_undefined_primal(operand) else None
     update_t = ad_util.Zero(update.aval) if ad.is_undefined_primal(update) else None
   else:
-    dus = dynamic_update_slice
-    ds = dynamic_slice
+    dus = dynamic_update_slice_p.bind
+    ds = dynamic_slice_p.bind
     zeros = lax._zeros(t, shape=update_shape)
-    operand_t = dus(t, zeros, start_indices) if ad.is_undefined_primal(operand) else None
-    update_t = ds(t, start_indices, update_shape) if ad.is_undefined_primal(update) else None
+    operand_t = dus(t, zeros, *start_indices) if ad.is_undefined_primal(operand) else None
+    update_t = ds(t, *start_indices, slice_sizes=update_shape) if ad.is_undefined_primal(update) else None
   return [operand_t, update_t] + [None] * len(start_indices)
 
 def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
@@ -1004,6 +1063,9 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.dynamic_update_slice_mlir(
+        ctx, x, update, *start_indices)
   return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
                                    start_indices).results
 
@@ -1159,7 +1221,8 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   expanded_indices_shape.pop(index_vector_dim)
   indices_shape = iter(expanded_indices_shape)
 
-  slice_sizes = iter(np.delete(slice_sizes, collapsed_slice_dims))
+  slice_sizes = (s for i, s in enumerate(slice_sizes)
+                 if i not in collapsed_slice_dims)
   return tuple(next(slice_sizes) if i in offset_dims
                else next(indices_shape) for i in range(output_shape_rank))
 
@@ -1248,7 +1311,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
   elif operand_bdim is None and indices_bdim is not None:
     indices = batching.moveaxis(indices, indices_bdim, 0)
-    offset_dims = tuple(np.add(1, dimension_numbers.offset_dims))
+    offset_dims = tuple(1 + d for d in dimension_numbers.offset_dims)
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
         collapsed_slice_dims=dimension_numbers.collapsed_slice_dims,
@@ -1306,16 +1369,20 @@ gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     weak_type_rule=_argnum_weak_type(0))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
-
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
-
 
 
 def _gather_lower(ctx, operand, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.gather_mlir(
+        ctx, operand, indices, dimension_numbers=dimension_numbers,
+        slice_sizes=slice_sizes, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
     return gather_fill_fn(
@@ -2037,47 +2104,17 @@ def _dynamic_slice_indices(operand, start_indices: Any):
     if start_indices.ndim != 1:
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))
-    start_indices = [i for i in start_indices]
-  return [np.asarray(i + d if i < 0 else i, lax._dtype(i))
-          if isinstance(i, (int, np.integer)) and core.is_constant_dim(d)
-          else lax.select(
-              lax.lt(i, lax._const(i, 0)),
-              lax.add(i, lax.convert_element_type(core.dimension_as_value(d), lax._dtype(i))),
-              i)
-          for i, d in zip(start_indices, operand.shape)]
-
-
-# TODO(mattjj): getslice is a prototype for dynamic shapes, revise or remove it
-def _getslice(x, lo, hi):
-  return getslice_p.bind(x, lo, hi)
-
-getslice_p = core.Primitive('getslice')
-
-@getslice_p.def_impl
-def getslice_impl(x, lo, hi):
-  return x[lo:hi]
-
-def _getslice_staging_rule(trace, x, lo, hi):
-  size = lax.make_bint(lax.clamp(0, hi - lo, x.shape[0]), x.shape[0])
-  aval = core.DShapedArray((size,), x.dtype, x.weak_type)
-  source_info = source_info_util.current()
-  out_tracer = pe.DynamicJaxprTracer(trace, aval, source_info)
-  invars = map(trace.getvar, [x, lo, hi])
-  eqn = pe.new_jaxpr_eqn(invars, [trace.makevar(out_tracer)],
-                         getslice_p, {}, source_info)
-  trace.frame.eqns.append(eqn)
-  return out_tracer
-pe.custom_staging_rules[getslice_p] = _getslice_staging_rule
-
-def _getslice_padding_rule(in_avals, out_avals, x, lo, hi):
-  xx = lax.concatenate([x, x], 0)
-  return [dynamic_slice_in_dim(xx, lo, x.shape[0])]
-pe.padding_rules[getslice_p] = _getslice_padding_rule
-
-def _getslice_lower(ctx, x, lo, hi):
-  aval_out, = ctx.avals_out
-  return mhlo.RealDynamicSliceOp(
-      mlir.aval_to_ir_type(aval_out), x,
-      mlir.shape_tensor([lo]), mlir.shape_tensor([hi]), mlir.shape_tensor([1])
-  ).results
-mlir.register_lowering(getslice_p, _getslice_lower)
+    start_indices = list(start_indices)
+  result = []
+  for i, d in zip(start_indices, operand.shape):
+    # We test whether i and d are static to avoid unnecessary staging.
+    if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
+      result.append(lax.convert_element_type(i + d, _dtype(i)) if i < 0 else i)
+      continue
+    d = core.dimension_as_value(d)
+    if isinstance(i, (int, np.integer)):
+      result.append(i + lax.convert_element_type(d, _dtype(i)) if i < 0 else i)
+      continue
+    d = lax.convert_element_type(d, _dtype(i))
+    result.append(lax.select(i < 0, i + d, i))
+  return result

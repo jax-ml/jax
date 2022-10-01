@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ flags.DEFINE_string(
     'IREE compiler backend to use.')
 
 iree_compiler_map = {
-  "cpu" : "dylib",
+  "cpu" : "llvm-cpu",
   "cuda" : "cuda",
   "vmvx" : "vmvx",
   "vulkan" : "vulkan-spirv"
@@ -88,7 +88,7 @@ class IreeBuffer(xla_client.DeviceArrayBase):
   def copy_to_device(self, device):
     return self
 
-  def to_py(self) -> np.ndarray:
+  def __array__(self, dtype=None, context=None):
     return np.asarray(self._buffer)
 
   def to_iree(self):
@@ -104,8 +104,14 @@ class IreeBuffer(xla_client.DeviceArrayBase):
     return self  # no async
 
   # overrides repr on base class which expects _value and aval attributes
-  def __repr__(self): return f'IreeBuffer({self.to_py()})'
-  _value = property(to_py)
+  def __repr__(self): return f'IreeBuffer({np.asarray(self)})'
+
+  @property
+  def _value(self):
+    return np.asarray(self)
+
+  def copy_to_host_async(self):
+    return self
 
 class IreeExecutable:
 
@@ -136,7 +142,7 @@ class IreeClient:
 
   def __init__(self,
                *,
-               iree_backend: str = None):
+               iree_backend: Optional[str] = None):
     self.platform = "iree"
     self.platform_version = "0.0.1"
     self.runtime_type = "iree"
@@ -183,7 +189,8 @@ class IreeClient:
         extra_args=extra_args,
     )
     # Load it into the runtime.
-    vm_module = iree.runtime.VmModule.from_flatbuffer(iree_binary)
+    vm_module = iree.runtime.VmModule.from_flatbuffer(
+      self.iree_config.vm_instance, iree_binary)
     module_object = iree.runtime.load_vm_module(vm_module, self.iree_config)
     return IreeExecutable(self, self._devices, module_object, "main")
 

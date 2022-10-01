@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -72,12 +72,14 @@ class _ProfileState:
     self.profile_session = None
     self.log_dir = None
     self.create_perfetto_link = False
+    self.create_perfetto_trace = False
     self.lock = threading.Lock()
 
 _profile_state = _ProfileState()
 
 
-def start_trace(log_dir, create_perfetto_link: bool = False):
+def start_trace(log_dir, create_perfetto_link: bool = False,
+                create_perfetto_trace: bool = False):
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -96,6 +98,12 @@ def start_trace(log_dir, create_perfetto_link: bool = False):
     create_perfetto_link: A boolean which, if true, creates and prints link to
       the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
       block until the link is opened and Perfetto loads the trace.
+    create_perfetto_trace: A boolean which, if true, additionally dumps a
+      ``perfetto_trace.json.gz`` file that is compatible for upload with the
+      Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
+      generated if ``create_perfetto_link`` is true. This could be useful if you
+      want to generate a Perfetto-compatible trace without blocking the
+      processs.
   """
   with _profile_state.lock:
     if _profile_state.profile_session is not None:
@@ -109,7 +117,10 @@ def start_trace(log_dir, create_perfetto_link: bool = False):
 
     _profile_state.profile_session = xla_client.profiler.ProfilerSession()
     _profile_state.create_perfetto_link = create_perfetto_link
+    _profile_state.create_perfetto_trace = (
+        create_perfetto_trace or create_perfetto_link)
     _profile_state.log_dir = log_dir
+
 
 def _write_perfetto_trace_file(log_dir):
   # Navigate to folder with the latest trace dump to find `trace.json.jz`
@@ -152,13 +163,12 @@ class _PerfettoServer(http.server.SimpleHTTPRequestHandler):
   def do_POST(self):
     self.send_error(404, "File not found")
 
-def _host_perfetto_trace_file(log_dir):
+def _host_perfetto_trace_file(path):
   # ui.perfetto.dev looks for files hosted on `127.0.0.1:9001`. We set up a
   # TCP server that is hosting the `perfetto_trace.json.gz` file.
   port = 9001
-  abs_filename = _write_perfetto_trace_file(log_dir)
   orig_directory = os.path.abspath(os.getcwd())
-  directory, filename = os.path.split(abs_filename)
+  directory, filename = os.path.split(path)
   try:
     os.chdir(directory)
     socketserver.TCPServer.allow_reuse_address = True
@@ -183,15 +193,18 @@ def stop_trace():
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
     _profile_state.profile_session.stop_and_export(_profile_state.log_dir)
-    if _profile_state.create_perfetto_link:
-      _host_perfetto_trace_file(_profile_state.log_dir)
+    if _profile_state.create_perfetto_trace:
+      abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
+      if _profile_state.create_perfetto_link:
+        _host_perfetto_trace_file(abs_filename)
     _profile_state.profile_session = None
     _profile_state.create_perfetto_link = False
+    _profile_state.create_perfetto_trace = False
     _profile_state.log_dir = None
 
 
 @contextmanager
-def trace(log_dir, create_perfetto_link=False):
+def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
   """Context manager to take a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -209,8 +222,14 @@ def trace(log_dir, create_perfetto_link=False):
     create_perfetto_link: A boolean which, if true, creates and prints link to
       the Perfetto trace viewer UI (https://ui.perfetto.dev). The program will
       block until the link is opened and Perfetto loads the trace.
+    create_perfetto_trace: A boolean which, if true, additionally dumps a
+      ``perfetto_trace.json.gz`` file that is compatible for upload with the
+      Perfetto trace viewer UI (https://ui.perfetto.dev). The file will also be
+      generated if ``create_perfetto_link`` is true. This could be useful if you
+      want to generate a Perfetto-compatible trace without blocking the
+      processs.
   """
-  start_trace(log_dir, create_perfetto_link)
+  start_trace(log_dir, create_perfetto_link, create_perfetto_trace)
   try:
     yield
   finally:
@@ -232,15 +251,6 @@ class TraceAnnotation(xla_client.profiler.TraceMe):
   event occurs while the process is being traced.
   """
   pass
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-class TraceContext(TraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "TraceContext has been renamed to TraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
 
 
 class StepTraceAnnotation(TraceAnnotation):
@@ -267,15 +277,6 @@ class StepTraceAnnotation(TraceAnnotation):
 
   def __init__(self, name: str, **kwargs):
     super().__init__(name, _r=1, **kwargs)
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-class StepTraceContext(StepTraceAnnotation):
-  def __init__(self, *args, **kwargs):
-    warnings.warn(
-        "StepTraceContext has been renamed to StepTraceAnnotation. This alias "
-        "will eventually be removed; please update your code.")
-    super().__init__(*args, **kwargs)
 
 
 def annotate_function(func: Callable, name: Optional[str] = None,
@@ -312,14 +313,6 @@ def annotate_function(func: Callable, name: Optional[str] = None,
       return func(*args, **kwargs)
     return wrapper
   return wrapper
-
-
-# TODO: remove this sometime after jax 0.2.11 is released
-def trace_function(*args, **kwargs):
-  warnings.warn(
-      "trace_function has been renamed to annotate_function. This alias "
-      "will eventually be removed; please update your code.")
-  return annotate_function(*args, **kwargs)
 
 
 

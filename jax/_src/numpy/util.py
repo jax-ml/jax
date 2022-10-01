@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -124,6 +124,7 @@ def _wraps(
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
     skip_params: Sequence[str] = (),
     extra_params: Optional[str] = None,
+    module: Optional[str] = None,
 ) -> Callable[[_T], _T]:
   """Specialized version of functools.wraps for wrapping numpy functions.
 
@@ -147,13 +148,20 @@ def _wraps(
     extra_params: an optional string containing additional parameter descriptions.
       When ``update_doc=True``, these will be added to the list of parameter
       descriptions in the updated doc.
+    module: an optional string specifying the module from which the wrapped function
+      is imported. This is useful for objects such as ufuncs, where the module cannot
+      be determined from the wrapped function itself.
   """
   def wrap(op):
     docstr = getattr(fun, "__doc__", None)
+    name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
     try:
-      name = f"{fun.__module__}.{fun.__name__}"
+      mod = module or fun.__module__
     except AttributeError:
-      name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
+      if config.jax_enable_checks:
+        raise ValueError(f"function {fun} defines no __module__; pass module keyword to _wraps.")
+    else:
+      name = f"{mod}.{name}"
     if docstr:
       try:
         parsed = _parse_numpydoc(docstr)
@@ -274,8 +282,19 @@ def _promote_dtypes_inexact(*args):
   Promotes arguments to an inexact type."""
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
-  to_dtype_inexact = dtypes._to_inexact_dtype(to_dtype)
+  to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
   return [lax_internal._convert_element_type(x, to_dtype_inexact, weak_type)
+          for x in args]
+
+
+def _promote_dtypes_numeric(*args):
+  """Convenience function to apply Numpy argument dtype promotion.
+
+  Promotes arguments to a numeric (non-bool) type."""
+  to_dtype, weak_type = dtypes._lattice_result_type(*args)
+  to_dtype = dtypes.canonicalize_dtype(to_dtype)
+  to_dtype_numeric = dtypes.to_numeric_dtype(to_dtype)
+  return [lax_internal._convert_element_type(x, to_dtype_numeric, weak_type)
           for x in args]
 
 
@@ -285,7 +304,7 @@ def _promote_dtypes_complex(*args):
   Promotes arguments to a complex type."""
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
-  to_dtype_complex = dtypes._to_complex_dtype(to_dtype)
+  to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
   return [lax_internal._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
 
@@ -334,6 +353,12 @@ def _promote_args(fun_name, *args):
   _check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
   return _promote_shapes(fun_name, *_promote_dtypes(*args))
+
+
+def _promote_args_numeric(fun_name, *args):
+  _check_arraylike(fun_name, *args)
+  _check_no_float0s(fun_name, *args)
+  return _promote_shapes(fun_name, *_promote_dtypes_numeric(*args))
 
 
 def _promote_args_inexact(fun_name, *args):

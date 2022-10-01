@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,6 +41,7 @@ from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
 # TODO: update callers to refer to new location.
 from jax._src.util import extend_name_stack as extend_name_stack  # noqa: F401
 from jax._src.util import wrap_name as wrap_name  # noqa: F401
+from jax._src.typing import Shape
 
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -134,9 +135,9 @@ def parameter(builder, num, shape, name=None, replicated=None):
 # arbitrary tuple nesting, but JAX only uses one level of tupling (and our type
 # checkers don't support recursive types), so we only represent one level of
 # nesting in this type definition.
-SpatialSharding = Union[Tuple[int, ...],
+SpatialSharding = Union[Shape,
                         None,
-                        Tuple[Optional[Tuple[int, ...]], ...]]
+                        Tuple[Optional[Shape], ...]]
 
 def sharding_to_proto(sharding: SpatialSharding):
   """Converts a SpatialSharding to an OpSharding.

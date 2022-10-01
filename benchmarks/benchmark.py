@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,7 +83,7 @@ def benchmark(f: Callable[[], Any], iters: Optional[int] = None,
 
 
 def benchmark_suite(prepare: Callable[..., Callable], params_list: List[Dict],
-                    name: str, target_total_secs: int = None):
+                    name: str, target_total_secs: Optional[int] = None):
   """Benchmarks a function for several combinations of parameters.
 
   Prints the summarized results in a table..

@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -236,17 +236,29 @@ def wrap_init(f, params=None) -> WrappedFun:
   params = () if params is None else tuple(sorted(params.items()))
   return WrappedFun(f, (), (), params, None)
 
-def annotate(f: WrappedFun,
-             in_type: Optional[Tuple[Tuple[core.AbstractValue, bool], ...]]
-             ) -> WrappedFun:
+
+def annotate(f: WrappedFun, in_type: core.InputType) -> WrappedFun:
   assert f.in_type is None
   if in_type is None:
     return f
+  _check_input_type(in_type)
+  return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type)
+
+def _check_input_type(in_type: core.InputType) -> None:
+  # Check that in_type is syntactically well-formed
   assert (type(in_type) is tuple and all(type(e) is tuple for e in in_type) and
           all(isinstance(a, core.AbstractValue) and type(b) is bool
               and not isinstance(a, core.ConcreteArray) for a, b in in_type) and
-          all(isinstance(d, (int, core.DBIdx)) for a, _ in in_type
+          all(isinstance(d, (int, core.BInt, core.DBIdx)) for a, _ in in_type
               if type(a) is core.DShapedArray for d in a.shape))
+
+  # Check that all DBIdx point to positions to the left of the input on which
+  # they appear.
+  assert all(d.val < i for i, (aval, _) in enumerate(in_type)
+             if isinstance(aval, core.DShapedArray) for d in aval.shape
+             if isinstance(d, core.DBIdx))
+
+  # Check that all implicit arguments have at least one DBIdx pointing to them.
   provided = [e for _, e in in_type]
   for aval, _ in in_type:
     if type(aval) is core.DShapedArray:
@@ -254,7 +266,6 @@ def annotate(f: WrappedFun,
         if isinstance(d, core.DBIdx):
           provided[d.val] = True
   assert all(provided)
-  return WrappedFun(f.f, f.transforms, f.stores, f.params, in_type)
 
 
 class _CacheLocalContext(threading.local):

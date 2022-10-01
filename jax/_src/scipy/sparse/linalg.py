@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -512,7 +512,7 @@ def _lstsq(a, b):
   # faster than jsp.linalg.lstsq
   a2 = _dot(a.T.conj(), a)
   b2 = _dot(a.T.conj(), b)
-  return jsp.linalg.solve(a2, b2, sym_pos=True)
+  return jsp.linalg.solve(a2, b2, assume_a='pos')
 
 
 def _gmres_batched(A, b, x0, unit_residual, residual_norm, ptol, restart, M):

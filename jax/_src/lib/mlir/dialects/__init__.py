@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,18 +17,5 @@ import jaxlib.mlir.dialects.builtin as builtin
 import jaxlib.mlir.dialects.chlo as chlo
 import jaxlib.mlir.dialects.mhlo as mhlo
 import jaxlib.mlir.dialects.func as func
-
-try:
-  import jaxlib.mlir.dialects.ml_program as ml_program
-except (ModuleNotFoundError, ImportError):
-  # TODO(phawkins): make this unconditional when jaxlib > 0.3.14
-  #                        is the minimum version.
-  pass
-
-try:
-  import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
-except (ModuleNotFoundError, ImportError):
-  # TODO(ajcbik,phawkins): make this unconditional when jaxlib > 0.3.7
-  #                        is the minimum version.
-  pass
-
+import jaxlib.mlir.dialects.ml_program as ml_program
+import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor

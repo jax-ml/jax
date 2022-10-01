@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ import os
 from typing import Any, Dict, Tuple
 import unittest
 
+from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -101,7 +102,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses,
       include_jax_unimpl=False,
-      #one_containing="cumprod_dtype_by_fun_shape=float16[8,9]_axis=0_reverse=False"
+      #one_containing="scatter_modes_out_of_bounds_shape=float32[1,5]",
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
@@ -113,10 +114,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
     enable_xla = harness.params.get("enable_xla", True)
+    if config.jax2tf_default_experimental_native_lowering and not enable_xla:
+      return
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
-    with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
-      self.ConvertAndCompare(func_jax, *args, limitations=limitations,
-                             enable_xla=enable_xla)
+    try:
+      with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
+        self.ConvertAndCompare(func_jax, *args, limitations=limitations,
+                               enable_xla=enable_xla)
+    except Exception as e:
+      if (config.jax2tf_default_experimental_native_lowering and
+          "does not work with custom calls" in str(e)):
+        logging.warning("Supressing error %s", e)
+      else:
+        raise e
 
   def test_primitive_coverage(self):
     """Fail if there are JAX primitives that are not implemented."""
@@ -139,8 +149,14 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
+      # TODO: remove once we delete sharded_jit.py
+      if p.name in ["sharded_call", "sharding_constraint"]:
+        continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
+        continue
+      if p.name == "debug_callback":
+        # TODO(sharadmv,necula): enable debug callbacks in TF
         continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(

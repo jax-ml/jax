@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,6 +21,7 @@ from jax.scipy.stats import gamma as gamma
 from jax.scipy.stats import geom as geom
 from jax.scipy.stats import laplace as laplace
 from jax.scipy.stats import logistic as logistic
+from jax.scipy.stats import multinomial as multinomial
 from jax.scipy.stats import multivariate_normal as multivariate_normal
 from jax.scipy.stats import nbinom as nbinom
 from jax.scipy.stats import norm as norm

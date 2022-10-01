@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -42,14 +42,13 @@ import jax
 from jax._src.numpy import lax_numpy
 from jax._src import dtypes
 from jax._src.lax import lax
+from jax._src.typing import DimSize, Shape
 import opt_einsum
 from jax import config
 from jax import core
 
 import numpy as np
 
-DimSize = core.DimSize
-Shape = core.Shape
 TfVal = Any
 # A dimension environment maps dimension variables to expressions that
 # compute the value of the dimension. These expressions refer to the
@@ -297,6 +296,13 @@ class _DimPolynomial():
   def __lt__(self, other: DimSize):
     return not self.__ge__(other)
 
+  def _division_error_msg(self, dividend, divisor, details: str = "") -> str:
+    msg = f"Cannot divide '{dividend}' by '{divisor}'."
+    if details:
+      msg += f"\nDetails: {details}."
+    msg += "\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported."
+    return msg
+
   def divmod(self, divisor: DimSize) -> Tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
@@ -309,18 +315,19 @@ class _DimPolynomial():
     divisor = _ensure_poly(divisor)
     dmon, dcount = divisor.leading_term
     dividend, quotient = self, 0
-    err_msg = f"Dimension polynomial '{self}' is not a multiple of '{divisor}'"
     # invariant: self = dividend + divisor * quotient
     # the leading term of dividend decreases through the loop.
     while is_poly_dim(dividend) and not dividend.is_constant:
       mon, count = dividend.leading_term
       try:
         qmon = mon.divide(dmon)
-      except InconclusiveDimensionOperation:
-        raise InconclusiveDimensionOperation(err_msg)
+      except InconclusiveDimensionOperation as e:
+        raise InconclusiveDimensionOperation(
+            self._division_error_msg(self, divisor, str(e)))
       qcount, rcount = divmod(count, dcount)
       if rcount != 0:
-        raise InconclusiveDimensionOperation(err_msg)
+        raise InconclusiveDimensionOperation(
+            self._division_error_msg(self, divisor))
 
       q = _DimPolynomial.from_coeffs({qmon: qcount})
       quotient += q
@@ -333,7 +340,8 @@ class _DimPolynomial():
       remainder = r
     else:
       if dividend != 0:
-        raise InconclusiveDimensionOperation(err_msg)
+        raise InconclusiveDimensionOperation(
+            self._division_error_msg(self, divisor))
       remainder = 0
 
     if config.jax_enable_checks:
@@ -351,13 +359,14 @@ class _DimPolynomial():
     q, r = self.divmod(divisor)
     if r != 0:
       raise InconclusiveDimensionOperation(
-          f"Dimension polynomial '{self}' is not a multiple of '{divisor}'")
+          self._division_error_msg(self, divisor,
+                                   f"Remainder is not zero: {r}"))
     return q
 
   def __rtruediv__(self, dividend: DimSize):
     # Used for "/", when dividend is not a _DimPolynomial
     raise InconclusiveDimensionOperation(
-        f"Division of '{dividend}' by dimension polynomial '{self}' is not supported")
+        self._division_error_msg(dividend, self, "Dividend must be a polynomial"))
 
   def __mod__(self, divisor: DimSize) -> int:
     return self.divmod(divisor)[1]
@@ -399,12 +408,22 @@ class _DimPolynomial():
     terms = [_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.monomials()]
     return functools.reduce(_add, terms) if len(terms) > 1 else terms[0]
 
+  @staticmethod
+  def get_aval(_: "_DimPolynomial"):
+    return core.ShapedArray((),
+                            dtypes.canonicalize_dtype(np.int64),
+                            weak_type=True)
+
+
+core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
+
 def _ensure_poly(p: DimSize) -> _DimPolynomial:
   if isinstance(p, _DimPolynomial): return p
   return _DimPolynomial({_DimMon(): p})
 
 def is_poly_dim(p: DimSize) -> bool:
   return isinstance(p, _DimPolynomial)
+
 
 
 class DimensionHandlerPoly(core.DimensionHandler):
@@ -433,10 +452,10 @@ class DimensionHandlerPoly(core.DimensionHandler):
     err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
     try:
       q, r = _ensure_poly(sz1).divmod(sz2)
-    except InconclusiveDimensionOperation:
-      raise InconclusiveDimensionOperation(err_msg)
+    except InconclusiveDimensionOperation as e:
+      raise InconclusiveDimensionOperation(err_msg + f"\nDetails: {e}")
     if r != 0:
-      raise InconclusiveDimensionOperation(err_msg)
+      raise InconclusiveDimensionOperation(err_msg + f"\nRemainder is not zero: {r}")
     return q  # type: ignore[return-value]
 
   def stride(self, d: DimSize, window_size: DimSize, window_stride: DimSize) -> DimSize:
@@ -448,7 +467,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
     except InconclusiveDimensionOperation as e:
       raise InconclusiveDimensionOperation(
           f"Cannot compute stride for dimension '{d}', "
-          f"window_size '{window_size}', stride '{window_stride}'. Reason: {e}.")
+          f"window_size '{window_size}', stride '{window_stride}'.\nDetails: {e}.")
     return d
 
   def as_value(self, d: DimSize):
@@ -499,7 +518,7 @@ def _einsum_contract_path(*operands, **kwargs):
     contract_operands.append(operands[idx[0]])
   return contract_operands, contractions
 
-lax_numpy._polymorphic_einsum_contract_path_handlers[_DimPolynomial] = _einsum_contract_path
+lax_numpy._poly_einsum_handlers[_DimPolynomial] = _einsum_contract_path
 
 # A JAX primitive with no array arguments but with a dimension parameter
 # that is a DimPoly. The value of the primitive is the value of the dimension.
@@ -721,30 +740,20 @@ def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
   return (eval_shape,
           tuple(core.ShapedArray((), np.int32) for _ in dim_vars))
 
-def args_avals(
-    arg_shapes: Sequence[Sequence[Optional[int]]],
-    arg_jax_dtypes: Sequence[DType],
-    polymorphic_shapes: Sequence[Optional[Union[str, PolyShape]]]) -> \
-  Sequence[core.ShapedArray]:
+def arg_aval(
+    arg_shape: Sequence[Optional[int]],
+    arg_jax_dtype: DType,
+    polymorphic_shape: Optional[Union[str, PolyShape]]) -> core.ShapedArray:
   """Computes abstract values.
 
   Args:
-    arg_shapes: the shapes for the arguments, possibly having None dimensions.
-    arg_dtypes: the inferred JAX dtypes for the args.
-    polymorphic_shapes: the polymorphic specifications for the arguments.
-  Returns: a sequence of abstract values corresponding to the arguments.
+    arg_shape: the shape for the argument, possibly having None dimensions.
+    arg_dtype: the inferred JAX dtype for the arg.
+    polymorphic_shape: the polymorphic specifications for the argument.
+  Returns: the JAX abstract value for the argument.
   """
-
-  def input_aval(arg_shape: Sequence[Optional[int]],
-                 arg_jax_dtype: DType,
-                 polymorphic_shape: Optional[str]) -> core.ShapedArray:
-    """The abstract value for an input."""
-    aval_shape = _parse_spec(polymorphic_shape, arg_shape)
-    return core.ShapedArray(aval_shape, arg_jax_dtype)
-
-  avals = tuple(map(input_aval, arg_shapes, arg_jax_dtypes, polymorphic_shapes))  # type: ignore
-  return avals
-
+  aval_shape = _parse_spec(polymorphic_shape, arg_shape)
+  return core.ShapedArray(aval_shape, arg_jax_dtype)
 
 def prepare_dim_var_env(args_avals: Sequence[core.AbstractValue]) -> \
     Tuple[Sequence[str], Callable]:

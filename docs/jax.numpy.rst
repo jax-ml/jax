@@ -180,6 +180,7 @@ namespace; they are listed below.
     fromfunction
     fromiter
     fromstring
+    from_dlpack
     full
     full_like
     gcd
@@ -284,7 +285,6 @@ namespace; they are listed below.
     nanquantile
     nanstd
     nansum
-    nan_to_num
     nanvar
     ndarray
     ndim

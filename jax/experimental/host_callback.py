@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -512,9 +512,10 @@ from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
 from jax.experimental import pjit
-from jax.interpreters import ad, xla, batching, masking, pxla
+from jax.interpreters import ad, xla, batching, pxla
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
+from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -891,16 +892,6 @@ def _id_tap_dep_batching_rule(batched_args, batch_dims):
 
 batching.primitive_batchers[id_tap_dep_p] = _id_tap_dep_batching_rule
 
-
-def _id_tap_dep_masking_rule(operands, operands_logical_shapes):
-  if FLAGS.jax_host_callback_ad_transforms:
-    assert False
-  arg_res, arg_tap = operands
-  return id_tap_dep_p.bind(arg_res, arg_tap)
-
-
-masking.masking_rules[id_tap_dep_p] = _id_tap_dep_masking_rule
-
 ### The outside_call primitive
 """
 This primitive is used to implement the `call` and `id_tap` functions.
@@ -1108,7 +1099,7 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
         xla.aval_to_xla_shapes(res_aval)[0]
         for res_aval in callback_flat_results_aval
     ]
-    backend = xb.get_backend(ctx.platform)
+    backend = ctx.module_context.backend
     token_and_results_op, keep_alive = backend.emit_python_callback(
         wrapped_callback,
         comp,
@@ -1182,10 +1173,19 @@ def _outside_call_lowering(
       result_arrays = ()
     return result_arrays
 
+  if isinstance(ctx.module_context.axis_context,
+                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+    # Apply maximal sharding so pjit only executes the callback on device 0.
+    sharding = xla_client.OpSharding()
+    sharding.type = xla_client.OpSharding.Type.MAXIMAL
+    sharding.tile_assignment_dimensions = [1]
+    sharding.tile_assignment_devices = [0]
+  else:
+    sharding = None
   results, next_token, keep_alive = mlir.emit_python_callback(ctx,
       wrapped_callback, current_token, callback_operands,
       callback_operand_avals, callback_flat_results_aval,  # type: ignore[arg-type]
-      has_side_effect=True)
+      has_side_effect=True, sharding=sharding)
   _callback_handler_data.keep_alives.append(keep_alive)
   # We must put the two tokens at the end
   if identity:
@@ -1455,29 +1455,6 @@ def _outside_call_batching_rule(batched_args, batch_dims, **params):
 
 batching.primitive_batchers[outside_call_p] = _outside_call_batching_rule
 
-
-def _outside_call_masking_rule(operands, operands_logical_shapes, **params):
-  if not params["identity"]:
-    raise NotImplementedError("masking rules are implemented only for id_tap, not for call.")
-  assert "has_token" not in params
-
-  assert len(operands) == len(operands_logical_shapes)
-  arg_treedef = params["arg_treedef"]
-  # We will send the pair of (arg, arg_logical_shapes)
-  packed_operands, packed_arg_tree = api.tree_flatten(
-      (api.tree_unflatten(arg_treedef, operands),
-       api.tree_unflatten(arg_treedef, operands_logical_shapes)))
-
-  packed_results = outside_call_p.bind(
-      *packed_operands,
-      **dict(_add_transform(params, "mask"),
-             arg_treedef=packed_arg_tree))
-  return packed_results[:len(operands)] + packed_results[len(packed_operands):]
-
-
-masking.masking_rules[outside_call_p] = _outside_call_masking_rule
-
-
 ####
 #### Jaxpr rewriting logic to thread the tokens through stateful primitives.
 ####
@@ -1638,18 +1615,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 # cased to just pass-through the token
                 in_axes=eqn.params["in_axes"] + (None, None),
                 out_axes=eqn.params["out_axes"] + (0, 0))))
-  elif eqn.primitive is pe.remat_call_p:
-    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
-    eqns.append(
-        eqn.replace(
-            invars=eqn.invars + [input_token_var, input_itoken_var],
-            outvars=eqn.outvars + [output_token_var, output_itoken_var],
-            params=dict(
-                eqn.params,
-                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
-            )))
-  elif eqn.primitive is custom_derivatives.custom_jvp_call_jaxpr_p:
-    fun_jaxpr = eqn.params["fun_jaxpr"]
+  elif eqn.primitive is custom_derivatives.custom_jvp_call_p:
+    fun_jaxpr = eqn.params["call_jaxpr"]
 
     def unreachable_thunk():
       assert False, "Should not be reached"
@@ -1660,7 +1627,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
             outvars=eqn.outvars + [output_token_var, output_itoken_var],
             params=dict(
                 eqn.params,
-                fun_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
+                call_jaxpr=_rewrite_closed_jaxpr(fun_jaxpr, True, True),
                 jvp_jaxpr_thunk=unreachable_thunk
             )))
   elif eqn.primitive is custom_derivatives.custom_vjp_call_jaxpr_p:
@@ -1707,6 +1674,16 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                                    (pjit.REPLICATED, pjit.REPLICATED)),
                 out_axis_resources=(eqn.params["out_axis_resources"] +
                                     (pjit.REPLICATED, pjit.REPLICATED)),
+            )))
+  elif eqn.primitive is ad_checkpoint.remat_p:
+    jaxpr_ = cast(core.Jaxpr, eqn.params["jaxpr"])
+    eqns.append(
+        eqn.replace(
+            invars=eqn.invars + [input_token_var, input_itoken_var],
+            outvars=eqn.outvars + [output_token_var, output_itoken_var],
+            params=dict(
+                eqn.params,
+                jaxpr=_rewrite_jaxpr(jaxpr_, True, True),
             )))
   else:
     raise NotImplementedError(f"outfeed rewrite {eqn.primitive}")

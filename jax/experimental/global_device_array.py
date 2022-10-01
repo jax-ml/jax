@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,11 +19,12 @@ import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
 from jax import core
+from jax._src import api_util
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.config import config
-from jax.interpreters import pxla, xla
-from jax._src.util import prod, safe_zip, cache
+from jax.interpreters import pxla, xla, mlir
+from jax._src.util import prod, safe_zip
 from jax._src.api import device_put
 from jax.interpreters.pxla import PartitionSpec
 
@@ -53,7 +54,7 @@ def _get_indices(global_shape: Shape, global_mesh: pxla.Mesh,
   return indices  # type: ignore
 
 
-@cache()
+@functools.lru_cache(maxsize=4096)
 def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
                       mesh_axes: MeshAxes) -> Mapping[Device, Index]:
   indices = _get_indices(global_shape, global_mesh, mesh_axes)
@@ -63,7 +64,7 @@ def get_shard_indices(global_shape: Shape, global_mesh: pxla.Mesh,
       for d, i in safe_zip(global_mesh.devices.flat, indices)}  # type: ignore
 
 
-@cache()
+@functools.lru_cache(maxsize=4096)
 def get_shard_indices_replica_ids(
     global_shape: Shape, global_mesh: pxla.Mesh,
     mesh_axes: MeshAxes) -> Mapping[Device, Tuple[Index, int]]:
@@ -95,7 +96,7 @@ def _get_shard_indices_replica_ids_uncached(
   return out
 
 
-@cache()
+@functools.lru_cache(maxsize=4096)
 def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
   chunk_size = []
   for mesh_axis, size in zip(mesh_axes, global_shape):
@@ -253,14 +254,18 @@ class GlobalDeviceArray:
 
   """
 
-  def __init__(self, global_shape: Shape, global_mesh: pxla.Mesh,
-               mesh_axes: MeshAxes, device_buffers: Sequence[DeviceArray],
+  def __init__(self,
+               global_shape: Shape,
+               global_mesh: pxla.Mesh,
+               mesh_axes: MeshAxes,
+               device_buffers: Union[xb.ShardedBuffer, Sequence[DeviceArray]],
                _gda_fast_path_args: Optional[_GdaFastPathArgs] = None,
                _enable_checks: bool = True):
     self._global_shape = global_shape
     self._global_mesh = global_mesh
     self._mesh_axes = mesh_axes
-    self._device_buffers = device_buffers
+    self._init_buffers(device_buffers)
+
     # Optionally precomputed for performance.
     self._gda_fast_path_args = _gda_fast_path_args
     self._current_process = xb.process_index()
@@ -271,7 +276,7 @@ class GlobalDeviceArray:
       self._local_devices = self._gda_fast_path_args.local_devices
 
     if _enable_checks or config.jax_enable_checks:
-      for db, ld in safe_zip(device_buffers, self._local_devices):
+      for db, ld in safe_zip(self._device_buffers, self._local_devices):
         if db.device() != ld:
           raise ValueError(
               "The `global_mesh.local_devices` and `device_buffers` device "
@@ -280,16 +285,54 @@ class GlobalDeviceArray:
 
     if _enable_checks or config.jax_enable_checks:
       ss = get_shard_shape(self._global_shape, self._global_mesh, self.mesh_axes)
-      assert all(db.shape == ss for db in device_buffers), (
+      assert all(db.shape == ss for db in self._device_buffers), (
           f"Expected shard shape {ss} doesn't match the device buffer "
           f"shape, got: {[db.shape for db in device_buffers]}")
 
-    dtype = device_buffers[0].dtype
+    if self._sharded_buffer is None:
+      dtype = device_buffers[0].dtype  # type: ignore
+    else:
+      dtype = self._sharded_buffer.dtype  # type: ignore
     if _enable_checks or config.jax_enable_checks:
-      assert all(db.dtype == dtype for db in device_buffers), (
+      assert all(db.dtype == dtype for db in self._device_buffers), (
           "Input arrays to GlobalDeviceArray must have matching dtypes, "
           f"got: {[db.dtype for db in device_buffers]}")
     self.dtype = dtype
+
+  def _init_buffers(self, device_buffers):
+    from jax._src.array import ArrayImpl
+
+    self._maybe_device_buffers = None
+
+    # ShardedBuffer is the fast path for managing sharded buffers that avoids
+    # creating python objects for every device.
+    if xb.use_sharded_buffer:
+      if isinstance(device_buffers, xc.ShardedBuffer):
+        # if ShardedBuffer is provided, we don't need to use `_device_buffers`
+        self._sharded_buffer = device_buffers  # type: ignore
+      elif isinstance(device_buffers[0], DeviceArray):  # type: ignore
+        # if xla_client.Buffer is provided, we convert it to ShardedBuffer.
+        self._sharded_buffer = xc.ShardedBuffer.create_sharded_buffer(device_buffers)
+      elif isinstance(device_buffers[0], ArrayImpl):
+        self._sharded_buffer = None
+        self._maybe_device_buffers = [db._arrays[0] for db in device_buffers]
+      else:
+        # if `device_buffers` is any other types that cannot
+        # be converted to ShardedBuffer, then we use `device_buffers`.
+        # TODO(yashkatariya,chky): Remove this branch once everyone is using
+        # sharded_buffer
+        self._sharded_buffer = None
+        self._maybe_device_buffers = device_buffers
+    else:
+      # TODO: Remove this after bumping the minimum jaxlib version.
+      self._sharded_buffer = None
+      self._maybe_device_buffers = device_buffers
+
+  @property
+  def _device_buffers(self):
+    if self._maybe_device_buffers is None:
+      self._maybe_device_buffers = self._sharded_buffer.get_device_buffers()  # type: ignore
+    return self._maybe_device_buffers
 
   def __eq__(self, other: object):
     raise NotImplementedError(
@@ -351,6 +394,10 @@ class GlobalDeviceArray:
   def local_shards(self) -> Sequence[Shard]:
     return self._create_local_shards()
 
+  @pxla.maybe_cached_property
+  def addressable_shards(self) -> Sequence[Shard]:
+    return self.local_shards
+
   @property
   def global_shards(self) -> Sequence[Shard]:
     if self.mesh.size == len(self._local_devices):
@@ -376,6 +423,9 @@ class GlobalDeviceArray:
 
   @property
   def _value(self):
+    if self.is_fully_replicated:
+      return np.asarray(self._device_buffers[0])
+
     if self.mesh.is_multi_process:
       raise RuntimeError("Fetching value for GDA that spans non-addressable "
                          "devices is not possible. You can use "
@@ -385,15 +435,26 @@ class GlobalDeviceArray:
                      for s in self.local_shards if s.replica_id == 0]
     npy_value = np.empty(self.shape, self.dtype)
     for s in unique_shards:
-      npy_value[s.index] = s.data.to_py()
+      npy_value[s.index] = np.asarray(s.data)
     return npy_value
+
+  def __array__(self, dtype=None, context=None):
+    return self._value if dtype is None else self._value.astype(dtype)
 
   def local_data(self, index) -> DeviceArray:
     return pxla._set_aval(self._device_buffers[index])
 
+  def addressable_data(self, index) -> DeviceArray:
+    return self.local_data(index)
+
   def block_until_ready(self):
-    for db in self._device_buffers:
-      db.block_until_ready()
+    # self._sharded_buffer can be None if xla_extension_version < 90 or
+    # _DeviceArray is used.
+    if self._sharded_buffer is None:
+      for db in self._device_buffers:
+        db.block_until_ready()
+    else:
+      self._sharded_buffer.block_until_ready() # type: ignore
     return self
 
   @classmethod
@@ -557,13 +618,33 @@ core.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
 xla.pytype_aval_mappings[GlobalDeviceArray] = lambda x: core.ShapedArray(
     x.shape, x.dtype)
 xla.canonicalize_dtype_handlers[GlobalDeviceArray] = pxla.identity
+api_util._shaped_abstractify_handlers[GlobalDeviceArray] = \
+    lambda x: core.ShapedArray(x.shape, x.dtype)
 
-def _gda_shard_arg(x, devices, indices):
-  return x._device_buffers
+# This will only work when GDA is fully addressable i.e. on a single host or
+# fully replicated.
+def _gda_mlir_constant_handler(val, canonicalize_types=True):
+  return mlir.ir_constants(val._value,
+                           canonicalize_types=canonicalize_types)
+mlir.register_constant_handler(GlobalDeviceArray, _gda_mlir_constant_handler)
+
+
+def _gda_shard_arg(x, devices, indices, mode):
+  if mode == pxla.InputsHandlerMode.pmap:
+    raise RuntimeError('GDA is not supported with pmap.')
+  # self._sharded_buffer can be None if xla_extension_version < 90 or
+  # _DeviceArray is used.
+  if x._sharded_buffer is None:
+    return x._device_buffers
+  return x._sharded_buffer
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 
-def _gda_array_result_handler(global_aval, out_sharding):
+def _gda_array_result_handler(global_aval, out_sharding, committed,
+                              is_out_sharding_from_xla):
+  if core.is_opaque_dtype(global_aval.dtype):
+    return global_aval.dtype._rules.global_sharded_result_handler(
+        global_aval, out_sharding, committed, is_out_sharding_from_xla)
   global_mesh, out_axis_resources = out_sharding.mesh, out_sharding.spec
   global_idx_rid = get_shard_indices_replica_ids(global_aval.shape, global_mesh,
                                                  out_axis_resources)

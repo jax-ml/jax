@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 
 import abc
 import asyncio
+import itertools
 from functools import partial
 import re
 import threading
@@ -23,18 +24,39 @@ from absl import logging
 
 import jax
 from jax._src import distributed
-from jax._src.util import prod
+from jax._src.config import config
 from jax.experimental import global_device_array as gda
+from jax._src import array
+from jax._src import sharding
 from jax.experimental.maps import Mesh
 import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts
-from etils import epath
 
 
 TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
+_module_unique_count = itertools.count()
+
+
+async def create_async_array_from_callback(
+    global_shape: array.Shape,
+    inp_sharding: sharding.XLACompatibleSharding,
+    data_callback: Callable[[array.Index], asyncio.Future],
+):
+  device_to_index_map = inp_sharding.devices_indices_map(global_shape)
+  addressable_da = inp_sharding._addressable_device_assignment
+  future_arrays = [data_callback(device_to_index_map[d])  # type: ignore
+                   for d in addressable_da]
+  # Pause here and come back to `from_async_callback()` when future_arrays are
+  # ready. device_put cannot happen with future_arrays.
+  local_arrays = await asyncio.gather(*future_arrays)
+
+  dbs = [jax.device_put(array, device)
+         for array, device in zip(local_arrays, addressable_da)]
+  return array.make_array_from_single_device_arrays(
+      global_shape, inp_sharding, dbs)
 
 
 async def create_async_gda_from_callback(
@@ -58,19 +80,22 @@ async def create_async_gda_from_callback(
                                gda._GdaFastPathArgs(global_idx_rid, local_devices))
 
 
-def _get_metadata(gda):
-  if gda.dtype == jnp.bfloat16:
+def _get_metadata(arr):
+  if arr.dtype == jnp.bfloat16:
     # Tensorstore uses 'bfloat16', not '<V2'.
     dtype = 'bfloat16'
   else:
-    dtype = np.dtype(gda.dtype).str
-
+    dtype = np.dtype(arr.dtype).str
+  if isinstance(arr, array.ArrayImpl):
+    local_shape = arr._arrays[0].shape
+  else:
+    local_shape = arr.local_data(0).shape
   return {
       'compressor': {
           'id': 'gzip'
       },
-      'shape': gda.shape,
-      'chunks': np.array(np.maximum(1, gda.local_data(0).shape)),
+      'shape': arr.shape,
+      'chunks': np.array(np.maximum(1, local_shape)),
       'dtype': dtype,
   }
 
@@ -109,6 +134,9 @@ class _LimitInFlightBytes:
     self._cv = asyncio.Condition(lock=asyncio.Lock())
 
   async def wait_for_bytes(self, requested_bytes):
+    if requested_bytes >= self._max_bytes:
+      raise ValueError('Requested more bytes than we reserved space for: '
+                       f'{requested_bytes} > {self._max_bytes}')
     async with self._cv:
       await self._cv.wait_for(lambda: self._available_bytes > requested_bytes)
       self._available_bytes -= requested_bytes
@@ -121,12 +149,15 @@ class _LimitInFlightBytes:
       self._cv.notify_all()
 
 
-async def async_serialize(gda_inp: gda.GlobalDeviceArray, tensorstore_spec,
-                          commit_future=None):
+async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
+  if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
+      arr_inp.is_fully_addressable()):
+    raise ValueError('Passing fully addressable Arrays to a multi-host '
+                     'serialization is not allowed.')
   # 'metadata' may not be present at the top level (for example, if we are using
   # a 'cast' driver).
   if not _spec_has_metadata(tensorstore_spec):
-    tensorstore_spec['metadata'] = _get_metadata(gda_inp)
+    tensorstore_spec['metadata'] = _get_metadata(arr_inp)
 
   if jax.process_index() == 0:
     open_future = ts.open(
@@ -156,14 +187,17 @@ async def async_serialize(gda_inp: gda.GlobalDeviceArray, tensorstore_spec,
       else:
         await write_future.commit
 
-  future_write_state = jax.tree_util.tree_map(_write_array,
-                                              gda_inp.local_shards)
+  if isinstance(arr_inp, array.ArrayImpl):
+    local_shards = arr_inp.addressable_shards
+  else:
+    local_shards = arr_inp.local_shards
+  future_write_state = jax.tree_util.tree_map(_write_array, local_shards)
   return await asyncio.gather(*future_write_state)
 
 
-def run_serialization(gdas, tensorstore_specs):
+def run_serialization(arrays, tensorstore_specs):
   async def _run_serializer():
-    future_writer = jax.tree_util.tree_map(async_serialize, gdas, tensorstore_specs)
+    future_writer = jax.tree_util.tree_map(async_serialize, arrays, tensorstore_specs)
     return await asyncio.gather(*future_writer)
   asyncio.run(_run_serializer())
 
@@ -177,6 +211,14 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
   chunk_origin = chunk_template.origin
   chunk_shape = chunk_template.shape
 
+  # Some TensorStore drivers are not chunked, e.g. the inline 'array' driver.
+  # For those, instead of returning a near-infinite memory footprint, estimate
+  # the footprint as the entire shape.
+  for i in range(rank):
+    if not chunk_template[i].finite:
+      return t.domain.size * num_bytes
+
+  # Otherwise, if we have a chunked driver, estimate based on chunk size.
   for i in range(rank):
     origin_value = origin[i]
     chunk_origin_value = chunk_origin[i]
@@ -186,6 +228,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
     lower_aligned = lower // chunk_size * chunk_size
     upper_aligned = -(-upper // chunk_size) * chunk_size
     num_bytes *= (upper_aligned - lower_aligned)
+
   return num_bytes
 
 
@@ -216,13 +259,17 @@ async def async_deserialize(mesh, mesh_axes, tensorstore_spec,
     if dtype is not None:
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
-      return out.astype(dtype)
+      out = out.astype(dtype)
 
     if byte_limiter is not None:
       await byte_limiter.release_bytes(requested_bytes)
     return out
 
-  return await create_async_gda_from_callback(tuple(shape), mesh, mesh_axes, cb)
+  if config.jax_array:
+    inp_sharding = sharding.MeshPspecSharding(mesh, mesh_axes)
+    return await create_async_array_from_callback(tuple(shape), inp_sharding, cb)
+  else:
+    return await create_async_gda_from_callback(tuple(shape), mesh, mesh_axes, cb)
 
 
 def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
@@ -233,17 +280,17 @@ def run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
     # Object should be created once per process.
     byte_limiter = _LimitInFlightBytes(concurrent_bytes)
 
-    future_gdas = jax.tree_util.tree_map(
+    future_arrays = jax.tree_util.tree_map(
         partial(async_deserialize, byte_limiter=byte_limiter),
         global_meshes, mesh_axes, tensorstore_specs,
         [None] * len(tensorstore_specs) if global_shapes is None else global_shapes,
         [None] * len(tensorstore_specs) if dtypes is None else dtypes)
-    return await asyncio.gather(*future_gdas)
+    return await asyncio.gather(*future_arrays)
   return asyncio.run(_run_deserializer())
 
 
 def _get_key(key: str):
-  return f'checkpoint_{key}'
+  return f'tensorstore_checkpoint_{key}'
 
 
 class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
@@ -299,11 +346,8 @@ class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
     """Blocks until serialization has finished."""
 
   @abc.abstractmethod
-  # TODO(b/233793426): Try removing temp_checkpoint_dir and final_checkpoint_dir
-  # from the API and use a callback instead. This will affect how async
-  # mechanism works.
-  def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
-                final_checkpoint_dir):
+  def serialize(self, arrays, tensorstore_specs, *,
+                on_commit_callback: Callable[[], None]):
     """Serializes GDAs to TensorStore."""
 
   @abc.abstractmethod
@@ -327,7 +371,7 @@ class AsyncManager:
                        '`jax.distributed.initialize()` at the start of your '
                        'program.')
     self._client = distributed.global_state.client
-    self._final_checkpoint_dir = None
+    self._count = None
 
   def __del__(self):
     if self._thread is not None and self._thread.is_alive():
@@ -336,7 +380,7 @@ class AsyncManager:
                       'possibility of losing errors raised if the '
                       'this class is deleted before writing is completed.')
 
-  def _thread_func(self, temp_checkpoint_dir, final_checkpoint_dir):
+  def _thread_func(self):
     try:
       current_process = jax.process_index()
       logging.info('Starting commit to storage layer by process: %s',
@@ -348,27 +392,25 @@ class AsyncManager:
 
       # All processes will wait at the barrier. When all processes are at the
       # barrier, the barrier will be satisfied. If not, then it will timeout.
-      self._client.wait_at_barrier(self._final_checkpoint_dir,
-                                   self._timeout_in_ms)
+      key_for_barrier = _get_key(self._count)
+      logging.info('Key used for barrier is %s for process %s',
+                   key_for_barrier, current_process)
+      self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)
       logging.info('Finished waiting at barrier for process %s',
                    current_process)
 
       if current_process == 0:
-        logging.info('Renaming %s to %s', temp_checkpoint_dir,
-                     final_checkpoint_dir)
-        epath.Path(temp_checkpoint_dir).rename(final_checkpoint_dir)
-        logging.info('Finished saving checkpoint to `%s`.',
-                     final_checkpoint_dir)
-        self._client.key_value_set(
-            _get_key(self._final_checkpoint_dir), _CHECKPOINT_SUCCESS)
+        self._on_commit_callback()
+        self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
+
     except Exception as e:
       self._exception = e
 
-  def _start_async_commit(self, temp_checkpoint_dir, final_checkpoint_dir):
-    self._final_checkpoint_dir = final_checkpoint_dir
-    self._thread = threading.Thread(
-        target=self._thread_func,
-        args=(temp_checkpoint_dir, final_checkpoint_dir))
+  def _start_async_commit(self, on_commit_callback):
+    self._count = next(_module_unique_count)
+
+    self._on_commit_callback = on_commit_callback
+    self._thread = threading.Thread(target=self._thread_func)
     self._thread.start()
 
   def check_for_errors(self):
@@ -385,11 +427,11 @@ class AsyncManager:
 
     self.check_for_errors()
 
-    if self._final_checkpoint_dir is not None:
+    if self._count is not None:
       # Block until process 0 writes success value to the key value store.
       # If it fails to write it, then `blocking_key_value_get` will time out.
       self._client.blocking_key_value_get(
-          _get_key(self._final_checkpoint_dir), self._timeout_in_ms)
+          _get_key(self._count), self._timeout_in_ms)
 
   def _add_futures(self, futures: Sequence[asyncio.Future]):
     self._commit_futures = futures
@@ -398,9 +440,8 @@ class AsyncManager:
 class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBase):
   """Responsible for serializing GDAs via TensorStore."""
 
-  def serialize(self, gdas, tensorstore_specs, *, temp_checkpoint_dir,
-                final_checkpoint_dir):
-    """Serializes GlobalDeviceArrays via TensorStore asynchronously.
+  def serialize(self, arrays, tensorstore_specs, *, on_commit_callback):
+    """Serializes GlobalDeviceArrays or Arrays via TensorStore asynchronously.
 
     TensorStore writes to a storage layer in 2 steps:
     *  Reading/copying from the source after which the source can be modified.
@@ -412,8 +453,9 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     finish in a separate thread allowing other computation to proceed.
 
     Args:
-      gdas: GlobalDeviceArrays that should be serialized.
-      tensorstore_specs: TensorStore specs that are used to serialize GDAs.
+      arrays: GlobalDeviceArrays or Arrays that should be serialized.
+      tensorstore_specs: TensorStore specs that are used to serialize GDAs or
+        Arrays.
       temp_checkpoint_dir: Temporary checkpoint directory where the checkpoints
         will be written.
       final_checkpoint_dir: Final checkpoint directory where the checkpoints
@@ -425,8 +467,8 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     commit_futures = [[] for _ in range(len(tensorstore_specs))]
 
     async def _run_serializer():
-      future_writer = jax.tree_util.tree_map(async_serialize, gdas, tensorstore_specs,
-                                   commit_futures)
+      future_writer = jax.tree_util.tree_map(
+          async_serialize, arrays, tensorstore_specs, commit_futures)
       return await asyncio.gather(*future_writer)
 
     asyncio.run(_run_serializer())
@@ -435,9 +477,10 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
 
     # Used in wait_until_finished to check on process != 0, if the checkpoint
     # has finished writing.
-    self._start_async_commit(temp_checkpoint_dir, final_checkpoint_dir)
+    self._start_async_commit(on_commit_callback)
 
   def deserialize(self, global_meshes, mesh_axes, tensorstore_specs,
                   global_shapes=None, dtypes=None):
+    self.wait_until_finished()
     return run_deserialization(global_meshes, mesh_axes, tensorstore_specs,
                                global_shapes, dtypes)

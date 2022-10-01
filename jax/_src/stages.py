@@ -1,4 +1,4 @@
-# Copyright 2022 Google LLC
+# Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -446,7 +446,7 @@ class Lowered(Stage):
                      lowering: XlaLowering,
                      in_tree: tree_util.PyTreeDef,
                      in_avals,
-                     donate_argnums: Tuple[int],
+                     donate_argnums: Tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
                      no_kwargs: bool = False):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
@@ -497,6 +497,14 @@ class Lowered(Stage):
 
 
 class Wrapped(Protocol):
+  """A function ready to be specialized, lowered, and compiled.
+
+  This protocol reflects the output of functions such as
+  ``jax.jit``. Calling it results in JIT (just-in-time) lowering,
+  compilation, and execution. It can also be explicitly lowered prior
+  to compilation, and the result compiled prior to execution.
+  """
+
   def __call__(self, *args, **kwargs):
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError

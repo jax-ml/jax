@@ -8,8 +8,90 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.15 (Unreleased)
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...main).
+## jax 0.3.21
+* Changes
+  * The persistent compilation cache will now warn instead of raising an
+    exception on error ({jax-issue}`#12582`), so program execution can continue
+    if something goes wrong with the cache. Set
+    `JAX_RAISE_PERSISTENT_CACHE_ERRORS=true` to revert this behavior.
+
+## jaxlib 0.3.21
+
+## jax 0.3.20 (Sep 28, 2022)
+* Bug fixes:
+  * Adds missing `.pyi` files that were missing from the previous release ({jax-issue}`#12536`).
+  * Fixes an incompatibility between `jax` 0.3.19 and the libtpu version it pinned ({jax-issue}`#12550`). Requires jaxlib 0.3.20.
+  * Fix incorrect `pip` url in `setup.py` comment ({jax-issue}`#12528`).
+
+## jaxlib 0.3.20 (Sep 28, 2022)
+* Bug fixes
+  * Fixes support for limiting the visible CUDA devices via
+   `jax_cuda_visible_devices` in distributed jobs. This functionality is needed for
+   the JAX/SLURM integration on GPU ({jax-issue}`#12533`).
+
+## jax 0.3.19 (Sep 27, 2022)
+* Fixes required jaxlib version.
+
+## jax 0.3.18 (Sep 26, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.17...jax-v0.3.18).
+* Changes
+  * Ahead-of-time lowering and compilation functionality (tracked in
+    {jax-issue}`#7733`) is stable and public. See [the
+    overview](https://jax.readthedocs.io/en/latest/aot.html) and the API docs
+    for {mod}`jax.stages`.
+  * Introduced {class}`jax.Array`, intended to be used for both `isinstance` checks
+    and type annotations for array types in JAX. Notice that this included some subtle
+    changes to how `isinstance` works for {class}`jax.numpy.ndarray` for jax-internal
+    objects, as {class}`jax.numpy.ndarray` is now a simple alias of {class}`jax.Array`.
+* Breaking changes
+  * `jax._src` is no longer imported into the from the public `jax` namespace.
+    This may break users that were using JAX internals.
+  * `jax.soft_pmap` has been deleted. Please use `pjit` or `xmap` instead.
+    `jax.soft_pmap` is undocumented. If it were documented, a deprecation period
+    would have been provided.
+
+## jax 0.3.17 (Aug 31, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.16...jax-v0.3.17).
+* Bugs
+  * Fix corner case issue in gradient of `lax.pow` with an exponent of zero
+    ({jax-issue}`12041`)
+* Breaking changes
+  * {func}`jax.checkpoint`, also known as {func}`jax.remat`, no longer supports
+    the `concrete` option, following the previous version's deprecation; see
+    [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
+* Changes
+  * Added {func}`jax.pure_callback` that enables calling back to pure Python functions from compiled functions (e.g. functions decorated with `jax.jit` or `jax.pmap`).
+* Deprecations:
+  * The deprecated `DeviceArray.tile()` method has been removed. Use {func}`jax.numpy.tile`
+    ({jax-issue}`#11944`).
+  * `DeviceArray.to_py()` has been deprecated. Use `np.asarray(x)` instead.
+
+## jax 0.3.16
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.15...main).
+* Breaking changes
+  * Support for NumPy 1.19 has been dropped, per the
+    [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
+    Please upgrade to NumPy 1.20 or newer.
+* Changes
+  * Added {mod}`jax.debug` that includes utilities for runtime value debugging such at {func}`jax.debug.print` and {func}`jax.debug.breakpoint`.
+  * Added new documentation for [runtime value debugging](debugging/index)
+* Deprecations
+  * {func}`jax.mask` {func}`jax.shapecheck` APIs have been removed.
+    See {jax-issue}`#11557`.
+  * {mod}`jax.experimental.loops` has been removed. See {jax-issue}`#10278`
+    for an alternative API.
+  * {func}`jax.tree_util.tree_multimap` has been removed. It has been deprecated since
+    JAX release 0.3.5, and {func}`jax.tree_util.tree_map` is a direct replacement.
+  * Removed `jax.experimental.stax`; it has long been a deprecated alias of
+    {mod}`jax.example_libraries.stax`.
+  * Removed `jax.experimental.optimizers`; it has long been a deprecated alias of
+    {mod}`jax.example_libraries.optimizers`.
+  * {func}`jax.checkpoint`, also known as {func}`jax.remat`, has a new
+    implementation switched on by default, meaning the old implementation is
+    deprecated; see [JEP 11830](https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html).
+
+## jax 0.3.15 (July 22, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.14...jax-v0.3.15).
 * Changes
   * `JaxTestCase` and `JaxTestLoader` have been removed from `jax.test_util`. These
     classes have been deprecated since v0.3.1 ({jax-issue}`#11248`).
@@ -17,17 +99,20 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Binary operations between JAX arrays and built-in collections (`dict`, `list`, `set`, `tuple`)
     now raise a `TypeError` in all cases. Previously some cases (particularly equality and inequality)
     would return boolean scalars inconsistent with similar operations in NumPy ({jax-issue}`#11234`).
-  * {mod}`jax.tree_util` routines accessed as top-level JAX package imports are now deprecated, and
-    will be removed in a future JAX release in accordance with the {ref}`api-compatibility` policy:
+  * Several {mod}`jax.tree_util` routines accessed as top-level JAX package imports are now
+    deprecated, and will be removed in a future JAX release in accordance with the
+    {ref}`api-compatibility` policy:
     * {func}`jax.treedef_is_leaf` is deprecated in favor of {func}`jax.tree_util.treedef_is_leaf`
     * {func}`jax.tree_flatten` is deprecated in favor of {func}`jax.tree_util.tree_flatten`
     * {func}`jax.tree_leaves` is deprecated in favor of {func}`jax.tree_util.tree_leaves`
-    * {func}`jax.tree_map` is deprecated in favor of {func}`jax.tree_util.tree_map`
     * {func}`jax.tree_structure` is deprecated in favor of {func}`jax.tree_util.tree_structure`
     * {func}`jax.tree_transpose` is deprecated in favor of {func}`jax.tree_util.tree_transpose`
     * {func}`jax.tree_unflatten` is deprecated in favor of {func}`jax.tree_util.tree_unflatten`
+  * The `sym_pos` argument of {func}`jax.scipy.linalg.solve` is deprecated in favor of `assume_a='pos'`,
+    following a similar deprecation in {func}`scipy.linalg.solve`.
 
-## jaxlib 0.3.15 (Unreleased)
+## jaxlib 0.3.15 (July 22, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.14...jaxlib-v0.3.15).
 
 ## jax 0.3.14 (June 27, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.13...jax-v0.3.14).

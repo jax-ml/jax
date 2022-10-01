@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -51,7 +51,7 @@ def _can_use_color() -> bool:
   except NameError:
     pass
   # Otherwise check if we're in a terminal
-  return sys.stdout.isatty()
+  return hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()
 
 CAN_USE_COLOR = _can_use_color()
 

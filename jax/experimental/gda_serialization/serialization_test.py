@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,18 +19,24 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax._src import util
+from jax._src import config as jax_config
 from jax.config import config
+from jax._src import array
+from jax._src.sharding import MeshPspecSharding
 from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization
 import numpy as np
+import tensorstore as ts
 
 config.parse_flags_with_absl()
 
 
 class CheckpointTest(jtu.JaxTestCase):
 
-  def test_checkpointing(self):
+  def test_checkpointing_gda(self):
+    if config.jax_array:
+      self.skipTest('GDA and Array cannot be enabled together.')
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
@@ -53,7 +59,7 @@ class CheckpointTest(jtu.JaxTestCase):
     ckpt_dir2 = pathlib.Path(self.create_tempdir('second').full_path)
 
     # Third GDA
-    def cb3(index):
+    def cb3(_):
       return np.array([])
     global_mesh1d = jtu.create_global_mesh((8,), ('x',))
     gda3 = GlobalDeviceArray.from_callback((0,), global_mesh1d, P(None), cb3)
@@ -69,16 +75,16 @@ class CheckpointTest(jtu.JaxTestCase):
         [mesh_axes, P('x'), P(None)],
         tspecs)
 
-    self.assertArraysEqual(m1.local_shards[0].data.to_py(),
+    self.assertArraysEqual(np.asarray(m1.local_shards[0].data),
                            np.array([[0], [2]]))
-    self.assertArraysEqual(m1.local_shards[1].data.to_py(),
+    self.assertArraysEqual(np.asarray(m1.local_shards[1].data),
                            np.array([[1], [3]]))
     self.assertEqual(m1.local_shards[0].data.shape, (2, 1))
     self.assertEqual(m1.dtype, np.int32)
 
-    self.assertArraysEqual(m2.local_shards[0].data.to_py(),
+    self.assertArraysEqual(np.asarray(m2.local_shards[0].data),
                            np.array([[16, 17], [18, 19]]))
-    self.assertArraysEqual(m2.local_shards[1].data.to_py(),
+    self.assertArraysEqual(np.asarray(m2.local_shards[1].data),
                            np.array([[16, 17], [18, 19]]))
     self.assertEqual(m2.local_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
@@ -86,10 +92,74 @@ class CheckpointTest(jtu.JaxTestCase):
     for i, s in enumerate(m3.local_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)
-      self.assertArraysEqual(s.data.to_py(), np.array([]))
+      self.assertArraysEqual(np.asarray(s.data), np.array([]))
     self.assertEqual(m3.dtype, np.float32)
 
-  def test_checkpointing_with_bigger_shape(self):
+  @jax_config.jax_array(True)
+  def test_checkpointing_jax_array(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    inp_shape = (8, 2)
+    pspec = P('x', 'y')
+    num = util.prod(inp_shape)
+
+    # First Array
+    global_input_data1 = np.arange(num).reshape(inp_shape)
+    a1 = array.make_array_from_callback(
+        inp_shape, MeshPspecSharding(global_mesh, pspec),
+        lambda idx: global_input_data1[idx])
+    ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
+
+    # Second Array
+    global_input_data2 = np.arange(num, num + num).reshape(inp_shape)
+    a2 = array.make_array_from_callback(
+        inp_shape, MeshPspecSharding(global_mesh, pspec),
+        lambda idx: global_input_data2[idx])
+    ckpt_dir2 = pathlib.Path(self.create_tempdir('second').full_path)
+
+    # Third Array
+    def cb3(_):
+      return np.array([])
+    global_mesh1d = jtu.create_global_mesh((8,), ('x',))
+    a3 = array.make_array_from_callback(
+        (0,), MeshPspecSharding(global_mesh1d, P(None)), cb3)
+    ckpt_dir3 = pathlib.Path(self.create_tempdir('third').full_path)
+
+    ckpt_paths = [str(ckpt_dir1), str(ckpt_dir2), str(ckpt_dir3)]
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+
+    serialization.run_serialization([a1, a2, a3], tspecs)
+
+    m1, m2, m3 = serialization.run_deserialization(
+        [global_mesh, global_mesh, global_mesh1d],
+        [pspec, P('x'), P(None)],
+        tspecs)
+
+    self.assertIsInstance(m1, array.ArrayImpl)
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[0].data),
+                           np.array([[0], [2]]))
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[1].data),
+                           np.array([[1], [3]]))
+    self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
+    self.assertEqual(m1.dtype, np.int32)
+
+    self.assertIsInstance(m2, array.ArrayImpl)
+    self.assertArraysEqual(np.asarray(m2.addressable_shards[0].data),
+                           np.array([[16, 17], [18, 19]]))
+    self.assertArraysEqual(np.asarray(m2.addressable_shards[1].data),
+                           np.array([[16, 17], [18, 19]]))
+    self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
+    self.assertEqual(m2.dtype, np.int32)
+
+    self.assertIsInstance(m3, array.ArrayImpl)
+    for i, s in enumerate(m3.addressable_shards):
+      self.assertEqual(s.index, (slice(None),))
+      self.assertEqual(s.replica_id, i)
+      self.assertArraysEqual(np.asarray(s.data), np.array([]))
+    self.assertEqual(m3.dtype, np.float32)
+
+  def test_checkpointing_with_bigger_shape_gda(self):
+    if config.jax_array:
+      self.skipTest('GDA and Array cannot be enabled together.')
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     num = util.prod(global_input_shape)
@@ -127,9 +197,51 @@ class CheckpointTest(jtu.JaxTestCase):
     }
 
     for l in m1.local_shards:
-      self.assertArraysEqual(l.data.to_py(), expected_data[l.device.id])
+      self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
-  def test_checkpointing_scalar(self):
+  @jax_config.jax_array(True)
+  def test_checkpointing_with_bigger_shape_jax_array(self):
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    num = util.prod(global_input_shape)
+
+    global_input_data1 = np.arange(num, dtype=np.int32).reshape(global_input_shape)
+    def cb1(index):
+      return global_input_data1[index]
+    arr = array.make_array_from_callback(
+        global_input_shape, MeshPspecSharding(global_mesh, P('x', 'y')), cb1)
+    ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
+
+    ckpt_paths = [str(ckpt_dir1)]
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+
+    serialization.run_serialization([arr], tspecs)
+
+    m1, = serialization.run_deserialization(
+        [jtu.create_global_mesh((4, 2), ('x', 'y'))],
+        [P('x', 'y')],
+        tspecs,
+        [(12, 2)],
+        [np.float32]
+    )
+
+    expected_data = {
+        0: np.array([[0], [2], [4]], dtype=np.float32),
+        1: np.array([[1], [3], [5]], dtype=np.float32),
+        2: np.array([[6], [8], [10]], dtype=np.float32),
+        3: np.array([[7], [9], [11]], dtype=np.float32),
+        4: np.array([[12], [14], [0]], dtype=np.float32),
+        5: np.array([[13], [15], [0]], dtype=np.float32),
+        6: np.array([[0], [0], [0]], dtype=np.float32),
+        7: np.array([[0], [0], [0]], dtype=np.float32),
+    }
+
+    for l in m1.addressable_shards:
+      self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
+
+  def test_checkpointing_scalar_gda(self):
+    if config.jax_array:
+      self.skipTest('GDA and Array cannot be enabled together.')
     global_mesh = jtu.create_global_mesh((2,), ('x'))
     global_input_shape = ()
     data = np.array(4)
@@ -151,7 +263,60 @@ class CheckpointTest(jtu.JaxTestCase):
     )
 
     for l in m1.local_shards:
-      self.assertArraysEqual(l.data.to_py(), data.astype(np.float32))
+      self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
+
+  @jax_config.jax_array(True)
+  def test_checkpointing_scalar_jax_array(self):
+    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    global_input_shape = ()
+    data = np.array(4)
+    s = MeshPspecSharding(global_mesh, P(None))
+    gda1 = array.make_array_from_callback(
+        global_input_shape, s, lambda idx: data[idx])
+    ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
+
+    ckpt_paths = [str(ckpt_dir1)]
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+
+    serialization.run_serialization([gda1], tspecs)
+
+    m1, = serialization.run_deserialization(
+        [jtu.create_global_mesh((2,), ('x'))],
+        [P(None)],
+        tspecs,
+        [()],
+        [np.float32]
+    )
+
+    for l in m1.addressable_shards:
+      self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
+
+  def test_deserialize_tensorstore_array_gda(self):
+    if config.jax_array:
+      self.skipTest('GDA and Array cannot be enabled together.')
+    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    data = np.arange(1024)
+    tspec = ts.array(data).spec()
+    m1, = serialization.run_deserialization(
+        [global_mesh],
+        [P(None)],
+        [tspec]
+    )
+    for l in m1.local_shards:
+      self.assertArraysEqual(np.asarray(l.data), data)
+
+  @jax_config.jax_array(True)
+  def test_deserialize_tensorstore_array_jax_array(self):
+    global_mesh = jtu.create_global_mesh((2,), ('x'))
+    data = np.arange(1024)
+    tspec = ts.array(data).spec()
+    m1, = serialization.run_deserialization(
+        [global_mesh],
+        [P(None)],
+        [tspec]
+    )
+    for l in m1.addressable_shards:
+      self.assertArraysEqual(np.asarray(l.data), data)
 
   def test_spec_has_metadata(self):
     spec = {

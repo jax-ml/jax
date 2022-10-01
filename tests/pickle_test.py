@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ import pickle
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 try:
   import cloudpickle
@@ -27,8 +28,8 @@ import jax
 from jax import core
 from jax import numpy as jnp
 from jax.config import config
+from jax.interpreters import pxla
 from jax._src import test_util as jtu
-import jax._src.lib
 
 config.parse_flags_with_absl()
 
@@ -92,6 +93,31 @@ class PickleTest(jtu.JaxTestCase):
     self.assertArraysEqual(x, y)
     self.assertIsInstance(y, type(x))
     self.assertEqual(x.aval, y.aval)
+
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {'testcase_name': '_' + name, 'prng_name': name}
+      for name in ['threefry2x32', 'rbg', 'unsafe_rbg']))
+  def testPickleOfKeyArray(self, prng_name):
+    with jax.default_prng_impl(prng_name):
+      k1 = jax.random.PRNGKey(72)
+      s  = pickle.dumps(k1)
+      k2 = pickle.loads(s)
+      self.assertEqual(k1.dtype, k2.dtype)
+      self.assertArraysEqual(jax.random.key_data(k1),
+                             jax.random.key_data(k2))
+
+  @parameterized.parameters(
+      (pxla.PartitionSpec(),),
+      (pxla.PartitionSpec(None),),
+      (pxla.PartitionSpec('x', None),),
+      (pxla.PartitionSpec(None, 'y'),),
+      (pxla.PartitionSpec('x', 'y'),),
+      (pxla.PartitionSpec(('x', 'y'),),),
+  )
+  def testPickleOfPartitionSpecs(self, partition_spec):
+    restored_partition_spec = pickle.loads(pickle.dumps(partition_spec))
+    self.assertIsInstance(restored_partition_spec, pxla.PartitionSpec)
+    self.assertTupleEqual(partition_spec, restored_partition_spec)
 
   def testPickleX64(self):
     with jax.experimental.enable_x64():

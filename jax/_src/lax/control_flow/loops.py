@@ -1,4 +1,4 @@
-# Copyright 2022 Google LLC
+# Copyright 2022 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,21 +19,23 @@ import operator
 from typing import Any, Callable, List, Optional, Sequence, Tuple, TypeVar
 
 import jax
+import weakref
 from jax import core
 from jax import linear_util as lu
 from jax.config import config
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import masking
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
+import jax._src.pretty_printer as pp
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map)
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
+from jax._src import api_util
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
@@ -51,6 +53,7 @@ from jax._src.util import (
     safe_zip,
     split_list,
     unzip2,
+    weakref_lru_cache,
     )
 import numpy as np
 
@@ -231,9 +234,8 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
     stacked_y = tree_map(stack, *maybe_reversed(ys))
     return carry, stacked_y
 
-  x_shapes = [masking.padded_shape_as_value(x.shape[1:]) for x in xs_flat]
-  x_dtypes = [dtypes.canonicalize_dtype(x.dtype) for x in xs_flat]
-  x_avals = tuple(_map(ShapedArray, x_shapes, x_dtypes))
+  xs_avals = [core.raise_to_shaped(core.get_aval(x)) for x in xs_flat]
+  x_avals = [core.mapped_aval(length, 0, aval) for aval in xs_avals]
 
   def _create_jaxpr(init):
     init_flat, init_tree = tree_flatten(init)
@@ -241,7 +243,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
 
     carry_avals = tuple(_map(_abstractify, init_flat))
     jaxpr, consts, out_tree = _initial_style_jaxpr(
-        f, in_tree, carry_avals + x_avals, "scan")
+        f, in_tree, (*carry_avals, *x_avals), "scan")
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
@@ -413,7 +415,7 @@ def _index_array(i, aval, x):
   return slicing.index_in_dim(x, i, keepdims=False)
 
 def _empty_array(sz, aval):
-  return lax.full((sz,) + aval.shape, 0, aval.dtype)
+  return lax.broadcast(lax.empty(aval.dtype), (sz, *aval.shape))
 
 def _update_array(i, aval, xs, x):
   return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
@@ -757,21 +759,6 @@ def _scan_batching_rule(axis_size, axis_name, main_type, args, dims, reverse, le
   ys_bdims = [1 if b else batching.not_mapped for b in ys_batched]
   return outs, carry_bdims + ys_bdims
 
-def _scan_masking_rule(padded_vals, logical_shapes, reverse, length,
-                       jaxpr, num_consts, num_carry, linear, unroll):
-  dynamic_length, = masking.shape_as_value((length,))
-  masked_jaxpr = _masked_scan_jaxpr(jaxpr, num_consts, num_carry)
-  consts, init, xs = split_list(padded_vals, [num_consts, num_carry])
-  max_length, = {x.shape[0] for x in xs}
-  const_linear, init_linear, xs_linear = split_list(linear, [num_consts, num_carry])
-  dynamic_length = lax.convert_element_type(dynamic_length, dtypes.int_)
-  out_vals = scan_p.bind(dynamic_length, *consts, dtypes.int_(0), *init, *xs,
-      reverse=reverse, length=max_length, jaxpr=masked_jaxpr,
-      num_consts=1 + num_consts, num_carry=1 + num_carry,
-      linear=tuple([False] + const_linear + [False] + init_linear + xs_linear),
-      unroll=unroll)
-  return out_vals[1:]
-
 def _masked_scan_jaxpr(jaxpr, num_consts, num_carry):
   fun = core.jaxpr_as_fun(jaxpr)
 
@@ -795,8 +782,6 @@ def _scan_padding_rule(in_avals, out_avals, *args, jaxpr, **params):
 
 def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
                    ) -> Tuple[List[bool], core.JaxprEqn]:
-  if not config.after_neurips:
-    return [True] * len(eqn.params['jaxpr'].in_avals), eqn
   jaxpr = eqn.params['jaxpr']
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_xs = len(jaxpr.in_avals) - num_consts - num_carry
@@ -814,18 +799,17 @@ def _scan_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn
       used_carry_out = _map(operator.or_, used_carry_out, used_carry_in)
   else:
     assert False, "Fixpoint not reached"
-  core.check_jaxpr(jaxpr.jaxpr)
+  if config.jax_enable_checks: core.check_jaxpr(jaxpr.jaxpr)
 
   new_linear = [l for l, u in zip(eqn.params['linear'], used_inputs) if u]
   new_params = dict(eqn.params, num_consts=sum(used_consts),
                     num_carry=sum(used_carry_in), linear=tuple(new_linear),
                     jaxpr=core.ClosedJaxpr(jaxpr_dce, jaxpr.consts))
-  new_eqn = pe.new_jaxpr_eqn([v for v, used in zip(eqn.invars, used_inputs)
-                              if used],
-                             [v for v, used in zip(eqn.outvars, used_outputs)
-                              if used],
-                             eqn.primitive, new_params, eqn.effects,
-                             eqn.source_info)
+  # TODO(mattjj,sharadmv): don't assume effects are never DCE'd?
+  new_eqn = pe.new_jaxpr_eqn(
+      [v for v, used in zip(eqn.invars, used_inputs) if used],
+      [v for v, used in zip(eqn.outvars, used_outputs) if used],
+      eqn.primitive, new_params, eqn.effects, eqn.source_info)
   assert len(new_eqn.invars ) == len(new_params['jaxpr'].in_avals )
   assert len(new_eqn.outvars) == len(new_params['jaxpr'].out_avals)
   return used_inputs, new_eqn
@@ -836,32 +820,34 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   num_consts, num_carry = eqn.params['num_consts'], eqn.params['num_carry']
   num_ys = len(jaxpr.out_avals) - num_carry
 
-  # Fixpoint (currently trivial on 'inst_in')
+  # Fixpoint (trivial on 'inst_in', since we might as well make all inputs
+  # available as DCE can subsequently prune any unused ones)
   const_uk, carry_uk, xs_uk = split_list(unks_in, [num_consts, num_carry])
   for _ in range(1 + len(carry_uk)):
     unks_in = const_uk   + carry_uk   + xs_uk
     jaxpr_known_, jaxpr_staged_, unks_out, inst_out, num_res = \
         pe.partial_eval_jaxpr_custom(
-            jaxpr.jaxpr, in_unknowns=unks_in, in_inst=[True] * len(unks_in),
+            jaxpr.jaxpr, in_unknowns=unks_in, in_inst=True,
             ensure_out_unknowns=carry_uk + [False] * num_ys,
             ensure_out_inst=True, saveable=saveable)
-    carry_uk_out  , ys_uk   = split_list(unks_out, [num_carry])
+    carry_uk_out, ys_uk = split_list(unks_out, [num_carry])
     if carry_uk_out == carry_uk:
       break
     else:
-      carry_uk = _map(operator.or_, carry_uk  , carry_uk_out  )
+      carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
   else:
     assert False, "Fixpoint not reached"
   jaxpr_known  = core.ClosedJaxpr(jaxpr_known_ , jaxpr.consts)
   jaxpr_staged = core.ClosedJaxpr(jaxpr_staged_, jaxpr.consts)
 
-  # Ensure residuals are all moved to the back.
+  # Move all residual binders to the back of jaxpr_staged so they're extensive.
   # TODO(mattjj): make jaxpr_staged only take instantiated inputs
   res_avals = jaxpr_staged.in_avals[:num_res]
   jaxpr_staged = pe.move_binders_to_back(
       jaxpr_staged, [True] * num_res + [False] * len(jaxpr.in_avals))
 
-  # Instantiate all inputs (b/c jaxpr_staged takes all inputs).
+  # Instantiate all inputs (b/c jaxpr_staged takes all inputs, corresponding to
+  # passing in_inst argument to partial_eval_jaxpr_custom above).
   new_inst = [x for x, inst in zip(eqn.invars, inst_in)
               if type(x) is core.Var and not inst]
   inst_in = [True] * len(inst_in)
@@ -871,7 +857,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   num_const_known = len(const_uk) - sum(const_uk)
   num_carry_known = len(carry_uk) - sum(carry_uk)
   num_xs_known    = len(   xs_uk) - sum(   xs_uk)
-  jaxpr_known_hoist, jaxpr_known_loop, loop_dep, _ = \
+  jaxpr_known_hoist, jaxpr_known_loop, loop_dep, consts_known_lp_avals = \
       pe.partial_eval_jaxpr_nounits(
           jaxpr_known,
           [False] * num_const_known + [True] * (num_carry_known + num_xs_known),
@@ -882,7 +868,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   jaxpr_staged = pe.move_binders_to_front(
       jaxpr_staged, [False] * sum(inst_in) + _map(operator.not_, loop_dep_res))
   num_intensive_res = len(loop_dep_res) - sum(loop_dep_res)
-  del loop_dep, num_carry_known, num_xs_known
+  del loop_dep, num_carry_known, num_xs_known, const_uk
 
   # Create residual variables.
   intensive_avals, ext_avals_mapped = partition_list(loop_dep_res, res_avals)
@@ -896,9 +882,13 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # jaxpr_known_hoist and a scan of jaxpr_known_loop.
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
-  linear_known = [l for l, uk in zip(eqn.params['linear'], unks_in) if not uk]
+  # jaxpr_known_loop takes as input constants output as res by jaxpr_known_hoist
+  # (corresponding to consts_known_lp_avals) followed by known carry and xs.
+  linear_known_ = [l for l, uk in zip(eqn.params['linear'], unks_in) if not uk]
+  _, linear_known_ = split_list(linear_known_, [num_const_known])
+  linear_known = [False] * len(consts_known_lp_avals) + linear_known_
   params_known = dict(eqn.params, jaxpr=jaxpr_known_loop,
-                      num_consts=len(const_uk)-sum(const_uk),
+                      num_consts=len(consts_known_lp_avals),
                       num_carry=len(carry_uk)-sum(carry_uk),
                       linear=tuple(linear_known))
 
@@ -917,6 +907,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
       core.closed_call_p, dict(call_jaxpr=call_jaxpr), call_jaxpr.effects,
       eqn.source_info)
 
+  # Create the staged eqn.
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   linear_staged = ([False] * len(intensive_res) + list(eqn.params['linear']) +
                    [False] * len(extensive_res))
@@ -945,9 +936,8 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry
      type(linear) is tuple and all(type(x) is bool for x in linear))
   tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
 
-  length_types = (int, masking.Poly) if bind_time else (int,)
   tc(length, 'length', 'non-negative int',
-     type(length) in length_types and length >= 0)
+     type(length) is int and length >= 0)
 
   if len(linear) != len(avals):
     raise core.JaxprTypeError(
@@ -979,6 +969,28 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry
       f'called with sequence of type\n{_avals_short(x_avals)}')
   return [*init_avals, *y_avals], jaxpr.effects
 
+def _scan_pp_rule(eqn, context, settings):
+  printed_params = dict(eqn.params)
+  del printed_params['linear']
+  if eqn.params['num_consts'] + eqn.params['num_carry'] == len(eqn.invars):
+    del printed_params['length']
+  if printed_params['unroll'] == 1:
+    del printed_params['unroll']
+  if printed_params['num_carry'] == 0:
+    del printed_params['num_carry']
+  if printed_params['num_consts'] == 0:
+    del printed_params['num_consts']
+  if not printed_params['reverse']:
+    del printed_params['reverse']
+  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
+  rhs = [pp.text(eqn.primitive.name),
+         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
+         pp.text(" ") + core.pp_vars(eqn.invars, context)]
+  annotation = (source_info_util.summarize(eqn.source_info)
+                if settings.source_info else None)
+  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+
+
 def scan_bind(*args, **params):
   if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
@@ -999,11 +1011,12 @@ xla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
 batching.axis_primitive_batchers[scan_p] = _scan_batching_rule
-masking.masking_rules[scan_p] = _scan_masking_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
+# TODO(mattjj,frostig): un-comment this pp rule
+# core.pp_eqn_rules[scan_p] = _scan_pp_rule
 
 ### while_loop
 
@@ -1319,44 +1332,105 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   out_tracers = [t for t, uk in zip(out_tracers_, carry_uk) if uk]
   return util.merge_lists(carry_uk, out_known, out_tracers)
 
+# TODO(mattjj): de-duplicate code with _while_partial_eval
+def _while_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+  del saveable  # We can't save any residuals anyway (w/o dynamic shapes)!
+  cond_jaxpr = eqn.params['cond_jaxpr']
+  cond_nconsts = eqn.params['cond_nconsts']
+  body_jaxpr = eqn.params['body_jaxpr']
+  body_nconsts = eqn.params['body_nconsts']
+
+  cond_consts_uk, body_consts_uk, carry_init_uk = \
+      split_list(unks_in, [cond_nconsts, body_nconsts])
+
+  # Fixpoint to compute known part of the body (trivial on 'inst_in', since we
+  # make all inputs available as DCE can subsequently prune any unused ones)
+  carry_uk = carry_init_uk
+  for _ in range(1 + len(carry_uk)):
+    body_unks_in = body_consts_uk + carry_uk
+    jaxpr_known_, _, carry_uk_out, _, num_res = \
+        pe.partial_eval_jaxpr_custom(
+            body_jaxpr.jaxpr, in_unknowns=body_unks_in, in_inst=True,
+            ensure_out_unknowns=carry_uk, ensure_out_inst=True,
+            saveable=ad_checkpoint.nothing_saveable)
+    if carry_uk_out == carry_uk:
+      break
+    else:
+      carry_uk = _map(operator.or_, carry_uk, carry_uk_out)
+  else:
+    assert False, "Fixpoint not reached"
+  assert not num_res
+  body_jaxpr_known = core.ClosedJaxpr(jaxpr_known_, body_jaxpr.consts)
+  del jaxpr_known_, carry_uk_out, num_res
+
+  # Instantiate all inputs (b/c jaxpr_staged will take all inputs).
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+
+  # Compute the known part of cond_fun (basically pruning inputs on known side).
+  cond_unks_in = cond_consts_uk + carry_uk
+  cond_jaxpr_known_, _, [cond_uk], _, _ = \
+      pe.partial_eval_jaxpr_custom(
+          cond_jaxpr.jaxpr, cond_unks_in, in_inst=True,
+          ensure_out_unknowns=False, ensure_out_inst=True,
+          saveable=ad_checkpoint.nothing_saveable)
+  # NOTE(mattjj): I think it should be impossible for the condition to be
+  # unknown, but asserting that caused a test failure in diffrax. So
+  # we handle it: if it is unknown, stage out the whole cond function.
+  if cond_uk:
+    return None, eqn, [True] * len(carry_uk), [True] * len(carry_uk), new_inst
+  cond_jaxpr_known = core.ClosedJaxpr(cond_jaxpr_known_, cond_jaxpr.consts)
+  del cond_uk
+
+  # Build the known eqn.
+  ins_known, _ = partition_list(unks_in, eqn.invars)
+  out_binders_known, _ = partition_list(carry_uk, eqn.outvars)
+  params_known = dict(cond_jaxpr=cond_jaxpr_known, body_jaxpr=body_jaxpr_known,
+                      cond_nconsts=len(cond_consts_uk) - sum(cond_consts_uk),
+                      body_nconsts=len(body_consts_uk) - sum(body_consts_uk))
+  effects_known = core.join_effects(cond_jaxpr_known.effects,
+                                    body_jaxpr_known.effects)
+  eqn_known = pe.new_jaxpr_eqn(ins_known, out_binders_known, while_p,
+                               params_known, effects_known, eqn.source_info)
+
+  # Staged eqn is same as input eqn.
+  eqn_staged = eqn
+
+  unks_out = carry_uk
+  inst_out = [True] * len(unks_out)
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst
+
 def _while_transpose_error(*_, **kwargs):
   raise ValueError("Reverse-mode differentiation does not work for "
                    "lax.while_loop or lax.fori_loop. "
                    "Try using lax.scan instead.")
 
-while_p = core.AxisPrimitive('while')
-while_p.multiple_results = True
-while_p.def_impl(partial(xla.apply_primitive, while_p))
-while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
-ad.primitive_jvps[while_p] = _while_loop_jvp
-pe.custom_partial_eval_rules[while_p] = _while_partial_eval
-xla.register_initial_style_primitive(while_p)
-ad.primitive_transposes[while_p] = _while_transpose_error
-batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
-pe.partial_eval_jaxpr_custom_rules[while_p] = \
-    partial(pe.partial_eval_jaxpr_custom_rule_not_implemented, 'while_loop')
-
-
-def _pred_bcast_select_mhlo(
-    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
-    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
-  if x_y_aval is core.abstract_token:
-    x, = xs
-    y, = ys
-    return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
-  else:
-    assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
-    x, = xs
-    y, = ys
-    assert x.type == y.type, (x.type, y.type)
-    assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
-            pred_aval.shape, x_y_aval)
-    bcast_pred = mhlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(x_y_aval.update(dtype=np.dtype(np.bool_))),
-        pred, mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
-    return mhlo.SelectOp(bcast_pred, x, y).results
-
-
+# For a while loop with ordered effects in the cond, we need a special
+# lowering. Fundamentally, we'd like to rewrite a while loop that looks like
+# this:
+# ```
+# while cond(x):
+#   x = body(x)
+# ```
+# into something that looks like this:
+# ```
+# while True:
+#   token, pred = cond(token, x)
+#   if not pred:
+#     break
+#   token, x = body(token, x)
+# ```
+# Unfortunately, with an MHLO while we can't (1) return multiple values
+# from a `cond` and (2) can't break a while loop. We thus adopt the
+# following rewrite strategy:
+# ```
+# def new_cond(pred, token, x):
+#   return pred
+# token, pred = cond(token, x)
+# while new_cond(pred, token, x):
+#   token, x = body(token, x)
+#   token, pred = cond(token, x)
+# ```
 def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                     body_nconsts):
   pred_aval = cond_jaxpr.out_avals[0]
@@ -1364,34 +1438,12 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   cond_ordered_effects = [eff for eff in cond_jaxpr.effects if eff in
                           core.ordered_effects]
   if cond_ordered_effects:
-    # For a while loop with ordered effects in the cond, we need a special
-    # lowering. Fundamentally, we'd like to rewrite a while loop that looks like
-    # this:
-    # ```
-    # while cond(x):
-    #   x = body(x)
-    # ```
-    # into something that looks like this:
-    # ```
-    # while True:
-    #   token, pred = cond(token, x)
-    #   if not pred:
-    #     break
-    #   token, x = body(token, x)
-    # ```
-    # Unfortunately, with an MHLO while we can't (1) return multiple values
-    # from a `cond` and (2) can't break a while loop. We thus adopt the
-    # following rewrite strategy:
-    # ```
-    # def new_cond(pred, token, x):
-    #   return pred
-    # token, pred = cond(token, x)
-    # while new_cond(pred, token, x):
-    #   token, x = body(token, x)
-    #   token, pred = cond(token, x)
-    # ```
     def cond(args):
-      return core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
+      # Pred can be batched
+      pred = core.eval_jaxpr(cond_jaxpr.jaxpr, cond_jaxpr.consts, *args)[0]
+      if batched:
+        pred = lax._reduce_or(pred, tuple(range(len(pred_aval.shape))))
+      return pred
     def body(args):
       return tuple(core.eval_jaxpr(body_jaxpr.jaxpr, body_jaxpr.consts, *args))
     def new_cond(pred_args):
@@ -1489,7 +1541,50 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
   return z
 
+def _while_typecheck(*in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
+                     body_nconsts):
+  # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
+  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  if joined_effects - allowed_effects:
+    raise NotImplementedError(
+        f'Effects not supported in `while`: {joined_effects - allowed_effects}')
+  return body_jaxpr.out_avals, joined_effects
+
+while_p = core.AxisPrimitive('while')
+while_p.multiple_results = True
+while_p.def_impl(partial(xla.apply_primitive, while_p))
+while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
+ad.primitive_jvps[while_p] = _while_loop_jvp
+pe.custom_partial_eval_rules[while_p] = _while_partial_eval
+xla.register_initial_style_primitive(while_p)
+ad.primitive_transposes[while_p] = _while_transpose_error
+batching.axis_primitive_batchers[while_p] = _while_loop_batching_rule
+pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
+core.custom_typechecks[while_p] = _while_typecheck
+
+
+def _pred_bcast_select_mhlo(
+    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
+    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
+  if x_y_aval is core.abstract_token:
+    x, = xs
+    y, = ys
+    return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
+  else:
+    assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
+    x, = xs
+    y, = ys
+    assert x.type == y.type, (x.type, y.type)
+    assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
+            pred_aval.shape, x_y_aval)
+    x_y_type = mlir.aval_to_ir_type(x_y_aval)
+    bcast_pred_type = ir.RankedTensorType.get(
+        x_y_type.shape, mlir.dtype_to_ir_type(np.dtype(np.bool_)))
+    bcast_pred = mhlo.BroadcastInDimOp(
+        bcast_pred_type, pred,
+        mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
+    return mhlo.SelectOp(bcast_pred, x, y).results
 
 ### fori_loop
 
@@ -1497,18 +1592,20 @@ def _fori_cond_fun(loop_carry):
   i, upper, _ = loop_carry
   return lax.lt(i, upper)
 
-@cache()
+@weakref_lru_cache
 def _fori_body_fun(body_fun):
+  body_fun = weakref.ref(body_fun)
   def while_body_fun(loop_carry):
     i, upper, x = loop_carry
-    return lax.add(i, lax._const(i, 1)), upper, body_fun(i, x)
+    return lax.add(i, lax._const(i, 1)), upper, body_fun()(i, x)
   return while_body_fun
 
-@cache()
+@weakref_lru_cache
 def _fori_scan_body_fun(body_fun):
+  body_fun = weakref.ref(body_fun)
   def scanned_fun(loop_carry, _):
     i, x = loop_carry
-    return (i + 1, body_fun(i, x)), None
+    return (i + 1, body_fun()(i, x)), None
   return scanned_fun
 
 @api_boundary
@@ -1628,24 +1725,6 @@ def map(f, xs):
   g = lambda _, x: ((), f(x))
   _, ys = scan(g, (), xs)
   return ys
-
-
-def _concat_masking_rule(padded_vals, logical_shapes, dimension):
-  result = lax.concatenate(padded_vals, dimension)  # fragmented
-  offset = 0
-  for padded_val, logical_shape in zip(padded_vals, logical_shapes):
-    result = _memcpy(dimension, logical_shape[dimension], padded_val,
-                     result, offset)
-    offset = offset + logical_shape[dimension]
-  return result
-
-def _memcpy(axis, num, src, dst, offset):
-  def body(i, dst):
-    update = slicing.dynamic_index_in_dim(src, i, axis)
-    return slicing.dynamic_update_index_in_dim(dst, update, i + offset, axis)
-  return fori_loop(0, num, body, dst)
-
-masking.masking_rules[lax.concatenate_p] = _concat_masking_rule  # type: ignore
 
 def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, algorithm):
   """Calls RBG in a loop and stacks the results."""
@@ -1837,9 +1916,8 @@ def _cumsum_transpose_rule(t, operand, *, axis: int, reverse: bool):
 
 
 
-def cumred_tpu_impl(window_reduce: Callable, x, *, axis: int, reverse: bool):
-  # On TPU, an implementation using reduce_window is handled specially by the
-  # compiler and is efficient. On other backends, it is O(n^2).
+def cumred_reduce_window_impl(window_reduce: Callable, x, *, axis: int,
+                              reverse: bool):
   n = x.shape[axis]
   if n == 0:
     return x
@@ -1849,6 +1927,19 @@ def cumred_tpu_impl(window_reduce: Callable, x, *, axis: int, reverse: bool):
   window_dims = [1] * x.ndim
   window_dims[axis] = n
   return window_reduce(x, window_dims, strides, padding)
+
+
+def cumred_gpu_impl(window_reduce: Callable, reduce_fn: Callable, x, *,
+                    axis: int, reverse: bool):
+  # On GPU, reduce_window is executed in a single fusion and associative_scan
+  # is split into multiple to materialize intermediate calculations.
+  # On small inputs reduce_window is faster being a single fusion,
+  # but on larger ones is slower because of O(n^2) complexity.
+  # This conservative value of the threshold was obtained via benchmarking.
+  if x.shape[axis] > 32:
+    return associative_scan(reduce_fn, x, reverse=reverse, axis=axis)
+  return cumred_reduce_window_impl(window_reduce, x, axis=axis, reverse=reverse)
+
 
 def _cumred_batch_rule(prim, batched_args, batch_dims, *, axis: int,
                        reverse: bool):
@@ -1864,24 +1955,29 @@ def _cumred_dtype_rule(name, operand, *args, **kw):
   return dtypes.canonicalize_dtype(operand.dtype)
 
 
-def _cumulative_reduction_primitive(name,
-                                    reduce_fn,
-                                    tpu_reduce_window_fn):
+def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
   reducer_p = lax.standard_primitive(
     _cumred_shape_rule, partial(_cumred_dtype_rule, name),
     name)
   batching.primitive_batchers[reducer_p] = partial(_cumred_batch_rule,
                                                    reducer_p)
-  mlir.register_lowering(
-      reducer_p,
-      mlir.cache_lowering(
-          mlir.lower_fun(partial(associative_scan, reduce_fn),
-                         multiple_results=False)))
-  mlir.register_lowering(
-      reducer_p,
-      mlir.lower_fun(partial(cumred_tpu_impl, tpu_reduce_window_fn),
-                     multiple_results=False),
-      platform='tpu')
+
+  def register_lowering(fn, platform=None):
+    mlir.register_lowering(
+        reducer_p,
+        mlir.cache_lowering(mlir.lower_fun(fn, multiple_results=False)),
+        platform=platform)
+
+  # Default for platforms not treated specially below.
+  register_lowering(partial(associative_scan, reduce_fn))
+  # On GPU, we choose between window reduction and associative scan
+  # based on the input size.
+  for platform in ['cuda', 'rocm']:
+    register_lowering(
+        partial(cumred_gpu_impl, reduce_window_fn, reduce_fn), platform)
+  # On TPU, an implementation using reduce_window is handled specially by the
+  # compiler and is efficient. On other backends, it is O(n^2).
+  register_lowering(partial(cumred_reduce_window_impl, reduce_window_fn), 'tpu')
   return reducer_p
 
 cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)

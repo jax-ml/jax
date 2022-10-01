@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2019 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,6 +83,12 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testGluValue(self):
     val = nn.glu(jnp.array([1.0, 0.0]), axis=0)
     self.assertAllClose(val, jnp.array([0.5]))
+
+  @parameterized.parameters(False, True)
+  def testGeluIntType(self, approximate):
+    val_float = nn.gelu(jnp.array(-1.0), approximate=approximate)
+    val_int = nn.gelu(jnp.array(-1), approximate=approximate)
+    self.assertAllClose(val_float, val_int)
 
   @parameterized.parameters(False, True)
   def testGelu(self, approximate):
@@ -204,6 +210,32 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
     with jax.checking_leaks():
       fwd()  # doesn't crash
+
+  def testCustomJVPLeak2(self):
+    # https://github.com/google/jax/issues/8171
+    # The above test uses jax.nn.sigmoid, as in the original #8171, but that
+    # function no longer actually has a custom_jvp! So we inline the old def.
+
+    @jax.custom_jvp
+    def sigmoid(x):
+      one = jnp.float32(1)
+      return jax.lax.div(one, jax.lax.add(one, jax.lax.exp(jax.lax.neg(x))))
+    sigmoid.defjvps(lambda g, ans, x: g * ans * (jnp.float32(1) - ans))
+
+    @jax.jit
+    def fwd():
+      a = jnp.array(1., 'float32')
+
+      def f(hx, _):
+        hx = sigmoid(hx + a)
+        return hx, None
+
+      hx = jnp.array(0., 'float32')
+      jax.lax.scan(f, hx, None, length=2)
+
+    with jax.checking_leaks():
+      fwd()  # doesn't crash
+
 
 InitializerRecord = collections.namedtuple(
   "InitializerRecord",

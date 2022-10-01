@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ load(
     "py_extension",
     "windows_cc_shared_mlir_library",
 )
+load("//jaxlib:symlink_files.bzl", "symlink_inputs")
 
 package(
     default_visibility = [
@@ -70,15 +71,30 @@ py_extension(
     ],
 )
 
-py_extension(
-    name = "_mlirTransforms",
-    srcs = [
-        "@llvm-project//mlir:lib/Bindings/Python/Transforms/Transforms.cpp",
+symlink_inputs(
+    name = "_mlir_libs",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        ".": [
+            "@llvm-project//mlir/python:MlirLibsPyFiles",
+        ],
+    }},
+    deps = [
+        ":_mlir",
+        ":_site_initialize_0",
     ],
+)
+
+# JAX-specific registrations.
+py_extension(
+    name = "_site_initialize_0",
+    srcs = ["_site_initialize_0.cc"],
     copts = COPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
-        "@llvm-project//mlir:CAPITransformsHeaders",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
         "@pybind11",
     ],
 )
@@ -90,7 +106,7 @@ py_extension(
 py_extension(
     name = "_mlirHlo",
     srcs = [
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:python/MlirHloModule.cc",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:python/MlirHloModule.cc",
     ],
     copts = COPTS,
     deps = [
@@ -98,8 +114,44 @@ py_extension(
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPIHeaders",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:CAPIHeaders",
         "@pybind11",
+    ],
+)
+
+##---------------------------------------------------------------------------##
+# Stablehlo Extensions
+##---------------------------------------------------------------------------##
+
+py_extension(
+    name = "_chlo",
+    srcs = [
+        "@stablehlo//:stablehlo/integrations/python/ChloModule.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
+        "@stablehlo//:chlo_capi_headers",
+    ],
+)
+
+py_extension(
+    name = "_stablehlo",
+    srcs = [
+        "@stablehlo//:stablehlo/integrations/python/StablehloModule.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
+        "@stablehlo//:stablehlo_capi_headers",
     ],
 )
 
@@ -119,10 +171,12 @@ cc_library(
 cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
-        "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:CAPIObjects",
+        "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:CAPIObjects",
+        "@stablehlo//:chlo_capi_objects",
+        "@stablehlo//:stablehlo_capi_objects",
     ],
 )
 
@@ -149,5 +203,10 @@ cc_binary(
 windows_cc_shared_mlir_library(
     name = "jaxlib_mlir_capi_dll",
     out = "jaxlib_mlir_capi.dll",
+    exported_symbol_prefixes = [
+        "mlir",
+        "chlo",
+        "stablehlo",
+    ],
     deps = [":jaxlib_mlir_capi_objects"],
 )

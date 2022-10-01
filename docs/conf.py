@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
-copyright = '2020, Google LLC. NumPy and SciPy documentation are copyright the respective authors.'
+copyright = '2020, The JAX Authors. NumPy and SciPy documentation are copyright the respective authors.'
 author = 'The JAX authors'
 
 # The short X.Y version
@@ -117,7 +117,7 @@ exclude_patterns = [
     # Ignore markdown source for notebooks; myst-nb builds from the ipynb
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
-    'design_notes/type_promotion.md',
+    'jep/9407-type-promotion.md',
     # TODO: revert to jax-101/*.md once 08-pjit has a notebook
     'jax-101/01-jax-basics.md',
     'jax-101/02-jitting.md',
@@ -159,6 +159,8 @@ html_theme = 'sphinx_book_theme'
 html_theme_options = {
     'logo_only': True,
     'show_toc_level': 2,
+    'repository_url': 'https://github.com/google/jax',
+    'use_repository_button': True,     # add a "link to repository" button
 }
 
 # The name of an image file (relative to this directory) to place at the top
@@ -202,7 +204,7 @@ nb_execution_excludepatterns = [
     # Strange error apparently due to asynchronous cell execution
     'notebooks/thinking_in_jax.*',
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
-    'design_notes/type_promotion.*',
+    'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
     'jax-101/*',
     'notebooks/xmap_tutorial.*',

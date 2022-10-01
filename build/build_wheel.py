@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -163,6 +163,7 @@ def prepare_wheel(sources_path):
 
   verify_mac_libraries_dont_reference_chkstack()
   copy_file("__main__/build/LICENSE.txt", dst_dir=sources_path)
+  copy_file("__main__/jaxlib/README.md", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.py", dst_dir=sources_path)
   copy_file("__main__/jaxlib/setup.cfg", dst_dir=sources_path)
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
@@ -170,8 +171,8 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
   copy_to_jaxlib(f"__main__/jaxlib/_lapack.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/mhlo_helpers.py")
-  copy_to_jaxlib(f"__main__/jaxlib/_pocketfft.{pyext}")
-  copy_to_jaxlib("__main__/jaxlib/pocketfft.py")
+  copy_to_jaxlib(f"__main__/jaxlib/_ducc_fft.{pyext}")
+  copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_solver.py")
@@ -205,14 +206,11 @@ def prepare_wheel(sources_path):
   mlir_dir = os.path.join(jaxlib_dir, "mlir")
   mlir_dialects_dir = os.path.join(jaxlib_dir, "mlir", "dialects")
   mlir_libs_dir = os.path.join(jaxlib_dir, "mlir", "_mlir_libs")
-  mlir_transforms_dir = os.path.join(jaxlib_dir, "mlir", "transforms")
   os.makedirs(mlir_dir)
   os.makedirs(mlir_dialects_dir)
   os.makedirs(mlir_libs_dir)
-  os.makedirs(mlir_transforms_dir)
   copy_file("__main__/jaxlib/mlir/ir.py", dst_dir=mlir_dir)
   copy_file("__main__/jaxlib/mlir/passmanager.py", dst_dir=mlir_dir)
-  copy_file("__main__/jaxlib/mlir/transforms/__init__.py", dst_dir=mlir_transforms_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_builtin_ops_ext.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_builtin_ops_gen.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/_chlo_ops_gen.py", dst_dir=mlir_dialects_dir)
@@ -230,11 +228,14 @@ def prepare_wheel(sources_path):
   copy_file("__main__/jaxlib/mlir/dialects/func.py", dst_dir=mlir_dialects_dir)
   copy_file("__main__/jaxlib/mlir/dialects/ml_program.py", dst_dir=mlir_dialects_dir)
 
+  copy_file("__main__/jaxlib/mlir/_mlir_libs/__init__.py", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlir.{pyext}", dst_dir=mlir_libs_dir)
+  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_chlo.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirHlo.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}", dst_dir=mlir_libs_dir)
   copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}", dst_dir=mlir_libs_dir)
-  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_mlirTransforms.{pyext}", dst_dir=mlir_libs_dir)
+  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}", dst_dir=mlir_libs_dir)
+  copy_file(f"__main__/jaxlib/mlir/_mlir_libs/_site_initialize_0.{pyext}", dst_dir=mlir_libs_dir)
   if _is_windows():
     copy_file("__main__/jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi.dll", dst_dir=mlir_libs_dir)
   elif _is_mac():

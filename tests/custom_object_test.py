@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -121,10 +121,7 @@ def sparse_array_shape_handler(a):
   )
 
 def sparse_array_device_put_handler(a, device):
-  return (
-    xb.get_device_backend(device).buffer_from_pyval(a.data, device),
-    xb.get_device_backend(device).buffer_from_pyval(a.indices, device)
-  )
+  return (*dispatch.device_put(a.data, device), *dispatch.device_put(a.indices, device))
 
 core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
@@ -274,6 +271,8 @@ dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
+# TODO(https://github.com/google/jax/issues/12104): Enable this
+@jtu.with_config(jax_array=False)
 class CustomObjectTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(

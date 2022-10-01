@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,17 +17,12 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//jaxlib:jax.bzl",
-    "absl_logging_py_deps",
-    "absl_testing_py_deps",
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_test_util_visibility",
-    "loops_visibility",
-    "numpy_py_deps",
+    "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
-    "scipy_py_deps",
-    "sharded_jit_visibility",
 )
 
 licenses(["notice"])
@@ -75,7 +70,7 @@ py_library(
     ] + jax_test_util_visibility,
     deps = [
         ":jax",
-    ] + absl_testing_py_deps + numpy_py_deps,
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 py_library_providing_imports_info(
@@ -98,15 +93,12 @@ py_library_providing_imports_info(
             "_src/test_util.py",
             "*_test.py",
             "**/*_test.py",
-            "interpreters/sharded_jit.py",
         ],
     ) + [
         # until new parallelism APIs are moved out of experimental
         "experimental/maps.py",
         "experimental/pjit.py",
         "experimental/global_device_array.py",
-        "experimental/array.py",
-        "experimental/sharding.py",
         "experimental/multihost_utils.py",
         # until checkify is moved out of experimental
         "experimental/checkify.py",
@@ -116,12 +108,13 @@ py_library_providing_imports_info(
         "experimental/compilation_cache/cache_interface.py",
     ],
     lib_rule = pytype_library,
+    pytype_srcs = glob(["_src/**/*.pyi"]),
     visibility = ["//visibility:public"],
     deps = select({
                ":enable_jaxlib_build": [":jaxlib_deps"],
                "//conditions:default": [],
            }) +
-           numpy_py_deps + scipy_py_deps + jax_extra_deps,
+           py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
 )
 
 py_library(
@@ -140,15 +133,13 @@ py_library_providing_imports_info(
     visibility = ["//visibility:public"],
     deps = [
         ":jax",
-        ":sharded_jit",
-    ] + absl_logging_py_deps + numpy_py_deps,
+    ] + py_deps("absl/logging") + py_deps("numpy"),
 )
 
 pytype_library(
     name = "stax",
     srcs = [
         "example_libraries/stax.py",
-        "experimental/stax.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
@@ -163,21 +154,10 @@ pytype_library(
     deps = [":jax"],
 )
 
-# sharded_jit is deprecated. Please do not add any more projects to the visibility.
-pytype_library(
-    name = "sharded_jit",
-    srcs = ["interpreters/sharded_jit.py"],
-    visibility = [
-        ":internal",
-    ] + sharded_jit_visibility,
-    deps = [":jax"],
-)
-
 pytype_library(
     name = "optimizers",
     srcs = [
         "example_libraries/optimizers.py",
-        "experimental/optimizers.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],
@@ -187,14 +167,6 @@ pytype_library(
     name = "ode",
     srcs = ["experimental/ode.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
-)
-
-# loops is deprecated. Please do not add any more projects to the visibility.
-pytype_library(
-    name = "loops",
-    srcs = ["experimental/loops.py"],
-    visibility = [":internal"] + loops_visibility,
     deps = [":jax"],
 )
 

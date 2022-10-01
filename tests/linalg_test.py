@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -299,7 +299,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a, = args_maker()
     w1, _ = jnp.linalg.eig(a)
     w2 = jnp.linalg.eigvals(a)
-    self.assertAllClose(w1, w2, rtol={np.complex128: 1e-14})
+    self.assertAllClose(w1, w2, rtol={np.complex64: 1e-5, np.complex128: 1e-14})
 
   @jtu.skip_on_devices("gpu", "tpu")
   def testEigvalsInf(self):
@@ -538,6 +538,11 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-3)
     self._CompileAndCheck(jnp_fn, args_maker)
+
+  def testStringInfNorm(self):
+    err, msg = ValueError, r"Invalid order 'inf' for vector norm."
+    with self.assertRaisesRegex(err, msg):
+      jnp.linalg.norm(jnp.array([1.0, 2.0, 3.0]), ord="inf")
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_n={}_full_matrices={}_compute_uv={}_hermitian={}".format(
@@ -919,7 +924,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       {"testcase_name": "_shape={}".format(
            jtu.format_shape_dtype_string(shape, dtype)),
        "shape": shape, "dtype": dtype}
-      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50)]
+      for shape in [(3, ), (1, 2), (8, 5), (4, 4), (5, 5), (50, 50),
+                    (3, 4, 5), (2, 3, 4, 5)]
       for dtype in float_types + complex_types))
   def testMatrixRank(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -1153,31 +1159,31 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name":
-       "_lhs={}_rhs={}_sym_pos={}_lower={}".format(
+       "_lhs={}_rhs={}_assume_a={}_lower={}".format(
            jtu.format_shape_dtype_string(lhs_shape, dtype),
            jtu.format_shape_dtype_string(rhs_shape, dtype),
-           sym_pos, lower),
+           assume_a, lower),
        "lhs_shape": lhs_shape, "rhs_shape": rhs_shape, "dtype": dtype,
-       "sym_pos": sym_pos, "lower": lower}
+       "assume_a": assume_a, "lower": lower}
       for lhs_shape, rhs_shape in [
           ((1, 1), (1, 1)),
           ((4, 4), (4,)),
           ((8, 8), (8, 4)),
       ]
-      for sym_pos, lower in [
-        (False, False),
-        (True, False),
-        (True, True),
+      for assume_a, lower in [
+        ('gen', False),
+        ('pos', False),
+        ('pos', True),
       ]
       for dtype in float_types + complex_types))
-  def testSolve(self, lhs_shape, rhs_shape, dtype, sym_pos, lower):
+  def testSolve(self, lhs_shape, rhs_shape, dtype, assume_a, lower):
     rng = jtu.rand_default(self.rng())
-    osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
-    jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, sym_pos=sym_pos, lower=lower)
+    osp_fun = lambda lhs, rhs: osp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
+    jsp_fun = lambda lhs, rhs: jsp.linalg.solve(lhs, rhs, assume_a=assume_a, lower=lower)
 
     def args_maker():
       a = rng(lhs_shape, dtype)
-      if sym_pos:
+      if assume_a == 'pos':
         a = np.matmul(a, np.conj(T(a)))
         a = np.tril(a) if lower else np.triu(a)
       return [a, rng(rhs_shape, dtype)]

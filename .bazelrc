@@ -35,6 +35,7 @@ build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 # these values are overridden.
 build --@org_tensorflow//tensorflow/compiler/xla/python:enable_gpu=false
 build --@org_tensorflow//tensorflow/compiler/xla/python:enable_tpu=false
+build --@org_tensorflow//tensorflow/compiler/xla/python:enable_plugin_device=false
 
 ###########################################################################
 
@@ -96,7 +97,7 @@ build:windows --linkopt=/OPT:REF
 build:windows --host_linkopt=/OPT:REF
 build:windows --linkopt=/OPT:ICF
 build:windows --host_linkopt=/OPT:ICF
-build:windows --experimental_strict_action_env=true
+build:windows --incompatible_strict_action_env=true
 
 build:linux --config=posix
 build:linux --copt=-Wno-unknown-warning-option
@@ -112,6 +113,8 @@ build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
 build:tpu --@org_tensorflow//tensorflow/compiler/xla/python:enable_tpu=true
 build:tpu --define=with_tpu_support=true
+
+build:plugin_device --@org_tensorflow//tensorflow/compiler/xla/python:enable_plugin_device=true
 
 #########################################################################
 # RBE config options below.
@@ -197,6 +200,31 @@ build:rbe_linux_cuda11.1_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
 build:rbe_linux_cuda11.1_nvcc_py3.10 --config=rbe_linux_cuda11.1_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.1-cudnn8-tensorrt7.2_config_python3.10"
 build:rbe_linux_cuda11.1_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
 
+build:rbe_linux_cuda11.2_nvcc_base --config=rbe_linux_cuda_base
+build:rbe_linux_cuda11.2_nvcc_base --action_env=TF_CUDA_VERSION=11
+build:rbe_linux_cuda11.2_nvcc_base --action_env=TF_CUDNN_VERSION=8
+build:rbe_linux_cuda11.2_nvcc_base --action_env=CUDA_TOOLKIT_PATH="/usr/local/cuda-11.2"
+build:rbe_linux_cuda11.2_nvcc_base --action_env=LD_LIBRARY_PATH="/usr/local/cuda:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/tensorrt/lib"
+build:rbe_linux_cuda11.2_nvcc_base --action_env=GCC_HOST_COMPILER_PATH="/dt9/usr/bin/gcc"
+test:rbe_linux_cuda11.2_nvcc_base --test_env=LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/cuda-11.1/lib64"
+build:rbe_linux_cuda11.2_nvcc_base --host_crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda11.2_nvcc_base --crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain"
+build:rbe_linux_cuda11.2_nvcc_base --extra_toolchains="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_linux_cuda11.2_nvcc_base --extra_execution_platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
+build:rbe_linux_cuda11.2_nvcc_base --host_platform="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
+build:rbe_linux_cuda11.2_nvcc_base --platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_platform//:platform"
+build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_cuda"
+build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_TENSORRT_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_tensorrt"
+build:rbe_linux_cuda11.2_nvcc_base --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_nccl"
+build:rbe_linux_cuda11.2_nvcc_py3.7 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.7"
+build:rbe_linux_cuda11.2_nvcc_py3.7 --python_path="/usr/local/bin/python3.7"
+build:rbe_linux_cuda11.2_nvcc_py3.8 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.8"
+build:rbe_linux_cuda11.2_nvcc_py3.8 --python_path="/usr/local/bin/python3.8"
+build:rbe_linux_cuda11.2_nvcc_py3.9 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.9"
+build:rbe_linux_cuda11.2_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_linux_cuda11.2_nvcc_py3.10 --config=rbe_linux_cuda11.2_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.2-cudnn8.1-tensorrt7.2_config_python3.10"
+build:rbe_linux_cuda11.2_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
+
 build:rbe_linux_cuda11.4_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda11.4_nvcc_base --action_env=TF_CUDA_VERSION=11
 build:rbe_linux_cuda11.4_nvcc_base --action_env=TF_CUDNN_VERSION=8
@@ -229,3 +257,6 @@ build:tensorflow_testing_rbe_linux --config=tensorflow_testing_rbe
 
 # Load `.jax_configure.bazelrc` file written by build.py
 try-import %workspace%/.jax_configure.bazelrc
+
+# Load rc file with user-specific options.
+try-import %workspace%/.bazelrc.user

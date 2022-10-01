@@ -4332,8 +4332,8 @@ Copyright 2019 The TensorFlow Authors.  All rights reserved.
    limitations under the License.
 
 --------------------------------------------------------------------------------
-License for pocketfft:
-Copyright (C) 2010-2018 Max-Planck-Society
+License for the FFT components of ducc0:
+Copyright (C) 2010-2022 Max-Planck-Society
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification,

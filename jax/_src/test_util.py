@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,12 +14,13 @@
 
 from contextlib import contextmanager
 import inspect
+import io
 import functools
 from functools import partial
 import re
 import os
 import textwrap
-from typing import Dict, List, Generator, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -154,13 +155,29 @@ def check_eq(xs, ys, err_msg=''):
 
 
 @contextmanager
+def capture_stdout() -> Generator[Callable[[], str], None, None]:
+  with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
+    def _read() -> str:
+      return fp.getvalue()
+    yield _read
+
+
+@contextmanager
 def count_device_put():
   device_put = dispatch.device_put
   count = [0]
 
   def device_put_and_count(*args, **kwargs):
     count[0] += 1
-    return device_put(*args, **kwargs)
+    # device_put handlers might call `dispatch.device_put` (e.g. on an
+    # underlying payload or several). We only want to count these
+    # recursive puts once, so we skip counting more than the outermost
+    # one in such a call stack.
+    dispatch.device_put = device_put
+    try:
+      return device_put(*args, **kwargs)
+    finally:
+      dispatch.device_put = device_put_and_count
 
   dispatch.device_put = device_put_and_count
   try:
@@ -237,8 +254,11 @@ def is_device_rocm():
 def is_device_cuda():
   return xla_bridge.get_backend().platform_version.startswith('cuda')
 
+def is_device_tpu_v4():
+  return jax.devices()[0].device_kind == "TPU v4"
+
 def _get_device_tags():
-  """returns a set of tags definded for the device under test"""
+  """returns a set of tags defined for the device under test"""
   if is_device_rocm():
     device_tags = {device_under_test(), "rocm"}
   elif is_device_cuda():
@@ -315,6 +335,7 @@ PYTHON_SCALAR_SHAPE = _PythonScalar()
 def is_valid_shape(shape, dtype):
   if shape == PYTHON_SCALAR_SHAPE:
     return dtype == np.dtype(type(np.array(0, dtype=dtype).item()))
+  return True
 
 
 def _dims_of_shape(shape):
@@ -879,7 +900,10 @@ class BufferDonationTestCase(JaxTestCase):
   assertNotDeleted = lambda self, x: self._assertDeleted(x, False)
 
   def _assertDeleted(self, x, deleted):
-    if hasattr(x, "device_buffer"):
+    if hasattr(x, "_arrays"):
+      for buffer in x._arrays:
+        self.assertEqual(buffer.is_deleted(), deleted)
+    elif hasattr(x, "device_buffer"):
       self.assertEqual(x.device_buffer.is_deleted(), deleted)
     else:
       for buffer in x.device_buffers:
@@ -905,7 +929,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   local_devices = list(api.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
-  mesh_devices = np.array(local_devices[:size]).reshape(shape)
+  mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
   with Mesh(mesh_devices, axis_names):
     yield
 

@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,12 +18,16 @@ from typing import Optional
 import zlib
 
 import jax
+from jax._src import array
+from jax._src import sharding
 from jax.tree_util import PyTreeDef
+from jax.interpreters import pxla
 from jax.experimental import maps
 from jax.experimental.pjit import pjit, FROM_GDA
 from jax.interpreters.pxla import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax._src import distributed
+from jax._src import config as config_internal
 import numpy as np
 
 
@@ -78,6 +82,36 @@ def sync_global_devices(name: str):
   assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
 
 
+def _handle_array_process_allgather(inp, tiled):
+  if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable():
+    reps = sharding.OpShardingSharding(inp.sharding._device_assignment,
+                                       sharding._get_replicated_op_sharding())
+    out = pjit(lambda x: x, out_axis_resources=reps)(inp)
+  else:
+    # All inputs here will be fully addressable.
+    devices = np.array(jax.devices()).reshape(jax.process_count(),
+                                              jax.local_device_count())
+    global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
+    pspec = P('processes')
+    s = jax.sharding.MeshPspecSharding(global_mesh, pspec)
+
+    host_np_arr = np.asarray(inp)
+    if host_np_arr.ndim == 0 or not tiled:
+      host_np_arr = np.expand_dims(host_np_arr, axis=0)
+
+    aval = jax.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
+    global_aval = global_mesh._local_to_global(
+        pxla._get_array_mapping(pspec), aval)
+
+    bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
+    global_arr = array.make_array_from_single_device_arrays(
+        global_aval.shape, s, bufs)
+    with global_mesh:
+      out = pjit(lambda x: x, out_axis_resources=None)(global_arr)
+
+  return np.asarray(out.addressable_data(0))
+
+
 def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
   """Gather data from across processes.
 
@@ -100,28 +134,34 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
   """
 
   def _pjit(inp):
-    if isinstance(inp, GlobalDeviceArray):
-      if inp.is_fully_replicated:
-        return inp.local_data(0).to_py()
-      global_mesh = inp.mesh
-      in_axis_resources = FROM_GDA
+    if jax.config.jax_array:
+      return _handle_array_process_allgather(inp, tiled)
     else:
-      # DA/SDA/np.array will be sharded based on global_mesh.local_mesh.
-      # Shape of local_mesh will always be (1, local_device_count())
-      devices = np.array(jax.devices()).reshape(jax.process_count(),
-                                                jax.local_device_count())
-      global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
-      in_axis_resources = P('processes')
-      if inp.ndim == 0 or not tiled:
-        inp = np.expand_dims(inp, axis=0)
+      if isinstance(inp, GlobalDeviceArray):
+        if inp.is_fully_replicated:
+          return np.asarray(inp.local_data(0))
+        global_mesh = inp.mesh
+        in_axis_resources = FROM_GDA
+      else:
+        # DA/SDA/np.array will be sharded based on global_mesh.local_mesh.
+        # Shape of local_mesh will always be (1, local_device_count())
+        devices = np.array(jax.devices()).reshape(jax.process_count(),
+                                                  jax.local_device_count())
+        global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
+        in_axis_resources = P('processes')
+        if inp.ndim == 0 or not tiled:
+          inp = np.expand_dims(inp, axis=0)
 
-    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
-      out = pjit(lambda x: x, in_axis_resources=in_axis_resources,
-                 out_axis_resources=None)(inp)
-    return out.local_data(0).to_py()
+      with global_mesh:
+        out = pjit(lambda x: x, in_axis_resources=in_axis_resources,
+                   out_axis_resources=None)(inp)
+      return np.asarray(out.addressable_data(0))
 
-  with jax._src.config.parallel_functions_output_gda(True):
-    return jax.tree_util.tree_map(_pjit, in_tree)
+  if jax.config.jax_array:
+    return jax.tree_map(_pjit, in_tree)  # array route
+  else:
+    with config_internal.parallel_functions_output_gda(True):
+      return jax.tree_map(_pjit, in_tree)  # gda route
 
 
 def assert_equal(in_tree, fail_message: str = ''):

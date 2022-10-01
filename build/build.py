@@ -1,6 +1,6 @@
 #!/usr/bin/python
 #
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,8 +83,8 @@ def check_numpy_version(python_bin_path):
   version = shell(
       [python_bin_path, "-c", "import numpy as np; print(np.__version__)"])
   numpy_version = tuple(map(int, version.split(".")[:2]))
-  if numpy_version < (1, 19):
-    print("ERROR: JAX requires NumPy 1.19 or newer, found " + version + ".")
+  if numpy_version < (1, 20):
+    print("ERROR: JAX requires NumPy 1.20 or newer, found " + version + ".")
     sys.exit(-1)
   return version
 
@@ -219,7 +219,8 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, bazel_options, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, enable_cuda, enable_nccl,
-                  enable_tpu, enable_remote_tpu, enable_rocm):
+                  enable_tpu, enable_remote_tpu, enable_rocm,
+                  enable_plugin_device):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -266,7 +267,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --distinct_host_configuration=false\n")
 
     for o in bazel_options:
-      f.write(f"common {o}\n")
+      f.write(f"build {o}\n")
     if target_cpu_features == "release":
       if wheel_cpu == "x86_64":
         f.write("build --config=avx_windows\n" if is_windows()
@@ -291,6 +292,8 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write("build --config=rocm\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
+    if enable_plugin_device:
+      f.write("build --config=plugin_device\n")
 
 BANNER = r"""
      _   _  __  __
@@ -388,6 +391,11 @@ def main():
                "builds.")
   add_boolean_argument(
       parser,
+      "enable_plugin_device",
+      default=False,
+      help_str="Should we build with a plugin device enable?")
+  add_boolean_argument(
+      parser,
       "remote_build",
       default=False,
       help_str="Should we build with RBE (Remote Build Environment)?")
@@ -464,6 +472,7 @@ def main():
       "darwin_arm64": "arm64",
       "darwin_x86_64": "x86_64",
       "ppc": "ppc64le",
+      "aarch64": "aarch64",
   }
   # TODO(phawkins): support other bazel cpu overrides.
   wheel_cpu = (wheel_cpus[args.target_cpu] if args.target_cpu is not None
@@ -513,6 +522,8 @@ def main():
       print(f"ROCm toolkit path: {rocm_toolkit_path}")
     print(f"ROCm amdgpu targets: {args.rocm_amdgpu_targets}")
 
+  print("Plugin device enabled: {}".format("yes" if args.enable_plugin_device else "no"))
+
   write_bazelrc(
       python_bin_path=python_bin_path,
       remote_build=args.remote_build,
@@ -533,6 +544,7 @@ def main():
       enable_tpu=args.enable_tpu,
       enable_remote_tpu=args.enable_remote_tpu,
       enable_rocm=args.enable_rocm,
+      enable_plugin_device=args.enable_plugin_device,
   )
 
   if args.configure_only:
@@ -548,7 +560,7 @@ def main():
     f"--cpu={wheel_cpu}"])
   print(" ".join(command))
   shell(command)
-  shell([bazel_path, "shutdown"])
+  shell([bazel_path] + args.bazel_startup_options + ["shutdown"])
 
 
 if __name__ == "__main__":

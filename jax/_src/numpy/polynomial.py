@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import numpy as np
 def _roots_no_zeros(p):
   # build companion matrix and find its eigenvalues (the roots)
   if p.size < 2:
-    return array([], dtype=dtypes._to_complex_dtype(p.dtype))
+    return array([], dtype=dtypes.to_complex_dtype(p.dtype))
   A = diag(ones((p.size - 2,), p.dtype), -1)
   A = A.at[0, :].set(-p[1:] / p[0])
   return linalg.eigvals(A)
@@ -83,7 +83,7 @@ def roots(p, *, strip_zeros=True):
   if p.ndim != 1:
     raise ValueError("Input must be a rank-1 array.")
   if p.size < 2:
-    return array([], dtype=dtypes._to_complex_dtype(p.dtype))
+    return array([], dtype=dtypes.to_complex_dtype(p.dtype))
   num_leading_zeros = _where(all(p == 0), len(p), argmin(p == 0))
 
   if strip_zeros:

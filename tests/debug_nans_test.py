@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2019 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -94,7 +94,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     # run to compile, and the next call won't go through `cache_miss`.
     f(2)
     # 'cond' not 'xla_call'
-    msg = r"invalid value \(nan\) encountered in cond"
+    msg = r"invalid value \(nan\) encountered in .*cond.*"
     with self.assertRaisesRegex(FloatingPointError, msg):
       f(1)
 
@@ -135,7 +135,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
       with self.assertRaisesRegex(
           FloatingPointError,
-          r"invalid value \(nan\) encountered in parallel computation"):
+          r"invalid value \(nan\) encountered in xmap"):
         ans = f(jnp.array([0.]))
         ans.block_until_ready()
 
@@ -150,7 +150,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = jax.experimental.PartitionSpec('x')
+    p = pjit.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
                   in_axis_resources=p,
                   out_axis_resources=p)
@@ -205,7 +205,7 @@ class DebugInfsTest(jtu.JaxTestCase):
     # run to compile, and the next call won't go through `cache_miss`.
     f(2)
     # 'cond' not 'xla_call'
-    msg = r"invalid value \(inf\) encountered in cond"
+    msg = r"invalid value \(inf\) encountered in .*cond.*"
     with self.assertRaisesRegex(FloatingPointError, msg):
       f(1)
 
@@ -225,8 +225,8 @@ class DebugInfsTest(jtu.JaxTestCase):
   def testDebugNansDoesntReturnDeoptimizedResult(self):
     @jax.jit
     def f(x):
-      x + 2  # avoid trivial dispatch path by adding some eqn
-      return jnp.nan
+      y = x + 2  # avoid trivial dispatch path by adding some eqn
+      return jnp.nan, y
 
     with self.assertRaisesRegex(FloatingPointError, "de-optimized"):
       with jax.debug_nans(True):

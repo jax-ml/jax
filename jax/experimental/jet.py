@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -61,7 +61,6 @@ import numpy as np
 import jax
 from jax import core
 from jax import lax
-from jax.custom_derivatives import custom_jvp_call_jaxpr_p
 from jax.interpreters import xla
 import jax.linear_util as lu
 import jax.numpy as jnp
@@ -326,6 +325,7 @@ deflinear(lax.broadcast_in_dim_p)
 deflinear(lax.concatenate_p)
 deflinear(lax.pad_p)
 deflinear(lax.reshape_p)
+deflinear(lax.squeeze_p)
 deflinear(lax.rev_p)
 deflinear(lax.transpose_p)
 deflinear(lax.slice_p)
@@ -498,11 +498,11 @@ def _integer_pow_taylor(primals_in, series_in, *, y):
 jet_rules[lax.integer_pow_p] = _integer_pow_taylor
 
 
-def _expit_taylor(primals_in, series_in):
+def _logistic_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
   u = [x] + series
-  v = [jax.scipy.special.expit(x)] + [None] * len(series)
+  v = [lax.logistic(x)] + [None] * len(series)
   e = [v[0] * (1 - v[0])] + [None] * len(series)  # terms for sigmoid' = sigmoid * (1 - sigmoid)
   for k in range(1, len(v)):
     v[k] = fact(k-1) * sum(_scale(k, j) * e[k-j] * u[j] for j in range(1, k+1))
@@ -511,12 +511,15 @@ def _expit_taylor(primals_in, series_in):
   primal_out, *series_out = v
   return primal_out, series_out
 
+jet_rules[lax.logistic_p] = _logistic_taylor
+
+
 def _tanh_taylor(primals_in, series_in):
   x, = primals_in
   series, = series_in
   u = [2*x] + [2 * series_ for series_ in series]
   primals_in, *series_in = u
-  primal_out, series_out = _expit_taylor((primals_in, ), (series_in, ))
+  primal_out, series_out = _logistic_taylor((primals_in, ), (series_in, ))
   series_out = [2 * series_ for series_ in series_out]
   return 2 * primal_out - 1, series_out
 jet_rules[lax.tanh_p] = _tanh_taylor
@@ -681,13 +684,6 @@ def _lax_min_taylor_rule(primal_in, series_in):
     series_out = [select_min_and_avg_eq(*terms_in) for terms_in in zip(*series_in)]
     return primal_out, series_out
 jet_rules[lax.min_p] = _lax_min_taylor_rule
-
-def _custom_jvp_call_jaxpr_rule(primals_in, series_in, *, fun_jaxpr,
-                                jvp_jaxpr_thunk):
-  # TODO(mattjj): do something better than ignoring custom jvp rules for jet?
-  del jvp_jaxpr_thunk
-  return jet(core.jaxpr_as_fun(fun_jaxpr), primals_in, series_in)
-jet_rules[custom_jvp_call_jaxpr_p] = _custom_jvp_call_jaxpr_rule
 
 def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
                       dimension_numbers, indices_are_sorted, unique_indices,

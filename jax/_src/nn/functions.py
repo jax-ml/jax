@@ -1,4 +1,4 @@
-# Copyright 2019 Google LLC
+# Copyright 2019 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,10 +45,20 @@ def relu(x: Array) -> Array:
   .. math::
     \mathrm{relu}(x) = \max(x, 0)
 
+  except under differentiation, we take:
+
+  .. math::
+    \nabla \mathrm{relu}(0) = 0
+
+  For more information see
+  `Numerical influence of ReLU’(0) on backpropagation
+  <https://openreview.net/forum?id=urrcVI-_jRm>`_.
+
   Args:
     x : input array
   """
   return jnp.maximum(x, 0)
+# For behavior at 0, see https://openreview.net/forum?id=urrcVI-_jRm
 relu.defjvps(lambda g, ans, x: lax.select(x > 0, g, lax.full_like(g, 0)))
 
 @jax.jit
@@ -91,7 +101,7 @@ def sigmoid(x: Array) -> Array:
   Args:
     x : input array
   """
-  return expit(x)
+  return lax.logistic(x)
 
 @jax.jit
 def silu(x: Array) -> Array:
@@ -200,7 +210,7 @@ def celu(x: Array, alpha: Array = 1.0) -> Array:
     x : input array
     alpha : array or scalar (default: 1.0)
   """
-  return jnp.where(x > 0, x, alpha * jnp.expm1(x / alpha))
+  return jnp.maximum(x, 0.0) + alpha * jnp.expm1(jnp.minimum(x, 0.0) / alpha)
 
 @jax.jit
 def selu(x: Array) -> Array:
@@ -252,6 +262,10 @@ def gelu(x: Array, approximate: bool = True) -> Array:
     x : input array
     approximate: whether to use the approximate or exact formulation.
   """
+
+  # Promote to nearest float-like dtype.
+  x = x.astype(dtypes.to_inexact_dtype(x.dtype))
+
   if approximate:
     sqrt_2_over_pi = np.sqrt(2 / np.pi).astype(x.dtype)
     cdf = 0.5 * (1.0 + jnp.tanh(sqrt_2_over_pi * (x + 0.044715 * (x ** 3))))

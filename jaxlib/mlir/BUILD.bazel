@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ symlink_inputs(
 py_library(
     name = "mlir",
     deps = [
-        "//jaxlib/mlir/_mlir_libs:_mlir",
+        "//jaxlib/mlir/_mlir_libs",
     ],
 )
 
@@ -88,6 +88,20 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "chlo_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@stablehlo//:chlo_ops_py_files",
+    ]}},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_chlo",
+    ],
+)
+
+symlink_inputs(
     name = "sparse_tensor_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
@@ -106,7 +120,7 @@ symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
-        "@org_tensorflow//tensorflow/compiler/mlir/hlo:MhloOpsPyFiles",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:MhloOpsPyFiles",
     ]}},
     deps = [
         ":core",
@@ -130,15 +144,15 @@ symlink_inputs(
 )
 
 symlink_inputs(
-    name = "transforms",
+    name = "stablehlo_dialect",
     rule = py_library,
-    symlinked_inputs = {"srcs": {
-        "transforms": [
-            "@llvm-project//mlir/python:TransformsPyFiles",
-        ],
-    }},
+    symlinked_inputs = {"srcs": {"dialects": [
+        "@stablehlo//:stablehlo_ops_py_files",
+    ]}},
     deps = [
+        ":core",
+        ":ir",
         ":mlir",
-        "//jaxlib/mlir/_mlir_libs:_mlirTransforms",
+        "//jaxlib/mlir/_mlir_libs:_stablehlo",
     ],
 )

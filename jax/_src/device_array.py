@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ from functools import partial, partialmethod
 import operator
 from typing import (Any, List, Optional, Union)
 import weakref
+import warnings
 
 import numpy as np
 
@@ -29,6 +30,7 @@ from jax._src import dtypes
 from jax._src import profiler
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
+from jax._src.typing import Array
 
 ### device-persistent data
 
@@ -146,7 +148,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
   def _value(self):
     self._check_if_deleted()
     if self._npy_value is None:
-      self._npy_value = self.device_buffer.to_py()  # pytype: disable=attribute-error  # bind-properties
+      self._npy_value = np.asarray(self.device_buffer)  # pytype: disable=attribute-error  # bind-properties
       self._npy_value.flags.writeable = False
     return self._npy_value
 
@@ -266,6 +268,21 @@ for device_array in [DeviceArray]:
 
   setattr(device_array, "__array__", __array__)
 
+  # TODO(phawkins): delete this code path after the deprecation for .to_py()
+  # expires in Nov 2022.
+  def to_py(self):
+    warnings.warn("The .to_py() method on JAX arrays is deprecated. Use "
+                  "np.asarray(...) instead.", category=FutureWarning)
+    return np.asarray(self._value)
+
+  setattr(device_array, "to_py", to_py)
+
+  def __dlpack__(self):
+    from jax.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
+    return to_dlpack(self)
+
+  setattr(device_array, "__dlpack__", __dlpack__)
+
   def __reduce__(self):
     fun, args, arr_state = self._value.__reduce__()
     aval_state = {'weak_type': self.aval.weak_type,
@@ -316,7 +333,9 @@ class DeletedBuffer(object): pass
 deleted_buffer = DeletedBuffer()
 
 
+Array.register(DeviceArray)
 device_array_types: List[type] = [xc.Buffer, _DeviceArray]
 for _device_array in device_array_types:
   core.literalable_types.add(_device_array)
   core.pytype_aval_mappings[_device_array] = abstract_arrays.canonical_concrete_aval
+  Array.register(_device_array)

@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,19 +14,15 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "absl_logging_py_deps",
-    "cloudpickle_py_deps",
     "jax_generate_backend_suites",
     "jax_test",
     "jax_test_file_visibility",
-    "pil_py_deps",
-    "portpicker_py_deps",
+    "py_deps",
     "pytype_library",
-    "scipy_py_deps",
-    "tensorflow_py_deps",
+    "pytype_test",
 )
 
-licenses(["notice"])  # Apache 2
+licenses(["notice"])
 
 package(default_visibility = ["//visibility:private"])
 
@@ -35,7 +31,14 @@ jax_generate_backend_suites()
 jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = 10,
+)
+
+jax_test(
+    name = "dynamic_api_test",
+    srcs = ["dynamic_api_test.py"],
+    shard_count = 2,
 )
 
 jax_test(
@@ -47,7 +50,7 @@ jax_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
     disable_backends = ["tpu"],
-    deps = tensorflow_py_deps,
+    deps = py_deps("tensorflow"),
 )
 
 jax_test(
@@ -78,25 +81,22 @@ jax_test(
     srcs = ["custom_object_test.py"],
 )
 
-py_test(
+jax_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
 )
 
 py_test(
-    name = "distributed_test",
-    srcs = ["distributed_test.py"],
+    name = "multiprocess_gpu_test",
+    srcs = ["multiprocess_gpu_test.py"],
     args = [
         "--exclude_test_targets=MultiProcessGpuTest",
     ],
+    tags = ["manual"],
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + portpicker_py_deps,
+    ] + py_deps("portpicker"),
 )
 
 jax_test(
@@ -132,9 +132,15 @@ jax_test(
 jax_test(
     name = "lobpcg_test",
     srcs = ["lobpcg_test.py"],
+    env = {"LOBPCG_EMIT_DEBUG_PLOTS": "1"},
+    shard_count = {
+        "cpu": 48,
+        "gpu": 48,
+        "tpu": 48,
+    },
     deps = [
         "//jax:experimental_sparse",
-    ],
+    ] + py_deps("matplotlib"),
 )
 
 jax_test(
@@ -159,6 +165,7 @@ py_test(
 jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
         "gpu": 4,
@@ -173,6 +180,15 @@ jax_test(
 jax_test(
     name = "pjit_test",
     srcs = ["pjit_test.py"],
+    backend_tags = {
+        "tpu": ["notsan"],  # Times out under tsan.
+    },
+    pjrt_c_api_bypass = True,
+    shard_count = {
+        "cpu": 5,
+        "gpu": 5,
+        "tpu": 5,
+    },
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -191,6 +207,7 @@ jax_test(
 jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
+    pjrt_c_api_bypass = True,
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -219,46 +236,22 @@ jax_test(
         "tpu": 10,
         "iree": 10,
     },
-    deps = pil_py_deps + tensorflow_py_deps,
+    deps = py_deps("pil") + py_deps("tensorflow"),
 )
 
 jax_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental_host_callback",
     ],
 )
 
-py_test(
-    name = "jax_jit_test_x32",
-    srcs = ["jax_jit_test.py"],
-    main = "jax_jit_test.py",
-    visibility = ["//visibility:private"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
-)
-
-py_test(
-    name = "jax_jit_test_x64",
-    srcs = ["jax_jit_test.py"],
-    args = ["--jax_enable_x64=true"],
-    main = "jax_jit_test.py",
-    visibility = ["//visibility:private"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
-)
-
-test_suite(
+jax_test(
     name = "jax_jit_test",
-    tests = [
-        "jax_jit_test_x32",
-        "jax_jit_test_x64",
-    ],
+    srcs = ["jax_jit_test.py"],
+    main = "jax_jit_test.py",
 )
 
 py_test(
@@ -268,7 +261,7 @@ py_test(
         "//jax:test_util",
         "//jax/experimental/jax2tf",
         "//jax/tools:jax_to_ir",
-    ] + tensorflow_py_deps,
+    ] + py_deps("tensorflow"),
 )
 
 jax_test(
@@ -293,9 +286,9 @@ jax_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
     shard_count = {
-        "cpu": 10,
-        "gpu": 20,
-        "tpu": 10,
+        "cpu": 30,
+        "gpu": 40,
+        "tpu": 30,
         "iree": 10,
     },
 )
@@ -325,10 +318,33 @@ jax_test(
 jax_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 20,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 10,
+    },
+)
+
+jax_test(
+    name = "lax_numpy_operators_test",
+    srcs = ["lax_numpy_operators_test.py"],
+    pjrt_c_api_bypass = True,
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 5,
+    },
+)
+
+jax_test(
+    name = "lax_numpy_reducers_test",
+    srcs = ["lax_numpy_reducers_test.py"],
+    pjrt_c_api_bypass = True,
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 5,
     },
 )
 
@@ -366,7 +382,7 @@ jax_test(
         "tpu": ["noasan"],  # Test times out.
     },
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 40,
         "tpu": 10,
         "iree": 10,
@@ -390,6 +406,7 @@ jax_test(
 jax_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
+    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -448,19 +465,16 @@ jax_test(
         "tpu": [
             "cpu:8",
             "noasan",  # Times out.
+            "nodebug",  # Times out.
+            "notsan",  # Times out.
         ],
     },
     shard_count = {
-        "cpu": 20,
+        "cpu": 40,
         "gpu": 40,
         "tpu": 10,
         "iree": 20,
     },
-)
-
-jax_test(
-    name = "masking_test",
-    srcs = ["masking_test.py"],
 )
 
 jax_test(
@@ -502,16 +516,24 @@ jax_test(
     srcs = ["pickle_test.py"],
     deps = [
         "//jax:experimental",
-    ] + cloudpickle_py_deps,
+    ] + py_deps("cloudpickle"),
 )
 
 jax_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
+    backend_tags = {
+        "tpu": [
+            "noasan",  # Times out.
+            "nodebug",  # Times out.
+            "notsan",  # Times out.
+        ],
+    },
+    pjrt_c_api_bypass = True,
     shard_count = {
-        "cpu": 5,
-        "gpu": 10,
-        "tpu": 5,
+        "cpu": 30,
+        "gpu": 30,
+        "tpu": 30,
     },
     tags = ["multiaccelerator"],
     deps = [
@@ -567,10 +589,10 @@ jax_test(
     name = "random_test",
     srcs = ["random_test.py"],
     shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 10,
-        "iree": 10,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 20,
+        "iree": 20,
     },
 )
 
@@ -584,9 +606,9 @@ jax_test(
     },
     main = "random_test.py",
     shard_count = {
-        "cpu": 30,
+        "cpu": 40,
         "gpu": 40,
-        "tpu": 20,
+        "tpu": 40,
         "iree": 20,
     },
 )
@@ -624,6 +646,7 @@ jax_test(
         ],  # Test times out under asan/tsan.
     },
     shard_count = {
+        "cpu": 10,
         "gpu": 10,
         "tpu": 5,
     },
@@ -641,17 +664,6 @@ jax_test(
 )
 
 jax_test(
-    name = "sharded_jit_test",
-    srcs = ["sharded_jit_test.py"],
-    disable_backends = [
-        "tpu",
-        "iree",
-    ],
-    tags = ["multiaccelerator"],
-    deps = ["//jax:experimental"],
-)
-
-jax_test(
     name = "sparse_test",
     srcs = ["sparse_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
@@ -661,14 +673,14 @@ jax_test(
         ],
     },
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 40,
-        "tpu": 10,
+        "tpu": 40,
         "iree": 10,
     },
     deps = [
         "//jax:experimental_sparse",
-    ] + scipy_py_deps,
+    ] + py_deps("scipy"),
 )
 
 jax_test(
@@ -677,6 +689,7 @@ jax_test(
     args = ["--jax_bcoo_cusparse_lowering=true"],
     shard_count = {
         "gpu": 20,
+        "tpu": 10,
     },
     deps = [
         "//jax:experimental_sparse",
@@ -719,6 +732,15 @@ py_test(
     ],
 )
 
+pytype_test(
+    name = "typing_test",
+    srcs = ["typing_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 py_test(
     name = "util_test",
     srcs = ["util_test.py"],
@@ -743,7 +765,7 @@ py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ] + absl_logging_py_deps,
+    ] + py_deps("absl/logging"),
 )
 
 py_test(
@@ -762,6 +784,7 @@ jax_test(
     backend_tags = {
         "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
     },
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:compilation_cache",
         "//jax:experimental",
@@ -781,6 +804,7 @@ jax_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -810,10 +834,11 @@ jax_test(
 jax_test(
     name = "host_callback_to_tf_test",
     srcs = ["host_callback_to_tf_test.py"],
+    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
-    ] + tensorflow_py_deps,
+    ] + py_deps("tensorflow"),
 )
 
 jax_test(
@@ -872,6 +897,11 @@ jax_test(
 )
 
 jax_test(
+    name = "python_callback_test",
+    srcs = ["python_callback_test.py"],
+)
+
+jax_test(
     name = "debugger_test",
     srcs = ["debugger_test.py"],
     enable_configs = [
@@ -880,13 +910,37 @@ jax_test(
     ],
 )
 
+jax_test(
+    name = "state_test",
+    srcs = ["state_test.py"],
+    enable_configs = [
+        "gpu",
+        "cpu",
+    ],
+)
+
+jax_test(
+    name = "for_loop_test",
+    srcs = ["for_loop_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
+)
+
+jax_test(
+    name = "clear_backends_test",
+    srcs = ["clear_backends_test.py"],
+)
+
 exports_files(
     [
         "api_test.py",
         "pmap_test.py",
         "compilation_cache_test.py",
-        "sharded_jit_test.py",
         "pjit_test.py",
+        "python_callback_test.py",
         "transfer_guard_test.py",
     ],
     visibility = jax_test_file_visibility,

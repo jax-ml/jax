@@ -1,4 +1,4 @@
-# Copyright 2021 Google LLC
+# Copyright 2021 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 """Bazel macros used by the JAX build."""
 
-load("@org_tensorflow//tensorflow/core/platform/default:build_config.bzl", _pyx_library = "pyx_library")
+load("@org_tensorflow//tensorflow/tsl/platform/default:build_config.bzl", _pyx_library = "pyx_library")
 load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _pybind_extension = "pybind_extension")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
@@ -25,6 +25,7 @@ load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_li
 cuda_library = _cuda_library
 rocm_library = _rocm_library
 pytype_library = native.py_library
+pytype_test = native.py_test
 pyx_library = _pyx_library
 pybind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
@@ -35,27 +36,25 @@ flatbuffer_cc_library = _flatbuffer_cc_library
 jax_internal_packages = []
 jax_test_util_visibility = []
 loops_visibility = []
-sharded_jit_visibility = []
 
-absl_logging_py_deps = []
-absl_testing_py_deps = []
-cloudpickle_py_deps = []
-numpy_py_deps = []
-pil_py_deps = []
-portpicker_py_deps = []
-scipy_py_deps = []
-tensorflow_py_deps = []
+def py_deps(_package):
+    """Returns the Bazel deps for Python package `package`."""
+
+    # We assume the user has installed all dependencies in their Python environment.
+    # This indirection exists because in Google's internal build we build
+    # dependencies from source with Bazel, but that's not something most people would want.
+    return []
 
 jax_extra_deps = []
 jax2tf_deps = []
 
-def py_library_providing_imports_info(*, name, lib_rule = native.py_library, **kwargs):
+def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
     lib_rule(name = name, **kwargs)
 
 def py_extension(name, srcs, copts, deps):
     pybind_extension(name, srcs = srcs, copts = copts, deps = deps, module_name = name)
 
-def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
+def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_symbol_prefixes = []):
     """Workaround DLL building issue.
 
     1. cc_binary with linkshared enabled cannot produce DLL with symbol
@@ -89,6 +88,10 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         target_compatible_with = ["@platforms//os:windows"],
     )
 
+    # say filtered_symbol_prefixes == ["mlir", "chlo"], then construct the regex
+    # pattern as "^\\s*(mlir|clho)" to use grep
+    pattern = "^\\s*(" + "|".join(exported_symbol_prefixes) + ")"
+
     # filtered def_file, only the needed symbols are included
     filtered_def_name = name + ".filtered.def"
     filtered_def_file = out + ".def"
@@ -96,7 +99,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = []):
         name = filtered_def_name,
         srcs = [full_def_name],
         outs = [filtered_def_file],
-        cmd = """echo 'LIBRARY {}\nEXPORTS ' > $@ && grep '^\\W*mlir' $(location :{}) >> $@""".format(out, full_def_name),
+        cmd = """echo 'LIBRARY {}\nEXPORTS ' > $@ && grep -E '{}' $(location :{}) >> $@""".format(out, pattern, full_def_name),
         target_compatible_with = ["@platforms//os:windows"],
     )
 
@@ -133,6 +136,7 @@ def jax_test(
         name,
         srcs,
         args = [],
+        env = {},
         shard_count = None,
         deps = [],
         disable_backends = None,  # buildifier: disable=unused-variable
@@ -140,7 +144,8 @@ def jax_test(
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = None,  # buildifier: disable=unused-variable
         tags = [],
-        main = None):
+        main = None,
+        pjrt_c_api_bypass = False):  # buildifier: disable=unused-variable
     if main == None:
         if len(srcs) == 1:
             main = srcs[0]
@@ -163,6 +168,7 @@ def jax_test(
             name = name + "_" + backend,
             srcs = srcs,
             args = test_args,
+            env = env,
             deps = [
                 "//jax",
                 "//jax:test_util",

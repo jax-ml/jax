@@ -1,4 +1,4 @@
-# Copyright 2018 Google LLC
+# Copyright 2018 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -46,8 +46,6 @@ from jax._src.tree_util import (
   tree_flatten as tree_flatten,
   tree_leaves as tree_leaves,
   tree_map as tree_map,
-  # TODO(jakevdp) remove tree_multimap once deprecation is complete.
-  tree_multimap,
   tree_reduce as tree_reduce,
   tree_structure as tree_structure,
   tree_transpose as tree_transpose,

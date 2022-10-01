@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,9 +14,7 @@
 
 from jax._src.profiler import (
   StepTraceAnnotation as StepTraceAnnotation,
-  StepTraceContext as StepTraceContext,
   TraceAnnotation as TraceAnnotation,
-  TraceContext as TraceContext,
   device_memory_profile as device_memory_profile,
   save_device_memory_profile as save_device_memory_profile,
   start_server as start_server,
@@ -25,5 +23,4 @@ from jax._src.profiler import (
   stop_trace as stop_trace,
   trace as trace,
   annotate_function as annotate_function,
-  trace_function as trace_function,
 )

@@ -1,4 +1,4 @@
-# Copyright 2020 Google LLC
+# Copyright 2020 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -134,6 +134,9 @@ LAX_GRAD_OPS = [
                    dtypes=grad_complex_dtypes),
     grad_test_spec(lax.cbrt, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_float_dtypes, tol={np.float64: 3e-5}),
+    grad_test_spec(lax.logistic, nargs=1, order=2,
+                   rng_factory=jtu.rand_default,
+                   dtypes=grad_inexact_dtypes),
 
     grad_test_spec(lax.add, nargs=2, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes),
@@ -529,6 +532,26 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     check_grads(rev, (np.array([[6., 5., 4.], [3., 2., 1.]]),), 2,
                 rtol={np.float32: 3e-3})
 
+  def testPowSecondDerivative(self):
+    # https://github.com/google/jax/issues/12033
+    x, y = 4.0, 0.0
+    expected = ((0.0, 1/x), (1/x, np.log(x) ** 2))
+
+    with self.subTest("jacfwd"):
+      result_fwd = jax.jacfwd(jax.jacfwd(lax.pow, (0, 1)), (0, 1))(x, y)
+      self.assertAllClose(result_fwd, expected)
+
+    with self.subTest("jacrev"):
+      result_rev = jax.jacrev(jax.jacrev(lax.pow, (0, 1)), (0, 1))(x, y)
+      self.assertAllClose(result_rev, expected)
+
+    with self.subTest("zero to the zero"):
+      result = jax.grad(lax.pow)(0.0, 0.0)
+      # TODO(jakevdp) special-case zero in a way that doesn't break other cases
+      # See https://github.com/google/jax/pull/12041#issuecomment-1222766191
+      # self.assertEqual(result, 0.0)
+      self.assertAllClose(result, np.nan)
+
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_predshape={}_argshapes={}".format(
           jtu.format_shape_dtype_string(pred_shape, np.bool_),
@@ -615,6 +638,37 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
     dus = lambda y: lax.dynamic_update_slice(operand, y, start_indices)
     check_grads(dus, (update,), 2, ["fwd", "rev"], eps=1.)
+
+  def testDynamicSliceValueAndGrad(self):
+    # Regression test for https://github.com/google/jax/issues/10984
+    # Issue arose due to an out-of-range negative index.
+    rng = jtu.rand_default(self.rng())
+    shape = (5, 5)
+    axis = 0
+    index = -(shape[axis] + 3)
+    def f(x):
+      return lax.dynamic_index_in_dim(x, index, axis).sum()
+    x = rng(shape, np.float32)
+
+    result1 = f(x)
+    result2, _ = jax.value_and_grad(f, 0)(x)
+    self.assertAllClose(result1, result2)
+
+  def testDynamicUpdateSliceValueAndGrad(self):
+    # Regression test for https://github.com/google/jax/issues/10984
+    # Issue arose due to an out-of-range negative index.
+    rng = jtu.rand_default(self.rng())
+    shape = (5, 5)
+    axis = 0
+    index = -(shape[axis] + 3)
+    def f(x, y):
+      return lax.dynamic_update_index_in_dim(x, y, index, axis).sum()
+    x = rng(shape, np.float32)
+    y = rng([1 for s in shape], np.float32)
+
+    result1 = f(x, y)
+    result2, _ = jax.value_and_grad(f, 0)(x, y)
+    self.assertAllClose(result1, result2)
 
   @parameterized.named_parameters(jtu.cases_from_list(
       {"testcase_name": "_shape={}_perm={}".format(
