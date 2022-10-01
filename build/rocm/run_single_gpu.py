@@ -106,6 +106,7 @@ def main(args):
 
 
 if __name__ == '__main__':
+  os.environ['HSA_TOOLS_LIB'] = "libroctracer64.so"
   parser = argparse.ArgumentParser()
   parser.add_argument("-p",
                       "--parallel",

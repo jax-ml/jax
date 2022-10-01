@@ -92,6 +92,19 @@ struct SyevdDescriptor {
 void Syevd(hipStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 
+// Symmetric (Hermitian) eigendecomposition, Jacobi algorithm: syevj/heevj
+// Supports batches of matrices up to size 32.
+
+struct SyevjDescriptor {
+  HipsolverType type;
+  hipsolverFillMode_t uplo;
+  int batch, n;
+  int lwork;
+};
+
+void Syevj(hipStream_t stream, void** buffers, const char* opaque,
+           size_t opaque_len, XlaCustomCallStatus* status);
+
 // Singular value decomposition using QR algorithm: gesvd
 
 struct GesvdDescriptor {

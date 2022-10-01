@@ -376,7 +376,7 @@ def _syevd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   return out[:3]
 
 cuda_syevd = partial(_syevd_mhlo, "cu", _cusolver, True)
-rocm_syevd = partial(_syevd_mhlo, "hip", _hipsolver, False)
+rocm_syevd = partial(_syevd_mhlo, "hip", _hipsolver, True)
 
 
 def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,

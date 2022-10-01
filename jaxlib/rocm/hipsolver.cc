@@ -293,6 +293,74 @@ std::pair<int, py::bytes> BuildSyevdDescriptor(const py::dtype& dtype,
   return {lwork, PackDescriptor(SyevdDescriptor{type, uplo, b, n, lwork})};
 }
 
+// Symmetric (Hermitian) eigendecomposition, Jacobi algorithm: syevj/heevj
+// Supports batches of matrices up to size 32.
+
+// Returns the workspace size and a descriptor for a syevj_batched operation.
+std::pair<int, py::bytes> BuildSyevjDescriptor(const py::dtype& dtype,
+                                               bool lower, int batch, int n) {
+  HipsolverType type = DtypeToHipsolverType(dtype);
+  auto h = SolverHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
+  int lwork;
+  hipsolverSyevjInfo_t params;
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverCreateSyevjInfo(&params)));
+  std::unique_ptr<void, void (*)(hipsolverSyevjInfo_t)> params_cleanup(
+      params, [](hipsolverSyevjInfo_t p) { hipsolverDestroySyevjInfo(p); });
+  hipsolverEigMode_t jobz = HIPSOLVER_EIG_MODE_VECTOR;
+  hipsolverFillMode_t uplo =
+      lower ? HIPSOLVER_FILL_MODE_LOWER : HIPSOLVER_FILL_MODE_UPPER;
+  if (batch == 1) {
+    switch (type) {
+      case HipsolverType::F32:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverSsyevj_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params)));
+        break;
+      case HipsolverType::F64:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverDsyevj_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params)));
+        break;
+      case HipsolverType::C64:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverCheevj_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params)));
+        break;
+      case HipsolverType::C128:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverZheevj_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params)));
+        break;
+    }
+  } else {
+    switch (type) {
+      case HipsolverType::F32:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverSsyevjBatched_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params, batch)));
+        break;
+      case HipsolverType::F64:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverDsyevjBatched_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params, batch)));
+        break;
+      case HipsolverType::C64:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverCheevjBatched_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params, batch)));
+        break;
+      case HipsolverType::C128:
+        JAX_THROW_IF_ERROR(JAX_AS_STATUS(hipsolverZheevjBatched_bufferSize(
+            handle.get(), jobz, uplo, n, /*A=*/nullptr, /*lda=*/n,
+            /*W=*/nullptr, &lwork, params, batch)));
+        break;
+    }
+  }
+  return {lwork, PackDescriptor(SyevjDescriptor{type, uplo, batch, n, lwork})};
+}
+
 // Singular value decomposition using QR algorithm: gesvd
 
 // Returns the workspace size and a descriptor for a gesvd operation.
@@ -343,8 +411,7 @@ py::dict Registrations() {
   dict["hipsolver_geqrf"] = EncapsulateFunction(Geqrf);
   dict["hipsolver_orgqr"] = EncapsulateFunction(Orgqr);
   dict["hipsolver_syevd"] = EncapsulateFunction(Syevd);
-  // dict["cusolver_syevj"] = EncapsulateFunction(Syevj); not supported by
-  // ROCm yet
+  dict["hipsolver_syevj"] = EncapsulateFunction(Syevj);
   dict["hipsolver_gesvd"] = EncapsulateFunction(Gesvd);
   // dict["cusolver_gesvdj"] = EncapsulateFunction(Gesvdj);  not supported by
   // ROCm yet
@@ -358,8 +425,7 @@ PYBIND11_MODULE(_hipsolver, m) {
   m.def("build_geqrf_descriptor", &BuildGeqrfDescriptor);
   m.def("build_orgqr_descriptor", &BuildOrgqrDescriptor);
   m.def("build_syevd_descriptor", &BuildSyevdDescriptor);
-  // m.def("build_syevj_descriptor", &BuildSyevjDescriptor); not supported by
-  // ROCm yet
+  m.def("build_syevj_descriptor", &BuildSyevjDescriptor);
   m.def("build_gesvd_descriptor", &BuildGesvdDescriptor);
   // m.def("build_gesvdj_descriptor", &BuildGesvdjDescriptor); not supported by
   // ROCm yet
