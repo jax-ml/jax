@@ -26,4 +26,5 @@ from jax._src.util import (
   unzip2 as unzip2,
   wrap_name as wrap_name,
   wraps as wraps,
+  is_sda_like as is_sda_like,
 )

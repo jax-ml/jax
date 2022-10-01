@@ -404,17 +404,19 @@ def pjit(fun: Callable,
         if config.jax_parallel_functions_output_gda or config.jax_array else
         maps._positional_semantics.val)
 
+    is_gda = tuple(isinstance(a, GDA) for a in args_flat)
     global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
         hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
-        tuple(isinstance(a, GDA) for a in args_flat), resource_env)
+        is_gda, resource_env)
 
     jaxpr, canonicalized_out_shardings_flat = _pjit_jaxpr(
         flat_fun, hashable_pytree(out_shardings), global_in_avals,
         HashableFunction(out_tree, closure=()))
 
-    if not config.jax_array:
+    if any(i for i in is_gda):
       canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
           canonicalized_in_shardings_flat, args_flat)
+
     # in_shardings and out_shardings here are all OpShardingSharding.
     params = dict(
         jaxpr=jaxpr,
@@ -473,7 +475,7 @@ def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
 
 
 def _create_sharding_for_array(mesh, x):
-  if isinstance(x, XLACompatibleSharding) or _is_auto(x) or _is_unspecified(x):
+  if isinstance(x, XLACompatibleSharding) or _is_unspecified_or_from_gda_or_auto(x):
     return x
   if mesh.empty:
     raise RuntimeError("pjit requires a non-empty mesh! Is a mesh defined at "
@@ -481,7 +483,7 @@ def _create_sharding_for_array(mesh, x):
                        "XLACompatibleSharding to pjit and then the "
                        "mesh context manager is not required.")
   # A nice user error is raised in _prepare_axis_resources.
-  assert isinstance(x, ParsedPartitionSpec)
+  assert isinstance(x, ParsedPartitionSpec), x
   return _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x)
 
 
@@ -560,8 +562,10 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
                              allow_uneven_sharding=False)
     global_in_avals = local_in_avals
+    # TODO(yashkatariya): Only check for _is_auto or _is_unspecified when GDA
+    # is deleted.
     canonicalized_shardings = tuple(
-        i if _is_auto(i) or _is_unspecified(i) else to_op_sharding_sharding(i, aval.ndim)
+        i if _is_unspecified_or_from_gda_or_auto(i) else to_op_sharding_sharding(i, aval.ndim)
         for i, aval in safe_zip(in_shardings_flat, global_in_avals))
     return tuple(global_in_avals), canonicalized_shardings
 
@@ -808,10 +812,6 @@ def _prepare_axis_resources(axis_resources,
   new_entries = []
   for entry in entries:
     if _is_unspecified_or_from_gda_or_auto(entry):
-      if config.jax_array and _is_from_gda(entry):
-        raise ValueError('`FROM_GDA` cannot be set when config.jax_array is '
-                         'enabled. Leave in_axis_resources empty or populate '
-                         'it with shardings.')
       new_entries.append(entry)
     elif isinstance(entry, Sharding):
       if not isinstance(entry, XLACompatibleSharding):
@@ -1589,6 +1589,11 @@ def _maybe_replace_from_gda_with_pspec(
   for in_sharding_flat, arg in safe_zip(in_shardings_flat, args_flat):
     if _is_auto(in_sharding_flat):
       out.append(in_sharding_flat)
+    # Add a fast path when array is enabled. Don't use GDA when jax_array is
+    # enabled.
+    elif config.jax_array and isinstance(arg, GDA):
+      gda_sharding = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+      out.append(to_op_sharding_sharding(gda_sharding, arg.ndim))
     elif isinstance(arg, GDA):
       gda_sharding = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
       out.append(_gda_check_and_get_sharding(gda_sharding, in_sharding_flat, arg.ndim))
