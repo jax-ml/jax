@@ -4353,7 +4353,7 @@ mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
 
-def _array_copy(arr):
+def _array_copy(arr: ArrayLike) -> Array:
   return copy_p.bind(arr)
 
 # The copy_p primitive exists for expressing making copies of runtime arrays.
