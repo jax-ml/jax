@@ -178,6 +178,10 @@ class _DeviceArray(DeviceArray):  # type: ignore
     if self._npy_value is None:
       self.device_buffer.copy_to_host_async()  # pytype: disable=attribute-error
 
+  def unsafe_buffer_pointer(self):
+    self._check_if_deleted()
+    return self.device_buffer.unsafe_buffer_pointer()  # pytype: disable=attribute-error
+
   def delete(self):
     """Deletes the device array and any cached copy on the host.
 
