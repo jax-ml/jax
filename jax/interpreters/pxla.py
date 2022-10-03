@@ -2047,9 +2047,13 @@ class ExecuteReplicated:
           input_bufs)
     if dispatch.needs_check_special():
       for bufs in out_bufs:
-        if xb.use_sharded_buffer and isinstance(bufs, xb.xla_client.ShardedBuffer):
-          bufs = cast(xb.xla_client.ShardedBuffer, bufs).get_device_buffers()
+        if xb.use_sharded_buffer and isinstance(bufs, xc.ShardedBuffer):
+          bufs = cast(xc.ShardedBuffer, bufs).get_device_buffers()
         dispatch.check_special(self.name, bufs)
+    # TODO(yashkatariya): Remove once migration to Array is completed.
+    if (config.jax_array and out_bufs and xb.use_sharded_buffer and
+        isinstance(out_bufs[0], xc.ShardedBuffer)):
+      out_bufs = [o.get_device_buffers() for o in out_bufs]
     return self.out_handler(out_bufs)
 
 
