@@ -698,6 +698,41 @@ def named_cases_from_sampler(gen):
     yield case
 
 
+def sample_product_testcases(*args, **kw):
+  """Non-decorator form of sample_product."""
+  args = [list(arg) for arg in args]
+  kw = [(k, list(v)) for k, v in kw.items()]
+  n = prod(len(a) for a in args) * prod(len(v) for _, v in kw)
+  rng = np.random.RandomState(42)
+  testcases = []
+  for i in rng.choice(n, size=min(n, FLAGS.num_generated_cases), replace=False):
+    testcase = {}
+    for a in args:
+      testcase.update(a[i % len(a)])
+      i //= len(a)
+    for k, v in kw:
+      testcase[k] = v[i % len(v)]
+      i //= len(v)
+    testcases.append(testcase)
+  return testcases
+
+def sample_product(*args, **kw):
+  """Decorator that samples from a cartesian product of test cases.
+
+  Similar to absltest.parameterized.product(), except that it samples from the
+  cartesian product rather than returning the whole thing.
+
+  Arguments:
+    *args: each positional argument is a list of dictionaries. The entries
+      in a dictionary correspond to name=value argument pairs; one dictionary
+      will be chosen for each test case. This allows multiple parameters to be
+      correlated.
+    **kw: each keyword argument is a list of values. One value will be chosen
+      for each test case.
+  """
+  return parameterized.parameters(*sample_product_testcases(*args, **kw))
+
+
 class JaxTestLoader(absltest.TestLoader):
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)
