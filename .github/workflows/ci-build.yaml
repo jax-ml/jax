@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Cancel previous
-        uses: styfle/cancel-workflow-action@0.10.0
+        uses: styfle/cancel-workflow-action@0.10.1
         with:
           access_token: ${{ github.token }}
         if: ${{github.ref != 'refs/head/main'}}
@@ -67,7 +67,7 @@ jobs:
             use-latest-jaxlib: false
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.10.0
+      uses: styfle/cancel-workflow-action@0.10.1
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/head/main'}}
@@ -124,7 +124,7 @@ jobs:
         python-version: [3.7]
     steps:
     - name: Cancel previous
-      uses: styfle/cancel-workflow-action@0.10.0
+      uses: styfle/cancel-workflow-action@0.10.1
       with:
         access_token: ${{ github.token }}
       if: ${{github.ref != 'refs/head/main'}}
