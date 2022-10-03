@@ -453,7 +453,6 @@ class cuSparseTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
-  @jtu.skip_on_devices("rocm")  # TODO(rocm): see SWDEV-328107
   def test_coo_sorted_indices_gpu_lowerings(self):
     dtype = jnp.float32
 
@@ -1143,7 +1142,6 @@ class BCOOTest(jtu.JaxTestCase):
           [(5, 3), (5, 2), [0], [0]],
       ]
       for dtype in jtu.dtypes.floating + jtu.dtypes.complex))
-  @jtu.skip_on_devices("rocm")
   def test_bcoo_dot_general_cusparse(
     self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
     rng = jtu.rand_small(self.rng())
@@ -1275,7 +1273,6 @@ class BCOOTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
-  @jtu.skip_on_devices("rocm")  # TODO(rocm): see SWDEV-328107
   def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
     """Tests bcoo dot general with out-of-bound and unsorted indices."""
 

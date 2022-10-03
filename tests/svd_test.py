@@ -208,6 +208,7 @@ class SvdTest(jtu.JaxTestCase):
       for m, n, r, c in zip([2, 4, 8], [4, 4, 6], [1, 0, 1], [1, 0, 1])
       for dtype in jtu.dtypes.floating
   ])
+  @jtu.skip_on_devices("rocm")
   def testSvdOnTinyElement(self, m, n, r, c, dtype):
     """Tests SVD on matrix of zeros and close-to-zero entries."""
     a = jnp.zeros((m, n), dtype=dtype)
