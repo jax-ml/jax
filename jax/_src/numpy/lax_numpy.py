@@ -1653,7 +1653,7 @@ def tile(A, reps):
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
-def _concatenate_array(arr, axis: int, dtype=None):
+def _concatenate_array(arr, axis: Optional[int], dtype=None):
   # Fast path for concatenation when the input is an ndarray rather than a list.
   arr = asarray(arr, dtype=dtype)
   if arr.ndim == 0 or arr.shape[0] == 0:
@@ -1668,7 +1668,7 @@ def _concatenate_array(arr, axis: int, dtype=None):
   return lax.reshape(arr, shape, dimensions)
 
 @_wraps(np.concatenate)
-def concatenate(arrays, axis: int = 0, dtype=None):
+def concatenate(arrays, axis: Optional[int] = 0, dtype=None):
   if isinstance(arrays, (np.ndarray, ndarray)):
     return _concatenate_array(arrays, axis, dtype=dtype)
   _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
