@@ -405,6 +405,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
 
     for i, j in zip(iter(arr), iter(input_data)):
+      self.assertIsInstance(i, array.ArrayImpl)
       self.assertArraysEqual(i, j)
 
   def test_array_getitem_mesh_pspec_sharding_multi_device(self):
@@ -416,8 +417,12 @@ class JaxArrayTest(jtu.JaxTestCase):
     # TODO(yashkatariya): `__getitem__` with a specific index takes the fast
     # path after b/245667823 is fixed.
     s = arr[2:4, 0:1]
+    self.assertIsInstance(s, array.ArrayImpl)
     self.assertArraysEqual(s, np.array([[4], [6]]))
-    self.assertArraysEqual(arr[:2], input_data[:2])
+
+    p = arr[:2]
+    self.assertIsInstance(p, array.ArrayImpl)
+    self.assertArraysEqual(p, input_data[:2])
 
   def test_array_iter_mesh_pspec_sharding_single_device(self):
     if jax.device_count() < 2:

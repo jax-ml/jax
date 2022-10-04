@@ -277,9 +277,9 @@ class ArrayImpl(basearray.Array):
       return lax_numpy._rewriting_take(self, idx)
     else:
       # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
-      # the fast path (see PmapSharding branch above) after b/245667823 is
-      # fixed.
-      return self._value[idx]
+      # the fast path (see PmapSharding branch above) after after uneven
+      # partitioning support is added
+      return device_put(self._value[idx])
 
   def __iter__(self):
     if self.ndim == 0:
@@ -292,8 +292,8 @@ class ArrayImpl(basearray.Array):
         return (self[i] for i in range(self.shape[0]))  # type: ignore
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
-        # here after b/245667823 is fixed.
-        return (self._value[i] for i in range(self.shape[0]))
+        # here after uneven partitioning support is added.
+        return (device_put(self._value[i]) for i in range(self.shape[0]))
 
   def item(self):
     if dtypes.issubdtype(self.dtype, np.complexfloating):
@@ -520,9 +520,6 @@ mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
 
 def _device_put_array(x, device: Optional[Device]):
-  # TODO(yashkatariya): Remove this restriction and the round trip via host
-  # once lowering to XLA goes through `lower_mesh_computation`.
-  assert x.is_fully_addressable()
   if dispatch.is_single_device_sharding(x.sharding):
     x = dispatch._copy_device_array_to_device(pxla._set_aval(x._arrays[0]), device)
     return (x,)
