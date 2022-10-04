@@ -77,7 +77,8 @@ from jax._src.numpy.util import (  # noqa: F401
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DTypeLike
-from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
+from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip,
+                           ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
 from jax._src.array import ArrayImpl
 
@@ -2979,15 +2980,11 @@ def _einsum(operands: Sequence,
     return operand, names
 
   def filter_singleton_dims(operand, names, other_shape, other_names):
-    s = shape(operand)
-    new_shape = []
-    new_names = []
-    for i, d in enumerate(names):
-      other_i = other_names.find(d)
-      if not core.symbolic_equal_dim(s[i], 1) or other_i == -1 or core.symbolic_equal_dim(other_shape[other_i], 1):
-        new_shape.append(s[i])
-        new_names.append(d)
-    return reshape(operand, tuple(new_shape)), "".join(new_names)
+    eq = core.symbolic_equal_dim
+    keep = [not eq(operand.shape[i], 1) or j == -1 or eq(other_shape[j], 1)
+            for i, j in enumerate(map(other_names.find, names))]
+    sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
+    return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
   for operand_indices, contracted_names_set, einstr in contractions:
     contracted_names = sorted(contracted_names_set)
@@ -3658,7 +3655,11 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
     step  = idx.step  if idx.step  is not None else 1
     if (0 <= start < n and 0 <= stop <= n and 0 < step and
         (start, stop, step) != (0, n, 1)):
-      return lax.slice_in_dim(arr, start, stop, step)
+      if _any(isinstance(d, core.Tracer) for d in arr.shape[1:]):
+        if step == 1:  # TODO(mattjj, sharadmv): handle step != 1
+          return lax.dynamic_slice_in_dim(arr, start, _max(0, stop - start), 0)
+      else:
+        return lax.slice_in_dim(arr, start, stop, step)
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if jax.config.jax_dynamic_shapes and arr.ndim > 0:

@@ -1456,7 +1456,11 @@ def _iter(tracer):
     raise TypeError("iteration over a 0-d array")  # same as numpy error
   else:
     n = int(tracer.shape[0])
-    return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
+    if any(isinstance(d, core.Tracer) for d in tracer.shape):
+      return (slicing.dynamic_index_in_dim(tracer, i, keepdims=False)
+              for i in range(n))
+    else:
+      return (slicing.index_in_dim(tracer, i, keepdims=False) for i in range(n))
 ShapedArray._iter = staticmethod(_iter)
 core.DShapedArray._iter = staticmethod(_iter)
 
@@ -3186,9 +3190,7 @@ def _squeeze_lower(ctx, operand, *, dimensions):
     ).results
   else:
     return mhlo.ReshapeOp(mlir.aval_to_ir_type(aval_out), operand).results
-
 mlir.register_lowering(squeeze_p, _squeeze_lower)
-
 
 
 def shape_as_value(shape: core.Shape):
