@@ -127,8 +127,14 @@ def _try_broadcast_shapes(
         return None
   return tuple(result_shape)
 
+@overload
+def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]: ...
+
+@overload
 def broadcast_shapes(*shapes: Tuple[Union[int, core.Tracer], ...]
-                     ) -> Tuple[Union[int, core.Tracer], ...]:
+                     ) -> Tuple[Union[int, core.Tracer], ...]: ...
+
+def broadcast_shapes(*shapes):
   """Returns the shape that results from NumPy broadcasting of `shapes`."""
   # NOTE: We have both cached and uncached versions to handle Tracers in shapes.
   try:
