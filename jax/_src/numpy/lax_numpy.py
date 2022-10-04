@@ -76,6 +76,7 @@ from jax._src.numpy.util import (  # noqa: F401
   _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
+from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
                            canonicalize_axis as _canonicalize_axis)
 from jax._src.array import ArrayImpl
@@ -1838,7 +1839,8 @@ https://jax.readthedocs.io/en/latest/faq.html).
 """
 
 @_wraps(np.array, lax_description=_ARRAY_DOC)
-def array(object, dtype=None, copy=True, order="K", ndmin=0):
+def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
+          order: str = "K", ndmin: int = 0) -> Array:
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
@@ -1878,6 +1880,8 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   # (See https://github.com/google/jax/issues/8950)
   ndarray_types = (device_array.DeviceArray, core.Tracer, ArrayImpl)
 
+  out: ArrayLike
+
   if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
@@ -1902,10 +1906,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError(f"Unexpected input type for array: {type(object)}")
 
-  out = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
-  if ndmin > ndim(out):
-    out = lax.expand_dims(out, range(ndmin - ndim(out)))
-  return out
+  out_array: Array = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
+  if ndmin > ndim(out_array):
+    out_array = lax.expand_dims(out_array, range(ndmin - ndim(out_array)))
+  return out_array
 
 
 def _convert_to_array_if_dtype_fails(x):
@@ -1918,7 +1922,7 @@ def _convert_to_array_if_dtype_fails(x):
 
 
 @_wraps(np.asarray, lax_description=_ARRAY_DOC)
-def asarray(a, dtype=None, order=None):
+def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Any = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "asarray")
   dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
   return array(a, dtype=dtype, copy=False, order=order)
