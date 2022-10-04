@@ -416,7 +416,7 @@ class LaxTest(jtu.JaxTestCase):
           for b, i, j in itertools.product([2, 3], repeat=3)]
       for dtype in float_dtypes
       for strides in [(1, 1), (1, 2), (2, 1)]
-      for padding in ["VALID", "SAME"]))
+      for padding in ["VALID", "SAME", "PYTORCH_SAME"]))
   def testConv(self, lhs_shape, rhs_shape, dtype, strides, padding):
     rng = jtu.rand_small(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -3035,6 +3035,24 @@ class LazyConstantTest(jtu.JaxTestCase):
         expected.astype(np.float32), lax.log1p(np.float32(1e-5)))
     np.testing.assert_array_almost_equal_nulp(
         expected.astype(np.complex64), lax.log1p(np.complex64(1e-5)))
+
+  @parameterized.named_parameters(
+      dict(testcase_name='_same', pad_type='SAME', answer=[(0, 1)]),
+      dict(
+          testcase_name='_pytorch_same',
+          pad_type='PYTORCH_SAME',
+          answer=[(1, 0)],
+      ),
+      dict(testcase_name='_valid', pad_type='VALID', answer=[(0, 0)]),
+  )
+  def testPadTypeToPads(self, pad_type, answer):
+    result = lax.padtype_to_pads(
+        in_shape=[768],
+        window_shape=[3],
+        window_strides=2,
+        padding=pad_type,
+    )
+    self.assertEqual(result, answer)
 
 
 class LaxNamedShapeTest(jtu.JaxTestCase):

@@ -630,7 +630,7 @@ class LaxVmapTest(jtu.JaxTestCase):
        "dtype": dtype, "padding": padding, "shape": shape,
        "dims": dims, "strides": strides}
       for dtype in float_dtypes
-      for padding in ["VALID", "SAME"]
+      for padding in ["VALID", "SAME", "PYTORCH_SAME",]
       for shape in [(3, 2, 4, 6)]
       for dims in [(1, 1, 2, 1)]
       for strides in [(1, 2, 2, 1), (1, 1, 1, 1)]))
