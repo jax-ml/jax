@@ -800,6 +800,13 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
       out = f(np.arange(40.))
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
+  def test_array_layout_is_preserved(self):
+
+    def g(x):
+      return jax.pure_callback(lambda x: x, x, x)
+
+    x = np.arange(6, dtype=np.int32).reshape((3, 2))
+    np.testing.assert_allclose(g(x), x)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
