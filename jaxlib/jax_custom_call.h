@@ -7,21 +7,23 @@
 extern "C" {
 #endif
 
-#define JAX_FFI_CALL_CPU "JAX_FFI_CALL_CPU"
+#define JaxFFICallCpu "JaxFFICallCpu"
 
-#define JaxFFIVersion() \
-        ((*((void (*)())(api[0])))())
+#define JaxFFIVersion(api) (api->version)
 #define JaxFFIStatusSetSuccess(api, status) \
-        ((*((void (*)(JaxFFIStatus*))(api[1])))(status))
+        ((*((void (*)(JaxFFIStatus*))(api->fn_table[0])(status))))
 #define JaxFFIStatusSetFailure(api, status, msg) \
-        ((*((void (*)(JaxFFIStatus*, const char*))(api[2])))(status, msg))
+        ((*((void (*)(JaxFFIStatus*, const char*))(api->fn_table[1])))(status, msg))
 
 struct JaxFFIStatus;
 
-typedef void* JaxFFI_API;
+struct JaxFFIApi {
+  int version;
+  void** fn_table;
+};
 
 /*
-void add_one(JaxFFI_API* api, JaxFFIStatus* status, ...) {
+void add_one(JaxFFIApi* api, JaxFFIStatus* status, ...) {
   JaxFFIStatusSetFailure(api, status, "...");
 }
 */

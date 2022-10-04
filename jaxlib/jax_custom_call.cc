@@ -11,11 +11,7 @@ struct JaxFFIStatus {
   std::optional<std::string> message;
 };
 
-int JAX_FFI_V1 = 1;
-
-int JaxFFIVersionFn() {
-  return JAX_FFI_V1;
-}
+int JaxFFIVersion1 = 0;
 
 void JaxFFIStatusSetSuccessFn(JaxFFIStatus* status) {
   status->message = std::nullopt;
@@ -25,11 +21,15 @@ void JaxFFIStatusSetFailureFn(JaxFFIStatus* status, const char* message) {
   status->message = std::string(message);
 }
 
-void *JaxFFI_API_Table[] = {
-  (void *)&JaxFFIVersionFn,
-  (void *)&JaxFFIStatusSetSuccessFn,
-  (void *)&JaxFFIStatusSetFailureFn
+struct JaxFFIStruct {
+  int version = JaxFFIVersion1;
+  void* fn_table[2] = {
+    (void *)&JaxFFIStatusSetSuccessFn,
+    (void *)&JaxFFIStatusSetFailureFn
+  };
 };
+
+JaxFFIStruct jax_ffi_struct;
 
 namespace py = pybind11;
 
@@ -54,8 +54,8 @@ extern "C" void JaxFFICallWrapper(void* output, void** inputs,
   auto descriptor = reinterpret_cast<Descriptor*>(*static_cast<uintptr_t*>(inputs[0]));
   inputs += 1;
   JaxFFIStatus jax_ffi_status;
-  auto function_ptr = reinterpret_cast<void (*) (JaxFFI_API*, JaxFFIStatus*, void*, void**, void**)>(descriptor->function_ptr);
-  function_ptr(JaxFFI_API_Table, &jax_ffi_status,
+  auto function_ptr = reinterpret_cast<void(*)(JaxFFIApi*, JaxFFIStatus*, void*, void**, void**)>(descriptor->function_ptr);
+  function_ptr(reinterpret_cast<JaxFFIApi*>(&jax_ffi_struct), &jax_ffi_status,
                descriptor->user_descriptor,
                inputs, reinterpret_cast<void**>(output));
   if (jax_ffi_status.message) {

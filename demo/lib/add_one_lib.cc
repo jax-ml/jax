@@ -10,7 +10,8 @@ struct Info {
 };
 // TODO: upgrade XLA CPU custom call to use serialization not pointer (common case is string)
 
-extern "C" void add_one(JaxFFI_API* api, JaxFFIStatus* status, void* descriptor, void** inputs, void** outputs) {
+extern "C" void add_one(JaxFFIApi* api, JaxFFIStatus* status, void* descriptor, void** inputs, void** outputs) {
+  assert(JaxFFIVersion(api) == 1);
   Info* info = (Info*) descriptor;
   float* input = (float*) inputs[0];
   float* output = (float*) outputs[0];
@@ -22,7 +23,7 @@ extern "C" void add_one(JaxFFI_API* api, JaxFFIStatus* status, void* descriptor,
 
 PYBIND11_MODULE(add_one_lib, m) {
   m.def("get_function", []() {
-    return py::capsule(reinterpret_cast<void*>(add_one), JAX_FFI_CALL_CPU);
+    return py::capsule(reinterpret_cast<void*>(add_one), JaxFFICallCpu);
   });
   m.def("get_descriptor", [](float n) {
     Info* info = new Info();
