@@ -350,7 +350,7 @@ def backends():
           # we expect a RuntimeError.
           err_msg = f"Unable to initialize backend '{platform}': {err}"
           if config.jax_platforms:
-            setup_msg = f"(Set JAX_PLATFORMS='' to auto fallback to CPU or JAX_PLATFORMS=cpu to always use CPU)"
+            setup_msg = f" (set JAX_PLATFORMS='' to choose backend automatically)"
             raise RuntimeError(err_msg + setup_msg)
           else:
             _backends_errors[platform] = str(err)
