@@ -1233,6 +1233,23 @@ class APITest(jtu.JaxTestCase):
       with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
         jax.jit(f)(x)
 
+
+  @parameterized.named_parameters(
+      ('grad', jax.grad),
+      ('jacfwd', jax.jacfwd),
+      ('jacref', jax.jacrev),
+  )
+  def test_grad_wrap(self, transform):
+    # Ensures that transforms wrap transformed functions with the correct signature.
+
+    @partial(jit, static_argnames=['flag'])
+    @transform
+    def my_function(x, flag):
+      return x if flag else jnp.zeros_like(x)
+
+    self.assertEqual(my_function(1.0, False), 0.0)
+    self.assertEqual(my_function(1.0, True), 1.0)
+
   def test_grad_bad_input(self):
     def f(x):
       return x

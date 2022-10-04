@@ -1249,6 +1249,12 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   _check_callable(fun)
   argnums = _ensure_index(argnums)
 
+  docstr = ("Jacobian of {fun} with respect to positional argument(s) "
+            "{argnums}. Takes the same arguments as {fun} but returns the "
+            "jacobian of the output with respect to the arguments at "
+            "positions {argnums}.")
+
+  @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
@@ -1331,6 +1337,12 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   """
   _check_callable(fun)
 
+  docstr = ("Jacobian of {fun} with respect to positional argument(s) "
+            "{argnums}. Takes the same arguments as {fun} but returns the "
+            "jacobian of the output with respect to the arguments at "
+            "positions {argnums}.")
+
+  @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
