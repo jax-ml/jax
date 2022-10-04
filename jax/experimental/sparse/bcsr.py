@@ -14,15 +14,76 @@
 
 """BCSR (Bached compressed row) matrix object and associated primitives."""
 
-from typing import Tuple
+from typing import NamedTuple, Sequence, Tuple
 
 from jax import core
 from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.util import _safe_asarray
+from jax.experimental.sparse.util import _broadcasting_vmap, _csr_to_coo, _safe_asarray
 import jax.numpy as jnp
-from jax.util import split_list
+from jax.util import split_list, safe_zip
 
 Shape = Tuple[int, ...]
+
+
+class BCSRProperties(NamedTuple):
+  n_batch: int
+  n_dense: int
+  nse: int
+
+
+def _compatible(shape1, shape2):
+  return all(s1 in (1, s2) for s1, s2 in safe_zip(shape1, shape2))
+
+
+def _validate_bcsr_indices(indices: jnp.ndarray, indptr: jnp.ndarray,
+                           shape: Sequence[int]) -> BCSRProperties:
+  assert jnp.issubdtype(indices.dtype, jnp.integer)
+  assert jnp.issubdtype(indptr.dtype, jnp.integer)
+  shape = tuple(shape)
+
+  nse = indices.shape[-1]
+  n_batch = indices.ndim - 1
+  n_dense = len(shape) - n_batch - 2
+  assert n_dense >= 0
+
+  if not _compatible(indices.shape[:n_batch], shape[:n_batch]):
+    raise ValueError("indices batch dimensions not compatible for "
+                     f"indices.shape={indices.shape}, shape={shape}")
+  if not _compatible(indptr.shape[:n_batch], shape[:n_batch]):
+    raise ValueError("indptr batch dimensions not compatible for "
+                     f"indptr.shape={indptr.shape}, shape={shape}")
+  if indptr.shape[n_batch:] != (shape[n_batch] + 1,):
+    raise ValueError("indptr shape must match the matrix shape plus 1.")
+
+  return BCSRProperties(n_batch=n_batch, n_dense=n_dense, nse=nse)
+
+
+def _validate_bcsr(data: jnp.ndarray, indices: jnp.ndarray,
+                   indptr: jnp.ndarray, shape: Sequence[int]) -> BCSRProperties:
+  props = _validate_bcsr_indices(indices, indptr, shape)
+  shape = tuple(shape)
+  n_batch, n_dense, nse = props.n_batch, props.n_dense, props.nse
+  n_sparse = data.ndim - n_batch - n_dense
+  if n_sparse != 2:
+    raise ValueError("BCSR array must have 2 sparse dimensions; "
+                     f"{n_sparse} is given.")
+  if not _compatible(data.shape[:n_batch], shape[:n_batch]):
+    raise ValueError("data batch dimensions not compatible for "
+                    f"data.shape={data.shape}, shape={shape}")
+  if data.shape[-(n_dense + 1):] != (nse,) + shape[n_batch + 2:]:
+    raise ValueError(f"Invalid data.shape={data.shape} for "
+                    f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
+  return props
+
+
+def _bcsr_to_bcoo(indices: jnp.ndarray, indptr: jnp.ndarray, *,
+                  shape: Sequence[int]) -> jnp.ndarray:
+  """Given BCSR (indices, indptr), return BCOO (indices)."""
+  n_batch, _, _ = _validate_bcsr_indices(indices, indptr, shape)
+  csr_to_coo = _csr_to_coo
+  for _ in range(n_batch):
+    csr_to_coo = _broadcasting_vmap(csr_to_coo)
+  return jnp.stack(csr_to_coo(indices, indptr), axis=indices.ndim)
 
 
 class BCSR(JAXSparse):
