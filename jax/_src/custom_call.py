@@ -29,6 +29,7 @@ def _custom_call_lowering_rule(ctx: mlir.LoweringRuleContext, *in_nodes,
   custom_call = _CUSTOM_CALL_REGISTRY[name]
   function_ptr = custom_call._registry[platform]
   custom_call_descriptor, keepalive = custom_call_lib.make_descriptor(function_ptr, descriptor)
+  print("lower 1")
   ctx.module_context.add_keepalive(keepalive)
   ctx.module_context.add_keepalive(descriptor)
   out_type = ir.TupleType.get_tuple([
@@ -47,6 +48,7 @@ def _custom_call_lowering_rule(ctx: mlir.LoweringRuleContext, *in_nodes,
             called_computations=ir.ArrayAttr.get([]))
   results = [mhlo.GetTupleElementOp(out, mlir.i32_attr(i)).result
              for i in range(len(out_avals))]
+  print("lower 2")
   return results
 mlir.register_lowering(custom_call_p, _custom_call_lowering_rule, platform="cpu")
 
