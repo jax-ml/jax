@@ -78,7 +78,7 @@ class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
   def input_shardings(self) -> Sequence[XLACompatibleSharding]:
-    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)    # pytype: disable=attribute-error
+    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)  # pytype: disable=attribute-error
     assert not kwargs
     return args
 
@@ -438,14 +438,14 @@ def pjit(fun: Callable,
   def lower(*args, _global_avals=False, **kwargs):
     (_, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params(*args, _global_avals=_global_avals, **kwargs)
-    if any(_is_unspecified(i) for i in params['in_shardings']):
-      raise ValueError("Please specify sharding on pjit's in_axis_resources.")
+    in_shardings = _resolve_in_shardings(
+        args, params['in_shardings'], params['out_shardings'],
+        params['resource_env'].physical_mesh)
     in_is_global = _calc_is_global_sequence(
-        params['in_positional_semantics'], params['in_shardings'])
+        params['in_positional_semantics'], in_shardings)
     lowering = _pjit_lower(
-        params['jaxpr'], params['in_shardings'],
-        params['out_shardings'],  params['resource_env'],
-        params['donated_invars'], params['name'],
+        params['jaxpr'], in_shardings, params['out_shardings'],
+        params['resource_env'], params['donated_invars'], params['name'],
         in_is_global)
 
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])

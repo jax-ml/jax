@@ -253,7 +253,7 @@ class ArgInfo:
 
 
 class Stage:
-  args_info: Any                # PyTree of ArgInfo
+  args_info: Any  # PyTree of ArgInfo
 
   @property
   def in_tree(self) -> tree_util.PyTreeDef:
@@ -378,6 +378,20 @@ class Compiled(Stage):
     runtime.
     """
     return self._executable.runtime_executable()
+
+  @property
+  def input_shardings(self):  # PyTree[XLACompatibleSharding]
+    shardings_flat = getattr(self._executable, '_in_shardings', None)
+    if shardings_flat is None:
+      raise ValueError("no input_shardings on compiled object")
+    return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
+
+  @property
+  def output_shardings(self):  # PyTree[XLACompatibleSharding]
+    shardings_flat = getattr(self._executable, '_out_shardings', None)
+    if shardings_flat is None:
+      raise ValueError("no output_shardings on compiled object")
+    return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   def __call__(self, *args, **kwargs):
     if jax.config.jax_dynamic_shapes:

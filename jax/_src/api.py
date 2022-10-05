@@ -3018,10 +3018,11 @@ def _valid_jaxtype(arg):
 
 
 class ShapeDtypeStruct:
-  __slots__ = ["shape", "dtype", "named_shape"]
-  def __init__(self, shape, dtype, named_shape=None):
+  __slots__ = ["shape", "dtype", "named_shape", "sharding"]
+  def __init__(self, shape, dtype, sharding=None, named_shape=None):
     self.shape = shape
     self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
+    self.sharding = sharding
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: prod(self.shape))
