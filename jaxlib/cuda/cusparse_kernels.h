@@ -32,6 +32,8 @@ limitations under the License.
 
 // Some functionality defined here is only available in CUSPARSE 11.3 or newer.
 #define JAX_CUSPARSE_11300 (CUSPARSE_VERSION >= 11300)
+// CUDA-11.8 introduces FP8 E4M3/E5M2 types.
+#define JAX_CUDA_11080 (CUDA_VERSION >= 11080)
 
 namespace jax {
 
