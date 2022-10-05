@@ -300,6 +300,13 @@ for device_array in [DeviceArray]:
 
   setattr(device_array, "sharding", property(sharding))
 
+  def addressable_shards(self):
+    from jax._src import array
+    return [array.Shard(self.device(), self.sharding, self.shape,
+                        self.device_buffer)]
+
+  setattr(device_array, "addressable_shards", property(addressable_shards))
+
   setattr(device_array, "__str__", partialmethod(_forward_to_value, str))
   setattr(device_array, "__bool__", partialmethod(_forward_to_value, bool))
   setattr(device_array, "__nonzero__", partialmethod(_forward_to_value, bool))

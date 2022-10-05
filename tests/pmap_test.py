@@ -2605,6 +2605,9 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
       y = jax.device_put_sharded(x, devices)
     self.assertIsInstance(y, array_type)
     self.assertIsInstance(y.sharding, jax.sharding.PmapSharding)
+    for s in y.addressable_shards:
+      self.assertArraysEqual(s.data, y[s.index])
+      self.assertEqual(s.replica_id, 0)
     buffers = getattr(y, buffer_attr)
     self.assertEqual(len(buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(buffers, devices)))

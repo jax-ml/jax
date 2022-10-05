@@ -854,6 +854,15 @@ def _sda_sharding(self):
                             'have the sharding attribute implemented. Please '
                             'use the new `jax.Array` type instead.')
 
+def _sda_addressable_shards(self):
+  from jax._src import array
+  out = []
+  for db in self.device_buffers:
+    db = _set_aval(db)
+    out.append(array.Shard(db.device(), self.sharding, self.shape, db))
+  return out
+
+
 for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
   setattr(sda, "one_replica_buffer_indices",
           property(_sda_one_replica_buffer_indices))
@@ -865,9 +874,11 @@ for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
   setattr(sda, "__iter__", _sda__iter__)
   setattr(sda, "__reversed__", _sda__reversed__)
   setattr(sda, "sharding", property(_sda_sharding))
+  setattr(sda, "addressable_shards", property(_sda_addressable_shards))
 
 del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async,
-     _sda_check_if_deleted, _sda_block_until_ready, _sda_value, _sda__getitem__)
+     _sda_check_if_deleted, _sda_block_until_ready, _sda_value, _sda__getitem__,
+     _sda_sharding, _sda_addressable_shards)
 
 
 ShardedDeviceArray: Type[object]

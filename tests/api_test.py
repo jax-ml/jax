@@ -1491,6 +1491,10 @@ class APITest(jtu.JaxTestCase):
     x = api.device_put(x)
     _check_instance(self, x)
     self.assertIsInstance(x.sharding, jax.sharding.SingleDeviceSharding)
+    for s in x.addressable_shards:
+      self.assertArraysEqual(s.data, x)
+      self.assertEqual(s.replica_id, 0)
+      self.assertEqual(s.index, (slice(None), slice(None)))
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
