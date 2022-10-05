@@ -18,7 +18,8 @@ from functools import partial
 import numpy as np
 import textwrap
 import operator
-from typing import Optional, Tuple, Union, cast
+from typing import Optional, Tuple, Union, cast, overload
+from typing_extensions import Literal
 
 from jax import jit, custom_jvp
 from jax import lax
@@ -44,6 +45,22 @@ def _H(x: ArrayLike) -> Array:
 def cholesky(a: ArrayLike) -> Array:
   a, = _promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.cholesky(a)
+
+@overload
+def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[True],
+        hermitian: bool = False) -> Tuple[Array, Array, Array]: ...
+@overload
+def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[True],
+        hermitian: bool = False) -> Tuple[Array, Array, Array]: ...
+@overload
+def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[False],
+        hermitian: bool = False) -> Array: ...
+@overload
+def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[False],
+        hermitian: bool = False) -> Array: ...
+@overload
+def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
+        hermitian: bool = False) -> Union[Array, Tuple[Array, Array, Array]]: ...
 
 @_wraps(np.linalg.svd)
 @partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
@@ -531,10 +548,14 @@ def norm(x: ArrayLike, ord: Union[int, str, None] = None,
     raise ValueError(
         f"Invalid axis values ({axis}) for jnp.linalg.norm.")
 
+@overload
+def qr(a: ArrayLike, mode: Literal["r"]) -> Array: ...
+@overload
+def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, Tuple[Array, Array]]: ...
 
 @_wraps(np.linalg.qr)
 @partial(jit, static_argnames=('mode',))
-def qr(a: ArrayLike, mode: str = "reduced") -> Tuple[Array, Array]:
+def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, Tuple[Array, Array]]:
   a, = _promote_dtypes_inexact(jnp.asarray(a))
   if mode == "raw":
     a, taus = lax_linalg.geqrf(a)
