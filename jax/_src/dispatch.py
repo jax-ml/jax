@@ -458,6 +458,8 @@ def lower_xla_callable(
                                                       checkify.init_error,
                                                       checkify.all_checks)
       if error_msgs:
+        # TODO(lenamartens): support pruning.
+        keep_unused = True
         consts, jaxpr = new_jaxpr.consts, new_jaxpr.jaxpr
         err = checkify.init_error
         err_args = ((core.raise_to_shaped(core.get_aval(x)), True)
@@ -945,8 +947,8 @@ def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
   out_bufs = result_handler(env, out_bufs)
   if error_msgs is not None:
     pred, code, payload, *out_bufs = out_bufs
-    error = checkify.Error(pred, code, error_msgs, payload)
-    error.throw()
+    error = checkify.Error(pred, code, error_msgs, payload)  # type: ignore
+    checkify.raise_error(error)
   return out_bufs
 
 
@@ -989,7 +991,7 @@ def _execute_trivial(jaxpr, device: Optional[Device], consts, avals, handlers,
   if error_msgs is not None:
     from jax._src import checkify
     err = checkify.init_error
-    args = [*[err.err, err.code, err.payload], *args]
+    args = (*[err.err, err.code, err.payload], *args)
 
   pruned_args = (x for i, x in enumerate(args) if i in kept_var_idx)
   map(env.setdefault, jaxpr.invars, pruned_args)

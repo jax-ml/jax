@@ -652,6 +652,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertStartsWith(err.get(), "out-of-bounds indexing")
 
   def test_scan_consts2(self):
+    @jax.jit
     def f(xs):
       def scan_body(carry, _):
         # add more consts!
@@ -1241,6 +1242,16 @@ class DebugTest(jtu.JaxTestCase):
 
     f = jax.jit(f, donate_argnums=(0, 1))
     f(3., 4.)
+
+  def test_pruned_args(self):
+    def f(x, _):
+      used = np.array(2.)
+      return x + used
+    f_pruned = jax.jit(f)
+    with jtu.count_device_put() as count:
+      np.testing.assert_allclose(f_pruned(1., 2.), 3)
+    # no pruning and +3 args
+    self.assertEqual(count[0], 5)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
