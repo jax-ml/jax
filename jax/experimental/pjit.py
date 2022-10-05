@@ -25,11 +25,12 @@ from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax._src.sharding import (
     MeshPspecSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
-    XLADeviceAssignment)
+    XLADeviceAssignment, PmapSharding)
 from jax import core
 from jax import linear_util as lu
 from jax import stages
-from jax._src.api import _check_callable, _check_arg, local_devices, FLAGS
+from jax._src import array
+from jax._src.api import _check_callable, _check_arg, local_devices, FLAGS, device_put
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
@@ -412,7 +413,8 @@ def pjit(fun: Callable,
         flat_fun, hashable_pytree(out_shardings), global_in_avals,
         HashableFunction(out_tree, closure=()))
 
-    if not config.jax_array:
+    if (any(_is_from_gda(i) for i in canonicalized_in_shardings_flat) or
+        not config.jax_array):
       canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
           canonicalized_in_shardings_flat, args_flat)
     # in_shardings and out_shardings here are all OpShardingSharding.
@@ -473,7 +475,9 @@ def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
 
 
 def _create_sharding_for_array(mesh, x):
-  if isinstance(x, XLACompatibleSharding) or _is_auto(x) or _is_unspecified(x):
+  # TODO(yashkatariya): Only check for auto and unspecified here after
+  # FROM_GDA is removed.
+  if isinstance(x, XLACompatibleSharding) or _is_unspecified_or_from_gda_or_auto(x):
     return x
   if mesh.empty:
     raise RuntimeError("pjit requires a non-empty mesh! Is a mesh defined at "
@@ -481,7 +485,7 @@ def _create_sharding_for_array(mesh, x):
                        "XLACompatibleSharding to pjit and then the "
                        "mesh context manager is not required.")
   # A nice user error is raised in _prepare_axis_resources.
-  assert isinstance(x, ParsedPartitionSpec)
+  assert isinstance(x, ParsedPartitionSpec), x
   return _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x)
 
 
@@ -560,8 +564,10 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
                              allow_uneven_sharding=False)
     global_in_avals = local_in_avals
+    # TODO(yashkatariya): Only check for _is_auto or _is_unspecified when
+    # FROM_GDA is removed.
     canonicalized_shardings = tuple(
-        i if _is_auto(i) or _is_unspecified(i) else to_op_sharding_sharding(i, aval.ndim)
+        i if _is_unspecified_or_from_gda_or_auto(i) else to_op_sharding_sharding(i, aval.ndim)
         for i, aval in safe_zip(in_shardings_flat, global_in_avals))
     return tuple(global_in_avals), canonicalized_shardings
 
@@ -808,10 +814,6 @@ def _prepare_axis_resources(axis_resources,
   new_entries = []
   for entry in entries:
     if _is_unspecified_or_from_gda_or_auto(entry):
-      if config.jax_array and _is_from_gda(entry):
-        raise ValueError('`FROM_GDA` cannot be set when config.jax_array is '
-                         'enabled. Leave in_axis_resources empty or populate '
-                         'it with shardings.')
       new_entries.append(entry)
     elif isinstance(entry, Sharding):
       if not isinstance(entry, XLACompatibleSharding):
@@ -1589,6 +1591,8 @@ def _maybe_replace_from_gda_with_pspec(
   for in_sharding_flat, arg in safe_zip(in_shardings_flat, args_flat):
     if _is_auto(in_sharding_flat):
       out.append(in_sharding_flat)
+    elif isinstance(arg, array.ArrayImpl):
+      out.append(to_op_sharding_sharding(arg.sharding, arg.ndim))
     elif isinstance(arg, GDA):
       gda_sharding = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
       out.append(_gda_check_and_get_sharding(gda_sharding, in_sharding_flat, arg.ndim))
@@ -1821,3 +1825,97 @@ def _get_pspec_from_executable(
   out_partition_spec = _get_partition_spec(out_ppspec)
   in_partition_spec = _get_partition_spec(in_ppspec)
   return tuple(in_partition_spec), tuple(out_partition_spec)
+
+
+def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
+  """Converts a host local value to a globally sharded `jax.Array`.
+
+  You can use this function to transition to `jax.Array`. Using `jax.Array` with
+  `pjit` has the same semantics of using GDA with pjit i.e. all `jax.Array`
+  inputs to pjit should be globally shaped.
+
+  If you are currently passing host local values to pjit, you can use this
+  function to convert your host local values to global Arrays and then pass that
+  to pjit.
+
+  Example usage:
+
+  ```
+  global_inputs = jax.experimental.pjit.host_local_array_to_global_array(
+    host_local_inputs, global_mesh, in_pspecs)
+
+  with mesh:
+    global_out = pjitted_fun(global_inputs)
+
+  host_local_output = jax.experimental.pjit.global_array_to_host_local_array(
+    global_out, mesh, out_pspecs)
+  ```
+
+  Args:
+    local_inputs: A Pytree of host local values.
+    global_mesh: The global mesh.
+    pspecs: A Pytree of PartitionSpecs.
+  """
+  def _convert(arr, pspec):
+    if isinstance(arr, array.ArrayImpl) and isinstance(arr.sharding, PmapSharding):
+      arr = np.array(arr)
+    local_sharding = MeshPspecSharding(global_mesh.local_mesh, pspec)
+    arrays = [
+        device_put(arr[index], d)
+        for d, index in local_sharding.devices_indices_map(arr.shape).items()
+    ]
+    global_aval = global_mesh._local_to_global(
+        pxla._get_array_mapping(pspec),
+        core.ShapedArray(arr.shape, arrays[0].dtype))
+    return array.ArrayImpl(global_aval, MeshPspecSharding(global_mesh, pspec),
+                           arrays, committed=True)
+
+  flattened_inps, in_tree = tree_flatten(local_inputs)
+  in_pspecs = flatten_axis_resources(
+      'input pspecs', in_tree, pspecs, tupled_args=True)
+  out = tree_map(_convert, tuple(flattened_inps), in_pspecs)
+  return tree_unflatten(in_tree, out)
+
+
+def global_array_to_host_local_array(global_inputs, global_mesh, pspecs):
+  """Converts a global `jax.Array` to a host local `jax.Array`.
+
+  You can use this function to transition to `jax.Array`. Using `jax.Array` with
+  `pjit` has the same semantics of using GDA with pjit i.e. all `jax.Array`
+  inputs to pjit should be globally shaped and the output from `pjit` will also
+  be globally shaped `jax.Array`s
+
+  You can use this function to convert the globally shaped `jax.Array` output
+  from pjit to host local values again so that the transition to jax.Array can
+  be a mechanical change.
+
+  Example usage:
+
+  ```
+  global_inputs = jax.experimental.pjit.host_local_array_to_global_array(
+    host_local_inputs, global_mesh, in_pspecs)
+
+  with mesh:
+    global_out = pjitted_fun(global_inputs)
+
+  host_local_output = jax.experimental.pjit.global_array_to_host_local_array(
+    global_out, mesh, out_pspecs)
+  ```
+
+  Args:
+    global_inputs: A Pytree of global `jax.Array`s.
+    global_mesh: The global mesh.
+    pspecs: A Pytree of PartitionSpecs.
+  """
+  def _convert(arr, pspec):
+    local_aval = global_mesh._global_to_local(
+        pxla._get_array_mapping(pspec), arr.aval)
+    return array.ArrayImpl(
+        local_aval, MeshPspecSharding(global_mesh.local_mesh, pspec),
+        arr._arrays, committed=True)
+
+  flattened_inps, out_tree = tree_flatten(global_inputs)
+  out_pspecs = flatten_axis_resources(
+      'output pspecs', out_tree, pspecs, tupled_args=True)
+  out = tree_map(_convert, tuple(flattened_inps), out_pspecs)
+  return tree_unflatten(out_tree, out)
