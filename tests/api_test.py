@@ -56,6 +56,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import array, sharding
 from jax.experimental import pjit
+from jax.experimental import maps
 from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
@@ -1485,6 +1486,32 @@ class APITest(jtu.JaxTestCase):
     assert np.all(y2[1][0] == 2 * x)
     self.assertIsInstance(y2[1][1], np.ndarray)
     assert np.all(y2[1][1] == 3 * x)
+
+  def test_device_put_sharding(self):
+    mesh = maps.Mesh(jax.devices(), ('x',))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+    x = jnp.arange(len(jax.devices()))
+    y = jax.device_put(x, s)
+    self.assertEqual(y.sharding, s)
+    self.assertArraysAllClose(y, x)
+
+    # this might hit a special fast path
+    z = jax.device_put(y, s)
+    self.assertEqual(z.sharding, s)
+    self.assertArraysAllClose(z, x)
+    self.assertIs(z, y)  # no copy
+
+    w = jax.device_put(z)
+    self.assertIs(w, z)
+
+    u = jax.device_put(y, jax.devices()[0])
+    self.assertArraysAllClose(u, y)
+    self.assertEqual(u.device(), jax.devices()[0])
+
+    # TODO(frostig): make this pass with JAX_ENABLE_CUSTOM_PRNG=1
+    # # this can cover opaque dtypes
+    # x = jax.random.split(jax.random.PRNGKey(0), len(jax.devices()))
+    # jax.device_put(x, s)  # doesn't crash
 
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")

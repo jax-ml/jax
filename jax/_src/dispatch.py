@@ -1291,14 +1291,38 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
       committed=(device is not None))
 
 
-def _device_put_impl(x, device: Optional[Device] = None):
+def _device_put_impl(
+    x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
   from jax._src import array, sharding
+  if not isinstance(device, (Device, jax.sharding.Sharding, type(None))):
+    raise TypeError(
+        "device_put's second argument must be a Device, a Sharding, or None, "
+        f"but got type {type(device)} with value {device}")
+
+  if isinstance(device, sharding.Sharding):
+    if not device.is_fully_addressable():  # type: ignore
+      raise ValueError(
+          "device_put's second argument must be a Device or a Sharding which "
+          f"represents addressable devices, but got {sharding}")
+    if getattr(x, 'sharding', None) == device:
+      return x
+    # TODO(mattjj,yashkatariya,phawkins): runtime fast resharding here?
+    return array.make_array_from_callback(x.shape, device, lambda idx: x[idx])
+
+  assert isinstance(device, (Device, type(None)))
+
+  if isinstance(x, array.ArrayImpl):
+    if not x.is_fully_addressable():
+      raise ValueError(
+          "device_put's first argument must be a fully addressable array, but "
+          f"got value with devices {x.devices()}")
+    if device is None:
+      return x
+    elif is_single_device_sharding(x.sharding):
+      return _copy_array_to_device(x, device)
 
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
-
-  if type(x) is array.ArrayImpl and isinstance(x.sharding, sharding.SingleDeviceSharding):
-    return _copy_array_to_device(x, device)
 
   try:
     a = xla.abstractify(x)

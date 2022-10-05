@@ -1926,7 +1926,7 @@ def _convert_to_array_if_dtype_fails(x):
 def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Any = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "asarray")
   dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
-  return array(a, dtype=dtype, copy=False, order=order)
+  return array(a, dtype=dtype, copy=False, order=order)  # type: ignore
 
 
 @_wraps(np.copy, lax_description=_ARRAY_DOC)
