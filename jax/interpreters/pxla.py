@@ -845,6 +845,15 @@ def _sda__reversed__(self):
     return (self[i] for i in range(self.shape[0] - 1, -1, -1))
 
 
+def _sda_sharding(self):
+  has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding_spec.sharding)
+  if has_unstacked:
+    devices = np.array([d.device() for d in self.device_buffers])
+    return jax.sharding.PmapSharding(devices, self.sharding_spec)
+  raise NotImplementedError('SDAs that are the output of pjit/xmap do not '
+                            'have the sharding attribute implemented. Please '
+                            'use the new `jax.Array` type instead.')
+
 for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
   setattr(sda, "one_replica_buffer_indices",
           property(_sda_one_replica_buffer_indices))
@@ -855,6 +864,7 @@ for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
   setattr(sda, "__getitem__", _sda__getitem__)
   setattr(sda, "__iter__", _sda__iter__)
   setattr(sda, "__reversed__", _sda__reversed__)
+  setattr(sda, "sharding", property(_sda_sharding))
 
 del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async,
      _sda_check_if_deleted, _sda_block_until_ready, _sda_value, _sda__getitem__)

@@ -1496,6 +1496,7 @@ class APITest(jtu.JaxTestCase):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
     _check_instance(self, x)
+    self.assertIsInstance(x.sharding, jax.sharding.SingleDeviceSharding)
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
