@@ -303,10 +303,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(self.jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_{argnum_type}",
-     "argnum_type": argnum_type}
-    for argnum_type in ("static_argnums", "donate_argnums")))
+  @parameterized.parameters("static_argnums", "donate_argnums")
   def test_jit_argnums_overflow_error(self, argnum_type: str):
     def f(a, b, c):
       ...
@@ -902,10 +899,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
   # applications.
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_num_args={num_args}",
-     "num_args": num_args}
-    for num_args in [2, 3, 4]))
+  @parameterized.parameters(2, 3, 4)
   def test_jit_with_pruned_args(self, num_args):
     def f(*args):
       used = np.array(2)
@@ -9122,12 +9116,13 @@ class NamedCallTest(jtu.JaxTestCase):
     out = f(5)
     self.assertEqual(out, 5)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}_func={func}",
-       "jit": jit, "func": func}
+  @jtu.sample_product(
+    [dict(func=func, jit=jit)
       for func in ['identity', 'asarray', 'device_put']
       for jit in jtu.JIT_IMPLEMENTATION
-      if not (jit._name == "noop" and func == 'identity')))
+      if not (jit._name == "noop" and func == 'identity')
+    ],
+  )
   def test_integer_overflow(self, jit, func):
     funcdict = {
       'identity': lambda x: x,
