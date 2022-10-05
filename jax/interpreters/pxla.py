@@ -347,6 +347,7 @@ ShardingSpec.__repr__ = sharding_spec_repr  # type: ignore
 # Do not pollute the namespace
 del sharding_spec_mesh_shape, sharding_spec_indices, sharding_spec_repr
 
+@lru_cache(maxsize=4096)
 def spec_to_indices(shape: Tuple[int, ...],
                     spec: ShardingSpec) -> Tuple[Index, ...]:
   """Returns numpy-style indices corresponding to a sharding spec.
@@ -628,6 +629,7 @@ global_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaRe
 _USE_CPP_SDA = True
 
 
+@lru_cache(maxsize=4096)
 def _create_pmap_sharding_spec(aval, sharded_dim=0, sharded_dim_size=None):
   if sharded_dim is not None:
     sharded_aval = aval.update(
