@@ -8,7 +8,12 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.22
+## jax 0.3.22 (Oct 5, 2022)
+* Changes
+  * Add `JAX_PLATFORMS=tpu,cpu` as default setting in TPU initialization, 
+  so JAX will raise an error if TPU cannot be initialized instead of falling 
+  back to CPU. Users are able to override this behavior to automatically choose 
+  an available backend by setting `JAX_PLATFORMS=''`.
 
 ## jaxlib 0.3.22
 
