@@ -361,7 +361,8 @@ implemented more widely (see :func:`jax.numpy.linalg.eigh`).
 """)
 def eig(a: ArrayLike) -> Tuple[Array, Array]:
   a, = _promote_dtypes_inexact(jnp.asarray(a))
-  return lax_linalg.eig(a, compute_left_eigenvectors=False)
+  w, v = lax_linalg.eig(a, compute_left_eigenvectors=False)
+  return w, v
 
 
 @_wraps(np.linalg.eigvals)
