@@ -149,6 +149,7 @@ from jax import numpy as numpy
 from jax import ops as ops
 from jax import profiler as profiler
 from jax import random as random
+from jax import scipy as scipy
 from jax import sharding as sharding
 from jax import stages as stages
 from jax import tree_util as tree_util

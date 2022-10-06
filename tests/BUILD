@@ -458,6 +458,18 @@ jax_test(
     deps = [":lax_test_lib"],
 )
 
+py_test(
+    name = "lazy_loader_test",
+    srcs = [
+        "lazy_loader_module/__init__.py",
+        "lazy_loader_module/lazy_test_submodule.py",
+        "lazy_loader_test.py",
+    ],
+    deps = [
+        "//jax:test_util",
+    ],
+)
+
 jax_test(
     name = "linalg_test",
     srcs = ["linalg_test.py"],

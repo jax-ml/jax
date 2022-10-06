@@ -9,6 +9,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.24
+  * JAX should be faster to import. We now import scipy lazily, which accounted
+    for a significant fraction of JAX's import time.
 
 ## jaxlib 0.3.24
 

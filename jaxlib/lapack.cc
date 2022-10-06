@@ -25,6 +25,8 @@ namespace {
 namespace py = pybind11;
 
 void GetLapackKernelsFromScipy() {
+  static bool initialized = false;  // Protected by GIL
+  if (initialized) return;
   py::module cython_blas = py::module::import("scipy.linalg.cython_blas");
   // Technically this is a Cython-internal API. However, it seems highly likely
   // it will remain stable because Cython itself needs API stability for
@@ -125,6 +127,7 @@ void GetLapackKernelsFromScipy() {
   ComplexGees<std::complex<double>>::fn =
       reinterpret_cast<ComplexGees<std::complex<double>>::FnType*>(
           lapack_ptr("zgees"));
+  initialized = true;
 }
 
 py::dict Registrations() {
@@ -186,7 +189,8 @@ py::dict Registrations() {
 }
 
 PYBIND11_MODULE(_lapack, m) {
-  GetLapackKernelsFromScipy();
+  // Populates the LAPACK kernels from scipy on first call.
+  m.def("initialize", GetLapackKernelsFromScipy);
 
   m.def("registrations", &Registrations);
   m.def("lapack_sgeqrf_workspace", &Geqrf<float>::Workspace);

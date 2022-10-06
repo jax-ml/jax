@@ -27,8 +27,7 @@ from jax import lax
 from jax import core
 from jax.core import AxisName
 from jax._src import util
-from jax.scipy.special import expit
-from jax.scipy.special import logsumexp as _logsumexp
+from jax._src.ops.special import logsumexp as _logsumexp
 import jax.numpy as jnp
 
 Array = Any
