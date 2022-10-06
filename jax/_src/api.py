@@ -668,7 +668,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   # this might naturally be a method, with ``fun`` as a ``self`` and
   # all the other arguments stored as attributes.
 
-  def arg_spec(x):
+  def arg_spec(always_committed, x):
     from jax._src.sharding import PmapSharding
     from jax.experimental import pjit
     # like xla.arg_spec but duck-types on x.shape and x.dtype
@@ -678,7 +678,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
         if isinstance(x.sharding, PmapSharding):
           return aval, None
         return aval, (pjit.to_op_sharding_sharding(x.sharding, x.ndim)
-                      if x._committed else None)
+                      if getattr(x, '_committed', always_committed) else None)
       else:
         return aval, None
     else:
@@ -699,7 +699,8 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
-    arg_specs_and_devices = map(arg_spec, args_flat)
+    always_committed = all(not hasattr(x, '_committed') for x in args_flat)
+    arg_specs_and_devices = map(partial(arg_spec, always_committed), args_flat)
     if jax.config.jax_dynamic_shapes:
       axes_specs = (None if abstracted_axes is None else
                     _flat_axes_specs(abstracted_axes, *args, **kwargs))
@@ -3019,7 +3020,7 @@ def _valid_jaxtype(arg):
 
 class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "named_shape", "sharding"]
-  def __init__(self, shape, dtype, sharding=None, named_shape=None):
+  def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = shape
     self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
     self.sharding = sharding

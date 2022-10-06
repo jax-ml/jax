@@ -28,6 +28,7 @@ Finally, this module defines a couple more classes to commonly adapt our
 various internal XLA-backed lowerings and executables into the lowering and
 executable protocols described above.
 """
+from __future__ import annotations
 
 import warnings
 
@@ -40,7 +41,6 @@ from jax import core
 from jax import tree_util
 from jax.lib import xla_client as xc
 
-from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -66,7 +66,7 @@ class Executable(Protocol):
     # TODO(frostig): improve annotation (sequences of arrays/buffers)
     raise NotImplementedError
 
-  def input_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+  def input_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
     """Flat sequence of input shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -74,7 +74,7 @@ class Executable(Protocol):
     """
     raise NotImplementedError
 
-  def output_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+  def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
     """Flat sequence of output shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -179,11 +179,11 @@ class XlaExecutable(Executable):
   def call(self, *args_flat) -> Sequence[Any]:
     raise NotImplementedError("must override")
 
-  def input_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+  def input_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
     raise NotImplementedError(
         "compiled executable carries no input sharding information")
 
-  def output_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+  def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
     raise NotImplementedError(
         "compiled executable carries no output sharding information")
 
@@ -498,8 +498,10 @@ class Lowered(Stage):
 
   def compile(self) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    return Compiled(self._lowering.compile(), self.args_info,
-                    self.out_tree, no_kwargs=self._no_kwargs)
+    kw = (dict(_allow_propagation_to_outputs=True) if jax.config.jax_array
+          else {})
+    return Compiled(self._lowering.compile(**kw), self.args_info, self.out_tree,
+                    no_kwargs=self._no_kwargs)
 
   def as_text(self, dialect: Optional[str] = None) -> str:
     """A human-readable text representation of this lowering.

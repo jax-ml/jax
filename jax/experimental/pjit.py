@@ -78,7 +78,7 @@ class PjitCompiled(stages.Compiled):
 
   @pxla.maybe_cached_property
   def input_shardings(self) -> Sequence[XLACompatibleSharding]:
-    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)  # pytype: disable=attribute-error
+    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)    # pytype: disable=attribute-error
     assert not kwargs
     return args
 
@@ -436,11 +436,14 @@ def pjit(fun: Callable,
     wrapped = _python_pjit(fun, infer_params)
 
   def lower(*args, _global_avals=False, **kwargs):
-    (_, flat_local_in_avals, params, in_tree, out_tree,
+    (args_flat, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params(*args, _global_avals=_global_avals, **kwargs)
-    in_shardings = _resolve_in_shardings(
-        args, params['in_shardings'], params['out_shardings'],
-        params['resource_env'].physical_mesh)
+    if config.jax_array:
+      in_shardings = _resolve_in_shardings(
+          args_flat, params['in_shardings'], params['out_shardings'],
+          params['resource_env'].physical_mesh)
+    else:
+      in_shardings = params['in_shardings']
     in_is_global = _calc_is_global_sequence(
         params['in_positional_semantics'], in_shardings)
     lowering = _pjit_lower(

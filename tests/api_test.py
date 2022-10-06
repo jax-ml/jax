@@ -53,6 +53,7 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import partial_eval as pe
+from jax.experimental import maps
 from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import array, sharding
 from jax.experimental import pjit
@@ -2120,6 +2121,23 @@ class APITest(jtu.JaxTestCase):
     s3 = api.ShapeDtypeStruct(shape=(2, 4), dtype=jnp.float32)
     self.assertEqual(hash(s1), hash(s2))
     self.assertNotEqual(hash(s1), hash(s3))
+
+  @jax_config.jax_array(True)
+  def test_shape_dtype_struct_sharding(self):
+    mesh = maps.Mesh(jax.devices(), ('x',))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+
+    x = jax.ShapeDtypeStruct(
+        shape=(3,),
+        dtype=jnp.dtype('float32'),
+        sharding=s)
+
+    def f(x):
+      return x * 2
+
+    c = jit(f).lower(x).compile()
+    print(c.input_shardings )
+    print(c.output_shardings)
 
   def test_eval_shape(self):
     def fun(x, y):

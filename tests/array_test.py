@@ -481,6 +481,42 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.array([1, 2, 3])
     self.assertIsInstance(x.device_buffer, array.ArrayImpl)
 
+  def test_shape_dtype_struct_sharding(self):
+    mesh = maps.Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
+    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+
+    def f(x):
+      return x * 2.
+
+    # x_dummy = jax.ShapeDtypeStruct(
+    #     shape=(8, 2),
+    #     dtype=jnp.dtype('float32'),
+    #     sharding=s)
+    import types
+    x_dummy = types.SimpleNamespace(
+        shape=(8, 2),
+        dtype=jnp.dtype('float32'),
+        sharding=s,
+        _committed=True,
+        ndim=2,
+    )
+
+    # from jax.experimental.pjit import pjit
+    # c = pjit(f).lower(x_dummy).compile()
+    c = jax.jit(f).lower(x_dummy).compile()
+    # input_shardings, output_shardings = c.input_shardings, c.output_shardings
+    # self.assertIsInstance(input_shardings, tuple)
+    # self.assertLen(input_shardings, 2)
+    # self.assertEqual(input_shardings[1], {})
+    # self.assertEqual(input_shardings[1], {})
+
+    x_data = jnp.arange(8 * 2.).reshape(8, 2)
+    x = array.make_array_from_callback((8, 2), s, lambda idx: x_data[idx])
+    y = jax.jit(f)(x)
+    print(y.sharding)
+    print(c.output_shardings)
+    # self.assertEqual(y.sharding, c.output_shardings)
+
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
