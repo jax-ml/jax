@@ -51,18 +51,16 @@ struct Descriptor {
 
 extern "C" void JaxFFICallWrapper(void* output, void** inputs,
                                   XlaCustomCallStatus* status) {
-  printf("call wrapper 0");
   auto descriptor = reinterpret_cast<Descriptor*>(*static_cast<uintptr_t*>(inputs[0]));
   inputs += 1;
   JaxFFIStatus jax_ffi_status;
-  printf("call wrapper 1");
+  JaxFFIApi jax_ffi_api;
+  jax_ffi_api.version = jax_ffi_struct.version;
+  jax_ffi_api.fn_table = jax_ffi_struct.fn_table;
   auto function_ptr = reinterpret_cast<void(*)(JaxFFIApi*, JaxFFIStatus*, void*, size_t, void**, void**)>(descriptor->function_ptr);
-  printf("call wrapper 2");
-  function_ptr(reinterpret_cast<JaxFFIApi*>(&jax_ffi_struct), &jax_ffi_status,
+  function_ptr(reinterpret_cast<JaxFFIApi*>(&jax_ffi_api), &jax_ffi_status,
                descriptor->user_descriptor.data(), descriptor->user_descriptor.size(),
                inputs, reinterpret_cast<void**>(output));
-  printf("call wrapper 3");
-  abort();
   if (jax_ffi_status.message) {
     XlaCustomCallStatusSetFailure(status, jax_ffi_status.message->data(),
                                   jax_ffi_status.message->size());
@@ -83,7 +81,6 @@ PYBIND11_MODULE(_jax_custom_call, m) {
     py::capsule keepalive = py::capsule(descriptor, [](void* ptr) {
         delete reinterpret_cast<Descriptor*>(ptr);
     });
-    printf("make_decs ptr=%x", ptr);
     return std::make_pair(ptr, keepalive);
   });
 }

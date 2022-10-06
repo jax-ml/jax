@@ -16,14 +16,6 @@ extern "C" void add_one(JaxFFIApi* api, JaxFFIStatus* status,
   Info info;
   assert(descriptor_size == sizeof(Info));
   std::memcpy(&info, descriptor, descriptor_size);
-  assert(false);
-  abort();
-  printf("descriptor_size=%d\n", descriptor_size);
-  printf("sizeof=%d\n", sizeof(Info));
-  printf("info.n=%d\n", info.n);
-  fflush(stdout);
-  fflush(stderr);
-  //if (info.n < 0) {
   if (info.n < 0) {
     JaxFFIStatusSetFailure(api, status, "Info must be >= 0");
   }
