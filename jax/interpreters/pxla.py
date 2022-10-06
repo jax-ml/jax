@@ -3368,6 +3368,12 @@ class MeshExecutable(stages.XlaExecutable):
     _check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
 
+  def input_shardings(self):
+    return self._in_shardings
+
+  def output_shardings(self):
+    return self._out_shardings
+
 
 def _out_shardings_for_trivial(
     jaxpr: core.Jaxpr, consts: Sequence[Any],

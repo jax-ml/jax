@@ -40,6 +40,7 @@ from jax import core
 from jax import tree_util
 from jax.lib import xla_client as xc
 
+from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -63,6 +64,22 @@ class Executable(Protocol):
   def call(self, *args_flat) -> Sequence[Any]:
     """Execute on the flat list of arguments, returning flat outputs."""
     # TODO(frostig): improve annotation (sequences of arrays/buffers)
+    raise NotImplementedError
+
+  def input_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+    """Flat sequence of input shardings.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    raise NotImplementedError
+
+  def output_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+    """Flat sequence of output shardings.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     raise NotImplementedError
 
   def as_text(self) -> str:
@@ -161,6 +178,14 @@ class XlaExecutable(Executable):
 
   def call(self, *args_flat) -> Sequence[Any]:
     raise NotImplementedError("must override")
+
+  def input_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+    raise NotImplementedError(
+        "compiled executable carries no input sharding information")
+
+  def output_shardings(self) -> Sequence[sharding.XLACompatibleSharding]:
+    raise NotImplementedError(
+        "compiled executable carries no output sharding information")
 
   def as_text(self) -> str:
     xla_ext_exe = self.xla_extension_executable()
@@ -380,17 +405,13 @@ class Compiled(Stage):
     return self._executable.runtime_executable()
 
   @property
-  def input_shardings(self):  # PyTree[XLACompatibleSharding]
-    shardings_flat = getattr(self._executable, '_in_shardings', None)
-    if shardings_flat is None:
-      raise ValueError("no input_shardings on compiled object")
+  def input_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
+    shardings_flat = self._executable.input_shardings()
     return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @property
-  def output_shardings(self):  # PyTree[XLACompatibleSharding]
-    shardings_flat = getattr(self._executable, '_out_shardings', None)
-    if shardings_flat is None:
-      raise ValueError("no output_shardings on compiled object")
+  def output_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
+    shardings_flat = self._executable.output_shardings()
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   def __call__(self, *args, **kwargs):
