@@ -37,8 +37,9 @@ from jax import core
 from jax._src import dtypes as _dtypes
 from jax import lax
 from jax._src.config import flags, bool_env, config
+from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.util import prod, unzip2
-from jax.tree_util import tree_map, tree_all
+from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src.lib import xla_bridge
 from jax._src import dispatch
 from jax._src.public_test_util import (  # noqa: F401
@@ -756,6 +757,21 @@ def with_config(**kwds):
     cls._default_config = {**JaxTestCase._default_config, **kwds}
     return cls
   return decorator
+
+
+def promote_like_jnp(fun, inexact=False):
+  """Decorator that promotes the arguments of `fun` to `jnp.result_type(*args)`.
+
+  jnp and np have different type promotion semantics; this decorator allows
+  tests make an np reference implementation act more like an jnp
+  implementation.
+  """
+  _promote = _promote_dtypes_inexact if inexact else _promote_dtypes
+  def wrapper(*args, **kw):
+    flat_args, tree = tree_flatten(args)
+    args = tree_unflatten(tree, _promote(*flat_args))
+    return fun(*args, **kw)
+  return wrapper
 
 
 class JaxTestCase(parameterized.TestCase):

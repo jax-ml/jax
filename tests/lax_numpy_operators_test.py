@@ -29,11 +29,9 @@ import jax
 import jax.ops
 from jax import lax
 from jax import numpy as jnp
-from jax import tree_util
 
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -66,13 +64,6 @@ python_scalar_dtypes = [jnp.bool_, jnp.int_, jnp.float_, jnp.complex_]
 # uint64 is problematic because with any uint type it promotes to float:
 int_dtypes_no_uint64 = [d for d in int_dtypes + unsigned_dtypes if d != np.uint64]
 
-def _indexer_with_default_outputs(indexer, use_defaults=True):
-  """Like jtu.with_jax_dtype_defaults, but for __getitem__ APIs"""
-  class Indexer:
-    @partial(jtu.with_jax_dtype_defaults, use_defaults=use_defaults)
-    def __getitem__(self, *args):
-      return indexer.__getitem__(*args)
-  return Indexer()
 
 def _valid_dtypes_for_shape(shape, dtypes):
   # Not all (shape, dtype) pairs are valid. In particular, Python scalars only
@@ -400,21 +391,6 @@ def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
 
 
-def _promote_like_jnp(fun, inexact=False):
-  """Decorator that promotes the arguments of `fun` to `jnp.result_type(*args)`.
-
-  jnp and np have different type promotion semantics; this decorator allows
-  tests make an np reference implementation act more like an jnp
-  implementation.
-  """
-  _promote = _promote_dtypes_inexact if inexact else _promote_dtypes
-  def wrapper(*args, **kw):
-    flat_args, tree = tree_util.tree_flatten(args)
-    args = tree_util.tree_unflatten(tree, _promote(*flat_args))
-    return fun(*args, **kw)
-  return wrapper
-
-
 class JaxNumpyOperatorTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy operators."""
 
@@ -460,7 +436,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
                            [tolerance, tol, jtu.default_tolerance()])
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
-      self._CheckAgainstNumpy(_promote_like_jnp(np_op, inexact), jnp_op,
+      self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op, inexact), jnp_op,
                               args_maker, check_dtypes=check_dtypes, tol=tol)
       self._CompileAndCheck(jnp_op, args_maker, check_dtypes=check_dtypes,
                             atol=tol, rtol=tol)
@@ -595,7 +571,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
-      self._CheckAgainstNumpy(_promote_like_jnp(np_op), jnp_op, args_maker)
+      self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op), jnp_op, args_maker)
       self._CompileAndCheck(jnp_op, args_maker)
 
   @parameterized.named_parameters(jtu.cases_from_list(
