@@ -1447,7 +1447,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     wrapped_axis = axis % len(base_shape)
     shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
               for size, _ in zip(itertools.cycle([3, 1, 4]), arg_dtypes)]
-    def np_fun(*args):
+    @_promote_like_jnp
+    def np_fun(*args, dtype=dtype):
+      dtype = dtype or args[0].dtype
       args = [x if x.dtype != jnp.bfloat16 else x.astype(np.float32)
               for x in args]
       return np.concatenate(args, axis=axis, dtype=dtype, casting='unsafe')
@@ -1457,9 +1459,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return [rng(shape, dtype) for shape, dtype in zip(shapes, arg_dtypes)]
 
     with jtu.strict_promotion_if_dtypes_match(arg_dtypes):
-      # TODO: tests fail with bfloat16/float16 inputs mixed with integers.
-      if np.float16 not in arg_dtypes and dtypes.bfloat16 not in arg_dtypes:
-        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
