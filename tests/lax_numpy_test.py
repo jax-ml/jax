@@ -44,7 +44,6 @@ from jax._src import device_array
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.util import prod, safe_zip
 from jax._src import array
@@ -137,21 +136,6 @@ def _shapes_are_broadcast_compatible(shapes):
 
 def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
-
-
-def _promote_like_jnp(fun, inexact=False):
-  """Decorator that promotes the arguments of `fun` to `jnp.result_type(*args)`.
-
-  jnp and np have different type promotion semantics; this decorator allows
-  tests make an np reference implementation act more like an jnp
-  implementation.
-  """
-  _promote = _promote_dtypes_inexact if inexact else _promote_dtypes
-  def wrapper(*args, **kw):
-    flat_args, tree = tree_util.tree_flatten(args)
-    args = tree_util.tree_unflatten(tree, _promote(*flat_args))
-    return fun(*args, **kw)
-  return wrapper
 
 
 class LaxBackedNumpyTests(jtu.JaxTestCase):
@@ -1447,7 +1431,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     wrapped_axis = axis % len(base_shape)
     shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
               for size, _ in zip(itertools.cycle([3, 1, 4]), arg_dtypes)]
-    @_promote_like_jnp
+    @jtu.promote_like_jnp
     def np_fun(*args, dtype=dtype):
       dtype = dtype or args[0].dtype
       args = [x if x.dtype != jnp.bfloat16 else x.astype(np.float32)
@@ -1692,7 +1676,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testRepeat(self, axis, shape, dtype, repeats, fixed_size):
     rng = jtu.rand_default(self.rng())
     np_fun = lambda arg: np.repeat(arg, repeats=repeats, axis=axis)
-    np_fun = _promote_like_jnp(np_fun)
+    np_fun = jtu.promote_like_jnp(np_fun)
     if fixed_size:
       total_repeat_length = np.repeat(np.zeros(shape), repeats, axis).shape[axis or 0]
       jnp_fun = lambda arg, rep: jnp.repeat(arg, repeats=rep, axis=axis,
@@ -2388,7 +2372,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [np.array([rng(shape, dtype) for dtype in dtypes])]
     else:
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
-    np_fun = _promote_like_jnp(np.column_stack)
+    np_fun = jtu.promote_like_jnp(np.column_stack)
     jnp_fun = jnp.column_stack
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
@@ -2417,9 +2401,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
 
     if numpy_version < (1, 24):
-      np_fun = _promote_like_jnp(lambda *args: np.stack(*args, axis=axis).astype(out_dtype))
+      np_fun = jtu.promote_like_jnp(lambda *args: np.stack(*args, axis=axis).astype(out_dtype))
     else:
-      np_fun = _promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype, casting='unsafe'))
+      np_fun = jtu.promote_like_jnp(partial(np.stack, axis=axis, dtype=out_dtype, casting='unsafe'))
 
     jnp_fun = partial(jnp.stack, axis=axis, dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
@@ -2447,9 +2431,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       args_maker = lambda: [[rng(shape, dtype) for dtype in dtypes]]
 
     if numpy_version < (1, 24) or op == "dstack":
-      np_fun = _promote_like_jnp(lambda *args: getattr(np, op)(*args).astype(out_dtype))
+      np_fun = jtu.promote_like_jnp(lambda *args: getattr(np, op)(*args).astype(out_dtype))
     else:
-      np_fun = partial(_promote_like_jnp(getattr(np, op)), dtype=out_dtype)
+      np_fun = partial(jtu.promote_like_jnp(getattr(np, op)), dtype=out_dtype)
 
     jnp_fun = partial(getattr(jnp, op), dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
@@ -2903,47 +2887,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
-
-  @jtu.sample_product(
-    [dict(shape=shape, dtype=dtype, axis=axis, weights_shape=weights_shape)
-      for shape, dtype in _shape_and_dtypes(nonempty_shapes, number_dtypes)
-      for axis in list(range(-len(shape), len(shape))) + [None]
-      # `weights_shape` is either `None`, same as the averaged axis, or same as
-      # that of the input
-      for weights_shape in ([None, shape] if axis is None or len(shape) == 1
-                            else [None, (shape[axis],), shape])
-    ],
-    keepdims=([False, True] if numpy_version >= (1, 23) else [None]),
-    returned=[False, True],
-  )
-  def testAverage(self, shape, dtype, axis, weights_shape, returned, keepdims):
-    rng = jtu.rand_default(self.rng())
-    kwds = dict(returned=returned)
-    if keepdims is not None:
-      kwds['keepdims'] = keepdims
-    if weights_shape is None:
-      np_fun = lambda x: np.average(x, axis, **kwds)
-      jnp_fun = lambda x: jnp.average(x, axis, **kwds)
-      args_maker = lambda: [rng(shape, dtype)]
-    else:
-      np_fun = lambda x, weights: np.average(x, axis, weights, **kwds)
-      jnp_fun = lambda x, weights: jnp.average(x, axis, weights, **kwds)
-      args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
-    np_fun = _promote_like_jnp(np_fun, inexact=True)
-    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
-           np.float64: 1e-12, np.complex64: 1e-5}
-    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE and numpy_version >= (1, 22)
-    if numpy_version == (1, 23, 0) and keepdims and weights_shape is not None and axis is not None:
-      # Known failure: https://github.com/numpy/numpy/issues/21850
-      pass
-    else:
-      try:
-        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
-                                check_dtypes=check_dtypes, tol=tol)
-      except ZeroDivisionError:
-        self.skipTest("don't support checking for ZeroDivisionError")
-    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
-                          rtol=tol, atol=tol)
 
   @jtu.sample_product(
     [dict(arg=arg, dtype=dtype, ndmin=ndmin)
@@ -4014,7 +3957,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     def np_fun(cond, x, y):
-      return _promote_like_jnp(partial(np.where, cond))(x, y)
+      return jtu.promote_like_jnp(partial(np.where, cond))(x, y)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(np_fun, jnp.where, args_maker)
       self._CompileAndCheck(jnp.where, args_maker)
@@ -4978,7 +4921,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       tol = {np.complex64: 1e-5, np.complex128: 1e-14}
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
-      self._CheckAgainstNumpy(_promote_like_jnp(np_op), jnp.logaddexp, args_maker, tol=tol)
+      self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op), jnp.logaddexp, args_maker, tol=tol)
       self._CompileAndCheck(jnp.logaddexp, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
@@ -5004,7 +4947,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       tol = {np.complex64: 1e-5, np.complex128: 1e-14}
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
-      self._CheckAgainstNumpy(_promote_like_jnp(np_op), jnp.logaddexp2, args_maker, tol=tol)
+      self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op), jnp.logaddexp2, args_maker, tol=tol)
       self._CompileAndCheck(jnp.logaddexp2, args_maker, rtol=tol, atol=tol)
 
   def testDefaultDtypes(self):

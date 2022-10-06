@@ -57,6 +57,18 @@ all_dtypes = number_dtypes + bool_dtypes
 
 python_scalar_dtypes = [jnp.bool_, jnp.int_, jnp.float_, jnp.complex_]
 
+def _valid_dtypes_for_shape(shape, dtypes):
+  # Not all (shape, dtype) pairs are valid. In particular, Python scalars only
+  # have one type in each category (float, bool, etc.)
+  if shape is jtu.PYTHON_SCALAR_SHAPE:
+    return [t for t in dtypes if t in python_scalar_dtypes]
+  return dtypes
+
+def _shape_and_dtypes(shapes, dtypes):
+  for shape in shapes:
+    for dtype in _valid_dtypes_for_shape(shape, dtypes):
+      yield (shape, dtype)
+
 def _compatible_shapes(shape):
   if np.ndim(shape) == 0 or shape in scalar_shapes:
     return [shape]
@@ -456,6 +468,47 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
   def testReductionWithRepeatedAxisError(self):
     with self.assertRaisesRegex(ValueError, r"duplicate value in 'axis': \(0, 0\)"):
       jnp.sum(jnp.arange(3), (0, 0))
+
+  @jtu.sample_product(
+    [dict(shape=shape, dtype=dtype, axis=axis, weights_shape=weights_shape)
+      for shape, dtype in _shape_and_dtypes(nonempty_shapes, number_dtypes)
+      for axis in list(range(-len(shape), len(shape))) + [None] + [tuple(range(len(shape)))]
+      # `weights_shape` is either `None`, same as the averaged axis, or same as
+      # that of the input
+      for weights_shape in ([None, shape] if axis is None or len(shape) == 1 or isinstance(axis, tuple)
+                            else [None, (shape[axis],), shape])
+    ],
+    keepdims=([False, True] if numpy_version >= (1, 23) else [None]),
+    returned=[False, True],
+  )
+  def testAverage(self, shape, dtype, axis, weights_shape, returned, keepdims):
+    rng = jtu.rand_default(self.rng())
+    kwds = dict(returned=returned)
+    if keepdims is not None:
+      kwds['keepdims'] = keepdims
+    if weights_shape is None:
+      np_fun = lambda x: np.average(x, axis, **kwds)
+      jnp_fun = lambda x: jnp.average(x, axis, **kwds)
+      args_maker = lambda: [rng(shape, dtype)]
+    else:
+      np_fun = lambda x, weights: np.average(x, axis, weights, **kwds)
+      jnp_fun = lambda x, weights: jnp.average(x, axis, weights, **kwds)
+      args_maker = lambda: [rng(shape, dtype), rng(weights_shape, dtype)]
+    np_fun = jtu.promote_like_jnp(np_fun, inexact=True)
+    tol = {dtypes.bfloat16: 2e-1, np.float16: 1e-2, np.float32: 1e-5,
+           np.float64: 1e-12, np.complex64: 1e-5}
+    check_dtypes = shape is not jtu.PYTHON_SCALAR_SHAPE and numpy_version >= (1, 22)
+    if numpy_version == (1, 23, 0) and keepdims and weights_shape is not None and axis is not None:
+      # Known failure: https://github.com/numpy/numpy/issues/21850
+      pass
+    else:
+      try:
+        self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
+                                check_dtypes=check_dtypes, tol=tol)
+      except ZeroDivisionError:
+        self.skipTest("don't support checking for ZeroDivisionError")
+    self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
+                          rtol=tol, atol=tol)
 
   @parameterized.named_parameters(
       jtu.cases_from_list(
