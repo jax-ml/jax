@@ -45,6 +45,7 @@ from jax._src.typing import Shape
 
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import ad
 
@@ -62,7 +63,11 @@ Buffer = xe.Buffer
 XlaOp = xc.XlaOp
 XlaShape = xc.Shape
 XlaBuilder = xc.XlaBuilder
-XlaExecutable = xc.Executable
+XlaLoadedExecutable = Any
+if xla_extension_version >= 98:
+  XlaLoadedExecutable = xc.LoadedExecutable  # type:ignore
+else:
+  XlaLoadedExecutable = xc.Executable  # type:ignore
 
 # apply_primitive is defined in jax._src.dispatch.
 apply_primitive: Callable

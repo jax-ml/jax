@@ -77,7 +77,7 @@ Backend = xe.Client
 Device = xc.Device
 Buffer = xe.Buffer
 
-XlaExecutable = xc.Executable
+XlaLoadedExecutable = xla.XlaLoadedExecutable
 CompileOptions = xc.CompileOptions
 
 map, unsafe_map = util.safe_map, map
@@ -859,13 +859,12 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
   return input_bufs, _remove_tokens
 
 
-def _execute_compiled(name: str, compiled: XlaExecutable,
+def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
                       input_handler: Optional[Callable],
                       output_buffer_counts: Sequence[int],
-                      result_handler: Callable,
-                      has_unordered_effects: bool,
-                      ordered_effects: List[core.Effect],
-                      kept_var_idx, has_host_callbacks: bool, *args):
+                      result_handler: Callable, has_unordered_effects: bool,
+                      ordered_effects: List[core.Effect], kept_var_idx,
+                      has_host_callbacks: bool, *args):
   device, = compiled.local_devices()
   args, env = input_handler(args) if input_handler else (args, None)
   in_flat = flatten(device_put(x, device) for i, x in enumerate(args)
@@ -888,14 +887,17 @@ def _execute_compiled(name: str, compiled: XlaExecutable,
   return result_handler(env, out_bufs)
 
 
-def _execute_replicated(name: str, compiled: XlaExecutable,
+def _execute_replicated(name: str,
+                        compiled: XlaLoadedExecutable,
                         input_handler: Optional[Callable],
                         output_buffer_counts: Sequence[int],
                         result_handler: Callable,
                         has_unordered_effects: bool,
                         ordered_effects: List[core.Effect],
-                        kept_var_idx, has_host_callbacks: bool,
-                        *args, from_lower_sharding_computation: bool = False):
+                        kept_var_idx,
+                        has_host_callbacks: bool,
+                        *args,
+                        from_lower_sharding_computation: bool = False):
   if has_unordered_effects or ordered_effects:
     # TODO(sharadmv): support jit-of-pmap with effects
     raise NotImplementedError(
@@ -1056,10 +1058,10 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   return backend_compile(backend, serialized_computation, compile_options,
                          host_callbacks)
 
-def _cache_read(computation: Union[str, bytes, ir.Module],
-                module_name: str,
+
+def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
                 compile_options: CompileOptions,
-                backend: Backend) -> Optional[XlaExecutable]:
+                backend: Backend) -> Optional[XlaLoadedExecutable]:
   """Looks up `computation` in the persisent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
@@ -1074,11 +1076,10 @@ def _cache_read(computation: Union[str, bytes, ir.Module],
         f"'{module_name}': {type(ex).__name__}: {ex}")
     return None
 
-def _cache_write(computation: Union[str, bytes, ir.Module],
-                 module_name: str,
-                 compile_options: CompileOptions,
-                 backend: Backend,
-                 compiled: XlaExecutable):
+
+def _cache_write(computation: Union[str, bytes, ir.Module], module_name: str,
+                 compile_options: CompileOptions, backend: Backend,
+                 compiled: XlaLoadedExecutable):
   """Writes `computation` to the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc

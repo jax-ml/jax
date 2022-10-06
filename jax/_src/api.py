@@ -479,7 +479,7 @@ class _BackendAndDeviceInfo(NamedTuple):
   committed_to_device: bool
 
 class _FastpathData(NamedTuple):
-  xla_executable: xla.XlaExecutable
+  xla_executable: xla.XlaLoadedExecutable
   out_pytree_def: Any
   sticky_device: Optional[xc.Device]
   avals: Iterable[Any]
@@ -2164,7 +2164,7 @@ def _python_pmap(
 
 class _PmapFastpathData(NamedTuple):
   version: int  # For forward and backward compatibility
-  xla_executable: xla.XlaExecutable
+  xla_executable: xla.XlaLoadedExecutable
   in_handler: Any
   out_handler: Any
   out_pytree_def: Any

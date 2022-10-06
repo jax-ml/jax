@@ -22,6 +22,7 @@ import jax
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
+from jax.interpreters import xla
 from absl import logging
 
 _cache = None
@@ -34,7 +35,9 @@ def initialize_cache(path):
   _cache = GFileCache(path)
   logging.warning("Initialized persistent compilation cache at %s", path)
 
-def get_executable(xla_computation, compile_options, backend) -> Optional[xla_client.Executable]:
+
+def get_executable(xla_computation, compile_options,
+                   backend) -> Optional[xla.XlaLoadedExecutable]:
   """Returns the cached executable if present, or None otherwise."""
   assert _cache is not None, "initialize_cache must be called before you can call get_executable()"
   cache_key = get_cache_key(xla_computation, compile_options, backend)
@@ -47,7 +50,7 @@ def get_executable(xla_computation, compile_options, backend) -> Optional[xla_cl
   return xla_executable_deserialized
 
 def put_executable(module_name, xla_computation, compile_options,
-                   executable: xla_client.Executable, backend):
+                   executable: xla.XlaLoadedExecutable, backend):
   """Adds 'executable' to the cache, possibly evicting older entries."""
   assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
   cache_key = get_cache_key(xla_computation, compile_options, backend)

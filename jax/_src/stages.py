@@ -44,6 +44,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.lib import mlir
+from jax.interpreters import xla
 
 
 source_info_util.register_exclusion(__file__)
@@ -156,7 +157,7 @@ class Lowering(Protocol):
 
 class XlaExecutable(Executable):
 
-  def xla_extension_executable(self) -> xla_extension.Executable:
+  def xla_extension_executable(self) -> xla.XlaLoadedExecutable:
     raise NotImplementedError("must override")
 
   def call(self, *args_flat) -> Sequence[Any]:

@@ -141,7 +141,7 @@ def _python_pjit(fun: Callable, infer_params):
   return wrapped
 
 class _PjitFastpathData(NamedTuple):
-  xla_executable: xla.XlaExecutable
+  xla_executable: xla.XlaLoadedExecutable
   out_pytree_def: Any
   in_shardings: Sequence[Any]
   out_shardings: Sequence[Any]
