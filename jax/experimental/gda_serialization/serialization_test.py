@@ -22,7 +22,7 @@ from jax._src import util
 from jax._src import config as jax_config
 from jax.config import config
 from jax._src import array
-from jax._src.sharding import MeshPspecSharding
+from jax._src.sharding import MeshPspecSharding, OpShardingSharding
 from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization
@@ -71,8 +71,9 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([gda1, gda2, gda3], tspecs)
 
     m1, m2, m3 = serialization.run_deserialization(
-        [global_mesh, global_mesh, global_mesh1d],
-        [mesh_axes, P('x'), P(None)],
+        [MeshPspecSharding(global_mesh, mesh_axes),
+         MeshPspecSharding(global_mesh, P('x')),
+         MeshPspecSharding(global_mesh1d, P(None))],
         tspecs)
 
     self.assertArraysEqual(np.asarray(m1.local_shards[0].data),
@@ -130,8 +131,9 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([a1, a2, a3], tspecs)
 
     m1, m2, m3 = serialization.run_deserialization(
-        [global_mesh, global_mesh, global_mesh1d],
-        [pspec, P('x'), P(None)],
+        [MeshPspecSharding(global_mesh, pspec),
+         MeshPspecSharding(global_mesh, P('x')),
+         MeshPspecSharding(global_mesh1d, P(None))],
         tspecs)
 
     self.assertIsInstance(m1, array.ArrayImpl)
@@ -177,9 +179,10 @@ class CheckpointTest(jtu.JaxTestCase):
 
     serialization.run_serialization([gda1], tspecs)
 
+    ds = MeshPspecSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+
     m1, = serialization.run_deserialization(
-        [jtu.create_global_mesh((4, 2), ('x', 'y'))],
-        [P('x', 'y')],
+        [ds],
         tspecs,
         [(12, 2)],
         [np.float32]
@@ -199,6 +202,14 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.local_shards:
       self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
+    with self.assertRaisesRegex(
+        ValueError,
+        'Deserializing a GlobalDeviceArray is only possible with '
+        'a `MeshPspecSharding`'):
+      new_ds = OpShardingSharding.get_replicated(list(global_mesh.devices.flat))
+      serialization.run_deserialization([new_ds], tspecs, [(12, 2)], [np.float32])
+
+
   @jax_config.jax_array(True)
   def test_checkpointing_with_bigger_shape_jax_array(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
@@ -217,13 +228,10 @@ class CheckpointTest(jtu.JaxTestCase):
 
     serialization.run_serialization([arr], tspecs)
 
-    m1, = serialization.run_deserialization(
-        [jtu.create_global_mesh((4, 2), ('x', 'y'))],
-        [P('x', 'y')],
-        tspecs,
-        [(12, 2)],
-        [np.float32]
-    )
+    ds = MeshPspecSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+
+    m1, = serialization.run_deserialization([ds], tspecs, [(12, 2)],
+                                            [np.float32])
 
     expected_data = {
         0: np.array([[0], [2], [4]], dtype=np.float32),
@@ -238,6 +246,11 @@ class CheckpointTest(jtu.JaxTestCase):
 
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
+
+    new_ds = OpShardingSharding.get_replicated(list(global_mesh.devices.flat))
+    m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)], [np.float32])
+    for l in m2.addressable_shards:
+      self.assertArraysEqual(l.data, global_input_data1.astype('float32'))
 
   def test_checkpointing_scalar_gda(self):
     if config.jax_array:
@@ -255,8 +268,7 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([gda1], tspecs)
 
     m1, = serialization.run_deserialization(
-        [jtu.create_global_mesh((2,), ('x'))],
-        [P(None)],
+        [MeshPspecSharding(jtu.create_global_mesh((2,), ('x')), P(None))],
         tspecs,
         [()],
         [np.float32]
@@ -279,10 +291,10 @@ class CheckpointTest(jtu.JaxTestCase):
     tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
     serialization.run_serialization([gda1], tspecs)
+    ds = MeshPspecSharding(jtu.create_global_mesh((2,), ('x')), P(None))
 
     m1, = serialization.run_deserialization(
-        [jtu.create_global_mesh((2,), ('x'))],
-        [P(None)],
+        [ds],
         tspecs,
         [()],
         [np.float32]
@@ -298,8 +310,7 @@ class CheckpointTest(jtu.JaxTestCase):
     data = np.arange(1024)
     tspec = ts.array(data).spec()
     m1, = serialization.run_deserialization(
-        [global_mesh],
-        [P(None)],
+        [MeshPspecSharding(global_mesh, P(None))],
         [tspec]
     )
     for l in m1.local_shards:
@@ -311,8 +322,7 @@ class CheckpointTest(jtu.JaxTestCase):
     data = np.arange(1024)
     tspec = ts.array(data).spec()
     m1, = serialization.run_deserialization(
-        [global_mesh],
-        [P(None)],
+        [MeshPspecSharding(global_mesh, P(None))],
         [tspec]
     )
     for l in m1.addressable_shards:
