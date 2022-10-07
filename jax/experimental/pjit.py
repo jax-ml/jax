@@ -73,27 +73,6 @@ _AUTOAxisResource = pxla._AUTOAxisResource
 AUTO = pxla.AUTO
 _is_auto = pxla._is_auto
 
-
-class PjitCompiled(stages.Compiled):
-
-  @pxla.maybe_cached_property
-  def input_shardings(self) -> Sequence[XLACompatibleSharding]:
-    args, kwargs = tree_unflatten(self.in_tree, self._executable._in_shardings)    # pytype: disable=attribute-error
-    assert not kwargs
-    return args
-
-  @pxla.maybe_cached_property
-  def output_shardings(self) -> Sequence[XLACompatibleSharding]:
-    return tree_unflatten(self.out_tree, self._executable._out_shardings)  # pytype: disable=attribute-error
-
-
-class PjitLowered(stages.Lowered):
-
-  def compile(self) -> PjitCompiled:
-    return PjitCompiled(self._lowering.compile(), self.args_info, self.out_tree,
-                        no_kwargs=self._no_kwargs)
-
-
 _UnspecifiedValue = pxla._UnspecifiedValue
 _UNSPECIFIED = pxla._UNSPECIFIED
 _is_unspecified = pxla._is_unspecified
@@ -436,21 +415,24 @@ def pjit(fun: Callable,
     wrapped = _python_pjit(fun, infer_params)
 
   def lower(*args, _global_avals=False, **kwargs):
-    (_, flat_local_in_avals, params, in_tree, out_tree,
+    (args_flat, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params(*args, _global_avals=_global_avals, **kwargs)
-    if any(_is_unspecified(i) for i in params['in_shardings']):
-      raise ValueError("Please specify sharding on pjit's in_axis_resources.")
+    if config.jax_array:
+      in_shardings = _resolve_in_shardings(
+          args_flat, params['in_shardings'], params['out_shardings'],
+          params['resource_env'].physical_mesh)
+    else:
+      in_shardings = params['in_shardings']
     in_is_global = _calc_is_global_sequence(
-        params['in_positional_semantics'], params['in_shardings'])
+        params['in_positional_semantics'], in_shardings)
     lowering = _pjit_lower(
-        params['jaxpr'], params['in_shardings'],
-        params['out_shardings'],  params['resource_env'],
-        params['donated_invars'], params['name'],
-        in_is_global)
+        params['jaxpr'], in_shardings, params['out_shardings'],
+        params['resource_env'], params['donated_invars'], params['name'],
+        in_is_global, always_lower=True)
 
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
-    return PjitLowered.from_flat_info(
+    return stages.Lowered.from_flat_info(
         lowering, args_kwargs_in_tree, local_in_avals, donate_argnums, out_tree,
         no_kwargs=True)
 
@@ -863,7 +845,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
       if not isinstance(arg_s, XLACompatibleSharding):
         raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
                          'which is not a subclass of XLACompatibleSharding.')
-      if a._committed:
+      if getattr(a, '_committed', True):
         committed_arg_shardings.append(arg_s)
 
   da = _get_and_check_device_assignment(
@@ -873,7 +855,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
 
   resolved_in_shardings = []
   for arg, pjit_in_s in safe_zip(args, pjit_in_shardings):
-    arg_s, committed = ((arg.sharding, arg._committed)
+    arg_s, committed = ((arg.sharding, getattr(arg, '_committed', True))
                         if hasattr(arg, 'sharding') else (_UNSPECIFIED, False))
     if _is_unspecified(pjit_in_s):
       if _is_unspecified(arg_s):
@@ -920,7 +902,7 @@ def _pjit_call_impl(*args, jaxpr,
     _allow_propagation_to_outputs = False
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
-      donated_invars, name, in_is_global).compile(
+      donated_invars, name, in_is_global, always_lower=False).compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
@@ -988,7 +970,8 @@ def _pjit_lower_cached(
     resource_env,
     donated_invars,
     name: str,
-    in_is_global: Sequence[bool]):
+    in_is_global: Sequence[bool],
+    always_lower: bool):
   in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
@@ -1034,7 +1017,7 @@ def _pjit_lower_cached(
     return pxla.lower_sharding_computation(
         fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
         jaxpr.in_avals, in_is_global=in_is_global, keep_unused=True,
-        committed=True, always_lower=False)
+        committed=True, always_lower=always_lower)
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
@@ -1213,8 +1196,9 @@ def _pjit_partial_eval(trace, *in_tracers,
           known_params["jaxpr"], known_params["in_shardings"],
           known_params["out_shardings"], known_params["resource_env"],
           known_params["donated_invars"], known_params["name"],
-          in_is_global).compile(_allow_propagation_to_outputs=True,
-                                _allow_compile_replicated=False)
+          in_is_global, always_lower=False).compile(
+              _allow_propagation_to_outputs=True,
+              _allow_compile_replicated=False)
       _, out_op_shardings = _get_op_sharding_from_executable(compiled.xla_executable)
       residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
     else:

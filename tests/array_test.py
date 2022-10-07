@@ -26,6 +26,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_extension_version
 from jax._src.util import prod, safe_zip
+from jax.interpreters import pxla
+from jax.experimental.pjit import pjit
 from jax.experimental import PartitionSpec as P
 from jax._src import sharding
 from jax._src import array
@@ -480,6 +482,57 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     x = jnp.array([1, 2, 3])
     self.assertIsInstance(x.device_buffer, array.ArrayImpl)
+
+  def test_shape_dtype_struct_sharding_jit(self):
+    mesh = jtu.create_global_mesh((8,), ('x'))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+
+    x_dummy = jax.ShapeDtypeStruct(
+        shape=(16,),
+        dtype=jnp.dtype('float32'),
+        sharding=s)
+
+    def f(x):
+      return x * 2
+
+    c = jax.jit(f).lower(x_dummy).compile()
+    input_shardings, output_shardings = c.input_shardings, c.output_shardings
+    self.assertLen(input_shardings, 2)
+    self.assertEqual(input_shardings[1], {})
+    self.assertEqual(input_shardings[1], {})
+
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            input_shardings[0][0]._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            output_shardings._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+
+  def test_shape_dtype_struct_sharding_pjit(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+
+    def f(x):
+      return x * 2.
+
+    x_dummy = jax.ShapeDtypeStruct(
+        shape=(8, 2),
+        dtype=jnp.dtype('float32'),
+        sharding=s)
+
+    c = pjit(f).lower(x_dummy).compile()
+    input_shardings, output_shardings = c.input_shardings, c.output_shardings
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            input_shardings[0][0]._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            output_shardings._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+
 
 
 @jtu.with_config(jax_array=True)

@@ -2751,7 +2751,8 @@ def lower_sharding_computation(
     out_shardings = (_UNSPECIFIED,) * len(global_out_avals)
 
   # mypy doesn't understand that out_sharding here is always a sequence.
-  assert len(out_shardings) == len(global_out_avals), (len(out_shardings), len(global_out_avals))  # type: ignore
+  assert len(out_shardings) == len(global_out_avals), (
+      len(out_shardings), len(global_out_avals))  # type: ignore
 
   if keep_unused:
     kept_var_idx = set(range(len(global_in_avals)))
@@ -3367,6 +3368,12 @@ class MeshExecutable(stages.XlaExecutable):
     # Check the GDA sharding and the input sharding.
     _check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
+
+  def input_shardings(self):
+    return self._in_shardings
+
+  def output_shardings(self):
+    return self._out_shardings
 
 
 def _out_shardings_for_trivial(

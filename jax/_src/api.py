@@ -678,8 +678,12 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
       if hasattr(x, 'sharding'):
         if isinstance(x.sharding, PmapSharding):
           return aval, None
+        # If `x` has a sharding attribute but not `_committed` attribute,
+        # assume that `x` is committed. This might happen when the input is
+        # a `ShapedDtypeStruct` or `types.SimpleNamespace`, etc that might
+        # only have a `sharding` attribute on them.
         return aval, (pjit.to_op_sharding_sharding(x.sharding, x.ndim)
-                      if x._committed else None)
+                      if getattr(x, '_committed', True) else None)
       else:
         return aval, None
     else:
@@ -3022,10 +3026,12 @@ def _valid_jaxtype(arg):
 
 
 class ShapeDtypeStruct:
-  __slots__ = ["shape", "dtype", "named_shape"]
-  def __init__(self, shape, dtype, named_shape=None):
+  __slots__ = ["shape", "dtype", "named_shape", "sharding"]
+  def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = shape
     self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
+    if sharding is not None:
+      self.sharding = sharding
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: prod(self.shape))
