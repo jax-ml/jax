@@ -116,6 +116,8 @@ class ArrayImpl(basearray.Array):
                arrays: Union[Sequence[DeviceArray], Sequence[ArrayImpl]],
                committed: bool, _skip_checks: bool = False):
     # NOTE: the actual implementation of the constructor is moved to C++.
+    assert all(isinstance(a, DeviceArray) or hasattr(a, '_arrays')
+               for a in arrays)
 
     self.aval = aval
     self._sharding = sharding
@@ -545,39 +547,17 @@ def _array_pmap_shard_arg(x, devices, indices, mode):
     return pxla._shard_sharded_device_array_slow_path(x, devices, indices, mode)
 
 
-def _array_rest_shard_arg(x, devices, indices, mode):
-  if not x._committed:
-    if dispatch.is_single_device_sharding(x.sharding):
-      # This condition is to break the recursion that happens when only
-      # `pxla._shard_device_array` is used since it has `_multi_slice` in the
-      # implementation which is jitted. Eventually it calls back here and the
-      # recursion happens.
-      x_indices = tuple(x.sharding.addressable_devices_indices_map(x.shape).values())
-      if x_indices == indices:
-        return [buf if buf.device() == d else buf.copy_to_device(d)
-                for buf, d in safe_zip(x._arrays, devices)]
-      return pxla._shard_device_array(x, devices, indices, mode)
-    else:
-      raise NotImplementedError('Resharding uncommitted arrays sharded over '
-                                'multiple devices is not supported.')
-  # TODO(yashkatariya): Remove the special case here and don't move to another
-  # device if its already committed. There is a TODO in dispatch.py already
-  # for this.
-  if dispatch.is_single_device_sharding(x.sharding):
+def _array_rest_shard_arg(x: ArrayImpl, devices, indices, mode):
+  x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
+  if tuple(indices) == tuple(x_indices):
     return [buf if buf.device() == d else buf.copy_to_device(d)
             for buf, d in safe_zip(x._arrays, devices)]
-  # If PmapSharding exists, then do a round trip via host. This will happen
-  # if the input Array containing PmapSharding takes the jit path
-  # i.e. `apply_primitive` or `xla_callable_uncached`. `jit(pmap)` is the most
-  # common case where this will happen.
-  # TODO(yashkatariya): Remove the special case here and don't move to another
-  # device if its already committed. There is a TODO in dispatch.py already
-  # for this.
   elif isinstance(x.sharding, PmapSharding):
     return pxla.device_put(x._value, devices, replicate=True)
+  elif x.is_fully_addressable():
+    return pxla._shard_device_array(x, devices, indices, mode)
   else:
-    return x._arrays
-
+    raise NotImplementedError("foo")
 
 def _array_shard_arg(x, devices, indices, mode):
   if mode == pxla.InputsHandlerMode.pmap:

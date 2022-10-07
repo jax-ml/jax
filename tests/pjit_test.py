@@ -41,6 +41,7 @@ from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax._src import array
+from jax._src import sharding
 from jax._src.sharding import MeshPspecSharding, Sharding, OpShardingSharding
 import jax.experimental.pjit as pjit_lib
 from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
@@ -2290,6 +2291,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out3.sharding.devices_indices_map(shape)
     cache_info3 = OpShardingSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+
+  @jax_array(True)
+  def test_device_put_sharding_prng(self):
+    mesh = jtu.create_global_mesh((8,), ('x',))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+
+    x = jax.random.split(jax.random.PRNGKey(0), len(jax.devices()))
+    y = jax.device_put(x, s)  # doesn't crash
+
+    if config.jax_enable_custom_prng:
+      self.assertIsInstance(y, jax.random.KeyArray)
 
 
 class ArrayCppPjitTest(ArrayPjitTest):
