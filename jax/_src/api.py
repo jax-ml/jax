@@ -19,6 +19,7 @@ arguments and outputs. The Python containers handled are pytrees (see
 tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
+from __future__ import annotations
 
 import collections
 import functools
@@ -2794,13 +2795,18 @@ def make_jaxpr(fun: Callable,
   return make_jaxpr_f
 
 
-def device_put(x, device: Optional[xc.Device] = None):
+def device_put(
+    x, device: Optional[Union[xc.Device, jax.sharding.Sharding]] = None):
   """Transfers ``x`` to ``device``.
 
   Args:
     x: An array, scalar, or (nested) standard Python container thereof.
-    device: The (optional) :py:class:`Device` to which ``x`` should be
-      transferred. If given, then the result is committed to the device.
+    device: The (optional) :py:class:`Device` or `Sharding` representing the
+      device(s) to which ``x`` should be transferred. If given, then the result
+      is committed to the device(s).
+
+  Returns:
+    A copy of ``x`` that resides on ``device``.
 
   If the ``device`` parameter is ``None``, then this operation behaves like the
   identity function if the operand is on any device already, otherwise it
@@ -2809,10 +2815,8 @@ def device_put(x, device: Optional[xc.Device] = None):
   For more details on data placement see the
   :ref:`FAQ on data placement <faq-data-placement>`.
 
-  This function is always asynchronous, i.e. returns immediately.
-
-  Returns:
-    A copy of ``x`` that resides on ``device``.
+  This function is always asynchronous, i.e. returns immediately without
+  blocking the calling Python thread until any transfers are completed.
   """
   with config_explicit_device_put_scope():
     return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
