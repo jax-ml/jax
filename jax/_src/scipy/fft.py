@@ -14,7 +14,7 @@
 
 from functools import partial
 
-import scipy.fftpack as osp_fft  # TODO use scipy.fft once scipy>=1.4.0 is used
+import scipy.fft as osp_fft
 from jax import lax, numpy as jnp
 from jax._src.util import canonicalize_axis
 from jax._src.numpy.util import _wraps, _promote_dtypes_complex
