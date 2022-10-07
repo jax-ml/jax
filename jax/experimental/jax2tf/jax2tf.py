@@ -997,6 +997,10 @@ class TensorFlowTrace(core.Trace):
 
     This function may be called by way of trace.full_raise.
     """
+    if hasattr(val, "__jax_array__"):
+      val = val.__jax_array__()
+      if isinstance(val, TensorFlowTracer):
+        return val
     tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val, memoize_constants=True)
     return TensorFlowTracer(
         self, val, core.ShapedArray(tf_val.shape, jax_dtype,

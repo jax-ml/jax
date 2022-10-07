@@ -1885,7 +1885,7 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
 
   out: ArrayLike
 
-  if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
+  if _all(not isinstance(leaf, ndarray_types) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
     # https://github.com/google/jax/pull/6047. More correct would be to call
