@@ -1862,6 +1862,8 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
   if isinstance(object, (bool, int, float, complex)):
     _ = dtypes.coerce_to_array(object, dtype)
 
+  object = tree_map(lambda leaf: leaf.__jax_array__() if hasattr(leaf, "__jax_array__") else leaf,
+                    object)
   leaves = tree_leaves(object)
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.

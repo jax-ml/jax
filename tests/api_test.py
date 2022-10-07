@@ -3574,6 +3574,13 @@ class APITest(jtu.JaxTestCase):
     for f in [jnp.isscalar, jnp.size, jnp.shape, jnp.dtype]:
       self.assertEqual(f(x), f(a))
 
+    x = AlexArray(jnp.array(1))
+    a1 = jnp.array(x)
+    self.assertAllClose(1, a1)
+
+    a2 = jnp.array(((x, x), [x, x]))
+    self.assertAllClose(np.array(((1, 1), (1, 1))), a2)
+
   def test_constant_handler_mro(self):
     # https://github.com/google/jax/issues/6129
 
