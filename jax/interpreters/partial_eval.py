@@ -898,7 +898,8 @@ def tracers_to_jaxpr(
 
   def newvar(t: JaxprTracer) -> Var:
     var = gensym(type_substitute(t.aval))
-    assert t_to_var.setdefault(id(t), var) is var
+    var_ = t_to_var.setdefault(id(t), var)
+    assert var is var_
     return var
 
   def type_substitute(aval: AbstractValue) -> AbstractValue:
