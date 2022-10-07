@@ -520,24 +520,25 @@ static absl::Status CooMatmat_(cudaStream_t stream, void** buffers,
   cusparseDnMatDescr_t mat_b = 0;
   cusparseDnMatDescr_t mat_c = 0;
 
+
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
       d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
-                                 /*batchStride=*/d.A.batch_stride)));
+    cusparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
+                               /*batchStride=*/d.A.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
       &mat_b, d.B.rows, d.B.cols,
       /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
-                                   /*batchStride=*/d.B.batch_stride)));
+    cusparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
+                                 /*batchStride=*/d.B.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
       &mat_c, d.C.rows, d.C.cols,
       /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
-                                   /*batchStride=*/d.C.batch_stride)));
+    cusparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
+                                 /*batchStride=*/d.C.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
       handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
       mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf)));
@@ -579,10 +580,16 @@ static absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
   T* X = (T*)(buffers[4]);
   void* buffer = buffers[5];
 
-  // The solution X is written in place to B.
+  // The solution X is written in place to B. We need to therefore copy the
+  // contents of B into the output buffer X and pass that into the kernel as B.
+  // Once copy insertion is supported for custom call aliasing, we could alias B
+  // with X and avoid the copy, the code below is written defensively assuming B
+  // and X might alias, but today we know they will not.
+  // TODO(b/182906199): Update the comment here once copy insertion is WAI.
   if (X != B) {
-    return absl::InvalidArgumentError(
-        "Input and output buffers to gtsv2 must alias");
+    size_t B_bytes = ldb * n * sizeof(T);
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+        cudaMemcpyAsync(X, B, B_bytes, cudaMemcpyDeviceToDevice, stream)));
   }
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(

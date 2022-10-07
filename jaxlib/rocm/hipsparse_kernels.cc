@@ -504,10 +504,16 @@ static absl::Status gtsv2(F computeGtsv2, hipStream_t stream, void** buffers,
   T* X = (T*)(buffers[4]);
   void* buffer = buffers[5];
 
-  // The solution X is written in place to B.
+  // The solution X is written in place to B. We need to therefore copy the
+  // contents of B into the output buffer X and pass that into the kernel as B.
+  // Once copy insertion is supported for custom call aliasing, we could alias B
+  // with X and avoid the copy, the code below is written defensively assuming B
+  // and X might alias, but today we know they will not.
+  // TODO(b/182906199): Update the comment here once copy insertion is WAI.
   if (X != B) {
-    return absl::InvalidArgumentError(
-        "Input and output buffers to gtsv2 must alias");
+    size_t B_bytes = ldb * n * sizeof(T);
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+        hipMemcpyAsync(X, B, B_bytes, hipMemcpyDeviceToDevice, stream)));
   }
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(

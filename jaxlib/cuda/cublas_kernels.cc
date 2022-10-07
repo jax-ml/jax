@@ -83,6 +83,11 @@ static absl::Status TrsmBatched_(cudaStream_t stream, void** buffers,
   auto h = BlasHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[2] != buffers[1]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+        buffers[2], buffers[1], SizeOfCublasType(d.type) * d.batch * d.m * d.n,
+        cudaMemcpyDeviceToDevice, stream)));
+  }
   const int lda = d.side == CUBLAS_SIDE_LEFT ? d.m : d.n;
   const int ldb = d.m;
   auto a_batch_host = MakeBatchPointers(stream, buffers[0], buffers[3], d.batch,
@@ -162,6 +167,11 @@ static absl::Status GetrfBatched_(cudaStream_t stream, void** buffers,
   auto h = BlasHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[0] != buffers[1]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+        buffers[1], buffers[0], SizeOfCublasType(d.type) * d.batch * d.n * d.n,
+        cudaMemcpyDeviceToDevice, stream)));
+  }
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
@@ -220,6 +230,11 @@ static absl::Status GeqrfBatched_(cudaStream_t stream, void** buffers,
   auto h = BlasHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[0] != buffers[1]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+        buffers[1], buffers[0], SizeOfCublasType(d.type) * d.batch * d.m * d.n,
+        cudaMemcpyDeviceToDevice, stream)));
+  }
 
   std::vector<int> info(d.batch);
   auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[3], d.batch,

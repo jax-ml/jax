@@ -74,6 +74,12 @@ static absl::Status Potrf_(hipStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[1] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+        hipMemcpyAsync(buffers[1], buffers[0],
+                       SizeOfHipsolverType(d.type) * d.batch * d.n * d.n,
+                       hipMemcpyDeviceToDevice, stream)));
+  }
 
   int* info = static_cast<int*>(buffers[2]);
   void* workspace = buffers[3];
@@ -169,6 +175,13 @@ static absl::Status Getrf_(hipStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[1] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+        hipMemcpyDeviceToDevice, stream)));
+  }
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
@@ -245,6 +258,13 @@ static absl::Status Geqrf_(hipStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[1] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+        hipMemcpyDeviceToDevice, stream)));
+  }
 
   int* info = static_cast<int*>(buffers[3]);
 
@@ -325,6 +345,13 @@ static absl::Status Orgqr_(hipStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[2] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[2], buffers[0],
+        SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+        hipMemcpyDeviceToDevice, stream)));
+  }
 
   int* info = static_cast<int*>(buffers[3]);
 
@@ -405,6 +432,11 @@ static absl::Status Syevd_(hipStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+      buffers[1], buffers[0],
+      SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+          static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
+      hipMemcpyDeviceToDevice, stream)));
   hipsolverEigMode_t jobz = HIPSOLVER_EIG_MODE_VECTOR;
   int* info = static_cast<int*>(buffers[3]);
   void* work = buffers[4];
@@ -485,6 +517,13 @@ absl::Status Syevj_(hipStream_t stream, void** buffers, const char* opaque,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[1] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
+        hipMemcpyDeviceToDevice, stream)));
+  }
   hipsolverSyevjInfo_t params;
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverCreateSyevjInfo(&params)));
   std::unique_ptr<void, void (*)(hipsolverSyevjInfo_t)> params_cleanup(
@@ -586,6 +625,11 @@ static absl::Status Gesvd_(hipStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+      buffers[1], buffers[0],
+      SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+          static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
+      hipMemcpyDeviceToDevice, stream)));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   switch (d.type) {

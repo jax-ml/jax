@@ -82,6 +82,11 @@ static absl::Status TrsmBatched_(hipStream_t stream, void** buffers,
   auto h = BlasHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[2] != buffers[1]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[2], buffers[1], SizeOfHipblasType(d.type) * d.batch * d.m * d.n,
+        hipMemcpyDeviceToDevice, stream)));
+  }
   const int lda = d.side == HIPBLAS_SIDE_LEFT ? d.m : d.n;
   const int ldb = d.m;
   auto a_batch_host = MakeBatchPointers(stream, buffers[0], buffers[3], d.batch,
@@ -161,6 +166,11 @@ static absl::Status GetrfBatched_(hipStream_t stream, void** buffers,
   auto h = BlasHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[0] != buffers[1]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0], SizeOfHipblasType(d.type) * d.batch * d.n * d.n,
+        hipMemcpyDeviceToDevice, stream)));
+  }
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
@@ -220,6 +230,11 @@ static absl::Status GeqrfBatched_(hipStream_t stream, void** buffers,
   auto h = BlasHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
+  if (buffers[0] != buffers[1]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0], SizeOfHipblasType(d.type) * d.batch * d.m * d.n,
+        hipMemcpyDeviceToDevice, stream)));
+  }
 
   std::vector<int> info(d.batch);
   auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[3], d.batch,

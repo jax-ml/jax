@@ -356,8 +356,7 @@ def _gtsv2_mhlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
       [dl, d, du, B],
       backend_config=gpu_sparse.build_gtsv2_descriptor(m, n, ldb),
       operand_layouts=[[0]] * 3 + [[1, 0]],
-      result_layouts=[[1, 0], [0]],
-      operand_output_aliases={3: 0})
+      result_layouts=[[1, 0], [0]])
   return out[0]
 
 cuda_gtsv2 = partial(_gtsv2_mhlo, "cu", _cusparse)
