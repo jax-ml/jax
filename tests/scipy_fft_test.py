@@ -17,7 +17,7 @@ from absl.testing import absltest, parameterized
 
 from jax._src import test_util as jtu
 import jax.scipy.fft as jsp_fft
-import scipy.fftpack as osp_fft  # TODO use scipy.fft once scipy>=1.4.0 is used
+import scipy.fft as osp_fft
 
 from jax.config import config
 
@@ -75,7 +75,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda a: jsp_fft.dctn(a, s=s, axes=axes, norm=norm)
-    np_fn = lambda a: osp_fft.dctn(a, shape=s, axes=axes, norm=norm)
+    np_fn = lambda a: osp_fft.dctn(a, s=s, axes=axes, norm=norm)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
