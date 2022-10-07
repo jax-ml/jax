@@ -63,7 +63,7 @@ def _validate_bcsr(data: jnp.ndarray, indices: jnp.ndarray,
   props = _validate_bcsr_indices(indices, indptr, shape)
   shape = tuple(shape)
   n_batch, n_dense, nse = props.n_batch, props.n_dense, props.nse
-  n_sparse = data.ndim - n_batch - n_dense
+  n_sparse = len(shape) - n_batch - n_dense
   if n_sparse != 2:
     raise ValueError("BCSR array must have 2 sparse dimensions; "
                      f"{n_sparse} is given.")
