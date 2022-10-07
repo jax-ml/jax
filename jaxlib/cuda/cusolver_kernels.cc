@@ -94,12 +94,6 @@ static absl::Status Potrf_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        cudaMemcpyAsync(buffers[1], buffers[0],
-                        SizeOfCusolverType(d.type) * d.batch * d.n * d.n,
-                        cudaMemcpyDeviceToDevice, stream)));
-  }
 
   int* info = static_cast<int*>(buffers[2]);
   void* workspace = buffers[3];
@@ -192,13 +186,6 @@ static absl::Status Getrf_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-        buffers[1], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
-  }
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
@@ -275,13 +262,6 @@ static absl::Status Geqrf_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-        buffers[1], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
-  }
 
   int* info = static_cast<int*>(buffers[3]);
   void* workspace = buffers[4];
@@ -458,13 +438,6 @@ static absl::Status Orgqr_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  if (buffers[2] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-        buffers[2], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-            static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
-  }
 
   int* info = static_cast<int*>(buffers[3]);
   void* workspace = buffers[4];
@@ -544,11 +517,6 @@ static absl::Status Syevd_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-      buffers[1], buffers[0],
-      SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-          static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
-      cudaMemcpyDeviceToDevice, stream)));
   cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_VECTOR;
   int* info = static_cast<int*>(buffers[3]);
   void* work = buffers[4];
@@ -629,13 +597,6 @@ absl::Status Syevj_(cudaStream_t stream, void** buffers, const char* opaque,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-        buffers[1], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-            static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
-  }
   syevjInfo_t params;
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCreateSyevjInfo(&params)));
   std::unique_ptr<syevjInfo, void (*)(syevjInfo*)> params_cleanup(
@@ -738,11 +699,6 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-      buffers[1], buffers[0],
-      SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-          static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-      cudaMemcpyDeviceToDevice, stream)));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   int64_t k = d.jobu == 'A' ? d.m : d.n;
@@ -841,11 +797,6 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
-      buffers[1], buffers[0],
-      SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
-          static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-      cudaMemcpyDeviceToDevice, stream)));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   gesvdjInfo_t params;
