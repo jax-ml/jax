@@ -34,6 +34,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    jaxpr
    notebooks/convolutions
    pytrees
+   argument_annotations
    type_promotion
    errors
    transfer_guard
