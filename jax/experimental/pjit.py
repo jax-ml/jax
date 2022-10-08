@@ -875,9 +875,10 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
         if committed and not pxla.are_op_shardings_equal(
             pjit_in_s._to_xla_op_sharding(arg.ndim),
             arg_s._to_xla_op_sharding(arg.ndim)):
+          op =  getattr(pjit_in_s, '_original_sharding', pjit_in_s)
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
-                           f'Got pjit sharding: {pjit_in_s},\n'
+                           f'Got pjit sharding: {op},\n'
                            f'arg sharding: {arg_s}')
       resolved_in_shardings.append(pjit_in_s)
 

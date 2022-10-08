@@ -2198,6 +2198,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertLen(out.addressable_shards, 8)
 
   @jax_array(True)
+  def test_pjit_uncommitted_array_in_axis_resources_reshard(self):
+    arr = jnp.arange(16).reshape(8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    with mesh:
+      out = pjit(lambda x: x, in_axis_resources=P('x', 'y'))(arr)
+      self.assertArraysEqual(out, arr)
+      self.assertLen(out.addressable_shards, 8)
+      for s in out.addressable_shards:
+        self.assertArraysEqual(s.data, arr[s.index])
+        self.assertEqual(s.replica_id, 0)
+
+  @jax_array(True)
   def test_pjit_uncommitted_array_and_committed_array(self):
     shape = (8, 2)
     uarr = jnp.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -2290,6 +2302,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out3.sharding.devices_indices_map(shape)
     cache_info3 = OpShardingSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+
+  @jax_array(True)
+  def test_device_put_sharding_prng(self):
+    mesh = jtu.create_global_mesh((8,), ('x',))
+    s = MeshPspecSharding(mesh, P('x'))
+
+    x = jax.random.split(jax.random.PRNGKey(0), len(jax.devices()))
+    y = jax.device_put(x, s)
+
+    if config.jax_enable_custom_prng:
+      self.assertIsInstance(y, jax.random.KeyArray)
+      self.assertEqual(y.sharding, s)
+
+  @jax_array(True)
+  def test_device_put_on_different_sharding(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    x = jnp.arange(8).reshape(4, 2)
+    s1 = MeshPspecSharding(mesh, P('x'))
+    a = jax.device_put(x, s1)
+    self.assertEqual(a.sharding, s1)
+
+    s2 = MeshPspecSharding(mesh, P('x', 'y'))
+    b = jax.device_put(a, s2)
+    self.assertEqual(b.sharding, s2)
 
 
 class ArrayCppPjitTest(ArrayPjitTest):

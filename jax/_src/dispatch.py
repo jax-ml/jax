@@ -1295,16 +1295,28 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
 def _device_put_impl(
     x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
   from jax._src import array, sharding
+  from jax.interpreters import pxla
+
+  try:
+    a = xla.abstractify(x)
+  except TypeError as err:
+    raise TypeError(
+        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
   if isinstance(device, sharding.Sharding):
-    if not device.is_fully_addressable():  # type: ignore
+    s = device
+    if not s.is_fully_addressable():  # type: ignore
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {sharding}")
-    if getattr(x, 'sharding', None) == device:
+    if getattr(x, 'sharding', None) == s:
       return x
-    # TODO(mattjj,yashkatariya,phawkins): runtime fast resharding here?
-    return array.make_array_from_callback(x.shape, device, lambda idx: x[idx])
+    # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
+    arg_handler = pxla.shard_arg_handlers[type(x)]
+    result_handler = pxla.global_aval_to_result_handler(a, s, True, False)
+    map_ = s.devices_indices_map(x.shape)  # type: ignore
+    return result_handler(arg_handler(x, list(map_), list(map_.values()),
+                                      pxla.InputsHandlerMode.pjit_or_xmap))
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
@@ -1320,11 +1332,6 @@ def _device_put_impl(
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
 
-  try:
-    a = xla.abstractify(x)
-  except TypeError as err:
-    raise TypeError(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
   return aval_to_result_handler(device, a)(None, *device_put(x, device))
 
 

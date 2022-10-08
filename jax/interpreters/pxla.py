@@ -592,7 +592,7 @@ local_result_handlers[(ConcreteArray, OutputType.ShardedDeviceArray)] = sda_arra
 def global_aval_to_result_handler(
     aval: core.AbstractValue, out_sharding, committed: bool,
     is_out_sharding_from_xla: bool
-) -> Callable[[List[xb.xla_client.Buffer]], Any]:
+) -> Callable[[Sequence[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
   Args:

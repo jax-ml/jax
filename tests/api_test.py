@@ -1487,10 +1487,12 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], np.ndarray)
     assert np.all(y2[1][1] == 3 * x)
 
+  @jax_config.jax_array(True)
   def test_device_put_sharding(self):
     mesh = maps.Mesh(jax.devices(), ('x',))
     s = sharding.MeshPspecSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
+
     y = jax.device_put(x, s)
     self.assertEqual(y.sharding, s)
     self.assertArraysAllClose(y, x)
@@ -1507,11 +1509,6 @@ class APITest(jtu.JaxTestCase):
     u = jax.device_put(y, jax.devices()[0])
     self.assertArraysAllClose(u, y)
     self.assertEqual(u.device(), jax.devices()[0])
-
-    # TODO(frostig): make this pass with JAX_ENABLE_CUSTOM_PRNG=1
-    # # this can cover opaque dtypes
-    # x = jax.random.split(jax.random.PRNGKey(0), len(jax.devices()))
-    # jax.device_put(x, s)  # doesn't crash
 
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
