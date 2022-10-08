@@ -454,6 +454,42 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     self.assertAllClose(discharge_of_vmap_ans, vmap_of_discharge_ans,
                         check_dtypes=False)
 
+  def test_get_with_broadcasting_indices(self):
+
+    float_ = (jnp.dtype('float64') if jax.config.jax_enable_x64 else
+              jnp.dtype('float32'))
+    int_ = (jnp.dtype('int64') if jax.config.jax_enable_x64 else
+            jnp.dtype('int32'))
+    ref_shape = (128, 64)
+    ref_aval = state.ShapedArrayRef(ref_shape, float_)
+    idx1_shape, idx2_shape = (32,), (48,)
+    idx1_aval = core.ShapedArray(idx1_shape, int_)
+    idx2_aval = core.ShapedArray(idx2_shape, int_)
+    def f(x_ref, idx1, idx2):
+      return [x_ref[idx1[:, None], idx2[None, :]]]
+    stateful_jaxpr, _, stateful_consts = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(f), [ref_aval, idx1_aval, idx2_aval])
+    jaxpr, consts = state.discharge_state(stateful_jaxpr, stateful_consts)
+    x = self.rng().randn(*ref_aval.shape)
+    idx1, idx2 = jnp.arange(32), jnp.arange(48)
+    y, _ = jax.core.eval_jaxpr(jaxpr, consts, x, idx1, idx2)
+    np.testing.assert_allclose(y, x[idx1[:, None], idx2[None, :]])
+
+  def test_get_with_nontrivial_slices(self):
+
+    float_ = (jnp.dtype('float64') if jax.config.jax_enable_x64 else
+              jnp.dtype('float32'))
+    ref_shape = (128, 12, 64)
+    ref_aval = state.ShapedArrayRef(ref_shape, float_)
+    def f(x_ref):
+      return [x_ref[32:48:5, jnp.arange(5), :64]]
+    stateful_jaxpr, _, stateful_consts = pe.trace_to_jaxpr_dynamic(
+        lu.wrap_init(f), [ref_aval])
+    jaxpr, consts = state.discharge_state(stateful_jaxpr, stateful_consts)
+    x = self.rng().randn(*ref_aval.shape)
+    y, _ = jax.core.eval_jaxpr(jaxpr, consts, x)
+    np.testing.assert_allclose(y, x[32:48:5, jnp.arange(5), :64])
+
 
 class StateDischargeTest(jtu.JaxTestCase):
 

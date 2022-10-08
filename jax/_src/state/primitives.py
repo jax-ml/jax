@@ -21,18 +21,19 @@ from jax import core
 from jax import lax
 from jax._src import ad_util
 from jax._src import pretty_printer as pp
+from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
+import numpy as np
 
 from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
                                   AccumEffect)
 
 ## General utilities
 
-Array = Any
 T = TypeVar('T')
 class Ref(Protocol):
 
@@ -65,15 +66,54 @@ def _get_impl(ref: Ref, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
 
-Indexer = Tuple[Union[int, slice, jnp.ndarray], ...]
+Indexer = Tuple[Union[int, slice, ArrayLike], ...]
 
-def _unpack_idx(idx: Indexer, ndim: int
+def _is_trivial_slice(slc):
+  if not isinstance(slc, slice):
+    return False
+  return slc == slice(None) or slc == slice(None, None, 1)
+
+def _unpack_idx(idx: Indexer, shape: Tuple[int, ...],
                ) -> Tuple[Tuple[int, ...], Tuple[bool, ...]]:
-  indexed_dims_ = [type(i) != slice for i in idx]
-  _, non_slice_idx = partition_list(indexed_dims_, idx)
-  indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
-  return (tuple(map(lambda x: jnp.asarray(x, jnp.int32), non_slice_idx)),
-          tuple(indexed_dims))
+  # First we pad out `idx` to include the trailing trivial slices
+  idx = (*idx, *([slice(None)] * (len(shape) - len(idx))))
+  # Then we check if we have any non-trivial slices like `x[:32]`. If that's
+  # the case, we need to convert *all* slices into non-trivial slices to
+  # preserve the indexing ordering.
+  has_non_trivial_slices = any(
+      isinstance(ix, slice) and not _is_trivial_slice(ix) for ix in idx)
+  if has_non_trivial_slices:
+    idx = tuple(
+        slice(0, s) if _is_trivial_slice(ix) else ix
+        for ix, s in zip(idx, shape))
+  # We remove trivial slices from our `idx`.
+  indexed_dims = [not _is_trivial_slice(ix) for ix in idx]
+  _, non_slice_idx_ = partition_list(indexed_dims, idx)
+  _, non_slice_shape = partition_list(indexed_dims, shape)
+  non_slice_idx = []
+  # The state primitives accept either trivial slices or index arrays. We need
+  # to convert nontrivial slices into index arrays.
+  for i, (ix, s) in enumerate(zip(non_slice_idx_, non_slice_shape)):
+    if isinstance(ix, int):
+      ix = np.array(ix, np.int32)
+    if isinstance(ix, slice):
+      start = 0 if ix.start is None else ix.start
+      end = s if ix.stop is None else ix.stop
+      step = 1 if ix.step is None else ix.step
+      ix = jnp.arange(start, end, step)
+    if has_non_trivial_slices and ix.shape:
+      # We need to make sure to broadcast the *other* index arrays as well. They
+      # should be broadcastable against each other, but not necessarily against
+      # the non-trivial slices.
+      ix = lax.broadcast_in_dim(ix, tuple(1 if dim != i else ix.shape[0] for
+                                dim in range(len(non_slice_idx_))),
+                                broadcast_dimensions=(i,))
+    non_slice_idx.append(ix)
+  non_slice_idx = map(lambda x: jnp.asarray(x, jnp.int32), non_slice_idx)
+  # We now broadcast index arrays against each other to produce the same shape
+  # indexed array in each slot.
+  non_slice_idx = jnp.broadcast_arrays(*non_slice_idx)
+  return (tuple(non_slice_idx), tuple(indexed_dims))
 
 def _get_slice_output_shape(in_shape: Tuple[int, ...],
                             idx_shapes: Tuple[Tuple[int, ...], ...],
@@ -86,7 +126,7 @@ def _get_slice_output_shape(in_shape: Tuple[int, ...],
 
 def ref_get(ref: Ref, idx: Tuple[Union[int, slice], ...]) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  idx, indexed_dims = _unpack_idx(idx, ref.shape)
   return get_p.bind(ref, *idx, indexed_dims=indexed_dims)
 
 # `swap` mutates a `Ref`, setting its value and returns its previous value.
@@ -112,12 +152,12 @@ def _swap_impl(ref: Ref, value: Array, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 swap_p.def_impl(_swap_impl)
 
-def ref_swap(ref: Ref, idx: Tuple[int, ...], value: Array) -> Array:
+def ref_swap(ref: Ref, idx: Indexer, value: Array) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
-  idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  idx, indexed_dims = _unpack_idx(idx, ref.shape)
   return swap_p.bind(ref, value, *idx, indexed_dims=indexed_dims)
 
-def ref_set(ref: Ref, idx: Tuple[int, ...], value: Array) -> None:
+def ref_set(ref: Ref, idx: Indexer, value: Array) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
   ref_swap(ref, idx, value)
 
@@ -140,9 +180,9 @@ def _addupdate_impl(ref: Ref, value: Array, *idx: int):
   raise ValueError("Can't evaluate `addupdate` outside a stateful context.")
 addupdate_p.def_impl(_addupdate_impl)
 
-def ref_addupdate(ref: Ref, idx: Tuple[int, ...], x: Array) -> None:
+def ref_addupdate(ref: Ref, idx: Indexer, x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  idx, indexed_dims = _unpack_idx(idx, ref.shape)
   return addupdate_p.bind(ref, x, *idx, indexed_dims=indexed_dims)
 
 ## get/set/addupdate abstract evaluation rules
