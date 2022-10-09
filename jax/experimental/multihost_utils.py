@@ -83,7 +83,7 @@ def sync_global_devices(name: str):
 
 
 def _handle_array_process_allgather(inp, tiled):
-  if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable():
+  if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
     reps = sharding.OpShardingSharding(inp.sharding._device_assignment,
                                        sharding._get_replicated_op_sharding())
     out = pjit(lambda x: x, out_axis_resources=reps)(inp)

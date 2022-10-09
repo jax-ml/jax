@@ -285,7 +285,7 @@ class ArrayImpl(basearray.Array):
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
-      assert self.is_fully_replicated() or self.is_fully_addressable()
+      assert self.is_fully_replicated or self.is_fully_addressable
       if dispatch.is_single_device_sharding(self.sharding):
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
       elif isinstance(self.sharding, PmapSharding):
@@ -307,6 +307,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise TypeError(self.dtype)
 
+  @property
   def is_fully_replicated(self) -> bool:
     return self.shape == self._arrays[0].shape
 
@@ -317,7 +318,7 @@ class ArrayImpl(basearray.Array):
     else:
       dtype_str = f'dtype={self.dtype.name})'
 
-    if self.is_fully_addressable() or self.is_fully_replicated():
+    if self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
       s = np.array2string(self._value, prefix=prefix, suffix=',',
                           separator=', ', max_line_width=line_width)
@@ -329,8 +330,9 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}{self.shape}, {dtype_str}"
 
+  @pxla.maybe_cached_property
   def is_fully_addressable(self) -> bool:
-    return self.sharding.is_fully_addressable()
+    return self.sharding.is_fully_addressable
 
   def __array__(self, dtype=None, context=None):
     return np.asarray(self._value, dtype=dtype)
@@ -446,12 +448,12 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
-      if self.is_fully_replicated():
+      if self.is_fully_replicated:
         self._npy_value = np.asarray(self._arrays[0])  # type: ignore
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
-      if not self.is_fully_addressable():
+      if not self.is_fully_addressable:
         raise RuntimeError("Fetching value for `jax.Array` that spans "
                            "non-addressable devices is not possible. You can use "
                            "`jax.experimental.multihost_utils.process_allgather` "
@@ -547,7 +549,7 @@ def _array_pmap_shard_arg(x, devices, indices, mode):
 
 def _array_rest_shard_arg(x: ArrayImpl, devices, indices, mode):
   x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
-  if not x.is_fully_addressable():
+  if not x.is_fully_addressable:
     if tuple(x_indices) == tuple(indices):
       return x._arrays
     else:

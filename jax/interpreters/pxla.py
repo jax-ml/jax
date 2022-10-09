@@ -2751,7 +2751,7 @@ def lower_sharding_computation(
     out_shardings = (_UNSPECIFIED,) * len(global_out_avals)
 
   # mypy doesn't understand that out_sharding here is always a sequence.
-  assert len(out_shardings) == len(global_out_avals), (
+  assert len(out_shardings) == len(global_out_avals), (  # type: ignore
       len(out_shardings), len(global_out_avals))  # type: ignore
 
   if keep_unused:

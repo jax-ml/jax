@@ -1305,7 +1305,7 @@ def _device_put_impl(
 
   if isinstance(device, sharding.Sharding):
     s = device
-    if not s.is_fully_addressable():  # type: ignore
+    if not s.is_fully_addressable:  # type: ignore
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {sharding}")
@@ -1320,7 +1320,7 @@ def _device_put_impl(
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
-    if not x.is_fully_addressable():
+    if not x.is_fully_addressable:
       raise ValueError(
           "device_put's first argument must be a fully addressable array, but "
           f"got value with devices {x.devices()}")

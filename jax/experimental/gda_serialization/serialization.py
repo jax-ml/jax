@@ -152,7 +152,7 @@ class _LimitInFlightBytes:
 
 async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
   if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
-      arr_inp.is_fully_addressable()):
+      arr_inp.is_fully_addressable):
     raise ValueError('Passing fully addressable Arrays to a multiprocess '
                      'serialization is not allowed.')
   # 'metadata' may not be present at the top level (for example, if we are using

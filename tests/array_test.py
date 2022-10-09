@@ -132,7 +132,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertListEqual(replica_ids, expected_replica_ids)
     self.assertListEqual([i.device.id for i in arr.addressable_shards],
                          [0, 1, 2, 3, 4, 5, 6, 7])
-    self.assertEqual(arr.is_fully_replicated(), expected_is_fully_replicated)
+    self.assertEqual(arr.is_fully_replicated, expected_is_fully_replicated)
     for i, s in enumerate(arr.addressable_shards):
       self.assertEqual(s.data.aval,
                        jax.ShapedArray(expected_shard_shape, s.data.dtype))
