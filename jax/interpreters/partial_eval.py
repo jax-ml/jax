@@ -41,8 +41,9 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
 from jax.core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
                       ClosedJaxpr, new_jaxpr_eqn, ConcreteArray, Var, DropVar,
                       raise_to_shaped, Atom, JaxprEqn, Primitive, ShapedArray,
-                      DShapedArray, mapped_aval, unmapped_aval, DBIdx, InDBIdx,
-                      OutDBIdx, InputType, OutputType, get_referent)
+                      DShapedArray, AbstractBInt, mapped_aval, unmapped_aval,
+                      DBIdx, InDBIdx, OutDBIdx, InputType, OutputType,
+                      get_referent)
 from jax._src import source_info_util
 from jax.config import config
 
@@ -2339,14 +2340,12 @@ Val = Any
 
 def pad_jaxpr(jaxpr: Jaxpr, consts: Sequence[Const]
               ) -> Tuple[Jaxpr, List[Const]]:
-  bounds = {v: v.aval.dtype.bound for v in jaxpr.invars
-            if isinstance(v.aval, core.UnshapedArray) and
-            type(v.aval.dtype) is core.bint and not v.aval.shape}
+  bounds = {v: v.aval.bound for v in jaxpr.invars
+            if type(v.aval) is AbstractBInt}
   idxs = {v: DBIdx(i) for i, v in enumerate(jaxpr.invars)}
 
   def substitute(aval: AbstractValue) -> AbstractValue:
-    if (isinstance(aval, core.UnshapedArray) and type(aval.dtype) is core.bint
-        and not aval.shape):
+    if isinstance(aval, AbstractBInt):
       return ShapedArray((), dtypes._scalar_type_to_dtype(int))
     elif isinstance(aval, DShapedArray):
       shape = [bounds.get(d, idxs.get(d, d)) for d in aval.shape]  # type: ignore
@@ -2378,39 +2377,20 @@ def _eval_jaxpr_padded(
   map(write, jaxpr.constvars, consts)
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
+    rule = padding_rules[eqn.primitive]
     in_avals  = [_substitute_axis_sizes(env, v.aval) for v in eqn.invars]
     out_avals = [_substitute_axis_sizes(env, v.aval) for v in eqn.outvars]
-    rule = padding_rules[eqn.primitive]
     outs = rule(in_avals, out_avals, *map(read, eqn.invars), **eqn.params)
     map(write, eqn.outvars, outs)
   return map(read, jaxpr.outvars)
 
 def _substitute_axis_sizes(env: Dict, aval: AbstractValue) -> AbstractValue:
   if isinstance(aval, DShapedArray):
-    shp = []
-    for d in aval.shape:
-      if isinstance(d, core.DArray):
-        assert not d.shape and type(d.dtype) is core.bint
-        shp.append(BoundedAxisSize(int(d._data), int(d.dtype.bound)))
-      elif (type(d) is core.Var and isinstance(d.aval, core.DShapedArray) and
-            type(d.aval.dtype) is core.bint):
-        assert not d.aval.shape
-        shp.append(BoundedAxisSize(env[d], d.aval.dtype.bound))
-      else:
-        shp.append(env.get(d, d))
+    shp = [BoundedAxisSize(env[d], d.aval.bound) if type(d) is Var and
+           type(d.aval) is AbstractBInt else env.get(d, d) for d in aval.shape]
     return DShapedArray(tuple(shp), aval.dtype, aval.weak_type)
   else:
     return aval
-
-def _is_bint_axis_size(d: Union[int, core.DArray, core.Var]) -> bool:
-  if isinstance(d, core.DArray):
-    assert not d.shape
-    return type(d.dtype) is core.bint
-  elif isinstance(d, core.Var):
-    return (isinstance(d.aval, core.DShapedArray) and
-            type(d.aval.dtype) is core.bint)
-  return False
-
 
 padding_rules: Dict[Primitive, Callable] = {}
 

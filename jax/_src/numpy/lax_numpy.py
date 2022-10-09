@@ -88,17 +88,10 @@ newaxis = None
 # arguments for `shape`.
 def canonicalize_shape(
     shape: Union[core.Shape, int, core.Tracer], context: str="") -> core.Shape:
-  if isinstance(shape, (list, tuple)):
-    return core.canonicalize_shape(shape, context)  # type: ignore
-  elif isinstance(shape, np.ndarray):
-    if shape.ndim == 0:
-      return core.canonicalize_shape((shape,), context)
-    else:
-      return core.canonicalize_shape(shape, context)
-  elif isinstance(shape, core.Tracer) or ndim(shape) == 0:
+  if isinstance(shape, core.Tracer) or ndim(shape) == 0:
     return core.canonicalize_shape((shape,), context)
   else:
-    raise TypeError(f"expected shape-like, got {shape}")
+    return core.canonicalize_shape(shape, context)  # type: ignore
 
 # Common docstring additions:
 
@@ -2135,21 +2128,23 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
   if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
     if stop is not None or step is not None:
       raise ValueError(
-          "jax.numpy.arange supports non-constant arguments only in "
-          "single-argument form. Found "
-          f"jax.numpy.arange(start={start}, stop={stop}, step={step})")
+          "jax.numpy.arange supports non-constant arguments only in single-argument form. "
+          f"Found jax.numpy.arange(start={start}, stop={stop}, step={step})")
     return lax.iota(dtype or int_, start)
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = _jnp_dtype(dtype)
   if stop is None and step is None:
-    start_dtype = _dtype(start)
-    if not jax.config.jax_dynamic_shapes:
+    if (jax.config.jax_dynamic_shapes and
+        not isinstance(core.get_aval(start), core.AbstractBInt) and
+        not isinstance(core.get_aval(start), core.ConcreteArray)):
+      start = ceil(start).astype(int)  # note using jnp here
+    elif (isinstance(start, core.BInt) or isinstance(start, core.Tracer) and
+          isinstance(core.get_aval(start), core.AbstractBInt)):
+      pass
+    else:
       start = require(start, msg("stop"))
-    if (not dtypes.issubdtype(start_dtype, np.integer) and
-        not core.is_opaque_dtype(start_dtype)):
-      ceil_ = ceil if isinstance(start, core.Tracer) else np.ceil
-      start = ceil_(start).astype(int)
+      start = np.ceil(start).astype(int)
     return lax.iota(dtype, start)
   else:
     start = require(start, msg("start"))

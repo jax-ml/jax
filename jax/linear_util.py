@@ -249,11 +249,8 @@ def _check_input_type(in_type: core.InputType) -> None:
   assert (type(in_type) is tuple and all(type(e) is tuple for e in in_type) and
           all(isinstance(a, core.AbstractValue) and type(b) is bool
               and not isinstance(a, core.ConcreteArray) for a, b in in_type) and
-          all(isinstance(d, (int, core.DBIdx, core.DArray))
-              and (not isinstance(d, core.DArray) or
-                   type(d.dtype) is core.bint and not d.shape)
-              for a, _ in in_type if type(a) is core.DShapedArray
-              for d in a.shape))
+          all(isinstance(d, (int, core.BInt, core.DBIdx)) for a, _ in in_type
+              if type(a) is core.DShapedArray for d in a.shape))
 
   # Check that all DBIdx point to positions to the left of the input on which
   # they appear.

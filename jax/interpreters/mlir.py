@@ -145,8 +145,13 @@ def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
   # in the MHLO builder, -1 indicates a '?' axis size
-  shape = [d if type(d) is int else -1 for d in aval.shape]
+  shape = [d if type(d) is int else d.bound if type(d) is core.BInt else -1
+           for d in aval.shape]
   return (ir.RankedTensorType.get(shape, dtype_to_ir_type(aval.dtype)),)
+
+def _bint_ir_types(aval: core.AbstractBInt) -> Sequence[ir.Type]:
+  dtype = dtypes._scalar_type_to_dtype(int)
+  return (ir.RankedTensorType.get((), dtype_to_ir_type(dtype)),)
 
 ir_type_handlers: Dict[Type[core.AbstractValue],
                         Callable[[Any], Sequence[ir.Type]]] = {}
@@ -161,6 +166,7 @@ def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[ir.Type]:
   except KeyError as err:
     raise TypeError(f"No ir_type_handler for aval type: {type(aval)}") from err
 
+ir_type_handlers[core.AbstractBInt] = _bint_ir_types
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.ConcreteArray] = _array_ir_types
 ir_type_handlers[core.AbstractToken] = lambda _: [mhlo.TokenType.get()]

@@ -1203,6 +1203,7 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 
 # TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
+
 opaque_dtypes: Set[Any] = set()
 
 # TODO(frostig): update inliners of the four functions below to call them
@@ -1442,11 +1443,12 @@ def primal_dtype_to_tangent_dtype(primal_dtype):
 # We have a convention of reusing AbsractValues as types, even though we could
 # make a distinction and use abstract values during tracing only. This reuse
 # becomes a bit more extreme with DShapedArrays. A DShapedArray's shape
-# attribute is a tuple which can contain several different types: int, DArray
-# (scalar and with dtype of bint type), Tracer (while tracing), Var (when used
-# as jaxpr type annotations), or DBIdx/InDBIdx/OutDBIdx (when used in InputType
-# or OutputType). We could reduce this polymorphism if it seems cleaner, though
-# it's kind of convenient!
+# attribute is a tuple which can contain several different types: int, BInt,
+# Tracer (while tracing), Var (when used as jaxpr type annotations), or
+# DBIdx/InDBIdx/OutDBIdx (when used in InputType or OutputType). We could reduce
+# this polymorphism if it seems cleaner, though it's kind of convenient!
+AxisSize = Union[int, 'BInt', Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
+
 class DShapedArray(UnshapedArray):
   __slots__ = ['shape']
   shape: Tuple[AxisSize, ...]  # noqa: F821
@@ -1509,55 +1511,64 @@ class DConcreteArray(DShapedArray):
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
 
 
+# TODO(mattjj): remove this, replace with arrays of bints
+class AbstractBInt(AbstractValue):
+  __slots__ = ['bound']
+  bound: int
+  def __init__(self, bound):
+    self.bound = bound
+  def str_short(self, short_dtypes=False) -> str:
+    return f'bint{{≤{self.bound}}}[]'
+  __repr__ = str_short
+  def __eq__(self, other):
+    return type(other) is AbstractBInt and self.bound == other.bound
+  def __hash__(self) -> int:
+    return hash((type(self), self.bound))
+  def at_least_vspace(self):
+    return self  # should return float0 array
+  def join(self, other):
+    return self
 
-class DArray:
+class BInt:
+  val: Any  # Union[int, Array]
+  bound: int
+  def __init__(self, val, bound):
+    assert 0 <= val <= bound
+    self.val = val
+    self.bound = bound
+  def __repr__(self) -> str:
+    return f'{self.val}{{≤{self.bound}}}'
+  def __int__(self) -> int:
+    return self.val
+  def __eq__(self, other) -> bool:
+    return (isinstance(other, BInt) and
+            (self.val, self.bound) == (other.val, other.bound))
+  def __hash__(self):
+    return hash((self.val, self.bound))
+pytype_aval_mappings[BInt] = lambda x: AbstractBInt(x.bound)
+
+
+# DShapedArray w/ BInt in shapes => PaddedArray runtime representation
+class PaddedArray:
   _aval: DShapedArray
   _data: Any  # standard array type
   def __init__(self, aval, data):
-    pad_shape = tuple(d.dtype.bound if type(d) is DArray and
-                      type(d.dtype) is bint else d for d in aval.shape)
-    assert data.shape == pad_shape
+    padded_shape = tuple(d.bound if type(d) is BInt else d for d in aval.shape)
+    assert data.shape == padded_shape
     self._aval = aval
     self._data = data
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
   def __repr__(self) -> str:
-    if not self.shape and type(self.dtype) is bint:
-      # special-case scalar bints
-      return f'{int(self._data)}{{≤{self.dtype.bound}}}'
-
     dtypestr = _short_dtype_name(self._aval.dtype)
     shapestr = ','.join(map(str, self.shape))
-    slices = tuple(slice(int(d._data)) if type(d) is DArray and
-                   type(d.dtype) is bint else slice(None) for d in self.shape)
+    slices = tuple(slice(d.val) if type(d) is BInt else slice(None)
+                   for d in self.shape)
     data = self._data[slices]
     return f'{dtypestr}[{shapestr}] with value:\n{data}'
-  def __hash__(self) -> int:
-    if not self.shape:
-      return hash((self._aval, int(self._data)))
-    raise TypeError("unhashable type: DArray")
-  def __eq__(self, other):
-    if isinstance(other, DArray) and self._aval == other._aval:
-      return self._data == other._data
-    return False
-
-pytype_aval_mappings[DArray] = \
+pytype_aval_mappings[PaddedArray] = \
     lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
                              x._data)
-
-@dataclass(frozen=True, eq=True)
-class bint:
-  bound: int
-
-  @property
-  def name(self) -> str:
-    return f'bint{{≤{self.bound}}}'
-
-  def __str__(self) -> str:
-    return self.name
-opaque_dtypes.add(bint)
-
-AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
 class AbstractToken(AbstractValue):
@@ -1588,6 +1599,7 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
   raise TypeError(type(aval))
 
 raise_to_shaped_mappings : Dict[type, Callable] = {
+  AbstractBInt: lambda aval, _: aval,
   AbstractToken: lambda aval, _: aval,
   Bot: lambda aval, _: aval,
   UnshapedArray: lambda aval, _: aval,
@@ -1680,13 +1692,10 @@ class DimensionHandler:
 
 _dimension_handler_int = DimensionHandler()
 _SPECIAL_DIMENSION_HANDLERS: Dict[type, DimensionHandler] = {}
-DArrayDimHandler = type('DArrayDimHandler', (DimensionHandler,), {})()
 
 def _get_special_dim_handler(dim: DimSize) -> Optional[DimensionHandler]:
   if isinstance(dim, Tracer) and not config.jax_dynamic_shapes:
     return None
-  if isinstance(dim, DArray) and not dim.shape and type(dim.dtype) is bint:
-    return DArrayDimHandler
   return _SPECIAL_DIMENSION_HANDLERS.get(type(dim))
 
 def _dim_handler_and_canonical(*dlist: DimSize) -> Tuple[DimensionHandler, Tuple[DimSize, ...]]:
@@ -1797,9 +1806,6 @@ def dimension_as_value(d: DimSize):
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   if isinstance(dim, Tracer) and config.jax_dynamic_shapes:
     return dim
-  elif (config.jax_dynamic_shapes and isinstance(dim, DArray) and
-        type(dim._aval.dtype) is bint and not dim._aval.shape):
-    return dim
   elif is_special_dim_size(dim):
     return dim
   else:
@@ -1841,6 +1847,20 @@ def _invalid_shape_error(shape: Shape, context: str=""):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
   return TypeError(msg)
+
+class BIntDimensionHandler(DimensionHandler):
+  def symbolic_equal(self, d1, d2) -> bool:
+    return isinstance(d2, BInt) and d1.val == d2.val and d1.bound == d2.bound
+  def sum(self, *ds) -> BInt:
+    if not all(isinstance(d, BInt) for d in ds):
+      raise InconclusiveDimensionOperation
+    if len({d.bound for d in ds}) != 1:
+      raise InconclusiveDimensionOperation
+    return BInt(sum(d.val for d in ds), ds[0].bound)
+  def fail(self, *_): raise InconclusiveDimensionOperation
+  great_equal = diff = divide_shape_sizes = stride = dilate = as_value = fail
+_SPECIAL_DIMENSION_HANDLERS[BInt] = BIntDimensionHandler()
+
 
 
 # ------------------- Named shapes -------------------
@@ -2523,14 +2543,13 @@ def check_type(
   if isinstance(ty, DShapedArray):
     # Check all elements in the shape tuple are well-typed.
     for d in ty.shape:
-      if (isinstance(d, int) or
-          isinstance(d, DArray) and not d.shape and type(d.dtype) == bint):
+      if isinstance(d, (int, BInt)):
         continue
       elif isinstance(d, Var):
         if d not in env:
           ctx, _ = ctx_factory()
           raise JaxprTypeError(f"unbound axis size: '{pp_var(d, ctx)}'")
-        if not isinstance(d.aval, (ShapedArray, DShapedArray)):
+        if not isinstance(d.aval, (ShapedArray, AbstractBInt)):
           raise JaxprTypeError(f"axis size with unexpected type annotation: "
                                f"{d.aval} of type {type(d.aval)}")
         if isinstance(d.aval, ShapedArray):
@@ -2538,13 +2557,6 @@ def check_type(
           if shape: raise JaxprTypeError(f"axis size nonscalar: {d.aval}")
           if not dtypes.issubdtype(dtype, np.integer):
             raise JaxprTypeError(f"axis size with non-integer dtype: {d.aval}")
-        else:
-          assert isinstance(d.aval, DShapedArray)
-          shape, dtype = d.aval.shape, d.aval.dtype
-          if shape: raise JaxprTypeError(f"axis size nonscalar: {d.aval}")
-          if type(dtype) is not bint:
-            raise JaxprTypeError(
-                f"DArray axis size with non-bint dtype: {d.aval}")
       else:
         raise JaxprTypeError(f"unexpected type in shape: {type(d)}")
   else:

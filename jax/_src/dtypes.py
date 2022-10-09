@@ -237,7 +237,7 @@ def _issubclass(a, b):
   except TypeError:
     return False
 
-def issubdtype(a, b) -> bool:
+def issubdtype(a, b):
   if a == "bfloat16":
     a = bfloat16
   if a == bfloat16:
@@ -251,10 +251,7 @@ def issubdtype(a, b) -> bool:
     # interacts badly with JAX's custom scalar types. As a workaround,
     # explicitly cast the second argument to a NumPy type object.
     b = np.dtype(b).type
-  try:
-    return np.issubdtype(a, b)
-  except TypeError:  # e.g. if 'a' is not a np.dtype
-    return False
+  return np.issubdtype(a, b)
 
 can_cast = np.can_cast
 issubsctype = np.issubsctype
@@ -439,8 +436,6 @@ def dtype(x, *, canonicalize=False):
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]
-  elif jax.core.is_opaque_dtype(getattr(x, 'dtype', None)):
-    dt = x.dtype
   else:
     dt = np.result_type(x)
   if dt not in _jax_dtype_set:
