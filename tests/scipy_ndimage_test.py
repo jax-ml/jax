@@ -18,7 +18,6 @@ from functools import partial
 import numpy as np
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import scipy.ndimage as osp_ndimage
 
 from jax import grad
@@ -59,27 +58,24 @@ def _fixed_ref_map_coordinates(input, coordinates, order, mode, cval=0.0):
 
 class NdimageTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_coordinates={}_order={}_mode={}_cval={}_impl={}_round={}".format(
-          jtu.format_shape_dtype_string(shape, dtype),
-          jtu.format_shape_dtype_string(coords_shape, coords_dtype),
-          order, mode, cval, impl, round_),
-       "rng_factory": rng_factory, "shape": shape,
-       "coords_shape": coords_shape, "dtype": dtype,
-       "coords_dtype": coords_dtype, "order": order, "mode": mode,
-       "cval": cval, "impl": impl, "round_": round_}
-      for shape in [(5,), (3, 4), (3, 4, 5)]
-      for coords_shape in [(7,), (2, 3, 4)]
-      for dtype in float_dtypes + int_dtypes
-      for coords_dtype in float_dtypes
-      for order in [0, 1]
-      for mode in ['wrap', 'constant', 'nearest', 'mirror', 'reflect']
-      for cval in ([0, -1] if mode == 'constant' else [0])
-      for impl, rng_factory in [
-          ("original", partial(jtu.rand_uniform, low=0, high=1)),
-          ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),
-      ]
-      for round_ in [True, False]))
+  @jtu.sample_product(
+    [dict(mode=mode, cval=cval)
+     for mode in ['wrap', 'constant', 'nearest', 'mirror', 'reflect']
+     for cval in ([0, -1] if mode == 'constant' else [0])
+    ],
+    [dict(impl=impl, rng_factory=rng_factory)
+     for impl, rng_factory in [
+       ("original", partial(jtu.rand_uniform, low=0, high=1)),
+       ("fixed", partial(jtu.rand_uniform, low=-0.75, high=1.75)),
+     ]
+    ],
+    shape=[(5,), (3, 4), (3, 4, 5)],
+    coords_shape=[(7,), (2, 3, 4)],
+    dtype=float_dtypes + int_dtypes,
+    coords_dtype=float_dtypes,
+    order=[0, 1],
+    round_=[True, False],
+  )
   def testMapCoordinates(self, shape, dtype, coords_shape, coords_dtype, order,
                          mode, cval, impl, round_, rng_factory):
 
@@ -120,11 +116,10 @@ class NdimageTest(jtu.JaxTestCase):
     self.assertIn("Only nearest neighbor",
                   lsp_ndimage.map_coordinates.__doc__)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{np.dtype(dtype)}_order={order}",
-       "dtype": dtype, "order": order}
-      for dtype in float_dtypes + int_dtypes
-      for order in [0, 1]))
+  @jtu.sample_product(
+    dtype=float_dtypes + int_dtypes,
+    order=[0, 1],
+  )
   def testMapCoordinatesRoundHalf(self, dtype, order):
     x = np.arange(-3, 3, dtype=dtype)
     c = np.array([[.5, 1.5, 2.5, 3.5]])

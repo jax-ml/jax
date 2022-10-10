@@ -13,14 +13,12 @@
 # limitations under the License.
 
 from functools import partial
-import itertools
 import unittest
 import warnings
 
 import numpy as np
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax import image
@@ -52,19 +50,15 @@ inexact_dtypes = jtu.dtypes.inexact
 
 class ImageTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-       {"testcase_name": "_shape={}_target={}_method={}_antialias={}".format(
-          jtu.format_shape_dtype_string(image_shape, dtype),
-          jtu.format_shape_dtype_string(target_shape, dtype), method,
-          antialias),
-        "dtype": dtype, "image_shape": image_shape,
-        "target_shape": target_shape,
-        "method": method, "antialias": antialias}
-       for dtype in float_dtypes
-       for target_shape, image_shape in itertools.combinations_with_replacement(
-        [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]], 2)
-       for method in ["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic"]
-       for antialias in [False, True]))
+  _TF_SHAPES = [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]]
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    target_shape=_TF_SHAPES,
+    image_shape=_TF_SHAPES,
+    method=["nearest", "bilinear", "lanczos3", "lanczos5", "bicubic"],
+    antialias=[False, True],
+  )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testResizeAgainstTensorFlow(self, dtype, image_shape, target_shape, method,
                                   antialias):
@@ -88,18 +82,14 @@ class ImageTest(jtu.JaxTestCase):
                                  np.float32: 1e-4, np.float64: 1e-4})
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-       {"testcase_name": "_shape={}_target={}_method={}".format(
-          jtu.format_shape_dtype_string(image_shape, dtype),
-          jtu.format_shape_dtype_string(target_shape, dtype), method),
-        "dtype": dtype, "image_shape": image_shape,
-        "target_shape": target_shape,
-        "method": method}
-       for dtype in [np.float32]
+  _PIL_SHAPES = [[3, 2], [6, 4], [33, 17], [50, 39]]
 
-       for target_shape, image_shape in itertools.combinations_with_replacement(
-        [[3, 2], [6, 4], [33, 17], [50, 39]], 2)
-       for method in ["nearest", "bilinear", "lanczos3", "bicubic"]))
+  @jtu.sample_product(
+    dtype=[np.float32],
+    target_shape=_PIL_SHAPES,
+    image_shape=_PIL_SHAPES,
+    method=["nearest", "bilinear", "lanczos3", "bicubic"],
+  )
   @unittest.skipIf(not PIL_Image, "Test requires PIL")
   def testResizeAgainstPIL(self, dtype, image_shape, target_shape, method):
     rng = jtu.rand_uniform(self.rng())
@@ -119,18 +109,15 @@ class ImageTest(jtu.JaxTestCase):
                      antialias=True)
     self._CheckAgainstNumpy(pil_fn, jax_fn, args_maker, check_dtypes=True)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-       {"testcase_name": "_shape={}_target={}_method={}".format(
-          jtu.format_shape_dtype_string(image_shape, dtype),
-          jtu.format_shape_dtype_string(target_shape, dtype), method),
-        "dtype": dtype, "image_shape": image_shape, "target_shape": target_shape,
-        "method": method}
-       for dtype in inexact_dtypes
-       for image_shape, target_shape in [
-         ([3, 1, 2], [6, 1, 4]),
-         ([1, 3, 2, 1], [1, 6, 4, 1]),
-       ]
-       for method in ["nearest", "linear", "lanczos3", "lanczos5", "cubic"]))
+  @jtu.sample_product(
+    [dict(image_shape=image_shape, target_shape=target_shape)
+     for image_shape, target_shape in [
+       ([3, 1, 2], [6, 1, 4]),
+       ([1, 3, 2, 1], [1, 6, 4, 1]),
+     ]],
+    dtype=inexact_dtypes,
+    method=["nearest", "linear", "lanczos3", "lanczos5", "cubic"],
+  )
   def testResizeUp(self, dtype, image_shape, target_shape, method):
     data = [64, 32, 32, 64, 50, 100]
     expected_data = {}
@@ -164,19 +151,16 @@ class ImageTest(jtu.JaxTestCase):
     expected = np.array(expected_data[method], dtype=dtype).reshape(target_shape)
     self.assertAllClose(output, expected, atol=1e-04)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-       {"testcase_name": "_shape={}_target={}_method={}_antialias={}".format(
-          jtu.format_shape_dtype_string(image_shape, dtype),
-          jtu.format_shape_dtype_string(target_shape, dtype), method,
-          antialias),
-        "dtype": dtype, "image_shape": image_shape,
-        "target_shape": target_shape,
-        "method": method, "antialias": antialias}
-       for dtype in [np.float32]
-       for target_shape, image_shape in itertools.combinations_with_replacement(
-        [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4], [2, 50, 38, 4]], 2)
-       for method in ["bilinear", "lanczos3", "lanczos5", "bicubic"]
-       for antialias in [False, True]))
+  _RESIZE_GRADIENTS_SHAPES = [[2, 3, 2, 4], [2, 6, 4, 4], [2, 33, 17, 4],
+                              [2, 50, 38, 4]]
+
+  @jtu.sample_product(
+    dtype=[np.float32],
+    target_shape=_RESIZE_GRADIENTS_SHAPES,
+    image_shape=_RESIZE_GRADIENTS_SHAPES,
+    method=["bilinear", "lanczos3", "lanczos5", "bicubic"],
+    antialias=[False, True],
+  )
   def testResizeGradients(self, dtype, image_shape, target_shape, method,
                            antialias):
     rng = jtu.rand_default(self.rng())
@@ -185,41 +169,36 @@ class ImageTest(jtu.JaxTestCase):
                      antialias=antialias)
     jtu.check_grads(jax_fn, args_maker(), order=2, rtol=1e-2, eps=1.)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-       {"testcase_name": "_shape={}_target={}_method={}_antialias={}".format(
-          jtu.format_shape_dtype_string(image_shape, dtype),
-          jtu.format_shape_dtype_string(target_shape, dtype), method,
-          antialias),
-        "dtype": dtype, "image_shape": image_shape,
-        "target_shape": target_shape,
-        "method": method, "antialias": antialias}
-       for dtype in [np.float32]
-       for image_shape, target_shape in [
-         ([1], [0]),
-         ([5, 5], [5, 0]),
-         ([5, 5], [0, 1]),
-         ([5, 5], [0, 0])
-       ]
-       for method in ["nearest", "linear", "lanczos3", "lanczos5", "cubic"]
-       for antialias in [False, True]))
+  @jtu.sample_product(
+    [dict(image_shape=image_shape, target_shape=target_shape)
+     for image_shape, target_shape in [
+       ([1], [0]),
+       ([5, 5], [5, 0]),
+       ([5, 5], [0, 1]),
+       ([5, 5], [0, 0])
+     ]
+    ],
+    dtype=[np.float32],
+    method=["nearest", "linear", "lanczos3", "lanczos5", "cubic"],
+    antialias=[False, True],
+  )
   def testResizeEmpty(self, dtype, image_shape, target_shape, method, antialias):
     # Regression test for https://github.com/google/jax/issues/7586
     image = np.ones(image_shape, dtype)
     out = jax.image.resize(image, shape=target_shape, method=method, antialias=antialias)
     self.assertArraysEqual(out, jnp.zeros(target_shape, dtype))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_target={}_method={}".format(
-         jtu.format_shape_dtype_string(image_shape, dtype),
-         jtu.format_shape_dtype_string(target_shape, dtype), method),
-       "dtype": dtype, "image_shape": image_shape,
-       "target_shape": target_shape,
-       "scale": scale, "translation": translation, "method": method}
-      for dtype in inexact_dtypes
-      for image_shape, target_shape, scale, translation in [
-        ([3, 1, 2], [6, 1, 4], [2.0, 1.0, 2.0], [1.0, 0.0, -1.0]),
-        ([1, 3, 2, 1], [1, 6, 4, 1], [1.0, 2.0, 2.0, 1.0], [0.0, 1.0, -1.0, 0.0])]
-      for method in ["linear", "lanczos3", "lanczos5", "cubic"]))
+  @jtu.sample_product(
+    [dict(image_shape=image_shape, target_shape=target_shape, scale=scale,
+          translation=translation)
+     for image_shape, target_shape, scale, translation in [
+       ([3, 1, 2], [6, 1, 4], [2.0, 1.0, 2.0], [1.0, 0.0, -1.0]),
+       ([1, 3, 2, 1], [1, 6, 4, 1], [1.0, 2.0, 2.0, 1.0], [0.0, 1.0, -1.0, 0.0])
+     ]
+    ],
+    dtype=inexact_dtypes,
+    method=["linear", "lanczos3", "lanczos5", "cubic"],
+  )
   def testScaleAndTranslateUp(self, dtype, image_shape, target_shape, scale,
                               translation, method):
     data = [64, 32, 32, 64, 50, 100]
@@ -257,13 +236,11 @@ class ImageTest(jtu.JaxTestCase):
         expected_data[method], dtype=dtype).reshape(target_shape)
     self.assertAllClose(output, expected, atol=2e-03)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_dtype={}_method={}_antialias={}".format(
-         jtu.dtype_str(dtype), method, antialias),
-       "dtype": dtype, "method": method, "antialias": antialias}
-      for dtype in inexact_dtypes
-      for method in ["linear", "lanczos3", "lanczos5", "cubic"]
-      for antialias in [True, False]))
+  @jtu.sample_product(
+    dtype=inexact_dtypes,
+    method=["linear", "lanczos3", "lanczos5", "cubic"],
+    antialias=[True, False],
+  )
   def testScaleAndTranslateDown(self, dtype, method, antialias):
     image_shape = [1, 6, 7, 1]
     target_shape = [1, 3, 3, 1]
@@ -321,10 +298,7 @@ class ImageTest(jtu.JaxTestCase):
     self.assertAllClose(output, expected, atol=2e-03)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"antialias={antialias}",
-       "antialias": antialias}
-      for antialias in [True, False]))
+  @jtu.sample_product(antialias=[True, False])
   def testScaleAndTranslateJITs(self, antialias):
     image_shape = [1, 6, 7, 1]
     target_shape = [1, 3, 3, 1]
@@ -354,10 +328,7 @@ class ImageTest(jtu.JaxTestCase):
     output = jax.jit(jit_fn)(x, scale_a, translation_a)
     self.assertAllClose(output, expected, atol=2e-03)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"antialias={antialias}",
-       "antialias": antialias}
-      for antialias in [True, False]))
+  @jtu.sample_product(antialias=[True, False])
   def testScaleAndTranslateGradFinite(self, antialias):
     image_shape = [1, 6, 7, 1]
     target_shape = [1, 3, 3, 1]

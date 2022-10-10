@@ -373,31 +373,31 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.eqns[2].primitive, state.get_p)
     self.assertEqual(jaxpr.eqns[3].primitive, state.get_p)
 
-  @parameterized.parameters(jtu.cases_from_list([
-      dict(ref_shape=ref_shape, ref_bdim=ref_bdim, idx_shape=idx_shape,
-           indexed_dims=indexed_dims, idx_bdims=idx_bdims, out_bdim=out_bdim,
-           op=op)
-      for ref_shape in [(1,), (2, 3), (4, 5, 6)]
-      for ref_bdim in range(1 + len(ref_shape))
-      for idx_shape in [(), (1,), (2,), (5, 6)]
-      for indexed_dims in it.product([True, False], repeat=len(ref_shape))
-      for idx_bdims in it.product([None, *range(1 + len(idx_shape))],
-                                  repeat=sum(indexed_dims))
-      for out_bdim in range(1 + len(ref_shape) - sum(indexed_dims)
-                            + len(idx_shape) * any(indexed_dims))
-      for op in [
-          lambda x_ref, indexer: [x_ref[indexer]],
-          lambda x_ref, indexer: [
-              state.ref_swap(x_ref, indexer,
-                             jnp.ones(x_ref.shape, x_ref.dtype)[None][(0,
-                               *indexer)])],
-          lambda x_ref, indexer: (
-              state.ref_addupdate(x_ref, indexer,
-                                  jnp.ones(x_ref.shape, x_ref.dtype)[None][(0,
-                                    *indexer)])
-              or [jnp.ones(x_ref.shape, x_ref.dtype)[None][(0, *indexer)]])
-      ]
-  ]))
+  @jtu.sample_product(
+    [dict(ref_shape=ref_shape, ref_bdim=ref_bdim, idx_shape=idx_shape,
+          indexed_dims=indexed_dims, idx_bdims=idx_bdims, out_bdim=out_bdim)
+     for ref_shape in [(1,), (2, 3), (4, 5, 6)]
+     for ref_bdim in range(1 + len(ref_shape))
+     for idx_shape in [(), (1,), (2,), (5, 6)]
+     for indexed_dims in it.product([True, False], repeat=len(ref_shape))
+     for idx_bdims in it.product([None, *range(1 + len(idx_shape))],
+                                 repeat=sum(indexed_dims))
+     for out_bdim in range(1 + len(ref_shape) - sum(indexed_dims)
+                           + len(idx_shape) * any(indexed_dims))
+    ],
+    op=[
+        lambda x_ref, indexer: [x_ref[indexer]],
+        lambda x_ref, indexer: [
+            state.ref_swap(x_ref, indexer,
+                            jnp.ones(x_ref.shape, x_ref.dtype)[None][(0,
+                              *indexer)])],
+        lambda x_ref, indexer: (
+            state.ref_addupdate(x_ref, indexer,
+                                jnp.ones(x_ref.shape, x_ref.dtype)[None][(0,
+                                  *indexer)])
+            or [jnp.ones(x_ref.shape, x_ref.dtype)[None][(0, *indexer)]])
+    ],
+  )
   def test_vmap(self, ref_shape, ref_bdim, idx_shape, indexed_dims,
                     idx_bdims, out_bdim, op):
 

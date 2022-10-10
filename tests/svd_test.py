@@ -24,7 +24,6 @@ from jax._src.lax import svd
 from jax._src import test_util as jtu
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 
 config.parse_flags_with_absl()
@@ -45,14 +44,11 @@ _MAX_LOG_CONDITION_NUM = 9 if _JAX_ENABLE_X64 else 4
 @jtu.with_config(jax_numpy_rank_promotion='allow')
 class SvdTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {    # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}_full_matrices={}'.format(
-              m, n, log_cond, full_matrices),
-          'm': m, 'n': n, 'log_cond': log_cond, 'full_matrices': full_matrices}
-      for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])
-      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)
-      for full_matrices in [True, False]))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
+    log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
+    full_matrices=[True, False],
+  )
   def testSvdWithRectangularInput(self, m, n, log_cond, full_matrices):
     """Tests SVD with rectangular input."""
     with jax.default_matmul_precision('float32'):
@@ -100,9 +96,9 @@ class SvdTest(jtu.JaxTestCase):
         self.assertAllClose(
             expected_s, jnp.real(actual_s), rtol=_SVD_RTOL, atol=1E-6)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': f'_m={m}_by_n={n}', 'm': m, 'n': n}
-      for m, n in zip([50, 6], [3, 60])))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in zip([50, 6], [3, 60])],
+  )
   def testSvdWithSkinnyTallInput(self, m, n):
     """Tests SVD with skinny and tall input."""
     # Generates a skinny and tall input
@@ -115,12 +111,10 @@ class SvdTest(jtu.JaxTestCase):
 
       np.testing.assert_almost_equal(relative_diff, 1E-6, decimal=6)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {   # pylint:disable=g-complex-comprehension
-          'testcase_name': f'_m={m}_r={r}_log_cond={log_cond}',
-          'm': m, 'r': r, 'log_cond': log_cond}
-      for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])
-      for log_cond in np.linspace(1, 3, 3)))
+  @jtu.sample_product(
+    [dict(m=m, r=r) for m, r in zip([8, 8, 8, 10], [3, 5, 7, 9])],
+    log_cond=np.linspace(1, 3, 3),
+  )
   def testSvdWithOnRankDeficientInput(self, m, r, log_cond):
     """Tests SVD with rank-deficient input."""
     with jax.default_matmul_precision('float32'):
@@ -139,14 +133,11 @@ class SvdTest(jtu.JaxTestCase):
 
       np.testing.assert_almost_equal(diff, 1E-4, decimal=2)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {    # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}_full_matrices={}'.format(
-              m, n, log_cond, full_matrices),
-          'm': m, 'n': n, 'log_cond': log_cond, 'full_matrices': full_matrices}
-      for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])
-      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)
-      for full_matrices in [True, False]))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in zip([2, 8, 10, 20], [4, 6, 10, 18])],
+    log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
+    full_matrices=[True, False],
+  )
   def testSingularValues(self, m, n, log_cond, full_matrices):
     """Tests singular values."""
     with jax.default_matmul_precision('float32'):
@@ -181,16 +172,12 @@ class SvdTest(jtu.JaxTestCase):
         actual_diff = jnp.diff(actual_s, append=0)
         np.testing.assert_array_less(actual_diff, np.zeros_like(actual_diff))
 
-  @parameterized.named_parameters([
-      {'testcase_name': f'_m={m}_by_n={n}_full_matrices={full_matrices}_'  # pylint:disable=g-complex-comprehension
-                        f'compute_uv={compute_uv}_dtype={dtype}',
-       'm': m, 'n': n, 'full_matrices': full_matrices,  # pylint:disable=undefined-variable
-       'compute_uv': compute_uv, 'dtype': dtype}  # pylint:disable=undefined-variable
-      for m, n in zip([2, 4, 8], [4, 4, 6])
-      for full_matrices in [True, False]
-      for compute_uv in [True, False]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
-  ])
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in zip([2, 4, 8], [4, 4, 6])],
+    full_matrices=[True, False],
+    compute_uv=[True, False],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
   def testSvdOnZero(self, m, n, full_matrices, compute_uv, dtype):
     """Tests SVD on matrix of all zeros."""
     osp_fun = functools.partial(osp_linalg.svd, full_matrices=full_matrices,
@@ -202,12 +189,11 @@ class SvdTest(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker_svd)
 
 
-  @parameterized.named_parameters([
-      {'testcase_name': f'_m={m}_by_n={n}_r={r}_c={c}_dtype={dtype}',
-       'm': m, 'n': n, 'r': r, 'c': c, 'dtype': dtype}
-      for m, n, r, c in zip([2, 4, 8], [4, 4, 6], [1, 0, 1], [1, 0, 1])
-      for dtype in jtu.dtypes.floating
-  ])
+  @jtu.sample_product(
+    [dict(m=m, n=n, r=r, c=c)
+     for m, n, r, c in zip([2, 4, 8], [4, 4, 6], [1, 0, 1], [1, 0, 1])],
+    dtype=jtu.dtypes.floating,
+  )
   @jtu.skip_on_devices("rocm")
   def testSvdOnTinyElement(self, m, n, r, c, dtype):
     """Tests SVD on matrix of zeros and close-to-zero entries."""
