@@ -218,8 +218,13 @@ from jax.experimental.sparse.bcoo import (
 )
 
 from jax.experimental.sparse.bcsr import (
+    bcsr_fromdense as bcsr_fromdense,
+    bcsr_fromdense_p as bcsr_fromdense_p,
+    bcsr_todense as bcsr_todense,
+    bcsr_todense_p as bcsr_todense_p,
     BCSR as BCSR,
 )
+
 from jax.experimental.sparse.api import (
     empty as empty,
     eye as eye,

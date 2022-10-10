@@ -2250,6 +2250,44 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertArraysEqual((y_sp @ x_sp).todense(), y_de @ x_de)
 
 
+# TODO(tianjianlu): Unify the testing for BCOOTest and BCSRTest.
+class BCSRTest(jtu.JaxTestCase):
+  @parameterized.named_parameters(jtu.cases_from_list(
+      {"testcase_name": "_{}_nbatch={}".format(
+        jtu.format_shape_dtype_string(shape, dtype), n_batch),
+       "shape": shape, "dtype": dtype, "n_batch": n_batch}
+      for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for dtype in jtu.dtypes.floating + jtu.dtypes.complex
+      for n_batch in range(len(shape) - 1)))
+  def test_bcsr_dense_round_trip(self, shape, dtype, n_batch):
+    n_sparse = 2
+    n_dense = len(shape) - n_sparse - n_batch
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
+
+    args_maker_fromdense = lambda: [M]
+    fromdense = partial(sparse_bcsr._bcsr_fromdense, nse=nse, n_batch=n_batch,
+                        n_dense=n_dense)
+    self._CompileAndCheck(fromdense, args_maker_fromdense)
+
+    data, indices, indptr = fromdense(M)
+
+    self.assertEqual(data.dtype, dtype)
+    self.assertEqual(data.shape,
+                     shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:])
+    self.assertEqual(indices.dtype, jnp.int32)
+    self.assertEqual(indices.shape, shape[:n_batch] + (nse,))
+    self.assertEqual(indptr.dtype, jnp.int32)
+    self.assertEqual(indptr.shape, shape[:n_batch] + (shape[n_batch] + 1,))
+
+    todense = partial(sparse_bcsr._bcsr_todense, shape=shape)
+    self.assertArraysEqual(M, todense(data, indices, indptr))
+    args_maker_todense = lambda: [data, indices, indptr]
+    self._CompileAndCheck(todense, args_maker_todense)
+
+
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):
     rng_sparse = rand_sparse(self.rng())
@@ -2521,7 +2559,6 @@ class SparseObjectTest(jtu.JaxTestCase):
     self._CompileAndCheck(bcoo_to_bcsr, args_maker_bcoo_to_bcsr)
 
     bcsr_indices, indptr = bcoo_to_bcsr(bcoo_indices)
-    bcsr_indices_jit, indptr_jit = jit(bcoo_to_bcsr)(bcoo_indices)
 
     self.assertEqual(bcsr_indices.dtype, jnp.int32)
     self.assertEqual(bcsr_indices.shape, shape[:n_batch] + (nse,))
