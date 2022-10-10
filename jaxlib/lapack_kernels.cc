@@ -682,10 +682,9 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   lwork = static_cast<int>(work_query);
   T* work = new T[lwork];
 
+  size_t a_size = static_cast<int64_t>(n) * static_cast<int64_t>(n) * sizeof(T);
   if (a_out != a_in) {
-    std::memcpy(a_out, a_in,
-                static_cast<int64_t>(b) * static_cast<int64_t>(n) *
-                    static_cast<int64_t>(n) * sizeof(T));
+    std::memcpy(a_out, a_in, static_cast<int64_t>(b) * a_size);
   }
 
   for (int i = 0; i < b; ++i) {
