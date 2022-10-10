@@ -2328,28 +2328,15 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(a, s2)
     self.assertEqual(b.sharding, s2)
 
-
-class ArrayCppPjitTest(ArrayPjitTest):
-
-  def setUp(self):
-    super().setUp()
-    self.jax_array = config.jax_array
-    self.cpp_pjit = config.FLAGS.experimental_cpp_pjit
-    config.update('experimental_cpp_pjit', True)
-    config.update('jax_array', True)
-
-  def tearDown(self):
-    config.update('experimental_cpp_pjit', self.cpp_pjit)
-    config.update('jax_array', self.jax_array)
-    super().tearDown()
-
-  def test_concurrent_cpp_pjit(self):
+  @jax_array(True)
+  def test_concurrent_pjit(self):
     global_mesh = jtu.create_global_mesh((1,), ('x',))
     sharding = MeshPspecSharding(global_mesh, P('x',))
     n = 10
     with global_mesh:
       fs = [pjit(lambda x, i: x + i, static_argnums=1) for _ in range(n)]
 
+      @jax_array(True)
       def _invoke_with_mesh_twice(arg_tuple):
         f, x, i = arg_tuple
         with global_mesh:
