@@ -691,7 +691,7 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   for (int i = 0; i < b; ++i) {
     fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, wr_out, wi_out,
        vs_out, &n_int, work, &lwork, b_work, info_out);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_out, a_size);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_out, n * n * sizeof(T));
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sdim_out, sizeof(int));
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wr_out, sizeof(T) * n);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wi_out, sizeof(T) * n);
