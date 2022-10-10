@@ -98,7 +98,8 @@ def _trsm_mhlo(platform, gpu_blas, dtype, a, b, left_side=False, lower=False,
       [a, b],
       backend_config=opaque,
       operand_layouts=[layout] * 2,
-      result_layouts=[layout, work_layout, work_layout])
+      result_layouts=[layout, work_layout, work_layout],
+      operand_output_aliases={1: 0})
   return out[0]
 
 cuda_trsm = partial(_trsm_mhlo, "cu", _cublas)
@@ -133,7 +134,8 @@ def _potrf_mhlo(platform, gpu_solver, dtype, a, lower):
       [a],
       backend_config=opaque,
       operand_layouts=[layout],
-      result_layouts=[layout, info_layout, work_layout])
+      result_layouts=[layout, info_layout, work_layout],
+      operand_output_aliases={0: 0})
   return out[:2]
 
 cuda_potrf = partial(_potrf_mhlo, "cu", _cusolver)
@@ -179,7 +181,8 @@ def _getrf_mhlo(platform, gpu_blas, gpu_solver, dtype, a):
         tuple(range(num_bd, -1, -1)),
         tuple(range(num_bd - 1, -1, -1)),
         [0],
-      ])
+      ],
+      operand_output_aliases={0: 0})
   return out[:3]
 
 cuda_getrf = partial(_getrf_mhlo, "cu", _cublas, _cusolver)
@@ -217,7 +220,8 @@ def _geqrf_mhlo(platform, gpu_solver, dtype, a):
         tuple(range(num_bd, -1, -1)),
         tuple(range(num_bd - 1, -1, -1)),
         [0],
-      ])
+      ],
+      operand_output_aliases={0: 0})
   return out[:3]
 
 cuda_geqrf = partial(_geqrf_mhlo, "cu", _cusolver)
@@ -253,7 +257,9 @@ def _geqrf_batched_mhlo(platform, gpu_blas, dtype, a):
         tuple(range(num_bd, -1, -1)),
         [0],
         [0],
-      ])
+      ],
+      operand_output_aliases={0: 0}
+  )
   return out[:2]
 
 cuda_geqrf_batched = partial(_geqrf_batched_mhlo, "cu", _cublas)
@@ -321,7 +327,8 @@ def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
         layout,
         tuple(range(num_bd - 1, -1, -1)),
         [0],
-      ])
+      ],
+      operand_output_aliases={0: 0})
   return out[:2]
 
 cuda_orgqr = partial(_orgqr_mhlo, "cu", _cusolver)
@@ -372,7 +379,8 @@ def _syevd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
           tuple(range(num_bd, -1, -1)),
           tuple(range(num_bd - 1, -1, -1)),
           [0],
-      ])
+      ],
+      operand_output_aliases={0: 0})
   return out[:3]
 
 cuda_syevd = partial(_syevd_mhlo, "cu", _cusolver, True)
@@ -427,7 +435,8 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
             matrix_layout,
             scalar_layout,
             [0],
-        ])
+        ],
+        operand_output_aliases={0: 0})
     vt = mhlo.TransposeOp(
         v,
         ir.DenseIntElementsAttr.get(np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd)))).result
@@ -469,7 +478,8 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
           matrix_layout,
           scalar_layout,
           [0],
-        ])
+        ],
+        operand_output_aliases={0: 0})
   else:
     lwork, opaque = gpu_solver.build_gesvd_descriptor(
         np.dtype(dtype), b, m, n, compute_uv, full_matrices)
@@ -495,7 +505,8 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
           matrix_layout,
           scalar_layout,
           [0],
-        ])
+        ],
+        operand_output_aliases={0: 0})
   return s, u, vt, info
 
 cuda_gesvd = partial(_gesvd_mhlo, "cu", _cusolver, True)
