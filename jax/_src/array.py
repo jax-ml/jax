@@ -373,7 +373,7 @@ class ArrayImpl(basearray.Array):
   # TODO(https://github.com/google/jax/issues/12380): Remove this when DA is
   # deleted.
   @property
-  def device_buffer(self) -> DeviceArray:
+  def device_buffer(self) -> ArrayImpl:
     self._check_if_deleted()
     if len(self._arrays) == 1:
       return _single_device_array_from_buf(self._arrays[0], self._committed)
@@ -383,7 +383,7 @@ class ArrayImpl(basearray.Array):
   # TODO(https://github.com/google/jax/issues/12380): Remove this when SDA is
   # deleted.
   @property
-  def device_buffers(self) -> Sequence[DeviceArray]:
+  def device_buffers(self) -> Sequence[ArrayImpl]:
     self._check_if_deleted()
     return [_single_device_array_from_buf(a, self._committed)
             for a in self._arrays]
