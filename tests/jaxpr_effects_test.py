@@ -17,7 +17,6 @@ import unittest
 import warnings
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 from jax import core
@@ -209,9 +208,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       return x
     jax.make_jaxpr(f)(2.)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{flavor}", flavor=flavor)
-    for flavor in ["old", "new"]))
+  @jtu.sample_product(flavor=["old", "new"])
   def test_remat_call_primitive_inherits_effects(self, flavor):
     remat = jax.remat if flavor == "old" else ad_checkpoint.checkpoint
 

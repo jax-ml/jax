@@ -14,7 +14,7 @@
 
 """Tests for --debug_nans."""
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import jax
 import numpy as np
@@ -81,9 +81,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = 0. / A
       ans.block_until_ready()
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_jit={jit._name}", "jit": jit}
-    for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def testCallDeoptimized(self, jit):
     @jit
     def f(x):
@@ -192,9 +190,7 @@ class DebugInfsTest(jtu.JaxTestCase):
       ans = 1. / A
       ans.block_until_ready()
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}", "jit": jit}
-      for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def testCallDeoptimized(self, jit):
     @jit
     def f(x):
