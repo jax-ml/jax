@@ -17,6 +17,7 @@ import functools
 import itertools
 import operator
 import textwrap
+from typing import Callable, Dict, List, Sequence, Tuple
 
 import scipy.ndimage
 
@@ -25,23 +26,25 @@ from jax._src import util
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
+from jax._src.typing import ArrayLike, Array
 from jax._src.util import safe_zip as zip
 
 
-_nonempty_prod = functools.partial(functools.reduce, operator.mul)
-_nonempty_sum = functools.partial(functools.reduce, operator.add)
+def _nonempty_prod(arrs: Sequence[Array]) -> Array:
+  return functools.reduce(operator.mul, arrs)
 
+def _nonempty_sum(arrs: Sequence[Array]) -> Array:
+  return functools.reduce(operator.add, arrs)
 
-def _mirror_index_fixer(index, size):
+def _mirror_index_fixer(index: Array, size: int) -> Array:
     s = size - 1 # Half-wavelength of triangular wave
     # Scaled, integer-valued version of the triangular wave |x - round(x)|
     return jnp.abs((index + s) % (2 * s) - s)
 
-
-def _reflect_index_fixer(index, size):
+def _reflect_index_fixer(index: Array, size: int) -> Array:
     return jnp.floor_divide(_mirror_index_fixer(2*index+1, 2*size+1) - 1, 2)
 
-_INDEX_FIXERS = {
+_INDEX_FIXERS: Dict[str, Callable[[Array, int], Array]] = {
     'constant': lambda index, size: index,
     'nearest': lambda index, size: jnp.clip(index, 0, size - 1),
     'wrap': lambda index, size: index % size,
@@ -50,17 +53,17 @@ _INDEX_FIXERS = {
 }
 
 
-def _round_half_away_from_zero(a):
+def _round_half_away_from_zero(a: Array) -> Array:
   return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
 
 
-def _nearest_indices_and_weights(coordinate):
+def _nearest_indices_and_weights(coordinate: Array) -> List[Tuple[Array, int]]:
   index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
 
-def _linear_indices_and_weights(coordinate):
+def _linear_indices_and_weights(coordinate: ArrayLike) -> List[Tuple[Array, int]]:
   lower = jnp.floor(coordinate)
   upper_weight = coordinate - lower
   lower_weight = 1 - upper_weight
@@ -69,14 +72,15 @@ def _linear_indices_and_weights(coordinate):
 
 
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
-def _map_coordinates(input, coordinates, order, mode, cval):
-  input = jnp.asarray(input)
+def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
+                     order: int, mode: str, cval: ArrayLike) -> Array:
+  input_arr = jnp.asarray(input)
   coordinates = [jnp.asarray(c) for c in coordinates]
-  cval = jnp.asarray(cval, input.dtype)
+  cval = jnp.asarray(cval, input_arr.dtype)
 
-  if len(coordinates) != input.ndim:
+  if len(coordinates) != input_arr.ndim:
     raise ValueError('coordinates must be a sequence of length input.ndim, but '
-                     '{} != {}'.format(len(coordinates), input.ndim))
+                     '{} != {}'.format(len(coordinates), input_arr.ndim))
 
   index_fixer = _INDEX_FIXERS.get(mode)
   if index_fixer is None:
@@ -98,7 +102,7 @@ def _map_coordinates(input, coordinates, order, mode, cval):
         'jax.scipy.ndimage.map_coordinates currently requires order<=1')
 
   valid_1d_interpolations = []
-  for coordinate, size in zip(coordinates, input.shape):
+  for coordinate, size in zip(coordinates, input_arr.shape):
     interp_nodes = interp_fun(coordinate)
     valid_interp = []
     for index, weight in interp_nodes:
@@ -112,15 +116,15 @@ def _map_coordinates(input, coordinates, order, mode, cval):
     indices, validities, weights = util.unzip3(items)
     if all(valid is True for valid in validities):
       # fast path
-      contribution = input[indices]
+      contribution = input_arr[indices]
     else:
       all_valid = functools.reduce(operator.and_, validities)
-      contribution = jnp.where(all_valid, input[indices], cval)
+      contribution = jnp.where(all_valid, input_arr[indices], cval)
     outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
-  if jnp.issubdtype(input.dtype, jnp.integer):
+  if jnp.issubdtype(input_arr.dtype, jnp.integer):
     result = _round_half_away_from_zero(result)
-  return result.astype(input.dtype)
+  return result.astype(input_arr.dtype)
 
 
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
@@ -132,6 +136,6 @@ def _map_coordinates(input, coordinates, order, mode, cval):
     not as implemented by SciPy.
     """))
 def map_coordinates(
-    input, coordinates, order, mode='constant', cval=0.0,
+    input: ArrayLike, coordinates: Sequence[ArrayLike], order: int, mode: str = 'constant', cval: ArrayLike = 0.0,
 ):
   return _map_coordinates(input, coordinates, order, mode, cval)

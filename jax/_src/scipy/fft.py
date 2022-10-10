@@ -13,22 +13,25 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Optional, Sequence
 
 import scipy.fft as osp_fft
-from jax import lax, numpy as jnp
+from jax import lax
+import jax.numpy as jnp
 from jax._src.util import canonicalize_axis
 from jax._src.numpy.util import _wraps, _promote_dtypes_complex
+from jax._src.typing import Array
 
-def _W4(N, k):
-  N, k = _promote_dtypes_complex(N, k)
-  return jnp.exp(-.5j * jnp.pi * k / N)
+def _W4(N: int, k: Array) -> Array:
+  N_arr, k = _promote_dtypes_complex(N, k)
+  return jnp.exp(-.5j * jnp.pi * k / N_arr)
 
-def _dct_interleave(x, axis):
+def _dct_interleave(x: Array, axis: int) -> Array:
   v0 = lax.slice_in_dim(x, None, None, 2, axis)
   v1 = lax.rev(lax.slice_in_dim(x, 1, None, 2, axis), (axis,))
   return lax.concatenate([v0, v1], axis)
 
-def _dct_ortho_norm(out, axis):
+def _dct_ortho_norm(out: Array, axis: int) -> Array:
   factor = lax.concatenate([lax.full((1,), 4, out.dtype), lax.full((out.shape[axis] - 1,), 2, out.dtype)], 0)
   factor = lax.expand_dims(factor, [a for a in range(out.ndim) if a != axis])
   return out / lax.sqrt(factor * out.shape[axis])
@@ -37,7 +40,8 @@ def _dct_ortho_norm(out, axis):
 # John Makhoul: A Fast Cosine Transform in One and Two Dimensions (1980)
 
 @_wraps(osp_fft.dct)
-def dct(x, type=2, n=None, axis=-1, norm=None):
+def dct(x: Array, type: int = 2, n: Optional[int] = None,
+        axis: int = -1, norm: Optional[str] = None) -> Array:
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 
@@ -58,7 +62,7 @@ def dct(x, type=2, n=None, axis=-1, norm=None):
   return out
 
 
-def _dct2(x, axes, norm):
+def _dct2(x: Array, axes: Sequence[int], norm: Optional[str]) -> Array:
   axis1, axis2 = map(partial(canonicalize_axis, num_dims=x.ndim), axes)
   N1, N2 = x.shape[axis1], x.shape[axis2]
   v = _dct_interleave(_dct_interleave(x, axis1), axis2)
@@ -75,7 +79,10 @@ def _dct2(x, axes, norm):
 
 
 @_wraps(osp_fft.dctn)
-def dctn(x, type=2, s=None, axes=None, norm=None):
+def dctn(x: Array, type: int = 2,
+         s: Optional[Sequence[int]]=None,
+         axes: Optional[Sequence[int]] = None,
+         norm: Optional[str] = None) -> Array:
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
 
