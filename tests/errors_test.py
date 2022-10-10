@@ -381,8 +381,8 @@ class UserContextTracebackTest(jtu.JaxTestCase):
 
 class CustomErrorsTest(jtu.JaxTestCase):
   @jtu.sample_product(
-    [dict(errorclass=errorclass)
-     for errorclass in dir(jax.errors)
+    errorclass=[
+     errorclass for errorclass in dir(jax.errors)
      if errorclass.endswith('Error') and errorclass not in ['JaxIndexError', 'JAXTypeError']
     ],
   )
