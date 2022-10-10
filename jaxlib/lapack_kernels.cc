@@ -664,7 +664,7 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
   bool (*select)(T, T) = nullptr;
 
   void** out = reinterpret_cast<void**>(out_tuple);
-  T* a_work = reinterpret_cast<T*>(out[0]);
+  T* a_out = reinterpret_cast<T*>(out[0]);
 
   T* wr_out = reinterpret_cast<T*>(out[1]);
   T* wi_out = reinterpret_cast<T*>(out[2]);
@@ -676,18 +676,22 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
 
   T work_query;
   int lwork = -1;
-  fn(&jobvs, &sort, select, &n_int, a_work, &n_int, sdim_out, wr_out, wi_out,
+  fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, wr_out, wi_out,
      vs_out, &n_int, &work_query, &lwork, b_work, info_out);
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&work_query, sizeof(work_query));
   lwork = static_cast<int>(work_query);
   T* work = new T[lwork];
 
+  if (a_out != a_in) {
+    std::memcpy(a_out, a_in,
+                static_cast<int64_t>(b) * static_cast<int64_t>(n) *
+                    static_cast<int64_t>(n) * sizeof(T));
+  }
+
   for (int i = 0; i < b; ++i) {
-    size_t a_size = n * n * sizeof(T);
-    std::memcpy(a_work, a_in, a_size);
-    fn(&jobvs, &sort, select, &n_int, a_work, &n_int, sdim_out, wr_out, wi_out,
+    fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, wr_out, wi_out,
        vs_out, &n_int, work, &lwork, b_work, info_out);
-    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_work, a_size);
+    ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(a_out, a_size);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sdim_out, sizeof(int));
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wr_out, sizeof(T) * n);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(wi_out, sizeof(T) * n);
@@ -695,7 +699,7 @@ void RealGees<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(info_out, sizeof(int));
 
     a_in += n * n;
-    a_work += n * n;
+    a_out += n * n;
     wr_out += n;
     wi_out += n;
     vs_out += n * n;
@@ -724,7 +728,7 @@ void ComplexGees<T>::Kernel(void* out_tuple, void** data,
   bool (*select)(T) = nullptr;
 
   void** out = reinterpret_cast<void**>(out_tuple);
-  T* a_work = reinterpret_cast<T*>(out[0]);
+  T* a_out = reinterpret_cast<T*>(out[0]);
   typename T::value_type* r_work =
       reinterpret_cast<typename T::value_type*>(out[1]);
   T* w_out = reinterpret_cast<T*>(out[2]);
@@ -736,16 +740,20 @@ void ComplexGees<T>::Kernel(void* out_tuple, void** data,
 
   T work_query;
   int lwork = -1;
-  fn(&jobvs, &sort, select, &n_int, a_work, &n_int, sdim_out, w_out, vs_out,
+  fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, w_out, vs_out,
      &n_int, &work_query, &lwork, r_work, b_work, info_out);
   ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(&work_query, sizeof(work_query));
   lwork = static_cast<int>(work_query.real());
   T* work = new T[lwork];
 
+  if (a_out != a_in) {
+    std::memcpy(a_out, a_in,
+                static_cast<int64_t>(b) * static_cast<int64_t>(n) *
+                    static_cast<int64_t>(n) * sizeof(T));
+  }
+
   for (int i = 0; i < b; ++i) {
-    size_t a_size = n * n * sizeof(T);
-    std::memcpy(a_work, a_in, a_size);
-    fn(&jobvs, &sort, select, &n_int, a_work, &n_int, sdim_out, w_out, vs_out,
+    fn(&jobvs, &sort, select, &n_int, a_out, &n_int, sdim_out, w_out, vs_out,
        &n_int, work, &lwork, r_work, b_work, info_out);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(w_out, sizeof(T) * n);
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(vs_out, sizeof(T) * n * n);
@@ -753,7 +761,7 @@ void ComplexGees<T>::Kernel(void* out_tuple, void** data,
     ABSL_ANNOTATE_MEMORY_IS_INITIALIZED(sdim_out, sizeof(int));
 
     a_in += n * n;
-    a_work += n * n;
+    a_out += n * n;
     w_out += n;
     vs_out += n * n;
     ++info_out;
