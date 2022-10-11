@@ -202,6 +202,10 @@ class ArrayImpl(basearray.Array):
   def sharding(self):
     return self._sharding
 
+  @property
+  def weak_type(self):
+    return self.aval.weak_type
+
   def __str__(self):
     return str(self._value)
 

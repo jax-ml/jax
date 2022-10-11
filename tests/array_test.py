@@ -197,6 +197,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertTrue(dispatch.is_single_device_sharding(arr.sharding))
     self.assertEqual(arr._committed, False)
+    self.assertFalse(arr.weak_type)
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])
