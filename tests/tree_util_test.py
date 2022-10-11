@@ -505,6 +505,13 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, expected):
       raise e2('in_axes')
 
+  def test_different_num_children_print_key_diff(self):
+    e, = prefix_errors({'a': 1}, {'a': 2, 'b': 3})
+    expected = ("so the symmetric difference on key sets is\n"
+                "    b")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
   def test_different_metadata(self):
     e, = prefix_errors({1: 2}, {3: 4})
     expected = ("pytree structure error: different pytree metadata "

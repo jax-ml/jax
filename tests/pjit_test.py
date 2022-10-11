@@ -2603,9 +2603,7 @@ class PJitErrorTest(jtu.JaxTestCase):
         "    pjit out_axis_resources tree root\n"
         "At that key path, the prefix pytree pjit out_axis_resources has a "
         "subtree of type\n"
-        "    <class 'list'>\n"
-        "with 2 children, but at the same key path the full pytree has a "
-        "subtree of the same type but with 3 children.")
+        "    <class 'list'>\n")
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 
