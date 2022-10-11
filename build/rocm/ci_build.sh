@@ -30,10 +30,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/build_common.sh"
 CONTAINER_TYPE="rocm"
 
-DOCKERFILE_PATH="${SCRIPT_DIR}/Dockerfile.rocm"
+DOCKERFILE_PATH="${SCRIPT_DIR}/Dockerfile.ms"    
 DOCKER_CONTEXT_PATH="${SCRIPT_DIR}"
 KEEP_IMAGE="--rm"
 POSITIONAL_ARGS=()
+
+RUNTIME_FLAG=0
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep_image)
       KEEP_IMAGE=""
+      shift 1
+      ;;
+    --runtime)
+      RUNTIME_FLAG=1
       shift 1
       ;;
     *)
@@ -67,13 +73,12 @@ function upsearch (){
     cd .. && upsearch "$1"
 }
 
-# Set up WORKSPACE and BUILD_TAG. Jenkins will set them for you or we pick
-# reasonable defaults if you run it outside of Jenkins.
+# Set up WORKSPACE. 
 WORKSPACE="${WORKSPACE:-$(upsearch WORKSPACE)}"
-BUILD_TAG="${BUILD_TAG:-jax_ci}"
+BUILD_TAG="${BUILD_TAG:-jax}"
 
-# Determine the docker image name
-DOCKER_IMG_NAME="${BUILD_TAG}.${CONTAINER_TYPE}"
+# Determine the docker image name and BUILD_TAG.
+DOCKER_IMG_NAME="${BUILD_TAG}_${CONTAINER_TYPE}"
 
 # Under Jenkins matrix build, the build tag may contain characters such as
 # commas (,) and equal signs (=), which are not valid inside docker image names.
@@ -89,9 +94,15 @@ echo "BUILD_TAG: ${BUILD_TAG}"
 echo "  (docker container name will be ${DOCKER_IMG_NAME})"
 echo ""
 
-echo "Building container (${DOCKER_IMG_NAME})..."
-docker build -t ${DOCKER_IMG_NAME} \
-    -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
+if [[ "${RUNTIME_FLAG}" -eq 1  ]]; then
+  echo "Building (runtime) container (${DOCKER_IMG_NAME}) with Dockerfile($DOCKERFILE_PATH)..."
+  docker build --target rt_build --tag ${DOCKER_IMG_NAME} \
+      -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"
+else
+  echo "Building (CI) container (${DOCKER_IMG_NAME}) with Dockerfile($DOCKERFILE_PATH)..."
+  docker build --target ci_build --tag ${DOCKER_IMG_NAME} \
+      -f "${DOCKERFILE_PATH}" "${DOCKER_CONTEXT_PATH}"  
+fi
 
 # Check docker build status
 if [[ $? != "0" ]]; then
@@ -115,7 +126,8 @@ if [[ "${KEEP_IMAGE}" != "--rm" ]] && [[ $? == "0" ]]; then
   echo "Committing the docker container as jax-rocm"
   docker stop ${DOCKER_IMG_NAME}
   docker commit ${DOCKER_IMG_NAME} jax-rocm
-  docker rm ${DOCKER_IMG_NAME}
+  docker rm ${DOCKER_IMG_NAME}    # remove this temp container
+  docker rmi ${DOCKER_IMG_NAME}   # remote this temp image
 fi
 
-echo "ROCm build was successful!"
+echo "Jax-ROCm build was successful!"
