@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-from contextlib import contextmanager
 import enum
 from functools import partial
 import itertools
@@ -1419,12 +1418,6 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       warnings.simplefilter("error")
       jnp.zeros(5).at[::2].set(1)
       self.assertLen(w, 0)
-
-  @contextmanager
-  def assertNoWarnings(self):
-    with warnings.catch_warnings(record=True) as caught_warnings:
-      yield
-    self.assertEmpty(caught_warnings)
 
   @jtu.sample_product(
     [dict(idx=idx, idx_type=idx_type)
