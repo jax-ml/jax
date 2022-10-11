@@ -2963,12 +2963,14 @@ def lower_mesh_computation(
 
   # 1. Trace to jaxpr and preprocess/verify it
   if spmd_lowering:
+    manual_axes: FrozenSet[MeshAxisName] = frozenset()
     # TODO: Consider handling xmap's 'vectorize' in here. We can vmap once instead of vtile twice!
     if tiling_method is not None:
       if isinstance(tiling_method, TileVectorize):
         tiling_transform = vtile_by_mesh
       elif isinstance(tiling_method, TileManual):
         tiling_transform = lambda f, *args: vtile_manual(f, tiling_method.manual_axes, *args)  # type: ignore
+        manual_axes = tiling_method.manual_axes
       else:
         raise NotImplementedError(f"Unrecognized tiling method: {tiling_method}")
       assert not callable(out_shardings)
@@ -3031,7 +3033,7 @@ def lower_mesh_computation(
       else:
         out_partitions.append(o._to_xla_op_sharding(aval.ndim))
     replicated_args = [False] * len(in_jaxpr_avals)
-    axis_ctx = mlir.SPMDAxisContext(mesh)
+    axis_ctx = mlir.SPMDAxisContext(mesh, manual_axes)
   else:
     replicated_args = [not _get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
     in_partitions = None

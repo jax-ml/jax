@@ -865,6 +865,14 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     x = jnp.arange(16, dtype=jnp.float32).reshape(4, 4)
     self.assertAllClose(h(x), (x * x).sum(0))
 
+  @jtu.with_mesh([('x', 2)])
+  def testBareXmapCollective(self):
+    x = jnp.arange(20, dtype=jnp.float32).reshape(4, 5)
+
+    y = xmap(lambda x: lax.psum(x, 'i'),
+             in_axes=['i', ...], out_axes=[...], axis_resources={'i': 'x'})(x)
+    self.assertAllClose(x.sum(0), y)
+
 
 class NamedNumPyTest(XMapTestCase):
 
