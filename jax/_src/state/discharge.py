@@ -16,7 +16,7 @@ from __future__ import annotations
 import dataclasses
 from functools import partial
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from typing_extensions import Protocol
 
 import numpy as np
@@ -43,13 +43,17 @@ zip, unsafe_zip = safe_zip, zip
 # into a "pure" jaxpr that takes in and outputs values and no longer has the
 # `Read/Write/Accum` effects.
 
-def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any]
+def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
+                    should_discharge: Union[bool, Sequence[bool]] = True
                     ) -> Tuple[core.Jaxpr, List[Any]]:
   """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
+  if isinstance(should_discharge, bool):
+    should_discharge = [should_discharge] * len(jaxpr.invars)
   in_avals = [core.ShapedArray(v.aval.shape, v.aval.dtype)
-              if type(v.aval) is ShapedArrayRef
-              else v.aval for v in jaxpr.invars]
-  eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr, consts))
+              if type(v.aval) is ShapedArrayRef and d
+              else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
+  eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
+                                    should_discharge, consts))
   new_jaxpr, _ , new_consts = pe.trace_to_jaxpr_dynamic(eval_jaxpr, in_avals)
   return new_jaxpr, new_consts
 
@@ -82,8 +86,9 @@ def register_discharge_rule(prim: core.Primitive):
 def _has_refs(eqn: core.JaxprEqn):
   return any(isinstance(v.aval, ShapedArrayRef) for v in eqn.invars)
 
-def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
-                                *args: Any):
+def _eval_jaxpr_discharge_state(
+    jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
+    *args: Any):
   env = Environment({})
 
   map(env.write, jaxpr.constvars, consts)
@@ -91,8 +96,13 @@ def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
   # regular values in this interpreter.
   map(env.write, jaxpr.invars, args)
 
+  refs_to_discharge = set(id(v.aval) for v, d
+                          in zip(jaxpr.invars, should_discharge) if d
+                          and isinstance(v.aval, ShapedArrayRef))
+
   for eqn in jaxpr.eqns:
-    if _has_refs(eqn):
+    if _has_refs(eqn) and any(id(v.aval) in refs_to_discharge
+                              for v in eqn.invars):
       if eqn.primitive not in _discharge_rules:
         raise NotImplementedError("No state discharge rule implemented for "
             f"primitive: {eqn.primitive}")
@@ -119,7 +129,7 @@ def _eval_jaxpr_discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any],
   # them up by looking at `len(jaxpr.outvars)`.
   out_vals = map(env.read, jaxpr.outvars)
   ref_vals = map(
-      env.read, [v for v in jaxpr.invars if type(v.aval) is ShapedArrayRef])
+      env.read, [v for v in jaxpr.invars if id(v.aval) in refs_to_discharge])
   return out_vals + ref_vals
 
 @register_discharge_rule(get_p)
