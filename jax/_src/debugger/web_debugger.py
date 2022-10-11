@@ -92,4 +92,4 @@ def run_debugger(frames: List[debugger_core.DebuggerFrame],
   WebDebugger(frames, thread_id, **kwargs).run()
 
 if WEB_PDB_ENABLED:
-  debugger_core.register_debugger("web", run_debugger, 0)
+  debugger_core.register_debugger("web", run_debugger, -2)
