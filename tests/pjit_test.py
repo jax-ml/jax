@@ -1697,6 +1697,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     out = f(input_array)
     self.assertIsInstance(out, array.ArrayImpl)
+    self.assertTrue(out._committed)
     self.assertEqual(out.shape, (8, 8))
     self.assertEqual(out.addressable_shards[0].data.shape, shard_shape)
     for s in out.addressable_shards:
@@ -2045,12 +2046,36 @@ class ArrayPjitTest(jtu.JaxTestCase):
     def add(x, y):
       return x + y
     out = add(a, b)
+    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertArraysEqual(out, a + b)
+    self.assertFalse(out._committed)
 
     out2 = add(out, out)
+    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertIsInstance(out2, array.ArrayImpl)
     self.assertArraysEqual(out2, 2 * (a + b))
+    self.assertFalse(out2._committed)
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+
+    c = jax.device_put(a, jax.devices()[0])
+    out3 = add(c, c)
+    cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertArraysEqual(out3, 2 * c)
+    self.assertTrue(out3._committed)
+
+    self.assertEqual(cache_info3.hits, cache_info2.hits)
+    self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
+
+    out4 = add(out3, out3)
+    cache_info4 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertArraysEqual(out4, 4 * c)
+    self.assertTrue(out4._committed)
+
+    self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
+    self.assertEqual(cache_info4.misses, cache_info3.misses)
 
   @jax_array(True)
   def test_pjit_single_device_sharding_mul(self):
@@ -2327,6 +2352,65 @@ class ArrayPjitTest(jtu.JaxTestCase):
     s2 = MeshPspecSharding(mesh, P('x', 'y'))
     b = jax.device_put(a, s2)
     self.assertEqual(b.sharding, s2)
+
+  @jax_array(True)
+  def test_with_sharding_constraint_jit(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    @partial(jax.jit, static_argnums=(0, 1))
+    def sharded_zeros(shape, pspec):
+      out = jnp.zeros(shape, jnp.bfloat16)
+      return pjit_lib.with_sharding_constraint(out, MeshPspecSharding(mesh, pspec))
+
+    out = sharded_zeros((4096, 3072), P('x', 'y'))
+    out_s = MeshPspecSharding(mesh, P('x', 'y'))
+    self.assertTrue(pxla.are_op_shardings_equal(
+        out.sharding._to_xla_op_sharding(out.ndim),
+        out_s._to_xla_op_sharding(out.ndim)))
+
+  @jax_array(True)
+  def test_with_sharding_constraint_pjit(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    @partial(pjit, static_argnums=(0, 1))
+    def sharded_zeros(shape, pspec):
+      out = jnp.zeros(shape, jnp.bfloat16)
+      return pjit_lib.with_sharding_constraint(out, MeshPspecSharding(mesh, pspec))
+
+    out = sharded_zeros((4096, 3072), P('x', 'y'))
+    out_s = MeshPspecSharding(mesh, P('x', 'y'))
+    self.assertTrue(pxla.are_op_shardings_equal(
+        out.sharding._to_xla_op_sharding(out.ndim),
+        out_s._to_xla_op_sharding(out.ndim)))
+
+  @jax_array(True)
+  def test_jit_with_sharding_constraint_committed_inp_error(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    @jax.jit
+    def sharded_inp(inp):
+      return pjit_lib.with_sharding_constraint(
+          inp, MeshPspecSharding(mesh, P('x', 'y')))
+
+    committed_inp = jax.device_put(jnp.zeros((8, 2), jnp.bfloat16), jax.devices()[0])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Devices of all `Array` inputs and outputs should be the same"):
+      sharded_inp(committed_inp)
+
+  @jax_array(True)
+  def test_jit_device_with_sharding_constraint_error(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    @partial(jax.jit, static_argnums=(0, 1), device=jax.devices()[0])
+    def sharded_zeros(shape, pspec):
+      out = jnp.zeros(shape, jnp.bfloat16)
+      return pjit_lib.with_sharding_constraint(out, MeshPspecSharding(mesh, pspec))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Pjit's devices and Array's devices should be equal."):
+      sharded_zeros((4096, 3072), P('x', 'y'))
 
   @jax_array(True)
   def test_concurrent_pjit(self):

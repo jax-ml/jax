@@ -503,6 +503,7 @@ def _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
       # has been reset to None). Thus, we do not support the fast-path.
       execute is not None and
       type(execute) is pxla.ExecuteReplicated and
+      len(execute._local_devices) == 1 and
       # No effects in computation
       not execute.ordered_effects and
       not execute.has_unordered_effects and

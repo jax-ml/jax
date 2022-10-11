@@ -38,6 +38,7 @@ from functools import partial, lru_cache
 import itertools as it
 import operator as op
 import sys
+import warnings
 import threading
 import types
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
@@ -2662,6 +2663,9 @@ class PartitionSpec(tuple):
   from a tuple that should be treated as a pytree.
   """
 
+  # A sentinel value representing a dim is unconstrained.
+  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
+
   def __init__(self, *partitions):
     pass
 
@@ -2674,23 +2678,44 @@ class PartitionSpec(tuple):
   def __reduce__(self):
     return (PartitionSpec, tuple(self))
 
-  """A sentinel value representing a dim is unconstrained."""
-  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
 
+def _get_and_check_device_assignment(
+    shardings: Iterable[XLACompatibleSharding],
+    devices: Optional[Sequence[xc.Device]]) -> Tuple[xla.Backend, Sequence[xc.Device]]:
+  from jax._src.api import local_devices
 
-def _get_backend_from_shardings(
-    shardings: Iterable[Union[XLACompatibleSharding, _UnspecifiedValue]]
-) -> Tuple[xb.XlaBackend, Sequence[xc.Device]]:
-  da: Optional[Sequence[xc.Device]] = None
-  for s in shardings:
-    if _is_unspecified(s):
+  first_device_assignment = None
+  if devices is None:
+    devices = []
+  else:
+    devices = list(devices)
+
+  for i in shardings:
+    if _is_auto(i) or _is_unspecified(i):
       continue
-    # pytype does not understand that _UNSPECIFIED is being skipped above.
-    da = s._device_assignment  # type: ignore
-    break
-  da = cast(Sequence[xc.Device], da)
-  assert len(da) > 0
-  return xb.get_device_backend(da[0]), da
+    # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
+    # skipped.
+    if first_device_assignment is None:
+      first_device_assignment = list(i._device_assignment)  # type: ignore
+    arr_device_assignment = list(i._device_assignment)  # type: ignore
+    if not devices:
+      if first_device_assignment != arr_device_assignment:
+        raise ValueError("Devices of all `Array` inputs and outputs should be "
+                         "the same. "
+                         f"Got array devices: {first_device_assignment},\n "
+                         f"another array devices: {arr_device_assignment}")
+    else:
+      if devices != arr_device_assignment:
+        raise ValueError("Pjit's devices and Array's devices should be equal. "
+                         f"Got Pjit devices: {devices},\n "
+                         f"Array devices: {arr_device_assignment}")
+  if first_device_assignment is None and devices:
+    final_device_assignment = devices
+  elif first_device_assignment is None:
+    final_device_assignment = [config.jax_default_device or local_devices()[0]]
+  else:
+    final_device_assignment = first_device_assignment
+  return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 
 @profiler.annotate_function
@@ -2698,15 +2723,14 @@ def lower_sharding_computation(
     fun: lu.WrappedFun,
     api_name: str,
     fun_name: str,
-    in_shardings: Sequence[XLACompatibleSharding],
+    in_shardings: Sequence[Union[XLACompatibleSharding, _UnspecifiedValue]],
     out_shardings: Union[Sequence[Union[XLACompatibleSharding, _UnspecifiedValue]], _UnspecifiedValue],
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     in_is_global: Sequence[bool],
     keep_unused: bool,
-    committed: bool,
     always_lower: bool,
-    inp_device_assignment: Optional[Sequence[xc.Device]] = None):
+    devices_from_context: Optional[Sequence[xc.Device]] = None):
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
   The caller of this code can pass in a singleton _UNSPECIFIED because the
@@ -2714,31 +2738,41 @@ def lower_sharding_computation(
   lower_sharding_computation calculates the number of out_avals so it can apply
   the singleton _UNSPECIFIED to all out_avals.
   """
-  # Device assignment across all inputs and outputs should be the same. This
-  # is checked in pjit.
-  if inp_device_assignment is not None:
-    assert not in_shardings, "if device_assignment given, no in_shardings"
-    # TODO(yashkatariya): Look into allowing more than 1 device here.
-    assert len(inp_device_assignment) == 1
-    device_assignment = inp_device_assignment
-    backend = xb.get_device_backend(device_assignment[0])
-  else:
-    if _is_unspecified(out_shardings):
-      backend, device_assignment = _get_backend_from_shardings(in_shardings)  # type: ignore
-    else:
-      # type ignore because mypy can't understand that out_shardings that are
-      # UNSPECIFIED singleton are filtered above.
-      backend, device_assignment = _get_backend_from_shardings(  # type: ignore
-          it.chain(in_shardings, out_shardings))  # type: ignore
-
-  name_stack = new_name_stack(wrap_name(fun_name, api_name))
+  from jax._src.sharding import OpShardingSharding
 
   # 1. Trace to jaxpr and preprocess/verify it
+  name_stack = new_name_stack(wrap_name(fun_name, api_name))
+
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                  "in {elapsed_time} sec"):
     jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
         fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
   kept_outputs = [True] * len(global_out_avals)
+
+  if _is_unspecified(out_shardings):
+    out_shardings = (_UNSPECIFIED,) * len(global_out_avals)
+  # mypy doesn't understand that out_sharding here is always a sequence.
+  assert len(out_shardings) == len(global_out_avals), (  # type: ignore
+      len(out_shardings), len(global_out_avals))  # type: ignore
+
+  # Device assignment across all inputs, outputs and shardings inside jaxpr
+  # should be the same.
+  jaxpr_sharding = list(dispatch.jaxpr_shardings(jaxpr))
+  backend, device_assignment = _get_and_check_device_assignment(it.chain(
+      in_shardings, out_shardings, jaxpr_sharding), devices_from_context)  # type: ignore
+
+  # TODO(yashkatariya): Make this logic work after DCE because there can be
+  # equations inside the jaxpr that don't affect the output so whether the
+  # output(s) are committed or not should not depend on it.
+  committed = bool(
+      devices_from_context or
+      len(device_assignment) > 1 or
+      any(not _is_unspecified(i) for i in in_shardings) or
+      jaxpr_sharding or
+      any(not _is_unspecified(o) for o in out_shardings))  # type: ignore
+
+  in_shardings = tuple(OpShardingSharding.get_replicated(device_assignment)
+                       if _is_unspecified(i) else i for i in in_shardings)
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
   logging.log(log_priority,
@@ -2746,13 +2780,6 @@ def lower_sharding_computation(
               "Argument mapping: %s.",
               getattr(fun, '__name__', '<unnamed function>'), id(fun),
               global_in_avals, in_shardings)
-
-  if _is_unspecified(out_shardings):
-    out_shardings = (_UNSPECIFIED,) * len(global_out_avals)
-
-  # mypy doesn't understand that out_sharding here is always a sequence.
-  assert len(out_shardings) == len(global_out_avals), (  # type: ignore
-      len(out_shardings), len(global_out_avals))  # type: ignore
 
   if keep_unused:
     kept_var_idx = set(range(len(global_in_avals)))
@@ -2770,6 +2797,15 @@ def lower_sharding_computation(
                              if d.process_index == process_index]
   if len(device_assignment) != len(local_device_assignment):
     check_multihost_collective_allowlist(jaxpr)
+    warnings.warn(
+        "Running operations on `Array`s that are not fully addressable by this "
+        "process (i.e. `Array`s with data sharded across multiple devices and "
+        "processes.) is dangerous. It’s very important that all processes run "
+        "the same cross-process computations in the same order otherwise it "
+        "can lead to hangs.\n"
+        "If you’re not already familiar with JAX’s multi-process "
+        "programming model, please read "
+        "https://jax.readthedocs.io/en/latest/multi_process.html.")
 
   has_outfeed = core.jaxpr_uses_outfeed(jaxpr)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)

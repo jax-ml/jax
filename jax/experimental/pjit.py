@@ -30,7 +30,7 @@ from jax import core
 from jax import linear_util as lu
 from jax import stages
 from jax._src import array
-from jax._src.api import _check_callable, _check_arg, local_devices, FLAGS, device_put
+from jax._src.api import _check_callable, _check_arg, FLAGS, device_put
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
@@ -848,10 +848,12 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
       if getattr(a, '_committed', True):
         committed_arg_shardings.append(arg_s)
 
-  da = _get_and_check_device_assignment(
+  # Check if the device_assignment across inputs, outputs and arguments is the
+  # same.
+  pxla._get_and_check_device_assignment(
       it.chain(
           committed_arg_shardings, pjit_in_shardings, out_shardings),
-      pjit_mesh)
+      (None if pjit_mesh.empty else list(pjit_mesh.devices.flat)))
 
   resolved_in_shardings = []
   for arg, pjit_in_s in safe_zip(args, pjit_in_shardings):
@@ -859,14 +861,14 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
                         if hasattr(arg, 'sharding') else (_UNSPECIFIED, False))
     if _is_unspecified(pjit_in_s):
       if _is_unspecified(arg_s):
-        resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
+        resolved_in_shardings.append(arg_s)
       else:
         if committed:
           resolved_in_shardings.append(to_op_sharding_sharding(
               cast(XLACompatibleSharding, arg_s), arg.ndim))
         else:
           if dispatch.is_single_device_sharding(arg_s):
-            resolved_in_shardings.append(OpShardingSharding.get_replicated(da))
+            resolved_in_shardings.append(_UNSPECIFIED)
           else:
             raise NotImplementedError('Having uncommitted Array sharded on '
                                       'multiple devices is not supported.')
@@ -982,12 +984,13 @@ def _pjit_lower_cached(
   f.__name__ = name
   fun = lu.wrap_init(f)
 
+  mesh = resource_env.physical_mesh
+
   # Convert to `MeshPspecSharding` when `jax_array` is not enabled. This is
   # because GDA/SDA/DA are dependent on mesh for generating outputs.
   # MeshPspecSharding is required for host-local inputs too.
   any_auto = pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings))
   if not config.jax_array or any_auto:
-    mesh = resource_env.physical_mesh
     in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
         Tuple[MeshShardingMinusUnspecified, ...], tuple(
             MeshPspecSharding._from_parsed_pspec(
@@ -1007,7 +1010,7 @@ def _pjit_lower_cached(
   # because `xmap` only supports SPMDAxisContext right now.
   if (any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
     return pxla.lower_mesh_computation(
-      fun, 'pjit', name, resource_env.physical_mesh,
+      fun, 'pjit', name, mesh,
       in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
   else:
@@ -1018,7 +1021,8 @@ def _pjit_lower_cached(
     return pxla.lower_sharding_computation(
         fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
         jaxpr.in_avals, in_is_global=in_is_global, keep_unused=True,
-        committed=True, always_lower=always_lower)
+        always_lower=always_lower,
+        devices_from_context=(None if mesh.empty else list(mesh.devices.flat)))
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
@@ -1584,39 +1588,6 @@ def _maybe_replace_from_gda_with_pspec(
     else:
       out.append(in_sharding_flat)
   return tuple(out)
-
-
-def _get_and_check_device_assignment(shardings, pjit_mesh):
-  first_device_assignment = None
-  mesh_devices = list(pjit_mesh.devices.flat)
-  for i in shardings:
-    if _is_auto(i) or _is_unspecified(i):
-      continue
-    # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
-    # skipped.
-    if first_device_assignment is None:
-      first_device_assignment = i._device_assignment
-    arr_device_assignment = i._device_assignment
-    if pjit_mesh.empty:
-      # If mesh is empty, then check if all devices across shardings are
-      # equal
-      if first_device_assignment != arr_device_assignment:
-        raise ValueError("Devices of all `Array` inputs and outputs should be "
-                         "the same. "
-                         f"Got array devices: {first_device_assignment},\n "
-                         f"another array devices: {arr_device_assignment}")
-    else:
-      # If mesh is not empty, then check devices of all shardings against the
-      # mesh devices.
-      if mesh_devices != arr_device_assignment:
-        raise ValueError("Pjit's devices and Array's devices should be equal. "
-                         f"Got Pjit devices: {list(pjit_mesh.devices.flat)},\n "
-                         f"Array devices: {arr_device_assignment}")
-  if first_device_assignment is None and not pjit_mesh.empty:
-    return mesh_devices
-  if first_device_assignment is None:
-    return [config.jax_default_device or local_devices()[0]]
-  return first_device_assignment
 
 
 def _maybe_check_pjit_gda_mesh(args, mesh):

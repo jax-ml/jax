@@ -23,7 +23,7 @@ import itertools
 import time
 from typing import (
     Any, Callable, Dict, Optional, Sequence, Set, Tuple, List, Type, Union,
-    TYPE_CHECKING)
+    TYPE_CHECKING, Iterator)
 from typing_extensions import Protocol
 import os
 import re
@@ -301,62 +301,35 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
     da = [device]
 
   assert len(da) == 1
-  # Set committed to True for this path because it simulates a device_put on
-  # behalf of a user.
-  committed = True
   # in_shardings will be marked as replicated regardless of whatever the input
   # had. Given that only a single device is allowed above, this is correct.
   in_shardings = [sharding.OpShardingSharding.get_replicated(da)] * num_ins
-  return committed, da, in_shardings
+  return da, in_shardings
 
 
 def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
                      keep_unused, *arg_specs):
   # TODO(yashkatariya): Remove the local imports from here when the functions
   # in pxla.py move to dispatch.py or a utils file.
-  from jax._src import sharding
   from jax.interpreters import pxla
   from jax.experimental import pjit
 
   in_avals, in_shardings = util.unzip2(arg_specs)
 
+  da = None
   if backend is not None or device is not None:
-    committed, da, in_shardings = not_none_device_or_backend_on_jit(
+    da, in_shardings = not_none_device_or_backend_on_jit(
         backend, device, len(in_shardings))
-  else:
-    committed = any(i is not None for i in in_shardings)
-    da = pjit._get_and_check_device_assignment(
-        (i for i in in_shardings if i is not None), pxla.EMPTY_ENV.physical_mesh)
-    in_shardings = [sharding.OpShardingSharding.get_replicated(da) if i is None else i
-                    for i in in_shardings]
 
-  process_index = xb.process_index()
-  local_da = [d for d in da if d.process_index == process_index]
-  if len(local_da) != len(da):
-    warnings.warn(
-        "Running operations on `Array`s that are not fully addressable by this "
-        "process (i.e. `Array`s with data sharded across multiple devices and "
-        "processes.) is dangerous. It’s very important that all processes run "
-        "the same cross-process computations in the same order otherwise it "
-        "can lead to hangs.\n"
-        "If you’re not already familiar with JAX’s multi-process "
-        "programming model, please read "
-        "https://jax.readthedocs.io/en/latest/multi_process.html.")
-
-  if not in_shardings:
-    inp_device_assignment = da
-  else:
-    inp_device_assignment = None
+  in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]
 
   # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
-      fun, 'jit', name, in_shardings, pjit._UNSPECIFIED,
-      donated_invars, in_avals,
-      in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      committed=committed, always_lower=always_lower,
-      inp_device_assignment=inp_device_assignment)
+      fun, 'jit', name, in_shardings, pjit._UNSPECIFIED, donated_invars,
+      in_avals, in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
+      always_lower=always_lower, devices_from_context=da)
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
@@ -375,7 +348,7 @@ xla_callable = lu.cache(_xla_callable_uncached)
 def is_single_device_sharding(sharding) -> bool:
   from jax._src.sharding import PmapSharding
   # Special case PmapSharding here because PmapSharding maps away an axis
-  # and needs to be handled separately.
+  # and needs to be handled separately.test_pjit_single_device_sharding_add
   return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
 
 
@@ -567,6 +540,20 @@ def jaxpr_has_primitive(jaxpr, prim_name: str):
     if jaxpr_has_primitive(subjaxpr, prim_name):
       return True
   return False
+
+
+def jaxpr_shardings(jaxpr) -> Iterator[jax.sharding.XLACompatibleSharding]:
+  from jax.experimental import pjit
+
+  for eqn in jaxpr.eqns:
+    if eqn.primitive is pjit.sharding_constraint_p:
+      yield eqn.params['sharding']
+    elif eqn.primitive is pjit.pjit_p:
+      yield from eqn.params['in_shardings']
+      yield from eqn.params['out_shardings']
+  for subjaxpr in core.subjaxprs(jaxpr):
+    yield from jaxpr_shardings(subjaxpr)
+
 
 def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
   return (any(type(v.aval.dtype) is core.bint for v in jaxpr.invars
