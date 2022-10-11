@@ -18,6 +18,7 @@ from functools import partial, lru_cache
 import logging
 import threading
 import unittest
+import warnings
 from collections import OrderedDict, namedtuple
 
 from absl.testing import absltest
@@ -3019,6 +3020,22 @@ class UtilTest(jtu.JaxTestCase):
     mesh = maps.Mesh(jax.devices(), ('x',))
     self.assertIsInstance(mesh.devices, np.ndarray)
     self.assertEqual(mesh.size, jax.device_count())
+
+  def test_copy_to_device_warning_raised(self):
+    if jax.config.jax_array:
+      self.skipTest('jax.Array does not have copy_to_device attribute.')
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >= 2 devices')
+    x = jnp.array([1.0, 2.0], jnp.float32)
+
+    with warnings.catch_warnings(record=True) as w:
+      warnings.simplefilter("always")
+      x = x.copy_to_device(jax.devices()[1])
+      self.assertLen(w, 1)
+      self.assertTrue(issubclass(w[-1].category, DeprecationWarning))
+      self.assertIn(
+          "copy_to_device is deprecated, please use `jax.device_put` instead.",
+          str(w[-1].message))
 
 
 if __name__ == '__main__':
