@@ -15,6 +15,9 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   back to CPU. Set `JAX_PLATFORMS=''` to override this behavior and automatically
   choose an available backend (the original default), or set `JAX_PLATFORMS=cpu`
   to always use CPU regardless of if the TPU is available.
+* Deprecations
+  * Several test utilities deprecated in JAX v0.3.8 are now removed from
+    {mod}`jax.test_util`.
 
 ## jaxlib 0.3.22
 
