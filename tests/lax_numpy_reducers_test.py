@@ -574,7 +574,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       return out.astype(out_dtype)
     jnp_fun = partial(jnp.nanvar, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {np.float16: 1e-1, np.float32: 1e-3,
-                                    np.float64: 1e-3, np.complex128: 1e-6})
+                                    np.float64: 1e-3, np.complex64: 1e-3,
+                                    np.complex128: 1e-6})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
         not jnp.issubdtype(out_dtype, jnp.complexfloating)):
       self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))

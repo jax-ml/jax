@@ -1967,7 +1967,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
     np_fun = partial(np.trapz, dx=dx, axis=axis)
     jnp_fun = partial(jnp.trapz, dx=dx, axis=axis)
-    tol = jtu.tolerance(dtype, {np.float64: 1e-12,
+    tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
                                 dtypes.bfloat16: 4e-2})
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
                             check_dtypes=False)
@@ -2139,7 +2139,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         dtypes.bfloat16: 2e-1,
         np.float16: 2e-1,
         np.float32: 5e-2,
-        np.float64: 1e-13
+        np.float64: 1e-11
     }
 
     jnp_compile = jnp.polydiv # Without trim_leading_zeros (trim_zeros make it unable to be compiled by XLA)
