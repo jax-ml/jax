@@ -258,7 +258,7 @@ class ArrayImpl(basearray.Array):
     from jax._src.numpy import lax_numpy
     self._check_if_deleted()
 
-    if dispatch.is_single_device_sharding(self.sharding):
+    if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
       return lax_numpy._rewriting_take(self, idx)
     # TODO(yashkatariya): Make it work for other Shardings too wherever its
     # possible to not do data movement.
@@ -290,7 +290,7 @@ class ArrayImpl(basearray.Array):
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
       assert self.is_fully_replicated or self.is_fully_addressable
-      if dispatch.is_single_device_sharding(self.sharding):
+      if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
       elif isinstance(self.sharding, PmapSharding):
         return (self[i] for i in range(self.shape[0]))  # type: ignore

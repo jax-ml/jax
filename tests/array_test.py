@@ -411,6 +411,21 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(i, array.ArrayImpl)
       self.assertArraysEqual(i, j)
 
+  def test_array_iter_replicated_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P(None)))
+
+    for i, j in zip(iter(arr), iter(input_data)):
+      self.assertIsInstance(i, array.ArrayImpl)
+      self.assertArraysEqual(i, j)
+      self.assertLen(i.sharding.device_set, 8)
+      self.assertTrue(
+        pxla.are_op_shardings_equal(
+            arr.sharding._to_xla_op_sharding(arr.ndim),
+            i.sharding._to_xla_op_sharding(i.ndim)))
+
   def test_array_getitem_mesh_pspec_sharding_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
@@ -426,6 +441,30 @@ class JaxArrayTest(jtu.JaxTestCase):
     p = arr[:2]
     self.assertIsInstance(p, array.ArrayImpl)
     self.assertArraysEqual(p, input_data[:2])
+
+  def test_array_getitem_replicated_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P(None)))
+
+    s = arr[2:4, 0:1]
+    self.assertIsInstance(s, array.ArrayImpl)
+    self.assertArraysEqual(s, np.array([[4], [6]]))
+    self.assertLen(s.sharding.device_set, 8)
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            arr.sharding._to_xla_op_sharding(arr.ndim),
+            s.sharding._to_xla_op_sharding(s.ndim)))
+
+    p = arr[:2]
+    self.assertIsInstance(p, array.ArrayImpl)
+    self.assertArraysEqual(p, input_data[:2])
+    self.assertLen(s.sharding.device_set, 8)
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            arr.sharding._to_xla_op_sharding(arr.ndim),
+            s.sharding._to_xla_op_sharding(s.ndim)))
 
   def test_array_iter_mesh_pspec_sharding_single_device(self):
     if jax.device_count() < 2:
