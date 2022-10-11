@@ -265,9 +265,7 @@ canonicalize_dtype_handlers.update(
 canonicalize_dtype_handlers.update(
     (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
 canonicalize_dtype_handlers[core.Token] = identity
-canonicalize_dtype_handlers[core.PaddedArray] = identity
-canonicalize_dtype_handlers[core.BInt] = \
-    lambda x: core.BInt(_canonicalize_python_scalar_dtype(int, x.val), x.bound)
+canonicalize_dtype_handlers[core.DArray] = identity
 
 def abstractify(x) -> core.AbstractValue:
   typ = type(x)
@@ -289,8 +287,7 @@ def _make_abstract_python_scalar(typ, val):
 pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
 for t in device_array.device_array_types:
   pytype_aval_mappings[t] = operator.attrgetter('aval')
-pytype_aval_mappings[core.BInt] = lambda x: core.AbstractBInt(x.bound)
-pytype_aval_mappings[core.PaddedArray] = operator.attrgetter('_aval')
+pytype_aval_mappings[core.DArray] = operator.attrgetter('_aval')
 pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
 pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
 pytype_aval_mappings.update(

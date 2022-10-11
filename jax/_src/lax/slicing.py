@@ -931,6 +931,15 @@ def _dynamic_slice_typecheck_rule(x, *starts_and_dyn_sizes, slice_sizes):
                                  x.aval.weak_type)
     return [out_aval], core.no_effects
 
+def _dynamic_slice_padding_rule(in_avals, out_avals, x, *starts_and_dyn,
+                                slice_sizes):
+  x_aval, start_indices_avals, dyn_avals = util.split_list(in_avals, [1, x.ndim])
+  start_indices, dyn = util.split_list(starts_and_dyn, [x.ndim])
+  dyn_ = [a.dtype.bound if type(a.dtype) is core.bint else d
+          for a, d in zip(dyn_avals, dyn)]
+  slice_sizes_ = lax._merge_dyn_shape(slice_sizes, dyn_)
+  start_idx = [d.val if type(d) is core.DArray else d for d in start_indices]
+  return [dynamic_slice(x, start_idx, slice_sizes_)]
 
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
@@ -940,6 +949,7 @@ ad.primitive_transposes[dynamic_slice_p] = _dynamic_slice_transpose_rule
 batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
 core.custom_typechecks[dynamic_slice_p] = _dynamic_slice_typecheck_rule
+pe.padding_rules[dynamic_slice_p] = _dynamic_slice_padding_rule
 
 def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   x_aval, *_ = ctx.avals_in
@@ -1362,12 +1372,25 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                   indices_are_sorted=indices_are_sorted, mode=mode,
                   fill_value=fill_value), 0
 
+def _gather_pad_rule(in_avals, out_avals, operand, indices, *,
+                     dimension_numbers, slice_sizes, unique_indices,
+                     indices_are_sorted, mode, fill_value):
+  operand_aval, indices_aval = in_avals
+  if any(isinstance(d, pe.BoundedAxisSize) for d in operand_aval.shape):
+    raise NotImplementedError
+  if mode != GatherScatterMode.PROMISE_IN_BOUNDS:
+    # with fill, jnp.where on operand; with clip, jnp.where on indices
+    raise NotImplementedError
+  return [gather(operand, indices, dimension_numbers=dimension_numbers,
+                 slice_sizes=slice_sizes, mode=mode, fill_value=fill_value)]
+
 gather_p = standard_primitive(
     _gather_shape_rule, _gather_dtype_rule, 'gather',
     weak_type_rule=_argnum_weak_type(0))
 ad.defjvp(gather_p, _gather_jvp_rule, None)
 ad.primitive_transposes[gather_p] = _gather_transpose_rule
 batching.primitive_batchers[gather_p] = _gather_batching_rule
+pe.padding_rules[gather_p] = _gather_pad_rule
 
 
 def _gather_lower(ctx, operand, indices, *,
@@ -2094,7 +2117,7 @@ mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 def _dynamic_slice_indices(
     operand: Array,
     start_indices: Union[Array, Sequence[ArrayLike]]
-  ) -> List[Array]:
+  ) -> List[ArrayLike]:
   # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:
     msg = ("Length of slice indices must match number of operand dimensions ({} "
@@ -2105,7 +2128,7 @@ def _dynamic_slice_indices(
       raise ValueError("Slice indices must be a 1D sequence, got {}"
                        .format(start_indices.shape))  # type: ignore[union-attr]
     start_indices = list(start_indices)
-  result: List[Array] = []
+  result: List[ArrayLike] = []
   for i, d in zip(start_indices, operand.shape):
     # We test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
@@ -2113,8 +2136,7 @@ def _dynamic_slice_indices(
       continue
     d = core.dimension_as_value(d)
     if isinstance(i, (int, np.integer)):
-      result.append(i + lax.convert_element_type(d, _dtype(i)) if i < 0
-                    else lax.convert_element_type(i, _dtype(i)))
+      result.append(i + lax.convert_element_type(d, _dtype(i)) if i < 0 else i)
       continue
     d = lax.convert_element_type(d, _dtype(i))
     result.append(lax.select(i < 0, i + d, i))
