@@ -9,6 +9,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.22
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.21...main).
 * Changes
   * Add `JAX_PLATFORMS=tpu,cpu` as default setting in TPU initialization,
   so JAX will raise an error if TPU cannot be initialized instead of falling
@@ -17,8 +18,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   to always use CPU regardless of if the TPU is available.
 
 ## jaxlib 0.3.22
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.20...main).
 
 ## jax 0.3.21 (Sep 30, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.20...jax-v0.3.21).
 * Changes
   * The persistent compilation cache will now warn instead of raising an
     exception on error ({jax-issue}`#12582`), so program execution can continue
@@ -32,12 +35,14 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Fix incorrect `pip` url in `setup.py` comment ({jax-issue}`#12528`).
 
 ## jaxlib 0.3.20 (Sep 28, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.15...jaxlib-v0.3.20).
 * Bug fixes
   * Fixes support for limiting the visible CUDA devices via
    `jax_cuda_visible_devices` in distributed jobs. This functionality is needed for
    the JAX/SLURM integration on GPU ({jax-issue}`#12533`).
 
 ## jax 0.3.19 (Sep 27, 2022)
+* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.18...jax-v0.3.19).
 * Fixes required jaxlib version.
 
 ## jax 0.3.18 (Sep 26, 2022)
