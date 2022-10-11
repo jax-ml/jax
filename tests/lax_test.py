@@ -128,7 +128,7 @@ LAX_OPS = [
     op_record("square", 1, float_dtypes + complex_dtypes, jtu.rand_default),
     op_record("reciprocal", 1, float_dtypes + complex_dtypes, jtu.rand_positive),
     op_record("tan", 1, float_dtypes + complex_dtypes, jtu.rand_default, {np.float32: 3e-5}),
-    op_record("asin", 1, float_dtypes + complex_dtypes, jtu.rand_small),
+    op_record("asin", 1, float_dtypes + complex_dtypes, jtu.rand_small, {np.complex128: 5e-12}),
     op_record("acos", 1, float_dtypes + complex_dtypes, jtu.rand_small),
     op_record("atan", 1, float_dtypes + complex_dtypes, jtu.rand_small),
     op_record("asinh", 1, float_dtypes + complex_dtypes, jtu.rand_default,

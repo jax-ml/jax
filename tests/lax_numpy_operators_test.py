@@ -404,26 +404,25 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
-                                                      dtypes),
-         "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
-         "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-         "check_dtypes": rec.check_dtypes, "tolerance": rec.tolerance,
-         "inexact": rec.inexact, "kwargs": rec.kwargs or {}}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(op_name=rec.name, rng_factory=rec.rng_factory,
+            check_dtypes=rec.check_dtypes, tolerance=rec.tolerance,
+            inexact=rec.inexact, kwargs=rec.kwargs or {})],
+      [dict(shapes=shapes, dtypes=dtypes)
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in itertools.product(
-          *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
-      for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
-                                 JAX_COMPOUND_OP_RECORDS)))
+          *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
+    )
+    for rec in itertools.chain(JAX_ONE_TO_ONE_OP_RECORDS,
+                               JAX_COMPOUND_OP_RECORDS)))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def testOp(self, np_op, jnp_op, rng_factory, shapes, dtypes, check_dtypes,
+  def testOp(self, op_name, rng_factory, shapes, dtypes, check_dtypes,
              tolerance, inexact, kwargs):
-    np_op = partial(np_op, **kwargs)
-    jnp_op = partial(jnp_op, **kwargs)
+    np_op = partial(getattr(np, op_name), **kwargs)
+    jnp_op = partial(getattr(jnp, op_name), **kwargs)
     np_op = jtu.ignore_warning(category=RuntimeWarning,
                                message="invalid value.*")(np_op)
     np_op = jtu.ignore_warning(category=RuntimeWarning,
@@ -441,18 +440,17 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_op, args_maker, check_dtypes=check_dtypes,
                             atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
-                                                      dtypes),
-         "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes, "name": rec.name,
-         "tol": rec.tolerance}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, tol=rec.tolerance)],
+      [dict(shapes=shapes, dtypes=dtypes)
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in itertools.product(
-          *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
-      for rec in JAX_OPERATOR_OVERLOADS))
+          *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
+    )
+    for rec in JAX_OPERATOR_OVERLOADS))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testOperatorOverload(self, name, rng_factory, shapes, dtypes, tol):
     rng = rng_factory(self.rng())
@@ -463,18 +461,18 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck(fun, args_maker, atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(rec.test_name, shapes,
-                                                      dtypes),
-         "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes, "name": rec.name,
-         "op_tolerance": rec.tolerance}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory,
+            op_tolerance=rec.tolerance)],
+      [dict(shapes=shapes, dtypes=dtypes)
         for shapes in filter(
           _shapes_are_broadcast_compatible,
           itertools.combinations_with_replacement(rec.shapes, rec.nargs))
         for dtypes in itertools.product(
-          *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes)))
-      for rec in JAX_RIGHT_OPERATOR_OVERLOADS))
+          *(_valid_dtypes_for_shape(s, rec.dtypes) for s in shapes))],
+    )
+    for rec in JAX_RIGHT_OPERATOR_OVERLOADS))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRightOperatorOverload(self, name, rng_factory, shapes, dtypes,
                                 op_tolerance):
@@ -487,10 +485,10 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CompileAndCheck( fun, args_maker, atol=tol, rtol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"{rec.test_name}_{othertype}", "name": rec.name, "othertype": othertype}
-    for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
-    for othertype in [dict, list, tuple, set]))
+  @jtu.sample_product(
+    name=[rec.name for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2],
+    othertype=[dict, list, tuple, set],
+  )
   def testOperatorOverloadErrors(self, name, othertype):
     # Test that binary operators with builtin collections raise a TypeError
     # and report the types in the correct order.
@@ -506,10 +504,10 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       getattr(arr, name)(other)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"{rec.test_name}_{othertype}", "name": rec.name, "othertype": othertype}
-    for rec in JAX_RIGHT_OPERATOR_OVERLOADS if rec.nargs == 2
-    for othertype in [dict, list, tuple, set]))
+  @jtu.sample_product(
+    name=[rec.name for rec in JAX_RIGHT_OPERATOR_OVERLOADS if rec.nargs == 2],
+    othertype=[dict, list, tuple, set],
+  )
   def testRightOperatorOverloadErrors(self, name, othertype):
     # Test that binary operators with builtin collections raise a TypeError
     # and report the types in the correct order.
@@ -525,12 +523,11 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       getattr(arr, name)(other)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": rec.test_name + f"_{dtype}",
-       "rng_factory": rec.rng_factory,
-       "op_name": rec.name, "dtype": dtype}
-      for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
-      for dtype in rec.dtypes))
+  @jtu.sample_product(
+    [dict(op_name=rec.name, rng_factory=rec.rng_factory, dtype=dtype)
+     for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2
+     for dtype in rec.dtypes],
+  )
   def testBinaryOperatorDefers(self, op_name, rng_factory, dtype):
     rng = rng_factory(self.rng())
     arg = jax.device_put(rng((), dtype))
@@ -553,37 +550,38 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       with self.assertRaises(TypeError):
         op(arg, other)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(
-            rec.test_name, shapes, dtypes),
-         "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
-         "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name)}
-        for shapes in filter(
-          _shapes_are_broadcast_compatible,
-          itertools.combinations_with_replacement(rec.shapes, rec.nargs))
-        for dtypes in filter(
-          _dtypes_are_compatible_for_bitwise_ops,
-          itertools.combinations_with_replacement(rec.dtypes, rec.nargs)))
-      for rec in JAX_BITWISE_OP_RECORDS))
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory)],
+      shapes=filter(
+        _shapes_are_broadcast_compatible,
+        itertools.combinations_with_replacement(rec.shapes, rec.nargs)),
+      dtypes=filter(
+        _dtypes_are_compatible_for_bitwise_ops,
+        itertools.combinations_with_replacement(rec.dtypes, rec.nargs)),
+    )
+    for rec in JAX_BITWISE_OP_RECORDS))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
-  def testBitwiseOp(self, np_op, jnp_op, rng_factory, shapes, dtypes):
+  def testBitwiseOp(self, name, rng_factory, shapes, dtypes):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(jtu.promote_like_jnp(np_op), jnp_op, args_maker)
       self._CompileAndCheck(jnp_op, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": jtu.format_test_name_suffix(op.__name__, shapes, dtypes),
-     "op": op, "dtypes": dtypes, "shapes": shapes}
-    for op in [jnp.left_shift, jnp.right_shift]
-    for shapes in filter(
-      _shapes_are_broadcast_compatible,
-      # TODO numpy always promotes to shift dtype for zero-dim shapes:
-      itertools.combinations_with_replacement(nonzerodim_shapes, 2))
-    for dtypes in itertools.product(
-      *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))))
+  @jtu.sample_product(
+    [dict(dtypes=dtypes, shapes=shapes)
+      for shapes in filter(
+        _shapes_are_broadcast_compatible,
+        # TODO numpy always promotes to shift dtype for zero-dim shapes:
+        itertools.combinations_with_replacement(nonzerodim_shapes, 2))
+      for dtypes in itertools.product(
+        *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))
+    ],
+    op=[jnp.left_shift, jnp.right_shift],
+  )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testShiftOpAgainstNumpy(self, op, dtypes, shapes):
     dtype, shift_dtype = dtypes

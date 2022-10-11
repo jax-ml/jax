@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import numpy as np
 
@@ -275,11 +275,10 @@ xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 @jtu.with_config(jax_array=False)
 class CustomObjectTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_compile={compile}_primitive={primitive}",
-       "compile": compile, "primitive": primitive}
-      for primitive in [True, False]
-      for compile in [True, False]))
+  @jtu.sample_product(
+    primitive=[True, False],
+    compile=[True, False],
+  )
   def testSparseIdentity(self, compile, primitive):
     f = identity if primitive else (lambda x: x)
     f = jit(f) if compile else f
@@ -295,10 +294,9 @@ class CustomObjectTest(jtu.JaxTestCase):
     self.assertAllClose(M.data, M2.data)
     self.assertAllClose(M.indices, M2.indices)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_compile={compile}",
-       "compile": compile}
-      for compile in [True, False]))
+  @jtu.sample_product(
+    compile=[True, False],
+  )
   def testSparseSplit(self, compile):
     f = jit(split) if compile else split
     rng = jtu.rand_default(self.rng())
@@ -314,11 +312,10 @@ class CustomObjectTest(jtu.JaxTestCase):
       self.assertArraysEqual(M.data, MM.data)
       self.assertArraysEqual(M.indices, MM.indices)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_compile={compile}_primitive={primitive}",
-       "compile": compile, "primitive": primitive}
-      for primitive in [True, False]
-      for compile in [True, False]))
+  @jtu.sample_product(
+    primitive=[True, False],
+    compile=[True, False],
+  )
   def testSparseLaxLoop(self, compile, primitive):
     rng = jtu.rand_default(self.rng())
     f = identity if primitive else (lambda x: x)
@@ -327,21 +324,17 @@ class CustomObjectTest(jtu.JaxTestCase):
     M = make_sparse_array(rng, (10,), jnp.float32)
     lax.fori_loop(0, 10, body_fun, M)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_attr={attr}", "attr": attr}
-      for attr in ["data", "indices"]))
+  @jtu.sample_product(attr=["data", "indices"])
   def testSparseAttrAccess(self, attr):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [make_sparse_array(rng, (10,), jnp.float32)]
     f = lambda x: getattr(x, attr)
     self._CompileAndCheck(f, args_maker)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}".format(
-         jtu.format_shape_dtype_string(shape, dtype)),
-       "shape": shape, "dtype": dtype}
-      for shape in [(3, 3), (2, 6), (6, 2)]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    shape=[(3, 3), (2, 6), (6, 2)],
+    dtype=jtu.dtypes.floating,
+  )
   def testSparseMatvec(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [make_sparse_array(rng, shape, dtype), rng(shape[-1:], dtype)]
