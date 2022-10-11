@@ -251,6 +251,31 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         num_partitions=4)
 
   @jtu.with_mesh([("x", 2), ("y", 2)])
+  def test_pjit_basic2D_grad(self):
+    @functools.partial(pjit.pjit,
+                       in_axis_resources=(P("x", "y"), P("y")),
+                       out_axis_resources=P("x"))
+    def func_jax(x, y):
+      return x @ y
+
+    x_shape = (6, 4)
+    y_shape = (4, 2)
+    x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
+
+    # res_jax, pullback_jax = jax.vjp(func_jax, x, y)
+    # vjp_jax = pullback_jax(np.ones_like(res_jax))
+    func_tf = jax2tf.convert(func_jax)
+    func_tf(x, y)
+    xv = tf.Variable(x)
+    yv = tf.Variable(y)
+    with tf.GradientTape() as tape:
+      res = func_tf(xv, yv)
+
+    grad_xv_tf, grad_yv_tf = tape.gradient(res, xv, yv)
+    self.assertAllClose(2. * 4., tape.gradient(res, xv))
+
+  @jtu.with_mesh([("x", 2), ("y", 2)])
   def test_pjit_TwoMeshAxisSharding(self):
     @functools.partial(pjit.pjit,
              in_axis_resources=P(("x", "y"),),
