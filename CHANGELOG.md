@@ -8,8 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.22
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.21...main).
+## jax 0.3.23
+
+## jaxlib 0.3.23
+
+## jax 0.3.22 (Oct 11, 2022)
 * Changes
   * Add `JAX_PLATFORMS=tpu,cpu` as default setting in TPU initialization,
   so JAX will raise an error if TPU cannot be initialized instead of falling
@@ -20,8 +23,7 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Several test utilities deprecated in JAX v0.3.8 are now removed from
     {mod}`jax.test_util`.
 
-## jaxlib 0.3.22
-* [GitHub commits](https://github.com/google/jax/compare/jaxlib-v0.3.20...main).
+## jaxlib 0.3.22 (Oct 11, 2022)
 
 ## jax 0.3.21 (Sep 30, 2022)
 * [GitHub commits](https://github.com/google/jax/compare/jax-v0.3.20...jax-v0.3.21).
