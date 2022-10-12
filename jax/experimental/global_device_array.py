@@ -456,6 +456,10 @@ class GlobalDeviceArray:
     else:
       self._sharded_buffer.block_until_ready() # type: ignore
     return self
+  
+  @property
+  def sharding(self):
+    return jax.sharding.MeshPspecSharding(self._global_mesh, self.mesh_axes)
 
   @classmethod
   def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,
