@@ -18,6 +18,7 @@ import functools
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
+import jax
 from jax import core
 from jax._src import api_util
 from jax._src.lib import xla_bridge as xb
@@ -454,8 +455,12 @@ class GlobalDeviceArray:
       for db in self._device_buffers:
         db.block_until_ready()
     else:
-      self._sharded_buffer.block_until_ready() # type: ignore
+      self._sharded_buffer.block_until_ready()  # type: ignore
     return self
+
+  @property
+  def sharding(self):
+    return jax.sharding.MeshPspecSharding(self._global_mesh, self.mesh_axes)
 
   @classmethod
   def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,

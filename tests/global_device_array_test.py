@@ -88,6 +88,7 @@ class GDATest(jtu.JaxTestCase):
     self.assertArraysEqual(gda.local_data(0),
                            global_input_data[expected_index[0]])
     self.assertEqual(gda.local_shards[1].index, expected_index[1])
+    self.assertIsInstance(gda.sharding, jax.sharding.MeshPspecSharding)
     self.assertArraysEqual(gda.local_data(1),
                            global_input_data[expected_index[1]])
     self.assertEqual(gda.local_data(0).shape, expected_shard_shape)
