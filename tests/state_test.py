@@ -627,6 +627,26 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertTrue((b == inval + 1).all())
     self.assertTrue((refval == inval).all())
 
+  def test_partially_discharging_jaxpr_keeps_refs(self):
+    def f(a_ref, b_ref):
+      state.ref_set(a_ref, (), jnp.ones(4, jnp.float32))
+      state.ref_set(b_ref, (), jnp.ones(4, jnp.float32))
+      return []
+    in_avals = [
+        state.ShapedArrayRef((4,), jnp.dtype('float32')),
+        state.ShapedArrayRef((4,), jnp.dtype('float32'))
+        ]
+    stateful_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f),
+                                                          in_avals)
+    discharged_jaxpr, _ = state.discharge_state(
+        stateful_jaxpr, consts, should_discharge=[False, True])
+    self.assertLen(discharged_jaxpr.invars, 2)
+    self.assertLen(discharged_jaxpr.outvars, 1)
+    self.assertIsInstance(discharged_jaxpr.invars[0].aval, state.ShapedArrayRef)
+    self.assertIsInstance(discharged_jaxpr.invars[1].aval, core.ShapedArray)
+    self.assertEqual(discharged_jaxpr.effects,
+        {state.WriteEffect(discharged_jaxpr.invars[0].aval)})
+
 
 if CAN_USE_HYPOTHESIS:
 
