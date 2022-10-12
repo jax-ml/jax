@@ -69,7 +69,8 @@ def gammaincc(a, x):
   return lax.igammac(a, x)
 
 
-@_wraps(osp_special.erf, module='scipy.special')
+@_wraps(osp_special.erf, module='scipy.special', skip_params=["out"],
+        lax_description="Note that the JAX version does not support complex inputs.")
 def erf(x):
   x, = _promote_args_inexact("erf", x)
   return lax.erf(x)
