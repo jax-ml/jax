@@ -12,12 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax.scipy import interpolate as interpolate
-from jax.scipy import linalg as linalg
-from jax.scipy import ndimage as ndimage
-from jax.scipy import signal as signal
-from jax.scipy import sparse as sparse
-from jax.scipy import special as special
-from jax.scipy import stats as stats
-from jax.scipy import fft as fft
-from jax.scipy import cluster as cluster
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+  from jax.scipy import interpolate as interpolate
+  from jax.scipy import linalg as linalg
+  from jax.scipy import ndimage as ndimage
+  from jax.scipy import signal as signal
+  from jax.scipy import sparse as sparse
+  from jax.scipy import special as special
+  from jax.scipy import stats as stats
+  from jax.scipy import fft as fft
+  from jax.scipy import cluster as cluster
+else:
+  import jax._src.lazy_loader as _lazy
+  __getattr__, __dir__, __all__ = _lazy.attach(__name__, [
+    "interpolate",
+    "linalg",
+    "ndimage",
+    "signal",
+    "sparse",
+    "special",
+    "stats",
+    "fft",
+    "cluster",
+  ])
+  del _lazy
+
+del TYPE_CHECKING

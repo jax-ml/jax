@@ -27,6 +27,10 @@ from . import _lapack
 for _name, _value in _lapack.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")
 
+# Function that lazily initializes the LAPACK kernels in the runtime on first
+# use.
+_initialize = _lapack.initialize
+
 
 def _mhlo_u8(x):
   return mhlo.ConstantOp(
@@ -46,6 +50,7 @@ def _mhlo_s32(x):
 # triangular solve
 def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
                conj_a=False, diag=False):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
 
@@ -95,6 +100,7 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
 # # ?getrf: LU decomposition
 
 def getrf_mhlo(dtype, a):
+  _initialize()
   dims = ir.RankedTensorType(a.type).shape
   assert len(dims) >= 2
   m, n = dims[-2:]
@@ -139,6 +145,7 @@ def getrf_mhlo(dtype, a):
 # # ?geqrf: QR decomposition
 
 def geqrf_mhlo(dtype, a):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
@@ -191,6 +198,7 @@ def geqrf_mhlo(dtype, a):
 # # ?orgqr: product of elementary Householder reflectors:
 
 def orgqr_mhlo(dtype, a, tau):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
@@ -249,6 +257,7 @@ def orgqr_mhlo(dtype, a, tau):
 # ?potrf: Cholesky decomposition
 
 def potrf_mhlo(dtype, a, lower=False):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   m, n = dims[-2:]
@@ -289,6 +298,7 @@ def potrf_mhlo(dtype, a, lower=False):
 # # ?gesdd: Singular value decomposition
 
 def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
@@ -378,6 +388,7 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
 # # syevd: Symmetric eigendecomposition
 
 def syevd_mhlo(dtype, a, lower=False):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
   assert len(dims) >= 2
@@ -456,6 +467,7 @@ def syevd_mhlo(dtype, a, lower=False):
 # # geev: Nonsymmetric eigendecomposition
 
 def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
+  _initialize()
   dims = ir.RankedTensorType(a.type).shape
   assert len(dims) >= 2
   m, n = dims[-2:]
@@ -540,6 +552,7 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
 # # gees : Schur factorization
 
 def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
+  _initialize()
   a_type = ir.RankedTensorType(a.type)
   etype = a_type.element_type
   dims = a_type.shape

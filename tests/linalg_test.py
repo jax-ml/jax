@@ -19,6 +19,7 @@ import unittest
 
 import numpy as np
 import scipy
+import scipy.linalg
 import scipy as osp
 
 from absl.testing import absltest
