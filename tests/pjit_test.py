@@ -2278,7 +2278,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Devices of all `Array` inputs and outputs should be the same"):
+        "Devices of all `Array` inputs and outputs should be the same. "
+        r"Got array device ids \[0\] on platform.*and "
+        r"another array's device ids \[1\] on platform"):
       pjit(lambda x, y: (x, y))(a, b)
 
   @jax_array(True)
@@ -2409,7 +2411,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "Pjit's devices and Array's devices should be equal."):
+        "Pjit's devices and Array's devices should be equal. "
+        r"Got Pjit's device ids \[0\] on platform.*and "
+        r"Array's device ids \[0, 1, 2, 3\] on platform"):
       sharded_zeros((4096, 3072), P('x', 'y'))
 
   @jax_array(True)

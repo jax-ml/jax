@@ -2700,15 +2700,25 @@ def _get_and_check_device_assignment(
     arr_device_assignment = list(i._device_assignment)  # type: ignore
     if not devices:
       if first_device_assignment != arr_device_assignment:
-        raise ValueError("Devices of all `Array` inputs and outputs should be "
-                         "the same. "
-                         f"Got array devices: {first_device_assignment},\n "
-                         f"another array devices: {arr_device_assignment}")
+        p1 = first_device_assignment[0].platform.upper()
+        fda_ids = [d.id for d in first_device_assignment]
+        a_ids = [d.id for d in arr_device_assignment]
+        p2 = arr_device_assignment[0].platform.upper()
+        raise ValueError(
+            "Devices of all `Array` inputs and outputs should be "
+            "the same. "
+            f"Got array device ids {fda_ids} on platform {p1} and "
+            f"another array's device ids {a_ids} on platform {p2}")
     else:
       if devices != arr_device_assignment:
-        raise ValueError("Pjit's devices and Array's devices should be equal. "
-                         f"Got Pjit devices: {devices},\n "
-                         f"Array devices: {arr_device_assignment}")
+        p1 = devices[0].platform.upper()
+        dev_ids = [d.id for d in devices]
+        a_ids = [d.id for d in arr_device_assignment]
+        p2 = arr_device_assignment[0].platform.upper()
+        raise ValueError(
+            "Pjit's devices and Array's devices should be equal. "
+            f"Got Pjit's device ids {dev_ids} on platform {p1} and "
+            f"Array's device ids {a_ids} on platform {p2}")
   if first_device_assignment is None and devices:
     final_device_assignment = devices
   elif first_device_assignment is None:
