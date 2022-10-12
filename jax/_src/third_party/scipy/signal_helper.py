@@ -1,12 +1,15 @@
 """Utility functions adopted from scipy.signal."""
 
 import scipy.signal as osp_signal
+from typing import Any, Optional, Tuple, Union
 import warnings
 
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
-def _triage_segments(window, nperseg, input_length, dtype):
+def _triage_segments(window: Union[ArrayLike, str, Tuple[Any, ...]], nperseg: Optional[int],
+                     input_length: int, dtype: DTypeLike) -> Tuple[Array, int]:
   """
   Parses window and nperseg arguments for spectrogram and _spectral_helper.
   This is a helper function, not meant to be called externally.
@@ -36,13 +39,12 @@ def _triage_segments(window, nperseg, input_length, dtype):
       256. If window is array_like, nperseg is set to the length of the window.
   """
   if isinstance(window, (str, tuple)):
-    if nperseg is None:
-      nperseg = 256
-    if nperseg > input_length:
-      warnings.warn(f'nperseg = {nperseg} is greater than input length '
-                    f' = {input_length}, using nperseg = {nperseg}')
-      nperseg = input_length
-    win = jnp.array(osp_signal.get_window(window, nperseg), dtype=dtype)
+    nperseg_int = 256 if nperseg is None else int(nperseg)
+    if nperseg_int > input_length:
+      warnings.warn(f'nperseg = {nperseg_int} is greater than input length '
+                    f' = {input_length}, using nperseg = {input_length}')
+      nperseg_int = input_length
+    win = jnp.array(osp_signal.get_window(window, nperseg_int), dtype=dtype)
   else:
     win = jnp.asarray(window)
     if win.ndim != 1:
@@ -50,13 +52,13 @@ def _triage_segments(window, nperseg, input_length, dtype):
     if input_length < win.size:
       raise ValueError('window is longer than input signal')
     if nperseg is None:
-      nperseg = win.size
+      nperseg_int = win.size
     elif nperseg != win.size:
       raise ValueError("value specified for nperseg is different from length of window")
-  return win, nperseg
+  return win, nperseg_int
 
 
-def _median_bias(n):
+def _median_bias(n: int) -> Array:
   """
   Returns the bias of the median of a set of periodograms relative to
   the mean. See Appendix B from [1]_ for details.

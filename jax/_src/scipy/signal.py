@@ -14,6 +14,7 @@
 
 from functools import partial
 import operator
+from typing import Any, Callable, Optional, Tuple, Union
 import warnings
 
 import numpy as np
@@ -23,18 +24,20 @@ import jax
 import jax.numpy.fft
 from jax import lax
 from jax._src import dtypes
+from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy.lax_numpy import _check_arraylike
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg
 from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
 from jax._src.third_party.scipy import signal_helper
+from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
 
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling
 # of padding differs slightly between the two implementations (particularly for
 # mode='same').
-def _convolve_nd(in1, in2, mode, *, precision):
+def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike) -> Array:
   if mode not in ["full", "same", "valid"]:
     raise ValueError("mode must be one of ['full', 'same', 'valid']")
   if in1.ndim != in2.ndim:
@@ -69,16 +72,16 @@ def _convolve_nd(in1, in2, mode, *, precision):
 
 
 @_wraps(osp_signal.convolve)
-def convolve(in1, in2, mode='full', method='auto',
-             precision=None):
+def convolve(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
+             precision: PrecisionLike = None) -> Array:
   if method != 'auto':
     warnings.warn("convolve() ignores method argument")
   return _convolve_nd(in1, in2, mode, precision=precision)
 
 
 @_wraps(osp_signal.convolve2d)
-def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
-               precision=None):
+def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill',
+               fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
   if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
@@ -87,16 +90,16 @@ def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
 
 
 @_wraps(osp_signal.correlate)
-def correlate(in1, in2, mode='full', method='auto',
-              precision=None):
+def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
+              precision: PrecisionLike = None) -> Array:
   if method != 'auto':
     warnings.warn("correlate() ignores method argument")
   return _convolve_nd(in1, jnp.flip(in2.conj()), mode, precision=precision)
 
 
 @_wraps(osp_signal.correlate2d)
-def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
-                precision=None):
+def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill',
+                fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
   if jnp.ndim(in1) != 2 or jnp.ndim(in2) != 2:
@@ -126,36 +129,38 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0,
 
 
 @_wraps(osp_signal.detrend)
-def detrend(data, axis=-1, type='linear', bp=0, overwrite_data=None):
+def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
+            overwrite_data: None = None) -> Array:
   if overwrite_data is not None:
     raise NotImplementedError("overwrite_data argument not implemented.")
   if type not in ['constant', 'linear']:
     raise ValueError("Trend type must be 'linear' or 'constant'.")
-  data, = _promote_dtypes_inexact(jnp.asarray(data))
+  data_arr, = _promote_dtypes_inexact(jnp.asarray(data))
   if type == 'constant':
-    return data - data.mean(axis, keepdims=True)
+    return data_arr - data_arr.mean(axis, keepdims=True)
   else:
-    N = data.shape[axis]
+    N = data_arr.shape[axis]
     # bp is static, so we use np operations to avoid pushing to device.
-    bp = np.sort(np.unique(np.r_[0, bp, N]))
-    if bp[0] < 0 or bp[-1] > N:
+    bp_arr = np.sort(np.unique(np.r_[0, bp, N]))
+    if bp_arr[0] < 0 or bp_arr[-1] > N:
       raise ValueError("Breakpoints must be non-negative and less than length of data along given axis.")
-    data = jnp.moveaxis(data, axis, 0)
-    shape = data.shape
-    data = data.reshape(N, -1)
-    for m in range(len(bp) - 1):
-      Npts = bp[m + 1] - bp[m]
+    data_arr = jnp.moveaxis(data_arr, axis, 0)
+    shape = data_arr.shape
+    data_arr = data_arr.reshape(N, -1)
+    for m in range(len(bp_arr) - 1):
+      Npts = bp_arr[m + 1] - bp_arr[m]
       A = jnp.vstack([
-        jnp.ones(Npts, dtype=data.dtype),
-        jnp.arange(1, Npts + 1, dtype=data.dtype) / Npts.astype(data.dtype)
+        jnp.ones(Npts, dtype=data_arr.dtype),
+        jnp.arange(1, Npts + 1, dtype=data_arr.dtype) / Npts.astype(data_arr.dtype)
       ]).T
-      sl = slice(bp[m], bp[m + 1])
-      coef, *_ = linalg.lstsq(A, data[sl])
-      data = data.at[sl].add(-jnp.matmul(A, coef, precision=lax.Precision.HIGHEST))
-    return jnp.moveaxis(data.reshape(shape), 0, axis)
+      sl = slice(bp_arr[m], bp_arr[m + 1])
+      coef, *_ = linalg.lstsq(A, data_arr[sl])
+      data_arr = data_arr.at[sl].add(-jnp.matmul(A, coef, precision=lax.Precision.HIGHEST))
+    return jnp.moveaxis(data_arr.reshape(shape), 0, axis)
 
 
-def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
+def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
+                nperseg: int, noverlap: int, nfft: Optional[int], sides: str) -> Array:
   """Calculate windowed FFT in the same way the original SciPy does.
   """
   if x.dtype.kind == 'i':
@@ -167,13 +172,13 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
     result = x[..., np.newaxis]
   else:
     step = nperseg - noverlap
-    batch_shape = tuple(batch_shape)
+    batch_shape = list(batch_shape)
     x = x.reshape((int(np.prod(batch_shape)), signal_length))[..., np.newaxis]
     result = jax.lax.conv_general_dilated_patches(
         x, (nperseg,), (step,),
         'VALID',
         dimension_numbers=('NTC', 'OIT', 'NTC'))
-    result = result.reshape(batch_shape + result.shape[-2:])
+    result = result.reshape(*batch_shape, *result.shape[-2:])
 
   # Detrend each data segment individually
   result = detrend_func(result)
@@ -190,7 +195,7 @@ def _fft_helper(x, win, detrend_func, nperseg, noverlap, nfft, sides):
     return jax.numpy.fft.rfft(result.real, n=nfft)
 
 
-def odd_ext(x, n, axis=-1):
+def odd_ext(x: Array, n: int, axis: int = -1) -> Array:
   """Extends `x` along with `axis` by odd-extension.
 
   This function was previously a part of "scipy.signal.signaltools" but is no
@@ -218,11 +223,13 @@ def odd_ext(x, n, axis=-1):
   return ext
 
 
-def _spectral_helper(x, y,
-                     fs=1.0, window='hann', nperseg=None, noverlap=None,
-                     nfft=None, detrend_type='constant', return_onesided=True,
-                     scaling='density', axis=-1, mode='psd', boundary=None,
-                     padded=False):
+def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
+                     window: str = 'hann', nperseg: Optional[int] = None,
+                     noverlap: Optional[int] = None, nfft: Optional[int] = None,
+                     detrend_type: Union[bool, str, Callable[[Array], Array]] = 'constant',
+                     return_onesided: bool = True, scaling: str = 'density',
+                     axis: int = -1, mode: str = 'psd', boundary: Optional[str] = None,
+                     padded: bool = False) -> Tuple[Array, Array, Array]:
   """LAX-backend implementation of `scipy.signal._spectral_helper`.
 
   Unlike the original helper function, `y` can be None for explicitly
@@ -262,89 +269,96 @@ def _spectral_helper(x, y,
   if y is None:
     _check_arraylike('spectral_helper', x)
     x, = _promote_dtypes_inexact(x)
+    y_arr = x  # place-holder for type checking
     outershape = tuple_delete(x.shape, axis)
   else:
     if mode != 'psd':
       raise ValueError("two-argument mode is available only when mode=='psd'")
     _check_arraylike('spectral_helper', x, y)
-    x, y = _promote_dtypes_inexact(x, y)
-    if x.ndim != y.ndim:
+    x, y_arr = _promote_dtypes_inexact(x, y)
+    if x.ndim != y_arr.ndim:
       raise ValueError("two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
     # Check if we can broadcast the outer axes together
     try:
       outershape = jnp.broadcast_shapes(tuple_delete(x.shape, axis),
-                                        tuple_delete(y.shape, axis))
+                                        tuple_delete(y_arr.shape, axis))
     except ValueError as err:
       raise ValueError('x and y cannot be broadcast together.') from err
 
   result_dtype = dtypes.to_complex_dtype(x.dtype)
   freq_dtype = np.finfo(result_dtype).dtype
 
+  nperseg_int: int = 0
+  nfft_int: int = 0
+  noverlap_int: int = 0
+
   if nperseg is not None:  # if specified by user
-    nperseg = jax.core.concrete_or_error(int, nperseg,
-                                         "nperseg of windowed-FFT")
-    if nperseg < 1:
+    nperseg_int = jax.core.concrete_or_error(int, nperseg,
+                                             "nperseg of windowed-FFT")
+    if nperseg_int < 1:  # type: ignore[operator]
       raise ValueError('nperseg must be a positive integer')
   # parse window; if array like, then set nperseg = win.shape
-  win, nperseg = signal_helper._triage_segments(
-      window, nperseg, input_length=x.shape[axis], dtype=x.dtype)
+  win, nperseg_int = signal_helper._triage_segments(
+      window, nperseg if nperseg is None else nperseg_int,
+      input_length=x.shape[axis], dtype=x.dtype)
 
   if noverlap is None:
-    noverlap = nperseg // 2
+    noverlap_int = nperseg_int // 2  # type: ignore[operator]
   else:
-    noverlap = jax.core.concrete_or_error(int, noverlap,
-                                          "noverlap of windowed-FFT")
+    noverlap_int = jax.core.concrete_or_error(int, noverlap,
+                                              "noverlap of windowed-FFT")
+
   if nfft is None:
-    nfft = nperseg
+    nfft_int = nperseg_int
   else:
-    nfft = jax.core.concrete_or_error(int, nfft,
-                                      "nfft of windowed-FFT")
+    nfft_int = jax.core.concrete_or_error(int, nfft,
+                                          "nfft of windowed-FFT")
 
   # Special cases for size == 0
   if y is None:
     if x.size == 0:
       return jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, result_dtype)
   else:
-    if x.size == 0 or y.size == 0:
-      shape = tuple_insert(outershape, min([x.shape[axis], y.shape[axis]]), axis)
+    if x.size == 0 or y_arr.size == 0:
+      shape = tuple_insert(outershape, min([x.shape[axis], y_arr.shape[axis]]), axis)
       return jnp.zeros(shape, freq_dtype), jnp.zeros(shape, freq_dtype), jnp.zeros(shape, result_dtype)
 
   # Move time-axis to the end
   x = jnp.moveaxis(x, axis, -1)
-  if y is not None and y.ndim > 1:
-    y = jnp.moveaxis(y, axis, -1)
+  if y is not None and y_arr.ndim > 1:
+    y_arr = jnp.moveaxis(y_arr, axis, -1)
 
   # Check if x and y are the same length, zero-pad if necessary
-  if y is not None and x.shape[-1] != y.shape[-1]:
-    if x.shape[-1] < y.shape[-1]:
+  if y is not None and x.shape[-1] != y_arr.shape[-1]:
+    if x.shape[-1] < y_arr.shape[-1]:
       pad_shape = list(x.shape)
-      pad_shape[-1] = y.shape[-1] - x.shape[-1]
+      pad_shape[-1] = y_arr.shape[-1] - x.shape[-1]
       x = jnp.concatenate((x, jnp.zeros_like(x, shape=pad_shape)), -1)
     else:
-      pad_shape = list(y.shape)
-      pad_shape[-1] = x.shape[-1] - y.shape[-1]
-      y = jnp.concatenate((y, jnp.zeros_like(x, shape=pad_shape)), -1)
+      pad_shape = list(y_arr.shape)
+      pad_shape[-1] = x.shape[-1] - y_arr.shape[-1]
+      y_arr = jnp.concatenate((y_arr, jnp.zeros_like(x, shape=pad_shape)), -1)
 
-  if nfft < nperseg:
+  if nfft_int < nperseg_int:
     raise ValueError('nfft must be greater than or equal to nperseg.')
-  if noverlap >= nperseg:
+  if noverlap_int >= nperseg_int:
     raise ValueError('noverlap must be less than nperseg.')
-  nstep = nperseg - noverlap
+  nstep = nperseg_int - noverlap_int
 
   # Apply paddings
   if boundary is not None:
     ext_func = boundary_funcs[boundary]
-    x = ext_func(x, nperseg // 2, axis=-1)
+    x = ext_func(x, nperseg_int // 2, axis=-1)
     if y is not None:
-      y = ext_func(y, nperseg // 2, axis=-1)
+      y_arr = ext_func(y_arr, nperseg_int // 2, axis=-1)
 
   if padded:
     # Pad to integer number of windowed segments
     # I.e make x.shape[-1] = nperseg + (nseg-1)*nstep, with integer nseg
-    nadd = (-(x.shape[-1]-nperseg) % nstep) % nperseg
+    nadd = (-(x.shape[-1]-nperseg_int) % nstep) % nperseg_int
     x = jnp.concatenate((x, jnp.zeros_like(x, shape=(*x.shape[:-1], nadd))), axis=-1)
     if y is not None:
-      y = jnp.concatenate((y, jnp.zeros_like(x, shape=(*y.shape[:-1], nadd))), axis=-1)
+      y_arr = jnp.concatenate((y_arr, jnp.zeros_like(x, shape=(*y_arr.shape[:-1], nadd))), axis=-1)
 
   # Handle detrending and window functions
   if not detrend_type:
@@ -383,18 +397,18 @@ def _spectral_helper(x, y,
     sides = 'twosided'
 
   if sides == 'twosided':
-    freqs = jax.numpy.fft.fftfreq(nfft, 1/fs).astype(freq_dtype)
+    freqs = jax.numpy.fft.fftfreq(nfft_int, 1/fs).astype(freq_dtype)
   elif sides == 'onesided':
-    freqs = jax.numpy.fft.rfftfreq(nfft, 1/fs).astype(freq_dtype)
+    freqs = jax.numpy.fft.rfftfreq(nfft_int, 1/fs).astype(freq_dtype)
 
   # Perform the windowed FFTs
   result = _fft_helper(x, win, detrend_func,
-                       nperseg, noverlap, nfft, sides)
+                       nperseg_int, noverlap_int, nfft_int, sides)
 
   if y is not None:
     # All the same operations on the y data
-    result_y = _fft_helper(y, win, detrend_func,
-                           nperseg, noverlap, nfft, sides)
+    result_y = _fft_helper(y_arr, win, detrend_func,
+                           nperseg_int, noverlap_int, nfft_int, sides)
     result = jnp.conjugate(result) * result_y
   elif mode == 'psd':
     result = jnp.conjugate(result) * result
@@ -402,13 +416,13 @@ def _spectral_helper(x, y,
   result *= scale
 
   if sides == 'onesided' and mode == 'psd':
-    end = None if nfft % 2 else -1
+    end = None if nfft_int % 2 else -1
     result = result.at[..., 1:end].mul(2)
 
-  time = jnp.arange(nperseg / 2, x.shape[-1] - nperseg / 2 + 1,
-                    nperseg - noverlap, dtype=freq_dtype) / fs
+  time = jnp.arange(nperseg_int / 2, x.shape[-1] - nperseg_int / 2 + 1,
+                    nperseg_int - noverlap_int, dtype=freq_dtype) / fs
   if boundary is not None:
-    time -= (nperseg / 2) / fs
+    time -= (nperseg_int / 2) / fs
 
   result = result.astype(result_dtype)
 
@@ -423,9 +437,10 @@ def _spectral_helper(x, y,
 
 
 @_wraps(osp_signal.stft)
-def stft(x, fs=1.0, window='hann', nperseg=256, noverlap=None, nfft=None,
-         detrend=False, return_onesided=True, boundary='zeros', padded=True,
-         axis=-1):
+def stft(x: Array, fs: ArrayLike = 1.0, window: str = 'hann', nperseg: int = 256,
+         noverlap: Optional[int] = None, nfft: Optional[int] = None,
+         detrend: bool = False, return_onesided: bool = True, boundary: str = 'zeros',
+         padded: bool = True, axis: int = -1) -> Tuple[Array, Array, Array]:
   return _spectral_helper(x, None, fs, window, nperseg, noverlap,
                           nfft, detrend, return_onesided,
                           scaling='spectrum', axis=axis,
@@ -441,9 +456,11 @@ function as `csd(x, None)`."""
 
 
 @_wraps(osp_signal.csd, lax_description=_csd_description)
-def csd(x, y, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
-        detrend='constant', return_onesided=True, scaling='density',
-        axis=-1, average='mean'):
+def csd(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0, window: str = 'hann',
+        nperseg: Optional[int] = None, noverlap: Optional[int] = None,
+        nfft: Optional[int] = None, detrend: str = 'constant',
+        return_onesided: bool = True, scaling: str = 'density',
+        axis: int = -1, average: str = 'mean') -> Tuple[Array, Array]:
   freqs, _, Pxy = _spectral_helper(x, y, fs, window, nperseg, noverlap, nfft,
                                   detrend, return_onesided, scaling, axis,
                                   mode='psd')
@@ -472,9 +489,11 @@ def csd(x, y, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
 
 
 @_wraps(osp_signal.welch)
-def welch(x, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
-          detrend='constant', return_onesided=True, scaling='density',
-          axis=-1, average='mean'):
+def welch(x: Array, fs: ArrayLike = 1.0, window: str = 'hann',
+          nperseg: Optional[int] = None, noverlap: Optional[int] = None,
+          nfft: Optional[int] = None, detrend: str = 'constant',
+          return_onesided: bool = True, scaling: str = 'density',
+          axis: int = -1, average: str = 'mean') -> Tuple[Array, Array]:
   freqs, Pxx = csd(x, None, fs=fs, window=window, nperseg=nperseg,
                    noverlap=noverlap, nfft=nfft, detrend=detrend,
                    return_onesided=return_onesided, scaling=scaling,
@@ -483,7 +502,7 @@ def welch(x, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
   return freqs, Pxx.real
 
 
-def _overlap_and_add(x, step_size):
+def _overlap_and_add(x: Array, step_size: int) -> Array:
   """Utility function compatible with tf.signal.overlap_and_add.
 
   Args:
@@ -532,8 +551,11 @@ def _overlap_and_add(x, step_size):
 
 
 @_wraps(osp_signal.istft)
-def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
-          input_onesided=True, boundary=True, time_axis=-1, freq_axis=-2):
+def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
+          nperseg: Optional[int] = None, noverlap: Optional[int] = None,
+          nfft: Optional[int] = None, input_onesided: bool = True,
+          boundary: bool = True, time_axis: int = -1,
+          freq_axis: int = -2) -> Tuple[Array, Array]:
   # Input validation
   _check_arraylike("istft", Zxx)
   if Zxx.ndim < 2:
@@ -549,26 +571,27 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
   n_default = (2 * (Zxx.shape[freq_axis] - 1) if input_onesided
                else Zxx.shape[freq_axis])
 
-  nperseg = jax.core.concrete_or_error(int, nperseg or n_default,
-                                       "nperseg: segment length of STFT")
-  if nperseg < 1:
+  nperseg_int = jax.core.concrete_or_error(int, nperseg or n_default,
+                                           "nperseg: segment length of STFT")
+  if nperseg_int < 1:
     raise ValueError('nperseg must be a positive integer')
 
+  nfft_int: int = 0
   if nfft is None:
-    nfft = n_default
-    if input_onesided and nperseg == n_default + 1:
-      nfft += 1  # Odd nperseg, no FFT padding
+    nfft_int = n_default
+    if input_onesided and nperseg_int == n_default + 1:
+      nfft_int += 1  # Odd nperseg, no FFT padding
   else:
-    nfft = jax.core.concrete_or_error(int, nfft, "nfft of STFT")
-  if nfft < nperseg:
+    nfft_int = jax.core.concrete_or_error(int, nfft, "nfft of STFT")
+  if nfft_int < nperseg_int:
     raise ValueError(
-        f'FFT length ({nfft}) must be longer than nperseg ({nperseg}).')
+        f'FFT length ({nfft_int}) must be longer than nperseg ({nperseg_int}).')
 
-  noverlap = jax.core.concrete_or_error(int, noverlap or nperseg // 2,
-                                        "noverlap of STFT")
-  if noverlap >= nperseg:
+  noverlap_int = jax.core.concrete_or_error(int, noverlap or nperseg_int // 2,
+                                            "noverlap of STFT")
+  if noverlap_int >= nperseg_int:
     raise ValueError('noverlap must be less than nperseg.')
-  nstep = nperseg - noverlap
+  nstep = nperseg_int - noverlap_int
 
   # Rearrange axes if necessary
   if time_axis != Zxx.ndim - 1 or freq_axis != Zxx.ndim - 2:
@@ -579,18 +602,18 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
   # Perform IFFT
   ifunc = jax.numpy.fft.irfft if input_onesided else jax.numpy.fft.ifft
   # xsubs: [..., T, N], N is the number of frames, T is the frame length.
-  xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg, :]
+  xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg_int, :]
 
   # Get window as array
   if isinstance(window, (str, tuple)):
-    win = osp_signal.get_window(window, nperseg)
+    win = osp_signal.get_window(window, nperseg_int)
     win = jnp.asarray(win, dtype=xsubs.dtype)
   else:
     win = jnp.asarray(window)
     if len(win.shape) != 1:
       raise ValueError('window must be 1-D')
-    if win.shape[0] != nperseg:
-      raise ValueError(f'window must have length of {nperseg}')
+    if win.shape[0] != nperseg_int:
+      raise ValueError(f'window must have length of {nperseg_int}')
   xsubs *= win.sum()  # This takes care of the 'spectrum' scaling
 
   # make win broadcastable over xsubs
@@ -601,8 +624,8 @@ def istft(Zxx, fs=1.0, window='hann', nperseg=None, noverlap=None, nfft=None,
 
   # Remove extension points
   if boundary:
-    x = x[..., nperseg//2:-(nperseg//2)]
-    norm = norm[..., nperseg//2:-(nperseg//2)]
+    x = x[..., nperseg_int//2:-(nperseg_int//2)]
+    norm = norm[..., nperseg_int//2:-(nperseg_int//2)]
   x /= jnp.where(norm > 1e-10, norm, 1.0)
 
   # Put axes back
