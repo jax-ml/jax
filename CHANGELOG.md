@@ -8,11 +8,13 @@ Remember to align the itemized text with the first line of an item within a list
 PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
-## jax 0.3.23
+## jax 0.3.24
+
+## jaxlib 0.3.24
+
+## jax 0.3.23 (Oct 12, 2022)
 * Changes
   * Update Colab TPU driver version for new jaxlib release.
-
-## jaxlib 0.3.23
 
 ## jax 0.3.22 (Oct 11, 2022)
 * Changes
