@@ -479,12 +479,11 @@ class TestPromotionTables(jtu.JaxTestCase):
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}_promotion={promotion}",
-     "dtype": dtype, "weak_type": weak_type, "promotion": promotion}
-    for dtype in all_dtypes
-    for weak_type in [True, False]
-    for promotion in ['standard', 'strict']))
+  @jtu.sample_product(
+    dtype=all_dtypes,
+    weak_type=[True, False],
+    promotion=['standard', 'strict'],
+  )
   def testBinaryNonPromotion(self, dtype, weak_type, promotion):
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)

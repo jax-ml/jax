@@ -100,12 +100,8 @@ def _single_device_array_from_buf(buf, committed):
                    committed=committed, _skip_checks=True)
 
 
-@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 96 else None)
+@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 97 else None)
 class ArrayImpl(basearray.Array):
-  """Experimental unified Array type.
-
-  This Python implementation will eventually be replaced by a C++ implementation.
-  """
   # TODO(yashkatariya): Add __slots__ here.
 
   aval: core.ShapedArray
@@ -133,17 +129,47 @@ class ArrayImpl(basearray.Array):
     self._committed = committed
     self._npy_value = None
 
-    if not _skip_checks or config.jax_enable_checks:
-      self._check()
-
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
     # (like pjit, xmap, etc).
-    if not _skip_checks:
-      self._rearrange()
+    if not _skip_checks or config.jax_enable_checks:
+      self._check_and_rearrange()
 
-  def _check(self):
+  def _check_and_rearrange(self):
+    for db in self._arrays:
+      if db.dtype != self.dtype:
+        raise ValueError(
+            "Input buffers to `Array` must have matching dtypes. "
+            f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
+
+    device_id_to_buffer = {db.device().id: db for db in self._arrays}
+
+    addressable_dev = self.sharding.addressable_devices
+    if len(self._arrays) != len(addressable_dev):
+      raise ValueError(
+          f"Expected {len(addressable_dev)} per-device arrays "
+          "(this is how many devices are addressable by the sharding), but "
+          f"got {len(self._arrays)}")
+
+    array_device_ids = set(device_id_to_buffer.keys())
+    addressable_device_ids = set(d.id for d in addressable_dev)
+    # Calculate a symmetric difference because the device ids between sharding
+    # and _arrays should match.
+    diff = set(array_device_ids) ^ set(addressable_device_ids)
+    if diff:
+      dev_in_sharding_not_in_arrays = set(addressable_device_ids) - set(array_device_ids)
+      dev_in_arrays_not_in_sharding = set(array_device_ids) - set(addressable_device_ids)
+      err_msg = (
+          "Addressable devices and per-device arrays devices do not match.")
+      if dev_in_sharding_not_in_arrays:
+        err_msg += (f" Sharding contains devices {dev_in_sharding_not_in_arrays} "
+                    "that are not present in per-device arrays.")
+      if dev_in_arrays_not_in_sharding:
+        err_msg += (f" Per-device arrays contain devices {dev_in_arrays_not_in_sharding} "
+                    "that are not present in the sharding.")
+      raise ValueError(err_msg)
+
     ss = self.sharding.shard_shape(self.shape)
     for db in self._arrays:
       if db.shape != ss:
@@ -151,35 +177,10 @@ class ArrayImpl(basearray.Array):
             f"Expected shard shape {ss} doesn't match the buffer "
             f"shape {db.shape} for buffer: {db}")
 
-    for db in self._arrays:
-      if db.dtype != self.dtype:
-        raise ValueError(
-            "Input buffers to `Array` must have matching dtypes. "
-            f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
-
-  def _rearrange(self):
     # Rearrange arrays based on the device assignment.
-    # TODO(yashkatariya): Add a similar check for shardings that are not
-    # XLACompatibleSharding. But leave the rearragement to XLACompatibleSharding
-    # only.
     if isinstance(self.sharding, XLACompatibleSharding):
       addressable_da = self.sharding._addressable_device_assignment
-      if len(self._arrays) != len(addressable_da):
-        raise ValueError(
-            f"Expected {len(addressable_da)} per-device arrays "
-            "(this is how many devices are addressable by the sharding), but "
-            f"got {len(self._arrays)}")
-      device_to_buffer = {db.device().id: db for db in self._arrays}
-      try:
-        self._arrays = [device_to_buffer[device.id]
-                        for device in addressable_da]
-      except KeyError as e:
-        array_device_ids = set(a.device().id for a in self._arrays)
-        addressable_device_ids = set(d.id for d in addressable_da)
-        diff = set(array_device_ids) - set(addressable_device_ids)
-        raise ValueError(
-            f"Some per-device arrays are placed on devices {diff}, which are "
-            f"not used in the specified sharding {self.sharding}") from e
+      self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
 
   @property
   def shape(self) -> Shape:
@@ -200,6 +201,10 @@ class ArrayImpl(basearray.Array):
   @property
   def sharding(self):
     return self._sharding
+
+  @property
+  def weak_type(self):
+    return self.aval.weak_type
 
   def __str__(self):
     return str(self._value)
@@ -253,7 +258,7 @@ class ArrayImpl(basearray.Array):
     from jax._src.numpy import lax_numpy
     self._check_if_deleted()
 
-    if dispatch.is_single_device_sharding(self.sharding):
+    if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
       return lax_numpy._rewriting_take(self, idx)
     # TODO(yashkatariya): Make it work for other Shardings too wherever its
     # possible to not do data movement.
@@ -276,23 +281,23 @@ class ArrayImpl(basearray.Array):
       return lax_numpy._rewriting_take(self, idx)
     else:
       # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
-      # the fast path (see PmapSharding branch above) after b/245667823 is
-      # fixed.
-      return self._value[idx]
+      # the fast path (see PmapSharding branch above) after after uneven
+      # partitioning support is added
+      return device_put(self._value[idx])
 
   def __iter__(self):
     if self.ndim == 0:
       raise TypeError("iteration over a 0-d array")  # same as numpy error
     else:
-      assert self.is_fully_replicated() or self.is_fully_addressable()
-      if dispatch.is_single_device_sharding(self.sharding):
+      assert self.is_fully_replicated or self.is_fully_addressable
+      if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
         return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
       elif isinstance(self.sharding, PmapSharding):
         return (self[i] for i in range(self.shape[0]))  # type: ignore
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
-        # here after b/245667823 is fixed.
-        return (self._value[i] for i in range(self.shape[0]))
+        # here after uneven partitioning support is added.
+        return (device_put(self._value[i]) for i in range(self.shape[0]))
 
   def item(self):
     if dtypes.issubdtype(self.dtype, np.complexfloating):
@@ -306,6 +311,7 @@ class ArrayImpl(basearray.Array):
     else:
       raise TypeError(self.dtype)
 
+  @property
   def is_fully_replicated(self) -> bool:
     return self.shape == self._arrays[0].shape
 
@@ -316,7 +322,7 @@ class ArrayImpl(basearray.Array):
     else:
       dtype_str = f'dtype={self.dtype.name})'
 
-    if self.is_fully_addressable() or self.is_fully_replicated():
+    if self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
       s = np.array2string(self._value, prefix=prefix, suffix=',',
                           separator=', ', max_line_width=line_width)
@@ -328,8 +334,9 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}{self.shape}, {dtype_str}"
 
+  @pxla.maybe_cached_property
   def is_fully_addressable(self) -> bool:
-    return self.sharding.is_fully_addressable()
+    return self.sharding.is_fully_addressable
 
   def __array__(self, dtype=None, context=None):
     return np.asarray(self._value, dtype=dtype)
@@ -370,7 +377,7 @@ class ArrayImpl(basearray.Array):
   # TODO(https://github.com/google/jax/issues/12380): Remove this when DA is
   # deleted.
   @property
-  def device_buffer(self) -> DeviceArray:
+  def device_buffer(self) -> ArrayImpl:
     self._check_if_deleted()
     if len(self._arrays) == 1:
       return _single_device_array_from_buf(self._arrays[0], self._committed)
@@ -380,7 +387,7 @@ class ArrayImpl(basearray.Array):
   # TODO(https://github.com/google/jax/issues/12380): Remove this when SDA is
   # deleted.
   @property
-  def device_buffers(self) -> Sequence[DeviceArray]:
+  def device_buffers(self) -> Sequence[ArrayImpl]:
     self._check_if_deleted()
     return [_single_device_array_from_buf(a, self._committed)
             for a in self._arrays]
@@ -445,12 +452,12 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
 
     if self._npy_value is None:
-      if self.is_fully_replicated():
+      if self.is_fully_replicated:
         self._npy_value = np.asarray(self._arrays[0])  # type: ignore
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
-      if not self.is_fully_addressable():
+      if not self.is_fully_addressable:
         raise RuntimeError("Fetching value for `jax.Array` that spans "
                            "non-addressable devices is not possible. You can use "
                            "`jax.experimental.multihost_utils.process_allgather` "
@@ -519,9 +526,6 @@ mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
 
 def _device_put_array(x, device: Optional[Device]):
-  # TODO(yashkatariya): Remove this restriction and the round trip via host
-  # once lowering to XLA goes through `lower_mesh_computation`.
-  assert x.is_fully_addressable()
   if dispatch.is_single_device_sharding(x.sharding):
     x = dispatch._copy_device_array_to_device(pxla._set_aval(x._arrays[0]), device)
     return (x,)
@@ -547,38 +551,25 @@ def _array_pmap_shard_arg(x, devices, indices, mode):
     return pxla._shard_sharded_device_array_slow_path(x, devices, indices, mode)
 
 
-def _array_rest_shard_arg(x, devices, indices, mode):
-  if not x._committed:
+def _array_rest_shard_arg(x: ArrayImpl, devices, indices, mode):
+  x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
+  if not x.is_fully_addressable:
+    if tuple(x_indices) == tuple(indices):
+      return x._arrays
+    else:
+      return NotImplementedError("Cannot reshard an input that is not fully "
+                                 "addressable")
+  else:
+    if tuple(x_indices) == tuple(indices):
+      return [buf if buf.device() == d else buf.copy_to_device(d)
+              for buf, d in safe_zip(x._arrays, devices)]
+    # Resharding starts here:
+    if isinstance(x.sharding, PmapSharding):
+      return pxla.device_put(x._value, devices, replicate=True)
     if dispatch.is_single_device_sharding(x.sharding):
-      # This condition is to break the recursion that happens when only
-      # `pxla._shard_device_array` is used since it has `_multi_slice` in the
-      # implementation which is jitted. Eventually it calls back here and the
-      # recursion happens.
-      x_indices = tuple(x.sharding.addressable_devices_indices_map(x.shape).values())
-      if x_indices == indices:
-        return [buf if buf.device() == d else buf.copy_to_device(d)
-                for buf, d in safe_zip(x._arrays, devices)]
       return pxla._shard_device_array(x, devices, indices, mode)
     else:
-      raise NotImplementedError('Resharding uncommitted arrays sharded over '
-                                'multiple devices is not supported.')
-  # TODO(yashkatariya): Remove the special case here and don't move to another
-  # device if its already committed. There is a TODO in dispatch.py already
-  # for this.
-  if dispatch.is_single_device_sharding(x.sharding):
-    return [buf if buf.device() == d else buf.copy_to_device(d)
-            for buf, d in safe_zip(x._arrays, devices)]
-  # If PmapSharding exists, then do a round trip via host. This will happen
-  # if the input Array containing PmapSharding takes the jit path
-  # i.e. `apply_primitive` or `xla_callable_uncached`. `jit(pmap)` is the most
-  # common case where this will happen.
-  # TODO(yashkatariya): Remove the special case here and don't move to another
-  # device if its already committed. There is a TODO in dispatch.py already
-  # for this.
-  elif isinstance(x.sharding, PmapSharding):
-    return pxla.device_put(x._value, devices, replicate=True)
-  else:
-    return x._arrays
+      return pxla._shard_sharded_device_array_slow_path(x, devices, indices, mode)
 
 
 def _array_shard_arg(x, devices, indices, mode):

@@ -50,7 +50,7 @@ OUTPUT_DIR="${BASE_WORKSPACE_DIR}/outputs/"
 mkdir -p $OUTPUT_DIR
 
 # redirect both stdout and stderr in the same file for ease of analysis
-OUTFILE="${OUTPUT_DIR}/output-%j-%n.txt"
+OUTFILE="${OUTPUT_DIR}/output-test-jaxlib-nightly-%j-%n.txt"
 
 # Run any setup commands before the actual pytest command to make sure
 # that the processes are launched together

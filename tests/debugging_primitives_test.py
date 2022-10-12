@@ -17,7 +17,6 @@ import textwrap
 import unittest
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import jax
 from jax import lax
 from jax.config import config
@@ -330,9 +329,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # output data-dependence.
     self.assertEqual(output(), "")
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   def test_remat_of_debug_print(self, ordered):
     def f_(x):
       y = ad_checkpoint.checkpoint_name(x + 1., "y")
@@ -469,9 +466,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
     self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_scan(self, ordered):
     def f(xs):
@@ -489,9 +484,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       carry: 3, x: 1
       """))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_for_loop(self, ordered):
     def f(x):
@@ -520,9 +513,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
     else:
       self._assertLinesEqual(output(), expected)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_body(self, ordered):
     def f(x):
@@ -543,9 +534,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       x: 9
       """))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_cond(self, ordered):
     def f(x):
@@ -575,9 +564,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       x: 10
       """))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_in_batched_while_cond(self, ordered):
     def f(x):
@@ -635,9 +622,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       """)
       self._assertLinesEqual(output(), expected)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_cond(self, ordered):
     def f(x):
@@ -661,9 +646,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       true: 4
       """))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name="_ordered" if ordered else "", ordered=ordered)
-         for ordered in [False, True]))
+  @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_switch(self, ordered):
     def f(x):

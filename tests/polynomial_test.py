@@ -18,7 +18,6 @@ import numpy as np
 from scipy.sparse import csgraph, csr_matrix
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 from jax._src import dtypes
 from jax import numpy as jnp
@@ -66,15 +65,12 @@ class TestPolynomial(jtu.JaxTestCase):
     self.assertEqual(rank, x.size)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_dtype={}_leading={}_trailing={}".format(
-       jtu.format_shape_dtype_string((length+leading+trailing,), dtype),
-       leading, trailing),
-     "dtype": dtype, "length": length, "leading": leading, "trailing": trailing}
-    for dtype in all_dtypes
-    for length in [0, 3, 5]
-    for leading in [0, 2]
-    for trailing in [0, 2]))
+  @jtu.sample_product(
+    dtype=all_dtypes,
+    length=[0, 3, 5],
+    leading=[0, 2],
+    trailing=[0, 2],
+  )
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testRoots(self, dtype, length, leading, trailing):
@@ -95,15 +91,12 @@ class TestPolynomial(jtu.JaxTestCase):
     jnp_roots = jnp_fun(*args)
     self.assertSetsAllClose(np_roots, jnp_roots)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": "_dtype={}_leading={}_trailing={}".format(
-       jtu.format_shape_dtype_string((length+leading+trailing,), dtype),
-       leading, trailing),
-     "dtype": dtype, "length": length, "leading": leading, "trailing": trailing}
-    for dtype in all_dtypes
-    for length in [0, 3, 5]
-    for leading in [0, 2]
-    for trailing in [0, 2]))
+  @jtu.sample_product(
+    dtype=all_dtypes,
+    length=[0, 3, 5],
+    leading=[0, 2],
+    trailing=[0, 2],
+  )
   # TODO(phawkins): no nonsymmetric eigendecomposition implementation on GPU.
   @jtu.skip_on_devices("gpu", "tpu")
   def testRootsNoStrip(self, dtype, length, leading, trailing):

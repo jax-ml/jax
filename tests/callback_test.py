@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
@@ -27,9 +26,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 class CallbackTest(jtu.JaxTestCase):
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': f'_value={value}', 'value': value}
-      for value in [jnp.inf, jnp.nan]))
+  @jtu.sample_product(value=[jnp.inf, jnp.nan])
   def testFindByValueFound(self, value):
     def f(x):
       y = x ** 2
@@ -40,9 +37,7 @@ class CallbackTest(jtu.JaxTestCase):
     with self.assertRaises(FoundValue):
       find_by_value(f, value)(jnp.array([1.0, 2.0, 3.0]))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': f'_value={value}', 'value': value}
-      for value in [jnp.inf, jnp.nan]))
+  @jtu.sample_product(value=[jnp.inf, jnp.nan])
   def testFindByValueFoundJIT(self, value):
     def f(x):
       @jit
@@ -55,9 +50,7 @@ class CallbackTest(jtu.JaxTestCase):
     with self.assertRaises(FoundValue):
       find_by_value(f, value)(jnp.array([1.0, 2.0, 3.0]))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': f'_value={value}', 'value': value}
-      for value in [jnp.inf, jnp.nan]))
+  @jtu.sample_product(value=[jnp.inf, jnp.nan])
   def testFindByValueNotFound(self, value):
     def f(x):
       y = x ** 2

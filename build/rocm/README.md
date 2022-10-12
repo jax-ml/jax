@@ -9,9 +9,9 @@ This directory contains files and setup instructions t0 build and test JAX for R
 
     ./build/rocm/ci_build.sh --keep_image bash -c "./build/rocm/build_rocm.sh"
 
-  3. Launch a container: If the build was successful, there should be a docker image with name "jax-rocm:latest" in list of docker images (use "docker images" command to list them).
+  3. Launch a container: If the build was successful, there should be a docker image with name "jax_ci.rocm" in list of docker images (use "docker images" command to list them).
   ```
-  sudo docker run -it --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --entrypoint /bin/bash jax-rocm:latest
+  sudo docker run -it --device=/dev/kfd --device=/dev/dri --security-opt seccomp=unconfined --group-add video --entrypoint /bin/bash jax_ci.rocm:latest
   ```
 
 ***

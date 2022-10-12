@@ -19,6 +19,15 @@ ROCM_TF_FORK_REPO="https://github.com/ROCmSoftwarePlatform/tensorflow-upstream"
 ROCM_TF_FORK_BRANCH="develop-upstream"
 rm -rf /tmp/tensorflow-upstream || true
 git clone -b ${ROCM_TF_FORK_BRANCH} ${ROCM_TF_FORK_REPO} /tmp/tensorflow-upstream
+if [ ! -v TENSORFLOW_ROCM_COMMIT ]; then
+    echo "The TENSORFLOW_ROCM_COMMIT environment variable is not set, using top of branch"
+elif [ ! -z "$TENSORFLOW_ROCM_COMMIT" ]
+then
+      echo "Using tensorflow-rocm at commit: $TENSORFLOW_ROCM_COMMIT"
+      cd /tmp/tensorflow-upstream
+      git checkout $TENSORFLOW_ROCM_COMMIT
+      cd -
+fi
 
 python3 ./build/build.py --enable_rocm --rocm_path=${ROCM_PATH} --bazel_options=--override_repository=org_tensorflow=/tmp/tensorflow-upstream
 pip3 install --use-feature=2020-resolver --force-reinstall dist/*.whl  # installs jaxlib (includes XLA)

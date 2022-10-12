@@ -21,6 +21,7 @@ from typing import Optional
 
 # pytype: disable=import-error
 import jax
+from jax._src import profiler as jax_profiler
 try:
   from tensorflow.python.profiler import profiler_v2 as profiler
   from tensorflow.python.profiler import profiler_client
@@ -96,8 +97,8 @@ def collect_profile(port: int, duration_in_ms: int, host: str,
     fp.write(result.encode("utf-8"))
 
   if not no_perfetto_link:
-    path = jax._src.profiler._write_perfetto_trace_file(str(log_dir_))
-    jax._src.profiler._host_perfetto_trace_file(path)
+    path = jax_profiler._write_perfetto_trace_file(str(log_dir_))
+    jax_profiler._host_perfetto_trace_file(path)
 
 def main(args):
   collect_profile(args.port, args.duration_in_ms, args.host, args.log_dir,

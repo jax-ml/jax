@@ -26,6 +26,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_extension_version
 from jax._src.util import prod, safe_zip
+from jax.interpreters import pxla
+from jax.experimental.pjit import pjit
 from jax.experimental import PartitionSpec as P
 from jax._src import sharding
 from jax._src import array
@@ -130,7 +132,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertListEqual(replica_ids, expected_replica_ids)
     self.assertListEqual([i.device.id for i in arr.addressable_shards],
                          [0, 1, 2, 3, 4, 5, 6, 7])
-    self.assertEqual(arr.is_fully_replicated(), expected_is_fully_replicated)
+    self.assertEqual(arr.is_fully_replicated, expected_is_fully_replicated)
     for i, s in enumerate(arr.addressable_shards):
       self.assertEqual(s.data.aval,
                        jax.ShapedArray(expected_shard_shape, s.data.dtype))
@@ -195,6 +197,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(arr, array.ArrayImpl)
     self.assertTrue(dispatch.is_single_device_sharding(arr.sharding))
     self.assertEqual(arr._committed, False)
+    self.assertFalse(arr.weak_type)
 
   def test_jnp_array_jit_add(self):
     a = jnp.array([1, 2, 3])
@@ -293,13 +296,50 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.skipTest('Requires more than 4 devices')
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    # sharding device ids = {0, 1}
     s = sharding.MeshPspecSharding(mesh, P('x'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    # _arrays device ids = {2, 3}
     bufs = [jax.device_put(inp_data, d) for d in jax.devices()[2:4]]
     with self.assertRaisesRegex(
         ValueError,
-        "Some per-device arrays are placed on devices {2, 3}, which are "
-        "not used in the specified sharding"):
+        "Addressable devices and per-device arrays devices do not match. "
+        "Sharding contains devices {0, 1} that are not present in per-device "
+        "arrays. Per-device arrays contain devices {2, 3} that are not present "
+        "in the sharding."):
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+  def test_more_devices_in_sharding_than_arrays(self):
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    # Sharding device ids = {0, 1}
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    # _arrays device ids = {0, 0}
+    bufs = [jax.device_put(inp_data, jax.devices()[0]) for _ in range(2)]
+    with self.assertRaisesRegex(
+        ValueError,
+        "Addressable devices and per-device arrays devices do not match. "
+        r"Sharding contains devices \{1\} that are not present in per-device "
+        "arrays."):
+      array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
+
+  def test_different_devices_in_arrays_than_sharding(self):
+    if jax.device_count() < 3:
+      self.skipTest('Requires more than 3 devices')
+    shape = (8, 2)
+    mesh = maps.Mesh(np.array([jax.devices()[1], jax.devices()[2]]), ('x'))
+    # sharding device ids = {1, 2}
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    # _arrays device ids = {0, 1}
+    bufs = [jax.device_put(inp_data, d) for d in jax.devices()[:2]]
+    with self.assertRaisesRegex(
+        ValueError,
+        "Addressable devices and per-device arrays devices do not match. "
+        r"Sharding contains devices \{2\} that are not present in per-device "
+        r"arrays. Per-device arrays contain devices \{0\} that are not present "
+        "in the sharding."):
       array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   @parameterized.named_parameters(
@@ -368,7 +408,23 @@ class JaxArrayTest(jtu.JaxTestCase):
         input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
 
     for i, j in zip(iter(arr), iter(input_data)):
+      self.assertIsInstance(i, array.ArrayImpl)
       self.assertArraysEqual(i, j)
+
+  def test_array_iter_replicated_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P(None)))
+
+    for i, j in zip(iter(arr), iter(input_data)):
+      self.assertIsInstance(i, array.ArrayImpl)
+      self.assertArraysEqual(i, j)
+      self.assertLen(i.sharding.device_set, 8)
+      self.assertTrue(
+        pxla.are_op_shardings_equal(
+            arr.sharding._to_xla_op_sharding(arr.ndim),
+            i.sharding._to_xla_op_sharding(i.ndim)))
 
   def test_array_getitem_mesh_pspec_sharding_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -379,8 +435,36 @@ class JaxArrayTest(jtu.JaxTestCase):
     # TODO(yashkatariya): `__getitem__` with a specific index takes the fast
     # path after b/245667823 is fixed.
     s = arr[2:4, 0:1]
+    self.assertIsInstance(s, array.ArrayImpl)
     self.assertArraysEqual(s, np.array([[4], [6]]))
-    self.assertArraysEqual(arr[:2], input_data[:2])
+
+    p = arr[:2]
+    self.assertIsInstance(p, array.ArrayImpl)
+    self.assertArraysEqual(p, input_data[:2])
+
+  def test_array_getitem_replicated_multi_device(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    arr, input_data = create_array(
+        input_shape, sharding.MeshPspecSharding(global_mesh, P(None)))
+
+    s = arr[2:4, 0:1]
+    self.assertIsInstance(s, array.ArrayImpl)
+    self.assertArraysEqual(s, np.array([[4], [6]]))
+    self.assertLen(s.sharding.device_set, 8)
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            arr.sharding._to_xla_op_sharding(arr.ndim),
+            s.sharding._to_xla_op_sharding(s.ndim)))
+
+    p = arr[:2]
+    self.assertIsInstance(p, array.ArrayImpl)
+    self.assertArraysEqual(p, input_data[:2])
+    self.assertLen(s.sharding.device_set, 8)
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            arr.sharding._to_xla_op_sharding(arr.ndim),
+            s.sharding._to_xla_op_sharding(s.ndim)))
 
   def test_array_iter_mesh_pspec_sharding_single_device(self):
     if jax.device_count() < 2:
@@ -438,6 +522,57 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     x = jnp.array([1, 2, 3])
     self.assertIsInstance(x.device_buffer, array.ArrayImpl)
+
+  def test_shape_dtype_struct_sharding_jit(self):
+    mesh = jtu.create_global_mesh((8,), ('x'))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+
+    x_dummy = jax.ShapeDtypeStruct(
+        shape=(16,),
+        dtype=jnp.dtype('float32'),
+        sharding=s)
+
+    def f(x):
+      return x * 2
+
+    c = jax.jit(f).lower(x_dummy).compile()
+    input_shardings, output_shardings = c.input_shardings, c.output_shardings
+    self.assertLen(input_shardings, 2)
+    self.assertEqual(input_shardings[1], {})
+    self.assertEqual(input_shardings[1], {})
+
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            input_shardings[0][0]._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            output_shardings._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+
+  def test_shape_dtype_struct_sharding_pjit(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+
+    def f(x):
+      return x * 2.
+
+    x_dummy = jax.ShapeDtypeStruct(
+        shape=(8, 2),
+        dtype=jnp.dtype('float32'),
+        sharding=s)
+
+    c = pjit(f).lower(x_dummy).compile()
+    input_shardings, output_shardings = c.input_shardings, c.output_shardings
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            input_shardings[0][0]._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+    self.assertTrue(
+        pxla.are_op_shardings_equal(
+            output_shardings._to_xla_op_sharding(x_dummy.ndim),
+            s._to_xla_op_sharding(x_dummy.ndim)))
+
 
 
 @jtu.with_config(jax_array=True)

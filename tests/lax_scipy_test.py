@@ -252,10 +252,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
                           test_autodiff, nondiff_argnums):
-    if (jtu.device_under_test() == "cpu" and
-        (lax_op is lsp_special.gammainc or lax_op is lsp_special.gammaincc)):
-      # TODO(b/173608403): re-enable test when LLVM bug is fixed.
-      raise unittest.SkipTest("Skipping test due to LLVM lowering bug")
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
@@ -409,7 +405,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self.assertAllClose(actual, expected, rtol=1.1e-7, atol=3e-8)
 
-  @jtu.skip_on_devices("rocm")  # rtol and atol needs to be adjusted for ROCm
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmOrderZeroDegreeOne(self):
     """Tests the spherical harmonics of order one and degree zero."""

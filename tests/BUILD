@@ -81,13 +81,9 @@ jax_test(
     srcs = ["custom_object_test.py"],
 )
 
-py_test(
+jax_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
 )
 
 py_test(
@@ -324,9 +320,31 @@ jax_test(
     srcs = ["lax_numpy_test.py"],
     pjrt_c_api_bypass = True,
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 20,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 10,
+    },
+)
+
+jax_test(
+    name = "lax_numpy_operators_test",
+    srcs = ["lax_numpy_operators_test.py"],
+    pjrt_c_api_bypass = True,
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 5,
+    },
+)
+
+jax_test(
+    name = "lax_numpy_reducers_test",
+    srcs = ["lax_numpy_reducers_test.py"],
+    pjrt_c_api_bypass = True,
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 5,
     },
 )
 

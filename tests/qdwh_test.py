@@ -24,7 +24,6 @@ from jax._src.lax import qdwh
 from jax._src import test_util as jtu
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 
 config.parse_flags_with_absl()
@@ -61,12 +60,10 @@ _dot = functools.partial(jnp.dot, precision="highest")
 
 class QdwhTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {    # pylint:disable=g-complex-comprehension
-          'testcase_name': f'_m={m}_by_n={n}_log_cond={log_cond}',
-          'm': m, 'n': n, 'log_cond': log_cond}
-      for m, n in zip([8, 10, 20], [6, 10, 18])
-      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in [(8, 6), (10, 10), (20, 18)]],
+    log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
+  )
   def testQdwhUnconvergedAfterMaxNumberIterations(
       self, m, n, log_cond):
     """Tests unconvergence after maximum number of iterations."""
@@ -87,12 +84,10 @@ class QdwhTest(jtu.JaxTestCase):
     with self.subTest('Converged.'):
       self.assertFalse(is_converged)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {    # pylint:disable=g-complex-comprehension
-          'testcase_name': f'_m={m}_by_n={n}_log_cond={log_cond}',
-          'm': m, 'n': n, 'log_cond': log_cond}
-      for m, n in zip([8, 10, 20], [6, 10, 18])
-      for log_cond in np.linspace(1, _MAX_LOG_CONDITION_NUM, 4)))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in [(8, 6), (10, 10), (20, 18)]],
+    log_cond=np.linspace(1, _MAX_LOG_CONDITION_NUM, 4),
+  )
   def testQdwhWithUpperTriangularInputAllOnes(self, m, n, log_cond):
     """Tests qdwh with upper triangular input of all ones."""
     a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
@@ -129,14 +124,11 @@ class QdwhTest(jtu.JaxTestCase):
       self.assertAllClose(
           actual_results, expected_results, rtol=rtol, atol=1E-5)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {  # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}_padding={}'.format(
-              m, n, log_cond, padding),
-          'm': m, 'n': n, 'log_cond': log_cond, 'padding': padding}
-      for m, n in zip([6, 8], [6, 4])
-      for padding in (None, (3, 2))
-      for log_cond in np.linspace(1, 4, 4)))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in [(6, 6), (8, 4)]],
+    padding=(None, (3, 2)),
+    log_cond=np.linspace(1, 4, 4),
+  )
   def testQdwhWithRandomMatrix(self, m, n, log_cond, padding):
     """Tests qdwh with random input."""
     rng = jtu.rand_uniform(self.rng(), low=0.3, high=0.9)
@@ -172,13 +164,10 @@ class QdwhTest(jtu.JaxTestCase):
       self._CheckAgainstNumpy(osp_linalg.polar, lsp_linalg_fn, args_maker,
                               rtol=rtol, atol=1E-3)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {   # pylint:disable=g-complex-comprehension
-          'testcase_name': '_m={}_by_n={}_log_cond={}'.format(
-              m, n, log_cond),
-          'm': m, 'n': n, 'log_cond': log_cond}
-      for m, n in zip([10, 8], [10, 8])
-      for log_cond in np.linspace(1, 4, 4)))
+  @jtu.sample_product(
+    [dict(m=m, n=n) for m, n in [(10, 10), (8, 8)]],
+    log_cond=np.linspace(1, 4, 4),
+  )
   def testQdwhWithOnRankDeficientInput(self, m, n, log_cond):
     """Tests qdwh with rank-deficient input."""
     a = jnp.triu(jnp.ones((m, n))).astype(_QDWH_TEST_DTYPE)
@@ -215,12 +204,10 @@ class QdwhTest(jtu.JaxTestCase):
       self.assertAllClose(
           actual_results, expected_results, rtol=rtol, atol=1E-6)
 
-  @parameterized.named_parameters([
-      {'testcase_name': f'_m={m}_by_n={n}_r={r}_c={c}_dtype={dtype}',
-       'm': m, 'n': n, 'r': r, 'c': c, 'dtype': dtype}
-      for m, n, r, c in zip([4, 5], [3, 2], [1, 0], [1, 0])
-      for dtype in jtu.dtypes.floating
-  ])
+  @jtu.sample_product(
+    [dict(m=m, n=n, r=r, c=c) for m, n, r, c in [(4, 3, 1, 1), (5, 2, 0, 0)]],
+    dtype=jtu.dtypes.floating,
+  )
   def testQdwhWithTinyElement(self, m, n, r, c, dtype):
     """Tests qdwh on matrix with zeros and close-to-zero entries."""
     a = jnp.zeros((m, n), dtype=dtype)

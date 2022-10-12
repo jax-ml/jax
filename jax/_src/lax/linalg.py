@@ -15,11 +15,12 @@
 import inspect
 import functools
 from functools import partial
+from typing import cast, Any, Callable, List, Optional, Tuple, TypeVar, Union, overload
 import warnings
 
 import numpy as np
+from typing_extensions import Literal
 
-import jax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.vectorize import vectorize
 from jax._src import ad_util
@@ -50,14 +51,16 @@ from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
+from jax._src.typing import Array, ArrayLike
 
 xops = xla_client.ops
 
+TFun = TypeVar('TFun', bound=Callable[..., Any])
 
 # traceables
 
 # TODO(phawkins): remove backward compatibility shim after 2022/08/11.
-def _warn_on_positional_kwargs(f):
+def _warn_on_positional_kwargs(f: TFun) -> TFun:
   """Decorator used for backward compatibility of keyword-only arguments.
 
   Some functions were changed to mark their keyword arguments as keyword-only.
@@ -98,10 +101,10 @@ def _warn_on_positional_kwargs(f):
       kwargs[name] = value
     return f(*pos_args, **kwargs)
 
-  return wrapped
+  return cast(TFun, wrapped)
 
 @_warn_on_positional_kwargs
-def cholesky(x, *, symmetrize_input: bool = True):
+def cholesky(x: Array, *, symmetrize_input: bool = True) -> Array:
   """Cholesky decomposition.
 
   Computes the Cholesky decomposition
@@ -131,7 +134,8 @@ def cholesky(x, *, symmetrize_input: bool = True):
   return jnp.tril(cholesky_p.bind(x))
 
 @_warn_on_positional_kwargs
-def eig(x, *, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
+def eig(x: ArrayLike, *, compute_left_eigenvectors: bool = True,
+        compute_right_eigenvectors: bool = True) -> List[Array]:
   """Eigendecomposition of a general matrix.
 
   Nonsymmetric eigendecomposition is at present only implemented on CPU.
@@ -140,8 +144,8 @@ def eig(x, *, compute_left_eigenvectors=True, compute_right_eigenvectors=True):
                     compute_right_eigenvectors=compute_right_eigenvectors)
 
 @_warn_on_positional_kwargs
-def eigh(x, *, lower: bool = True, symmetrize_input: bool = True,
-         sort_eigenvalues: bool = True, ):
+def eigh(x: Array, *, lower: bool = True, symmetrize_input: bool = True,
+         sort_eigenvalues: bool = True) -> Tuple[Array, Array]:
   r"""Eigendecomposition of a Hermitian matrix.
 
   Computes the eigenvectors and eigenvalues of a complex Hermitian or real
@@ -176,7 +180,7 @@ def eigh(x, *, lower: bool = True, symmetrize_input: bool = True,
   return v, w
 
 
-def lu_pivots_to_permutation(pivots, permutation_size: int):
+def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
   """Converts the pivots (row swaps) returned by LU to a permutation.
 
   We build a permutation rather than applying `pivots` directly to the rows
@@ -194,7 +198,7 @@ def lu_pivots_to_permutation(pivots, permutation_size: int):
   return permutation
 
 
-def lu(x):
+def lu(x: ArrayLike) -> Tuple[Array, Array, Array]:
   """LU decomposition with partial pivoting.
 
   Computes the matrix decomposition:
@@ -228,7 +232,7 @@ def lu(x):
   return lu, pivots, permutation
 
 @_warn_on_positional_kwargs
-def qr(x, *, full_matrices: bool = True):
+def qr(x: ArrayLike, *, full_matrices: bool = True) -> Tuple[Array, Array]:
   """QR decomposition.
 
   Computes the QR decomposition
@@ -258,9 +262,18 @@ def qr(x, *, full_matrices: bool = True):
   q, r = qr_p.bind(x, full_matrices=full_matrices)
   return q, r
 
+@overload
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: Literal[True]) -> Tuple[Array, Array, Array]: ...
+
+@overload
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: Literal[False]) -> Array: ...
+
+@overload
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: bool = True) -> Union[Array, Tuple[Array, Array, Array]]: ...
+
 # TODO: Add `max_qdwh_iterations` to the function signature for TPU SVD.
 @_warn_on_positional_kwargs
-def svd(x, *, full_matrices=True, compute_uv=True):
+def svd(x: ArrayLike, *, full_matrices: bool = True, compute_uv: bool = True) -> Union[Array, Tuple[Array, Array, Array]]:
   """Singular value decomposition.
 
   Returns the singular values if compute_uv is False, otherwise returns a triple
@@ -276,9 +289,10 @@ def svd(x, *, full_matrices=True, compute_uv=True):
     return s
 
 @_warn_on_positional_kwargs
-def triangular_solve(a, b, *, left_side: bool = False, lower: bool = False,
+def triangular_solve(a: ArrayLike, b: ArrayLike, *,
+                     left_side: bool = False, lower: bool = False,
                      transpose_a: bool = False, conjugate_a: bool = False,
-                     unit_diagonal: bool = False):
+                     unit_diagonal: bool = False) -> Array:
   r"""Triangular solve.
 
   Solves either the matrix equation
@@ -327,17 +341,17 @@ def triangular_solve(a, b, *, left_side: bool = False, lower: bool = False,
 
 # utilities
 @partial(vectorize, signature='(n,m),(m)->(n)')
-def _matvec_multiply(a, b):
+def _matvec_multiply(a: Array, b: Array) -> Array:
   return lax.dot(a, b, precision=lax.Precision.HIGHEST)
 
-def _check_solve_shapes(a, b):
+def _check_solve_shapes(a: Array, b: Array):
   if not (a.ndim >= 2 and b.ndim in [a.ndim, a.ndim - 1] and
           a.shape[-1] == a.shape[-2] == b.shape[a.ndim - 2]):
     raise ValueError(
         "The arguments to solve must have shapes a=[..., m, m] and "
         f"b=[..., m, k] or b=[..., m]; got a={a.shape} and b={b.shape}")
 
-def _solve(a, b):
+def _solve(a: Array, b: Array) -> Array:
   _check_solve_shapes(a, b)
 
   # Broadcast leading dimensions of b to the shape of a, as is required by
@@ -361,15 +375,15 @@ def _solve(a, b):
     # b.shape == [..., m, k]
     return api.vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
-def _T(x): return jnp.swapaxes(x, -1, -2)
-def _H(x): return jnp.conj(_T(x))
-def symmetrize(x): return (x + _H(x)) / 2
+def _T(x: Array) -> Array: return jnp.swapaxes(x, -1, -2)
+def _H(x: Array) -> Array: return jnp.conj(_T(x))
+def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 
-def _unpack_tuple(f, n):
+def _unpack_tuple(f: TFun, n: int) -> TFun:
   def g(c, *args, **kwargs):
     t = f(c, *args, **kwargs)
     return (xops.GetTupleElement(t, i) for i in range(n))
-  return g
+  return cast(TFun, g)
 
 # primitives
 
@@ -558,7 +572,8 @@ ad.primitive_jvps[eig_p] = eig_jvp_rule
 # Symmetric/Hermitian eigendecomposition
 
 
-def eigh_jacobi(x, *, lower: bool = True, sort_eigenvalues: bool = True):
+def eigh_jacobi(x: ArrayLike, *, lower: bool = True,
+                sort_eigenvalues: bool = True) -> Tuple[Array, Array]:
   """Helper Jacobi eigendecomposition implemented by XLA.
 
   Used as a subroutine of QDWH-eig on TPU."""
@@ -1232,7 +1247,7 @@ xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
 
 
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
-def _lu_solve_core(lu, permutation, b, trans):
+def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
   m = lu.shape[0]
   x = jnp.reshape(b, (m, np.prod(b.shape[1:])))
   if trans == 0:
@@ -1252,7 +1267,7 @@ def _lu_solve_core(lu, permutation, b, trans):
 
 
 @partial(api.jit, static_argnums=(3,))
-def _lu_solve(lu, permutation, b, trans):
+def _lu_solve(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
   if len(lu.shape) < 2 or lu.shape[-1] != lu.shape[-2]:
     raise ValueError("last two dimensions of LU decomposition must be equal, "
                      "got shape {}".format(lu.shape))
@@ -1281,7 +1296,8 @@ def _lu_solve(lu, permutation, b, trans):
   return x[..., 0] if rhs_vector else x
 
 
-def lu_solve(lu, permutation, b, trans=0):
+def lu_solve(lu: ArrayLike, permutation: ArrayLike, b: ArrayLike,
+             trans: int = 0) -> Array:
   """LU solve with broadcasting."""
   return _lu_solve(lu, permutation, b, trans)
 
@@ -1292,7 +1308,7 @@ def lu_solve(lu, permutation, b, trans=0):
 # geqrf and orgqr. The names, while cryptic Fortran alphabet soup, are LAPACK's
 # names for the primitives, and we stick with them for consistency.
 
-def geqrf(a):
+def geqrf(a: ArrayLike) -> Tuple[Array, Array]:
   """Computes the QR decomposition of a matrix.
 
   Args:
@@ -1374,7 +1390,7 @@ mlir.register_lowering(
 
 # orgqr: product of elementary Householder reflectors
 
-def orgqr(a, taus):
+def orgqr(a: ArrayLike, taus: ArrayLike) -> Array:
   """Product of elementary Householder reflectors.
 
   Args:
@@ -1778,7 +1794,7 @@ mlir.register_lowering(tridiagonal_solve_p, mlir.lower_fun(
     _tridiagonal_solve_jax, multiple_results=False))
 
 
-def tridiagonal_solve(dl, d, du, b):
+def tridiagonal_solve(dl: Array, d: Array, du: Array, b: Array) -> Array:
   r"""Computes the solution of a tridiagonal linear system.
 
   This function computes the solution of a tridiagonal linear system:
@@ -1830,10 +1846,10 @@ def tridiagonal_solve(dl, d, du, b):
 
 
 @_warn_on_positional_kwargs
-def schur(x, *,
-          compute_schur_vectors=True,
-          sort_eig_vals=False,
-          select_callable=None):
+def schur(x: ArrayLike, *,
+          compute_schur_vectors: bool = True,
+          sort_eig_vals: bool = False,
+          select_callable: Optional[Callable[..., Any]] = None) -> Tuple[Array, Array]:
   return schur_p.bind(
       x,
       compute_schur_vectors=compute_schur_vectors,

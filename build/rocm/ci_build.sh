@@ -101,10 +101,12 @@ fi
 # Run the command inside the container.
 echo "Running '${POSITIONAL_ARGS[*]}' inside ${DOCKER_IMG_NAME}..."
 
+export TENSORFLOW_ROCM_COMMIT="${TENSORFLOW_ROCM_COMMIT:-}"
 
 docker run ${KEEP_IMAGE} --name ${DOCKER_IMG_NAME} --pid=host \
   -v ${WORKSPACE}:/workspace \
   -w /workspace \
+  -e TENSORFLOW_ROCM_COMMIT=${TENSORFLOW_ROCM_COMMIT} \
   ${ROCM_EXTRA_PARAMS} \
   "${DOCKER_IMG_NAME}" \
   ${POSITIONAL_ARGS[@]}

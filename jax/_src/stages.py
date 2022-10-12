@@ -28,6 +28,7 @@ Finally, this module defines a couple more classes to commonly adapt our
 various internal XLA-backed lowerings and executables into the lowering and
 executable protocols described above.
 """
+from __future__ import annotations
 
 import warnings
 
@@ -44,6 +45,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.lib import mlir
+from jax.interpreters import xla
 
 
 source_info_util.register_exclusion(__file__)
@@ -63,6 +65,22 @@ class Executable(Protocol):
   def call(self, *args_flat) -> Sequence[Any]:
     """Execute on the flat list of arguments, returning flat outputs."""
     # TODO(frostig): improve annotation (sequences of arrays/buffers)
+    raise NotImplementedError
+
+  def input_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+    """Flat sequence of input shardings.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
+    raise NotImplementedError
+
+  def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+    """Flat sequence of output shardings.
+
+    May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
+    compiler, or runtime.
+    """
     raise NotImplementedError
 
   def as_text(self) -> str:
@@ -156,11 +174,19 @@ class Lowering(Protocol):
 
 class XlaExecutable(Executable):
 
-  def xla_extension_executable(self) -> xla_extension.Executable:
+  def xla_extension_executable(self) -> xla.XlaLoadedExecutable:
     raise NotImplementedError("must override")
 
   def call(self, *args_flat) -> Sequence[Any]:
     raise NotImplementedError("must override")
+
+  def input_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+    raise NotImplementedError(
+        "compiled executable carries no input sharding information")
+
+  def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+    raise NotImplementedError(
+        "compiled executable carries no output sharding information")
 
   def as_text(self) -> str:
     xla_ext_exe = self.xla_extension_executable()
@@ -253,7 +279,7 @@ class ArgInfo:
 
 
 class Stage:
-  args_info: Any                # PyTree of ArgInfo
+  args_info: Any  # PyTree of ArgInfo
 
   @property
   def in_tree(self) -> tree_util.PyTreeDef:
@@ -379,6 +405,16 @@ class Compiled(Stage):
     """
     return self._executable.runtime_executable()
 
+  @property
+  def input_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
+    shardings_flat = self._executable.input_shardings()
+    return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
+
+  @property
+  def output_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
+    shardings_flat = self._executable.output_shardings()
+    return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
+
   def __call__(self, *args, **kwargs):
     if jax.config.jax_dynamic_shapes:
       raise NotImplementedError
@@ -463,8 +499,17 @@ class Lowered(Stage):
 
   def compile(self) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    return Compiled(self._lowering.compile(), self.args_info,
-                    self.out_tree, no_kwargs=self._no_kwargs)
+    from jax.interpreters import pxla
+
+    if (jax.config.jax_array and
+        isinstance(self._lowering, pxla.MeshComputation) and
+        all(pxla._is_unspecified(o) for o in self._lowering.compile_args['out_shardings'])):
+      kw = dict(_allow_propagation_to_outputs=True)
+    else:
+      kw = {}
+
+    return Compiled(self._lowering.compile(**kw), self.args_info, self.out_tree,
+                    no_kwargs=self._no_kwargs)
 
   def as_text(self, dialect: Optional[str] = None) -> str:
     """A human-readable text representation of this lowering.

@@ -29,7 +29,7 @@ from jax import tree_util
 from jax import vmap
 from jax.config import config
 from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.util import _count_stored_elements, _safe_asarray, CuSparseEfficiencyWarning, SparseEfficiencyError, SparseEfficiencyWarning
+from jax.experimental.sparse.util import _broadcasting_vmap, _count_stored_elements, _safe_asarray, CuSparseEfficiencyWarning, SparseEfficiencyError, SparseEfficiencyWarning
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
@@ -37,7 +37,6 @@ import jax.numpy as jnp
 from jax.interpreters import ad
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
-from jax._src.api_util import flatten_axes
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
@@ -52,26 +51,6 @@ from jax._src.lib import gpu_sparse
 Dtype = Any
 Shape = Tuple[int, ...]
 
-#----------------------------------------------------------------------
-# General utilities...
-def broadcasting_vmap(fun, in_axes=0, out_axes=0):
-  @functools.wraps(fun)
-  def batched_fun(*args):
-    args_flat, in_tree  = tree_util.tree_flatten(args)
-    in_axes_flat = flatten_axes("vmap in_axes", in_tree, in_axes, kws=False)
-    size = max(arg.shape[i] for arg, i in safe_zip(args_flat, in_axes_flat) if i is not None)
-    if size > 1:
-      if any(i is not None and arg.shape[i] not in (1, size)
-             for arg, i in safe_zip(args_flat, in_axes_flat)):
-        raise ValueError("broadcasting_vmap: mismatched input shapes")
-      args_flat, in_axes_flat = zip(*(
-          (arg, None) if i is None else (lax.squeeze(arg, (i,)), None) if arg.shape[i] == 1 else (arg, i)
-          for arg, i in zip(args_flat, in_axes_flat)
-      ))
-    new_args = tree_util.tree_unflatten(in_tree, args_flat)
-    new_in_axes = tree_util.tree_unflatten(in_tree, in_axes_flat)
-    return vmap(fun, in_axes=new_in_axes, out_axes=out_axes)(*new_args)
-  return batched_fun
 
 #----------------------------------------------------------------------
 # BCOO primitives: batched extension of COO.
@@ -157,6 +136,27 @@ def _validate_bcoo_indices(indices: jnp.ndarray, shape: Sequence[int]) -> BCOOPr
     raise ValueError(f"Invalid indices.shape={indices.shape} for "
                      f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
   return BCOOProperties(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense, nse=nse)
+
+
+def _bcoo_to_bcsr(indices: jnp.ndarray, *, shape: Sequence[int],
+                  index_dtype=jnp.int32):
+  """Given BCOO (indices), return BCSR (indices, indptr)."""
+  n_batch, n_sparse, _, _ = _validate_bcoo_indices(indices, shape)
+
+  if n_sparse != 2:
+    raise ValueError("Must have 2 sparse dimensions to be converted to BCSR.")
+
+  n_rows = shape[n_batch]
+
+  def get_ptr(i):
+    indptr = jnp.zeros(n_rows + 1, index_dtype)
+    return indptr.at[1:].set(jnp.cumsum(
+        jnp.bincount(i, length=n_rows).astype(index_dtype)))
+
+  for _ in range(n_batch):
+    get_ptr = vmap(get_ptr)
+
+  return indices[..., 1], get_ptr(indices[..., 0])
 
 
 #----------------------------------------------------------------------
@@ -682,7 +682,7 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
     else:
       return prod.sum(tuple(range(prod.ndim - out_array.ndim)), dtype=out_array.dtype)
   for _ in range(n_batch - len(lhs_contracting_b)):
-    result = broadcasting_vmap(result)
+    result = _broadcasting_vmap(result)
   rhs = lax.expand_dims(rhs, range(len(rhs_batch), n_batch - len(lhs_contracting_b)))
   out_array = jnp.zeros(out_aval.shape, out_aval.dtype)
   return result(out_array, lhs_data, lhs_indices, rhs)
@@ -1186,11 +1186,11 @@ def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lh
       rhs_contracting=[d - rhs.n_batch for d in rhs_contracting])
 
   for _ in reversed(range(len(rhs_batch), rhs.n_batch)):
-    func = broadcasting_vmap(func, in_axes=(None, None, 0, 0))
+    func = _broadcasting_vmap(func, in_axes=(None, None, 0, 0))
   for _ in reversed(range(len(lhs_batch), lhs.n_batch)):
-    func = broadcasting_vmap(func, in_axes=(0, 0, None, None))
+    func = _broadcasting_vmap(func, in_axes=(0, 0, None, None))
   for _ in range(len(lhs_batch)):
-    func = broadcasting_vmap(func, in_axes=0)
+    func = _broadcasting_vmap(func, in_axes=0)
   return func(lhs_data, lhs_indices, rhs_data, rhs_indices)
 
 @bcoo_spdot_general_p.def_abstract_eval
@@ -1326,7 +1326,7 @@ def _bcoo_sort_indices_impl(data, indices, *, spinfo):
   indices, perm = f(indices)
   permute = lambda d, p: d[p]
   for _ in range(props.n_batch):
-    permute = broadcasting_vmap(permute)
+    permute = _broadcasting_vmap(permute)
   data = permute(data, perm)
   return data, indices
 
@@ -1374,11 +1374,11 @@ def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
   data_dot, _ = tangents
   f = _bcoo_sort_indices_unbatched
   for _ in range(props.n_batch):
-    f = broadcasting_vmap(f)
+    f = _broadcasting_vmap(f)
   indices_out, perm = f(indices)
   permute = lambda d, p: d[p]
   for _ in range(props.n_batch):
-    permute = broadcasting_vmap(permute)
+    permute = _broadcasting_vmap(permute)
   data_out = permute(data, perm)
 
   indices_dot_out = ad.Zero.from_value(indices)
@@ -1440,7 +1440,7 @@ def _bcoo_sum_duplicates_impl(data, indices, *, spinfo, nse):
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   permute = lambda d_out, m, d: d_out.at[m].add(d, mode='drop')
   for _ in range(props.n_batch):
-    permute = broadcasting_vmap(permute)
+    permute = _broadcasting_vmap(permute)
   data_out = permute(data_out, mapping, data)
   return data_out, indices_out
 
@@ -1512,7 +1512,7 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   data_dot, _ = tangents
   f = functools.partial(_bcoo_sum_duplicates_unbatched, shape=spinfo.shape[props.n_batch:])
   for _ in range(props.n_batch):
-    f = broadcasting_vmap(f)
+    f = _broadcasting_vmap(f)
   indices_out, mapping, nse_batched = f(indices)
   if nse is None:
     nse = jnp.sum(nse_batched)
@@ -1530,7 +1530,7 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   data_dot_out = data_out
   permute = lambda d_out, m, d: d_out.at[m].add(d, mode='drop')
   for _ in range(props.n_batch):
-    permute = broadcasting_vmap(permute)
+    permute = _broadcasting_vmap(permute)
   data_out = permute(data_out, mapping, data)
   indices_dot_out = ad.Zero.from_value(indices_out)
   data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
@@ -1630,7 +1630,7 @@ def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error
                                 *map(jnp.ravel, meshes)])
       return new_d, new_i
     for _ in range(current_n_batch + 1):
-      _update = broadcasting_vmap(_update)
+      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     new_data = new_data.reshape(*new_data.shape[:current_n_batch],
                                 np.prod(new_data.shape[current_n_batch:current_n_batch + 2]),
@@ -1651,7 +1651,7 @@ def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error
       new_i = jnp.column_stack((*(m.ravel() for m in meshes[:-1]), new_i))
       return new_d, new_i
     for _ in range(n_batch):
-      _update = broadcasting_vmap(_update)
+      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     current_n_batch = n_batch
 
@@ -1662,7 +1662,7 @@ def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error
       new_i = i[:-n]
       return new_d, new_i
     for _ in range(current_n_batch + 1):
-      _update = broadcasting_vmap(_update)
+      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     current_n_dense = n_dense
 
@@ -1677,7 +1677,7 @@ def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error
       new_d = jnp.zeros_like(d, shape=new_d_shape).at[idx].set(d)
       return new_d, new_i
     for _ in range(current_n_batch):
-      _update = broadcasting_vmap(_update)
+      _update = _broadcasting_vmap(_update)
     new_data, new_indices = _update(new_data, new_indices)
     current_n_batch = n_batch
 
@@ -2108,7 +2108,7 @@ def _bcoo_multiply_sparse(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lhs_s
                            lhs_shape=lhs_shape[n_batch:],
                            rhs_shape=rhs_shape[n_batch:])
   for _ in range(n_batch):
-    _mul = broadcasting_vmap(_mul)
+    _mul = _broadcasting_vmap(_mul)
   data, indices = _mul(lhs_data, lhs_indices, rhs_data, rhs_indices)
   return data, indices, jnp.broadcast_shapes(lhs_shape, rhs_shape)
 
@@ -2179,7 +2179,7 @@ def _bcoo_multiply_dense(data, indices, v, *, spinfo):
     ind = tuple(i if s != 1 else 0 for i, s in zip(ind, v.shape))
     return data * v[ind]
   for _ in range(props.n_batch):
-    _mul = broadcasting_vmap(_mul)
+    _mul = _broadcasting_vmap(_mul)
   return _mul(data, indices, v)
 
 @tree_util.register_pytree_node_class

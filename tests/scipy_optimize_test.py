@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 import numpy as np
 import scipy
 import scipy.optimize
@@ -67,14 +67,13 @@ def zakharovFromIndices(x, ii):
 
 class TestBFGS(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
-     "maxiter": maxiter, "func_and_init": func_and_init}
-    for maxiter in [None]
-    for func_and_init in [(rosenbrock, np.zeros(2, dtype='float32')),
-                          (himmelblau, np.ones(2, dtype='float32')),
-                          (matyas, np.ones(2) * 6.),
-                          (eggholder, np.ones(2) * 100.)]))
+  @jtu.sample_product(
+    maxiter=[None],
+    func_and_init=[(rosenbrock, np.zeros(2, dtype='float32')),
+                   (himmelblau, np.ones(2, dtype='float32')),
+                   (matyas, np.ones(2) * 6.),
+                   (eggholder, np.ones(2) * 100.)],
+  )
   def test_minimize(self, maxiter, func_and_init):
     # Note, cannot compare step for step with scipy BFGS because our line search is _slightly_ different.
 
@@ -92,7 +91,8 @@ class TestBFGS(jtu.JaxTestCase):
 
     jax_res = min_op(x0)
     scipy_res = scipy.optimize.minimize(func(np), x0, method='BFGS').x
-    self.assertAllClose(scipy_res, jax_res, atol=2e-5, check_dtypes=False)
+    self.assertAllClose(scipy_res, jax_res, atol=2e-5, rtol=2e-5,
+                        check_dtypes=False)
 
   def test_fixes4594(self):
     n = 2
@@ -143,14 +143,13 @@ class TestBFGS(jtu.JaxTestCase):
 
 class TestLBFGS(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_func={func_and_init[0].__name__}_maxiter={maxiter}",
-     "maxiter": maxiter, "func_and_init": func_and_init}
-    for maxiter in [None]
-    for func_and_init in [(rosenbrock, np.zeros(2)),
-                          (himmelblau, np.zeros(2)),
-                          (matyas, np.ones(2) * 6.),
-                          (eggholder, np.ones(2) * 100.)]))
+  @jtu.sample_product(
+    maxiter=[None],
+    func_and_init=[(rosenbrock, np.zeros(2)),
+                   (himmelblau, np.zeros(2)),
+                   (matyas, np.ones(2) * 6.),
+                   (eggholder, np.ones(2) * 100.)],
+  )
   def test_minimize(self, maxiter, func_and_init):
 
     func, x0 = func_and_init

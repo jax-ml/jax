@@ -15,7 +15,6 @@
 from functools import partial
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax import numpy as jnp
@@ -27,55 +26,62 @@ config.parse_flags_with_absl()
 
 class VectorizeTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_leftshape={left_shape}_rightshape={right_shape}",
-       "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
+  @jtu.sample_product(
+    [dict(left_shape=left_shape, right_shape=right_shape,
+          result_shape=result_shape)
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3, 4), (2, 4)),
           ((2, 3), (1, 3, 4), (1, 2, 4)),
           ((5, 2, 3), (1, 3, 4), (5, 2, 4)),
           ((6, 5, 2, 3), (3, 4), (6, 5, 2, 4)),
-      ]))
+      ]
+    ],
+  )
   def test_matmat(self, left_shape, right_shape, result_shape):
     matmat = jnp.vectorize(jnp.dot, signature='(n,m),(m,k)->(n,k)')
     self.assertEqual(matmat(jnp.zeros(left_shape),
                             jnp.zeros(right_shape)).shape, result_shape)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_leftshape={left_shape}_rightshape={right_shape}",
-       "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
+  @jtu.sample_product(
+    [dict(left_shape=left_shape, right_shape=right_shape,
+          result_shape=result_shape)
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3,), (2,)),
           ((2, 3), (1, 3), (1, 2)),
           ((4, 2, 3), (1, 3), (4, 2)),
           ((5, 4, 2, 3), (1, 3), (5, 4, 2)),
-      ]))
+      ]
+    ],
+  )
   def test_matvec(self, left_shape, right_shape, result_shape):
     matvec = jnp.vectorize(jnp.dot, signature='(n,m),(m)->(n)')
     self.assertEqual(matvec(jnp.zeros(left_shape),
                             jnp.zeros(right_shape)).shape, result_shape)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_leftshape={left_shape}_rightshape={right_shape}",
-       "left_shape": left_shape, "right_shape": right_shape, "result_shape": result_shape}
+  @jtu.sample_product(
+    [dict(left_shape=left_shape, right_shape=right_shape,
+          result_shape=result_shape)
       for left_shape, right_shape, result_shape in [
           ((3,), (3,), ()),
           ((2, 3), (3,), (2,)),
           ((4, 2, 3), (3,), (4, 2)),
-      ]))
+      ]
+    ],
+  )
   def test_vecmat(self, left_shape, right_shape, result_shape):
     vecvec = jnp.vectorize(jnp.dot, signature='(m),(m)->()')
     self.assertEqual(vecvec(jnp.zeros(left_shape),
                             jnp.zeros(right_shape)).shape, result_shape)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_shape={shape}",
-       "shape": shape, "result_shape": result_shape}
+  @jtu.sample_product(
+    [dict(shape=shape, result_shape=result_shape)
       for shape, result_shape in [
           ((3,), ()),
           ((2, 3,), (2,)),
           ((1, 2, 3,), (1, 2)),
-      ]))
+      ]
+    ],
+  )
   def test_magnitude(self, shape, result_shape):
     size = 1
     for x in shape:
@@ -88,25 +94,27 @@ class VectorizeTest(jtu.JaxTestCase):
 
     self.assertEqual(magnitude(inputs).shape, result_shape)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_shape={shape}",
-       "shape": shape, "result_shape": result_shape}
+  @jtu.sample_product(
+    [dict(shape=shape, result_shape=result_shape)
       for shape, result_shape in [
           ((3,), ()),
           ((2, 3), (2,)),
           ((1, 2, 3, 4), (1, 2, 3)),
-      ]))
+      ]
+    ],
+  )
   def test_mean(self, shape, result_shape):
     mean = jnp.vectorize(jnp.mean, signature='(n)->()')
     self.assertEqual(mean(jnp.zeros(shape)).shape, result_shape)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_shape={shape}",
-       "shape": shape, "result_shape": result_shape}
+  @jtu.sample_product(
+    [dict(shape=shape, result_shape=result_shape)
       for shape, result_shape in [
           ((), (2,)),
           ((3,), (3,2,)),
-      ]))
+      ]
+    ],
+  )
   def test_stack_plus_minus(self, shape, result_shape):
 
     @partial(jnp.vectorize, signature='()->(n)')

@@ -20,7 +20,6 @@ import warnings
 
 import numpy as np
 
-import jax
 from jax import core
 from jax import lax
 from jax._src import api
@@ -28,7 +27,7 @@ from jax._src import dtypes
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.util import _broadcast_to, _check_arraylike, _complex_elem_type, _promote_dtypes_inexact, _promote_dtypes_numeric, _where, _wraps
 from jax._src.lax import lax as lax_internal
-from jax._src.util import canonicalize_axis as _canonicalize_axis, maybe_named_axis
+from jax._src.util import canonicalize_axis as _canonicalize_axis, maybe_named_axis, prod as _prod
 
 
 _all = builtins.all
@@ -86,17 +85,21 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
     if not _all(core.greater_equal_dim(shape[d], 1) for d in pos_dims):
       raise ValueError(f"zero-size array to reduction operation {name} which has no identity")
 
-  result_dtype = dtypes.canonicalize_dtype(dtype or dtypes.dtype(a))
+  result_dtype = dtype or dtypes.dtype(a)
 
-  # promote_integers=True matches NumPy's behavior for sum() and prod(), which promotes
-  # all int-like inputs to the widest available dtype.
   if dtype is None and promote_integers:
+    # Note: NumPy always promotes to 64-bit; jax instead promotes to the
+    # default dtype as defined by dtypes.int_ or dtypes.uint.
     if dtypes.issubdtype(result_dtype, np.bool_):
-      result_dtype = dtypes.canonicalize_dtype(np.int64)
+      result_dtype = dtypes.int_
     elif dtypes.issubdtype(result_dtype, np.unsignedinteger):
-      result_dtype = dtypes.canonicalize_dtype(np.uint64)
+      if np.iinfo(result_dtype).bits < np.iinfo(dtypes.uint).bits:
+        result_dtype = dtypes.uint
     elif dtypes.issubdtype(result_dtype, np.integer):
-      result_dtype = dtypes.canonicalize_dtype(np.int64)
+      if np.iinfo(result_dtype).bits < np.iinfo(dtypes.int_).bits:
+        result_dtype = dtypes.int_
+
+  result_dtype = dtypes.canonicalize_dtype(result_dtype)
 
   if upcast_f16_for_computation and dtypes.issubdtype(result_dtype, np.inexact):
     computation_dtype = _upcast_f16(result_dtype)
@@ -324,8 +327,10 @@ def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None
     avg = mean(a, axis=axis, keepdims=keepdims)
     if axis is None:
       weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
+    elif isinstance(axis, tuple):
+      weights_sum = lax.full_like(avg, _prod(core.dimension_as_value(a.shape[d]) for d in axis))
     else:
-      weights_sum = lax.full_like(avg, core.dimension_as_value(a.shape[axis]), dtype=avg.dtype)
+      weights_sum = lax.full_like(avg, core.dimension_as_value(a.shape[axis]))
   else:
     _check_arraylike("average", a, weights)
     a, weights = _promote_dtypes_inexact(a, weights)
@@ -333,17 +338,25 @@ def _average(a, axis: Optional[Union[int, Tuple[int, ...]]] = None, weights=None
     a_shape = np.shape(a)
     a_ndim = len(a_shape)
     weights_shape = np.shape(weights)
-    axis = None if axis is None else _canonicalize_axis(axis, a_ndim)
+
+    if axis is None:
+      pass
+    elif isinstance(axis, tuple):
+      axis = tuple(_canonicalize_axis(d, a_ndim) for d in axis)
+    else:
+      axis = _canonicalize_axis(axis, a_ndim)
 
     if a_shape != weights_shape:
       # Make sure the dimensions work out
-      if axis is None:
-        raise ValueError("Axis must be specified when shapes of a and "
-                         "weights differ.")
       if len(weights_shape) != 1:
         raise ValueError("1D weights expected when shapes of a and "
                          "weights differ.")
-      if not core.symbolic_equal_dim(weights_shape[0], a_shape[axis]):
+      if axis is None:
+        raise ValueError("Axis must be specified when shapes of a and "
+                         "weights differ.")
+      elif isinstance(axis, tuple):
+        raise ValueError("Single axis expected when shapes of a and weights differ")
+      elif not core.symbolic_equal_dim(weights_shape[0], a_shape[axis]):
         raise ValueError("Length of weights not "
                          "compatible with specified axis.")
 

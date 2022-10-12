@@ -76,18 +76,20 @@ from jax._src.numpy.util import (  # noqa: F401
   _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
-from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip, ceil_of_ratio,
+from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip,
+                           ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
 from jax._src.array import ArrayImpl
 
 newaxis = None
 
+
 # Like core.canonicalize_shape, but also accept int-like (non-sequence)
 # arguments for `shape`.
-def canonicalize_shape(
-    shape: Union[core.Shape, int, core.Tracer], context: str="") -> core.Shape:
-  if isinstance(shape, core.Tracer) or ndim(shape) == 0:
-    return core.canonicalize_shape((shape,), context)
+def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
+  if getattr(shape, 'ndim', None) == 0 or ndim(shape) == 0:
+    return core.canonicalize_shape((shape,), context)  # type: ignore
   else:
     return core.canonicalize_shape(shape, context)  # type: ignore
 
@@ -1653,7 +1655,7 @@ def tile(A, reps):
                         [k for pair in zip(reps, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps)))
 
-def _concatenate_array(arr, axis: int, dtype=None):
+def _concatenate_array(arr, axis: Optional[int], dtype=None):
   # Fast path for concatenation when the input is an ndarray rather than a list.
   arr = asarray(arr, dtype=dtype)
   if arr.ndim == 0 or arr.shape[0] == 0:
@@ -1668,7 +1670,7 @@ def _concatenate_array(arr, axis: int, dtype=None):
   return lax.reshape(arr, shape, dimensions)
 
 @_wraps(np.concatenate)
-def concatenate(arrays, axis: int = 0, dtype=None):
+def concatenate(arrays, axis: Optional[int] = 0, dtype=None):
   if isinstance(arrays, (np.ndarray, ndarray)):
     return _concatenate_array(arrays, axis, dtype=dtype)
   _stackable(*arrays) or _check_arraylike("concatenate", *arrays)
@@ -1838,7 +1840,8 @@ https://jax.readthedocs.io/en/latest/faq.html).
 """
 
 @_wraps(np.array, lax_description=_ARRAY_DOC)
-def array(object, dtype=None, copy=True, order="K", ndmin=0):
+def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
+          order: str = "K", ndmin: int = 0) -> Array:
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
@@ -1859,6 +1862,8 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   if isinstance(object, (bool, int, float, complex)):
     _ = dtypes.coerce_to_array(object, dtype)
 
+  object = tree_map(lambda leaf: leaf.__jax_array__() if hasattr(leaf, "__jax_array__") else leaf,
+                    object)
   leaves = tree_leaves(object)
   if dtype is None:
     # Use lattice_result_type rather than result_type to avoid canonicalization.
@@ -1878,7 +1883,9 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
   # (See https://github.com/google/jax/issues/8950)
   ndarray_types = (device_array.DeviceArray, core.Tracer, ArrayImpl)
 
-  if not _any(isinstance(leaf, ndarray_types) for leaf in leaves):
+  out: ArrayLike
+
+  if _all(not isinstance(leaf, ndarray_types) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
     # https://github.com/google/jax/pull/6047. More correct would be to call
@@ -1902,10 +1909,10 @@ def array(object, dtype=None, copy=True, order="K", ndmin=0):
 
     raise TypeError(f"Unexpected input type for array: {type(object)}")
 
-  out = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
-  if ndmin > ndim(out):
-    out = lax.expand_dims(out, range(ndmin - ndim(out)))
-  return out
+  out_array: Array = lax_internal._convert_element_type(out, dtype, weak_type=weak_type)
+  if ndmin > ndim(out_array):
+    out_array = lax.expand_dims(out_array, range(ndmin - ndim(out_array)))
+  return out_array
 
 
 def _convert_to_array_if_dtype_fails(x):
@@ -1918,10 +1925,10 @@ def _convert_to_array_if_dtype_fails(x):
 
 
 @_wraps(np.asarray, lax_description=_ARRAY_DOC)
-def asarray(a, dtype=None, order=None):
+def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Any = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "asarray")
   dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
-  return array(a, dtype=dtype, copy=False, order=order)
+  return array(a, dtype=dtype, copy=False, order=order)  # type: ignore
 
 
 @_wraps(np.copy, lax_description=_ARRAY_DOC)
@@ -2121,23 +2128,21 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
   if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
     if stop is not None or step is not None:
       raise ValueError(
-          "jax.numpy.arange supports non-constant arguments only in single-argument form. "
-          f"Found jax.numpy.arange(start={start}, stop={stop}, step={step})")
+          "jax.numpy.arange supports non-constant arguments only in "
+          "single-argument form. Found "
+          f"jax.numpy.arange(start={start}, stop={stop}, step={step})")
     return lax.iota(dtype or int_, start)
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = _jnp_dtype(dtype)
   if stop is None and step is None:
-    if (jax.config.jax_dynamic_shapes and
-        not isinstance(core.get_aval(start), core.AbstractBInt) and
-        not isinstance(core.get_aval(start), core.ConcreteArray)):
-      start = ceil(start).astype(int)  # note using jnp here
-    elif (isinstance(start, core.BInt) or isinstance(start, core.Tracer) and
-          isinstance(core.get_aval(start), core.AbstractBInt)):
-      pass
-    else:
+    start_dtype = _dtype(start)
+    if not jax.config.jax_dynamic_shapes:
       start = require(start, msg("stop"))
-      start = np.ceil(start).astype(int)
+    if (not dtypes.issubdtype(start_dtype, np.integer) and
+        not core.is_opaque_dtype(start_dtype)):
+      ceil_ = ceil if isinstance(start, core.Tracer) else np.ceil
+      start = ceil_(start).astype(int)
     return lax.iota(dtype, start)
   else:
     start = require(start, msg("start"))
@@ -2975,15 +2980,11 @@ def _einsum(operands: Sequence,
     return operand, names
 
   def filter_singleton_dims(operand, names, other_shape, other_names):
-    s = shape(operand)
-    new_shape = []
-    new_names = []
-    for i, d in enumerate(names):
-      other_i = other_names.find(d)
-      if not core.symbolic_equal_dim(s[i], 1) or other_i == -1 or core.symbolic_equal_dim(other_shape[other_i], 1):
-        new_shape.append(s[i])
-        new_names.append(d)
-    return reshape(operand, tuple(new_shape)), "".join(new_names)
+    eq = core.symbolic_equal_dim
+    keep = [not eq(operand.shape[i], 1) or j == -1 or eq(other_shape[j], 1)
+            for i, j in enumerate(map(other_names.find, names))]
+    sqez_axes, keep_axes = partition_list(keep, list(range(operand.ndim)))
+    return lax.squeeze(operand, sqez_axes), "".join(names[i] for i in keep_axes)
 
   for operand_indices, contracted_names_set, einstr in contractions:
     contracted_names = sorted(contracted_names_set)
@@ -3654,7 +3655,11 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
     step  = idx.step  if idx.step  is not None else 1
     if (0 <= start < n and 0 <= stop <= n and 0 < step and
         (start, stop, step) != (0, n, 1)):
-      return lax.slice_in_dim(arr, start, stop, step)
+      if _any(isinstance(d, core.Tracer) for d in arr.shape[1:]):
+        if step == 1:  # TODO(mattjj, sharadmv): handle step != 1
+          return lax.dynamic_slice_in_dim(arr, start, _max(0, stop - start), 0)
+      else:
+        return lax.slice_in_dim(arr, start, stop, step)
 
   # TODO(mattjj,dougalm): expand dynamic shape indexing support
   if jax.config.jax_dynamic_shapes and arr.ndim > 0:

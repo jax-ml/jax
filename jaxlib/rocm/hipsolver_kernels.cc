@@ -145,7 +145,6 @@ static absl::Status Potrf_(hipStream_t stream, void** buffers,
         break;
       }
       case HipsolverType::C128: {
-        hipDoubleComplex* a = static_cast<hipDoubleComplex*>(buffers[1]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverZpotrfBatched(
             handle.get(), d.uplo, d.n, static_cast<hipDoubleComplex**>(workspace), d.n,
             reinterpret_cast<hipDoubleComplex*>(static_cast<hipDoubleComplex**>(workspace) +
@@ -268,9 +267,6 @@ static absl::Status Geqrf_(hipStream_t stream, void** buffers,
   }
 
   int* info = static_cast<int*>(buffers[3]);
-  // TODO(rocm): workaround for unset devinfo. See SWDEV-317485
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(hipMemsetAsync(info, 0, sizeof(int) * d.batch, stream)));
 
   void* workspace = buffers[4];
   switch (d.type) {
@@ -358,9 +354,6 @@ static absl::Status Orgqr_(hipStream_t stream, void** buffers,
   }
 
   int* info = static_cast<int*>(buffers[3]);
-  // TODO(rocm): workaround for unset devinfo. See SWDEV-317485
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(hipMemsetAsync(info, 0, sizeof(int) * d.batch, stream)));
 
   void* workspace = buffers[4];
   switch (d.type) {
@@ -513,7 +506,115 @@ void Syevd(hipStream_t stream, void** buffers, const char* opaque,
   }
 }
 
-// TODO(rocm): add Syevj_ apis when support from hipsolver is ready
+// Symmetric (Hermitian) eigendecomposition, Jacobi algorithm: syevj/heevj
+// Supports batches of matrices up to size 32.
+
+absl::Status Syevj_(hipStream_t stream, void** buffers, const char* opaque,
+                    size_t opaque_len) {
+  auto s = UnpackDescriptor<SyevjDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const SyevjDescriptor& d = **s;
+  auto h = SolverHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
+  if (buffers[1] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfHipsolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
+        hipMemcpyDeviceToDevice, stream)));
+  }
+  hipsolverSyevjInfo_t params;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverCreateSyevjInfo(&params)));
+  std::unique_ptr<void, void (*)(hipsolverSyevjInfo_t)> params_cleanup(
+      params, [](hipsolverSyevjInfo_t p) { hipsolverDestroySyevjInfo(p); });
+  hipsolverEigMode_t jobz = HIPSOLVER_EIG_MODE_VECTOR;
+  int* info = static_cast<int*>(buffers[3]);
+  void* work = buffers[4];
+  if (d.batch == 1) {
+    switch (d.type) {
+      case HipsolverType::F32: {
+        float* a = static_cast<float*>(buffers[1]);
+        float* w = static_cast<float*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverSsyevj(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<float*>(work), d.lwork, info, params)));
+        break;
+      }
+      case HipsolverType::F64: {
+        double* a = static_cast<double*>(buffers[1]);
+        double* w = static_cast<double*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverDsyevj(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<double*>(work), d.lwork, info, params)));
+        break;
+      }
+      case HipsolverType::C64: {
+        hipFloatComplex* a = static_cast<hipFloatComplex*>(buffers[1]);
+        float* w = static_cast<float*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverCheevj(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<hipFloatComplex*>(work), d.lwork, info, params)));
+        break;
+      }
+      case HipsolverType::C128: {
+        hipDoubleComplex* a = static_cast<hipDoubleComplex*>(buffers[1]);
+        double* w = static_cast<double*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverZheevj(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<hipDoubleComplex*>(work), d.lwork, info, params)));
+        break;
+      }
+    }
+  } else {
+    switch (d.type) {
+      case HipsolverType::F32: {
+        float* a = static_cast<float*>(buffers[1]);
+        float* w = static_cast<float*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverSsyevjBatched(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<float*>(work), d.lwork, info, params, d.batch)));
+        break;
+      }
+      case HipsolverType::F64: {
+        double* a = static_cast<double*>(buffers[1]);
+        double* w = static_cast<double*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverDsyevjBatched(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<double*>(work), d.lwork, info, params, d.batch)));
+        break;
+      }
+      case HipsolverType::C64: {
+        hipFloatComplex* a = static_cast<hipFloatComplex*>(buffers[1]);
+        float* w = static_cast<float*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(hipsolverCheevjBatched(
+            handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+            static_cast<hipFloatComplex*>(work), d.lwork, info, params, d.batch)));
+        break;
+      }
+      case HipsolverType::C128: {
+        hipDoubleComplex* a = static_cast<hipDoubleComplex*>(buffers[1]);
+        double* w = static_cast<double*>(buffers[2]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+            hipsolverZheevjBatched(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+                                    static_cast<hipDoubleComplex*>(work),
+                                    d.lwork, info, params, d.batch)));
+        break;
+      }
+    }
+  }
+  return absl::OkStatus();
+}
+
+void Syevj(hipStream_t stream, void** buffers, const char* opaque,
+           size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = Syevj_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
+  }
+}
+
 // Singular value decomposition using QR algorithm: gesvd
 
 static absl::Status Gesvd_(hipStream_t stream, void** buffers,

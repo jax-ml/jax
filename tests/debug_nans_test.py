@@ -14,7 +14,7 @@
 
 """Tests for --debug_nans."""
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import jax
 import numpy as np
@@ -81,9 +81,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = 0. / A
       ans.block_until_ready()
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_jit={jit._name}", "jit": jit}
-    for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def testCallDeoptimized(self, jit):
     @jit
     def f(x):
@@ -150,7 +148,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = jax.experimental.PartitionSpec('x')
+    p = pjit.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
                   in_axis_resources=p,
                   out_axis_resources=p)
@@ -192,9 +190,7 @@ class DebugInfsTest(jtu.JaxTestCase):
       ans = 1. / A
       ans.block_until_ready()
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}", "jit": jit}
-      for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def testCallDeoptimized(self, jit):
     @jit
     def f(x):
