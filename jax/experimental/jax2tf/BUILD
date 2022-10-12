@@ -41,6 +41,8 @@ py_library(
         "shape_poly.py",
     ],
     srcs_version = "PY3",
+    # TODO: b/255503696: enable pytype
+    tags = ["pytype_unchecked_annotations"],
     deps = [
         "//jax",
     ] + py_deps("numpy") + py_deps("tensorflow") + jax2tf_deps,

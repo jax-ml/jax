@@ -52,9 +52,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def setUp(self):
     super().setUp()
-    # TODO(b/252943725): re-enable these tests
-    if config.jax_array and config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Test disabled for JAX_ARRAY")
+    # TODO(b/255511660): re-enable these tests
+    if (config.jax_array and
+        config.jax2tf_default_experimental_native_lowering):
+      raise unittest.SkipTest("Test disabled for JAX_ARRAY and native_lowering")
 
   def test_empty(self):
     f_jax = lambda x, y: x

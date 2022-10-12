@@ -307,5 +307,37 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         num_partitions=2)
 
 
+class PjitTest(tf_test_util.JaxToTfTestCase):
+
+  @jtu.with_mesh([("axis", 2)])
+  def test_pjit_basic1D(self):
+    if jtu.device_under_test() == "cpu":
+      raise unittest.SkipTest("b/255511660 Fails on CPU")
+    def func_jax(x):
+      return x + x
+
+    shape = (8, 10)
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+
+    func_pjit = pjit.pjit(func_jax,
+                          in_axis_resources=P("axis"),
+                          out_axis_resources=None)
+    res_jax = func_pjit(x)
+    func_tf = jax2tf.convert(func_pjit)
+
+    # Run in tf.function JIT compile mode
+    res_tf = tf.function(func_tf, autograph=False, jit_compile=True)(x)
+    self.assertAllClose(res_tf.numpy(), res_jax)
+
+    # Run in tf.function mode
+    res_tf = tf.function(func_tf, autograph=False)(x)
+    self.assertAllClose(res_tf.numpy(), res_jax)
+
+    # Run the converted function in TF eager mode
+    # TODO(b/255511660: fails on TPU in eager mode)
+    # res_tf = func_tf(x)
+    # self.assertAllClose(res_tf.numpy(), res_jax)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
