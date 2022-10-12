@@ -252,10 +252,6 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
                           test_autodiff, nondiff_argnums):
-    if (jtu.device_under_test() == "cpu" and
-        (lax_op is lsp_special.gammainc or lax_op is lsp_special.gammaincc)):
-      # TODO(b/173608403): re-enable test when LLVM bug is fixed.
-      raise unittest.SkipTest("Skipping test due to LLVM lowering bug")
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
