@@ -9,6 +9,8 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.23
+* Changes
+  * Update Colab TPU driver version for new jaxlib release.
 
 ## jaxlib 0.3.23
 
