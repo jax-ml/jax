@@ -19,7 +19,6 @@ import operator
 import random
 import unittest
 from typing import NamedTuple, Tuple
-import warnings
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -143,12 +142,6 @@ class cuSparseTest(jtu.JaxTestCase):
     if jtu.device_under_test() == "gpu" and dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
       return self.assertWarns(sparse.CuSparseEfficiencyWarning)
     return contextlib.nullcontext()
-
-  @contextlib.contextmanager
-  def assertNoWarnings(self):
-    with warnings.catch_warnings(record=True) as caught_warnings:
-      yield
-    self.assertEmpty(caught_warnings)
 
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
