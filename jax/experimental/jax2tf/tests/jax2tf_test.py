@@ -21,7 +21,6 @@ import unittest
 
 from absl import logging
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax import ad_checkpoint
@@ -200,12 +199,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     self.assertIsNotNone(f_tf.get_concrete_function())
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_dtype={dtype.__name__}_function={with_function}",
-         dtype=dtype,
-         with_function=with_function)
-    for dtype in [np.int64, np.float64]
-    for with_function in [True, False]))
+  @jtu.sample_product(
+    dtype=[np.int64, np.float64],
+    with_function=[True, False],
+  )
   def test_converts_64bit(self, dtype=np.int64, with_function=False):
     if not config.jax_enable_x64:
       self.skipTest("requires x64 mode")
@@ -251,10 +248,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
     self.ConvertAndCompare(f_jax, 0.7)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_disabled(self, with_function=False):
     f_tf = jax2tf.convert(jnp.tan, with_gradient=False)
     if with_function:
@@ -270,10 +264,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         y = f_tf(x)
         _ = tape.gradient(y, x)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients(self, with_function=True):
     def f(x, y):
       return x * x, x * y
@@ -291,10 +282,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(5., tape.gradient(v, x))
     self.assertAllClose(4., tape.gradient(v, y))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_pytree(self, with_function=True):
     def f(xy: Tuple[float, float]) -> Dict[str, float]:
       x, y = xy
@@ -368,10 +356,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(grad_jax.b, grad_tf[1])
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"function={with_function}",
-         with_function=with_function)
-    for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_with_ordered_dict_input(self, with_function=True):
     def f(inputs):
       out = 0.0
@@ -394,10 +379,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(np.array([1.]), tape.gradient(u, x).numpy())
     self.assertAllClose(np.array([1., 1.]), tape.gradient(u, y).numpy())
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_with_custom_jvp(self, with_function=True):
     """Check gradients, for a function with custom JVP."""
     @jax.custom_jvp
@@ -428,10 +410,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(4. * 4., y)
     self.assertAllClose(3. * 4., tape.gradient(y, x))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_with_custom_vjp(self, with_function=True):
     """Check gradients, for a function with custom VJP."""
     @jax.custom_vjp
@@ -498,10 +477,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.int32),
                         d_dx_tf.numpy())
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_unused_argument_readme(self, with_function=False):
     # x1 and x3 are not used. x3 has integer type.
     def fn(x0, x1, x2, x3):
@@ -546,10 +522,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(g_jax2tf[2].numpy(), np.float32(2.))
     self.assertAllClose(g_jax2tf[3].numpy(), np.int32(0))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_gradients_int_argument(self, with_function=False):
     # https://github.com/google/jax/issues/6975
     # Also issue #6975.
@@ -875,9 +848,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(outer)(2.)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{transform}", transform=transform)
-    for transform in ["jit", "jvp", "grad", "vmap"]))
+  @jtu.sample_product(transform=["jit", "jvp", "grad", "vmap"])
   def test_convert_under_transform_error(self, transform="vmap"):
     def outer(y):
       return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
@@ -886,9 +857,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         ValueError, "convert must be used outside all JAX transformations"):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    dict(testcase_name=f"_{transform}", transform=transform)
-    for transform in ["jit", "jvp", "grad", "vmap"]))
+  @jtu.sample_product(transform=["jit", "jvp", "grad", "vmap"])
   def test_convert_under_transform_error_non_tracer(self, transform="vmap"):
     def outer(y):
       sin_1 = jax2tf.convert(jnp.sin)(1.)  # Inner convert takes non-tracer arg
@@ -997,10 +966,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(tf_fn(tf.constant(1.375, tf.bfloat16)).numpy(),
                         jnp.bfloat16(2.750))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_kwargs(self, with_function=True):
     # Re: https://github.com/google/jax/issues/6791
     def f_jax(*, x):
@@ -1012,10 +978,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
       np.zeros((), dtype=np.float32))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_grad_kwargs(self, with_function=False):
     # Re: https://github.com/google/jax/issues/6791
     x = (np.zeros(3, dtype=np.float32),

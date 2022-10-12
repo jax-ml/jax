@@ -834,10 +834,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         res_jax,
         jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      dict(testcase_name=f"function={with_function}",
-           with_function=with_function)
-      for with_function in [False, True]))
+  @jtu.sample_product(with_function=[False, True])
   def test_grad_int(self, with_function=True):
     # https://github.com/google/jax/issues/7093
     # Also issue #6975.

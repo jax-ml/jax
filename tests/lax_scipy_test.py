@@ -141,7 +141,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     # of inputs to some reasonable intervals
     op_record("zeta", 2, float_dtypes, jtu.rand_positive, False),
     # TODO: float64 produces aborts on gpu, potentially related to use of jnp.piecewise
-    op_record("expi", 1, [np.float32], jtu.rand_default, True),
+    op_record("expi", 1, [np.float32], partial(jtu.rand_not_small, offset=0.1),
+              True),
     op_record("exp1", 1, [np.float32], jtu.rand_positive, True),
     op_record("expn", 2, (int_dtypes, [np.float32]), jtu.rand_positive, True, (0,)),
 ]
@@ -154,23 +155,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     return lambda: [rng(shape, dtype) for shape, dtype in zip(shapes, dtypes)]
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shapes={}_axis={}_keepdims={}_return_sign={}_use_b_{}".format(
-          jtu.format_shape_dtype_string(shapes, dtype),
-          axis, keepdims, return_sign, use_b),
-       # TODO(b/133842870): re-enable when exp(nan) returns NaN on CPU.
-       "shapes": shapes, "dtype": dtype,
-       "axis": axis, "keepdims": keepdims,
-       "return_sign": return_sign, "use_b": use_b}
-      for shape_group in compatible_shapes for dtype in float_dtypes + complex_dtypes + int_dtypes
+  @jtu.sample_product(
+    [dict(shapes=shapes, axis=axis, use_b=use_b)
+      for shape_group in compatible_shapes
       for use_b in [False, True]
       for shapes in itertools.product(*(
         (shape_group, shape_group) if use_b else (shape_group,)))
       for axis in range(-max(len(shape) for shape in shapes),
                          max(len(shape) for shape in shapes))
-      for keepdims in [False, True]
-      for return_sign in [False, True]))
+    ],
+    dtype=float_dtypes + complex_dtypes + int_dtypes,
+    keepdims=[False, True],
+    return_sign=[False, True],
+  )
   @jtu.ignore_warning(category=RuntimeWarning, message="invalid value encountered in .*")
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogSumExp(self, shapes, dtype, axis,
@@ -235,23 +232,23 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         result = lsp_special.logsumexp(1.0, b=1.0)
         self.assertEqual(result, 1.0)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-    jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix(
-            rec.test_name, shapes, dtypes),
-         "rng_factory": rec.rng_factory, "shapes": shapes, "dtypes": dtypes,
-         "test_autodiff": rec.test_autodiff,
-         "nondiff_argnums": rec.nondiff_argnums,
-         "scipy_op": getattr(osp_special, rec.name),
-         "lax_op": getattr(lsp_special, rec.name)}
-        for shapes in itertools.combinations_with_replacement(all_shapes, rec.nargs)
-        for dtypes in (itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
-          if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)))
-      for rec in JAX_SPECIAL_FUNCTION_RECORDS))
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(op=rec.name, rng_factory=rec.rng_factory,
+            test_autodiff=rec.test_autodiff,
+            nondiff_argnums=rec.nondiff_argnums)],
+      shapes=itertools.combinations_with_replacement(all_shapes, rec.nargs),
+      dtypes=(itertools.combinations_with_replacement(rec.dtypes, rec.nargs)
+        if isinstance(rec.dtypes, list) else itertools.product(*rec.dtypes)),
+    )
+    for rec in JAX_SPECIAL_FUNCTION_RECORDS
+  ))
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
-  def testScipySpecialFun(self, scipy_op, lax_op, rng_factory, shapes, dtypes,
+  def testScipySpecialFun(self, op, rng_factory, shapes, dtypes,
                           test_autodiff, nondiff_argnums):
+    scipy_op = getattr(osp_special, op)
+    lax_op = getattr(lsp_special, op)
     rng = rng_factory(self.rng())
     args_maker = self._GetArgsMaker(rng, shapes, dtypes)
     args = args_maker()
@@ -272,13 +269,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                       atol=jtu.if_device_under_test("tpu", .1, 1e-3),
                       rtol=.1, eps=1e-3)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_inshape={}_d={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), d),
-       "shape": shape, "dtype": dtype, "d": d}
-      for shape in all_shapes
-      for dtype in float_dtypes
-      for d in [1, 2, 5]))
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=float_dtypes,
+    d=[1, 2, 5],
+  )
   @jax.numpy_rank_promotion('raise')
   def testMultigammaln(self, shape, dtype, d):
     def scipy_fun(a):
@@ -322,13 +317,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
     self.assertAllClose(jax.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_lmax={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), l_max),
-       "l_max": l_max, "shape": shape, "dtype": dtype}
-       for l_max in [1, 2, 3, 6]
-       for shape in [(5,), (10,)]
-       for dtype in float_dtypes))
+  @jtu.sample_product(
+    l_max=[1, 2, 3, 6],
+    shape=[(5,), (10,)],
+    dtype=float_dtypes,
+  )
   def testLpmn(self, l_max, shape, dtype):
     rng = jtu.rand_uniform(self.rng(), low=-0.2, high=0.9)
     args_maker = lambda: [rng(shape, dtype)]
@@ -344,13 +337,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
                             atol=3e-3, check_dtypes=False)
     self._CompileAndCheck(lax_fun, args_maker, rtol=1E-5, atol=3e-3)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_lmax={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), l_max),
-       "l_max": l_max, "shape": shape, "dtype": dtype}
-       for l_max in [3, 4, 6, 32]
-       for shape in [(2,), (3,), (4,), (64,)]
-       for dtype in float_dtypes))
+  @jtu.sample_product(
+    l_max=[3, 4, 6, 32],
+    shape=[(2,), (3,), (4,), (64,)],
+    dtype=float_dtypes,
+  )
   def testNormalizedLpmnValues(self, l_max, shape, dtype):
     rng = jtu.rand_uniform(self.rng(), low=-0.2, high=0.9)
     args_maker = lambda: [rng(shape, dtype)]
@@ -432,11 +423,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self.assertAllClose(actual, expected, rtol=1e-8, atol=6e-8)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': f'_maxdegree={l_max}_inputsize={num_z}_dtype={dtype.__name__}',
-       'l_max': l_max, 'num_z': num_z, 'dtype': dtype}
+  @jtu.sample_product(
+    [dict(l_max=l_max, num_z=num_z)
       for l_max, num_z in zip([1, 3, 8, 10], [2, 6, 7, 8])
-      for dtype in jtu.dtypes.all_integer))
+    ],
+    dtype=jtu.dtypes.all_integer,
+  )
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises dtype promotion
   def testSphHarmForJitAndAgainstNumpy(self, l_max, num_z, dtype):
     """Tests against JIT compatibility and Numpy."""
@@ -475,32 +467,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     self.assertAllClose(actual, expected, rtol=1e-8, atol=9e-5)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name':
-        '_shape={}'
-        '_n_zero_sv={}_degeneracy={}_geometric_spectrum={}'
-        '_max_sv={}_method={}_side={}'
-        '_nonzero_condition_number={}_seed={}'.format(
-          jtu.format_shape_dtype_string(
-            shape, jnp.dtype(dtype).name).replace(" ", ""),
-          n_zero_sv, degeneracy, geometric_spectrum, max_sv,
-          method, side, nonzero_condition_number, seed
-        ),
-        'n_zero_sv': n_zero_sv, 'degeneracy': degeneracy,
-        'geometric_spectrum': geometric_spectrum,
-        'max_sv': max_sv, 'shape': shape, 'method': method,
-        'side': side, 'nonzero_condition_number': nonzero_condition_number,
-        'dtype': dtype, 'seed': seed}
-      for n_zero_sv in n_zero_svs
-      for degeneracy in degeneracies
-      for geometric_spectrum in geometric_spectra
-      for max_sv in max_svs
-      for shape in polar_shapes
-      for method in methods
-      for side in sides
-      for nonzero_condition_number in nonzero_condition_numbers
-      for dtype in jtu.dtypes.inexact
-      for seed in seeds))
+  @jtu.sample_product(
+    n_zero_sv=n_zero_svs,
+    degeneracy=degeneracies,
+    geometric_spectrum=geometric_spectra,
+    max_sv=max_svs,
+    shape=polar_shapes,
+    method=methods,
+    side=sides,
+    nonzero_condition_number=nonzero_condition_numbers,
+    dtype=jtu.dtypes.inexact,
+    seed=seeds,
+  )
   def testPolar(
     self, n_zero_sv, degeneracy, geometric_spectrum, max_sv, shape, method,
       side, nonzero_condition_number, dtype, seed):
@@ -552,15 +530,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       self.assertAllClose(
         matrix, recon, atol=tol * jnp.linalg.norm(matrix))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {'testcase_name':
-      '_linear_size={}_dtype={}_termination_size={}'.format(
-        linear_size, jnp.dtype(dtype).name, termination_size),
-     'linear_size': linear_size, 'dtype': dtype,
-     'termination_size': termination_size}
-    for linear_size in linear_sizes
-    for dtype in jtu.dtypes.floating + jtu.dtypes.complex
-    for termination_size in [1, 19]))
+  @jtu.sample_product(
+    linear_size=linear_sizes,
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    termination_size=[1, 19],
+  )
   def test_spectral_dac_eigh(self, linear_size, dtype, termination_size):
     if jtu.device_under_test() != "tpu" and termination_size != 1:
       raise unittest.SkipTest(
@@ -584,13 +558,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         HV, vV, atol=atol * (80 if jnp.issubdtype(dtype, jnp.complexfloating)
                              else 30))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{jtu.format_shape_dtype_string((n_obs, n_codes, *n_feats), dtype)}",
-       "n_obs": n_obs, "n_codes": n_codes, "n_feats": n_feats, "dtype": dtype}
-      for n_obs in [1, 3, 5]
-      for n_codes in [1, 2, 4]
-      for n_feats in [()] + [(i,) for i in range(1, 3)]
-      for dtype in float_dtypes + int_dtypes)) # scipy doesn't support complex
+  @jtu.sample_product(
+    n_obs=[1, 3, 5],
+    n_codes=[1, 2, 4],
+    n_feats=[()] + [(i,) for i in range(1, 3)],
+    dtype=float_dtypes + int_dtypes, # scipy doesn't support complex
+  )
   def test_vq(self, n_obs, n_codes, n_feats, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng((n_obs, *n_feats), dtype), rng((n_codes, *n_feats), dtype)]

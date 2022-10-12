@@ -137,7 +137,7 @@ if numpy_version >= (1, 22):  # where keyword added in numpy 1.22
       op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
                 inexact=True),
       op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
-                inexact=True),
+                inexact=True, tolerance={np.float16: 3e-3}),
       op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
                 inexact=True),
   ]
@@ -148,7 +148,7 @@ JAX_REDUCER_NO_DTYPE_RECORDS = [
     op_record("max", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, nonempty_shapes, jtu.rand_default, []),
     op_record("var", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
-              inexact=True),
+              inexact=True, tolerance={jnp.bfloat16: 2e-2}),
     op_record("std", 1, all_dtypes, nonempty_shapes, jtu.rand_default, [],
               inexact=True),
     op_record("nanmax", 1, all_dtypes, nonempty_shapes, jtu.rand_some_nan, []),
@@ -179,23 +179,25 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": "{}_inshape={}_axis={}_dtype={}_keepdims={}".format(
-            rec.test_name.capitalize(),
-            jtu.format_shape_dtype_string(shape, dtype), axis,
-            "None" if out_dtype is None else np.dtype(out_dtype).name, keepdims),
-         "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype, "out_dtype": out_dtype,
-         "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-         "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
-        for shape in rec.shapes for dtype in rec.dtypes
-        for out_dtype in [None] + rec.dtypes if out_dtype not in unsigned_dtypes
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(shape=shape, axis=axis, dtype=dtype)
+        for shape in rec.shapes
+        for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for keepdims in [False, True]
-        if jtu.is_valid_shape(shape, dtype))
-      for rec in JAX_REDUCER_RECORDS))
-  def testReducer(self, np_op, jnp_op, rng_factory, shape, dtype, out_dtype,
+        if jtu.is_valid_shape(shape, dtype)
+      ],
+      out_dtype=[out_dtype for out_dtype in [None] + rec.dtypes
+                  if out_dtype not in unsigned_dtypes],
+      keepdims=[False, True],
+    )
+    for rec in JAX_REDUCER_RECORDS
+  ))
+  def testReducer(self, name, rng_factory, shape, dtype, out_dtype,
                   axis, keepdims, inexact):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     @jtu.ignore_warning(category=np.ComplexWarning)
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -223,23 +225,26 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol,
                           rtol=tol)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
-            rec.test_name.capitalize(),
-            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            tolerance=rec.tolerance)],
+      [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for keepdims in [False, True]
-        if jtu.is_valid_shape(shape, dtype))
-      for rec in JAX_REDUCER_NO_DTYPE_RECORDS))
-  def testReducerNoDtype(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
-                         keepdims, inexact):
+        if jtu.is_valid_shape(shape, dtype)
+      ],
+      keepdims=[False, True],
+    )
+    for rec in JAX_REDUCER_NO_DTYPE_RECORDS
+  ))
+  def testReducerNoDtype(self, name, rng_factory, shape, dtype, axis,
+                         keepdims, inexact, tolerance):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
-    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    is_bf16_nan_test = (dtype == jnp.bfloat16 and
+                        rng_factory.__name__ == 'rand_some_nan')
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -255,25 +260,28 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
     args_maker = lambda: [rng(shape, dtype)]
-    tol = {np.float16: 0.002}
+    tol = jtu.join_tolerance({np.float16: 0.002},
+                             tolerance or jtu.default_tolerance())
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}".format(
-            rec.test_name.capitalize(),
-            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial),
-        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-        "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for initial in [0, 1] for keepdims in [False, True]
-        if jtu.is_valid_shape(shape, dtype))
-      for rec in JAX_REDUCER_INITIAL_RECORDS))
-  def testReducerInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+        if jtu.is_valid_shape(shape, dtype)
+      ],
+      initial=[0, 1],
+      keepdims=[False, True],
+    )
+    for rec in JAX_REDUCER_INITIAL_RECORDS
+  ))
+  def testReducerInitial(self, name, rng_factory, shape, dtype, axis,
                          keepdims, initial, inexact):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -295,25 +303,27 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}_promote_integers={}".format(
-            rec.test_name.capitalize(),
-            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial, promote_integers),
-        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-        "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact,
-        "promote_integers": promote_integers}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(shape=shape, axis=axis, dtype=dtype)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for initial in [0, 1] for keepdims in [False, True]
-        for promote_integers in [True, False]
-        if jtu.is_valid_shape(shape, dtype))
-      for rec in JAX_REDUCER_PROMOTE_INT_RECORDS))
-  def testReducerPromoteInt(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+        if jtu.is_valid_shape(shape, dtype)
+      ],
+      initial=[0, 1],
+      keepdims=[False, True],
+      promote_integers=[False, True],
+    )
+    for rec in JAX_REDUCER_PROMOTE_INT_RECORDS
+  ))
+  def testReducerPromoteInt(self, name, rng_factory, shape, dtype, axis,
                             keepdims, initial, inexact, promote_integers):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
-    is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
+    is_bf16_nan_test = (dtype == jnp.bfloat16 and
+                        rng_factory.__name__ == 'rand_some_nan')
     @jtu.ignore_warning(category=RuntimeWarning,
                         message="Degrees of freedom <= 0 for slice.*")
     @jtu.ignore_warning(category=np.ComplexWarning)
@@ -338,21 +348,22 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}".format(
-            rec.test_name.capitalize(),
-            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims),
-        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name),
-        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(shape=shape, axis=axis)
         for shape in rec.shapes if np.prod(shape) == 0
-        for dtype in rec.dtypes
-        for keepdims in [False, True]
-        for axis in range(-len(shape), len(shape)) if shape[axis] >= 1)
-      for rec in JAX_REDUCER_INITIAL_RECORDS))
-  def testReducerNoInitialZeroDims(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+        for axis in range(-len(shape), len(shape)) if shape[axis] >= 1
+      ],
+      dtype=rec.dtypes,
+      keepdims=[False, True],
+    )
+    for rec in JAX_REDUCER_INITIAL_RECORDS
+  ))
+  def testReducerNoInitialZeroDims(self, name, rng_factory, shape, dtype, axis,
                                    keepdims, inexact):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16 and rng_factory.__name__ == 'rand_some_nan'
     @jtu.ignore_warning(category=RuntimeWarning,
@@ -374,23 +385,24 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-      jtu.cases_from_list(
-        {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_initial={}_whereshape={}".format(
-            rec.test_name.capitalize(),
-            jtu.format_shape_dtype_string(shape, dtype), axis, keepdims, initial,
-            jtu.format_shape_dtype_string(whereshape, bool)),
-        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name), "whereshape": whereshape,
-        "initial": initial, "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
         for shape in rec.shapes for dtype in rec.dtypes
-        for whereshape in _compatible_shapes(shape)
         for axis in list(range(-len(shape), len(shape))) + [None]
-        for initial in [0, 1] for keepdims in [False, True]
-        if jtu.is_valid_shape(shape, dtype))
-      for rec in JAX_REDUCER_INITIAL_RECORDS))
-  def testReducerWhere(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
+        if jtu.is_valid_shape(shape, dtype)
+        for whereshape in _compatible_shapes(shape)
+      ],
+      initial=[0, 1],
+      keepdims=[False, True],
+    )
+    for rec in JAX_REDUCER_INITIAL_RECORDS
+  ))
+  def testReducerWhere(self, name, rng_factory, shape, dtype, axis,
                        keepdims, initial, inexact, whereshape):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     if (shape in [()] + scalar_shapes and
         dtype in [jnp.int16, jnp.uint16] and
         jnp_op in [jnp.min, jnp.max]):
@@ -417,23 +429,23 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @parameterized.named_parameters(itertools.chain.from_iterable(
-    jtu.cases_from_list(
-      {"testcase_name": "{}_inshape={}_axis={}_keepdims={}_whereshape={}".format(
-        rec.test_name.capitalize(),
-        jtu.format_shape_dtype_string(shape, dtype), axis, keepdims,
-        jtu.format_shape_dtype_string(whereshape, bool)),
-        "rng_factory": rec.rng_factory, "shape": shape, "dtype": dtype,
-        "np_op": getattr(np, rec.name), "jnp_op": getattr(jnp, rec.name), "whereshape": whereshape,
-        "axis": axis, "keepdims": keepdims, "inexact": rec.inexact}
-      for shape in rec.shapes for dtype in rec.dtypes
-      for whereshape in _compatible_shapes(shape)
-      for axis in list(range(-len(shape), len(shape))) + [None]
-      for keepdims in [False, True]
-      if jtu.is_valid_shape(shape, dtype))
-    for rec in JAX_REDUCER_WHERE_NO_INITIAL_RECORDS))
-  def testReducerWhereNoInitial(self, np_op, jnp_op, rng_factory, shape, dtype, axis,
-                                keepdims, inexact, whereshape):
+  @parameterized.parameters(itertools.chain.from_iterable(
+    jtu.sample_product_testcases(
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            tol=rec.tolerance)],
+      [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
+        for shape in rec.shapes for dtype in rec.dtypes
+        for whereshape in _compatible_shapes(shape)
+        for axis in list(range(-len(shape), len(shape))) + [None]
+        if jtu.is_valid_shape(shape, dtype)
+      ],
+      keepdims=[False, True],
+    ) for rec in JAX_REDUCER_WHERE_NO_INITIAL_RECORDS
+  ))
+  def testReducerWhereNoInitial(self, name, rng_factory, shape, dtype, axis,
+                                keepdims, inexact, whereshape, tol):
+    np_op = getattr(np, name)
+    jnp_op = getattr(jnp, name)
     rng = rng_factory(self.rng())
     is_bf16_nan_test = dtype == jnp.bfloat16
     # Do not pass where via args_maker as that is incompatible with _promote_like_jnp.
@@ -458,7 +470,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     if numpy_version >= (1, 20, 2) or np_op.__name__ in ("all", "any"):
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testReductionOfOutOfBoundsAxis(self):  # Issue 888
@@ -510,19 +522,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker, check_dtypes=check_dtypes,
                           rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-        {"testcase_name":
-         "_shape={}_dtype={}_out_dtype={}_axis={}_ddof={}_keepdims={}"
-         .format(shape, dtype.__name__, out_dtype.__name__, axis, ddof, keepdims),
-         "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
-         "ddof": ddof, "keepdims": keepdims}
-        for shape in [(5,), (10, 5)]
-        for dtype in all_dtypes
-        for out_dtype in inexact_dtypes
-        for axis in [None, 0, -1]
-        for ddof in [0, 1, 2]
-        for keepdims in [False, True]))
+  @jtu.sample_product(
+    shape=[(5,), (10, 5)],
+    dtype=all_dtypes,
+    out_dtype=inexact_dtypes,
+    axis=[None, 0, -1],
+    ddof=[0, 1, 2],
+    keepdims=[False, True],
+  )
   def testVar(self, shape, dtype, out_dtype, axis, ddof, keepdims):
     rng = jtu.rand_default(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
@@ -547,19 +554,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker, rtol=tol,
                             atol=tol)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-        {"testcase_name":
-         "_shape={}_dtype={}_out_dtype={}_axis={}_ddof={}_keepdims={}"
-         .format(shape, dtype, out_dtype, axis, ddof, keepdims),
-         "shape": shape, "dtype": dtype, "out_dtype": out_dtype, "axis": axis,
-         "ddof": ddof, "keepdims": keepdims}
-        for shape in [(5,), (10, 5)]
-        for dtype in all_dtypes
-        for out_dtype in inexact_dtypes
-        for axis in [None, 0, -1]
-        for ddof in [0, 1, 2]
-        for keepdims in [False, True]))
+  @jtu.sample_product(
+    shape=[(5,), (10, 5)],
+    dtype=all_dtypes,
+    out_dtype=inexact_dtypes,
+    axis=[None, 0, -1],
+    ddof=[0, 1, 2],
+    keepdims=[False, True],
+  )
   def testNanVar(self, shape, dtype, out_dtype, axis, ddof, keepdims):
     rng = jtu.rand_some_nan(self.rng())
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
@@ -594,22 +596,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     z = jax.grad(jnp.nanstd)(x)
     self.assertEqual(jnp.isnan(z).sum(), 0)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-        {"testcase_name":
-          "_shape={}_dtype={}_y_shape={}_y_dtype={}_rowvar={}_ddof={}_bias={}_fweights={}_aweights={}".format(
-            shape, dtype, y_shape, y_dtype, rowvar, ddof, bias, fweights, aweights),
-         "shape": shape, "y_shape": y_shape, "dtype": dtype, "y_dtype": y_dtype,"rowvar": rowvar, "ddof": ddof,
-         "bias": bias, "fweights": fweights, "aweights": aweights}
-        for shape in [(5,), (10, 5), (5, 10)]
-        for dtype in all_dtypes
-        for y_dtype in [None, dtype]
-        for rowvar in [True, False]
-        for y_shape in _get_y_shapes(y_dtype, shape, rowvar)
-        for bias in [True, False]
-        for ddof in [None, 2, 3]
-        for fweights in [True, False]
-        for aweights in [True, False]))
+  @jtu.sample_product(
+    [dict(shape=shape, dtype=dtype, y_dtype=y_dtype, rowvar=rowvar,
+          y_shape=y_shape)
+      for shape in [(5,), (10, 5), (5, 10)]
+      for dtype in all_dtypes
+      for y_dtype in [None, dtype]
+      for rowvar in [True, False]
+      for y_shape in _get_y_shapes(y_dtype, shape, rowvar)
+    ],
+    bias=[True, False],
+    ddof=[None, 2, 3],
+    fweights=[True, False],
+    aweights=[True, False],
+  )
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
   def testCov(self, shape, dtype, y_shape, y_dtype, rowvar, ddof, bias, fweights, aweights):
     rng = jtu.rand_default(self.rng())

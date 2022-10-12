@@ -658,20 +658,6 @@ def assert_dot_precision(expected_precision, fun, *args):
       assert precision == expected_precision, msg
 
 
-_CACHED_INDICES: Dict[int, Sequence[int]] = {}
-
-def cases_from_list(xs):
-  xs = list(xs)
-  n = len(xs)
-  k = min(n, FLAGS.num_generated_cases)
-  # Random sampling for every parameterized test is expensive. Do it once and
-  # cache the result.
-  indices = _CACHED_INDICES.get(n)
-  if indices is None:
-    rng = npr.RandomState(42)
-    _CACHED_INDICES[n] = indices = rng.permutation(n)
-  return [xs[i] for i in indices[:k]]
-
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
   cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
@@ -703,14 +689,20 @@ def named_cases_from_sampler(gen):
     yield case
 
 
+# Random sampling for every parameterized test is expensive. Do it once and
+# cache the result.
+@functools.lru_cache(maxsize=None)
+def _choice(n, m):
+  rng = np.random.RandomState(42)
+  return rng.choice(n, size=m, replace=False)
+
 def sample_product_testcases(*args, **kw):
   """Non-decorator form of sample_product."""
   args = [list(arg) for arg in args]
   kw = [(k, list(v)) for k, v in kw.items()]
   n = prod(len(a) for a in args) * prod(len(v) for _, v in kw)
-  rng = np.random.RandomState(42)
   testcases = []
-  for i in rng.choice(n, size=min(n, FLAGS.num_generated_cases), replace=False):
+  for i in _choice(n, min(n, FLAGS.num_generated_cases)):
     testcase = {}
     for a in args:
       testcase.update(a[i % len(a)])

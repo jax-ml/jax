@@ -16,7 +16,7 @@
 from functools import partial
 import itertools
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import numpy as np
 import scipy.stats as osp_stats
@@ -34,12 +34,10 @@ one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
 
 
 def genNamedParametersNArgs(n):
-  return parameterized.named_parameters(
-      jtu.cases_from_list(
-        {"testcase_name": jtu.format_test_name_suffix("", shapes, dtypes),
-          "shapes": shapes, "dtypes": dtypes}
-        for shapes in itertools.combinations_with_replacement(all_shapes, n)
-        for dtypes in itertools.combinations_with_replacement(jtu.dtypes.floating, n)))
+  return jtu.sample_product(
+    shapes=itertools.combinations_with_replacement(all_shapes, n),
+    dtypes=itertools.combinations_with_replacement(jtu.dtypes.floating, n),
+  )
 
 
 # Allow implicit rank promotion in these tests, as virtually every test exercises it.
@@ -179,14 +177,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
-  @parameterized.named_parameters(
-    jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [x_shape, alpha_shape], dtypes),
-        "shapes": [x_shape, alpha_shape], "dtypes": dtypes}
+  @jtu.sample_product(
+    shapes=[
+      [x_shape, alpha_shape]
       for x_shape in one_and_two_dim_shapes
       for alpha_shape in [(x_shape[0],), (x_shape[0] + 1,)]
-      for dtypes in itertools.combinations_with_replacement(jtu.dtypes.floating, 2)
-  ))
+    ],
+    dtypes=itertools.combinations_with_replacement(jtu.dtypes.floating, 2),
+  )
   def testDirichletLogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
 
@@ -564,13 +562,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       lsp_stats.norm.cdf(np.full((4,), np.inf, np.float32)),
       check_dtypes=False)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [shape, shape], [x_dtype, p_dtype]),
-       "x_dtype": x_dtype,
-       "p_dtype": p_dtype,
-       "shape": shape}
-      for shape in [(2), (4,), (1, 5)]
-      for (x_dtype, p_dtype) in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)))
+  @jtu.sample_product(
+    [dict(x_dtype=x_dtype, p_dtype=p_dtype)
+     for x_dtype, p_dtype in itertools.product(jtu.dtypes.integer, jtu.dtypes.floating)
+    ],
+    shape=[(2), (4,), (1, 5)],
+  )
   def testMultinomialLogPmf(self, shape, x_dtype, p_dtype):
     rng = jtu.rand_positive(self.rng())
     scipy_fun = osp_stats.multinomial.logpmf
@@ -588,16 +585,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                             tol=5e-4)
     self._CompileAndCheck(lax_fun, args_maker, rtol=1e-5, atol=1e-5)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_x={}_mean={}_cov={}".format(
-          jtu.format_shape_dtype_string(x_shape, x_dtype),
-          jtu.format_shape_dtype_string(mean_shape, mean_dtype)
-          if mean_shape is not None else None,
-          jtu.format_shape_dtype_string(cov_shape, cov_dtype)
-          if cov_shape is not None else None),
-       "x_shape": x_shape, "x_dtype": x_dtype,
-       "mean_shape": mean_shape, "mean_dtype": mean_dtype,
-       "cov_shape": cov_shape, "cov_dtype": cov_dtype}
+  @jtu.sample_product(
+    [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
       for x_shape, mean_shape, cov_shape in [
           # # These test cases cover default values for mean/cov, but we don't
           # # support those yet (and they seem not very valuable).
@@ -616,9 +605,13 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(3, 4), (4,), (4, 4)],
           [(2, 3, 4), (4,), (4, 4)],
       ]
-      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
-      if (mean_shape is not None or mean_dtype == np.float32)
-      and (cov_shape is not None or cov_dtype == np.float32)))
+    ],
+    [dict(x_dtype=x_dtype, mean_dtype=mean_dtype, cov_dtype=cov_dtype)
+     for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
+    ],
+    # if (mean_shape is not None or mean_dtype == np.float32)
+    # and (cov_shape is not None or cov_dtype == np.float32)))
+  )
   def testMultivariateNormalLogpdf(self, x_shape, x_dtype, mean_shape,
                                    mean_dtype, cov_shape, cov_dtype):
     rng = jtu.rand_default(self.rng())
@@ -642,16 +635,8 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                           rtol=1e-4, atol=1e-4)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_x={}_mean={}_cov={}".format(
-          jtu.format_shape_dtype_string(x_shape, x_dtype),
-          jtu.format_shape_dtype_string(mean_shape, mean_dtype)
-          if mean_shape is not None else None,
-          jtu.format_shape_dtype_string(cov_shape, cov_dtype)
-          if cov_shape is not None else None),
-       "x_shape": x_shape, "x_dtype": x_dtype,
-       "mean_shape": mean_shape, "mean_dtype": mean_dtype,
-       "cov_shape": cov_shape, "cov_dtype": cov_dtype}
+  @jtu.sample_product(
+    [dict(x_shape=x_shape, mean_shape=mean_shape, cov_shape=cov_shape)
       for x_shape, mean_shape, cov_shape in [
           # These test cases are where scipy flattens things, which has
           # different batch semantics than some might expect, so we manually
@@ -663,9 +648,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
           [(1, 3, 2), (3, 2,), (5, 1, 2, 2)],
           [(5, 3, 2), (1, 2,), (2, 2)],
       ]
-      for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
-      if (mean_shape is not None or mean_dtype == np.float32)
-      and (cov_shape is not None or cov_dtype == np.float32)))
+    ],
+    [dict(x_dtype=x_dtype, mean_dtype=mean_dtype, cov_dtype=cov_dtype)
+     for x_dtype, mean_dtype, cov_dtype in itertools.combinations_with_replacement(jtu.dtypes.floating, 3)
+    ],
+  )
   def testMultivariateNormalLogpdfBroadcasted(self, x_shape, x_dtype, mean_shape,
                                               mean_dtype, cov_shape, cov_dtype):
     rng = jtu.rand_default(self.rng())
@@ -691,12 +678,11 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                           rtol=1e-4, atol=1e-4)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_ndim={ndim}_nbatch={nbatch}_dtype={dtype.__name__}",
-       "ndim": ndim, "nbatch": nbatch, "dtype": dtype}
-      for ndim in [2, 3]
-      for nbatch in [1, 3, 5]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    ndim=[2, 3],
+    nbatch=[1, 3, 5],
+    dtype=jtu.dtypes.floating,
+  )
   def testMultivariateNormalLogpdfBatch(self, ndim, nbatch, dtype):
     # Regression test for #5570
     rng = jtu.rand_default(self.rng())
@@ -709,23 +695,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result2 = jax.vmap(lsp_stats.multivariate_normal.logpdf)(x, mean, cov)
     self.assertArraysEqual(result1, result2, check_dtypes=False)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-        "_inshape={}_outsize={}_weights={}_method={}_func={}".format(
-          jtu.format_shape_dtype_string(inshape, dtype),
-          outsize, weights, method, func),
-       "dtype": dtype,
-       "inshape": inshape,
-       "outsize": outsize,
-       "weights": weights,
-       "method": method,
-       "func": func}
-      for inshape in [(50,), (3, 50), (2, 12)]
-      for dtype in jtu.dtypes.floating
-      for outsize in [None, 10]
-      for weights in [False, True]
-      for method in [None, "scott", "silverman", 1.5, "callable"]
-      for func in [None, "evaluate", "logpdf", "pdf"]))
+  @jtu.sample_product(
+    inshape=[(50,), (3, 50), (2, 12)],
+    dtype=jtu.dtypes.floating,
+    outsize=[None, 10],
+    weights=[False, True],
+    method=[None, "scott", "silverman", 1.5, "callable"],
+    func=[None, "evaluate", "logpdf", "pdf"],
+  )
   def testKde(self, inshape, dtype, outsize, weights, method, func):
     if method == "callable":
       method = lambda kde: jax.numpy.power(kde.neff, -1./(kde.d+4))
@@ -764,12 +741,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
-       "dtype": dtype,
-       "shape": shape}
-      for shape in [(15,), (3, 15), (1, 12)]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    shape=[(15,), (3, 15), (1, 12)],
+    dtype=jtu.dtypes.floating,
+  )
   def testKdeIntegrateGaussian(self, shape, dtype):
     def scipy_fun(dataset, weights):
       kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
@@ -796,12 +771,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
-       "dtype": dtype,
-       "shape": shape}
-      for shape in [(15,), (12,)]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    shape=[(15,), (12,)],
+    dtype=jtu.dtypes.floating,
+  )
   def testKdeIntegrateBox1d(self, shape, dtype):
     def scipy_fun(dataset, weights):
       kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
@@ -820,12 +793,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
-       "dtype": dtype,
-       "shape": shape}
-      for shape in [(15,), (3, 15), (1, 12)]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    shape=[(15,), (3, 15), (1, 12)],
+    dtype=jtu.dtypes.floating,
+  )
   def testKdeIntegrateKde(self, shape, dtype):
     def scipy_fun(dataset, weights):
       kde = osp_stats.gaussian_kde(dataset, weights=np.abs(weights))
@@ -848,12 +819,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CompileAndCheck(
         lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
-       "dtype": dtype,
-       "shape": shape}
-      for shape in [(15,), (3, 15), (1, 12)]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    shape=[(15,), (3, 15), (1, 12)],
+    dtype=jtu.dtypes.floating,
+  )
   def testKdeResampleShape(self, shape, dtype):
     def resample(key, dataset, weights, *, shape):
       kde = lsp_stats.gaussian_kde(dataset, weights=jax.numpy.abs(weights))
@@ -878,12 +847,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     result = func(*args)
     assert result.shape == (ndim, 4)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": jtu.format_test_name_suffix("", [shape], [dtype]),
-       "dtype": dtype,
-       "shape": shape}
-      for shape in [(15,), (1, 12)]
-      for dtype in jtu.dtypes.floating))
+  @jtu.sample_product(
+    shape=[(15,), (1, 12)],
+    dtype=jtu.dtypes.floating,
+  )
   def testKdeResample1d(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     dataset = rng(shape, dtype)

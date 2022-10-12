@@ -15,7 +15,6 @@
 from functools import partial
 import unittest
 
-from absl.testing import parameterized
 from absl.testing import absltest
 import numpy as np
 import scipy.sparse.linalg
@@ -93,15 +92,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
       M = None
     return M
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}".format(
-            jtu.format_shape_dtype_string(shape, dtype),
-            preconditioner),
-       "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
-      for shape in [(4, 4), (7, 7)]
-      for dtype in [np.float64, np.complex128]
-      for preconditioner in [None, 'identity', 'exact', 'random']))
+  @jtu.sample_product(
+    shape=[(4, 4), (7, 7)],
+    dtype=[np.float64, np.complex128],
+    preconditioner=[None, 'identity', 'exact', 'random'],
+  )
   def test_cg_against_scipy(self, shape, dtype, preconditioner):
     if not config.x64_enabled:
       raise unittest.SkipTest("requires x64 mode")
@@ -132,12 +127,10 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         args_maker,
         tol=1e-6)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       f"_shape={jtu.format_shape_dtype_string(shape, dtype)}",
-       "shape": shape, "dtype": dtype}
-      for shape in [(2, 2)]
-      for dtype in float_types + complex_types))
+  @jtu.sample_product(
+    shape=[(2, 2)],
+    dtype=float_types + complex_types,
+  )
   def test_cg_as_solve(self, shape, dtype):
 
     rng = jtu.rand_default(self.rng())
@@ -219,16 +212,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertTrue(dtypes.is_weakly_typed(x))
 
   # BICGSTAB
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}".format(
-            jtu.format_shape_dtype_string(shape, dtype),
-            preconditioner),
-       "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
-      for shape in [(5, 5)]
-      for dtype in [np.float64, np.complex128]
-      for preconditioner in [None, 'identity', 'exact', 'random']
-  ))
+  @jtu.sample_product(
+    shape=[(5, 5)],
+    dtype=[np.float64, np.complex128],
+    preconditioner=[None, 'identity', 'exact', 'random'],
+  )
   def test_bicgstab_against_scipy(
       self, shape, dtype, preconditioner):
     if not config.jax_enable_x64:
@@ -266,16 +254,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         args_maker,
         tol=1e-4)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}".format(
-         jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
-      for shape in [(2, 2), (7, 7)]
-      for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']
-      ))
+  @jtu.sample_product(
+    shape=[(2, 2), (7, 7)],
+    dtype=float_types + complex_types,
+    preconditioner=[None, 'identity', 'exact'],
+  )
   @jtu.skip_on_devices("gpu")
   def test_bicgstab_on_identity_system(self, shape, dtype, preconditioner):
     A = jnp.eye(shape[1], dtype=dtype)
@@ -290,17 +273,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     solution_tol = 1e-8 if using_x64 else 1e-4
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}".format(
-         jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner
-      }
-      for shape in [(2, 2), (4, 4)]
-      for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']
-      ))
+  @jtu.sample_product(
+    shape=[(2, 2), (4, 4)],
+    dtype=float_types + complex_types,
+    preconditioner=[None, 'identity', 'exact'],
+  )
   @jtu.skip_on_devices("gpu")
   def test_bicgstab_on_random_system(self, shape, dtype, preconditioner):
     rng = jtu.rand_default(self.rng())
@@ -339,18 +316,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(expected, actual)
 
   # GMRES
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}_solve_method={}".format(
-            jtu.format_shape_dtype_string(shape, dtype),
-            preconditioner,
-            solve_method),
-       "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
-       "solve_method": solve_method}
-      for shape in [(3, 3)]
-      for dtype in [np.float64, np.complex128]
-      for preconditioner in [None, 'identity', 'exact', 'random']
-      for solve_method in ['incremental', 'batched']))
+  @jtu.sample_product(
+    shape=[(3, 3)],
+    dtype=[np.float64, np.complex128],
+    preconditioner=[None, 'identity', 'exact', 'random'],
+    solve_method=['incremental', 'batched'],
+  )
   def test_gmres_against_scipy(
       self, shape, dtype, preconditioner, solve_method):
     if not config.x64_enabled:
@@ -380,27 +351,20 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         partial(scipy_gmres, M=M, restart=2, maxiter=1),
         partial(lax_gmres, M=M, restart=2, maxiter=1, solve_method=solve_method),
         args_maker,
-        tol=1e-10)
+        tol=1e-9)
 
     self._CheckAgainstNumpy(
         np.linalg.solve,
         partial(lax_gmres, M=M, atol=1e-6, solve_method=solve_method),
         args_maker,
-        tol=1e-10)
+        tol=1e-8)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}_solve_method={}".format(
-         jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner,
-         solve_method),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
-      "solve_method": solve_method}
-      for shape in [(2, 2), (7, 7)]
-      for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']
-      for solve_method in ['batched', 'incremental']
-      ))
+  @jtu.sample_product(
+    shape=[(2, 2), (7, 7)],
+    dtype=float_types + complex_types,
+    preconditioner=[None, 'identity', 'exact'],
+    solve_method=['batched', 'incremental'],
+  )
   @jtu.skip_on_devices("gpu")
   def test_gmres_on_identity_system(self, shape, dtype, preconditioner,
                                     solve_method):
@@ -419,19 +383,12 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     solution_tol = 1e-8 if using_x64 else 1e-4
     self.assertAllClose(x, solution, atol=solution_tol, rtol=solution_tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}_solve_method={}".format(
-         jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner,
-         solve_method),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner,
-      "solve_method": solve_method}
-      for shape in [(2, 2), (4, 4)]
-      for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity', 'exact']
-      for solve_method in ['incremental', 'batched']
-      ))
+  @jtu.sample_product(
+    shape=[(2, 2), (4, 4)],
+    dtype=float_types + complex_types,
+    preconditioner=[None, 'identity', 'exact'],
+    solve_method=['incremental', 'batched'],
+  )
   @jtu.skip_on_devices("gpu")
   def test_gmres_on_random_system(self, shape, dtype, preconditioner,
                                   solve_method):
@@ -469,15 +426,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     actual, _ = jax.scipy.sparse.linalg.gmres(A, b)
     self.assertAllClose(expected, actual)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-       "_shape={}_preconditioner={}".format(
-         jtu.format_shape_dtype_string(shape, dtype),
-         preconditioner),
-      "shape": shape, "dtype": dtype, "preconditioner": preconditioner}
-      for shape in [(2, 2), (3, 3)]
-      for dtype in float_types + complex_types
-      for preconditioner in [None, 'identity']))
+  @jtu.sample_product(
+    shape=[(2, 2), (3, 3)],
+    dtype=float_types + complex_types,
+    preconditioner=[None, 'identity'],
+  )
   def test_gmres_arnoldi_step(self, shape, dtype, preconditioner):
     """
     The Arnoldi decomposition within GMRES is correct.
