@@ -19,7 +19,6 @@ import time
 import unittest
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import numpy as np
 
 import jax
@@ -34,9 +33,7 @@ config.parse_flags_with_absl()
 
 
 class X64ContextTests(jtu.JaxTestCase):
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}", "jit": jit}
-      for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def test_make_array(self, jit):
     func = jit(lambda: jnp.array(np.float64(0)))
     dtype_start = func().dtype
@@ -46,12 +43,10 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(func().dtype, "float32")
     self.assertEqual(func().dtype, dtype_start)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name": f"_jit={jit._name}_f_{f.__name__}",
-          "jit": jit,
-          "enable_or_disable": f
-      } for jit in jtu.JIT_IMPLEMENTATION for f in [enable_x64, disable_x64]))
+  @jtu.sample_product(
+    jit=jtu.JIT_IMPLEMENTATION,
+    enable_or_disable=[enable_x64, disable_x64],
+  )
   def test_correctly_capture_default(self, jit, enable_or_disable):
     # The fact we defined a jitted function with a block with a different value
     # of `config.enable_x64` has no impact on the output.
@@ -68,9 +63,7 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(func().dtype, "float32")
 
   @unittest.skipIf(jtu.device_under_test() != "cpu", "Test presumes CPU precision")
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}", "jit": jit}
-      for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def test_near_singular_inverse(self, jit):
     rng = jtu.rand_default(self.rng())
 
@@ -89,9 +82,7 @@ class X64ContextTests(jtu.JaxTestCase):
       result_32 = near_singular_inverse()
       self.assertTrue(jnp.all(~jnp.isfinite(result_32)))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}", "jit": jit}
-      for jit in jtu.JIT_IMPLEMENTATION))
+  @jtu.sample_product(jit=jtu.JIT_IMPLEMENTATION)
   def test_while_loop(self, jit):
     @jit
     def count_to(N):

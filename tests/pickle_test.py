@@ -94,9 +94,7 @@ class PickleTest(jtu.JaxTestCase):
     self.assertIsInstance(y, type(x))
     self.assertEqual(x.aval, y.aval)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {'testcase_name': '_' + name, 'prng_name': name}
-      for name in ['threefry2x32', 'rbg', 'unsafe_rbg']))
+  @jtu.sample_product(prng_name=['threefry2x32', 'rbg', 'unsafe_rbg'])
   def testPickleOfKeyArray(self, prng_name):
     with jax.default_prng_impl(prng_name):
       k1 = jax.random.PRNGKey(72)

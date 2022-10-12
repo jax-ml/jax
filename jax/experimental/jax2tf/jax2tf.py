@@ -68,7 +68,11 @@ import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 from tensorflow.core.framework import attr_value_pb2  # type: ignore[import]
-from tensorflow.python.compiler.xla.experimental import xla_sharding  # type: ignore[import]
+try:
+  from tensorflow.python.compiler.xla.experimental import xla_sharding  # type: ignore[import]
+except ModuleNotFoundError:
+  # This can be removed when TF 2.10 support is no longer needed.
+  from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
 from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
 # pylint: enable=g-direct-tensorflow-import
 
@@ -418,6 +422,21 @@ def flatten_fun_jax(fun_jax: Callable, args_tf: Sequence[TfVal],
     out_tree_ref = out_tree
     return res_flat_jax
 
+  if hasattr(fun_jax, "lower"):
+    # If the fun_jax is already a jit(f) or pjit(f), we must
+    # preserve the lowering function. This will be used in the _lower_native_and_run.
+    # We rely on the fact that the lowering is the same for the function
+    # taking pytrees, and the one taking flat args.
+    def fun_flat_jax_lower(*args_flat_jax):
+      tree_args, tree_kwargs = tree_util.tree_unflatten(in_tree, args_flat_jax)
+      lowered = fun_jax.lower(*tree_args, **tree_kwargs)
+      out_tree = lowered.out_tree
+      nonlocal out_tree_ref
+      assert out_tree_ref is None or out_tree_ref == out_tree
+      out_tree_ref = out_tree
+      return lowered
+    setattr(fun_flat_jax, "lower", fun_flat_jax_lower)
+
   return fun_flat_jax, args_flat_tf, in_tree, lambda: out_tree_ref
 
 def preprocess_arg_tf(arg_idx: int,
@@ -600,19 +619,24 @@ def _lower_native_and_run(fun_jax: Callable,
     abstracted_axes = None  # type: ignore
 
   arg_specs_jax = [
-    jax.ShapeDtypeStruct(aval.shape, aval.dtype)
+    jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
     for aval in args_avals
   ]
   # TODO: specify the backend for experimental_native_lowering
   backend = jax.default_backend()
-  lowered = jax.jit(fun_jax, backend=backend,
-                    keep_unused=True,  # TODO: allow dropping unused
-                    abstracted_axes=abstracted_axes).lower(*arg_specs_jax)._lowering
-
+  if not hasattr(fun_jax, "lower") or abstracted_axes:
+    # We support convert(pjit(f_jax, ...)) and convert(jit(f_jax)) but also
+    # convert(f_jax), in which case a "jit" is implied. We also add a jit when
+    # we need to pass the abstracted axes.
+    fun_jax_lower = jax.jit(fun_jax, backend=backend,
+                            keep_unused=True,  # TODO: allow dropping unused
+                            abstracted_axes=abstracted_axes).lower
+  else:
+    fun_jax_lower = fun_jax.lower
+  lowered = fun_jax_lower(*arg_specs_jax)._lowering
   mhlo_module = lowered.mhlo()
   mhlo_module_text = mlir.module_to_string(mhlo_module)
-  if jaxlib.version <= (0, 3, 14):
-    mhlo_module_text = _fixup_mhlo_module_text(mhlo_module_text)
+  logging.vlog(2, f"XlaCallModule {mhlo_module_text}")
   # We do not support custom_call, try to give an error for now
   if "mhlo.custom_call" in mhlo_module_text:
     # Try to give a nice error message. We could just dump the module...
@@ -622,20 +646,25 @@ def _lower_native_and_run(fun_jax: Callable,
            "work on TPU.")
     custom_calls = re.findall(r'mhlo.custom_call.*call_target_name\s+=\s+"([^"]+)".*loc\(([^\)]+)\)',
                               mhlo_module_text)
-    for cc in custom_calls:
-      msg += f"\n{cc[0]}"
-      # Get the line number
-      m = re.search('^' + cc[1] + ' =.*', mhlo_module_text, re.MULTILINE)
-      if m:
-        msg += f"\n  from line {m.group(0)}"
-    raise NotImplementedError(msg)
-  logging.vlog(2, f"XlaCallModule {mhlo_module_text}")
+    bad_custom_calls = tuple(filter(lambda cc: cc[0] != "Sharding", custom_calls))
+    if bad_custom_calls:
+      for cc in bad_custom_calls:
+        msg += f"\n{cc[0]}"
+        # Get the line number
+        m = re.search('^' + cc[1] + ' =.*', mhlo_module_text, re.MULTILINE)
+        if m:
+          msg += f"\n  from line {m.group(0)}"
+      raise NotImplementedError(msg)
 
   # Figure out the result types and shapes
-  if config.jax_array:
+  if "global_out_avals" in lowered.compile_args:
+    # This is currently the case for pjit
     out_avals = lowered.compile_args["global_out_avals"]
   else:
     out_avals = lowered.compile_args["out_avals"]
+  if lowered.compile_args["host_callbacks"]:
+    raise NotImplementedError("host_callbacks are not yet implemented for the jax2tf native lowering")
+
   # TODO(necula): handle d being InDBIdx
   out_shapes = tuple(
       tuple(d if type(d) is int else None
@@ -648,12 +677,22 @@ def _lower_native_and_run(fun_jax: Callable,
     return jax_type
   out_types = tuple(_out_type(out_aval.dtype) for out_aval in out_avals)
 
+  # Apply the shardings on arguments and results for pjit. This is redundant
+  # because the mhlo_module_text will already contain the shardings, but it
+  # makes it easier for tools like the TPU inference converter to see the
+  # sharding without digging into the `module` attribute of the `XlaCallModule`
+  # op, in the same way as it is done for the legacy jax2tf conversion.
+  if "in_shardings" in lowered.compile_args:
+    args_tf = tuple(
+      map(_shard_value, args_tf, args_avals, lowered.compile_args["in_shardings"]))
   res = tfxla.call_module(
       args_tf,
       module=mhlo_module_text,
       Tout=out_types,
       Sout=out_shapes,
       dim_args_spec=dim_args_spec)
+  if "out_shardings" in lowered.compile_args:
+    res = list(map(_shard_value, res, out_avals, lowered.compile_args["out_shardings"]))
 
   # Convert the results to the needed TF types
   def _convert_res(res_val, res_jax_type):
@@ -667,15 +706,6 @@ def _lower_native_and_run(fun_jax: Callable,
       _convert_res(res_val, out_aval.dtype)
       for res_val, out_aval in zip(res, out_avals))
   return res, out_avals
-
-def _fixup_mhlo_module_text(mhlo_module_text: str) -> str:
-  # A workaround for MHLO not (yet) having backwards compatibility. With
-  # jaxlib 0.3.14 we have an old serialization method that puts "..." around
-  # MHLO attributes. The parser is new and does not accept those attributes.
-  # We try to fix it up here, temporarily.
-  import re
-  return re.sub(r'#mhlo<"([^"]+)">', "#mhlo<\\1>", mhlo_module_text)
-
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
                                           in_vals: Sequence[TfVal],
@@ -993,6 +1023,10 @@ class TensorFlowTrace(core.Trace):
 
     This function may be called by way of trace.full_raise.
     """
+    if hasattr(val, "__jax_array__"):
+      val = val.__jax_array__()
+      if isinstance(val, TensorFlowTracer):
+        return val
     tf_val, jax_dtype = _tfval_to_tensor_jax_dtype(val, memoize_constants=True)
     return TensorFlowTracer(
         self, val, core.ShapedArray(tf_val.shape, jax_dtype,

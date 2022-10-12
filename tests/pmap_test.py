@@ -2508,12 +2508,10 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     x = jnp.arange(device_count)
     tree_util.tree_map(self.assertAllClose, f(x), {'a': x})
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{in_axes}_{out_axes}",
-       "in_axes": in_axes, "out_axes": out_axes}
-      for in_axes in all_bdims((3, 4), (3, 1), (1, 4), pmap=True)
-      for out_axes in out_bdims((3, 4), True)
-  ))
+  @jtu.sample_product(
+    in_axes=all_bdims((3, 4), (3, 1), (1, 4), pmap=True),
+    out_axes=out_bdims((3, 4), True),
+  )
   def testPmapAllAxesGrad(self, in_axes, out_axes):
     def f(x, y, z):
       return jnp.sin(x + y) * z
@@ -2604,6 +2602,10 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     with jax_config.jax_array(is_jax_array):
       y = jax.device_put_sharded(x, devices)
     self.assertIsInstance(y, array_type)
+    self.assertIsInstance(y.sharding, jax.sharding.PmapSharding)
+    for s in y.addressable_shards:
+      self.assertArraysEqual(s.data, y[s.index])
+      self.assertEqual(s.replica_id, 0)
     buffers = getattr(y, buffer_attr)
     self.assertEqual(len(buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(buffers, devices)))

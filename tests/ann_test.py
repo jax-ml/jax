@@ -15,7 +15,6 @@
 from functools import partial
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import numpy as np
 
@@ -61,18 +60,13 @@ def compute_recall(result_neighbors, ground_truth_neighbors) -> float:
 
 class AnnTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name":
-              "_qy={}_db={}_k={}_recall={}".format(
-                  jtu.format_shape_dtype_string(qy_shape, dtype),
-                  jtu.format_shape_dtype_string(db_shape, dtype), k, recall),
-          "qy_shape": qy_shape, "db_shape": db_shape, "dtype": dtype,
-          "k": k, "recall": recall }
-        for qy_shape in [(200, 128), (128, 128)]
-        for db_shape in [(128, 500), (128, 3000)]
-        for dtype in jtu.dtypes.all_floating
-        for k in [1, 10, 50] for recall in [0.9, 0.95]))
+  @jtu.sample_product(
+    qy_shape=[(200, 128), (128, 128)],
+    db_shape=[(128, 500), (128, 3000)],
+    dtype=jtu.dtypes.all_floating,
+    k=[1, 10, 50],
+    recall=[0.9, 0.95],
+  )
   def test_approx_max_k(self, qy_shape, db_shape, dtype, k, recall):
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
@@ -84,18 +78,13 @@ class AnnTest(jtu.JaxTestCase):
     ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
     self.assertGreater(ann_recall, recall)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name":
-              "_qy={}_db={}_k={}_recall={}".format(
-                  jtu.format_shape_dtype_string(qy_shape, dtype),
-                  jtu.format_shape_dtype_string(db_shape, dtype), k, recall),
-          "qy_shape": qy_shape, "db_shape": db_shape, "dtype": dtype,
-          "k": k, "recall": recall }
-        for qy_shape in [(200, 128), (128, 128)]
-        for db_shape in [(128, 500), (128, 3000)]
-        for dtype in jtu.dtypes.all_floating
-        for k in [1, 10, 50] for recall in [0.9, 0.95]))
+  @jtu.sample_product(
+    qy_shape=[(200, 128), (128, 128)],
+    db_shape=[(128, 500), (128, 3000)],
+    dtype=jtu.dtypes.all_floating,
+    k=[1, 10, 50],
+    recall=[0.9, 0.95],
+  )
   def test_approx_min_k(self, qy_shape, db_shape, dtype, k, recall):
     rng = jtu.rand_default(self.rng())
     qy = rng(qy_shape, dtype)
@@ -105,18 +94,14 @@ class AnnTest(jtu.JaxTestCase):
     _, ann_args = lax.approx_min_k(scores, k, recall_target=recall)
     self.assertEqual(k, len(ann_args[0]))
     ann_recall = compute_recall(np.asarray(ann_args), np.asarray(gt_args))
-    self.assertGreater(ann_recall, recall)
+    self.assertGreater(ann_recall, recall * 0.98)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name":
-              "_shape={}_k={}_max_k={}".format(
-                  jtu.format_shape_dtype_string(shape, dtype), k, is_max_k),
-          "shape": shape, "dtype": dtype, "k": k, "is_max_k": is_max_k }
-        for dtype in [np.float32]
-        for shape in [(4,), (5, 5), (2, 1, 4)]
-        for k in [1, 3]
-        for is_max_k in [True, False]))
+  @jtu.sample_product(
+    dtype=[np.float32],
+    shape=[(4,), (5, 5), (2, 1, 4)],
+    k=[1, 3],
+    is_max_k=[True, False],
+  )
   def test_autodiff(self, shape, dtype, k, is_max_k):
     vals = np.arange(prod(shape), dtype=dtype)
     vals = self.rng().permutation(vals).reshape(shape)
@@ -127,18 +112,13 @@ class AnnTest(jtu.JaxTestCase):
     jtu.check_grads(fn, (vals,), 2, ["fwd", "rev"], eps=1e-2)
 
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name":
-              "_qy={}_db={}_k={}_recall={}".format(
-                  jtu.format_shape_dtype_string(qy_shape, dtype),
-                  jtu.format_shape_dtype_string(db_shape, dtype), k, recall),
-          "qy_shape": qy_shape, "db_shape": db_shape, "dtype": dtype,
-          "k": k, "recall": recall }
-        for qy_shape in [(200, 128), (128, 128)]
-        for db_shape in [(2048, 128)]
-        for dtype in jtu.dtypes.all_floating
-        for k in [1, 10] for recall in [0.9, 0.95]))
+  @jtu.sample_product(
+    qy_shape=[(200, 128), (128, 128)],
+    db_shape=[(2048, 128)],
+    dtype=jtu.dtypes.all_floating,
+    k=[1, 10],
+    recall=[0.9, 0.95],
+  )
   def test_pmap(self, qy_shape, db_shape, dtype, k, recall):
     num_devices = jax.device_count()
     rng = jtu.rand_default(self.rng())

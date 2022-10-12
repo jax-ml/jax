@@ -86,13 +86,13 @@ def pure_callback_batching_rule(args, dims, *, callback, vectorized: bool,
   else:
     is_batched = [d is not batching.not_mapped for d in dims]
     unbatched_args, batched_args = util.partition_list(is_batched, new_args)
-    def _batch_fun(*batched_args):
+    def _batch_fun(batched_args):
       merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)
       return pure_callback_p.bind(
           *merged_args, callback=callback, result_avals=result_avals,
           vectorized=vectorized)
     from jax._src.lax.control_flow import map as lax_map
-    outvals = lax_map(_batch_fun, *batched_args)
+    outvals = lax_map(_batch_fun, batched_args)
   return tuple(outvals), (0,) * len(outvals)
 
 

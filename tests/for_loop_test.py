@@ -207,12 +207,9 @@ for_reference = for_loop.discharged_for_loop
 
 class ForLoopTransformationTest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_f={}_nsteps={}_impl={}".format(
-        for_body_name, nsteps, impl_name),
-        "f": for_body, "body_shapes": body_shapes,
-        "ref": ref, "n": nsteps, "for_impl": for_impl}
-      for for_impl, impl_name in FOR_LOOP_IMPLS
+  @jtu.sample_product(
+    [dict(for_body_name=for_body_name, f=for_body, ref=ref,
+          body_shapes=body_shapes, n=nsteps)
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
@@ -221,9 +218,14 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("accum", for_body_accum, accum_ref, [(4,), (4,)], 3),
         ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
-      ]))
+      ]
+    ],
+    [dict(for_impl=for_impl, impl_name=impl_name)
+     for for_impl, impl_name in FOR_LOOP_IMPLS],
+  )
   @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
-  def test_for_jvp(self, f, ref, body_shapes, n, for_impl):
+  def test_for_jvp(self, f, ref, body_shapes, n, for_impl, for_body_name,
+                   impl_name):
     for_ = for_impl
     rng = self.rng()
 
@@ -237,12 +239,9 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True, rtol=tol, atol=tol)
     jtu.check_grads(partial(for_, n, f), (args,), order=2, modes=["fwd"])
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_f={}_nsteps={}_impl={}".format(
-        for_body_name, nsteps, impl_name),
-        "f": for_body, "body_shapes": body_shapes,
-        "ref": ref, "n": nsteps, "for_impl": for_impl}
-      for for_impl, impl_name in FOR_LOOP_IMPLS
+  @jtu.sample_product(
+    [dict(for_body_name=for_body_name, f=for_body, ref=ref,
+          body_shapes=body_shapes, n=nsteps)
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
         ("swap_swap", for_body_swap_swap, swap_swap_ref, [(4,), (4,)], 4),
@@ -251,9 +250,14 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("accum", for_body_accum, accum_ref, [(4,), (4,)], 3),
         ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
-      ]))
+      ]
+    ],
+    [dict(for_impl=for_impl, impl_name=impl_name)
+     for for_impl, impl_name in FOR_LOOP_IMPLS],
+  )
   @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
-  def test_for_linearize(self, f, ref, body_shapes, n, for_impl):
+  def test_for_linearize(self, f, ref, body_shapes, n, for_impl, for_body_name,
+                         impl_name):
     for_ = for_impl
     rng = self.rng()
 
@@ -341,12 +345,9 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     np.testing.assert_allclose(actual_tangents[0], expected_tangents[0])
     np.testing.assert_allclose(actual_tangents[1], expected_tangents[1])
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_f={}_nsteps={}_impl={}".format(
-        for_body_name, nsteps, impl_name),
-        "f": for_body, "body_shapes": body_shapes,
-        "ref": ref, "n": nsteps, "for_impl": for_impl}
-      for for_impl, impl_name in FOR_LOOP_IMPLS
+  @jtu.sample_product(
+    [dict(for_body_name=for_body_name, f=for_body, ref=ref,
+          body_shapes=body_shapes, n=nsteps)
       for for_body_name, for_body, ref, body_shapes, nsteps in [
         ("noop", for_body_noop, noop_ref, [(4,), (4,)], 4),
         ("swap", for_body_swap, swap_ref, [(4,), (4,)], 4),
@@ -356,10 +357,15 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
         ("accum", for_body_accum, accum_ref, [(4,), (4,)], 3),
         ("sin_sq", for_body_sin_sq, sin_sq_ref, [(4,), (4,)], 4),
         ("reverse", for_body_reverse, reverse_ref, [(4,), (4,)], 4),
-      ]))
+      ]
+    ],
+    [dict(for_impl=for_impl, impl_name=impl_name)
+     for for_impl, impl_name in FOR_LOOP_IMPLS],
+  )
   @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
-  def test_for_grad(self, f, ref, body_shapes, n, for_impl):
+  def test_for_grad(self, f, ref, body_shapes, n, for_impl, for_body_name,
+                    impl_name):
     for_ = for_impl
     rng = self.rng()
 

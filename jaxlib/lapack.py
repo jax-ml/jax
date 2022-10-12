@@ -87,7 +87,9 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
        _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(num_b),
        alpha, a, b],
       operand_layouts=[scalar_layout] * 8 + [layout] * 2,
-      result_layouts=[layout])
+      result_layouts=[layout],
+      operand_output_aliases={9: 0},
+  )
 
 
 # # ?getrf: LU decomposition
@@ -129,7 +131,9 @@ def getrf_mhlo(dtype, a):
         layout,
         tuple(range(num_bd, -1, -1)),
         tuple(range(num_bd - 1, -1, -1)),
-      ])
+      ],
+      operand_output_aliases={3: 0},
+  )
 
 
 # # ?geqrf: QR decomposition
@@ -178,7 +182,9 @@ def geqrf_mhlo(dtype, a):
         tuple(range(num_bd, -1, -1)),
         tuple(range(num_bd - 1, -1, -1)),
         [0],
-      ])
+      ],
+      operand_output_aliases={4: 0},
+  )
   return out[:3]
 
 
@@ -234,7 +240,9 @@ def orgqr_mhlo(dtype, a, tau):
         layout,
         tuple(range(num_bd - 1, -1, -1)),
         [0],
-      ])
+      ],
+      operand_output_aliases={5: 0},
+  )
   return out[:2]
 
 
@@ -271,7 +279,9 @@ def potrf_mhlo(dtype, a, lower=False):
        ir.RankedTensorType.get(batch_dims, ir.IntegerType.get_signless(32))],
       [_mhlo_s32(int(lower)), _mhlo_s32(b), _mhlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
-      result_layouts=[layout, info_layout])
+      result_layouts=[layout, info_layout],
+      operand_output_aliases={3: 0},
+  )
   return out[:2]
 
 
@@ -359,7 +369,9 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
           layout,
           layout,
           tuple(range(num_bd - 1, -1, -1)),
-      ] + workspace_layouts)
+      ] + workspace_layouts,
+      operand_output_aliases={6: 0},
+  )
   return out[1:5]
 
 
@@ -435,7 +447,9 @@ def syevd_mhlo(dtype, a, lower=False):
           layout,
           tuple(range(num_bd, -1, -1)),
           tuple(range(num_bd - 1, -1, -1)),
-      ] + workspace_layouts)
+      ] + workspace_layouts,
+      operand_output_aliases={3: 0},
+  )
   return out[:3]
 
 
@@ -594,7 +608,8 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
         layout,
         tuple(range(num_bd - 1, -1, -1)),
         tuple(range(num_bd - 1, -1, -1)),
-      ]
+      ],
+      operand_output_aliases={4: 0},
   )
   if sort == ord('S'):
     return (out[0], out[3], out[4], out[5])

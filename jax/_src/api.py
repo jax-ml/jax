@@ -19,6 +19,7 @@ arguments and outputs. The Python containers handled are pytrees (see
 tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
+from __future__ import annotations
 
 import collections
 import functools
@@ -123,7 +124,7 @@ flags.DEFINE_bool(
     "is switched to True, the feature is not supported and possibly broken "
     "(e.g. it may use unreleased code from jaxlib.")
 flags.DEFINE_bool(
-    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", False),
+    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", True),
     "A flag enabling the C++ pjit fast path. Until the default "
     "is switched to True, the feature is not supported and possibly broken "
     "(e.g. it may use unreleased code from jaxlib.")
@@ -479,7 +480,7 @@ class _BackendAndDeviceInfo(NamedTuple):
   committed_to_device: bool
 
 class _FastpathData(NamedTuple):
-  xla_executable: xla.XlaExecutable
+  xla_executable: xla.XlaLoadedExecutable
   out_pytree_def: Any
   sticky_device: Optional[xc.Device]
   avals: Iterable[Any]
@@ -502,6 +503,7 @@ def _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
       # has been reset to None). Thus, we do not support the fast-path.
       execute is not None and
       type(execute) is pxla.ExecuteReplicated and
+      len(execute._local_devices) == 1 and
       # No effects in computation
       not execute.ordered_effects and
       not execute.has_unordered_effects and
@@ -677,8 +679,12 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
       if hasattr(x, 'sharding'):
         if isinstance(x.sharding, PmapSharding):
           return aval, None
+        # If `x` has a sharding attribute but not `_committed` attribute,
+        # assume that `x` is committed. This might happen when the input is
+        # a `ShapedDtypeStruct` or `types.SimpleNamespace`, etc that might
+        # only have a `sharding` attribute on them.
         return aval, (pjit.to_op_sharding_sharding(x.sharding, x.ndim)
-                      if x._committed else None)
+                      if getattr(x, '_committed', True) else None)
       else:
         return aval, None
     else:
@@ -1249,6 +1255,12 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   _check_callable(fun)
   argnums = _ensure_index(argnums)
 
+  docstr = ("Jacobian of {fun} with respect to positional argument(s) "
+            "{argnums}. Takes the same arguments as {fun} but returns the "
+            "jacobian of the output with respect to the arguments at "
+            "positions {argnums}.")
+
+  @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
@@ -1331,6 +1343,12 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   """
   _check_callable(fun)
 
+  docstr = ("Jacobian of {fun} with respect to positional argument(s) "
+            "{argnums}. Takes the same arguments as {fun} but returns the "
+            "jacobian of the output with respect to the arguments at "
+            "positions {argnums}.")
+
+  @wraps(fun, docstr=docstr, argnums=argnums)
   def jacfun(*args, **kwargs):
     f = lu.wrap_init(fun, kwargs)
     f_partial, dyn_args = argnums_partial(f, argnums, args,
@@ -2152,7 +2170,7 @@ def _python_pmap(
 
 class _PmapFastpathData(NamedTuple):
   version: int  # For forward and backward compatibility
-  xla_executable: xla.XlaExecutable
+  xla_executable: xla.XlaLoadedExecutable
   in_handler: Any
   out_handler: Any
   out_pytree_def: Any
@@ -2782,13 +2800,18 @@ def make_jaxpr(fun: Callable,
   return make_jaxpr_f
 
 
-def device_put(x, device: Optional[xc.Device] = None):
+def device_put(
+    x, device: Optional[Union[xc.Device, jax.sharding.Sharding]] = None):
   """Transfers ``x`` to ``device``.
 
   Args:
     x: An array, scalar, or (nested) standard Python container thereof.
-    device: The (optional) :py:class:`Device` to which ``x`` should be
-      transferred. If given, then the result is committed to the device.
+    device: The (optional) :py:class:`Device` or `Sharding` representing the
+      device(s) to which ``x`` should be transferred. If given, then the result
+      is committed to the device(s).
+
+  Returns:
+    A copy of ``x`` that resides on ``device``.
 
   If the ``device`` parameter is ``None``, then this operation behaves like the
   identity function if the operand is on any device already, otherwise it
@@ -2797,10 +2820,8 @@ def device_put(x, device: Optional[xc.Device] = None):
   For more details on data placement see the
   :ref:`FAQ on data placement <faq-data-placement>`.
 
-  This function is always asynchronous, i.e. returns immediately.
-
-  Returns:
-    A copy of ``x`` that resides on ``device``.
+  This function is always asynchronous, i.e. returns immediately without
+  blocking the calling Python thread until any transfers are completed.
   """
   with config_explicit_device_put_scope():
     return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
@@ -3006,10 +3027,12 @@ def _valid_jaxtype(arg):
 
 
 class ShapeDtypeStruct:
-  __slots__ = ["shape", "dtype", "named_shape"]
-  def __init__(self, shape, dtype, named_shape=None):
+  __slots__ = ["shape", "dtype", "named_shape", "sharding"]
+  def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = shape
     self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
+    if sharding is not None:
+      self.sharding = sharding
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: prod(self.shape))

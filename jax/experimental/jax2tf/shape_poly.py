@@ -41,6 +41,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 import jax
 from jax._src.numpy import lax_numpy
 from jax._src import dtypes
+from jax.interpreters import xla
 from jax._src.lax import lax
 from jax._src.typing import DimSize, Shape
 import opt_einsum
@@ -414,8 +415,12 @@ class _DimPolynomial():
                             dtypes.canonicalize_dtype(np.int64),
                             weak_type=True)
 
+  def __jax_array__(self):
+    # Used for implicit coercions of polynomials as JAX arrays
+    return _dim_as_value(self)
 
 core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
+xla.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
 
 def _ensure_poly(p: DimSize) -> _DimPolynomial:
   if isinstance(p, _DimPolynomial): return p

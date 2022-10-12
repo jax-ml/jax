@@ -1626,6 +1626,9 @@ def fori_loop(lower, upper, body_fun, init_val):
         val = body_fun(i, val)
       return val
 
+  As the Python version suggests, setting ``upper <= lower`` will produce no
+  iterations. Negative or custom increments are not supported.
+
   Unlike that Python version, ``fori_loop`` is implemented in terms of either a
   call to :func:`jax.lax.while_loop` or a call to :func:`jax.lax.scan`. If the
   trip count is static (meaning known at tracing time, perhaps because ``lower``

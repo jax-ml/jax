@@ -1,4 +1,4 @@
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 import scipy.optimize
 
 from jax import grad
@@ -61,11 +61,9 @@ class TestLineSearch(jtu.JaxTestCase):
 
   # -- Generic scalar searches
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_name={name}", "name": name}
-    for name in ['_scalar_func_1',
-                 '_scalar_func_2',
-                 '_scalar_func_3']))
+  @jtu.sample_product(
+    name=['_scalar_func_1', '_scalar_func_2', '_scalar_func_3'],
+  )
   def test_scalar_search_wolfe2(self, name):
 
     def bind_index(func, idx):
@@ -85,10 +83,9 @@ class TestLineSearch(jtu.JaxTestCase):
 
   # -- Generic line searches
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_name={name}", "name": name}
-    for name in ['_line_func_1',
-                 '_line_func_2']))
+  @jtu.sample_product(
+    name=['_line_func_1', '_line_func_2'],
+  )
   def test_line_search_wolfe2(self, name):
     def bind_index(func, idx):
       # Remember Python's closure semantics!

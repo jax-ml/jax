@@ -37,8 +37,9 @@ from jax import core
 from jax._src import dtypes as _dtypes
 from jax import lax
 from jax._src.config import flags, bool_env, config
+from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.util import prod, unzip2
-from jax.tree_util import tree_map, tree_all
+from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src.lib import xla_bridge
 from jax._src import dispatch
 from jax._src.public_test_util import (  # noqa: F401
@@ -599,13 +600,15 @@ def rand_some_zero(rng):
 def rand_int(rng, low=0, high=None):
   def fn(shape, dtype):
     nonlocal high
+    gen_dtype = dtype if np.issubdtype(dtype, np.integer) else np.int64
     if low == 0 and high is None:
       if np.issubdtype(dtype, np.integer):
         high = np.iinfo(dtype).max
       else:
         raise ValueError("rand_int requires an explicit `high` value for "
                          "non-integer types.")
-    return rng.randint(low, high=high, size=shape, dtype=dtype)
+    return rng.randint(low, high=high, size=shape,
+                       dtype=gen_dtype).astype(dtype)
   return fn
 
 def rand_unique_int(rng, high=None):
@@ -616,7 +619,9 @@ def rand_unique_int(rng, high=None):
 
 def rand_bool(rng):
   def generator(shape, dtype):
-    return _cast_to_shape(rng.rand(*_dims_of_shape(shape)) < 0.5, shape, dtype)
+    return _cast_to_shape(
+      np.asarray(rng.rand(*_dims_of_shape(shape)) < 0.5, dtype=dtype),
+      shape, dtype)
   return generator
 
 def check_raises(thunk, err_type, msg):
@@ -698,6 +703,41 @@ def named_cases_from_sampler(gen):
     yield case
 
 
+def sample_product_testcases(*args, **kw):
+  """Non-decorator form of sample_product."""
+  args = [list(arg) for arg in args]
+  kw = [(k, list(v)) for k, v in kw.items()]
+  n = prod(len(a) for a in args) * prod(len(v) for _, v in kw)
+  rng = np.random.RandomState(42)
+  testcases = []
+  for i in rng.choice(n, size=min(n, FLAGS.num_generated_cases), replace=False):
+    testcase = {}
+    for a in args:
+      testcase.update(a[i % len(a)])
+      i //= len(a)
+    for k, v in kw:
+      testcase[k] = v[i % len(v)]
+      i //= len(v)
+    testcases.append(testcase)
+  return testcases
+
+def sample_product(*args, **kw):
+  """Decorator that samples from a cartesian product of test cases.
+
+  Similar to absltest.parameterized.product(), except that it samples from the
+  cartesian product rather than returning the whole thing.
+
+  Arguments:
+    *args: each positional argument is a list of dictionaries. The entries
+      in a dictionary correspond to name=value argument pairs; one dictionary
+      will be chosen for each test case. This allows multiple parameters to be
+      correlated.
+    **kw: each keyword argument is a list of values. One value will be chosen
+      for each test case.
+  """
+  return parameterized.parameters(*sample_product_testcases(*args, **kw))
+
+
 class JaxTestLoader(absltest.TestLoader):
   def getTestCaseNames(self, testCaseClass):
     names = super().getTestCaseNames(testCaseClass)
@@ -719,6 +759,21 @@ def with_config(**kwds):
     cls._default_config = {**JaxTestCase._default_config, **kwds}
     return cls
   return decorator
+
+
+def promote_like_jnp(fun, inexact=False):
+  """Decorator that promotes the arguments of `fun` to `jnp.result_type(*args)`.
+
+  jnp and np have different type promotion semantics; this decorator allows
+  tests make an np reference implementation act more like an jnp
+  implementation.
+  """
+  _promote = _promote_dtypes_inexact if inexact else _promote_dtypes
+  def wrapper(*args, **kw):
+    flat_args, tree = tree_flatten(args)
+    args = tree_unflatten(tree, _promote(*flat_args))
+    return fun(*args, **kw)
+  return wrapper
 
 
 class JaxTestCase(parameterized.TestCase):

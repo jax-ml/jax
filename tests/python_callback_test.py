@@ -592,6 +592,13 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     out = h(jnp.arange(4.), 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
 
+    @jax.jit
+    @functools.partial(jax.vmap)
+    def h(x, y):
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y)
+    out = h(jnp.arange(4.), jnp.arange(10., 14.))
+    np.testing.assert_allclose(out, np.sin(np.arange(4.)) + jnp.arange(10., 14.))
+
   def test_vmap_vectorized_callback(self):
 
     def cb(x):
@@ -793,6 +800,13 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
       out = f(np.arange(40.))
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
+  def test_array_layout_is_preserved(self):
+
+    def g(x):
+      return jax.pure_callback(lambda x: x, x, x)
+
+    x = np.arange(6, dtype=np.int32).reshape((3, 2))
+    np.testing.assert_allclose(g(x), x)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

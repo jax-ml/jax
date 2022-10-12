@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import operator
 from functools import reduce
@@ -30,15 +30,10 @@ config.parse_flags_with_absl()
 class LaxBackedScipyInterpolateTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.interpolate implementations"""
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list({
-          "testcase_name": f"_spaces={spaces}_method={method}",
-          "spaces": spaces,
-          "method": method
-      }
-                          for spaces in (((0., 10., 10),), ((-15., 20., 12),
-                                                            (3., 4., 24)))
-                          for method in ("linear", "nearest")))
+  @jtu.sample_product(
+    spaces=(((0., 10., 10),), ((-15., 20., 12), (3., 4., 24))),
+    method=("linear", "nearest"),
+  )
   def testRegularGridInterpolator(self, spaces, method):
     rng = jtu.rand_default(self.rng())
     scipy_fun = lambda init_args, call_args: sp_interp.RegularGridInterpolator(

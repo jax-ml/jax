@@ -143,7 +143,6 @@ from jax._src.lax.lax import (
   logistic_p as logistic_p,
   lt as lt,
   lt_p as lt_p,
-  make_bint as make_bint,
   max as max,
   max_p as max_p,
   min as min,

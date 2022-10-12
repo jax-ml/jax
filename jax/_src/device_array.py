@@ -178,6 +178,10 @@ class _DeviceArray(DeviceArray):  # type: ignore
     if self._npy_value is None:
       self.device_buffer.copy_to_host_async()  # pytype: disable=attribute-error
 
+  def unsafe_buffer_pointer(self):
+    self._check_if_deleted()
+    return self.device_buffer.unsafe_buffer_pointer()  # pytype: disable=attribute-error
+
   def delete(self):
     """Deletes the device array and any cached copy on the host.
 
@@ -290,6 +294,18 @@ for device_array in [DeviceArray]:
     return (reconstruct_device_array, (fun, args, arr_state, aval_state))
 
   setattr(device_array, "__reduce__", __reduce__)
+
+  def sharding(self):
+    return jax.sharding.SingleDeviceSharding(self.device())
+
+  setattr(device_array, "sharding", property(sharding))
+
+  def addressable_shards(self):
+    from jax._src import array
+    return [array.Shard(self.device(), self.sharding, self.shape,
+                        self.device_buffer)]
+
+  setattr(device_array, "addressable_shards", property(addressable_shards))
 
   setattr(device_array, "__str__", partialmethod(_forward_to_value, str))
   setattr(device_array, "__bool__", partialmethod(_forward_to_value, bool))

@@ -56,6 +56,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import array, sharding
 from jax.experimental import pjit
+from jax.experimental import maps
 from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
@@ -303,10 +304,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(self.jit(lambda x: x + 1)(1 + 1j), 2 + 1j)
 
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_{argnum_type}",
-     "argnum_type": argnum_type}
-    for argnum_type in ("static_argnums", "donate_argnums")))
+  @parameterized.parameters("static_argnums", "donate_argnums")
   def test_jit_argnums_overflow_error(self, argnum_type: str):
     def f(a, b, c):
       ...
@@ -902,10 +900,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   # TODO(zhangqiaorjc): Test pruning constants after DCE pass prunes primitive
   # applications.
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_num_args={num_args}",
-     "num_args": num_args}
-    for num_args in [2, 3, 4]))
+  @parameterized.parameters(2, 3, 4)
   def test_jit_with_pruned_args(self, num_args):
     def f(*args):
       used = np.array(2)
@@ -1233,6 +1228,23 @@ class APITest(jtu.JaxTestCase):
       with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
         jax.jit(f)(x)
 
+
+  @parameterized.named_parameters(
+      ('grad', jax.grad),
+      ('jacfwd', jax.jacfwd),
+      ('jacref', jax.jacrev),
+  )
+  def test_grad_wrap(self, transform):
+    # Ensures that transforms wrap transformed functions with the correct signature.
+
+    @partial(jit, static_argnames=['flag'])
+    @transform
+    def my_function(x, flag):
+      return x if flag else jnp.zeros_like(x)
+
+    self.assertEqual(my_function(1.0, False), 0.0)
+    self.assertEqual(my_function(1.0, True), 1.0)
+
   def test_grad_bad_input(self):
     def f(x):
       return x
@@ -1475,10 +1487,38 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], np.ndarray)
     assert np.all(y2[1][1] == 3 * x)
 
+  @jax_config.jax_array(True)
+  def test_device_put_sharding(self):
+    mesh = maps.Mesh(jax.devices(), ('x',))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+    x = jnp.arange(len(jax.devices()))
+
+    y = jax.device_put(x, s)
+    self.assertEqual(y.sharding, s)
+    self.assertArraysAllClose(y, x)
+
+    # this might hit a special fast path
+    z = jax.device_put(y, s)
+    self.assertEqual(z.sharding, s)
+    self.assertArraysAllClose(z, x)
+    self.assertIs(z, y)  # no copy
+
+    w = jax.device_put(z)
+    self.assertIs(w, z)
+
+    u = jax.device_put(y, jax.devices()[0])
+    self.assertArraysAllClose(u, y)
+    self.assertEqual(u.device(), jax.devices()[0])
+
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
     _check_instance(self, x)
+    self.assertIsInstance(x.sharding, jax.sharding.SingleDeviceSharding)
+    for s in x.addressable_shards:
+      self.assertArraysEqual(s.data, x)
+      self.assertEqual(s.replica_id, 0)
+      self.assertEqual(s.index, (slice(None), slice(None)))
     y = [x, 2]
     y2 = api.device_get(y)
     self.assertIsInstance(y2, list)
@@ -3557,6 +3597,13 @@ class APITest(jtu.JaxTestCase):
     a = AlexArray(x)
     for f in [jnp.isscalar, jnp.size, jnp.shape, jnp.dtype]:
       self.assertEqual(f(x), f(a))
+
+    x = AlexArray(jnp.array(1))
+    a1 = jnp.array(x)
+    self.assertAllClose(1, a1)
+
+    a2 = jnp.array(((x, x), [x, x]))
+    self.assertAllClose(np.array(((1, 1), (1, 1))), a2)
 
   def test_constant_handler_mro(self):
     # https://github.com/google/jax/issues/6129
@@ -6322,7 +6369,8 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         re.escape(
-            "Custom JVP rule must produce primal and tangent outputs "
+            "Custom JVP rule foo_jvp for function f "
+            "must produce primal and tangent outputs "
             "with equal container (pytree) structures, but got "
             "{} and {} respectively.".format(
                 tree_util.tree_structure((1,)),
@@ -6367,9 +6415,64 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         re.escape(
-            "Custom JVP rule must produce a pair (list or tuple of length two) "
-            "representing primal and tangent outputs, got 1.0"),
+            "Custom JVP rule foo_jvp for function f "
+            "must produce a pair (list or tuple of length two) "
+            "representing primal and tangent outputs, but got 1.0"),
         lambda: api.jvp(f, (2.,), (1.,)))
+
+  def test_jvp_rule_primal_out_type_doesnt_match_primal_error_message(self):
+    # https://github.com/lucidrains/flash-attention-jax/issues/7
+
+    def scan_apply(f, x):
+      y, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
+      return y
+
+    @jax.custom_jvp
+    def f(x):
+      return x
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return (x, x), (xdot, xdot)
+
+    x = jnp.float32(1.)
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom JVP rule f_jvp for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal in value to the output of the "
+            "custom_jvp-decorated function f, and in particular of the "
+            "same container/pytree structure), but instead the JVP rule "
+            "output's first element had container/pytree structure:\n"
+            "    (float32[], float32[])\n"
+            "while the custom_jvp-decorated function f had output "
+            "container/pytree structure:\n"
+            "    float32[]."
+        ),
+        lambda: jax.jvp(lambda x: scan_apply(f, x), (x,), (x,)))
+
+    @f.defjvp
+    def f_jvp2(primals, tangents):
+      (x,), (xdot,) = primals, tangents
+      return jnp.zeros((3, *x.shape), x.dtype), xdot
+
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom JVP rule f_jvp2 for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal in value to the output of the "
+            "custom_jvp-decorated function f, and in particular "
+            "with leaves of the same shape/dtype), but instead the JVP rule "
+            "output's first element had shapes/dtypes of:\n"
+            "    float32[3]\n"
+            "while the custom_jvp-decorated function f had output shapes/dtypes"
+            " of:\n"
+            "    float32[]"
+        ),
+        lambda: jax.jvp(lambda x: scan_apply(f, x), (x,), (x,)))
 
   def test_multiple_rule_invocations(self):
     @jax.custom_jvp
@@ -7360,6 +7463,67 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(foo_fwd, foo_bwd)
     with self.assertRaisesRegex(TypeError, "Custom VJP rule .* must produce a tuple"):
       api.grad(f)(3.)
+
+  def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
+    # https://github.com/lucidrains/flash-attention-jax/issues/7
+
+    def scan_apply(f, x):
+      y, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
+      return y
+
+    @jax.custom_vjp
+    def f(x):
+      return x
+
+    def f_fwd(x):
+      return (x, x), None
+
+    def f_bwd(_, y_bar):
+      return (y_bar,)
+
+    f.defvjp(f_fwd, f_bwd)
+
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom VJP fwd rule f_fwd for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal to the output of the "
+            "custom_vjp-decorated function f) and the second element "
+            "represents residuals (i.e. values stored from the forward "
+            "pass for use on the backward pass), but instead the fwd rule "
+            "output's first element had container/pytree structure:\n"
+            "    (float32[], float32[])\n"
+            "while the custom_vjp-decorated function f had output "
+            "container/pytree structure:\n"
+            "    float32[]."
+        ),
+        lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
+
+    def f_fwd2(x):
+      return jnp.zeros((3, *x.shape), x.dtype), None
+
+    def f_bwd2(_, y_bar):
+      return (y_bar,)
+
+    f.defvjp(f_fwd2, f_bwd2)
+
+    self.assertRaisesRegex(
+        TypeError,
+        re.escape(
+            "Custom VJP fwd rule f_fwd2 for function f must produce a pair "
+            "(list or tuple of length two) where the first element represents "
+            "the primal output (equal to the output of the "
+            "custom_vjp-decorated function f) and the second element "
+            "represents residuals (i.e. values stored from the forward "
+            "pass for use on the backward pass), but instead the fwd rule "
+            "output's first element had shapes/dtypes of:\n"
+            "    float32[3]\n"
+            "while the custom_vjp-decorated function f had output "
+            "shapes/dtypes of:\n"
+            "    float32[]"
+        ),
+        lambda: jax.grad(lambda x: scan_apply(f, x))(jnp.float32(1.)))
 
   def test_issue2511(self):
     arr = jnp.ones((5, 2, 2))
@@ -9005,12 +9169,13 @@ class NamedCallTest(jtu.JaxTestCase):
     out = f(5)
     self.assertEqual(out, 5)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_jit={jit._name}_func={func}",
-       "jit": jit, "func": func}
+  @jtu.sample_product(
+    [dict(func=func, jit=jit)
       for func in ['identity', 'asarray', 'device_put']
       for jit in jtu.JIT_IMPLEMENTATION
-      if not (jit._name == "noop" and func == 'identity')))
+      if not (jit._name == "noop" and func == 'identity')
+    ],
+  )
   def test_integer_overflow(self, jit, func):
     funcdict = {
       'identity': lambda x: x,

@@ -436,27 +436,15 @@ The dimension polynomials have the following behavior for arithmetic operations:
     These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
 
 For example, in the following code to flatten a 2D array, the computation
-`x.shape[0] * x.shape[1]` computes the dimension polynomial `4 * b`:
+`x.shape[0] * x.shape[1]` computes the dimension polynomial `4 * b` as the
+new shape:
 
 ```python
 jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
                 polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
 ```
 
-Replacing the multiplication with `np.prod(x.shape)` would also
-work. Note that the dimension polynomials can be used only as shape arguments
-to JAX functions. If you try to use them in place of array arguments you will get
-an error:
-
-```python
-jax2tf.convert(lambda x: jnp.prod(x.shape),
-                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
-Uncaught exception TypeError: "Argument 'b' of type <class 'jax.experimental.jax2tf.shape_poly._DimPolynomial'> is not a valid JAX type"
-```
-
-See below for how you can turn a dimension polynomial into a JAX value.
-
-More operations are partially supported for dimension polynomials:
+Other operations are partially supported for dimension polynomials:
 
   * division is a special case. It is also overloaded, but it is only partially
     supported, when either (a) there is no remainder, or (b) the divisor is a constant
@@ -489,49 +477,50 @@ as `False` and produce a lowered function that returns `1` just because the dime
 are not identical: there are some concrete input shapes for which the function
 should return `0`.
 
-### Dimension variables appearing in the numeric computation
-
-There are some situations when dimension variables arise in the lowered computation itself.
-You can see in the following example how elements from the input shapes
-`(1024, 28, 28)` and `(28, 28)` appear in the computation and specifically
-in the `shape` parameter of the `broadcast_in_dim` JAX primitive.
-
-```python
-def image_mask_jax(images, mask):
-  # images: f32[B, W, W]  and mask: f32[W, W]
-  return images * mask
-
-print(jax.make_jaxpr(image_mask_jax)(np.ones((1024, 28, 28)), np.ones((28, 28))))
->> { lambda  ; a b.
->>   let c = broadcast_in_dim[ broadcast_dimensions=(1, 2)
->>                            shape=(1, 28, 28) ] b
->>      d = mul a c
->>   in (d,) }
-
-# The following will invoke broadcast_in_dim with shape=(1, w, w)
-jax2tf.convert(image_mask_jax, polymorphic_shapes=["(b, w, w)", "(w, w)"])
-```
-
-When tracing and lowering with abstract shapes some primitive parameters will be dimension variables
-instead of just constants, e.g., the `shape` parameter of `broadcast_in_dim` will be `(1, w, w)`.
-Note that JAX primitives distinguish the inputs, which are array values,
-e.g., `b` for `broadcast_in_dim` above, and the parameters, e.g., `broadcast_dimensions` and `shape`.
-
-The lowering of `image_mask_jax` would use `tf.shape` to compute the
-values of the dimension variables `b` and `w`:
-
-```python
-def image_mask_tf(images, mask):
-  b, w, _ = tf.shape(images) # Compute the dynamic values for the dimension variables "b" and "w"
-  return tf.math.multiply(images,
-                          tf.broadcast_to(tf.reshape(mask, [1, w, w]),
-                                          [b, w, w]))
-```
-
-To achieve this, when we start lowering a function we construct a shape environment,
+It may be useful to understand how dimension polynomials are lowered to TensorFlow.
+When we start lowering a function we construct a shape environment,
 mapping the dimension variables in the `polymorphic_shapes` specification to TensorFlow expressions
-using `tf.shape` on the input parameters.
+using `tf.shape` on the input parameters. When we emit TensorFlow ops that
+involve dimension polynomials, we convert the polynomial to a TensorFlow
+expression. Consider again the reshape example from above:
 
+```python
+jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
+                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
+```
+
+The internal shape environment would map `b` to `tf.shape(x)[0]`, and
+the lowered function would be:
+
+```python
+def reshape_tf(x):
+  b = tf.shape(x)[0] # Compute the dynamic values for the dimension variable "b"
+  return tf.reshape(x, [tf.math.multiply(4, b)])
+```
+
+While operations among dimension polynomials and constants are handled
+by the overloading described above, a different mechanism is used
+for operations between JAX arrays and dimension polynomials.
+In these cases,
+`jax2tf` will try to convert dimension polynomials implicitly.
+In the function below the two occurrences of `x.shape[0]`
+are converted implicitly to `jnp.array(x.shape[0])` because
+they are involved in JAX array operations:
+
+```python
+jax2tf.convert(lambda x: x + x.shape[0] + jnp.sin(x.shape[0]),
+               polymorphic_shapes=["b"])(np.ones(3))
+```
+
+Another typical example is when computing averages:
+
+```python
+jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
+               polymorphic_shapes=["(v, _)"])(np.ones((3, 4)))
+```
+
+It is also possible to convert dimension polynomials explicitly
+to JAX arrays, with `jnp.array(x.shape[0])` or even `jnp.array(x.shape)`.
 
 ### Errors in presence of shape polymorphism
 
@@ -551,10 +540,9 @@ because the shape abstraction is given by the `polymorphic_shapes`, even though 
 actual arguments are more specific and would actually work.
 
 Also,
-
 ```python
 jax2tf.convert(lambda x: jnp.matmul(x, x),
-             polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
+               polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 ```
 
 will result in the error `dot_general requires contracting dimensions to have the same shape, got [4] and [v]`. What is
@@ -565,16 +553,6 @@ equality expression can be true or false. Since it is not always true
 that `v == 4`, the shape checking rules fail with the above error.
 Since the lowered function works only for square matrices, the correct
 `polymorphic_shapes` is `["(v, v)"]`.
-
-
-Certain codes that use shapes in the actual computation may not yet work
-if those shapes are polymorphic. In the code below, the expression `x.shape[0]`
-will have the value of the dimension variable `v`. This case is not yet implemented:
-
-```python
-jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
-               polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
-```
 
 ### Division of shape polynomials is partially supported
 

@@ -62,6 +62,7 @@ class Sharding(metaclass=abc.ABCMeta):
     process_index = xb.process_index()
     return {d for d in self.device_set if d.process_index == process_index}
 
+  @pxla.maybe_cached_property
   def is_fully_addressable(self) -> bool:
     # The pytype disable is because pytype can't recognize a cached property.
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore

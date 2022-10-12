@@ -19,7 +19,8 @@ import random
 import sys
 import tempfile
 import unittest
-from unittest import SkipTest
+from unittest import mock, SkipTest
+import warnings
 
 from absl.testing import absltest
 from jax.experimental import PartitionSpec as P
@@ -35,9 +36,12 @@ from jax._src.lib import xla_client
 import numpy as np
 
 from jax.config import config
+from jax._src.config import raise_persistent_cache_errors
+
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+@jtu.with_config(jax_raise_persistent_cache_errors=True)
 class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -294,6 +298,38 @@ class CompilationCacheTest(jtu.JaxTestCase):
          axis_resources={'a': 'x'})(x)
       files_in_directory = len(os.listdir(tmpdir))
       self.assertEqual(files_in_directory, 2)
+
+  def test_cache_write_warning(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cc.initialize_cache(tmpdir)
+      f = jit(lambda x: x*x)
+
+      with raise_persistent_cache_errors(False), \
+           mock.patch.object(cc._cache.__class__, 'put') as mock_put, \
+           warnings.catch_warnings(record=True) as w:
+        mock_put.side_effect = RuntimeError("test error")
+        self.assertEqual(f(2), 4)
+        self.assertLen(w, 1)
+        self.assertIn(
+            "Error writing persistent compilation cache entry "
+            "for 'jit__lambda_': RuntimeError: test error",
+            str(w[0].message))
+
+  def test_cache_read_warning(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cc.initialize_cache(tmpdir)
+      f = jit(lambda x: x*x)
+
+      with raise_persistent_cache_errors(False), \
+           mock.patch.object(cc._cache.__class__, 'get') as mock_get, \
+           warnings.catch_warnings(record=True) as w:
+        mock_get.side_effect = RuntimeError("test error")
+        self.assertEqual(f(2), 4)
+        self.assertLen(w, 1)
+        self.assertIn(
+            "Error reading persistent compilation cache entry "
+            "for 'jit__lambda_': RuntimeError: test error",
+            str(w[0].message))
 
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False

@@ -1145,10 +1145,10 @@ class DynamicShapeTest(jtu.JaxTestCase):
               (jnp.ones((256,  10)), jnp.ones( 10))]
 
     # two different batch sizes *with bints*
-    bs1 = jax.lax.make_bint(128, 128)
+    bs1 = jax.lax.convert_element_type(128, jax.core.bint(128))
     batch1 = (jnp.ones((bs1, 784)), jnp.ones((bs1, 10)))
 
-    bs2 = jax.lax.make_bint(32, 128)
+    bs2 = jax.lax.convert_element_type(32, jax.core.bint(128))
     batch2 = (jnp.ones((bs2, 784)), jnp.ones((bs2, 10)))
 
     # count retraces (and don't crash)
@@ -1165,7 +1165,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
                         atol=1e-3, rtol=1e-3)
 
   def test_bint_basic(self):
-    d = lax.make_bint(3, 5)
+    d = lax.convert_element_type(3, jax.core.bint(5))
     self.assertEqual(str(d), '3{≤5}')
 
     @jax.jit
@@ -1175,21 +1175,22 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f(d)  # doesn't crash
 
   def test_bint_broadcast(self):
-    d = lax.make_bint(3, 5)
+    d = lax.convert_element_type(3, jax.core.bint(5))
+    bint = lambda x, b: lax.convert_element_type(x, core.bint(b))
 
     x = lax.broadcast_in_dim(0, (d,), ())  # doesn't crash
-    self.assertIsInstance(x, core.PaddedArray)
+    self.assertIsInstance(x, core.DArray)
     self.assertAllClose(x._data, np.zeros(5, dtype='int32'), check_dtypes=False)
     self.assertEqual(
-        x._aval, core.DShapedArray((core.BInt(3, 5),), x._data.dtype, True))
+        x._aval, core.DShapedArray((bint(3, 5),), x._data.dtype, True))
 
     def f(n):
       return jnp.zeros(n)
     x = jax.jit(f)(d)
-    self.assertIsInstance(x, core.PaddedArray)
+    self.assertIsInstance(x, core.DArray)
     self.assertAllClose(x._data, np.zeros(5, dtype='int32'), check_dtypes=False)
     self.assertEqual(
-        x._aval, core.DShapedArray((core.BInt(3, 5),), x._data.dtype, False))
+        x._aval, core.DShapedArray((bint(3, 5),), x._data.dtype, False))
 
     jaxpr = jax.make_jaxpr(f)(d).jaxpr
     # { lambda ; a:bint{≤5}[]. let
@@ -1197,7 +1198,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     #   in (b,) }
     self.assertLen(jaxpr.invars, 1)
     a, = jaxpr.invars
-    self.assertEqual(a.aval, core.AbstractBInt(5))
+    self.assertEqual(a.aval, core.DShapedArray((), core.bint(5)))
     self.assertLen(jaxpr.eqns, 1)
     eqn, = jaxpr.eqns
     self.assertLen(eqn.outvars, 1)
@@ -1208,13 +1209,13 @@ class DynamicShapeTest(jtu.JaxTestCase):
     def f(d):
       return jnp.arange(d, dtype='int32')
 
-    y = f(lax.make_bint(3, 5))
-    self.assertIsInstance(y, core.PaddedArray)
+    y = f(lax.convert_element_type(3, jax.core.bint(5)))
+    self.assertIsInstance(y, core.DArray)
     self.assertAllClose(y._data, np.arange(5), check_dtypes=False)
 
-    d = lax.make_bint(3, 5)
+    d = lax.convert_element_type(3, jax.core.bint(5))
     y = jax.jit(f)(d)
-    self.assertIsInstance(y, core.PaddedArray)
+    self.assertIsInstance(y, core.DArray)
     self.assertAllClose(y._data, np.arange(5), check_dtypes=False)
 
   def test_bint_compilation_cache(self):
@@ -1225,8 +1226,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
       nonlocal count
       count += 1
       return jnp.zeros(n)
-    f(lax.make_bint(3, 5))
-    f(lax.make_bint(4, 5))
+    f(lax.convert_element_type(3, jax.core.bint(5)))
+    f(lax.convert_element_type(4, jax.core.bint(5)))
     self.assertEqual(count, 1)
 
   def test_bint_compilation_cache2(self):
@@ -1238,26 +1239,27 @@ class DynamicShapeTest(jtu.JaxTestCase):
       count += 1
       return x.sum()
 
-    d = lax.make_bint(3, 5)
+    d = lax.convert_element_type(3, jax.core.bint(5))
     x = jnp.arange(d)
     y = f(x)
     self.assertEqual(y, 3)
     self.assertEqual(count, 1)
 
-    d = lax.make_bint(4, 5)
+    d = lax.convert_element_type(4, jax.core.bint(5))
     x = jnp.arange(d)
     y = f(x)
     self.assertEqual(y, 6)
     self.assertEqual(count, 1)
 
-    d = lax.make_bint(4, 6)
+    d = lax.convert_element_type(4, jax.core.bint(6))
     x = jnp.arange(d)
     y = f(x)
     self.assertEqual(y, 6)
     self.assertEqual(count, 2)
 
+  @unittest.skip('do we want to support this?')
   def test_bint_add(self):
-    d = lax.make_bint(4, 6)
+    d = lax.convert_element_type(4, jax.core.bint(6))
     x = jnp.arange(d)
 
     @jax.jit
@@ -1392,6 +1394,20 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
     y = f(jnp.arange(3 * 4).reshape(3, 4))
     self.assertAllClose(y, jnp.array([0, 1, 2, 3]))
+
+  def test_gather_basic_bounded(self):
+    x = jnp.arange(3. * 4.).reshape(3, 4)
+
+    def f(i):
+      return x[i]
+
+    sz = jax.lax.convert_element_type(2, jax.core.bint(3))
+    idx = jnp.arange(sz)
+    y = jax.jit(jax.vmap(f), abstracted_axes=('n',))(idx)
+
+    self.assertIsInstance(y, jax.core.DArray)
+    self.assertEqual(y.shape, (sz, 4))
+    self.assertAllClose(y._data, x)
 
 
 if __name__ == '__main__':

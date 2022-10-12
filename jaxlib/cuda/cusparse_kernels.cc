@@ -26,6 +26,9 @@ limitations under the License.
 #include "absl/synchronization/mutex.h"
 #include "third_party/gpus/cuda/include/cuComplex.h"
 #include "third_party/gpus/cuda/include/cuda.h"
+#if JAX_CUDA_11080
+#include "third_party/gpus/cuda/include/cuda_fp8.h"
+#endif
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
 #include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
@@ -117,6 +120,14 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_R_64U:
     case CUDA_C_64U:
       c.u64[0] = 1;
+      break;
+#endif
+#if JAX_CUDA_11080
+    case CUDA_R_8F_E4M3:
+      c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E4M3);
+      break;
+    case CUDA_R_8F_E5M2:
+      c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E5M2);
       break;
 #endif
     // TODO(jakevdp): 16F/16BF here might break on big endian platforms.

@@ -1,10 +1,10 @@
 FROM ubuntu:focal
 MAINTAINER Reza Rahimi <reza.rahimi@amd.com>
 
-ARG ROCM_DEB_REPO=http://repo.radeon.com/rocm/apt/5.2/
+ARG ROCM_DEB_REPO=http://repo.radeon.com/rocm/apt/5.3/
 ARG ROCM_BUILD_NAME=ubuntu
 ARG ROCM_BUILD_NUM=main
-ARG ROCM_PATH=/opt/rocm-5.2.0
+ARG ROCM_PATH=/opt/rocm-5.3.0
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV HOME /root/
@@ -80,7 +80,8 @@ RUN add-apt-repository ppa:deadsnakes/ppa && \
   apt update && \
   apt install -y python3.9-dev \
     python3-pip \
-    python3.9-distutils
+    python3.9-distutils \
+    python-is-python3
 
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
 
