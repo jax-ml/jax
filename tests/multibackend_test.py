@@ -16,7 +16,6 @@
 from functools import partial
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import numpy as np
 import numpy.random as npr
@@ -35,12 +34,7 @@ npr.seed(0)
 class MultiBackendTest(jtu.JaxTestCase):
   """Tests jit targeting to different backends."""
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": f"_backend={backend}",
-         "backend": backend,
-        }
-        for backend in ['cpu', 'gpu', 'tpu', None]
-        ))
+  @jtu.sample_product(backend=['cpu', 'gpu', 'tpu', None])
   def testMultiBackend(self, backend):
     if backend not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest("Backend is not CPU or the device under test")
@@ -56,10 +50,9 @@ class MultiBackendTest(jtu.JaxTestCase):
     correct_platform = backend if backend else jtu.device_under_test()
     self.assertEqual(z.device().platform, correct_platform)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": f"_ordering={ordering}",
-         "ordering": ordering,}
-        for ordering in [('cpu', None), ('gpu', None), ('tpu', None), (None, None)]))
+  @jtu.sample_product(
+    ordering=[('cpu', None), ('gpu', None), ('tpu', None), (None, None)]
+  )
   def testMultiBackendNestedJit(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
@@ -81,14 +74,11 @@ class MultiBackendTest(jtu.JaxTestCase):
     correct_platform = outer if outer else jtu.device_under_test()
     self.assertEqual(z.device().platform, correct_platform)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": f"_ordering={ordering}",
-         "ordering": ordering,}
-        for ordering in [
-            ('cpu', 'gpu'), ('gpu', 'cpu'),
-            ('cpu', 'tpu'), ('tpu', 'cpu'),
-            (None, 'cpu'), (None, 'gpu'), (None, 'tpu'),
-        ]))
+  @jtu.sample_product(
+    ordering=[('cpu', 'gpu'), ('gpu', 'cpu'), ('cpu', 'tpu'), ('tpu', 'cpu'),
+              (None, 'cpu'), (None, 'gpu'), (None, 'tpu'),
+    ],
+  )
   def testMultiBackendNestedJitConflict(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
@@ -111,11 +101,7 @@ class MultiBackendTest(jtu.JaxTestCase):
     y = npr.uniform(size=(10, 10))
     self.assertRaises(ValueError, lambda: fun(x, y))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-        {"testcase_name": f"_backend={backend}",
-         "backend": backend,}
-        for backend in ['cpu', 'gpu', 'tpu']
-        ))
+  @jtu.sample_product(backend=['cpu', 'gpu', 'tpu'])
   def testGpuMultiBackendOpByOpReturn(self, backend):
     if backend not in ('cpu', jtu.device_under_test()):
       raise SkipTest("Backend is not CPU or the device under test")

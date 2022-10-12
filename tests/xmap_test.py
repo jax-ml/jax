@@ -46,7 +46,7 @@ from jax._src.nn import initializers as nn_initializers
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
-from jax._src.util import curry, unzip2, prod, safe_zip
+from jax._src.util import unzip2, prod, safe_zip
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax.parallel import pgather
 from jax.interpreters import batching, pxla
@@ -876,13 +876,12 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
 
 class NamedNumPyTest(XMapTestCase):
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_{reduction.__name__}_axes={axes}_i={mapped_axis}",
-      "reduction": reduction, "axes": axes, "mapped_axis": mapped_axis}
-    for reduction in (jnp.sum, jnp.max, jnp.min, jnp.mean, jnp.var, jnp.std,
-                      jscipy.special.logsumexp)
-    for axes in (0, 'i', (1,), ('i',), (0, 1), (0, 'i'), ('i', 0))
-    for mapped_axis in range(3)))
+  @jtu.sample_product(
+    reduction=(jnp.sum, jnp.max, jnp.min, jnp.mean, jnp.var, jnp.std,
+               jscipy.special.logsumexp),
+    axes=(0, 'i', (1,), ('i',), (0, 1), (0, 'i'), ('i', 0)),
+    mapped_axis=range(3),
+  )
   def testReductions(self, reduction, axes, mapped_axis):
     axes_t = axes if isinstance(axes, tuple) else (axes,)
     ref_red = partial(reduction,
@@ -901,25 +900,15 @@ class NamedNumPyTest(XMapTestCase):
 
 class NamedRandomTest(XMapTestCase):
 
-  @curry
-  def parameterize_by_sampler(extra, f, subset):
-    if extra is None:
-      extra = [("", {})]
-    else:
-      extra = list(extra)
-    subset_fn = jtu.cases_from_list if subset else lambda x: x
-    return parameterized.named_parameters(subset_fn(
-        {"testcase_name": name + extra_name, "distr_sample": sample, **extra_kwargs}
-        for name, sample in [
-          ("Uniform", jax.random.uniform),
-          ("Normal", jax.random.normal),
-          ("Bernoulli", partial(jax.random.bernoulli, p=0.5)),
-          ("TruncatedNormal", partial(jax.random.truncated_normal, lower=-2, upper=2)),
-        ]
-        for extra_name, extra_kwargs in extra))(f)
+  SAMPLERS = [
+    ("Uniform", jax.random.uniform),
+    ("Normal", jax.random.normal),
+    ("Bernoulli", partial(jax.random.bernoulli, p=0.5)),
+    ("TruncatedNormal", partial(jax.random.truncated_normal, lower=-2, upper=2)),
+  ]
 
-  @parameterize_by_sampler(None, subset=False)
-  def testSamplerSharding(self, distr_sample):
+  @parameterized.parameters(*SAMPLERS)
+  def testSamplerSharding(self, distr_name, distr_sample):
     def sample(shape, map_size):
       return xmap(lambda: distr_sample(jax.random.PRNGKey(0), shape=shape),
                   in_axes=(), out_axes=[None, 'i', ...], axis_sizes={'i': map_size})()
@@ -931,12 +920,15 @@ class NamedRandomTest(XMapTestCase):
     with self.assertRaisesRegex(ValueError, error):
       sample(NamedShape(3, i=4), 5)
 
-  @parameterize_by_sampler(
-      ((f"_mesh={mesh}_resources={sorted(axis_resources.items())}",
-        {"axis_resources": tuple(axis_resources.items()), "mesh": tuple(mesh)})
-       for axis_resources, mesh in schedules({'i': 4, 'j': 6})), subset=True)
+  @jtu.sample_product(
+    [dict(distr_name=name, distr_sample=sample)
+     for name, sample in SAMPLERS],
+    [dict(axis_resources=tuple(axis_resources.items()), mesh=tuple(mesh))
+     for axis_resources, mesh in schedules({'i': 4, 'j': 6})],
+  )
   @jtu.with_mesh_from_kwargs
-  def testSamplerResourceIndependence(self, distr_sample, axis_resources, mesh):
+  def testSamplerResourceIndependence(self, distr_name, distr_sample,
+                                      axis_resources, mesh):
     def sample(axis_resources):
       return xmap(lambda: distr_sample(jax.random.PRNGKey(0), shape=NamedShape(3, i=4, j=6)),
                   in_axes=(), out_axes=['i', 'j', ...], axis_sizes={'i': 4, 'j': 6},
@@ -965,13 +957,12 @@ class NamedNNTest(XMapTestCase):
     with self.assertRaisesRegex(ValueError, "to match the size of axis i, but 3 != 5"):
       f(jnp.ones(5, dtype='int32'))
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-    {"testcase_name": f"_map_in={map_in}_map_out={map_out}_fan={fan}_distr={distr}",
-     "map_in": map_in, "map_out": map_out, "fan": fan,
-     "distr": distr}
-    for map_in, map_out in [(True, False), (False, True), (True, True)]
-    for fan in ['fan_in', 'fan_out', 'fan_avg']
-    for distr in ['uniform', 'normal', 'truncated_normal']))
+  @jtu.sample_product(
+    [dict(map_in=map_in, map_out=map_out)
+     for map_in, map_out in [(True, False), (False, True), (True, True)]],
+    fan=['fan_in', 'fan_out', 'fan_avg'],
+    distr=['uniform', 'normal', 'truncated_normal'],
+  )
   def testVarianceScaling(self, map_in, map_out, fan, distr):
     shape = (80, 50, 7)
     fan_in, fan_out = nn_initializers._compute_fans(NamedShape(*shape), 0, 1)

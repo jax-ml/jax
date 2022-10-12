@@ -294,29 +294,19 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     f_jax = jax.jit(lambda i: params[i])
     self.ConvertAndCompare(f_jax, indices)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_{f_jax.__name__}", f_jax=f_jax)
-          for f_jax in REDUCE))
+  @jtu.sample_product(f_jax=REDUCE)
   def test_reduce_ops_with_numerical_input(self, f_jax):
     values = np.array([1, 2, 3], dtype=np.float32)
     self.ConvertAndCompare(f_jax, values)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_{op}", op=op) for op in (
-              "add", "max", "min", "multiply", "set"
-          )))
+  @jtu.sample_product(op=["add", "max", "min", "multiply", "set"])
   def test_scatter_static(self, op):
     values = np.ones((5, 6), dtype=np.float32)
     update = np.float32(6.)
     f_jax = jax.jit(lambda v, u: getattr(v.at[::2, 3:], op)(u))
     self.ConvertAndCompare(f_jax, values, update)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_{f_jax.__name__}", f_jax=f_jax)
-          for f_jax in REDUCE))
+  @jtu.sample_product(f_jax=REDUCE)
   def test_reduce_ops_with_boolean_input(self, f_jax):
     values = np.array([True, False, True], dtype=np.bool_)
     self.ConvertAndCompare(f_jax, values)

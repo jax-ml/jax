@@ -205,18 +205,15 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(out.todense(), x.todense() + y.todense())
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_{}_nbatch={}_ndense={}_unique_indices={}".format(
-        jtu.format_shape_dtype_string(shape, dtype), n_batch, n_dense,
-          unique_indices),
-       "shape": shape, "dtype": dtype, "n_batch": n_batch, "n_dense": n_dense,
-       "unique_indices": unique_indices}
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for dtype in (jtu.dtypes.integer + jtu.dtypes.floating +
-                    jtu.dtypes.complex)
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
-      for unique_indices in [True, False]))
+    ],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex,
+    unique_indices=[True, False],
+  )
   def testSparseMul(self, shape, dtype, n_batch, n_dense, unique_indices):
     rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
     x = BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch,
@@ -281,10 +278,8 @@ class SparsifyTest(jtu.JaxTestCase):
         res_sparse = res_sparse.todense()
       self.assertArraysAllClose(res_dense, res_sparse)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_dimensions={}_nbatch={}_ndense={}".format(
-          jtu.format_shape_dtype_string(shape, np.float32), dimensions, n_batch, n_dense),
-       "shape": shape, "dimensions": dimensions, "n_batch": n_batch, "n_dense": n_dense}
+  @jtu.sample_product(
+    [dict(shape=shape, dimensions=dimensions, n_batch=n_batch, n_dense=n_dense)
       for shape, dimensions in [
           [(1,), (0,)],
           [(1,), (-1,)],
@@ -294,7 +289,9 @@ class SparsifyTest(jtu.JaxTestCase):
           [(2, 1, 3, 1), (3,)],
       ]
       for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) - n_batch + 1)))
+      for n_dense in range(len(shape) - n_batch + 1)
+    ],
+  )
   def testSparseSqueeze(self, shape, dimensions, n_batch, n_dense):
     rng = jtu.rand_default(self.rng())
 
@@ -307,9 +304,8 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse, result_dense)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_shapes={shapes}_func={func}_nbatch={n_batch}",
-       "shapes": shapes, "func": func, "n_batch": n_batch}
+  @jtu.sample_product(
+    [dict(shapes=shapes, func=func, n_batch=n_batch)
       for shapes, func, n_batch in [
           ([(4,), (4,)], "concatenate", 0),
           ([(4,), (4,)], "stack", 0),
@@ -328,7 +324,9 @@ class SparsifyTest(jtu.JaxTestCase):
           ([(2, 4), (2, 5)], "hstack", 2),
           ([(2, 4), (4,), (3, 4)], "vstack", 0),
           ([(1, 4), (4,), (1, 4)], "vstack", 0),
-      ]))
+      ]
+    ],
+  )
   def testSparseConcatenate(self, shapes, func, n_batch):
     f = self.sparsify(getattr(jnp, func))
     rng = jtu.rand_some_zero(self.rng())
@@ -336,9 +334,8 @@ class SparsifyTest(jtu.JaxTestCase):
     sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
     self.assertArraysEqual(f(arrs), f(sparrs).todense())
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{shape}->{new_shape}_n_batch={n_batch}_n_dense={n_dense}",
-       "shape": shape, "new_shape": new_shape, "n_batch": n_batch, "n_dense": n_dense}
+  @jtu.sample_product(
+    [dict(shape=shape, new_shape=new_shape, n_batch=n_batch, n_dense=n_dense)
       for shape, new_shape, n_batch, n_dense in [
         [(6,), (2, 3), 0, 0],
         [(1, 4), (2, 2), 0, 0],
@@ -348,7 +345,9 @@ class SparsifyTest(jtu.JaxTestCase):
         [(2, 3, 4), (3, 8), 0, 0],
         [(2, 3, 4), (1, 2, 12), 1, 0],
         [(2, 3, 4), (6, 2, 2), 2, 0],
-      ]))
+      ]
+    ],
+  )
   def testSparseReshapeMethod(self, shape, new_shape, n_batch, n_dense):
     rng = jtu.rand_some_zero(self.rng())
     arr = rng(shape, 'int32')
@@ -359,10 +358,9 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(arr2, arr2_sparse.todense())
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": f"_{shape}->{new_shape}_n_batch={n_batch}_n_dense={n_dense}_dimensions={dimensions}",
-       "shape": shape, "new_shape": new_shape, "n_batch": n_batch, "n_dense": n_dense,
-       "dimensions": dimensions}
+  @jtu.sample_product(
+    [dict(shape=shape, new_shape=new_shape, n_batch=n_batch, n_dense=n_dense,
+          dimensions=dimensions)
       for shape, new_shape, n_batch, n_dense, dimensions in [
         [(2, 3, 4), (24,), 0, 0, None],
         [(2, 3, 4), (24,), 0, 0, (0, 1, 2)],
@@ -375,7 +373,9 @@ class SparsifyTest(jtu.JaxTestCase):
         [(4, 2, 3), (2, 2, 6), 1, 0, (0, 2, 1)],
         [(2, 3, 4), (6, 4), 2, 0, (0, 1, 2)],
         [(2, 3, 4), (6, 4), 2, 0, (1, 0, 2)],
-      ]))
+      ]
+    ],
+  )
   def testSparseReshapeWithDimensions(self, shape, new_shape, n_batch, n_dense, dimensions):
     rng = jtu.rand_some_zero(self.rng())
     arr = rng(shape, 'int32')

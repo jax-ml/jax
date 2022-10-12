@@ -16,7 +16,7 @@
 from functools import partial
 import unittest
 
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 import numpy as np
 import scipy.signal as osp_signal
@@ -70,22 +70,19 @@ def _complex_dtype(dtype):
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_op={}_xshape={}_yshape={}_mode={}".format(
-          op,
-          jtu.format_shape_dtype_string(xshape, dtype),
-          jtu.format_shape_dtype_string(yshape, dtype),
-          mode),
-       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
-       "jsp_op": getattr(jsp_signal, op),
-       "osp_op": getattr(osp_signal, op)}
-      for mode in ['full', 'same', 'valid']
-      for op in ['convolve', 'correlate']
-      for dtype in default_dtypes
-      for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
-      for xshape in shapeset
-      for yshape in shapeset))
-  def testConvolutions(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
+  @jtu.sample_product(
+    [dict(xshape=xshape, yshape=yshape)
+     for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+     for xshape in shapeset
+     for yshape in shapeset
+    ],
+    mode=['full', 'same', 'valid'],
+    op=['convolve', 'correlate'],
+    dtype=default_dtypes,
+  )
+  def testConvolutions(self, xshape, yshape, dtype, mode, op):
+    jsp_op = getattr(jsp_signal, op)
+    osp_op = getattr(osp_signal, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
@@ -94,21 +91,16 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "op={}_xshape={}_yshape={}_mode={}".format(
-          op,
-          jtu.format_shape_dtype_string(xshape, dtype),
-          jtu.format_shape_dtype_string(yshape, dtype),
-          mode),
-       "xshape": xshape, "yshape": yshape, "dtype": dtype, "mode": mode,
-       "jsp_op": getattr(jsp_signal, op),
-       "osp_op": getattr(osp_signal, op)}
-      for mode in ['full', 'same', 'valid']
-      for op in ['convolve2d', 'correlate2d']
-      for dtype in default_dtypes
-      for xshape in twodim_shapes
-      for yshape in twodim_shapes))
-  def testConvolutions2D(self, xshape, yshape, dtype, mode, jsp_op, osp_op):
+  @jtu.sample_product(
+    mode=['full', 'same', 'valid'],
+    op=['convolve2d', 'correlate2d'],
+    dtype=default_dtypes,
+    xshape=twodim_shapes,
+    yshape=twodim_shapes,
+  )
+  def testConvolutions2D(self, xshape, yshape, dtype, mode, op):
+    jsp_op = getattr(jsp_signal, op)
+    osp_op = getattr(osp_signal, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
@@ -118,15 +110,13 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
                             tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name": "_shape={}_axis={}_type={}_bp={}".format(
-          jtu.format_shape_dtype_string(shape, dtype), axis, type, bp),
-       "shape": shape, "dtype": dtype, "axis": axis, "type": type, "bp": bp}
-      for shape in [(5,), (4, 5), (3, 4, 5)]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.integer
-      for axis in [0, -1]
-      for type in ['constant', 'linear']
-      for bp in [0, [0, 2]]))
+  @jtu.sample_product(
+    shape=[(5,), (4, 5), (3, 4, 5)],
+    dtype=jtu.dtypes.floating + jtu.dtypes.integer,
+    axis=[0, -1],
+    type=['constant', 'linear'],
+    bp=[0, [0, 2]],
+  )
   def testDetrend(self, shape, dtype, axis, type, bp):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
@@ -144,24 +134,19 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
-          f"_fs={fs}_window={window}_boundary={boundary}_detrend={detrend}"
-          f"_padded={padded}_nperseg={nperseg}_noverlap={noverlap}"
-          f"_axis={timeaxis}_nfft={nfft}",
-       "shape": shape, "dtype": dtype, "fs": fs, "window": window,
-       "nperseg": nperseg, "noverlap": noverlap, "nfft": nfft,
-       "detrend": detrend, "boundary": boundary, "padded": padded,
-       "timeaxis": timeaxis}
+  @jtu.sample_product(
+    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
+          nfft=nfft)
       for shape, nperseg, noverlap, timeaxis in stft_test_shapes
-      for dtype in default_dtypes
-      for fs in [1.0, 16000.0]
-      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
-      for detrend in ['constant', 'linear', False]
-      for boundary in [None, 'even', 'odd', 'zeros']
-      for padded in [True, False]))
+    ],
+    dtype=default_dtypes,
+    fs=[1.0, 16000.0],
+    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann'],
+    detrend=['constant', 'linear', False],
+    boundary=[None, 'even', 'odd', 'zeros'],
+    padded=[True, False],
+  )
   def testStftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                            noverlap, nfft, detrend, boundary, padded,
                            timeaxis):
@@ -193,26 +178,19 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   # Tests with `average == 'median'`` is excluded from `testCsd*`
   # due to the issue:
   #   https://github.com/scipy/scipy/issues/15601
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-          f"_xshape={jtu.format_shape_dtype_string(xshape, dtype)}"
-          f"_yshape={jtu.format_shape_dtype_string(yshape, dtype)}"
-          f"_average={average}_scaling={scaling}_nfft={nfft}"
-          f"_fs={fs}_window={window}_detrend={detrend}"
-          f"_nperseg={nperseg}_noverlap={noverlap}"
-          f"_axis={timeaxis}",
-       "xshape": xshape, "yshape": yshape, "dtype": dtype, "fs": fs,
-       "window": window,  "nperseg": nperseg, "noverlap": noverlap,
-       "nfft": nfft, "detrend": detrend, "scaling": scaling,
-       "timeaxis": timeaxis, "average": average}
+  @jtu.sample_product(
+    [dict(xshape=xshape, yshape=yshape, nperseg=nperseg, noverlap=noverlap,
+          timeaxis=timeaxis, nfft=nfft)
       for xshape, yshape, nperseg, noverlap, timeaxis in csd_test_shapes
-      for dtype in default_dtypes
-      for fs in [1.0, 16000.0]
-      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
-      for detrend in ['constant', 'linear', False]
-      for scaling in ['density', 'spectrum']
-      for average in ['mean']))
+    ],
+    dtype=default_dtypes,
+    fs=[1.0, 16000.0],
+    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann'],
+    detrend=['constant', 'linear', False],
+    scaling=['density', 'spectrum'],
+    average=['mean'],
+  )
   def testCsdAgainstNumpy(
       self, *, xshape, yshape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
@@ -242,25 +220,19 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
-          f"_average={average}_scaling={scaling}_nfft={nfft}"
-          f"_fs={fs}_window={window}_detrend={detrend}"
-          f"_nperseg={nperseg}_noverlap={noverlap}"
-          f"_axis={timeaxis}",
-       "shape": shape, "dtype": dtype, "fs": fs,
-       "window": window,  "nperseg": nperseg, "noverlap": noverlap,
-       "nfft": nfft, "detrend": detrend, "scaling": scaling,
-       "timeaxis": timeaxis, "average": average}
-      for shape, unused_yshape, nperseg, noverlap, timeaxis in csd_test_shapes
-      for dtype in default_dtypes
-      for fs in [1.0, 16000.0]
-      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
+  @jtu.sample_product(
+    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
+          nfft=nfft)
+      for shape, _yshape, nperseg, noverlap, timeaxis in csd_test_shapes
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
-      for detrend in ['constant', 'linear', False]
-      for scaling in ['density', 'spectrum']
-      for average in ['mean']))
+    ],
+    dtype=default_dtypes,
+    fs=[1.0, 16000.0],
+    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann'],
+    detrend=['constant', 'linear', False],
+    scaling=['density', 'spectrum'],
+    average=['mean'],
+  )
   def testCsdWithSameParamAgainstNumpy(
       self, *, shape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
@@ -292,26 +264,20 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
-          f"_fs={fs}_window={window}"
-          f"_nperseg={nperseg}_noverlap={noverlap}_nfft={nfft}"
-          f"_detrend={detrend}_return_onesided={return_onesided}"
-          f"_scaling={scaling}_axis={timeaxis}_average={average}",
-       "shape": shape, "dtype": dtype, "fs": fs, "window": window,
-       "nperseg": nperseg, "noverlap": noverlap, "nfft": nfft,
-       "detrend": detrend, "return_onesided": return_onesided,
-       "scaling": scaling, "timeaxis": timeaxis, "average": average}
+  @jtu.sample_product(
+    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
+          nfft=nfft)
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
-      for dtype in default_dtypes
-      for fs in [1.0, 16000.0]
-      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
-      for detrend in ['constant', 'linear', False]
-      for return_onesided in [True, False]
-      for scaling in ['density', 'spectrum']
-      for average in ['mean', 'median']))
+    ],
+    dtype=default_dtypes,
+    fs=[1.0, 16000.0],
+    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann'],
+    detrend=['constant', 'linear', False],
+    return_onesided=[True, False],
+    scaling=['density', 'spectrum'],
+    average=['mean', 'median'],
+  )
   def testWelchAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                             noverlap, nfft, detrend, return_onesided,
                             scaling, timeaxis, average):
@@ -342,20 +308,14 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
-          f"_nperseg={nperseg}_noverlap={noverlap}"
-          f"_use_nperseg={use_nperseg}_use_overlap={use_noverlap}"
-          f"_axis={timeaxis}",
-       "shape": shape, "dtype": dtype,
-       "nperseg": nperseg, "noverlap": noverlap,
-       "use_nperseg": use_nperseg, "use_noverlap": use_noverlap,
-       "timeaxis": timeaxis}
+  @jtu.sample_product(
+    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis)
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
-      for use_nperseg in [False, True]
-      for use_noverlap in [False, True]
-      for dtype in jtu.dtypes.floating + jtu.dtypes.integer))
+    ],
+    use_nperseg=[False, True],
+    use_noverlap=[False, True],
+    dtype=jtu.dtypes.floating + jtu.dtypes.integer,
+  )
   def testWelchWithDefaultStepArgsAgainstNumpy(
       self, *, shape, dtype, nperseg, noverlap, use_nperseg, use_noverlap,
       timeaxis):
@@ -386,23 +346,18 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @parameterized.named_parameters(jtu.cases_from_list(
-      {"testcase_name":
-          f"_shape={jtu.format_shape_dtype_string(shape, dtype)}"
-          f"_fs={fs}_window={window}_boundary={boundary}"
-          f"_nperseg={nperseg}_noverlap={noverlap}_onesided={onesided}"
-          f"_timeaxis={timeaxis}_freqaxis{freqaxis}_nfft={nfft}",
-       "shape": shape, "dtype": dtype, "fs": fs, "window": window,
-       "nperseg": nperseg, "noverlap": noverlap, "nfft": nfft,
-       "onesided": onesided, "boundary": boundary,
-       "timeaxis": timeaxis, "freqaxis": freqaxis}
+  @jtu.sample_product(
+    [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
+          freqaxis=freqaxis, nfft=nfft)
       for shape, nperseg, noverlap, timeaxis, freqaxis in istft_test_shapes
-      for dtype in default_dtypes
-      for fs in [1.0, 16000.0]
-      for window in ['boxcar', 'triang', 'blackman', 'hamming', 'hann']
       for nfft in [None, nperseg, int(nperseg * 1.5), nperseg * 2]
-      for onesided in [False, True]
-      for boundary in [False, True]))
+    ],
+    dtype=default_dtypes,
+    fs=[1.0, 16000.0],
+    window=['boxcar', 'triang', 'blackman', 'hamming', 'hann'],
+    onesided=[False, True],
+    boundary=[False, True],
+  )
   def testIstftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                             noverlap, nfft, onesided, boundary,
                             timeaxis, freqaxis):

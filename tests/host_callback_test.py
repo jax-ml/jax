@@ -24,7 +24,6 @@ import unittest
 from unittest import skip, SkipTest
 
 from absl.testing import absltest
-from absl.testing import parameterized
 
 import jax
 from jax import ad_checkpoint
@@ -514,12 +513,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertEqual(
         len(local_devices()), len(re.findall(r"112", testing_stream.output)))
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(
-              testcase_name=f"_with_jit_{with_jit}",
-              with_jit=with_jit)
-          for with_jit in [True, False]))
+  @jtu.sample_product(with_jit=[True, False])
   def test_tap_pytree(self, with_jit=False):
     def func(x, what=""):
       """Returns some pytrees depending on x"""
@@ -551,12 +545,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     hcb.barrier_wait()  # Wait for receivers to be done
     self.assertEqual(3, tap_count)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(
-              testcase_name=f"_concurrent_{concurrent}",
-              concurrent=concurrent)
-          for concurrent in [True, False]))
+  @jtu.sample_product(concurrent=[True, False])
   def test_tap_multiple(self, concurrent=False):
     """Call id_tap multiple times, concurrently or in sequence. """
     if concurrent and jtu.device_under_test() in ["cpu", "gpu"]:
@@ -628,12 +617,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     [t.start() for t in threads]
     [t.join() for t in threads]
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(
-              testcase_name=f"_with_jit_{with_jit}",
-              with_jit=with_jit)
-          for with_jit in [True, False]))
+  @jtu.sample_product(with_jit=[True, False])
   def test_tap_cond(self, with_jit=False):
     """A conditional"""
 
@@ -663,11 +647,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         where: end
         4""", testing_stream.output)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_with_jit_{with_jit}",
-               with_jit=with_jit)
-          for with_jit in [True, False]))
+  @jtu.sample_product(with_jit=[True, False])
   def test_tap_while_cond(self, with_jit=False):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
@@ -741,12 +721,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
                                  where: 3
                                  3""", testing_stream.output)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(
-              testcase_name=f"_with_jit_{with_jit}",
-              with_jit=with_jit)
-          for with_jit in [True, False]))
+  @jtu.sample_product(with_jit=[True, False])
   def test_tap_scan_cond(self, with_jit=True):
     def func(x):
       x1 = hcb.id_print(x, where="1", output_stream=testing_stream)
@@ -796,15 +771,11 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         [1 2 3]""", testing_stream.output)
     testing_stream.reset()
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(
-              testcase_name=f"_shape_{shape}_dtype_{np.dtype(dtype).name}_nr_args={nr_args}",
-              shape=shape,
-              dtype=dtype,
-              nr_args=nr_args) for nr_args in [1, 2]
-          for shape in [(), (2,), (2, 3), (2, 3, 4)]
-          for dtype in jtu.dtypes.all))
+  @jtu.sample_product(
+    nr_args=[1, 2],
+    shape=[(), (2,), (2, 3), (2, 3, 4)],
+    dtype=jtu.dtypes.all,
+  )
   def test_tap_jit_dtypes(self, nr_args=2, dtype=jnp.int16, shape=(2,)):
     if dtype in (jnp.complex64, jnp.complex128, jnp.bool_):
       raise SkipTest(f"host_callback not implemented for {dtype}.")
@@ -1971,13 +1942,11 @@ class HostCallbackTapTest(jtu.JaxTestCase):
       10"""
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_use_remat={use_remat}_{grad_func}_use_result={use_result}",
-               use_result=use_result, use_remat=use_remat, grad_func=grad_func)
-          for use_result in [True, False]
-          for grad_func in ["grad", "value_and_grad"]
-          for use_remat in ["old", "new", "none"]))
+  @jtu.sample_product(
+    use_result=[True, False],
+    grad_func=["grad", "value_and_grad"],
+    use_remat=["old", "new", "none"],
+  )
   def test_tap_remat(self, use_result=False, grad_func="grad", use_remat="new"):
     if use_remat == "old": raise SkipTest()
 
@@ -2108,11 +2077,9 @@ class HostCallbackCallTest(jtu.JaxTestCase):
         self.assertAllClose(2 * arg, fun(arg))
     self.assertEqual(count[0], 1)
 
-  @parameterized.named_parameters(
-      jtu.cases_from_list(
-          dict(testcase_name=f"_{np.dtype(dtype).name}", dtype=dtype)
-          for dtype in jtu.dtypes.all
-          if dtype != np.bool_))
+  @jtu.sample_product(
+    dtype=[dtype for dtype in jtu.dtypes.all if dtype != np.bool_],
+  )
   def test_call_types(self, dtype=np.float64):
 
     def f_outside(x):
