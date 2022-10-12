@@ -12,16 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import overload, Optional, Tuple, Union
+from typing_extensions import Literal
+
 import jax
 from jax import lax
 from jax import numpy as jnp
 from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
+from jax._src.typing import Array, ArrayLike
+import numpy as np
 
 # The definition of logsumexp is shared between jax.nn and jax.scipy, and
 # although it matches scipy's definition, we put it here to avoid having
 # unnecessary scipy dependencies.
 
-def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
+@overload
+def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, return_sign: Literal[False] = False) -> Array: ...
+
+@overload
+def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, *, return_sign: Literal[True]) -> Tuple[Array, Array]: ...
+
+@overload
+def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, return_sign: bool = False) -> Union[Array, Tuple[Array, Array]]: ...
+
+def logsumexp(a: ArrayLike, axis: Optional[int] = None, b: Optional[ArrayLike] = None,
+              keepdims: bool = False, return_sign: bool = False) -> Union[Array, Tuple[Array, Array]]:
   r"""Log-sum-exp reduction.
 
   Computes
@@ -49,29 +67,30 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
     on the value of the ``return_sign`` argument.
   """
   if b is not None:
-    a, b = _promote_args_inexact("logsumexp", a, b)
-    a = jnp.where(b != 0, a, -jnp.inf)
+    a_arr, b_arr = _promote_args_inexact("logsumexp", a, b)
+    a_arr = jnp.where(b_arr != 0, a_arr, -jnp.inf)
   else:
-    a, = _promote_args_inexact("logsumexp", a)
-  pos_dims, dims = _reduction_dims(a, axis)
-  amax = jnp.max(a, axis=dims, keepdims=keepdims)
+    a_arr, = _promote_args_inexact("logsumexp", a)
+    b_arr = a_arr  # for type checking
+  pos_dims, dims = _reduction_dims(a_arr, axis)
+  amax = jnp.max(a_arr, axis=dims, keepdims=keepdims)
   amax = lax.stop_gradient(lax.select(jnp.isfinite(amax), amax, lax.full_like(amax, 0)))
   amax_with_dims = amax if keepdims else lax.expand_dims(amax, pos_dims)
   # fast path if the result cannot be negative.
-  if b is None and not jnp.issubdtype(a.dtype, jnp.complexfloating):
-    out = lax.add(lax.log(jnp.sum(lax.exp(lax.sub(a, amax_with_dims)),
+  if b is None and not np.issubdtype(a_arr.dtype, np.complexfloating):
+    out = lax.add(lax.log(jnp.sum(lax.exp(lax.sub(a_arr, amax_with_dims)),
                                   axis=dims, keepdims=keepdims)),
                   amax)
     sign = jnp.where(jnp.isnan(out), out, 1.0)
     sign = jnp.where(jnp.isneginf(out), 0.0, sign).astype(out.dtype)
   else:
-    expsub = lax.exp(lax.sub(a, amax_with_dims))
+    expsub = lax.exp(lax.sub(a_arr, amax_with_dims))
     if b is not None:
-      expsub = lax.mul(expsub, b)
+      expsub = lax.mul(expsub, b_arr)
     sumexp = jnp.sum(expsub, axis=dims, keepdims=keepdims)
 
     sign = lax.stop_gradient(jnp.sign(sumexp))
-    if jnp.issubdtype(sumexp.dtype, jnp.complexfloating):
+    if np.issubdtype(sumexp.dtype, np.complexfloating):
       if return_sign:
         sumexp = sign*sumexp
       out = lax.add(lax.log(sumexp), amax)
@@ -80,7 +99,7 @@ def logsumexp(a, axis=None, b=None, keepdims=False, return_sign=False):
   if return_sign:
     return (out, sign)
   if b is not None:
-    if not jnp.issubdtype(out.dtype, jnp.complexfloating):
+    if not np.issubdtype(out.dtype, np.complexfloating):
       with jax.debug_nans(False):
-        out = jnp.where(sign < 0, jnp.array(jnp.nan, dtype=out.dtype), out)
+        out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
   return out
