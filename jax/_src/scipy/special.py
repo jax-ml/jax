@@ -1304,9 +1304,9 @@ def _expi_pos(x):
   )
 
 
-@_wraps(osp_special.expi, module='scipy.special')
 @api.custom_jvp
 @jit
+@_wraps(osp_special.expi, module='scipy.special')
 def expi(x):
   (x,) = _promote_args_inexact("expi", x)
   ret = jnp.piecewise(x, [x < 0], [lambda x: -exp1(-x), _expi_pos])
@@ -1423,9 +1423,9 @@ def _expn3(n, x):
   return (ans + one) * jnp.exp(-x) / xk
 
 
-@_wraps(osp_special.expn, module='scipy.special')
 @partial(api.custom_jvp, nondiff_argnums=(0,))
 @jnp.vectorize
+@_wraps(osp_special.expn, module='scipy.special')
 @jit
 def expn(n, x):
   n, x = _promote_args_inexact("expn", n, x)
