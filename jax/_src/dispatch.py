@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import atexit
-import collections
 import contextlib
 from functools import partial
 import itertools
@@ -55,7 +54,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
 from jax._src.util import flatten, unflatten
-from etils import epath
+from jax._src import path
 
 
 FLAGS = flags.FLAGS
@@ -1004,7 +1003,7 @@ def _make_string_safe_for_filename(s: str) -> str:
 def _dump_ir_to_file(name: str, ir: str):
   id = next(_ir_dump_counter)
   name = f"jax_ir{id}_{_make_string_safe_for_filename(name)}.mlir"
-  name = epath.Path(FLAGS.jax_dump_ir_to) / name
+  name = path.Path(FLAGS.jax_dump_ir_to) / name
   name.write_text(ir)
 
 
