@@ -21,12 +21,13 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
+from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.multivariate_normal.logpdf, update_doc=False, lax_description="""
 In the JAX version, the `allow_singular` argument is not implemented.
 """)
-def logpdf(x, mean, cov, allow_singular=None):
+def logpdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike, allow_singular: None = None) -> ArrayLike:
   if allow_singular is not None:
     raise NotImplementedError("allow_singular argument of multivariate_normal.logpdf")
   x, mean, cov = _promote_dtypes_inexact(x, mean, cov)
@@ -51,5 +52,5 @@ def logpdf(x, mean, cov, allow_singular=None):
               - jnp.log(L.diagonal(axis1=-1, axis2=-2)).sum(-1))
 
 @_wraps(osp_stats.multivariate_normal.pdf, update_doc=False)
-def pdf(x, mean, cov):
+def pdf(x: ArrayLike, mean: ArrayLike, cov: ArrayLike) -> Array:
   return lax.exp(logpdf(x, mean, cov))

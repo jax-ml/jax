@@ -19,10 +19,11 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
+from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.chi2.logpdf, update_doc=False)
-def logpdf(x, df, loc=0, scale=1):
+def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     x, df, loc, scale = _promote_args_inexact("chi2.logpdf", x, df, loc, scale)
     one = _lax_const(x, 1)
     two = _lax_const(x, 2)
@@ -37,5 +38,5 @@ def logpdf(x, df, loc=0, scale=1):
     return where(lax.lt(x, loc), -inf, log_probs)
 
 @_wraps(osp_stats.chi2.pdf, update_doc=False)
-def pdf(x, df, loc=0, scale=1):
+def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     return lax.exp(logpdf(x, df, loc, scale))

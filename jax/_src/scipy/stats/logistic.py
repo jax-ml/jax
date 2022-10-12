@@ -20,17 +20,19 @@ from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.logistic.logpdf, update_doc=False)
-def logpdf(x):
+def logpdf(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("logistic.logpdf", x)
   two = _lax_const(x, 2)
   half_x = lax.div(x, two)
   return lax.mul(lax.neg(two), jnp.logaddexp(half_x, lax.neg(half_x)))
 
+
 @_wraps(osp_stats.logistic.pdf, update_doc=False)
-def pdf(x):
+def pdf(x: ArrayLike) -> Array:
   return lax.exp(logpdf(x))
 
 @_wraps(osp_stats.logistic.ppf, update_doc=False)

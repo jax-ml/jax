@@ -19,11 +19,12 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
+from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import xlogy, xlog1py
 
 
 @_wraps(osp_stats.bernoulli.logpmf, update_doc=False)
-def logpmf(k, p, loc=0):
+def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   k, p, loc = jnp._promote_args_inexact("bernoulli.logpmf", k, p, loc)
   zero = _lax_const(k, 0)
   one = _lax_const(k, 1)
@@ -33,5 +34,5 @@ def logpmf(k, p, loc=0):
                   -jnp.inf, log_probs)
 
 @_wraps(osp_stats.bernoulli.pmf, update_doc=False)
-def pmf(k, p, loc=0):
+def pmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   return jnp.exp(logpmf(k, p, loc))

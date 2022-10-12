@@ -19,11 +19,12 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import xlogy, gammaln, gammaincc
 
 
 @_wraps(osp_stats.poisson.logpmf, update_doc=False)
-def logpmf(k, mu, loc=0):
+def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   k, mu, loc = jnp._promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
   x = lax.sub(k, loc)
@@ -31,11 +32,11 @@ def logpmf(k, mu, loc=0):
   return jnp.where(lax.lt(x, zero), -jnp.inf, log_probs)
 
 @_wraps(osp_stats.poisson.pmf, update_doc=False)
-def pmf(k, mu, loc=0):
+def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   return jnp.exp(logpmf(k, mu, loc))
 
 @_wraps(osp_stats.poisson.cdf, update_doc=False)
-def cdf(k, mu, loc=0):
+def cdf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   k, mu, loc = jnp._promote_args_inexact("poisson.logpmf", k, mu, loc)
   zero = _lax_const(k, 0)
   x = lax.sub(k, loc)

@@ -20,10 +20,11 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact
+from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.cauchy.logpdf, update_doc=False)
-def logpdf(x, loc=0, scale=1):
+def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = _promote_args_inexact("cauchy.logpdf", x, loc, scale)
   pi = _lax_const(x, np.pi)
   scaled_x = lax.div(lax.sub(x, loc), scale)
@@ -31,5 +32,5 @@ def logpdf(x, loc=0, scale=1):
   return lax.neg(lax.add(normalize_term, lax.log1p(lax.mul(scaled_x, scaled_x))))
 
 @_wraps(osp_stats.cauchy.pdf, update_doc=False)
-def pdf(x, loc=0, scale=1):
+def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, loc, scale))
