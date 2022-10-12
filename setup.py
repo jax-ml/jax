@@ -69,7 +69,6 @@ setup(
         'opt_einsum',
         'scipy>=1.5',
         'typing_extensions',
-        'etils[epath]',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.
