@@ -294,30 +294,54 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         np.matmul(args, vs) - ws[..., None, :] * vs) < 1e-3))
 
   @jtu.sample_product(
-    n=[0, 4, 5, 50, 512],
-    dtype=float_types + complex_types,
-    lower=[True, False],
-  )
-  def testEigh(self, n, dtype, lower):
+      [dict(uplo=u, symmetrize_input=s) for u, s in
+       [(None, True), (None, False), ('U', False), ('L', False)]],
+      n=[0, 4, 5, 50, 512],
+      dtype=float_types + complex_types)
+  def testEigh(self, n, dtype, uplo, symmetrize_input):
     rng = jtu.rand_default(self.rng())
     tol = 1e-3
-    args_maker = lambda: [rng((n, n), dtype)]
 
-    uplo = "L" if lower else "U"
-
-    a, = args_maker()
-    a = (a + np.conj(a.T)) / 2
-    w, v = jnp.linalg.eigh(np.tril(a) if lower else np.triu(a),
-                           UPLO=uplo, symmetrize_input=False)
+    a = rng((n, n), dtype)
+    w, v = jnp.linalg.eigh(a, UPLO=uplo, symmetrize_input=symmetrize_input)
     w = w.astype(v.dtype)
+
     self.assertLessEqual(
         np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
-    with jax.numpy_rank_promotion('allow'):
-      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                           tol * np.linalg.norm(a))
 
-    self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
-                          rtol=1e-3)
+    # Construct a representation of the symmetrix matrix implied
+    # by the parameters.
+    if symmetrize_input:
+      a_sym = 0.5 * (a + a.conj().T)
+    else:
+      a_tri = np.triu(a) if uplo == 'U' else np.tril(a)
+      a_sym = a_tri + a_tri.conj().T
+      a_sym[np.diag_indices(n)] *= 0.5
+
+    # We can't directly compare eigenvectors between JAX and numpy, so
+    # instead we check the expected identity a.v = v.w
+    with jax.numpy_rank_promotion('allow'):
+      self.assertLessEqual(np.linalg.norm(np.matmul(a_sym, v) - w * v),
+                           tol * np.linalg.norm(a_sym))
+
+    args_maker = lambda: [rng((n, n), dtype)]
+    jnp_fun = partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=symmetrize_input)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=1e-3)
+
+  @jtu.sample_product(func=[jnp.linalg.eigh, jnp.linalg.eigvalsh])
+  def testEighSymmetrizeError(self, func):
+    x = jnp.eye(3)
+    msg = ("jnp.linalg.eigh: to use a non-default value for the UPLO parameter "
+           "you must pass symmetrize_input=False")
+    with self.assertRaisesRegex(ValueError, msg):
+      func(x, UPLO='U')
+    with self.assertRaisesRegex(ValueError, msg):
+      func(x, UPLO='L')
+
+    # No errors for the following:
+    func(x)
+    func(x, UPLO='U', symmetrize_input=False)
+    func(x, UPLO='L', symmetrize_input=False)
 
   def testEighZeroDiagonal(self):
     a = np.array([[0., -1., -1.,  1.],
@@ -331,18 +355,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           1e-3 * np.linalg.norm(a))
 
   @jtu.sample_product(
+    [dict(uplo=u, symmetrize_input=s) for u, s in
+      [(None, True), (None, False), ('U', False), ('L', False)]],
     shape=[(4, 4), (5, 5), (50, 50)],
     dtype=float_types + complex_types,
   )
-  def testEigvalsh(self, shape, dtype):
+  def testEigvalsh(self, shape, dtype, uplo, symmetrize_input):
     rng = jtu.rand_default(self.rng())
-    n = shape[-1]
-    def args_maker():
-      a = rng((n, n), dtype)
-      a = (a + np.conj(a.T)) / 2
-      return [a]
-    self._CheckAgainstNumpy(np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker,
-                            tol=1e-3)
+    args_maker = lambda: [rng(shape, dtype)]
+
+    def np_fun(x):
+      if symmetrize_input:
+        x = 0.5 * (x + np.conj(x).T)
+      return np.linalg.eigvalsh(x, UPLO=uplo or 'L')
+    jnp_fun = partial(jnp.linalg.eigvalsh, UPLO=uplo, symmetrize_input=symmetrize_input)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1e-3)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)],
@@ -364,22 +392,22 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       f = partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)
     else:  # only check eigenvalue grads for complex matrices
       f = lambda a: partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)(a)[0]
-    jtu.check_grads(f, (a,), 2, rtol=1e-1)
+    with jtu.ignore_warning(category=UserWarning,
+                            message="jnp.linalg.eigh: to use a non-default value"):
+      jtu.check_grads(f, (a,), 2, rtol=1e-1)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (5, 5), (50, 50)],
-    dtype=complex_types,
-    lower=[True, False],
-    eps=[1e-4],
-  )
-  def testEighGradVectorComplex(self, shape, dtype, lower, eps):
+      shape=[(1, 1), (4, 4), (5, 5), (50, 50)],
+      dtype=complex_types,
+      lower=[True, False])
+  def testEighGradVectorComplex(self, shape, dtype, lower):
+    eps = 1e-4
     rng = jtu.rand_default(self.rng())
     # Special case to test for complex eigenvector grad correctness.
     # Exact eigenvector coordinate gradients are hard to test numerically for complex
     # eigensystem solvers given the extra degrees of per-eigenvector phase freedom.
     # Instead, we numerically verify the eigensystem properties on the perturbed
     # eigenvectors.  You only ever want to optimize eigenvector directions, not coordinates!
-    uplo = "L" if lower else "U"
     a = rng(shape, dtype)
     a = (a + np.conj(a.T)) / 2
     a = np.tril(a) if lower else np.triu(a)
@@ -387,7 +415,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     a_dot = (a_dot + np.conj(a_dot.T)) / 2
     a_dot = np.tril(a_dot) if lower else np.triu(a_dot)
     # evaluate eigenvector gradient and groundtruth eigensystem for perturbed input matrix
-    f = partial(jnp.linalg.eigh, UPLO=uplo)
+    f = partial(jnp.linalg.eigh, symmetrize_input=True)
     (w, v), (dw, dv) = jvp(f, primals=(a,), tangents=(a_dot,))
     self.assertTrue(jnp.issubdtype(w.dtype, jnp.floating))
     self.assertTrue(jnp.issubdtype(dw.dtype, jnp.floating))
