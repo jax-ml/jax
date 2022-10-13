@@ -63,7 +63,7 @@ from jax._src.environment_info import print_environment_info as print_environmen
 from jax._src.api import (
   ad,  # TODO(phawkins): update users to avoid this.
   effects_barrier,
-  block_until_ready,
+  block_until_ready as block_until_ready,
   checkpoint as checkpoint,
   checkpoint_policies as checkpoint_policies,
   clear_backends as clear_backends,
