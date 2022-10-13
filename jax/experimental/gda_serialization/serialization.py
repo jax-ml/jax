@@ -16,11 +16,11 @@
 import abc
 import asyncio
 import itertools
+import logging
 from functools import partial
 import re
 import threading
 from typing import Callable, Sequence, Optional, Dict, Any
-from absl import logging
 
 import jax
 from jax._src import distributed
@@ -39,6 +39,8 @@ TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
 _module_unique_count = itertools.count()
+
+logger = logging.getLogger(__name__)
 
 
 async def create_async_array_from_callback(
@@ -385,7 +387,7 @@ class AsyncManager:
 
   def __del__(self):
     if self._thread is not None and self._thread.is_alive():
-      logging.warning('Please add `.wait_until_finished()` in the main thread '
+      logger.warning('Please add `.wait_until_finished()` in the main thread '
                       'before your program finishes because there is a '
                       'possibility of losing errors raised if the '
                       'this class is deleted before writing is completed.')
@@ -393,20 +395,20 @@ class AsyncManager:
   def _thread_func(self):
     try:
       current_process = jax.process_index()
-      logging.info('Starting commit to storage layer by process: %s',
+      logger.info('Starting commit to storage layer by process: %s',
                    current_process)
       for future in self._commit_futures:
         future.result()
-      logging.info('Finished committing to storage layer by process: %s',
+      logger.info('Finished committing to storage layer by process: %s',
                    current_process)
 
       # All processes will wait at the barrier. When all processes are at the
       # barrier, the barrier will be satisfied. If not, then it will timeout.
       key_for_barrier = _get_key(self._count)
-      logging.info('Key used for barrier is %s for process %s',
+      logger.info('Key used for barrier is %s for process %s',
                    key_for_barrier, current_process)
       self._client.wait_at_barrier(key_for_barrier, self._timeout_in_ms)
-      logging.info('Finished waiting at barrier for process %s',
+      logger.info('Finished waiting at barrier for process %s',
                    current_process)
 
       if current_process == 0:
@@ -471,7 +473,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
       final_checkpoint_dir: Final checkpoint directory where the checkpoints
         will be moved from `temp_checkpoint_dir`.
     """
-    logging.info('Waiting for previous serialization to finish.')
+    logger.info('Waiting for previous serialization to finish.')
     self.wait_until_finished()
 
     commit_futures = [[] for _ in range(len(tensorstore_specs))]

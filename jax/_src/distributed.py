@@ -13,15 +13,16 @@
 # limitations under the License.
 
 import atexit
+import logging
 import os
-import functools
 
 from typing import Any, Optional, Union, Sequence
 
-from absl import logging
 from jax._src.clusters import ClusterEnv
 from jax._src.config import config
 from jax._src.lib import xla_extension
+
+logger = logging.getLogger(__name__)
 
 
 class State:
@@ -55,7 +56,7 @@ class State:
 
     if local_device_ids:
       visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]
-      logging.info('JAX distributed initialized with visible devices: %s', visible_devices)
+      logger.info('JAX distributed initialized with visible devices: %s', visible_devices)
       config.update("jax_cuda_visible_devices", visible_devices)
       config.update("jax_rocm_visible_devices", visible_devices)
 
@@ -64,7 +65,7 @@ class State:
     if process_id == 0:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
-      logging.info('Starting JAX distributed service on %s', coordinator_address)
+      logger.info('Starting JAX distributed service on %s', coordinator_address)
       self.service = xla_extension.get_distributed_runtime_service(
           coordinator_address, num_processes, config.jax_coordination_service)
 
@@ -75,7 +76,7 @@ class State:
     self.client = xla_extension.get_distributed_runtime_client(
         coordinator_address, process_id, config.jax_coordination_service,
         init_timeout=300)
-    logging.info('Connecting to JAX distributed service on %s', coordinator_address)
+    logger.info('Connecting to JAX distributed service on %s', coordinator_address)
     self.client.connect()
 
     if config.jax_coordination_service:

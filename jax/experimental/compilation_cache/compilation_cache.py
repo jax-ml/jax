@@ -13,19 +13,21 @@
 # limitations under the License.
 
 import hashlib
+import logging
 import os
 import re
 import sys
 from typing import List, Optional
 
-import jax
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
 from jax.interpreters import xla
-from absl import logging
 
 _cache = None
+
+logger = logging.getLogger(__name__)
+
 
 def initialize_cache(path):
   """Creates a global cache object. Should only be called once per process.
@@ -33,7 +35,7 @@ def initialize_cache(path):
   global _cache
   assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
   _cache = GFileCache(path)
-  logging.warning("Initialized persistent compilation cache at %s", path)
+  logger.warning("Initialized persistent compilation cache at %s", path)
 
 
 def get_executable(xla_computation, compile_options,
@@ -54,20 +56,20 @@ def put_executable(module_name, xla_computation, compile_options,
   """Adds 'executable' to the cache, possibly evicting older entries."""
   assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
   cache_key = get_cache_key(xla_computation, compile_options, backend)
-  logging.info('Writing %s to persistent compilation cache with key %s.',
+  logger.info('Writing %s to persistent compilation cache with key %s.',
                module_name, cache_key)
   serialized_executable = backend.serialize_executable(executable)
   _cache.put(cache_key, serialized_executable)
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
-  if logging.vlog_is_on(1):
+  if logger.isEnabledFor(logging.DEBUG):
     # Log the hash of just this entry
     fresh_hash_obj = hashlib.sha256()
     hashfn(fresh_hash_obj)
-    logging.vlog(1, "get_cache_key hash of serialized %s: %s", last_serialized,
+    logger.debug("get_cache_key hash of serialized %s: %s", last_serialized,
                  fresh_hash_obj.digest().hex())
     # Log the cumulative hash
-    logging.vlog(1, "get_cache_key hash after serializing %s: %s",
+    logger.debug("get_cache_key hash after serializing %s: %s",
                  last_serialized, hash_obj.digest().hex())
 
 def get_cache_key(xla_computation, compile_options, backend) -> str:
@@ -215,9 +217,9 @@ def _hash_xla_flags(hash_obj):
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
   for flag in xla_flags:
     if flag.split('=')[0] in _xla_flags_to_exclude_from_cache_key:
-      logging.vlog(1, "Not including XLA flag in cache key: %s", flag)
+      logger.debug("Not including XLA flag in cache key: %s", flag)
       continue
-    logging.vlog(1, "Including XLA flag in cache key: %s", flag)
+    logger.debug("Including XLA flag in cache key: %s", flag)
     _hash_string(hash_obj, flag)
 
 def _hash_int(hash_obj, int_var):

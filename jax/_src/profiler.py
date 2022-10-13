@@ -18,14 +18,13 @@ import glob
 import gzip
 import http.server
 import json
+import logging
 import os
 import socketserver
 import threading
-import warnings
 
 from typing import Callable, Optional
 
-from absl import logging
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
@@ -33,6 +32,8 @@ from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 
 _profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
+
+logger = logging.getLogger(__name__)
 
 
 def start_server(port: int):
@@ -134,7 +135,7 @@ def _write_perfetto_trace_file(log_dir):
     raise ValueError(f"Invalid trace folder: {latest_folder}")
   trace_json, = trace_jsons
 
-  logging.info("Loading trace.json.gz and removing its metadata...")
+  logger.info("Loading trace.json.gz and removing its metadata...")
   # Perfetto doesn't like the `metadata` field in `trace.json` so we remove
   # it.
   # TODO(sharadmv): speed this up by updating the generated `trace.json`
@@ -144,7 +145,7 @@ def _write_perfetto_trace_file(log_dir):
     del trace["metadata"]
   filename = "perfetto_trace.json.gz"
   perfetto_trace = os.path.join(latest_folder, filename)
-  logging.info("Writing perfetto_trace.json.gz...")
+  logger.info("Writing perfetto_trace.json.gz...")
   with gzip.open(perfetto_trace, "w") as fp:
     fp.write(json.dumps(trace).encode("utf-8"))
   return perfetto_trace

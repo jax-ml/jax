@@ -14,12 +14,11 @@
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 from functools import partial
 import contextlib
+import logging
 import os
 import re
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union, cast
-
-from absl import logging
 
 import jax
 from jax import lax
@@ -33,7 +32,6 @@ from jax.experimental import pjit
 from jax._src import sharding
 from jax.interpreters import ad
 from jax.interpreters import mlir
-from jax.interpreters import partial_eval
 from jax.interpreters import pxla
 from jax.interpreters import xla
 
@@ -52,7 +50,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src import lib as jaxlib
 from jax._src.lib import xla_client
 
 from jax.experimental.global_device_array import GlobalDeviceArray
@@ -93,6 +90,8 @@ _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/-]")
 
 map = util.safe_map
 zip = util.safe_zip
+
+logger = logging.getLogger(__name__)
 
 
 def _sanitize_scope_name(name):
@@ -636,7 +635,7 @@ def _lower_native_and_run(fun_jax: Callable,
   lowered = fun_jax_lower(*arg_specs_jax)._lowering
   mhlo_module = lowered.mhlo()
   mhlo_module_text = mlir.module_to_string(mhlo_module)
-  logging.vlog(2, f"XlaCallModule {mhlo_module_text}")
+  logger.debug("XlaCallModule %s", mhlo_module_text)
   # We do not support custom_call, try to give an error for now
   if "mhlo.custom_call" in mhlo_module_text:
     # Try to give a nice error message. We could just dump the module...

@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import List, Optional, Type, Sequence, Tuple
-from absl import logging
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
+logger = logging.getLogger(__name__)
 
 class ClusterEnv:
   """Interface for defining a cluster environment.
@@ -48,7 +49,7 @@ class ClusterEnv:
               local_device_ids)
     env = next((env for env in cls._cluster_types if env.is_env_present()), None)
     if env:
-      logging.vlog(1, 'Initializing distributed JAX environment via %s', env.__name__)
+      logger.debug('Initializing distributed JAX environment via %s', env.__name__)
       if coordinator_address is None:
         coordinator_address = env.get_coordinator_address()
       if num_processes is None:
@@ -64,7 +65,7 @@ class ClusterEnv:
           env.get_local_process_id() is not None):
         local_device_ids = [env.get_local_process_id()] # type: ignore[list-item]
     else:
-      logging.vlog(1, 'Could not find a known environment for initializing distributed JAX. '
+      logger.debug('Could not find a known environment for initializing distributed JAX. '
         'Known environments: %s', ', '.join(e.__name__ for e in cls._cluster_types))
     return (coordinator_address, num_processes, process_id, local_device_ids)
   # pytype: enable=bad-return-type
