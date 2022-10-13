@@ -1046,8 +1046,8 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
     else:
       compiled = backend_compile(backend, serialized_computation,
                                  compile_options, host_callbacks)
-      _cache_write(serialized_computation, module_name,  compile_options,
-                   backend, compiled)
+      _cache_write(computation, serialized_computation, module_name,
+                   compile_options, backend, compiled)
       return compiled
 
   return backend_compile(backend, serialized_computation, compile_options,
@@ -1072,22 +1072,57 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
     return None
 
 
-def _cache_write(computation: Union[str, bytes, ir.Module], module_name: str,
-                 compile_options: CompileOptions, backend: Backend,
-                 compiled: XlaLoadedExecutable):
-  """Writes `computation` to the persistent compilation cache."""
+def _cache_write(computation: ir.Module,
+                 serialized_computation: Union[str, bytes, ir.Module],
+                 module_name: str, compile_options: CompileOptions,
+                 backend: Backend, compiled: XlaLoadedExecutable):
+  """Writes `serialized_computation` to the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
 
+  min_instr_count = config.jax_persistent_cache_min_instruction_count
+  if min_instr_count:
+    count = _instruction_count(computation, max_count=min_instr_count)
+    if count < min_instr_count:
+      logging.info(
+          "Not writing persistent cache entry for '%s' because it has "
+          "fewer than %i instructions", module_name, min_instr_count)
+      return
+    else:
+      # Don't log `count` because it won't be more than max_count
+      logging.info(
+          "'%s' has at least %i instructions, writing persistent cache entry",
+          module_name, min_instr_count)
+
   try:
-    cc.put_executable(module_name, computation, compile_options, compiled,
-                      backend)
+    cc.put_executable(module_name, serialized_computation, compile_options,
+                      compiled, backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
     warnings.warn(
         f"Error writing persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
+
+
+def _instruction_count(module: ir.Module, max_count: Optional[int] = None):
+
+  def _blocks_count(blocks, count):
+    for block in blocks:
+      for op in block.operations:
+        count += 1
+        # Untested premature performance optimization
+        if max_count is not None and count >= max_count:
+          return max_count
+        for region in op.regions:
+          count = _blocks_count(region.blocks, count)
+    return count
+
+  count = 0
+  for func in module.body.operations:
+    count = _blocks_count(func.body.blocks, count)
+  return count
+
 
 def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):
   buffer_counts = [aval_to_num_buffers(aval) for aval in out_avals]
