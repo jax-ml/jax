@@ -25,6 +25,8 @@ build --define=no_ignite_support=true
 
 build --define=grpc_no_ares=true
 
+build --define=tsl_link_protobuf=true
+
 build -c opt
 
 build --config=short_logs
