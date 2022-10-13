@@ -195,7 +195,8 @@ class PrngTest(jtu.JaxTestCase):
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0x1cb996fc", "0xbb002be7")
-    result = prng.threefry_2x32(np.uint32([-1, -1]), np.uint32([-1, -1]))
+    u32_max = np.iinfo(np.uint32).max
+    result = prng.threefry_2x32(np.uint32([u32_max, u32_max]), np.uint32([u32_max, u32_max]))
     self.assertEqual(expected, result_to_hex(result))
 
     expected = ("0xc4923a9c", "0x483df7a0")
