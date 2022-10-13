@@ -18,11 +18,13 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
+from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import betaln, xlogy, xlog1py
 
 
 @_wraps(osp_stats.beta.logpdf, update_doc=False)
-def logpdf(x, a, b, loc=0, scale=1):
+def logpdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
+           loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, a, b, loc, scale = _promote_args_inexact("beta.logpdf", x, a, b, loc, scale)
   one = _lax_const(x, 1)
   shape_term = lax.neg(betaln(a, b))
@@ -33,6 +35,8 @@ def logpdf(x, a, b, loc=0, scale=1):
   return where(logical_or(lax.gt(x, lax.add(loc, scale)),
                           lax.lt(x, loc)), -inf, log_probs)
 
+
 @_wraps(osp_stats.beta.pdf, update_doc=False)
-def pdf(x, a, b, loc=0, scale=1):
+def pdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
+        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, a, b, loc, scale))

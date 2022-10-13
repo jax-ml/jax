@@ -19,10 +19,11 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact, inf, where
+from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.pareto.logpdf, update_doc=False)
-def logpdf(x, b, loc=0, scale=1):
+def logpdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, b, loc, scale = _promote_args_inexact("pareto.logpdf", x, b, loc, scale)
   one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
@@ -31,5 +32,5 @@ def logpdf(x, b, loc=0, scale=1):
   return where(lax.lt(x, lax.add(loc, scale)), -inf, log_probs)
 
 @_wraps(osp_stats.pareto.pdf, update_doc=False)
-def pdf(x, b, loc=0, scale=1):
+def pdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, b, loc, scale))

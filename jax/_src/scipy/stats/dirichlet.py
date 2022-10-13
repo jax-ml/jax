@@ -21,16 +21,19 @@ from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax.scipy.special import gammaln, xlogy
 from jax._src.numpy.lax_numpy import _promote_dtypes_inexact
+from jax._src.typing import Array, ArrayLike
 
 
-def _is_simplex(x):
+def _is_simplex(x: Array) -> Array:
   x_sum = jnp.sum(x, axis=0)
   return jnp.all(x > 0, axis=0) & (abs(x_sum - 1) < 1E-6)
 
 
 @_wraps(osp_stats.dirichlet.logpdf, update_doc=False)
-def logpdf(x, alpha):
-  x, alpha = _promote_dtypes_inexact(x, alpha)
+def logpdf(x: ArrayLike, alpha: ArrayLike) -> Array:
+  return _logpdf(*_promote_dtypes_inexact(x, alpha))
+
+def _logpdf(x: Array, alpha: Array) -> Array:
   if alpha.ndim != 1:
     raise ValueError(
       f"`alpha` must be one-dimensional; got alpha.shape={alpha.shape}"
@@ -51,5 +54,5 @@ def logpdf(x, alpha):
 
 
 @_wraps(osp_stats.dirichlet.pdf, update_doc=False)
-def pdf(x, alpha):
+def pdf(x: ArrayLike, alpha: ArrayLike) -> Array:
   return lax.exp(logpdf(x, alpha))

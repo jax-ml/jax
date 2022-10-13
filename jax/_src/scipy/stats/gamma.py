@@ -18,11 +18,12 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
+from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import gammaln, xlogy
 
 
 @_wraps(osp_stats.gamma.logpdf, update_doc=False)
-def logpdf(x, a, loc=0, scale=1):
+def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, a, loc, scale = _promote_args_inexact("gamma.logpdf", x, a, loc, scale)
   one = _lax_const(x, 1)
   y = lax.div(lax.sub(x, loc), scale)
@@ -32,5 +33,5 @@ def logpdf(x, a, loc=0, scale=1):
   return where(lax.lt(x, loc), -inf, log_probs)
 
 @_wraps(osp_stats.gamma.pdf, update_doc=False)
-def pdf(x, a, loc=0, scale=1):
+def pdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, a, loc, scale))

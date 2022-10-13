@@ -20,10 +20,11 @@ from jax import lax
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps
 from jax._src.numpy.lax_numpy import _promote_args_inexact
+from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.t.logpdf, update_doc=False)
-def logpdf(x, df, loc=0, scale=1):
+def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, df, loc, scale = _promote_args_inexact("t.logpdf", x, df, loc, scale)
   two = _lax_const(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
@@ -37,5 +38,5 @@ def logpdf(x, df, loc=0, scale=1):
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
 @_wraps(osp_stats.t.pdf, update_doc=False)
-def pdf(x, df, loc=0, scale=1):
+def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, df, loc, scale))
