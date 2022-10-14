@@ -39,6 +39,7 @@ from jax._src.numpy import lax_numpy
 import jax._src.util as util
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis
 from jax._src.lib.mlir import ir
+from jax._src.lib import mlir_api_version
 from jax._src.lib.mlir.dialects import mhlo
 
 unsafe_map, map = map, safe_map  # type: ignore
@@ -846,7 +847,7 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
 
   axis_context = ctx.module_context.axis_context
   is_manual = isinstance(axis_context, mlir.SPMDAxisContext) and axis_context.manual_axes
-  if is_manual:
+  if is_manual and mlir_api_version >= 35:
     channel = ctx.module_context.new_channel()
     other_args = dict(
         channel_handle=mhlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))

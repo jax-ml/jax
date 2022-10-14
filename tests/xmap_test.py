@@ -45,6 +45,7 @@ from jax._src import config as jax_config
 from jax._src.nn import initializers as nn_initializers
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_extension_version
 from jax._src.util import unzip2, prod, safe_zip
 from jax._src.lax import parallel as lax_parallel
@@ -875,6 +876,9 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testRepro(self):
+    if mlir_api_version < 35:
+      self.skipTest('MLIR api version should be greater than 35 for manual '
+                    'lowering of ppermute.')
     n = 2
     x = jnp.arange(n * 5, dtype=jnp.float32).reshape(n, 5)
 
