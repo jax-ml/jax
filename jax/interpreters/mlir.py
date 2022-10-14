@@ -323,7 +323,7 @@ def _source_info_to_location(
     loc = ir.Location.unknown()
   else:
     loc = ir.Location.file(xla._get_canonical_source_file(frame),
-                           frame.line_num, 1)
+                           frame.start_line, frame.start_column)
   loc = ir.Location.name(eqn_str, childLoc=loc)
   # TODO(phawkins): also include primitive.name as the operator type.
   return loc
