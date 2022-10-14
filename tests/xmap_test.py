@@ -873,6 +873,16 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
              in_axes=['i', ...], out_axes=[...], axis_resources={'i': 'x'})(x)
     self.assertAllClose(x.sum(0), y)
 
+  @jtu.with_mesh([('x', 2)])
+  def testRepro(self):
+    n = 2
+    x = jnp.arange(n * 5, dtype=jnp.float32).reshape(n, 5)
+
+    f = xmap(lambda x: lax.ppermute(x, 'i', perm=[(j, (j + 1) % n) for j in range(n)]),
+             in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
+    g = pjit(f, in_axis_resources=P('x'), out_axis_resources=P('x'))
+    self.assertAllClose(g(x), x[::-1])
+
 
 class NamedNumPyTest(XMapTestCase):
 

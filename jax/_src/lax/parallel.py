@@ -843,7 +843,18 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
       full_perm[i, j, 0] = grp[src]
       full_perm[i, j, 1] = grp[dst]
   full_perm = full_perm.reshape((-1, 2))
-  return mhlo.CollectivePermuteOp(x, mlir.dense_int_elements(full_perm)).results
+
+  axis_context = ctx.module_context.axis_context
+  is_manual = isinstance(axis_context, mlir.SPMDAxisContext) and axis_context.manual_axes
+  if is_manual:
+    channel = ctx.module_context.new_channel()
+    other_args = dict(
+        channel_handle=mhlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))
+  else:
+    other_args = {}
+
+  return mhlo.CollectivePermuteOp(
+      x, mlir.dense_int_elements(full_perm), **other_args).results
 
 def _ppermute_transpose_rule(t, x, perm, axis_name):
   srcs, dsts = unzip2(perm)
