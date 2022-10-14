@@ -115,7 +115,7 @@ def make_op_metadata(primitive: core.Primitive,
         op_type=primitive.name,
         op_name=eqn_str,
         source_file=_get_canonical_source_file(frame) if frame else None,
-        source_line=frame.line_num if frame else None)
+        source_line=frame.start_line if frame else None)
 
 # Utilities
 

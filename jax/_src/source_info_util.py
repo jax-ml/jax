@@ -33,7 +33,10 @@ Traceback = xla_client.Traceback
 class Frame(NamedTuple):
   file_name: str
   function_name: str
-  line_num: int
+  start_line: int
+  start_column: int
+  end_line: int
+  end_column: int
 
 
 _exclude_paths = [os.path.dirname(jax.version.__file__)]
@@ -110,10 +113,21 @@ def is_user_filename(filename: str) -> bool:
   return (filename.endswith("_test.py") or
           not any(filename.startswith(p) for p in _exclude_paths))
 
-def _raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
-  return Frame(file_name=code.co_filename,
-               function_name=code.co_name,
-               line_num=xla_client.Traceback.code_addr2line(code, lasti))
+if hasattr(xla_client.Traceback, "code_addr2location"):
+  # Python 3.11+
+  def _raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+    loc = xla_client.Traceback.code_addr2location(code, lasti)
+    start_line, start_column, end_line, end_column = loc
+    return Frame(file_name=code.co_filename,
+                function_name=code.co_name,
+                start_line=start_line, start_column=start_column,
+                end_line=end_line, end_column=end_column)
+else:
+  def _raw_frame_to_frame(code: types.CodeType, lasti: int) -> Frame:
+    return Frame(file_name=code.co_filename,
+                function_name=code.co_name,
+                start_line=xla_client.Traceback.code_addr2line(code, lasti),
+                start_column=0, end_line=0, end_column=0)
 
 def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   """Iterator over the user's frames, filtering jax-internal frames."""
@@ -132,10 +146,17 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
 def user_frame(source_info: SourceInfo) -> Optional[Frame]:
   return next(user_frames(source_info), None)
 
+def _summarize_frame(frame: Frame) -> str:
+  if frame.start_column != 0:
+    return (f"{frame.file_name}:{frame.start_line}:{frame.start_column} "
+            f"({frame.function_name})")
+  else:
+    return f"{frame.file_name}:{frame.start_line} ({frame.function_name})"
+
 def summarize(source_info: SourceInfo, num_frames=1) -> str:
   frames = itertools.islice(user_frames(source_info), num_frames)
-  frame_strs = [f"{frame.file_name}:{frame.line_num} ({frame.function_name})"
-                if frame else "unknown" for frame in frames]
+  frame_strs = [_summarize_frame(frame) if frame else "unknown"
+                for frame in frames]
   return '\n'.join(reversed(frame_strs))
 
 class _SourceInfoContext(threading.local):
