@@ -26,6 +26,7 @@ from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import _broadcasting_vmap, _count_stored_elements, _csr_to_coo, _safe_asarray
 import jax.numpy as jnp
 from jax.util import split_list, safe_zip
+from jax.interpreters import batching
 from jax.interpreters import mlir
 
 Shape = Tuple[int, ...]
@@ -309,3 +310,31 @@ class BCSR(JAXSparse):
   def todense(self):
     """Create a dense version of the array."""
     return bcsr_todense(self)
+
+
+#--------------------------------------------------------------------
+# vmappable handlers
+def _bcsr_to_elt(cont, _, val, axis):
+  if axis is None:
+    return val
+  if axis >= val.n_batch:
+    raise ValueError(f"Cannot map in_axis={axis} for BCSR array with n_batch="
+                     f"{val.n_batch}. in_axes for batched BCSR operations must "
+                     "correspond to a batched dimension.")
+  return BCSR((cont(val.data, axis),
+               cont(val.indices, axis),
+               cont(val.indptr, axis)),
+              shape=val.shape[:axis] + val.shape[axis + 1:])
+
+
+def _bcsr_from_elt(cont, axis_size, elt, axis):
+  if axis > elt.n_batch:
+    raise ValueError(f"BCSR: cannot add out_axis={axis} for BCSR array with "
+                     f"n_batch={elt.n_batch}. BCSR batch axes must be a "
+                     "contiguous block of leading dimensions.")
+  return BCSR((cont(axis_size, elt.data, axis),
+               cont(axis_size, elt.indices, axis),
+               cont(axis_size, elt.indptr, axis)),
+              shape=elt.shape[:axis] + (axis_size,) + elt.shape[axis:])
+
+batching.register_vmappable(BCSR, int, int, _bcsr_to_elt, _bcsr_from_elt, None)

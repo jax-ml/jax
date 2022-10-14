@@ -32,6 +32,7 @@ from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse.bcoo import BCOOInfo
+from jax.experimental.sparse.util import _csr_to_coo
 from jax import lax
 from jax._src.lib import xla_extension_version
 from jax._src.lib import gpu_sparse
@@ -640,6 +641,29 @@ class cuSparseTest(jtu.JaxTestCase):
 
 
 class BCOOTest(jtu.JaxTestCase):
+
+  def test_vmappable(self):
+    """Test does not depend on batching rules of BCOO primitives."""
+    M = jnp.arange(9).reshape((3, 3))
+
+    def fromdense_1d(x):
+      assert x.ndim == 1
+      ind = jnp.where(x != 0, size=3)[0]
+      val = x[ind]
+      return sparse.BCOO((val, ind[:, None]), shape=x.shape)
+
+    with self.subTest('_bcoo_from_elt'):
+      self.assertEqual(M.shape, vmap(fromdense_1d)(M).shape)
+
+    def todense_1d(bcoo_mat):
+      assert bcoo_mat.ndim == 1
+      assert bcoo_mat.n_sparse == 1
+      x = jnp.empty(bcoo_mat.shape, dtype=bcoo_mat.dtype)
+      return x.at[bcoo_mat.indices.ravel()].set(bcoo_mat.data)
+
+    with self.subTest('_bcoo_to_elt'):
+      bcoo_mat = sparse.BCOO.fromdense(M, n_batch=1)
+      self.assertEqual(bcoo_mat.shape, vmap(todense_1d)(bcoo_mat).shape)
 
   def test_repr(self):
     x = sparse.BCOO.fromdense(jnp.arange(5, dtype='float32'))
@@ -2182,6 +2206,34 @@ class BCOOTest(jtu.JaxTestCase):
 
 # TODO(tianjianlu): Unify the testing for BCOOTest and BCSRTest.
 class BCSRTest(jtu.JaxTestCase):
+  def test_vmappable(self):
+    """Test does not depend on batching rules of BCSR primitives."""
+    M = jnp.arange(36).reshape((4, 3, 3))
+
+    def fromdense_2d(x):
+      assert x.ndim == 2
+      row, col = jnp.where(x != 0, size=3)
+      val = x[row, col]
+      indices = col
+      indptr = jnp.zeros(x.shape[0] + 1, dtype=int)
+      indptr = indptr.at[1:].set(jnp.cumsum(
+          jnp.bincount(row, length=x.shape[0]).astype(int)))
+      return sparse.BCSR((val, indices, indptr), shape=x.shape)
+
+    with self.subTest('_bcsr_from_elt'):
+      self.assertEqual(M.shape, vmap(fromdense_2d)(M).shape)
+
+    def todense_2d(bcsr_mat):
+      assert bcsr_mat.ndim == 2
+      assert bcsr_mat.n_sparse == 2
+      x = jnp.empty(bcsr_mat.shape, dtype=bcsr_mat.dtype)
+      row, col = _csr_to_coo(bcsr_mat.indices, bcsr_mat.indptr)
+      return x.at[row, col].set(bcsr_mat.data)
+
+    with self.subTest('_bcsr_to_elt'):
+      bcsr_mat = sparse.BCSR.fromdense(M, n_batch=1)
+      self.assertEqual(bcsr_mat.shape, vmap(todense_2d)(bcsr_mat).shape)
+
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch)
       for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]

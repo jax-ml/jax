@@ -2443,7 +2443,7 @@ def _bcoo_to_elt(cont, _, val, axis):
     raise ValueError(f"Cannot map in_axis={axis} for BCOO array with n_batch={val.n_batch}. "
                      "in_axes for batched BCOO operations must correspond to a batch dimension.")
   return BCOO((cont(val.data, axis), cont(val.indices, axis)),
-              shape= val.shape[:axis] + val.shape[axis + 1:])
+              shape=val.shape[:axis] + val.shape[axis + 1:])
 
 def _bcoo_from_elt(cont, axis_size, elt, axis):
   if axis > elt.n_batch:
