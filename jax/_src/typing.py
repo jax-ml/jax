@@ -32,11 +32,11 @@ import numpy as np
 
 from jax._src.basearray import Array
 
-
-class HasDTypeAttribute(Protocol):
-  dtype: DType
-
 DType = np.dtype
+
+class SupportsDType(Protocol):
+  @property
+  def dtype(self) -> DType: ...
 
 # DTypeLike is meant to annotate inputs to np.dtype that return
 # a valid JAX dtype. It's different than numpy.typing.DTypeLike
@@ -44,7 +44,7 @@ DType = np.dtype
 # It does not include JAX dtype extensions such as KeyType and others.
 # For now, we use Any to allow scalar types like np.int32 & jnp.int32.
 # TODO(jakevdp) specify these more strictly.
-DTypeLike = Union[Any, str, np.dtype, HasDTypeAttribute]
+DTypeLike = Union[Any, str, np.dtype, SupportsDType]
 
 # Shapes are tuples of dimension sizes, which are normally integers. We allow
 # modules to extend the set of dimension sizes to contain other types, e.g.,
@@ -58,6 +58,8 @@ Shape = Sequence[DimSize]
 
 # ArrayLike is a Union of all objects that can be implicitly converted to a standard
 # JAX array (i.e. not including future non-standard array types like KeyArray and BInt).
+# It's different than np.typing.ArrayLike in that it doesn't accept arbitrary sequences,
+# nor does it accept string data.
 ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
