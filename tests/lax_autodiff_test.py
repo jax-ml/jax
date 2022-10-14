@@ -945,28 +945,30 @@ class LaxAutodiffTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, idxs=idxs, dnums=dnums,
-          update_shape=update_shape, max_idx=max_idx)
-      for arg_shape, idxs, update_shape, dnums, max_idx in [
+          update_shape=update_shape, max_idx=max_idx, multiplier=multiplier)
+      for arg_shape, idxs, update_shape, dnums, max_idx, multiplier in [
           ((5,), np.array([[0], [2]]), (2,), lax.ScatterDimensionNumbers(
             update_window_dims=(), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,)), 4),
+            scatter_dims_to_operand_dims=(0,)), 4, 1),
           ((10,), np.array([[0], [0], [0]]), (3, 2), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(),
-            scatter_dims_to_operand_dims=(0,)), 9),
+            scatter_dims_to_operand_dims=(0,)), 4, 2),
           ((10, 5,), np.array([[0], [2], [1]]), (3, 3), lax.ScatterDimensionNumbers(
             update_window_dims=(1,), inserted_window_dims=(0,),
-            scatter_dims_to_operand_dims=(0,)), 3),
+            scatter_dims_to_operand_dims=(0,)), 9, 1),
       ]
     ],
     dtype=grad_float_dtypes,
   )
   def testScatterGrad(self, arg_shape, dtype, idxs, update_shape, dnums,
-                      max_idx):
+                      max_idx, multiplier):
     # Scatters with conflicting indices are not deterministic on GPU, so we
     # use indices that do not collide.
     rng_idx = jtu.rand_unique_int(self.rng(), high=max_idx)
     rng = jtu.rand_default(self.rng())
-    idxs = rng_idx(idxs.shape, idxs.dtype)
+    # The multiplier ensures we don't pick overlapping windows if the update
+    # window is not of size 1.
+    idxs = rng_idx(idxs.shape, idxs.dtype) * multiplier
     scatter = lambda x, y: lax.scatter(x, idxs, y, dimension_numbers=dnums)
     x = rng(arg_shape, dtype)
     y = rng(update_shape, dtype)
