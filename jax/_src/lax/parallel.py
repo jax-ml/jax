@@ -715,10 +715,11 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       _replica_groups(ctx.module_context.axis_env, named_axes,
                       axis_index_groups))
   axis_context = ctx.module_context.axis_context
-  is_manual = isinstance(axis_context, mlir.SPMDAxisContext)
+  is_spmd = isinstance(axis_context,
+                       (mlir.SPMDAxisContext, mlir.ShardingContext))
 
   def all_reduce(aval, x):
-    if is_manual:
+    if is_spmd:
       channel = ctx.module_context.new_channel()
       other_args = dict(
           channel_handle=mhlo.ChannelHandle.get(
@@ -1417,7 +1418,7 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None, t
   return tree_util.tree_map(bind, x)
 
 
-def _build_axis_index_lowering_mhlo(axis_name, axis_env):
+def _build_axis_index_lowering_mhlo(ctx, axis_name, axis_env):
   if isinstance(axis_name, tuple):
     assert axis_name, 'empty axis name'
     if len(axis_name) > 1:
@@ -1429,14 +1430,24 @@ def _build_axis_index_lowering_mhlo(axis_name, axis_env):
   div = mlir.ir_constant(np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
                                   dtype=np.uint32))
   mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
-  unsigned_index = mhlo.RemOp(mhlo.DivOp(mhlo.ReplicaIdOp(), div), mod)
+  axis_context = ctx.module_context.axis_context
+  is_spmd = isinstance(axis_context,
+                       (mlir.SPMDAxisContext, mlir.ShardingContext))
+  if is_spmd:
+    device_id = mhlo.PartitionIdOp(
+        ir.RankedTensorType.get([], ir.IntegerType.get_unsigned(32)))
+  else:
+    device_id = mhlo.ReplicaIdOp()
+  unsigned_index = mhlo.RemOp(mhlo.DivOp(device_id, div), mod)
   return mhlo.ConvertOp(
       ir.RankedTensorType.get([], ir.IntegerType.get_signless(32)),
       unsigned_index).result
 
 def _axis_index_lowering(ctx, *, axis_name):
-  return [_build_axis_index_lowering_mhlo(axis_name,
-                                          ctx.module_context.axis_env)]
+  return [
+      _build_axis_index_lowering_mhlo(ctx, axis_name,
+                                      ctx.module_context.axis_env)
+  ]
 
 
 def _axis_index_abstract_eval(*, axis_name):

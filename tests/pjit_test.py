@@ -40,6 +40,7 @@ from jax.experimental import maps
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
+from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import MeshPspecSharding, Sharding, OpShardingSharding
 import jax.experimental.pjit as pjit_lib
@@ -1091,6 +1092,51 @@ class PJitTest(jtu.BufferDonationTestCase):
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
+  @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_custom_partitioner(self):
+    if xla_extension_version < 95:
+      raise unittest.SkipTest('Must support custom partitioning.')
+
+    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+      self.assertEqual(arg_shardings[0], result_sharding)
+      self.assertEqual(P(('x',)), result_sharding.spec)
+      self.assertEqual(P(('y',)), arg_shardings[1].spec)
+
+      def lower_fn(x, y):
+        axis_name = arg_shardings[1].spec[0][0]
+        i = jax.lax.axis_index(axis_name)
+        return jax.lax.psum(
+            jax.lax.dynamic_slice(x, (0, i * 8), (8, 8)) @ y, (axis_name))
+
+      return lower_fn, result_sharding, arg_shardings
+
+    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
+      x_shard, y_shard = arg_shardings
+      x_shape, y_shape = arg_shapes
+      x_names = tuple(x_shard.spec) + tuple(
+          None for _ in range(len(x_shape.shape) - len(x_shard.spec)))
+      y_names = tuple(y_shard.spec) + tuple(
+          None for _ in range(len(y_shape.shape) - len(y_shard.spec)))
+      return MeshPspecSharding(y_shard.mesh, P(*(x_names[:-1] + y_names[1:])))
+
+    @custom_partitioning
+    def f(x, y):
+      return x @ y
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition)
+
+    pjit_f = pjit(
+        f, in_axis_resources=(P('x'), P('y')), out_axis_resources=P('x'))
+    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+    y = np.asarray(np.random.randint(0, 20, (16, 32)), dtype=np.float32)
+    result1 = jax.jit(f)(x, y)
+    result2 = f(x, y)
+    result0 = pjit_f(x, y)
+    self.assertArraysEqual(result0, result1)
+    self.assertArraysEqual(result1, result2)
 
 class GDAPjitTest(jtu.JaxTestCase):
 
