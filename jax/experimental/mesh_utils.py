@@ -15,11 +15,13 @@
 """Utils for building a device mesh."""
 
 import itertools
+import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from absl import logging
 import jax
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
@@ -248,14 +250,14 @@ def create_device_mesh(
   device_kind = devices[-1].device_kind
   if device_kind in (_TPU_V2, _TPU_V3):
     if len(devices) == 8:
-      logging.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
+      logger.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
       device_mesh = np.asarray(devices)
       device_mesh = device_mesh[np.array(_TRAY_RING_ORDER)]
       device_mesh = device_mesh.reshape(mesh_shape)
       return device_mesh
     elif mesh_shape[-1] == 8:
       device_mesh = np.asarray(devices).reshape(mesh_shape)
-      logging.info('Reordering mesh to physical ring order on each TPU v2/v3 tray.')
+      logger.info('Reordering mesh to physical ring order on each TPU v2/v3 tray.')
       perm = np.array(_TRAY_RING_ORDER)
       device_mesh = device_mesh[..., perm]
       return device_mesh
@@ -270,7 +272,7 @@ def create_device_mesh(
       physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
     device_mesh, assignment = _create_device_mesh_for_nd_torus(
         physical_mesh, mesh_shape)
-    logging.info('_create_device_mesh_for_nd_torus assignment: %s', assignment)
+    logger.info('_create_device_mesh_for_nd_torus assignment: %s', assignment)
     return device_mesh
   else:
     device_mesh = np.asarray(devices).reshape(mesh_shape)

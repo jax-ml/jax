@@ -18,18 +18,19 @@
 import contextlib
 import functools
 import itertools
+import logging
 import os
 import sys
 import threading
 from typing import Any, List, Callable, Hashable, NamedTuple, Iterator, Optional
-import warnings
-
-from absl import logging
 
 from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
+
+logger = logging.getLogger(__name__)
+
 
 def bool_env(varname: str, default: bool) -> bool:
   """Read an environment variable and interpret it as a boolean.
@@ -643,7 +644,7 @@ log_compiles = config.define_bool_state(
     name='jax_log_compiles',
     default=False,
     help=('Log a message each time every time `jit` or `pmap` compiles an XLA '
-          'computation. Logging is performed with `absl.logging`. When this '
+          'computation. Logging is performed with `logging`. When this '
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
@@ -674,7 +675,7 @@ distributed_debug = config.define_bool_state(
     name='jax_distributed_debug',
     default=False,
     help=('Enable logging useful for debugging multi-process distributed '
-          'computations. Logging is performed with `absl.logging` at WARNING '
+          'computations. Logging is performed with `logging` at WARNING '
           'level.'))
 
 
@@ -772,7 +773,7 @@ def _validate_default_device(val):
     # TODO(skyewm): this is a workaround for non-PJRT Device types. Remove when
     # all JAX backends use a single C++ device interface.
     if 'Device' in str(type(val)):
-      logging.info(
+      logger.info(
           'Allowing non-`xla_client.Device` default device: %s, type: %s',
           repr(val), type(val))
       return

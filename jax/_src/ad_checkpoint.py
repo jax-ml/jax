@@ -18,7 +18,6 @@ from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
                     FrozenSet)
 import types
 
-from absl import logging
 import numpy as np
 
 import jax

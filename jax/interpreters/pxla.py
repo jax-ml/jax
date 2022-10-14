@@ -36,6 +36,7 @@ from collections import defaultdict, OrderedDict
 import dataclasses
 from functools import partial, lru_cache
 import itertools as it
+import logging
 import operator as op
 import sys
 import warnings
@@ -45,7 +46,6 @@ from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast,
                     TYPE_CHECKING)
 
-from absl import logging
 
 import numpy as np
 
@@ -105,6 +105,8 @@ else:
 xe = xc._xla
 
 unsafe_map, map = map, safe_map  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 Index = Union[int, slice, Tuple[Union[int, slice], ...]]
 
@@ -1385,19 +1387,19 @@ def lower_parallel_callable(
   jaxpr, consts, replicas, parts, shards = stage_parallel_callable(
       pci, fun, global_arg_shapes)
 
-  if logging.vlog_is_on(2):
-    logging.vlog(2, "sharded_avals: %s", shards.sharded_avals)
-    logging.vlog(2, "global_sharded_avals: %s", shards.global_sharded_avals)
-    logging.vlog(2, "num_replicas: %d  num_local_replicas: %d",
+  if logger.isEnabledFor(logging.DEBUG):
+    logger.debug("sharded_avals: %s", shards.sharded_avals)
+    logger.debug("global_sharded_avals: %s", shards.global_sharded_avals)
+    logger.debug("num_replicas: %d  num_local_replicas: %d",
                  replicas.num_global_replicas, replicas.num_local_replicas)
-    logging.vlog(2, "num_partitions: %d  local_num_partitions: %d",
+    logger.debug("num_partitions: %d  local_num_partitions: %d",
                  parts.num_partitions, parts.local_num_partitions)
-    logging.vlog(2, "arg_parts: %s", parts.arg_parts)
-    logging.vlog(2, "local_arg_parts: %s", parts.local_arg_parts)
-    logging.vlog(2, "out_parts: %s", parts.out_parts)
-    logging.vlog(2, "local_out_parts: %s", parts.local_out_parts)
-    logging.vlog(2, "devices: %s", devices)
-    logging.vlog(2, "local_devices: %s", pci.local_devices)
+    logger.debug("arg_parts: %s", parts.arg_parts)
+    logger.debug("local_arg_parts: %s", parts.local_arg_parts)
+    logger.debug("out_parts: %s", parts.out_parts)
+    logger.debug("local_out_parts: %s", parts.local_out_parts)
+    logger.debug("devices: %s", devices)
+    logger.debug("local_devices: %s", pci.local_devices)
 
   if (xb.process_count(backend) > 1 and must_run_on_all_devices and
       shards.num_local_shards != xb.local_device_count(backend)):
@@ -1425,7 +1427,7 @@ def lower_parallel_callable(
       f"{replicas.jaxpr_replicas} and nested_partitions={parts.num_partitions}")
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
+  logger.log(log_priority,
               "Compiling %s (%d) for %d devices with args %s. (num_replicas=%d"
               " num_partitions=%d)", fun.__name__, id(fun),
               shards.num_global_shards, avals, replicas.num_global_replicas,
@@ -2785,7 +2787,7 @@ def lower_sharding_computation(
                        if _is_unspecified(i) else i for i in in_shardings)
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
+  logger.log(log_priority,
               "Compiling %s (%d) for with global shapes and types %s. "
               "Argument mapping: %s.",
               getattr(fun, '__name__', '<unnamed function>'), id(fun),
@@ -2964,7 +2966,7 @@ def lower_mesh_computation(
   global_axis_sizes = mesh.shape
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
-  logging.log(log_priority,
+  logger.log(log_priority,
               "Compiling %s (%d) for %s mesh with global shapes and types %s. "
               "Argument mapping: %s.",
               getattr(fun, '__name__', '<unnamed function>'), id(fun),

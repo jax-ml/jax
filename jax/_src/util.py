@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from collections import namedtuple
 import functools
 from functools import partial
 import itertools as it
-from collections import namedtuple
+import logging
 import operator
 import types
 import threading
@@ -24,12 +24,13 @@ from typing import (Any, Callable, Dict, Iterable, List, Tuple, Generic,
                     TypeVar, Set, Iterator, Sequence, Optional)
 import weakref
 
-from absl import logging
 import numpy as np
 
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax.config import config
+
+logger = logging.getLogger(__name__)
 
 Seq = Sequence
 
@@ -510,7 +511,7 @@ def distributed_debug_log(*pairs):
       lines.append("DISTRIBUTED_DEBUG logging failed!")
       lines.append(f"{e}")
     lines.append("DISTRIBUTED_DEBUG_END")
-    logging.warning("\n".join(lines))
+    logger.warning("\n".join(lines))
 
 
 class OrderedSet(Generic[T]):

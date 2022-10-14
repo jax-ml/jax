@@ -20,15 +20,12 @@ XLA. There are also a handful of related casting utilities.
 """
 
 from functools import partial, lru_cache
+import logging
 import os
 import platform as py_platform
 import threading
 from typing import Any, Dict, List, Optional, Union
 import warnings
-
-from absl import logging
-# Disable "WARNING: Logging before flag parsing goes to stderr." message
-logging._warn_preinit_stderr = 0
 
 import jax._src.lib as lib
 from jax._src.config import flags, bool_env, int_env
@@ -57,6 +54,8 @@ use_sharded_buffer = xla_client._version >= 90
 ShardedBuffer = Any
 
 FLAGS = flags.FLAGS
+
+logger = logging.getLogger(__name__)
 
 # TODO(phawkins): Remove jax_xla_backend.
 flags.DEFINE_string(
@@ -126,8 +125,7 @@ def get_compile_options(
     build_options.auto_spmd_partitioning_mesh_shape = auto_spmd_partitioning_mesh_shape
     build_options.auto_spmd_partitioning_mesh_ids = auto_spmd_partitioning_mesh_ids
   if device_assignment is not None:
-    logging.vlog(
-        2,
+    logger.debug(
         'get_compile_options: num_replicas=%s num_partitions=%s device_assignment=%s',
         num_replicas, num_partitions, device_assignment)
     device_assignment = np.array(device_assignment)
@@ -170,10 +168,10 @@ def get_compile_options(
 
 def _make_tpu_driver_client():
   if tpu_driver_client is None:
-    logging.info("Remote TPU is not linked into jax; skipping remote TPU.")
+    logger.info("Remote TPU is not linked into jax; skipping remote TPU.")
     return None
   if FLAGS.jax_backend_target is None:
-    logging.info("No --jax_backend_target was provided; skipping remote TPU.")
+    logger.info("No --jax_backend_target was provided; skipping remote TPU.")
     return None
   return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
 
@@ -354,14 +352,14 @@ def backends():
             raise RuntimeError(err_msg)
           else:
             _backends_errors[platform] = str(err)
-            logging.info(err_msg)
+            logger.info(err_msg)
             continue
     # We don't warn about falling back to CPU on Mac OS, because we don't
     # support anything else there at the moment and warning would be pointless.
     if (py_platform.system() != "Darwin" and
         _default_backend.platform == "cpu" and
         FLAGS.jax_platform_name != 'cpu'):
-      logging.warning('No GPU/TPU found, falling back to CPU. '
+      logger.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
     return _backends
 
@@ -371,7 +369,7 @@ def _clear_backends():
   global _backends_errors
   global _default_backend
 
-  logging.info("Clearing JAX backend caches.")
+  logger.info("Clearing JAX backend caches.")
   with _backend_lock:
     _backends = {}
     _backends_errors = {}
@@ -385,7 +383,7 @@ def _init_backend(platform):
   if factory is None:
     raise RuntimeError(f"Unknown backend '{platform}'")
 
-  logging.vlog(1, "Initializing backend '%s'" % platform)
+  logger.debug("Initializing backend '%s'", platform)
   backend = factory()
   # TODO(skye): consider raising more descriptive errors directly from backend
   # factories instead of returning None.
@@ -397,7 +395,7 @@ def _init_backend(platform):
                              ("process_index", backend.process_index()),
                              ("device_count", backend.device_count()),
                              ("local_devices", backend.local_devices()))
-  logging.vlog(1, "Backend '%s' initialized" % platform)
+  logger.debug("Backend '%s' initialized", platform)
   return backend
 
 

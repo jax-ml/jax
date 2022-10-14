@@ -2963,10 +2963,10 @@ class APITest(jtu.JaxTestCase):
         f(2.)
     finally:
       logging.set_verbosity(prev_level)
-    self.assertLen(l.output, 3)  # 3 lines
-    self.assertIn('Finished tracing', l.output[0])
-    self.assertIn('Compiling f', l.output[1])
-    self.assertIn('Finished XLA compilation', l.output[2])
+    self.assertGreaterEqual(len(l.output), 3)  # 3 lines
+    self.assertTrue(any('Finished tracing' in line for line in l.output))
+    self.assertTrue(any('Compiling f' in line for line in l.output))
+    self.assertTrue(any('Finished XLA compilation' in line for line in l.output))
 
   def test_grad_of_jit_compilation_caching(self):
     if not hasattr(self, "assertLogs"):
@@ -2987,7 +2987,7 @@ class APITest(jtu.JaxTestCase):
         ans2 = api.grad(f)(3.)
     finally:
       logging.set_verbosity(prev_level)
-    self.assertLen(l.output, 2 * 3)  # one for fwd, one for bwd, 3 lines each
+    self.assertGreaterEqual(len(l.output), 2 * 3)  # one for fwd, one for bwd, 3 lines each
     self.assertAllClose(ans1, np.cos(2.), check_dtypes=False)
     self.assertAllClose(ans2, np.cos(3.), check_dtypes=False)
 

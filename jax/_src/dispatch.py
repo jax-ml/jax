@@ -22,14 +22,14 @@ import itertools
 import time
 from typing import (
     Any, Callable, Dict, Optional, Sequence, Set, Tuple, List, Type, Union,
-    TYPE_CHECKING, Iterator)
+    Iterator)
 from typing_extensions import Protocol
+import logging
 import os
 import re
 import threading
 import warnings
 
-from absl import logging
 import numpy as np
 
 import jax
@@ -81,6 +81,8 @@ CompileOptions = xc.CompileOptions
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+logger = logging.getLogger(__name__)
 
 # This flag is set on exit; no logging should be attempted
 _on_exit = False
@@ -360,7 +362,7 @@ def log_elapsed_time(fmt: str):
     start_time = time.time()
     yield
     elapsed_time = time.time() - start_time
-    logging.log(log_priority, fmt.format(elapsed_time=elapsed_time))
+    logger.log(log_priority, fmt.format(elapsed_time=elapsed_time))
 
 
 def should_tuple_args(num_args: int, platform: str):
@@ -476,7 +478,7 @@ def lower_xla_callable(
       msg = f"Compiling {fun.__name__} ({id(fun)}) for {len(abstract_args)} args."
     else:
       msg = f"Compiling {fun.__name__} ({id(fun)} for args {abstract_args}."
-    logging.log(log_priority, msg)
+    logger.log(log_priority, msg)
 
   raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, name, jaxpr)
 
@@ -1041,7 +1043,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
     cached_executable = _cache_read(serialized_computation, module_name,
                                     compile_options, backend)
     if cached_executable is not None:
-      logging.info("Persistent compilation cache hit for '%s'", module_name)
+      logger.info("Persistent compilation cache hit for '%s'", module_name)
       return cached_executable
     else:
       compiled = backend_compile(backend, serialized_computation,
