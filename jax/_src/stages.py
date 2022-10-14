@@ -33,7 +33,7 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 from typing_extensions import Protocol
 
 import jax
@@ -306,6 +306,12 @@ def make_args_info(in_tree, in_avals, donate_argnums):
       ArgInfo(aval, i in donate_argnums)
       for i, aval in enumerate(flat_avals)])
 
+class CompiledCallParams(NamedTuple):
+  executable: Executable
+  no_kwargs: bool
+  in_tree: tree_util.PyTreeDef
+  out_tree: tree_util.PyTreeDef
+
 
 class Compiled(Stage):
   """Compiled representation of a function specialized to types/values.
@@ -322,11 +328,19 @@ class Compiled(Stage):
   _executable: Executable
   _no_kwargs: bool
 
-  def __init__(self, executable, args_info, out_tree, no_kwargs=False):
+  def __init__(self, executable, args_info, out_tree, no_kwargs=False, create_cpp_call=None):
     self._executable = executable
     self._no_kwargs = no_kwargs
     self.args_info = args_info
     self.out_tree = out_tree
+    self._params = CompiledCallParams(self._executable, self._no_kwargs,
+                                      self.in_tree, self.out_tree)
+    # TODO(chky): Remove this conditional statement once we implement the fast
+    # path in C++ for all AOT paths.
+    if create_cpp_call is not None:
+      self._cpp_call = create_cpp_call(self._params)
+    else:
+      self._cpp_call = None
 
   def compiler_ir(self):
     """Post-compilation IR.
@@ -415,22 +429,25 @@ class Compiled(Stage):
     shardings_flat = self._executable.output_shardings()
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
-  def __call__(self, *args, **kwargs):
+  @staticmethod
+  def call(*args, **kwargs):
+    params = args[0]
+    args = args[1:]
     if jax.config.jax_dynamic_shapes:
       raise NotImplementedError
-    if self._no_kwargs and kwargs:
+    if params.no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())
       raise NotImplementedError(
           "function was compiled by a transformation that does not support "
           f"keyword arguments, but called with keyword arguments: {kws}")
     args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
-    if in_tree != self.in_tree:
+    if in_tree != params.in_tree:
       # TODO(frostig): provide more info about the source function
       # and transformation
       raise TypeError(
-          f"function compiled for {self.in_tree}, called with {in_tree}")
+          f"function compiled for {params.in_tree}, called with {in_tree}")
     try:
-      out_flat = self._executable.call(*args_flat)
+      out_flat = params.executable.call(*args_flat)
     except TypeError as e:
       # We can't transform ahead-of-time compiled calls, since we've
       # lowered and compiled for a fixed function signature, and JAX
@@ -448,7 +465,15 @@ class Compiled(Stage):
               f"Tracer type {type(arg)}.") from e
       else:
         raise
-    return tree_util.tree_unflatten(self.out_tree, out_flat)
+    outs = tree_util.tree_unflatten(params.out_tree, out_flat)
+    return outs, out_flat
+
+  def __call__(self, *args, **kwargs):
+    if self._cpp_call is not None:
+      return self._cpp_call(*args, **kwargs)
+
+    outs, _ = Compiled.call(self._params, *args, **kwargs)
+    return outs
 
 
 class Lowered(Stage):
@@ -466,16 +491,18 @@ class Lowered(Stage):
   out_tree: tree_util.PyTreeDef
   _lowering: XlaLowering
   _no_kwargs: bool
+  _create_cpp_call: Optional[Callable]
 
   def __init__(self,
                lowering: XlaLowering,
                args_info,       # PyTreee of ArgInfo
                out_tree: tree_util.PyTreeDef,
-               no_kwargs: bool = False):
+               no_kwargs: bool = False, create_cpp_call: Optional[Callable] = None):
     self._lowering = lowering
     self._no_kwargs = no_kwargs
     self.args_info = args_info
     self.out_tree = out_tree
+    self._create_cpp_call = create_cpp_call
 
   @classmethod
   def from_flat_info(cls,
@@ -484,7 +511,7 @@ class Lowered(Stage):
                      in_avals,
                      donate_argnums: Tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
-                     no_kwargs: bool = False):
+                     no_kwargs: bool = False, create_cpp_call: Optional[Callable] = None):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
 
     Args:
@@ -495,7 +522,7 @@ class Lowered(Stage):
         arguments (an error will be raised if some are provided).
     """
     return cls(lowering, make_args_info(in_tree, in_avals, donate_argnums),
-               out_tree, no_kwargs=no_kwargs)
+               out_tree, no_kwargs=no_kwargs, create_cpp_call=create_cpp_call)
 
   def compile(self) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
@@ -509,7 +536,7 @@ class Lowered(Stage):
       kw = {}
 
     return Compiled(self._lowering.compile(**kw), self.args_info, self.out_tree,
-                    no_kwargs=self._no_kwargs)
+                    no_kwargs=self._no_kwargs, create_cpp_call=self._create_cpp_call)
 
   def as_text(self, dialect: Optional[str] = None) -> str:
     """A human-readable text representation of this lowering.
