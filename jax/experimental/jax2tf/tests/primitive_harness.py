@@ -1180,6 +1180,10 @@ for shape, idxs, dnums, slice_sizes, needs_xla in [
      lax.GatherDimensionNumbers(
          offset_dims=(1,), collapsed_slice_dims=(0,),
          start_index_map=(0, 1)), (1, 3), True),
+    ((128, 12, 16), np.zeros((1, 240, 2), dtype=np.int32),
+     lax.GatherDimensionNumbers(
+         offset_dims=(1, 3, 4), collapsed_slice_dims=(),
+         start_index_map=(1, 2)), (128, 2, 2), False),
 ]:
   dtype = np.float32
   for enable_xla in ([True] if needs_xla else [True, False]):

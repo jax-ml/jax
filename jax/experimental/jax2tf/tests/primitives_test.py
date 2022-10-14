@@ -102,7 +102,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses,
       include_jax_unimpl=False,
-      #one_containing="scatter_modes_out_of_bounds_shape=float32[1,5]",
+      one_containing="gather_shape=(128, 12, 16)_idxs_shape=(1, 240, 2)_dnums=GatherDimensionNumbers(offset_dims=(1, 3, 4), collapsed_slice_dims=(), start_index_map=(1, 2))_slice_sizes=(128, 2, 2)_enable_xla=False",
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
