@@ -92,7 +92,7 @@ def _get_metadata(arr):
   if isinstance(arr, array.ArrayImpl):
     local_shape = arr._arrays[0].shape
   else:
-    local_shape = arr.local_data(0).shape
+    local_shape = arr.addressable_data(0).shape
   return {
       'compressor': {
           'id': 'gzip'
@@ -193,7 +193,7 @@ async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
   if isinstance(arr_inp, array.ArrayImpl):
     local_shards = arr_inp.addressable_shards
   else:
-    local_shards = arr_inp.local_shards
+    local_shards = arr_inp.addressable_shards
   future_write_state = jax.tree_util.tree_map(_write_array, local_shards)
   return await asyncio.gather(*future_write_state)
 

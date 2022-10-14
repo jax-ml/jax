@@ -147,7 +147,7 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
     else:
       if isinstance(inp, GlobalDeviceArray):
         if inp.is_fully_replicated:
-          return np.asarray(inp.local_data(0))
+          return np.asarray(inp.addressable_data(0))
         global_mesh = inp.mesh
         in_axis_resources = FROM_GDA
       else:

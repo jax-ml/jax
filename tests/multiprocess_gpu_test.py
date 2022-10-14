@@ -317,23 +317,23 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (16, 16))
-      self.assertEqual(out1.local_shards[0].data.shape, (2, 8))
+      self.assertEqual(out1.addressable_shards[0].data.shape, (2, 8))
       self.assertDictEqual(out1.mesh.shape, {"x": 8, "y": 2})
       expected_matrix_mul = global_input_data @ global_input_data.T
-      for s in out1.local_shards:
+      for s in out1.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data),
                                       expected_matrix_mul[s.index])
 
       self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (16, 2))
-      self.assertEqual(out2.local_shards[0].data.shape, (16, 2))
-      for s in out2.local_shards:
+      self.assertEqual(out2.addressable_shards[0].data.shape, (16, 2))
+      for s in out2.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data), global_input_data)
 
       self.assertIsInstance(out3, global_device_array.GlobalDeviceArray)
       self.assertEqual(out3.shape, (16, 2))
-      self.assertEqual(out3.local_shards[0].data.shape, (2, 2))
-      for s in out3.local_shards:
+      self.assertEqual(out3.addressable_shards[0].data.shape, (2, 2))
+      for s in out3.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data),
                                       global_input_data[s.index])
 
@@ -387,7 +387,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
                     in_axis_resources=pjit.FROM_GDA,
                     out_axis_resources=mesh_axes)
       out = f(gda1)
-      for s in out.local_shards:
+      for s in out.addressable_shards:
         device_id = s.device.id
         expected_index = expected_idx_rid[device_id][0]
         expected_replica_id = expected_idx_rid[device_id][1]
@@ -439,7 +439,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
                     out_axis_resources=mesh_axes)
       out = f(gda1)
 
-      for s in out.local_shards:
+      for s in out.addressable_shards:
         device_id = s.device.id
         expected_index = expected_idx_rid[device_id][0]
         expected_replica_id = expected_idx_rid[device_id][1]

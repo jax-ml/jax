@@ -232,13 +232,13 @@ class GlobalDeviceArray:
     ...        global_input_shape, global_mesh, mesh_axes, get_local_data_slice)
     >>> print(gda.shape)
     (8, 2)
-    >>> print(gda.local_shards[0].data)  # Access the data on a single local device
+    >>> print(gda.addressable_shards[0].data)  # Access the data on a single local device
     [[0]
      [2]]
-    >>> print(gda.local_shards[0].data.shape)
+    >>> print(gda.addressable_shards[0].data.shape)
     (2, 1)
     >>> # Numpy-style index into the global array that this data shard corresponds to
-    >>> print(gda.local_shards[0].index)
+    >>> print(gda.addressable_shards[0].index)
     (slice(0, 2, None), slice(0, 1, None))
 
   GDAs can also be given as an input to pjit and you can get GDAs as output from pjit::
@@ -250,7 +250,7 @@ class GlobalDeviceArray:
     with global_mesh:
       out = f(gda)
 
-    # `out` can be passed to another pjit call, out.local_shards can be used to
+    # `out` can be passed to another pjit call, out.addressable_shards can be used to
     # export the data to non-jax systems (e.g. for checkpointing or logging), etc.
 
   """
@@ -374,7 +374,7 @@ class GlobalDeviceArray:
 
   @property
   def is_fully_replicated(self) -> bool:
-    return self.shape == self.local_data(0).shape
+    return self.shape == self.addressable_data(0).shape
 
   def _create_local_shards(self) -> Sequence[Shard]:
     if self._gda_fast_path_args is not None:
@@ -402,7 +402,7 @@ class GlobalDeviceArray:
   @property
   def global_shards(self) -> Sequence[Shard]:
     if self.mesh.size == len(self._local_devices):
-      return self.local_shards
+      return self.addressable_shards
 
     # Populating global_shards lazily (i.e. when requested) because populating
     # sthem eagerly leads to a performance regression when training on large
@@ -433,7 +433,7 @@ class GlobalDeviceArray:
                          "`jax.experimental.multihost_utils.process_allgather` "
                          "for this use case.")
     unique_shards = [s.data.copy_to_host_async() or s
-                     for s in self.local_shards if s.replica_id == 0]
+                     for s in self.addressable_shards if s.replica_id == 0]
     npy_value = np.empty(self.shape, self.dtype)
     for s in unique_shards:
       npy_value[s.index] = np.asarray(s.data)
@@ -485,7 +485,7 @@ class GlobalDeviceArray:
       ...  return global_input_data[index]
       ...
       >>> gda = GlobalDeviceArray.from_callback(global_input_shape, global_mesh, mesh_axes, cb)
-      >>> gda.local_data(0).shape
+      >>> gda.addressable_data(0).shape
       (4, 2)
 
     Args:
@@ -533,7 +533,7 @@ class GlobalDeviceArray:
       ...   return [global_input_data[index] for index in indices]
       ...
       >>> gda = GlobalDeviceArray.from_batched_callback(global_input_shape, global_mesh, mesh_axes, batched_cb)
-      >>> gda.local_data(0).shape
+      >>> gda.addressable_data(0).shape
       (2, 2)
 
     Args:
@@ -585,7 +585,7 @@ class GlobalDeviceArray:
       ...
       >>> gda = GlobalDeviceArray.from_batched_callback_with_devices(
       ...   global_input_shape, global_mesh, mesh_axes, cb)
-      >>> gda.local_data(0).shape
+      >>> gda.addressable_data(0).shape
       (1, 2)
 
     Args:

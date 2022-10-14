@@ -1028,9 +1028,9 @@ class XMapGDATest(XMapTestCase):
       out = f(gda_obj)
       self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
       self.assertEqual(out.shape, (8, 2))
-      self.assertEqual(out.local_shards[0].data.shape, (2, 1))
+      self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
       self.assertDictEqual(out.mesh.shape, {'x': 4, 'y': 2})
-      for s in out.local_shards:
+      for s in out.addressable_shards:
         self.assertArraysEqual(s.data, input_data[s.index])
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
@@ -1058,19 +1058,19 @@ class XMapGDATest(XMapTestCase):
 
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8,))
-      self.assertEqual(out1.local_shards[0].data.shape, (2,))
+      self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
       self.assertDictEqual(out1.mesh.shape, {'x': 4, 'y': 2})
-      for s in out1.local_shards:
+      for s in out1.addressable_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
       self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8,))
-      self.assertEqual(out2.local_shards[0].data.shape, (2,))
+      self.assertEqual(out2.addressable_shards[0].data.shape, (2,))
       self.assertDictEqual(out2.mesh.shape, {'x': 4, 'y': 2})
-      for s in out2.local_shards:
+      for s in out2.addressable_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
-      for i, j in safe_zip(out1.local_shards, out2.local_shards):
+      for i, j in safe_zip(out1.addressable_shards, out2.addressable_shards):
         self.assertArraysEqual(i.data, j.data)
 
   @jtu.with_mesh([('x', 4), ('y', 2)])
@@ -1099,16 +1099,16 @@ class XMapGDATest(XMapTestCase):
 
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8,))
-      self.assertEqual(out1.local_shards[0].data.shape, (2,))
+      self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
       self.assertDictEqual(out1.mesh.shape, {'x': 4, 'y': 2})
-      for s in out1.local_shards:
+      for s in out1.addressable_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
       self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8,))
-      self.assertEqual(out2.local_shards[0].data.shape, (4,))
+      self.assertEqual(out2.addressable_shards[0].data.shape, (4,))
       self.assertDictEqual(out2.mesh.shape, {'x': 4, 'y': 2})
-      for s in out2.local_shards:
+      for s in out2.addressable_shards:
         self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
   @jtu.with_mesh([('x', 4), ('y', 2)])

@@ -76,21 +76,21 @@ class CheckpointTest(jtu.JaxTestCase):
          MeshPspecSharding(global_mesh1d, P(None))],
         tspecs)
 
-    self.assertArraysEqual(np.asarray(m1.local_shards[0].data),
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[0].data),
                            np.array([[0], [2]]))
-    self.assertArraysEqual(np.asarray(m1.local_shards[1].data),
+    self.assertArraysEqual(np.asarray(m1.addressable_shards[1].data),
                            np.array([[1], [3]]))
-    self.assertEqual(m1.local_shards[0].data.shape, (2, 1))
+    self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
     self.assertEqual(m1.dtype, np.int32)
 
-    self.assertArraysEqual(np.asarray(m2.local_shards[0].data),
+    self.assertArraysEqual(np.asarray(m2.addressable_shards[0].data),
                            np.array([[16, 17], [18, 19]]))
-    self.assertArraysEqual(np.asarray(m2.local_shards[1].data),
+    self.assertArraysEqual(np.asarray(m2.addressable_shards[1].data),
                            np.array([[16, 17], [18, 19]]))
-    self.assertEqual(m2.local_shards[0].data.shape, (2, 2))
+    self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
 
-    for i, s in enumerate(m3.local_shards):
+    for i, s in enumerate(m3.addressable_shards):
       self.assertEqual(s.index, (slice(None),))
       self.assertEqual(s.replica_id, i)
       self.assertArraysEqual(np.asarray(s.data), np.array([]))
@@ -199,7 +199,7 @@ class CheckpointTest(jtu.JaxTestCase):
         7: np.array([[0], [0], [0]], dtype=np.float32),
     }
 
-    for l in m1.local_shards:
+    for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
     with self.assertRaisesRegex(
@@ -274,7 +274,7 @@ class CheckpointTest(jtu.JaxTestCase):
         [np.float32]
     )
 
-    for l in m1.local_shards:
+    for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
 
   @jax_config.jax_array(True)
@@ -313,7 +313,7 @@ class CheckpointTest(jtu.JaxTestCase):
         [MeshPspecSharding(global_mesh, P(None))],
         [tspec]
     )
-    for l in m1.local_shards:
+    for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), data)
 
   @jax_config.jax_array(True)
