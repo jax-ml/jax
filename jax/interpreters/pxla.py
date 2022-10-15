@@ -853,9 +853,12 @@ def _sda_sharding(self):
   if has_unstacked:
     devices = np.array([d.device() for d in self.device_buffers])
     return jax.sharding.PmapSharding(devices, self.sharding_spec)
-  raise NotImplementedError('SDAs that are the output of pjit/xmap do not '
-                            'have the sharding attribute implemented. Please '
-                            'use the new `jax.Array` type instead.')
+  raise NotImplementedError(
+      'SDAs that are the output of pjit/xmap do not have the sharding attribute '
+      'implemented. If you are trying to pass the SDA to pjit/xmap, please '
+      'use multihost_utils.host_local_array_to_global_array(...) to convert '
+      'SDAs to global `jax.Array` and then pass them to pjit/xmap with '
+      '`jax_array` enabled.')
 
 def _sda_addressable_shards(self):
   from jax._src import array
