@@ -66,7 +66,7 @@ different result shape. In general, **such errors and also exceptions raised
 by the host computation may be difficult to debug**. See the Debugging section
 below.
 This is a problem for :func:`call` but not for :func:`id_tap` because for the
-latter the decice code does not expect a returned value.
+latter the device code does not expect a returned value.
 
 The :func:`call` API can be used inside a jit or pmap computation or inside
 cond/scan/while control flow. When used inside :func:`jax.pmap`, there will be
