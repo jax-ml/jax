@@ -19,4 +19,5 @@ from jax._src.sharding import (
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
     OpShardingSharding as OpShardingSharding,
+    DevicesSharding as DevicesSharding,
 )

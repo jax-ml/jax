@@ -697,6 +697,34 @@ class ShardingTest(jtu.JaxTestCase):
     s2 = sharding.OpShardingSharding(jax.devices(), op2)
     self.assertEqual(repr(s2), 'OpShardingSharding({replicated})')
 
+  @parameterized.named_parameters(
+      ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),
+      ("mesh_x",                P("x"),        (4, 2), (1,), False),
+      ("mesh_y",                P("y"),        (4, 2), (0,), True),
+      ("mesh_none_y",           P(None, "y"),  (4, 2), (0,), False),
+      ("mesh_none_x",           P(None, "x"),  (4, 2), (1,), True),
+      ("mesh_xy",               P(("x", "y")), (8, 1), (),   False),
+      ("mesh_fully_replicated", P(),           (4, 2), None, False),
+  )
+  def test_devices_sharding_op_sharding_lowering(
+      self, pspec, shape, axes, transpose):
+    value_shape = (8, 4)
+
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    mps = sharding.MeshPspecSharding(mesh, pspec)
+
+    devices_sharding = sharding.DevicesSharding(jax.devices())
+    devices_sharding = devices_sharding.reshape(shape).replicate(axes)
+    if transpose:
+      devices_sharding = devices_sharding.T
+
+    op1 = mps._to_xla_op_sharding(len(value_shape))
+    op2 = devices_sharding._to_xla_op_sharding(len(value_shape))
+
+    self.assertEqual(mps.shard_shape(value_shape),
+                     devices_sharding.shard_shape(value_shape))
+    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

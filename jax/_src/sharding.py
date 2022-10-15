@@ -11,13 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 import abc
 import functools
 from collections import Counter
-from typing import Sequence, Tuple, Optional, Mapping, Dict, Set, Union, cast
+import operator as op
+from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
+                    FrozenSet, Union, cast)
 
-from jax._src.util import safe_zip
+import jax
+from jax._src.util import safe_map, safe_zip, unzip2, prod
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
@@ -342,6 +346,119 @@ class PmapSharding(XLACompatibleSharding):
     if sharded_dim is None:
       return global_shape
     return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
+
+
+class DevicesSharding(XLACompatibleSharding):
+  _devices: List[xc.Device]
+  _ids: np.ndarray  # dtype DeviceIdSet
+
+  def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray]):
+    if not isinstance(devices, np.ndarray):
+      devices = np.array(devices, dtype='object')
+    if not devices.size:
+      raise ValueError(f"{self.__class__.__name__}.__init__ requires at least "
+                       f"one devices, got {devices}")
+    self._devices = list(devices.flat)
+    name = self._devices[0].platform.upper()
+    self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
+                         dtype='object')
+
+  shape = property(op.attrgetter('_ids.shape'))
+  ndim = property(op.attrgetter('_ids.ndim'))
+
+  def __repr__(self) -> str:
+    cls_name = self.__class__.__name__
+    body = np.array2string(self._ids, prefix=cls_name + '(', suffix=')',
+                           max_line_width=100)
+    return f'{cls_name}({body})'
+
+  def reshape(self, *shape):
+    return self.remake(self._devices, self._ids.reshape(*shape))
+
+  def transpose(self, *axes):
+    return self.remake(self._devices, self._ids.transpose(*axes))
+  T = property(transpose)
+
+  def replicate(self, axis=None, keepdims=True):
+    new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
+    return self.remake(self._devices, new_ids)
+
+  @classmethod
+  def remake(cls, devices: List[xc.Device], ids: np.ndarray) -> DevicesSharding:
+    self = cls.__new__(cls)
+    self._devices = devices
+    self._ids = ids
+    return self
+
+  # Hashable
+
+  def __hash__(self) -> int:
+    return id(self._devices)
+
+  def __eq__(self, other) -> bool:
+    return (isinstance(other, DevicesSharding) and
+            id(self._devices) == id(other._devices) and
+            bool(np.all(self._ids == other._ids)))
+
+  # Sharding interface
+
+  @pxla.maybe_cached_property
+  def device_set(self) -> set[xc.Device]:
+    return set(self._devices)
+
+  # XLACompatibleSharding interface
+
+  @functools.lru_cache(maxsize=4096)
+  def _to_xla_op_sharding(self, num_dimensions: int, axis_ctx=None):
+    assert axis_ctx is None
+
+    pbuf = xc.OpSharding()
+    if self.shape == (1,) * self.ndim:
+      pbuf.type = xc.OpSharding.Type.REPLICATED
+      return pbuf
+
+    shape = self.shape[self.ndim - num_dimensions:]  # 'rank promotion' of val
+    set_size, = {len(device_set) for device_set in self._ids.flat}
+    pbuf.type = xc.OpSharding.Type.OTHER
+    if set_size > 1:
+      pbuf.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+      pbuf.tile_assignment_dimensions = (*shape, set_size)
+    else:
+      pbuf.tile_assignment_dimensions = shape
+    pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
+    return pbuf
+
+  @property
+  def _device_assignment(self) -> list[xc.Device]:
+    return self._devices
+
+class DeviceIdSet:
+  _name: str
+  _ids: FrozenSet[int]
+  def __init__(self, name, *ids):
+    self._name = name
+    self._ids = frozenset(ids)
+
+  def __iter__(self):
+    return iter(sorted(self._ids))
+
+  def __add__(self, other) -> DeviceIdSet:
+    assert isinstance(other, DeviceIdSet)
+    return DeviceIdSet(self._name, *(self._ids | other._ids))
+
+  def __len__(self) -> int:
+    return len(self._ids)
+
+  def __repr__(self) -> str:
+    ids = ', '.join(safe_map(str, sorted(self._ids)))
+    return f'{{{self._name} {ids}}}'
+
+  def __hash__(self) -> int:
+    return hash((self._name, self._ids))
+
+  def __eq__(self, other) -> bool:
+    return (isinstance(other, DeviceIdSet) and self._name == other._name and
+            self._ids == other._ids)
 
 
 # TODO(yashkatariya): Remove this when minimum_jaxlib version is 0.3.17
