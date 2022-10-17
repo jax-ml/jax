@@ -4564,9 +4564,12 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
         (out_shape - 1) * window_strides + window_shape - in_shape,
     )
     if padding == PaddingType.PYTORCH_SAME:
-      if any(stride != 1 for stride in window_strides):
+      check_strides = window_strides
+      if isinstance(check_strides, int):
+        check_strides = [check_strides]
+      if any(stride != 1 for stride in check_strides):
         raise ValueError("PYTORCH_SAME padding is incompatible with strided "
-                         "convolutions")
+                         f"convolutions. Got {check_strides}.")
       shift_pad_sizes = pad_sizes + 1
     else:
       shift_pad_sizes = pad_sizes
