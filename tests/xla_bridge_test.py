@@ -128,6 +128,8 @@ class GetBackendTest(jtu.JaxTestCase):
   def setUp(self):
     self._orig_factories = xb._backend_factories
     xb._backend_factories = {}
+    self._orig_jax_platforms = config._read("jax_platforms")
+    config.FLAGS.jax_platforms = ""
     self._save_backend_state()
     self._reset_backend_state()
 
@@ -136,6 +138,7 @@ class GetBackendTest(jtu.JaxTestCase):
 
   def tearDown(self):
     xb._backend_factories = self._orig_factories
+    config.FLAGS.jax_platforms = self._orig_jax_platforms
     self._restore_backend_state()
 
   def _save_backend_state(self):
