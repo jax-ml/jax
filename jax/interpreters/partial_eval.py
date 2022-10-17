@@ -2224,14 +2224,13 @@ def _add_implicit_outputs(jaxpr: Jaxpr) -> Tuple[Jaxpr, OutputType]:
 
 
 class TracerAsName:
-  tracer: DynamicJaxprTracer
+  ref: Any
   def __init__(self, tracer):
-    trace = core.thread_local_state.trace_state.trace_stack.dynamic
-    self.tracer = trace.with_cur_sublevel().full_raise(tracer)
+    self.ref = core.get_referent(tracer)
   def __eq__(self, other):
-    return isinstance(other, TracerAsName) and self.tracer is other.tracer
+    return isinstance(other, TracerAsName) and self.ref is other.ref
   def __hash__(self):
-    return id(self.tracer)
+    return id(self.ref)
 
 def _extract_implicit_args(
     trace: DynamicJaxprTrace, in_type: Sequence[Tuple[AbstractValue, bool]],

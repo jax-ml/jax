@@ -2195,35 +2195,41 @@ def unmapped_aval(size: AxisSize, axis_name, axis: Optional[int],
   else:
     raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
-def _map_shaped_array(size: int, axis: Optional[int], aval: ShapedArray
-                      ) -> ShapedArray:
+
+def _map_shaped_array(
+    size: int, axis: Optional[int], aval: ShapedArray) -> ShapedArray:
   assert axis is None or aval.shape[axis] == size
   # TODO: Extend the named shape
   if axis is None: return aval
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                      named_shape=aval.named_shape, weak_type=aval.weak_type)
 
-def _unmap_shaped_array(size: int, axis_name, axis: Optional[int],
-                        aval: ShapedArray) -> ShapedArray:
+def _unmap_shaped_array(
+    size: int, axis_name: AxisName, axis: Optional[int], aval: ShapedArray
+  ) -> ShapedArray:
   named_shape = dict(aval.named_shape)
-  # TODO: Make this mandatory
-  named_shape.pop(axis_name, None)
+  named_shape.pop(axis_name, None)  # TODO: make this mandatory
   if axis is None: return aval.update(named_shape=named_shape)
-  return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                     named_shape=named_shape, weak_type=aval.weak_type)
+  elif type(axis) is int:
+    return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
+                       named_shape=named_shape, weak_type=aval.weak_type)
+  else: raise TypeError(axis)
 
-def _map_dshaped_array(size: AxisSize, axis: Optional[int],
-                       aval: DShapedArray) -> DShapedArray:
+def _map_dshaped_array(
+    size: AxisSize, axis: Optional[int], aval: DShapedArray) -> DShapedArray:
   if axis is None: return aval
   return DShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
                       aval.weak_type)
 
 def _unmap_dshaped_array(
-    size: AxisSize, axis_name, axis: Optional[int],
-    aval: DShapedArray) -> DShapedArray:
+    size: AxisSize, axis_name: AxisName, axis: Optional[int], aval: DShapedArray
+  ) -> DShapedArray:
   if axis is None: return aval
-  return DShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                      weak_type=aval.weak_type)
+  elif type(axis) is int:
+    return DShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
+                        weak_type=aval.weak_type)
+  else:
+    raise TypeError(axis)
 
 AvalMapHandlerPair = Tuple[Callable, Callable]
 aval_mapping_handlers: Dict[Type, AvalMapHandlerPair] = {

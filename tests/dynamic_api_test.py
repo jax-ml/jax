@@ -22,7 +22,9 @@ from absl.testing import absltest
 
 import jax
 import jax.numpy as jnp
-from jax import core, lax
+from jax import core
+from jax import lax
+from jax.interpreters import batching
 import jax._src.lib
 from jax._src import test_util as jtu
 import jax._src.util
@@ -1437,6 +1439,52 @@ class DynamicShapeTest(jtu.JaxTestCase):
     y = jnp.arange(3.0) + 1
     jax.make_jaxpr(f)(x, y)  # doesn't crash
 
+# TODO(https://github.com/google/jax/issues/12291): Enable jax.Array
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
+                 jax_array=False)
+class PileTest(jtu.JaxTestCase):
+
+  def test_internal_pile(self):
+    xs = jax.vmap(lambda n: jnp.arange(n).sum())(jnp.array([3, 1, 4]))
+    self.assertAllClose(xs, jnp.array([3, 0, 6]), check_dtypes=False)
+
+  def test_make_pile_from_dynamic_shape(self):
+    # We may not want to support returning piles from vmapped functions (instead
+    # preferring to have a separate API which allows piles). But for now it
+    # makes for a convenient way to construct piles for the other tests!
+    p = jax.vmap(partial(jnp.arange, dtype='int32'))(jnp.array([3, 1, 4]))
+    self.assertIsInstance(p, batching.Pile)
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[\[3 1 4\]\.Var[0-9]+\]')
+    data = jnp.concatenate([jnp.arange(3), jnp.arange(1), jnp.arange(4)])
+    self.assertAllClose(p.data, data, check_dtypes=False)
+
+  def test_pile_map_eltwise(self):
+    p = jax.vmap(partial(jnp.arange, dtype='int32'))(jnp.array([3, 1, 4]))
+    p = pile_map(lambda x: x ** 2)(p)
+    self.assertIsInstance(p, batching.Pile)
+    self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[\[3 1 4\]\.Var[0-9]+\]')
+    data = jnp.concatenate([jnp.arange(3), jnp.arange(1), jnp.arange(4)]) ** 2
+    self.assertAllClose(p.data, data, check_dtypes=False)
+
+  def test_pile_map_vector_dot(self):
+    p = jax.vmap(jnp.arange)(jnp.array([3, 1, 4]))
+    y = pile_map(jnp.dot)(p, p)
+    self.assertAllClose(y, jnp.array([5, 0, 14]))
+
+  def test_pile_map_matrix_dot(self):
+    sizes = jnp.array([3, 1, 4])
+    p1 = jax.vmap(lambda n: jnp.ones((7, n)))(sizes)
+    p2 = jax.vmap(lambda n: jnp.ones((n, 7)))(sizes)
+    y = pile_map(jnp.dot)(p1, p2)
+    self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
+                        check_dtypes=False)
+
+# TODO(mattjj): could just make this vmap, just need to adjust how we infer axis
+# sizes in api.py's _mapped_axis_size to handle piles. For another day...
+def pile_map(f):
+  def mapped(*piles):
+    return jax.vmap(f, axis_size=piles[0].aval.length)(*piles)
+  return mapped
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
