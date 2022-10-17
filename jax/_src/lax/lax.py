@@ -4538,15 +4538,15 @@ def _ceil_divide(x1, x2):
 # A dynamic enum is essential because this code extends existing
 # xla_client.PaddingType. If I make it static and xla_client.PaddingType gets
 # changed everything gets broken. That's why mypy is disabled.
-jax_enum_names = [
+jax_enum_names = [  # type: ignore
     *[es.name for es in xla_client.PaddingType],
     'PYTORCH_SAME',
-]  # type: ignore
-PaddingType = enum.Enum(
+]
+PaddingType = enum.Enum(  # type: ignore
     'JaxPaddingType',
     jax_enum_names,
     start=0,
-)  # type: ignore
+)
 
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
   """Convert padding string to list of pairs of pad values."""
