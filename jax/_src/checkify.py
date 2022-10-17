@@ -70,7 +70,7 @@ Payload = Union[np.ndarray, Array]
 # For now, the payload needs to be a fixed-size array: 3 int32s, used for the
 # OOB message.
 # TODO(lenamartens): Relax this fixed-size constraint.
-init_payload = lambda: np.ones((3,), np.int32)
+init_payload = np.ones((3,), np.int32)
 
 
 def _format_msg(msg, payloads):
@@ -95,7 +95,7 @@ class Error:
     object.__setattr__(self, "code", code)
     object.__setattr__(self, "msgs", msgs)
     object.__setattr__(self, "payload",
-                       init_payload() if payload is None else payload)
+                       init_payload if payload is None else payload)
 
   def get(self) -> Optional[str]:
     """Returns error message is error happened, None if no error happened."""
@@ -136,7 +136,7 @@ next_code = it.count(1).__next__  # globally unique ids, could be uuid4
 def assert_func(error: Error, err: Bool, msg: str,
                 payload: Optional[Payload]) -> Error:
   code = next_code()
-  payload = init_payload() if payload is None else payload
+  payload = init_payload if payload is None else payload
   out_err = error.err | err
   out_code = lax.select(error.err, error.code, code)
   out_payload = lax.select(error.err, error.payload, payload)
