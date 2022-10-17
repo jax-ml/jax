@@ -1599,9 +1599,10 @@ def emit_python_callback(
     ]
     operands = [token, *operands]
     result_types = [token_type()[0], *result_types]
+  # TODO(jakevdp) remove ignore statement once jaxlib>0.3.22 is released.
   callback_descriptor, keepalive = (
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
-                                                  operand_shapes,
+                                                  operand_shapes,  # type: ignore[arg-type]
                                                   result_shapes))
   descriptor_operand = ir_constant(
       callback_descriptor, canonicalize_types=False)
