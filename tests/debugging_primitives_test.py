@@ -22,13 +22,14 @@ from jax import lax
 from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax._src import sharding
 from jax.interpreters import pxla
+from jax._src import sharding
 from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
+from jax._src.lib import xla_bridge
 import jax.numpy as jnp
 import numpy as np
 
@@ -102,6 +103,9 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_debug_print(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x)
@@ -112,8 +116,12 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_debug_print_with_donate_argnums(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if jax.default_backend() not in {"gpu", "tpu"}:
       raise unittest.SkipTest("Donate argnums not supported.")
+
     def f(x, y):
       debug_print('x: {x}', x=x)
       return x + y
@@ -125,6 +133,9 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     @jax.jit
     def f(x):
       debug_print('x: {x}', x=x, ordered=True)
@@ -135,8 +146,12 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print_with_donate_argnums(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if jax.default_backend() not in {"gpu", "tpu"}:
       raise unittest.SkipTest("Donate argnums not supported.")
+
     def f(x, y):
       debug_print('x: {x}', x=x, ordered=True)
       return x + y
@@ -148,8 +163,12 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_prints_with_donate_argnums(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if jax.default_backend() not in {"gpu", "tpu"}:
       raise unittest.SkipTest("Donate argnums not supported.")
+
     def f(x, y):
       debug_print('x: {x}', x=x, ordered=True)
       debug_print('x: {x}', x=x)
@@ -162,6 +181,9 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_double_stage_out_ordered_print(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     @jax.jit
     @jax.jit
     def f(x):
@@ -173,6 +195,9 @@ class DebugPrintTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print_with_pytree(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     @jax.jit
     def f(x):
       struct = dict(foo=x)
@@ -400,6 +425,8 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_debug_print_in_staged_out_custom_jvp(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
     @jax.jit
     def f(x):
@@ -426,6 +453,8 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_debug_print_in_staged_out_custom_vjp(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
     @jax.jit
     def f(x):
@@ -469,6 +498,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_scan(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(xs):
       def _body(carry, x):
         debug_print("carry: {carry}, x: {x}", carry=carry, x=x, ordered=ordered)
@@ -487,6 +519,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_for_loop(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       def _body(i, x):
         debug_print("i: {i}", i=i, ordered=ordered)
@@ -516,6 +551,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_body(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       def _cond(x):
         return x < 10
@@ -537,6 +575,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_cond(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       def _cond(x):
         debug_print("x: {x}", x=x, ordered=ordered)
@@ -567,6 +608,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_in_batched_while_cond(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       def _cond(x):
         debug_print("x: {x}", x=x, ordered=ordered)
@@ -625,6 +669,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_cond(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       def true_fun(x):
         debug_print("true: {}", x, ordered=ordered)
@@ -649,6 +696,9 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
   @jtu.sample_product(ordered=[False, True])
   @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_switch(self, ordered):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       def b1(x):
         debug_print("b1: {}", x, ordered=ordered)
@@ -700,6 +750,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_works_in_pmap(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
 
@@ -723,6 +776,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_pjit(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
     if jax.default_backend() in {"cpu", "gpu"} and jaxlib.version < (0, 3, 16):
       raise unittest.SkipTest("`pjit` of callback not supported.")
@@ -757,6 +812,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_while(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
     if (jax.default_backend() in {"cpu", "gpu"}
         and jaxlib.xla_extension_version < 81):
@@ -792,6 +849,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if (jax.default_backend() in {"cpu", "gpu"}
         and jaxlib.xla_extension_version < 81):
       raise unittest.SkipTest("`pjit` of callback not supported.")
@@ -822,6 +882,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_xmap(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     def f(x):
       debug_print("{}", x, ordered=False)
     f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
@@ -835,6 +898,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_works_in_pmap_of_while(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
 
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
