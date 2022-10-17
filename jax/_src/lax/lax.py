@@ -4535,6 +4535,9 @@ def _ceil_divide(x1, x2):
   return -np.floor_divide(np.negative(x1), x2)
 
 
+# A dynamic enum is essential because this code extends existing
+# xla_client.PaddingType. If I make it static and xla_client.PaddingType gets
+# changed everything gets broken. That's why mypy is disabled.
 jax_enum_names = [
     *[es.name for es in xla_client.PaddingType],
     'PYTORCH_SAME',
