@@ -555,7 +555,7 @@ class LaxVmapTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    padding=["VALID", "SAME", "PYTORCH_SAME"],
+    padding=["VALID", "SAME"],
     shape=[(3, 2, 4, 6)],
     dims=[(1, 1, 2, 1)],
     strides=[(1, 2, 2, 1), (1, 1, 1, 1)],
