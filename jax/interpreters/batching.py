@@ -33,20 +33,30 @@ from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, wrap_name,
                            weakref_lru_cache)
 from jax.interpreters import partial_eval as pe
 
-map = safe_map
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 def _update_annotation(
     f: lu.WrappedFun, orig_type: Optional[core.InputType],
     axis_size: core.AxisSize, axis_name: core.AxisName,
-    in_dims: Sequence[Optional[int]]) -> lu.WrappedFun:
+    explicit_in_dims: Sequence[Optional[int]]) -> lu.WrappedFun:
   if orig_type is None: return f
-  if isinstance(axis_size, core.Tracer):
-    in_type_ = [(core.unmapped_aval(core.DBIdx(0), axis_name, dim, aval), keep)
-                for dim, (aval, keep) in zip(in_dims, orig_type)]
-    in_type = [(axis_size.aval, False), *in_type_]
-  else:
-    in_type = [(core.unmapped_aval(axis_size, axis_name, dim, aval), keep)
-               for dim, (aval, keep) in zip(in_dims, orig_type)]
+  # By convention, `explicit_in_dims` only accounts for explicit arguments.
+  assert len(explicit_in_dims) == sum(explicit for _, explicit in orig_type)
+  # We add a batch dim to each mapped argument type. If `axis_size` is dynamic
+  # (i.e. a Tracer) the added batch dim size is a DBIdx and we add a new leading
+  # implicit argument and increment all other DBIdx.
+  new_arg = isinstance(axis_size, Tracer)
+  sz = core.DBIdx(0) if new_arg else axis_size
+  def unmap(d, a):
+    if isinstance(a, core.DShapedArray):
+      a = a.update(shape=tuple(core.DBIdx(d.val + new_arg)
+                               if type(d) is core.DBIdx else d for d in a.shape))
+    return core.unmapped_aval(sz, axis_name, d, a)
+  in_dims = iter(explicit_in_dims)
+  in_type = [(unmap(next(in_dims), a), explicit) if explicit else (a, explicit)
+             for a, explicit in orig_type]
+  if new_arg: in_type = [(axis_size.aval, False), *in_type]  # type: ignore
   return lu.annotate(f, tuple(in_type))
 
 ### vmappable typeclass
@@ -285,8 +295,8 @@ class BatchTrace(Trace):
                      for out_axis, d in zip(out_axes_thunk(), dims_out()))
       new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
       vals_out = map_primitive.bind(f, *vals, **new_params)
-      dims_out = (d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
-                  for d, out_axis in zip(dims_out(), out_axes_thunk()))
+      dims_out = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
+                  for d, out_axis in zip(dims_out(), out_axes_thunk())]
       src = source_info_util.current()
       return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out)]
 
@@ -345,7 +355,8 @@ class BatchTrace(Trace):
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
-      out_dims = out_dims[-len(out_vals) % len(out_dims):]
+      _, res_tree = out_trees()
+      _, out_dims = split_list(out_dims, [res_tree.num_leaves])
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
 
@@ -551,7 +562,8 @@ zero_if_mapped = ZeroIfMapped()
 
 @lu.transformation_with_aux
 def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
+  size, = {x.shape[d] for x, d in zip(in_vals, in_dims * 2)
+           if d is not not_mapped}
   trace = main.with_cur_sublevel()
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_dims * 2)]

@@ -1303,6 +1303,24 @@ class DynamicShapeTest(jtu.JaxTestCase):
     f, = jaxpr.outvars
     self.assertEqual(f.aval.shape, (a,))
 
+  def test_vmap_abstracted_axes_2d(self):
+    def foo(x, y):
+      z = jax.vmap(jax.vmap(jnp.sin))(x) * y
+      return jax.vmap(jax.vmap(jnp.add))(x, z)
+
+    x = jnp.arange(12.).reshape(3, 4)
+    jaxpr = jax.make_jaxpr(foo, abstracted_axes=('n', 'm'))(x, x).jaxpr
+    self.assertLen(jaxpr.invars, 4)
+    a, b, c, d = jaxpr.invars
+    self.assertEqual(a.aval.shape, ())
+    self.assertEqual(b.aval.shape, ())
+    self.assertEqual(c.aval.shape, (a, b))
+    self.assertEqual(c.aval.shape, (a, b))
+    self.assertLen(jaxpr.eqns, 3)
+    self.assertLen(jaxpr.outvars, 1)
+    f, = jaxpr.outvars
+    self.assertEqual(f.aval.shape, (a, b))
+
   def test_vmap_of_indexing_basic(self):
     x = jnp.arange(3.)
 
