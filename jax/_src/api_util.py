@@ -438,7 +438,7 @@ def _shaped_abstractify_slow(x):
   weak_type = getattr(x, 'weak_type', False)
   named_shape = getattr(x, 'named_shape', {})
   if hasattr(x, 'dtype'):
-    dtype = dtypes.canonicalize_dtype(x.dtype)
+    dtype = dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True)
   else:
     dtype = dtypes.result_type(x)  # TODO(frostig,mattjj): why this case?
   return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,

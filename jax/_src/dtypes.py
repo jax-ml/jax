@@ -21,13 +21,15 @@
 
 
 import functools
-from typing import Any, Dict, List
+from typing import overload, Any, Dict, List, Union
+from typing_extensions import Literal
 
 import numpy as np
 
 import jax
 from jax._src.config import flags, config
 from jax._src.lib import xla_client
+from jax._src.typing import DType, OpaqueDType
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -89,9 +91,12 @@ def to_complex_dtype(dtype):
 
 
 @functools.lru_cache(maxsize=None)
-def _canonicalize_dtype(x64_enabled, dtype):
+def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any) -> Union[DType, OpaqueDType]:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   if jax.core.is_opaque_dtype(dtype):
+    if not allow_opaque_dtype:
+      raise ValueError(f"Internal: canonicalize_dtype called onopaque dtype {dtype} "
+                       "with allow_opaque_dtype=False")
     return dtype
   try:
     dtype = np.dtype(dtype)
@@ -103,8 +108,14 @@ def _canonicalize_dtype(x64_enabled, dtype):
   else:
     return _dtype_to_32bit_dtype.get(dtype, dtype)
 
-def canonicalize_dtype(dtype):
-  return _canonicalize_dtype(config.x64_enabled, dtype)
+@overload
+def canonicalize_dtype(dtype: Any, allow_opaque_dtype: Literal[False] = False) -> DType: ...
+
+@overload
+def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]: ...
+
+def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]:
+  return _canonicalize_dtype(config.x64_enabled, allow_opaque_dtype, dtype)
 
 # Default dtypes corresponding to Python scalars.
 python_scalar_dtypes : dict = {

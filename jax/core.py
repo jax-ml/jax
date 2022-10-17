@@ -49,7 +49,7 @@ import jax._src.pretty_printer as pp
 from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
-from jax._src.typing import DimSize, Shape
+from jax._src.typing import DimSize, OpaqueDType, Shape
 from jax._src import typing
 traceback_util.register_exclusion(__file__)
 
@@ -1203,13 +1203,13 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 
 # TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
-opaque_dtypes: Set[Any] = set()
+opaque_dtypes: Set[OpaqueDType] = set()
 
 # TODO(frostig): update inliners of the four functions below to call them
-def has_opaque_dtype(x: Any):
+def has_opaque_dtype(x: Any) -> bool:
   return is_opaque_dtype(get_aval(x).dtype)
 
-def is_opaque_dtype(dtype):
+def is_opaque_dtype(dtype: Any) -> bool:
   return type(dtype) in opaque_dtypes
 
 def _short_dtype_name(dtype) -> str:

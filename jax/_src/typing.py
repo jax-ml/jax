@@ -34,6 +34,9 @@ from jax._src.basearray import Array
 
 DType = np.dtype
 
+# TODO(jakevdp, froystig): make OpaqueDType a protocol
+OpaqueDType = Any
+
 class SupportsDType(Protocol):
   @property
   def dtype(self) -> DType: ...
