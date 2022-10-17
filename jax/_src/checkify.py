@@ -702,54 +702,26 @@ def ignore_error_output_jaxpr(jaxpr):
   new_jaxpr = jaxpr.replace(outvars=jaxpr.outvars[3:])
   return core.ClosedJaxpr(new_jaxpr, consts)
 
-def batch_error(err, code, payload, batch_shape):
-  err = jnp.broadcast_to(err, batch_shape)
-  code = jnp.broadcast_to(code, batch_shape)
-  payload = jnp.broadcast_to(payload, batch_shape+(3,))
-  return err, code, payload
-
-def unbatch_error(err, code, payload):
-  err = err.ravel()[0]
-  code = code.ravel()[0]
-  payload = payload.reshape(-1, 3)[0]
-  return err, code, payload
-
-def trivial_batched_jaxpr(jaxpr, batch_shape, batched_err):
-  fun = core.jaxpr_as_fun(jaxpr)
-
-  def g(err, code, payload, *a):
-    err_args = unbatch_error(err, code, payload)
-    err, code, payload, *out = fun(*err_args, *a)
-    err, code, payload = batch_error(err, code, payload, batch_shape)
-    return (err, code, payload, *out)
-
-  error_avals = map(lambda x: core.raise_to_shaped(core.get_aval(x)), batched_err)
-  new_jaxpr, _, literals_out = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(g), [*error_avals, *jaxpr.in_avals[3:]])
-  return core.ClosedJaxpr(new_jaxpr, literals_out)
-
 def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
                            cond_jaxpr, body_nconsts, body_jaxpr):
-  batch_shape = cond_jaxpr.out_avals[0].shape
-  if batch_shape:
-    err_args = batch_error(error.err, error.code, error.payload, batch_shape)
-  else:
-    err_args = [error.err, error.code, error.payload]
+  if cond_jaxpr.out_avals[0].shape:
+    # TODO(lenamartens, sharadmv): support batched while.
+    raise ValueError('Checkify does not support batched while-loops '
+                     '(checkify-of-vmap-of-while). \nHint: if possible, move '
+                     'the vmap to the outer level to get '
+                     'vmap-of-checkify-of-while.')
+  err_args = [error.err, error.code, error.payload]
 
   c_consts, b_consts, carry = split_list(in_flat, [cond_nconsts, body_nconsts])
 
   # Check if the first cond application will error.
   checked_cond_jaxpr, msgs_cond = checkify_jaxpr(cond_jaxpr, error,
                                                  enabled_errors)
-  if batch_shape:
-    checked_cond_jaxpr = trivial_batched_jaxpr(checked_cond_jaxpr, batch_shape, err_args)
   cond_err, cond_code, cond_payload, _ = core.jaxpr_as_fun(checked_cond_jaxpr)(
       *err_args, *c_consts, *carry)
 
   checked_body_jaxpr_, msgs_body = checkify_while_body_jaxpr(
-    cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts)
-  if batch_shape:
-    checked_body_jaxpr_ = trivial_batched_jaxpr(checked_body_jaxpr_, batch_shape, err_args)
+      cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts)
   to_move = [False] * 3 + [True] * body_nconsts + [False] * len(carry)
   checked_body_jaxpr = pe.move_binders_to_front(checked_body_jaxpr_, to_move)
 
@@ -762,8 +734,6 @@ def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
       *new_in_flat, cond_nconsts=cond_nconsts, cond_jaxpr=compat_cond_jaxpr,
       body_nconsts=body_nconsts, body_jaxpr=checked_body_jaxpr)
   new_msgs = {**error.msgs, **msgs_body, **msgs_cond}
-  if batch_shape:
-    err, code, payload = unbatch_error(err, code, payload)
 
   return out, Error(err, code, new_msgs, payload)
 error_checks[lax.while_p] = while_loop_error_check

@@ -891,7 +891,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertIn("should be positive", err.get())
 
-  def test_checkify_of_vmap_of_while(self):
+  def test_checkify_of_vmap_of_while_errors(self):
     @jax.vmap
     def fun(n, v):
       def while_cond(s):
@@ -909,17 +909,39 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     checked_f = checkify.checkify(fun, errors=checkify.all_checks)
 
-    err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
-    self.assertIsNotNone(err.get())
-    self.assertStartsWith(err.get(), "division by zero")
+    with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
+      checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
+    # TODO(lenamartens): reenable assertions below.
+    # self.assertIsNotNone(err.get())
+    # self.assertStartsWith(err.get(), "division by zero")
 
-    err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., -4.]))
-    self.assertIsNotNone(err.get())
-    self.assertStartsWith(err.get(), "value needs to be positive")
+    # err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., -4.]))
+    # self.assertIsNotNone(err.get())
+    # self.assertStartsWith(err.get(), "value needs to be positive")
 
-    err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([6., 2., -4.]))
-    self.assertIsNotNone(err.get())
-    self.assertStartsWith(err.get(), "value needs to be less than 6")
+    # err, _ = checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([6., 2., -4.]))
+    # self.assertIsNotNone(err.get())
+    # self.assertStartsWith(err.get(), "value needs to be less than 6")
+
+  def test_checkify_of_vmap_of_while_masked_errors(self):
+    def cond(x):
+      return x < 5
+
+    def body(x):
+      # This will only trigger in the masked portion of the batched while.
+      checkify.check(x < 5, "should never happen")
+      return x + 1
+
+    @jax.vmap
+    def fun(x):
+      return lax.while_loop(cond, body, x)
+
+    checked_f = checkify.checkify(fun)
+
+    with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
+      checked_f(jnp.arange(5))
+    # TODO(lenamartens): reenable assertions below.
+    # self.assertIsNone(err.get())
 
   def test_assert_cond_no_data_dependence(self):
     def f():
@@ -965,5 +987,6 @@ class LowerableChecksTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
                                 "x needs to be positive"):
       f(-1.)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
