@@ -629,7 +629,7 @@ def bench_slicing_compilation2(state):
     jax.jit(lambda x: (x[:1], x[1:2], x[2:3])).lower(x).compile()
 
 
-def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
+def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit):
   spec = pjit_lib.PartitionSpec('x')
   mesh = jtu.create_global_mesh((num_devices,), ('x',))
   s = sharding.MeshPspecSharding(mesh, spec)
@@ -648,9 +648,6 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
       lambda x: jax.tree_map(lambda x: x + 1, x),
       in_axis_resources=in_axis_resources,
       out_axis_resources=out_axis_resources)
-
-  if use_aot:
-    f = f.lower(x).compile()
 
   x = f(x)
 
@@ -698,60 +695,6 @@ def pjit_simple_4_device(state):
 def pjit_simple_4000_device(state):
   pjit_simple_benchmark(
       state, num_devices=4000, num_args=state.range(0), cpp_jit=state.range(1))
-
-
-@google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
-@jax_config.jax_array(True)
-def pjit_aot_1_device(state):
-  pjit_simple_benchmark(
-      state,
-      num_devices=1,
-      num_args=state.range(0),
-      cpp_jit=state.range(1),
-      use_aot=True)
-
-
-@google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
-@jax_config.jax_array(True)
-def pjit_aot_4_device(state):
-  pjit_simple_benchmark(
-      state,
-      num_devices=4,
-      num_args=state.range(0),
-      cpp_jit=state.range(1),
-      use_aot=True)
-
-
-@google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
-@jax_config.jax_array(True)
-def pjit_aot_4000_device(state):
-  pjit_simple_benchmark(
-      state,
-      num_devices=4000,
-      num_args=state.range(0),
-      cpp_jit=state.range(1),
-      use_aot=True)
 
 
 if __name__ == "__main__":
