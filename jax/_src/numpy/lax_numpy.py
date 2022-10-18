@@ -29,12 +29,13 @@ import collections
 from functools import partial, wraps as functools_wraps
 import operator
 import types
-from typing import Any, Sequence, FrozenSet, Optional, Tuple, Union
+from typing import overload, Any, Callable, Sequence, FrozenSet, Optional, Tuple, Union
 from textwrap import dedent as _dedent
 import warnings
 
 import numpy as np
 import opt_einsum
+from typing_extensions import Literal
 
 import jax
 from jax import jit
@@ -76,7 +77,7 @@ from jax._src.numpy.util import (  # noqa: F401
   _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
-from jax._src.typing import Array, ArrayLike, DTypeLike
+from jax._src.typing import Array, ArrayLike, DType, DTypeLike, Shape
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
@@ -1937,49 +1938,54 @@ def copy(a, order=None):
 
 
 @_wraps(np.zeros_like)
-def zeros_like(a, dtype=None, shape=None):
+def zeros_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
+               shape: Any = None) -> Array:
   _check_arraylike("zeros_like", a)
   lax_internal._check_user_dtype_supported(dtype, "zeros_like")
-  if np.isscalar(shape):
-    shape = (shape,)
+  if shape is not None:
+    shape = canonicalize_shape(shape)
   return lax.full_like(a, 0, dtype, shape)
 
 
 @_wraps(np.ones_like)
-def ones_like(a, dtype=None, shape=None):
+def ones_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
+              shape: Any = None) -> Array:
   _check_arraylike("ones_like", a)
   lax_internal._check_user_dtype_supported(dtype, "ones_like")
-  if np.isscalar(shape):
-    shape = (shape,)
+  if shape is not None:
+    shape = canonicalize_shape(shape)
   return lax.full_like(a, 1, dtype, shape)
 
 
 @_wraps(np.empty_like, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
-def empty_like(prototype, dtype=None, shape=None):
+def empty_like(prototype: ArrayLike, dtype: Optional[DTypeLike] = None,
+               shape: Any = None) -> Array:
   _check_arraylike("empty_like", prototype)
   lax_internal._check_user_dtype_supported(dtype, "empty_like")
   return zeros_like(prototype, dtype=dtype, shape=shape)
 
 
 @_wraps(np.full)
-def full(shape, fill_value, dtype=None):
+def full(shape: Any, fill_value: ArrayLike,
+         dtype: Optional[DTypeLike] = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "full")
   _check_arraylike("full", fill_value)
   if ndim(fill_value) == 0:
-    shape = (shape,) if ndim(shape) == 0 else shape
+    shape = canonicalize_shape(shape)
     return lax.full(shape, fill_value, dtype)
   else:
     return broadcast_to(asarray(fill_value, dtype=dtype), shape)
 
 
 @_wraps(np.full_like)
-def full_like(a, fill_value, dtype=None, shape=None):
+def full_like(a: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
+              shape: Any = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "full_like")
   _check_arraylike("full_like", a, fill_value)
   if shape is not None:
-    shape = (shape,) if ndim(shape) == 0 else shape
+    shape = canonicalize_shape(shape)
   if ndim(fill_value) == 0:
     return lax.full_like(a, fill_value, dtype, shape)
   else:
@@ -1989,7 +1995,7 @@ def full_like(a, fill_value, dtype=None, shape=None):
 
 
 @_wraps(np.zeros)
-def zeros(shape, dtype=None):
+def zeros(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   lax_internal._check_user_dtype_supported(dtype, "zeros")
@@ -1997,7 +2003,7 @@ def zeros(shape, dtype=None):
   return lax.full(shape, 0, _jnp_dtype(dtype))
 
 @_wraps(np.ones)
-def ones(shape, dtype=None):
+def ones(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = canonicalize_shape(shape)
@@ -2008,7 +2014,7 @@ def ones(shape, dtype=None):
 @_wraps(np.empty, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
-def empty(shape, dtype=None):
+def empty(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "empty")
   return zeros(shape, dtype)
 
@@ -2044,7 +2050,8 @@ def array_equiv(a1, a2):
 # General np.from* style functions mostly delegate to numpy.
 
 @_wraps(np.frombuffer)
-def frombuffer(buffer, dtype=float, count=-1, offset=0):
+def frombuffer(buffer: Union[bytes, Any], dtype: DTypeLike = float,
+               count: int = -1, offset: int = 0) -> Array:
   return asarray(np.frombuffer(buffer=buffer, dtype=dtype, count=count, offset=offset))
 
 
@@ -2084,12 +2091,13 @@ def fromiter(*args, **kwargs):
     "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
 @_wraps(getattr(np, "from_dlpack", None))
-def from_dlpack(x):
+def from_dlpack(x: Any) -> Array:
   from jax.dlpack import from_dlpack  # pylint: disable=g-import-not-at-top
   return from_dlpack(x.__dlpack__())
 
 @_wraps(np.fromfunction)
-def fromfunction(function, shape, *, dtype=float, **kwargs):
+def fromfunction(function: Callable[..., Array], shape: Any,
+                 *, dtype: DTypeLike = float, **kwargs) -> Array:
   shape = core.canonicalize_shape(shape, context="shape argument of jnp.fromfunction()")
   for i in range(len(shape)):
     in_axes = [0 if i == j else None for j in range(len(shape))]
@@ -2098,30 +2106,31 @@ def fromfunction(function, shape, *, dtype=float, **kwargs):
 
 
 @_wraps(np.fromstring)
-def fromstring(string, dtype=float, count=-1, *, sep):
+def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: str) -> Array:
   return asarray(np.fromstring(string=string, dtype=dtype, count=count, sep=sep))
 
 
 @_wraps(np.eye)
-def eye(N, M=None, k=0, dtype=None):
+def eye(N: core.DimSize, M: Optional[core.DimSize] = None, k: int = 0,
+        dtype: Optional[DTypeLike] = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "eye")
-  N = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
-  M = N if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
-  if N < 0 or M < 0:
+  N_int = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
+  M_int = N_int if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
+  if N_int < 0 or M_int < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
   k = operator.index(k)
-  return lax_internal._eye(_jnp_dtype(dtype), (N, M), k)
+  return lax_internal._eye(_jnp_dtype(dtype), (N_int, M_int), k)
 
 
 @_wraps(np.identity)
-def identity(n, dtype=None):
+def identity(n: core.DimSize, dtype: Optional[DTypeLike] = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
 @_wraps(np.arange)
-def arange(start: core.DimSize, stop: Optional[core.DimSize]=None,
-           step: Optional[core.DimSize]=None, dtype=None):
+def arange(start: core.DimSize, stop: Optional[core.DimSize] = None,
+           step: Optional[core.DimSize] = None, dtype: Optional[DTypeLike] = None) -> Array:
   lax_internal._check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
@@ -2168,17 +2177,40 @@ def _wrap_numpy_nullary_function(f):
     return asarray(f(*args, **kwargs))
   return wrapper
 
-
+@overload
+def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+             endpoint: bool = True, retstep: Literal[False] = False,
+             dtype: Optional[DTypeLike] = None,
+             axis: int = 0) -> Array: ...
+@overload
+def linspace(start: ArrayLike, stop: ArrayLike, num: int,
+             endpoint: bool, retstep: Literal[True],
+             dtype: Optional[DTypeLike] = None,
+             axis: int = 0) -> Tuple[Array, Array]: ...
+@overload
+def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+             endpoint: bool = True, *, retstep: Literal[True],
+             dtype: Optional[DTypeLike] = None,
+             axis: int = 0) -> Tuple[Array, Array]: ...
+@overload
+def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+             endpoint: bool = True, retstep: bool = False,
+             dtype: Optional[DTypeLike] = None,
+             axis: int = 0) -> Union[Array, Tuple[Array, Array]]: ...
 @_wraps(np.linspace)
-def linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
-             axis: int = 0):
+def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+             endpoint: bool = True, retstep: bool = False,
+             dtype: Optional[DTypeLike] = None,
+             axis: int = 0) -> Union[Array, Tuple[Array, Array]]:
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, num, endpoint, retstep, dtype, axis)
 
 @partial(jit, static_argnames=('num', 'endpoint', 'retstep', 'dtype', 'axis'))
-def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
-              axis: int = 0):
+def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+              endpoint: bool = True, retstep: bool = False,
+              dtype: Optional[DTypeLike] = None,
+              axis: int = 0) -> Union[Array, Tuple[Array, Array]]:
   """Implementation of linspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "linspace")
   if num < 0:
@@ -2199,7 +2231,7 @@ def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
   bounds_shape.insert(axis, 1)
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta = lax.convert_element_type(stop - start, computation_dtype) / div
+    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / div
     iota_shape = [1,] * len(bounds_shape)
     iota_shape[axis] = div
     # This approach recovers the endpoints with float32 arithmetic,
@@ -2215,12 +2247,12 @@ def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
                             _canonicalize_axis(axis, out.ndim))
 
   elif num == 1:
-    delta = nan if endpoint else stop - start
+    delta = asarray(nan if endpoint else stop - start, dtype=computation_dtype)
     out = reshape(broadcast_start, bounds_shape)
   else: # num == 0 degenerate case, match numpy behavior
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
     empty_shape.insert(axis, 0)
-    delta = nan
+    delta = asarray(nan, dtype=computation_dtype)
     out = reshape(array([], dtype=dtype), empty_shape)
 
   if issubdtype(dtype, integer) and not issubdtype(out.dtype, integer):
@@ -2233,15 +2265,17 @@ def _linspace(start, stop, num=50, endpoint=True, retstep=False, dtype=None,
 
 
 @_wraps(np.logspace)
-def logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
-             axis: int = 0):
+def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+             endpoint: bool = True, base: ArrayLike = 10.0,
+             dtype: Optional[DTypeLike] = None, axis: int = 0) -> Array:
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.logspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.logspace")
   return _logspace(start, stop, num, endpoint, base, dtype, axis)
 
 @partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
-def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
-             axis: int = 0):
+def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
+              endpoint: bool = True, base: ArrayLike = 10.0,
+              dtype: Optional[DTypeLike] = None, axis: int = 0) -> Array:
   """Implementation of logspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
@@ -2257,13 +2291,15 @@ def _logspace(start, stop, num=50, endpoint=True, base=10.0, dtype=None,
 
 
 @_wraps(np.geomspace)
-def geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
+def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
+              dtype: Optional[DTypeLike] = None, axis: int = 0) -> Array:
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.geomspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.geomspace")
   return _geomspace(start, stop, num, endpoint, dtype, axis)
 
 @partial(jit, static_argnames=('num', 'endpoint', 'dtype', 'axis'))
-def _geomspace(start, stop, num=50, endpoint=True, dtype=None, axis: int = 0):
+def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
+               dtype: Optional[DTypeLike] = None, axis: int = 0) -> Array:
   """Implementation of geomspace differentiable in start and stop args."""
   lax_internal._check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
