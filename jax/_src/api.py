@@ -136,10 +136,12 @@ def _nan_check_posthook(fun, args, kwargs, output):
 
   buffers = []
   for da_or_sda in leaves:
-    if hasattr(da_or_sda, "device_buffer"):
-      buffers.append(da_or_sda.device_buffer)
-    elif hasattr(da_or_sda, "device_buffers"):
+    if hasattr(da_or_sda, "device_buffers"):
       buffers.extend(da_or_sda.device_buffers)
+    # TODO(yashkatariya): Remove the `elif` branch once `jax.Array` is enabled
+    # by default.
+    elif hasattr(da_or_sda, "device_buffer"):
+      buffers.append(da_or_sda.device_buffer)
 
   try:
     dispatch.check_special(xla.xla_call_p, buffers)
