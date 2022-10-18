@@ -35,6 +35,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import can_execute_with_token
+from jax._src.lib import xla_bridge
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -594,6 +595,9 @@ class EffectOrderingTest(jtu.JaxTestCase):
   def test_can_execute_python_callback(self):
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     log = []
     def log_value(x):
       log.append(x)
@@ -614,8 +618,12 @@ class EffectOrderingTest(jtu.JaxTestCase):
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
+
     log = []
     def log_value(x):
       log.append(x)
@@ -700,8 +708,12 @@ class ParallelEffectsTest(jtu.JaxTestCase):
   def test_can_pmap_unordered_callback(self):
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
+
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
+
     log = set()
     def log_value(x):
       log.add(int(x))
