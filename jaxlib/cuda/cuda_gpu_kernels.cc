@@ -26,8 +26,6 @@ limitations under the License.
 namespace jax {
 namespace {
 
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_trsm_batched", TrsmBatched,
-                                         "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_getrf_batched", GetrfBatched,
                                          "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cuda_lu_pivots_to_permutation",

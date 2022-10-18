@@ -32,20 +32,6 @@ enum class HipblasType {
   C128,
 };
 
-// Batched triangular solve: trsmbatched
-
-struct TrsmBatchedDescriptor {
-  HipblasType type;
-  int batch, m, n;
-  hipblasSideMode_t side;
-  hipblasFillMode_t uplo;
-  hipblasOperation_t trans;
-  hipblasDiagType_t diag;
-};
-
-void TrsmBatched(hipStream_t stream, void** buffers, const char* opaque,
-                 size_t opaque_len, XlaCustomCallStatus* status);
-
 // Batched LU decomposition: getrfbatched
 
 struct GetrfBatchedDescriptor {

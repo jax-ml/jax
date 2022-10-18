@@ -33,21 +33,6 @@ enum class CublasType {
   C128,
 };
 
-
-// Batched triangular solve: trsmbatched
-
-struct TrsmBatchedDescriptor {
-  CublasType type;
-  int batch, m, n;
-  cublasSideMode_t side;
-  cublasFillMode_t uplo;
-  cublasOperation_t trans;
-  cublasDiagType_t diag;
-};
-
-void TrsmBatched(cudaStream_t stream, void** buffers, const char* opaque,
-                 size_t opaque_len, XlaCustomCallStatus* status);
-
 // Batched LU decomposition: getrfbatched
 
 struct GetrfBatchedDescriptor {

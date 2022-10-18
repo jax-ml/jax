@@ -63,49 +63,6 @@ def _real_type(dtype):
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def _trsm_mhlo(platform, gpu_blas, dtype, a, b, left_side=False, lower=False,
-               trans_a=False, conj_a=False, diag=False):
-  """Batched triangular solve.
-
-  XLA implements unbatched triangular solve directly, so we need only implement
-  the batched case."""
-  b_type = ir.RankedTensorType(b.type)
-  dims = b_type.shape
-  assert len(dims) >= 2
-  m, n = dims[-2:]
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
-  k = m if left_side else n
-
-  a_type = ir.RankedTensorType(a.type)
-  if (batch_dims + (k, k) != tuple(a_type.shape) or
-      a_type.element_type != b_type.element_type):
-    raise ValueError("Argument mismatch for trsm, got {} and {}".format(
-      a_type, b_type))
-
-  if conj_a and not trans_a:
-    raise NotImplementedError("Conjugation without transposition not supported")
-
-  lwork, opaque = gpu_blas.build_trsm_batched_descriptor(
-    np.dtype(dtype), batch, m, n, left_side, lower, trans_a, conj_a, diag)
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  work_type = ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8))
-  work_layout = [0]
-  out = custom_call(
-      f"{platform}blas_trsm_batched",
-      [b_type, work_type, work_type],
-      [a, b],
-      backend_config=opaque,
-      operand_layouts=[layout] * 2,
-      result_layouts=[layout, work_layout, work_layout],
-      operand_output_aliases={1: 0})
-  return out[0]
-
-cuda_trsm = partial(_trsm_mhlo, "cu", _cublas)
-rocm_trsm = partial(_trsm_mhlo, "hip", _hipblas)
-
-
 def _potrf_mhlo(platform, gpu_solver, dtype, a, lower):
   """Cholesky decomposition."""
   a_type = ir.RankedTensorType(a.type)

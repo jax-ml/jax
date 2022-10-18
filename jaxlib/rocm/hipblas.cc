@@ -50,24 +50,6 @@ HipblasType DtypeToHipblasType(const py::dtype& np_type) {
   return it->second;
 }
 
-// Returns the descriptor for a TrsmBatched operation.
-std::pair<size_t, py::bytes>
-BuildTrsmBatchedDescriptor(const py::dtype& dtype, int batch, int m, int n,
-                           bool left_side, bool lower, bool trans_a,
-                           bool conj_a, bool unit_diagonal) {
-  size_t size = batch * sizeof(void*);
-  TrsmBatchedDescriptor desc;
-  desc.type = DtypeToHipblasType(dtype);
-  desc.batch = batch;
-  desc.m = m;
-  desc.n = n;
-  desc.side = left_side ? HIPBLAS_SIDE_LEFT : HIPBLAS_SIDE_RIGHT;
-  desc.uplo = lower ? HIPBLAS_FILL_MODE_LOWER : HIPBLAS_FILL_MODE_UPPER;
-  desc.trans = trans_a ? (conj_a ? HIPBLAS_OP_C : HIPBLAS_OP_T) : HIPBLAS_OP_N;
-  desc.diag = unit_diagonal ? HIPBLAS_DIAG_UNIT : HIPBLAS_DIAG_NON_UNIT;
-  return {size, PackDescriptor(desc)};
-}
-
 // Returns the descriptor for a GetrfBatched operation.
 std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
                                                          int b, int n) {
@@ -86,7 +68,6 @@ std::pair<size_t, py::bytes> BuildGeqrfBatchedDescriptor(const py::dtype& dtype,
 
 py::dict Registrations() {
   py::dict dict;
-  dict["hipblas_trsm_batched"] = EncapsulateFunction(TrsmBatched);
   dict["hipblas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
   dict["hipblas_geqrf_batched"] = EncapsulateFunction(GeqrfBatched);
   return dict;
@@ -94,7 +75,6 @@ py::dict Registrations() {
 
 PYBIND11_MODULE(_hipblas, m) {
   m.def("registrations", &Registrations);
-  m.def("build_trsm_batched_descriptor", &BuildTrsmBatchedDescriptor);
   m.def("build_getrf_batched_descriptor", &BuildGetrfBatchedDescriptor);
   m.def("build_geqrf_batched_descriptor", &BuildGeqrfBatchedDescriptor);
 }
