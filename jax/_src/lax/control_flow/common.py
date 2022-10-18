@@ -87,7 +87,7 @@ def _initial_style_jaxprs_with_common_consts(
     return jaxpr.replace(constvars=constvars)
 
   consts = util.concatenate(all_consts)
-  jaxprs = [pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs)]
+  jaxprs = tuple(pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs))
   closed_jaxprs = [core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
                    for jaxpr in jaxprs]
   return closed_jaxprs, consts, all_out_trees

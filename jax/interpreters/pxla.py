@@ -3315,7 +3315,7 @@ class MeshExecutable(stages.XlaExecutable):
       assert not auto_spmd_lowering
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
-      are_out_shardings_from_xla = [False] * len(global_out_avals)
+      are_out_shardings_from_xla: Sequence[bool] = [False] * len(global_out_avals)
       handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings, committed, are_out_shardings_from_xla)  # type: ignore  # arg-type
       unsafe_call = backend.compile_replicated(computation, compile_options,

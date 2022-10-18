@@ -556,7 +556,7 @@ def _interpret_fun_jax(
     extra_name_stack: Optional[str],
     fresh_constant_cache: bool = False,
     experimental_native_lowering: bool = False
-) -> Tuple[Sequence[TfVal], Tuple[core.ShapedArray]]:
+) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   if experimental_native_lowering:
     del extra_name_stack
     return _lower_native_and_run(fun_jax, args_avals, args_tf)
@@ -576,7 +576,7 @@ def _interpret_fun_jax(
 def _lower_native_and_run(fun_jax: Callable,
                           args_avals: Sequence[core.ShapedArray],
                           args_tf: Sequence[TfVal],
-                          ) -> Tuple[Sequence[TfVal], Tuple[core.ShapedArray]]:
+                          ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   """Lowers the function using native lowering and then invokes it.
 
   Work-in-progress.

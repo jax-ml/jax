@@ -1165,7 +1165,7 @@ def _partial_eval_jaxpr_custom_cached(
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
         staged_eqns.append(eqn.replace(invars=inputs))
         map(partial(write, False, True), eqn.outvars)
-  out_unknowns, out_inst = unzip2(map(read, jaxpr.outvars))
+  out_unknowns, out_inst = unsafe_map(list, unzip2(map(read, jaxpr.outvars)))
   assert all(type(v) is Var for v in residuals), residuals
 
   for x, inst, ensure_inst in zip(jaxpr.outvars, out_inst, ensure_out_inst):

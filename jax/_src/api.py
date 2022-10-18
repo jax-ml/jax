@@ -706,6 +706,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     arg_specs_and_devices = map(arg_spec, args_flat)
+    in_avals: Sequence[core.AbstractValue]
     if jax.config.jax_dynamic_shapes:
       axes_specs = (None if abstracted_axes is None else
                     _flat_axes_specs(abstracted_axes, *args, **kwargs))

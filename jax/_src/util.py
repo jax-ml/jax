@@ -20,8 +20,8 @@ import logging
 import operator
 import types
 import threading
-from typing import (Any, Callable, Dict, Iterable, List, Tuple, Generic,
-                    TypeVar, Set, Iterator, Sequence, Optional)
+from typing import (Any, Callable, Collection, Dict, Iterable, List, Tuple, Generic,
+                    TypeVar, Set, Iterator, Sequence, Optional, overload)
 import weakref
 
 import numpy as np
@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 Seq = Sequence
 
 T = TypeVar("T")
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
+T3 = TypeVar("T3")
 
 def safe_zip(*args):
   n = len(args[0])
@@ -49,24 +52,26 @@ def safe_map(f, *args):
     assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(map(f, *args))
 
-def unzip2(xys):
+def unzip2(xys: Iterable[Tuple[T1, T2]]
+    ) -> Tuple[Tuple[T1, ...], Tuple[T2, ...]]:
   """Unzip sequence of length-2 tuples into two tuples."""
   # Note: we deliberately don't use zip(*xys) because it is lazily evaluated,
   # is too permissive about inputs, and does not guarantee a length-2 output.
-  xs = []
-  ys = []
+  xs: List[T1] = []
+  ys: List[T2] = []
   for x, y in xys:
     xs.append(x)
     ys.append(y)
   return tuple(xs), tuple(ys)
 
-def unzip3(xyzs):
+def unzip3(xyzs: Iterable[Tuple[T1, T2, T3]]
+    ) -> Tuple[Tuple[T1, ...], Tuple[T2, ...], Tuple[T3, ...]]:
   """Unzip sequence of length-3 tuples into three tuples."""
   # Note: we deliberately don't use zip(*xyzs) because it is lazily evaluated,
   # is too permissive about inputs, and does not guarantee a length-3 output.
-  xs = []
-  ys = []
-  zs = []
+  xs: List[T1] = []
+  ys: List[T2] = []
+  zs: List[T3] = []
   for x, y, z in xyzs:
     xs.append(x)
     ys.append(y)
