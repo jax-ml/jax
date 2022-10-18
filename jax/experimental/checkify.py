@@ -15,6 +15,7 @@
 from jax._src.checkify import (
     Error as Error,
     ErrorCategory as ErrorCategory,
+    JaxRuntimeError as JaxRuntimeError,
     all_checks as all_checks,
     automatic_checks as automatic_checks,
     check as check,
