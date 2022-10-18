@@ -30,6 +30,7 @@ from jax import core
 from jax import linear_util as lu
 from jax import stages
 from jax._src import array
+from jax._src.stages import CompiledCallParams
 from jax._src.api import _check_callable, _check_arg, FLAGS, device_put
 from jax._src.config import config
 from jax._src import dispatch
@@ -169,6 +170,45 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
   cpp_pjit_f = xc._xla.pjit(fun, cache_miss, static_argnums)
 
   return wraps(fun)(cpp_pjit_f)
+
+class _CppPjitAotCall:
+  def __init__(self, fun: Callable, static_argnums: Any):
+    self._fun = fun
+    self._static_argnums = static_argnums
+
+  def __call__(self, params: CompiledCallParams):
+
+    def aot_cache_miss(*args, **kwargs):
+      # The first invocation for a signature will use the python path. If it is
+      # a correct signature, the later invocations will use the C++ path.
+      # Otherwise, if the signature is wrong, it will be caught by the python
+      # path during the first invocation.
+      outs, out_flat = stages.Compiled.call(params, *args, **kwargs)
+
+      executable = params.executable
+
+      use_fastpath = (
+          isinstance(executable, pxla.MeshExecutable) and
+          isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+          not executable.unsafe_call.has_unordered_effects and
+          not executable.unsafe_call.has_host_callbacks and
+          all(isinstance(x, xc.ArrayImpl) for x in out_flat))
+
+      if use_fastpath:
+        out_avals = [o.aval for o in out_flat]
+        out_committed = [o._committed for o in out_flat]
+        fastpath_data = _PjitFastpathData(executable.xla_executable, params.out_tree,
+                                          executable._in_shardings,
+                                          executable._out_shardings,
+                                          out_avals, out_committed)
+      else:
+        fastpath_data = None
+
+      return outs, fastpath_data
+
+    self._cpp_aot_pjit_f = xc._xla.pjit(self._fun, aot_cache_miss,
+                                        self._static_argnums)
+    return self._cpp_aot_pjit_f
 
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
@@ -430,11 +470,16 @@ def pjit(fun: Callable,
         params['resource_env'], params['donated_invars'], params['name'],
         in_is_global, always_lower=True)
 
+    if FLAGS.experimental_cpp_pjit and xc._version >= 96:
+      create_cpp_call = _CppPjitAotCall(fun, static_argnums)
+    else:
+      create_cpp_call = None
+
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
     return stages.Lowered.from_flat_info(
         lowering, args_kwargs_in_tree, local_in_avals, donate_argnums, out_tree,
-        no_kwargs=True)
+        no_kwargs=True, create_cpp_call=create_cpp_call)
 
   wrapped.lower = lower
   return wrapped
