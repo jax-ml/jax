@@ -402,6 +402,16 @@ def _jit(
       device=device, backend=backend, donate_argnums=donate_argnums,
       inline=inline, keep_unused=keep_unused, abstracted_axes=abstracted_axes)
 
+
+_prep_jit_is_leaf = None  # none by default
+
+
+def set_prepare_jit_is_leaf(is_leaf):
+  """Overrides is_leaf test for tree flattening while preparing JIT."""
+  global _prep_jit_is_leaf
+  _prep_jit_is_leaf = is_leaf
+
+
 def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
                  args, kwargs):
   # Validate donate_argnums
@@ -413,7 +423,7 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
   f = lu.wrap_init(fun)
   f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
   f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
-  args_flat, in_tree = tree_flatten((args, kwargs))
+  args_flat, in_tree = tree_flatten((args, kwargs), is_leaf=_prep_jit_is_leaf)
   if donate_argnums:
     donated_invars = donation_vector(donate_argnums, args, kwargs)
   else:
