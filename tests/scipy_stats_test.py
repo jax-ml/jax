@@ -20,14 +20,18 @@ from absl.testing import absltest
 
 import numpy as np
 import scipy.stats as osp_stats
+import scipy.version
 
 import jax
-from jax._src import test_util as jtu, tree_util
+from jax._src import dtypes, test_util as jtu, tree_util
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
+numpy_version = tuple(map(int, np.version.version.split('.')[:3]))
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
@@ -879,6 +883,74 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     kde2 = tree_util.tree_unflatten(treedef, leaves)
     tree_util.tree_map(lambda a, b: self.assertAllClose(a, b), kde, kde2)
     self.assertAllClose(evaluate_kde(kde, x), kde.evaluate(x))
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape, axis in (
+        ((0,), None),
+        ((0,), 0),
+        ((7,), None),
+        ((7,), 0),
+        ((47, 8), None),
+        ((47, 8), 0),
+        ((47, 8), 1),
+        ((0, 2, 3), None),
+        ((0, 2, 3), 0),
+        ((0, 2, 3), 1),
+        ((0, 2, 3), 2),
+        ((10, 5, 21), None),
+        ((10, 5, 21), 0),
+        ((10, 5, 21), 1),
+        ((10, 5, 21), 2),
+      )
+    ],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
+    contains_nans=[True, False],
+    keepdims=[True, False]
+  )
+  def testMode(self, shape, dtype, axis, contains_nans, keepdims):
+    if scipy_version < (1, 9, 0) and keepdims != True:
+      self.skipTest("scipy < 1.9.0 only support keepdims == True")
+    if numpy_version < (1, 21, 0) and contains_nans:
+      self.skipTest("numpy < 1.21.0 only support contains_nans == False")
+
+    if contains_nans:
+      rng = jtu.rand_some_nan(self.rng())
+    else:
+      rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    def scipy_mode_wrapper(a, axis=0, nan_policy='propagate', keepdims=None):
+      """Wrapper to manage the shape discrepancies between scipy and jax"""
+      if scipy_version < (1, 9, 0) and a.size == 0 and keepdims == True:
+        if axis == None:
+          output_shape = tuple(1 for _ in a.shape)
+        else:
+          output_shape = tuple(1 if i == axis else s for i, s in enumerate(a.shape))
+        return (np.full(output_shape, np.nan, dtype=dtypes.canonicalize_dtype(jax.numpy.float_)),
+                np.full(output_shape, np.nan, dtype=dtypes.canonicalize_dtype(jax.numpy.float_)))
+
+      if scipy_version < (1, 9, 0):
+        result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy)
+      else:
+        result = osp_stats.mode(a, axis=axis, nan_policy=nan_policy, keepdims=keepdims)
+
+      if a.size != 0 and axis == None and keepdims == True:
+        output_shape = tuple(1 for _ in a.shape)
+        return (result.mode.reshape(output_shape), result.count.reshape(output_shape))
+      return result
+
+    scipy_fun = partial(scipy_mode_wrapper, axis=axis, keepdims=keepdims)
+    scipy_fun = jtu.ignore_warning(category=RuntimeWarning,
+                                   message="Mean of empty slice.*")(scipy_fun)
+    scipy_fun = jtu.ignore_warning(category=RuntimeWarning,
+                                   message="invalid value encountered.*")(scipy_fun)
+    lax_fun = partial(lsp_stats.mode, axis=axis, keepdims=keepdims)
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(dtype, tol_spec)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
