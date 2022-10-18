@@ -656,7 +656,7 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs
 
   # Reorder lhs sparse dimensions
   if lhs_contracting_s:
-    lhs_contracting_s = [d - n_batch for d in lhs_contracting_s]
+    lhs_contracting_s = tuple(d - n_batch for d in lhs_contracting_s)
     sparse_perm = jnp.array([*lhs_contracting_s, *remaining(range(n_sparse), lhs_contracting_s)])
     lhs_indices = lhs_indices[..., sparse_perm]
 

@@ -422,7 +422,7 @@ def lower_xla_callable(
     fun = lu.annotate(fun, in_type)
   else:
     assert abstract_args == (None,) * len(abstract_args)
-    abstract_args = [aval for aval, _ in fun.in_type]
+    abstract_args = tuple(aval for aval, _ in fun.in_type)
 
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                         "for jit in {elapsed_time} sec"):
@@ -681,7 +681,7 @@ def _input_handler(backend: Backend,
   assert config.jax_dynamic_shapes
 
   # Precompute how to grab implicit inputs from explicit inputs' axis sizes.
-  which_explicit = which_explicit or [True] * len(in_avals)
+  which_explicit = which_explicit or (True,) * len(in_avals)
   implicit_idxs = {i for i, ex in enumerate(which_explicit) if not ex}
   implicit_args_from_axes: List[Tuple[int, int, int]] = []
   for arg_idx, aval in enumerate(in_avals):
@@ -725,7 +725,7 @@ def _input_handler(backend: Backend,
 
 def _result_handler(backend: Backend,
                     sticky_device: Optional[Device],
-                    out_type: Optional[pe.OutputType]
+                    out_type: pe.OutputType,
                     ) -> Callable:
   out_avals, kept_outputs = util.unzip2(out_type)
   handlers = map(partial(aval_to_result_handler, sticky_device), out_avals)
@@ -976,6 +976,7 @@ class XlaComputation(stages.XlaLowering):
         self._executable = XlaCompiledComputation.from_trivial_jaxpr(
             **self.compile_args)
       else:
+        assert self._out_type is not None
         self._executable = XlaCompiledComputation.from_xla_computation(
             self.name, self._hlo, self._in_type, self._out_type,
             **self.compile_args)
@@ -1116,7 +1117,7 @@ class XlaCompiledComputation(stages.XlaExecutable):
   @staticmethod
   def from_xla_computation(name: str, xla_computation: Optional[ir.Module],
                            in_type: Optional[pe.InputType],
-                           out_type: Optional[pe.OutputType], nreps: int,
+                           out_type: pe.OutputType, nreps: int,
                            device: Optional[Device], backend: Backend,
                            tuple_args: bool,
                            in_avals: Sequence[core.AbstractValue],
