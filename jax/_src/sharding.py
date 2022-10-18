@@ -95,6 +95,13 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
+  @functools.lru_cache(maxsize=4096)
+  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
+    op_sharding = self._to_xla_op_sharding(len(global_shape))
+    op_sharding_sharding = OpShardingSharding(self._device_assignment,
+                                              op_sharding)
+    return op_sharding_sharding.devices_indices_map(global_shape)
+
   @pxla.maybe_cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     process_index = xb.process_index()
@@ -217,14 +224,6 @@ class MeshPspecSharding(XLACompatibleSharding):
   def device_set(self) -> Set[Device]:
     return set(self.mesh.devices.flat)
 
-  def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Index]:
-    # TODO(yashkatariya): Remove this when utilities are moved to pxla.py.
-    from jax.experimental import global_device_array
-
-    # `get_shard_indices` is cached.
-    return global_device_array.get_shard_indices(global_shape, self.mesh, self.spec)
-
   @pxla.maybe_cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
@@ -284,8 +283,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
   def device_set(self) -> Set[Device]:
     return {self._device}
 
-  def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Index]:
+  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:  # type: ignore
     return {self._device: (slice(None),) * len(global_shape)}
 
   @property
@@ -323,8 +321,7 @@ class PmapSharding(XLACompatibleSharding):
     return set(self.devices.flat)
 
   @functools.lru_cache(maxsize=4096)
-  def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return {d: i for d, i in safe_zip(self.devices.flat, indices)}  # type: ignore
 
@@ -404,8 +401,7 @@ class OpShardingSharding(XLACompatibleSharding):
     return set(self._devices)
 
   @functools.lru_cache(maxsize=4096)
-  def devices_indices_map(
-      self, global_shape: Shape) -> Mapping[Device, Index]:
+  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     indices = pxla.op_sharding_to_indices(self._op_sharding, global_shape,
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))
