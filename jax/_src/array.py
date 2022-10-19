@@ -412,7 +412,6 @@ class ArrayImpl(basearray.Array):
       return
     for buf in self._arrays:
       buf.delete()
-    self._arrays = None
     self._npy_value = None
 
   def is_deleted(self):
