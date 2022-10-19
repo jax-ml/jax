@@ -2138,6 +2138,6 @@ def _dynamic_slice_indices(
     if isinstance(i, (int, np.integer)):
       result.append(i + lax.convert_element_type(d, _dtype(i)) if i < 0 else i)
       continue
-    d = lax.convert_element_type(d, _dtype(i))
-    result.append(lax.select(i < 0, i + d, i))
+    d_arr = lax.convert_element_type(d, _dtype(i))
+    result.append(lax.select(i < 0, i + d_arr, i))
   return result

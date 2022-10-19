@@ -112,7 +112,7 @@ def _eval_jaxpr_discharge_state(
                                                         **eqn.params)
       for new_inval, invar in zip(new_invals, eqn.invars):
         if new_inval is not None:
-          env.write(invar, new_inval)
+          env.write(invar, new_inval)  # type: ignore[arg-type]
     else:
       # Default primitive rule, similar to `core.eval_jaxpr`. Note that here
       # we assume any higher-order primitives inside of the jaxpr are *not*

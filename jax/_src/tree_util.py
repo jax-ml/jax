@@ -279,7 +279,7 @@ register_pytree_node(
 register_pytree_node(
   collections.defaultdict,
   lambda x: (tuple(x.values()), (x.default_factory, tuple(x.keys()))),
-  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index]
+  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index,call-overload]
 
 
 
