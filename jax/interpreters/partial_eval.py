@@ -895,7 +895,8 @@ def tracers_to_jaxpr(
   def get_atom(t: JaxprTracer) -> Atom:
     return t.recipe if type(t.recipe) is Literal else t_to_var[id(t)]
 
-  def newvar(t: JaxprTracer) -> Var:
+  def newvar(t: Optional[JaxprTracer]) -> Var:
+    assert t is not None
     var = gensym(type_substitute(t.aval))
     var_ = t_to_var.setdefault(id(t), var)
     assert var is var_
@@ -2099,14 +2100,19 @@ def infer_lambda_input_type(
   lu._check_input_type(input_type)
   return input_type
 
+def _spec_to_dict(spec: AbstractedAxesSpec) -> Dict[int, AbstractedAxisName]:
+  if isinstance(spec, tuple):
+    return {i: d for i, d in enumerate(spec) if d is not None}
+  else:
+    return spec
+
 def _canonicalize_specs(
     ndims: Sequence[int], specs: Optional[Sequence[AbstractedAxesSpec]]
   ) -> List[Dict[int, AbstractedAxisName]]:
   if specs is None:
     return [{}] * len(ndims)
   else:
-    return [{i: d for i, d in enumerate(s) if d is not None} if type(s) is tuple
-            else s for n, s in zip(ndims, specs)]
+    return [_spec_to_dict(s) for n, s in zip(ndims, specs)]
 
 def _complete_specs(
     args: Sequence[Any], partial_specs: List[Dict[int, AbstractedAxisName]]
@@ -2250,7 +2256,8 @@ def _extract_implicit_args(
           tracers[d1.val] = trace.instantiate_const(d2)
         assert tracers[d1.val] is trace.instantiate_const(d2)
   assert all(t is not None for t in tracers)
-  return [t for t, (_, e) in zip(tracers, in_type) if not e]
+  tracers_validated = cast(List[DynamicJaxprTracer], tracers)  # remove Optional annotation.
+  return [t for t, (_, e) in zip(tracers_validated, in_type) if not e]
 
 def _in_avals_from_tracers(
     tracers: List[DynamicJaxprTracer]

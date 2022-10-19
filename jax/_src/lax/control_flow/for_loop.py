@@ -442,7 +442,7 @@ def _for_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   else:
     raise Exception("Invalid fixpoint")
   del out_unknowns  # redundant since it's the same as `in_unknowns`
-  tracers = tuple(trace.instantiate_const(t) if uk else t
+  tracers = tuple(trace.instantiate_const(t) if uk else t  # type: ignore
                   for t, uk in zip(tracers, in_unknowns))
 
   # We use `partial_eval_jaxpr_custom` here because it won't remove effectful
@@ -662,9 +662,10 @@ def _convert_outputs_to_writes(
       else:
         res_ref[i] = res_val
     return []
+  # TODO(mattjj, sharadmv): better handling of tokens, which don't have shape/dtype
   res_ref_avals = [ShapedArrayRef(v.aval.shape, v.aval.dtype)  # pytype: disable=attribute-error
                    if loop_invar else
-                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)
+                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)  # pytype: disable=attribute-error
                    for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])

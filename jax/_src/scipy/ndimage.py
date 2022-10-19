@@ -75,7 +75,7 @@ def _linear_indices_and_weights(coordinate: ArrayLike) -> List[Tuple[Array, int]
 def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
                      order: int, mode: str, cval: ArrayLike) -> Array:
   input_arr = jnp.asarray(input)
-  coordinates = [jnp.asarray(c) for c in coordinates]
+  coordinate_arrs = [jnp.asarray(c) for c in coordinates]
   cval = jnp.asarray(cval, input_arr.dtype)
 
   if len(coordinates) != input_arr.ndim:
@@ -102,7 +102,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
         'jax.scipy.ndimage.map_coordinates currently requires order<=1')
 
   valid_1d_interpolations = []
-  for coordinate, size in zip(coordinates, input_arr.shape):
+  for coordinate, size in zip(coordinate_arrs, input_arr.shape):
     interp_nodes = interp_fun(coordinate)
     valid_interp = []
     for index, weight in interp_nodes:

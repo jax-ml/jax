@@ -992,7 +992,7 @@ class SameDeviceAssignmentTuple:
   def __eq__(self, other):
     if not isinstance(other, SameDeviceAssignmentTuple):
       return False
-    return (all(pxla.are_op_shardings_equal(s._op_sharding, o._op_sharding)
+    return (all(pxla.are_op_shardings_equal(s._op_sharding, o._op_sharding)  # pytype: disable=attribute-error
                 if isinstance(s, OpShardingSharding) and isinstance(o, OpShardingSharding)
                 else s == o
                 for s, o in safe_zip(self.shardings, other.shardings)) and

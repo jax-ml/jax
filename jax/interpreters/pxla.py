@@ -1601,17 +1601,14 @@ class PmapExecutable(stages.XlaExecutable):
                             parts.local_num_partitions, arg_parts, aval, in_axis)
         for aval, arg_parts, in_axis in safe_zip(
             shards.sharded_avals, local_arg_parts_, pci.in_axes)]
-    input_indices = [spec_to_indices(aval.shape, spec)
+    input_indices = [spec_to_indices(aval.shape, spec)  # pytype: disable=attribute-error
                     if spec is not None else None
                     for aval, spec in safe_zip(pci.avals, input_sharding_specs)]
     in_shardings = _get_pmap_sharding(local_device_assignment, input_sharding_specs)
     nouts = len(shards.out_sharded_avals)
 
-    out_parts, local_out_parts = parts.out_parts, parts.local_out_parts
-    if parts.out_parts is None:
-      out_parts = (None,) * nouts
-    if parts.local_out_parts is None:
-      local_out_parts = (None,) * nouts
+    out_parts = (None,) * nouts if parts.out_parts is None else parts.out_parts
+    local_out_parts = (None,) * nouts if parts.local_out_parts is None else parts.local_out_parts
 
     local_out_avals = [
       get_local_aval(aval, parts, lparts)
@@ -1868,7 +1865,7 @@ def _get_sharding_specs(
                      'PmapSharding and MeshPspecSharding.')
 
 def local_avals_to_results_handler(
-    unmapped_local_out_avals: Sequence[Optional[ShapedArray]],
+    unmapped_local_out_avals: Sequence[ShapedArray],
     local_shardings: Sequence[XLACompatibleSharding]) -> ResultsHandler:
   out_indices = [tuple(s.devices_indices_map(aval.shape).values())
                  for s, aval in safe_zip(local_shardings, unmapped_local_out_avals)]
@@ -2864,18 +2861,18 @@ def lower_sharding_computation(
       elif core.is_opaque_dtype(aval.dtype):
         in_op_shardings.append(aval.dtype._rules.physical_op_sharding(aval, i))
       else:
-        in_op_shardings.append(i._to_xla_op_sharding(aval.ndim))
+        in_op_shardings.append(i._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
 
     # TODO(yashkatariya): Fix the HLO produced if out_partitions is
     # [None, OpShardingProto] has the sharding annotations.
     out_op_shardings = []
-    for aval, o in safe_zip(global_out_avals, out_shardings):
+    for aval, o in safe_zip(global_out_avals, out_shardings):  # type: ignore[arg-type]
       if _is_unspecified(o) or aval is core.abstract_token:
         out_op_shardings.append(None)
       elif core.is_opaque_dtype(aval.dtype):
         out_op_shardings.append(aval.dtype._rules.physical_op_sharding(aval, o))
       else:
-        out_op_shardings.append(o._to_xla_op_sharding(aval.ndim))
+        out_op_shardings.append(o._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
     replicated_args = [False] * len(global_in_avals)
     axis_ctx = mlir.ShardingContext(device_assignment)
   else:
@@ -3037,7 +3034,7 @@ def lower_mesh_computation(
       elif core.is_opaque_dtype(aval.dtype):
         in_partitions.append(aval.dtype._rules.physical_op_sharding(aval, i))
       else:
-        in_partitions.append(i._to_xla_op_sharding(aval.ndim))
+        in_partitions.append(i._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
 
     # TODO(yashkatariya): Fix the HLO produced if out_partitions is
     # [None, OpShardingProto] has the sharding annotations.
@@ -3048,7 +3045,7 @@ def lower_mesh_computation(
       elif core.is_opaque_dtype(aval.dtype):
         out_partitions.append(aval.dtype._rules.physical_op_sharding(aval, o))
       else:
-        out_partitions.append(o._to_xla_op_sharding(aval.ndim))
+        out_partitions.append(o._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh, manual_axes)
   else:

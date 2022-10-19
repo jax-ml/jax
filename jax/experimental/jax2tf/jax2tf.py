@@ -1137,7 +1137,7 @@ class TensorFlowTrace(core.Trace):
         elif call_primitive == xla.xla_call_p:
           if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
             # Make a nested tf.function(jit_compile=True)
-            store_tf_res_avals = None
+            store_tf_res_avals: Sequence[core.ShapedArray] = []
             def f_tf(*tf_args):
               nonlocal store_tf_res_avals
               tf_res_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
