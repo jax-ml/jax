@@ -573,6 +573,8 @@ def _array_rest_shard_arg(x: ArrayImpl, devices, indices, mode):
 
 
 def _array_shard_arg(x, devices, indices, mode):
+  if x.is_deleted():
+    raise RuntimeError("Invalid buffer passed: jax.Array has been deleted.")
   if mode == pxla.InputsHandlerMode.pmap:
     return _array_pmap_shard_arg(x, devices, indices, mode)
   else:
