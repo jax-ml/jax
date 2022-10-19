@@ -21,6 +21,7 @@ import operator
 from typing import Optional, Tuple, Union, cast, overload
 from typing_extensions import Literal
 
+import jax
 from jax import jit, custom_jvp
 from jax import lax
 
@@ -417,11 +418,13 @@ def pinv(a: ArrayLike, rcond: Optional[ArrayLike] = None) -> Array:
   rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
   cutoff = rcond * jnp.amax(s, axis=-1, keepdims=True, initial=-jnp.inf)
   s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
-  res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]))
+  res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]),
+                   precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
 
 @pinv.defjvp
+@jax.default_matmul_precision("float32")
 def _pinv_jvp(rcond, primals, tangents):
   # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
   # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM

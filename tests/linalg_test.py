@@ -95,8 +95,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     shape=[(1, 1), (3, 3), (2, 4, 4)],
     dtype=float_types,
   )
-  @jtu.skip_on_devices("tpu")
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  @jtu.skip_on_devices("tpu")
   def testDetGrad(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     a = rng(shape, dtype)
@@ -182,7 +182,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     shape=[(1, 1), (4, 4), (5, 5), (2, 7, 7)],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("tpu")
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSlogdetGrad(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -587,10 +586,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       else:
         jtu.check_jvp(svd, partial(jvp, svd), (a,), rtol=5e-2, atol=2e-1)
 
-    if jtu.device_under_test() == "tpu":
-      raise unittest.SkipTest("TPU matmul does not have enough precision")
-    # TODO(frederikwilde): Find the appropriate precision to use for this test on TPUs.
-
     if compute_uv and (not full_matrices):
       b, = args_maker()
       def f(x):
@@ -821,9 +816,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np.linalg.pinv, jnp.linalg.pinv, args_maker,
                             tol=1e-2)
     self._CompileAndCheck(jnp.linalg.pinv, args_maker)
-    if jtu.device_under_test() != "tpu":
-      # TODO(phawkins): 1e-1 seems like a very loose tolerance.
-      jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
+
+    # TODO(phawkins): 1e-1 seems like a very loose tolerance.
+    jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
 
   def testPinvGradIssue2792(self):
     def f(p):
@@ -998,8 +993,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     shape=[(1, 1), (4, 5), (10, 5), (10, 10), (6, 7, 7)],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("tpu")  # TODO(phawkins): precision problems on TPU.
-  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testLuGrad(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     a = rng(shape, dtype)

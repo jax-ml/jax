@@ -254,7 +254,7 @@ def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array
   l = jnp.tril(lu, -1)[:, :k] + jnp.eye(m, k, dtype=dtype)
   u = jnp.triu(lu)[:k, :]
   if permute_l:
-    return jnp.matmul(p, l), u
+    return jnp.matmul(p, l, precision=lax.Precision.HIGHEST), u
   else:
     return p, l, u
 

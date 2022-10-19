@@ -409,16 +409,14 @@ class LaxTest(jtu.JaxTestCase):
         or dtype == np.int64 or preferred_element_type == np.int64
         or dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("64-bit mode disabled")
-    if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
-      # TODO(b/183565702): Support integer convolutions on CPU/GPU.
-      raise SkipTest("Integer convolution not yet supported on GPU")
     if (jtu.device_under_test() == "tpu" and
        (dtype == np.complex128 or preferred_element_type == np.complex128)):
       raise SkipTest("np.complex128 is not yet supported on TPU")
-    if (jtu.device_under_test() == "tpu"
-        and preferred_element_type == np.float32
-        and dtype == np.int32):
-      raise SkipTest("TODO(b/250714805): test fails on TPU")
+    if (jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer)
+        and not (dtype == np.int8 and
+                 preferred_element_type in (np.int8, np.float32))):
+      # TODO(b/183565702): Support integer convolutions on CPU/GPU.
+      raise SkipTest("Integer convolution not yet supported on GPU")
     # x64 implementation is only accurate to ~float32 precision for this case.
     if dtype == np.complex64 and preferred_element_type == np.complex128:
       tol = 1e-5
@@ -515,7 +513,8 @@ class LaxTest(jtu.JaxTestCase):
   def testConvGeneralDilated0D(self, lhs_shape, rhs_shape, dtype,
                                feature_group_count, batch_group_count,
                                dimension_numbers, perms):
-    if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
+    if ((dtype != np.int8 and np.issubdtype(dtype, np.integer))
+        or np.issubdtype(dtype, np.bool_)):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
       if jtu.device_under_test() == "gpu":
         raise SkipTest("Integer convolution not yet supported on GPU")
@@ -561,7 +560,8 @@ class LaxTest(jtu.JaxTestCase):
                              padding, lhs_dilation, rhs_dilation,
                              feature_group_count, batch_group_count,
                              dimension_numbers, perms):
-    if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
+    if ((dtype != np.int8 and np.issubdtype(dtype, np.integer))
+        or np.issubdtype(dtype, np.bool_)):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
       if jtu.device_under_test() == "gpu":
         raise SkipTest("Integer convolution not yet supported on GPU")
@@ -680,7 +680,8 @@ class LaxTest(jtu.JaxTestCase):
                                                   padding,
                                                   dimension_numbers,
                                                   precision):
-    if np.issubdtype(dtype, np.integer) or np.issubdtype(dtype, np.bool_):
+    if ((dtype != np.int8 and np.issubdtype(dtype, np.integer))
+        or np.issubdtype(dtype, np.bool_)):
       # TODO(b/183565702): Support integer convolutions on CPU/GPU.
       if jtu.device_under_test() == "gpu":
         raise SkipTest("Integer convolution not yet supported on GPU")
