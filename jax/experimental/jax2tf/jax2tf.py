@@ -2413,7 +2413,7 @@ tf_impl_with_avals[prng.random_unwrap_p] = _random_unwrap_impl
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
   res = _convert_jax_impl(
-      partial(prng._threefry2x32_lowering, use_rolled_loops=False),
+      partial(prng._threefry2x32_lowering, use_rolled_loops=True),
       multiple_results=True, extra_name_stack="threefry")(
           *args, _in_avals=_in_avals, _out_aval=_out_aval)
   return res
