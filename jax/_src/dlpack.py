@@ -70,4 +70,5 @@ def from_dlpack(dlpack):
   xla_shape = buf.xla_shape()
   assert not xla_shape.is_tuple()
   aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
-  return dispatch.maybe_create_array_from_da(buf, aval, buf.device())
+  return jnp.asarray(           # asarray ensures dtype canonicalization
+      dispatch.maybe_create_array_from_da(buf, aval, buf.device()))
