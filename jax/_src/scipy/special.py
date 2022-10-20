@@ -13,20 +13,18 @@
 # limitations under the License.
 
 from functools import partial
-from typing import cast, overload, Any, List, Optional, Tuple, Union
+from typing import cast, Any, List, Optional, Tuple
 
 import numpy as np
 import scipy.special as osp_special
-from typing_extensions import Literal
 
-import jax
 from jax._src import api
 from jax import jit
 from jax import lax, core
 from jax.interpreters import ad
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
+from jax._src.numpy.lax_numpy import _promote_args_inexact
 from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
 from jax._src.typing import Array, ArrayLike
@@ -843,7 +841,7 @@ def _gen_associated_legendre(l_max: int,
   a_idx = jnp.arange(1, l_max + 1, dtype=x.dtype)
   b_idx = jnp.arange(l_max, dtype=x.dtype)
   if is_normalized:
-    initial_value = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
+    initial_value: ArrayLike = 0.5 / jnp.sqrt(jnp.pi)  # The initial value p(0,0).
     f_a = jnp.cumprod(-1 * jnp.sqrt(1.0 + 0.5 / a_idx))
     f_b = jnp.sqrt(2.0 * b_idx + 3.0)
   else:

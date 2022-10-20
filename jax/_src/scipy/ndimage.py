@@ -57,13 +57,13 @@ def _round_half_away_from_zero(a: Array) -> Array:
   return a if jnp.issubdtype(a.dtype, jnp.integer) else lax.round(a)
 
 
-def _nearest_indices_and_weights(coordinate: Array) -> List[Tuple[Array, int]]:
+def _nearest_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
   index = _round_half_away_from_zero(coordinate).astype(jnp.int32)
   weight = coordinate.dtype.type(1)
   return [(index, weight)]
 
 
-def _linear_indices_and_weights(coordinate: ArrayLike) -> List[Tuple[Array, int]]:
+def _linear_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
   lower = jnp.floor(coordinate)
   upper_weight = coordinate - lower
   lower_weight = 1 - upper_weight
