@@ -401,7 +401,7 @@ def scatter_mul(
       implementation-defined.
 
   Returns:
-    An array containing the sum of `operand` and the scattered updates.
+    An array containing the product of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.mul,
                                        lax._abstractify(lax._const(operand, 1)))
@@ -448,7 +448,7 @@ def scatter_min(
       implementation-defined.
 
   Returns:
-    An array containing the sum of `operand` and the scattered updates.
+    An array containing the min of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.min,
                                        lax._abstractify(lax._const(operand, 0)))
@@ -495,7 +495,7 @@ def scatter_max(
       implementation-defined.
 
   Returns:
-    An array containing the sum of `operand` and the scattered updates.
+    An array containing the max of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(lax.max,
                                        lax._abstractify(lax._const(operand, 0)))
@@ -610,7 +610,7 @@ def scatter(
       implementation-defined.
 
   Returns:
-    An array containing the sum of `operand` and the scattered updates.
+    An array containing the replacement of `operand` with the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(_scatter_reduction_computation,
                                        lax._abstractify(lax._const(operand, 0)))

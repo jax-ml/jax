@@ -312,6 +312,8 @@ class JetTest(jtu.JaxTestCase):
   def test_cummin(self):     self.unary_check(partial(lax.cummin, axis=0))
   @jtu.skip_on_devices("tpu")
   def test_dynamic_slice(self):     self.unary_check(partial(lax.dynamic_slice, start_indices=(0,0), slice_sizes=(1,1)))
+  @jtu.skip_on_devices("tpu")
+  def test_copy(self):       self.unary_check(jnp.copy)
 
 
   @jtu.skip_on_devices("tpu")
@@ -415,15 +417,21 @@ class JetTest(jtu.JaxTestCase):
       from jax import jacfwd, grad
 
       x = jnp.array([1., 1.])
-      μ = eps * x
+      mu = eps * x
 
       def F(t):
-        return f(x + t * μ)
+        return f(x + t * mu)
 
       return grad(jacfwd(F))(0.)
 
     self.check_jet(h, (0.,), ([1., 2., 3.],), rtol=1e-3)
 
+
+  @jtu.skip_on_devices("tpu")
+  def test_scatter_mul(self):
+    def f(z):
+      return z.at[0].multiply(-1.)
+    self.unary_check(f)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
