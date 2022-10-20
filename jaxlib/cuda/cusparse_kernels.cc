@@ -277,7 +277,7 @@ static absl::Status CsrMatvec_(cudaStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                   d.y.type, CUSPARSE_MV_ALG_DEFAULT, buf)));
+                   d.y.type, CUSPARSE_SPMV_CSR_ALG2, buf)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
@@ -474,7 +474,7 @@ static absl::Status CooMatvec_(cudaStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                   d.y.type, CUSPARSE_MV_ALG_DEFAULT, buf)));
+                   d.y.type, CUSPARSE_SPMV_COO_ALG2, buf)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
