@@ -32,11 +32,9 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
-from jax.interpreters import xla
 from jax._src import ad_checkpoint
 from jax._src import custom_derivatives
 from jax._src import lib as jaxlib
-from jax._src import source_info_util
 from jax._src import util
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc

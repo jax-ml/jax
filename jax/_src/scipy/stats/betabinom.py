@@ -13,7 +13,6 @@
 # limitations under the License
 
 
-import scipy
 import scipy.stats as osp_stats
 
 from jax import lax

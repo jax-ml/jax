@@ -14,7 +14,6 @@
 
 from functools import update_wrapper, reduce, partial
 import inspect
-import operator as op
 from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Set,
                     Any)
 

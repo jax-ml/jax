@@ -20,7 +20,6 @@ import tempfile
 from typing import Optional
 
 # pytype: disable=import-error
-import jax
 from jax._src import profiler as jax_profiler
 try:
   from tensorflow.python.profiler import profiler_v2 as profiler

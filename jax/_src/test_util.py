@@ -20,7 +20,7 @@ from functools import partial
 import re
 import os
 import textwrap
-from typing import Callable, Dict, List, Generator, Sequence, Tuple, Union
+from typing import Callable, List, Generator, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib

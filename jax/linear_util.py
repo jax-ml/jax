@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import threading
 from functools import partial
-from typing import Any, Tuple, Callable, Optional
+from typing import Any, Tuple, Callable
 import weakref
 
 from jax import core

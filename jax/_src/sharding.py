@@ -20,8 +20,7 @@ import operator as op
 from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
                     FrozenSet, Union, cast)
 
-import jax
-from jax._src.util import safe_map, safe_zip, unzip2, prod
+from jax._src.util import safe_map, safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version

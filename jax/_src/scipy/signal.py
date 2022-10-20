@@ -14,7 +14,7 @@
 
 from functools import partial
 import operator
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 import warnings
 
 import numpy as np

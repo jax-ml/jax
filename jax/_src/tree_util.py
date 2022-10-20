@@ -17,8 +17,8 @@ import difflib
 import functools
 from functools import partial
 import operator as op
-from typing import (Any, Callable, Hashable, Iterable, Optional, Tuple, List,
-                    Dict, Type, TypeVar, overload, TYPE_CHECKING, NamedTuple)
+from typing import (Any, Callable, Dict, Hashable, Iterable, List, NamedTuple,
+                    Optional, Tuple, Type, TypeVar, overload)
 import textwrap
 import warnings
 

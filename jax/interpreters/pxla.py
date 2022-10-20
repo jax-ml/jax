@@ -83,7 +83,7 @@ from jax._src.lib.mlir.dialects import mhlo
 from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
-                           split_dict, unzip2)
+                           unzip2)
 
 if TYPE_CHECKING:
   from jax._src.sharding import MeshPspecSharding, XLACompatibleSharding

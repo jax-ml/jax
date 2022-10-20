@@ -14,4 +14,4 @@
 
 # TODO(phawkins): fix users of this alias and delete this file.
 
-from jax._src.config import config
+from jax._src.config import config  # noqa: F401

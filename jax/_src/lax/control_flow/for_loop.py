@@ -35,7 +35,6 @@ from jax._src import state
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict)
 import jax.numpy as jnp
-import numpy as np
 
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
