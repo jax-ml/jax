@@ -140,6 +140,13 @@ jax.scipy.special
 jax.scipy.stats
 ---------------
 
+.. automodule:: jax.scipy.stats
+
+.. autosummary::
+  :toctree: _autosummary
+
+   mode
+
 jax.scipy.stats.bernoulli
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.bernoulli
