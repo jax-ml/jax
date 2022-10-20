@@ -2269,6 +2269,26 @@ class BCSRTest(jtu.JaxTestCase):
     args_maker_todense = lambda: [data, indices, indptr]
     self._CompileAndCheck(todense, args_maker_todense)
 
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch)
+      for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(len(shape) - 1)
+    ],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_bcsr_extract(self, shape, dtype, n_batch):
+    n_dense = len(shape) - n_batch - 2
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
+    data, indices, indptr = sparse_bcsr._bcsr_fromdense(
+        M, nse=nse, n_batch=n_batch, n_dense=n_dense)
+    data2 = sparse.bcsr_extract(indices, indptr, M)
+    self.assertArraysEqual(data, data2)
+    args_maker_bcsr_extract = lambda: [indices, indptr, M]
+    self._CompileAndCheck(sparse.bcsr_extract, args_maker_bcsr_extract)
+
 
 class SparseGradTest(jtu.JaxTestCase):
   def test_sparse_grad(self):

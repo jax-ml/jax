@@ -233,6 +233,43 @@ mlir.register_lowering(bcsr_todense_p, mlir.lower_fun(
     _bcsr_todense_impl, multiple_results=False))
 
 
+#--------------------------------------------------------------------
+# bcsr_extract
+bcsr_extract_p = core.Primitive('bcsr_extract')
+
+
+def bcsr_extract(indices, indptr, mat):
+  """Extract values from a dense matrix at given BCSR (indices, indptr).
+
+  Args:
+    indices: An ndarray; see BCSR indices.
+    indptr: An ndarray; see BCSR indptr.
+    mat: A dense matrix.
+
+  Returns:
+    An ndarray; see BCSR data.
+  """
+  return bcsr_extract_p.bind(indices, indptr, mat)
+
+
+@bcsr_extract_p.def_impl
+def _bcsr_extract_impl(indices, indptr, mat):
+  mat = jnp.asarray(mat)
+  bcoo_indices = _bcsr_to_bcoo(indices, indptr, shape=mat.shape)
+  return bcoo.bcoo_extract(bcoo_indices, mat)
+
+
+@bcsr_extract_p.def_abstract_eval
+def _bcsr_extract_abstract_eval(indices, indptr, mat):
+  n_batch, n_dense, nse = _validate_bcsr_indices(indices, indptr, mat.shape)
+  out_shape = mat.shape[:n_batch] + (nse,) + mat.shape[mat.ndim - n_dense:]
+  return core.ShapedArray(out_shape, mat.dtype)
+
+
+mlir.register_lowering(bcsr_extract_p, mlir.lower_fun(
+    _bcsr_extract_impl, multiple_results=False))
+
+
 class BCSR(JAXSparse):
   """Experimental batched CSR matrix implemented in JAX."""
 
