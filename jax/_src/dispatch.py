@@ -21,8 +21,8 @@ from functools import partial
 import itertools
 import time
 from typing import (
-    Any, Callable, Dict, Optional, Sequence, Set, Tuple, List, Type, Union,
-    Iterator)
+    Any, Callable, Dict, Iterable, Iterator, Optional, Sequence,
+    Set, Tuple, List, Type, Union)
 from typing_extensions import Protocol
 import logging
 import os
@@ -226,7 +226,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
                    donated_invars, inline, keep_unused: bool):
   del inline  # Only used at tracing time
   if fun.in_type is None:
-    arg_specs = unsafe_map(arg_spec, args)
+    arg_specs: Iterable[Any] = unsafe_map(arg_spec, args)
   else:
     # fun.in_type is used for dynamic shapes.
     if config.jax_array:

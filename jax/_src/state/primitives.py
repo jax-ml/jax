@@ -72,8 +72,7 @@ def _unpack_idx(idx: Indexer, ndim: int
   indexed_dims_ = [type(i) != slice for i in idx]
   _, non_slice_idx = partition_list(indexed_dims_, idx)
   indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
-  return (tuple(map(lambda x: jnp.asarray(x, jnp.int32), non_slice_idx)),
-          tuple(indexed_dims))
+  return (tuple(map(jnp.int32, non_slice_idx)), tuple(indexed_dims))
 
 def _get_slice_output_shape(in_shape: Tuple[int, ...],
                             idx_shapes: Tuple[Tuple[int, ...], ...],
