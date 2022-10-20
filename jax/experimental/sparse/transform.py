@@ -48,7 +48,7 @@ DeviceArray([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
 
 import functools
 from typing import (
-  Any, Callable, Dict, NamedTuple, List, Optional, Sequence, Tuple, Union)
+  Any, Callable, Dict, NamedTuple, List, Optional, Sequence, Tuple)
 
 import numpy as np
 
@@ -353,11 +353,12 @@ def eval_sparse(
 ) -> Sequence[SparsifyValue]:
   env : Dict[core.Var, SparsifyValue] = {}
 
-  def read(var: core.Var) -> Union[Array, SparsifyValue]:
+  def read(var: core.Atom) -> SparsifyValue:
     # all literals are dense
     if isinstance(var, core.Literal):
       return spenv.dense(var.val)
     else:
+      assert isinstance(var, core.Var)
       return env[var]
 
   def write_buffer(var: core.Var, a: Array) -> None:

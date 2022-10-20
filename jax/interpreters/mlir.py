@@ -977,13 +977,14 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   Assumes that an MLIR context, location, and insertion point are set.
   """
   assert ctx.platform != "gpu"
-  def read(v: core.Var) -> Sequence[ir.Value]:
+  def read(v: core.Atom) -> Sequence[ir.Value]:
     if type(v) is core.Literal:
       return ir_constants(v.val, canonicalize_types=True)
     else:
+      assert isinstance(v, core.Var)
       return env[v]
 
-  def aval(v: core.Var) -> core.AbstractValue:
+  def aval(v: core.Atom) -> core.AbstractValue:
     if type(v) is core.Literal:
       return xla.abstractify(v.val)
     else:

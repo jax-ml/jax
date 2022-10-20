@@ -2624,7 +2624,8 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
   ]
   if config.jax_experimental_name_stack:
     # Same name stack as XLA translation of cond_p
-    branches_tf = list(map(source_info_util.extend_name_stack("cond"),
+    # Note: extend_name_stack is a contextmanager, which is callable as a decorator.
+    branches_tf = list(map(source_info_util.extend_name_stack("cond"),  # type: ignore[arg-type]
         branches_tf))
   return tf.switch_case(index, branches_tf)
 
@@ -3042,7 +3043,7 @@ def _pjit(*args: TfVal,
           in_positional_semantics,
           out_positional_semantics,
           _in_avals: Sequence[core.ShapedArray],
-          _out_aval: core.ShapedArray) -> TfVal:
+          _out_aval: Sequence[core.ShapedArray]) -> TfVal:
   del donated_invars
   if resource_env.physical_mesh.is_multi_process:
     raise NotImplementedError("jax2tf translation for pjit over multi-process "

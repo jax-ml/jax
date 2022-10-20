@@ -327,7 +327,7 @@ class PmapSharding(XLACompatibleSharding):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
-    return {d: i for d, i in safe_zip(self.devices.flat, indices)}  # type: ignore
+    return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
   @pxla.maybe_cached_property
   def _device_assignment(self) -> XLADeviceAssignment:

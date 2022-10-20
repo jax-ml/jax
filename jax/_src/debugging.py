@@ -426,6 +426,7 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
   heights: Dict[Tuple[int, ...], int] = {}
   widths: Dict[Tuple[int, ...], int] = {}
   for dev, slcs in device_indices_map.items():
+    assert slcs is not None
     slcs = tuple(map(_raise_to_slice, slcs))
     chunk_idxs = tuple(map(_slice_to_chunk_idx, shape, slcs))
     if slcs is None:

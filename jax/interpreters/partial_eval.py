@@ -31,7 +31,6 @@ from jax import linear_util as lu
 from jax._src import api_util
 from jax._src import dtypes
 from jax._src import profiler
-from jax._src.ad_util import Zero
 from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
                                 tree_leaves)
@@ -379,7 +378,7 @@ class JaxprTrace(Trace):
                  for ax, a in zip(staged_out_axes, out_avals_mapped)]
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
-    eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
+    eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),  # type: ignore[arg-type]
                          out_tracers, primitive, staged_params,
                          jaxpr.effects,
                          source_info_util.current())
@@ -945,7 +944,7 @@ def tracers_to_jaxpr(
   env_vars, env_vals = unzip2(env.items())
   const_vars, const_vals = unzip2(consts.items())
   effects = core.join_effects(*(eqn.effects for eqn in eqns))
-  jaxpr = Jaxpr(const_vars, [*env_vars, *map(get_atom, in_tracers)],
+  jaxpr = Jaxpr(const_vars, [*env_vars, *map(get_atom, in_tracers)],  # type: ignore[list-item]
                 map(get_atom, out_tracers), eqns, effects)
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
@@ -1166,7 +1165,8 @@ def _partial_eval_jaxpr_custom_cached(
         inputs = map(ensure_instantiated, inst_in, eqn.invars)
         staged_eqns.append(eqn.replace(invars=inputs))
         map(partial(write, False, True), eqn.outvars)
-  out_unknowns, out_inst = unsafe_map(list, unzip2(map(read, jaxpr.outvars)))
+  unzipped = unzip2(map(read, jaxpr.outvars))
+  out_unknowns, out_inst = list(unzipped[0]), list(unzipped[1])
   assert all(type(v) is Var for v in residuals), residuals
 
   for x, inst, ensure_inst in zip(jaxpr.outvars, out_inst, ensure_out_inst):

@@ -58,6 +58,21 @@ def safe_zip(*args):
     assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(zip(*args))
 
+# safe_map cannot yet be fully annotated, so we use a strategy similar
+# to that used for builtins.map in python/typeshed. This supports
+# checking input types for the callable with up to three arguments.
+@overload
+def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> List[T]: ...
+
+@overload
+def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[T]: ...
+
+@overload
+def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[T]: ...
+
+@overload
+def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[T]: ...
+
 def safe_map(f, *args):
   args = list(map(list, args))
   n = len(args[0])
