@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
 
 import jax
 import jax._src.numpy.lax_numpy as jnp

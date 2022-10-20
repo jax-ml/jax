@@ -18,7 +18,7 @@ import html
 import inspect
 import traceback
 
-from typing import IO, List
+from typing import List
 
 import uuid
 

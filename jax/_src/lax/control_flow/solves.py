@@ -24,7 +24,6 @@ from jax.core import raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
                            tree_unflatten, treedef_tuple)

@@ -29,7 +29,6 @@ from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
 from typing_extensions import Protocol
 import warnings
 
-import jax
 from jax import core
 from jax import linear_util as lu
 from jax._src import ad_util

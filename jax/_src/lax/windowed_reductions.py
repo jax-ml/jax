@@ -18,7 +18,6 @@ import warnings
 
 import numpy as np
 
-import jax._src.lib
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir

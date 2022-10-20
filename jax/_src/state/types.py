@@ -13,27 +13,12 @@
 # limitations under the License.
 """Module for state types."""
 from __future__ import annotations
-from functools import partial
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Optional,  Union
 
-from jax import api_util
 from jax import core
-from jax import linear_util as lu
-from jax import tree_util
-from jax._src import ad_util
-from jax._src import device_array
-from jax._src import dispatch
-from jax._src import pretty_printer as pp
 from jax._src.lib import xla_bridge, xla_client
-from jax._src.util import (safe_map, safe_zip, split_list, tuple_insert,
-                           tuple_delete, prod)
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
-import numpy as np
+from jax._src.util import safe_map, safe_zip, tuple_insert, tuple_delete, prod
 
 xc = xla_client
 xb = xla_bridge

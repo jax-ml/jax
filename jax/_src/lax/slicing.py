@@ -23,7 +23,6 @@ import jax
 from jax import core
 from jax._src import ad_util
 from jax._src import dtypes
-from jax._src import source_info_util
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir

@@ -35,7 +35,6 @@ from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
-from jax._src import api_util
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
@@ -46,7 +45,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (
-    cache,
     extend_name_stack,
     partition_list,
     safe_map,

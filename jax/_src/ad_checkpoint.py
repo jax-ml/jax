@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-import operator as op
 from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
                     FrozenSet)
 import types
@@ -30,7 +29,6 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
-from jax._src import lax
 from jax._src import util
 from jax._src import source_info_util
 from jax._src import traceback_util

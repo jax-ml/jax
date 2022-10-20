@@ -26,7 +26,6 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src import util
-import jax._src.lib
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib import xla_client
 

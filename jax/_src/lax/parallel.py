@@ -23,7 +23,6 @@ import warnings
 
 import numpy as np
 
-import jax
 from jax import core
 from jax import tree_util
 from jax.core import ShapedArray, AxisName, raise_to_shaped

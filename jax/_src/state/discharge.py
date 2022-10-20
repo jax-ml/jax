@@ -27,8 +27,7 @@ from jax import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax._src.util import safe_map, safe_zip, split_list
 
-from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
-                                  AccumEffect)
+from jax._src.state.types import ShapedArrayRef
 from jax._src.state.primitives import get_p, swap_p, addupdate_p
 
 ## JAX utilities
