@@ -76,7 +76,7 @@ def f_jax(x):
 f_tf = jax2tf.convert(f_jax)
 
 # For example you execute f_tf eagerly with valid TensorFlow inputs:
-f_tf(np.random(...))
+f_tf(np.random.random(...))
 
 # Additionally you can use tools like `tf.function` to improve the execution
 # time of your function, or to stage it out to a SavedModel:
@@ -441,7 +441,7 @@ new shape:
 
 ```python
 jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
-                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
+                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 ```
 
 Other operations are partially supported for dimension polynomials:
@@ -486,7 +486,7 @@ expression. Consider again the reshape example from above:
 
 ```python
 jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
-                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4))
+                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 ```
 
 The internal shape environment would map `b` to `tf.shape(x)[0]`, and
@@ -666,7 +666,7 @@ same dtype, you should use `jax2tf.dtype_of_val`:
 # The following two calls will lower jax_fun at the same dtypes
 # independently of the value of JAX_ENABLE_X64.
 jax2tf.convert(jax_fun)(3.14)
-jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14))
+jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14)))
 ```
 
 ### Incomplete TensorFlow data type coverage
@@ -804,7 +804,7 @@ def f_jax(x):  # x: int16
 jax.grad(f_jax, allow_int=True)(x)
 # returns a special `float0`: array((b'',), dtype=[('float0', 'V')])
 
-jax2tf.convert(jax.grad(f_jax, allow_int=True))(x))
+jax2tf.convert(jax.grad(f_jax, allow_int=True))(x)
 # returns a tf.Tensor(0, shape=(), dtype=int32)
 ```
 
@@ -1013,7 +1013,7 @@ self.assertEqual(0, f_jax(x0))  # JAX sees that the x.shape[0] == 0
 # jax2tf catches the broken assumption b >= 1 if the lowered function is executed
 # eagerly.
 # Raises: ValueError: Dimension variable b must have integer value >= 1. Found value 0 when solving b == 0
-jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0))
+jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
 # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
 f_tf = tf.function(
