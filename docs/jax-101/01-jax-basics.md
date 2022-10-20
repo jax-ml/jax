@@ -59,7 +59,15 @@ One useful feature of JAX is that the same code can be run on different backends
 
 We will now perform a dot product to demonstrate that it can be done in different devices without changing the code. We use `%timeit` to check the performance. 
 
-(Technical detail: when a JAX function is called, the corresponding operation is dispatched to an accelerator to be computed asynchronously when possible. The returned array is therefore not necessarily 'filled in' as soon as the function returns. Thus, if we don't require the result immediately, the computation won't block Python execution. Therefore, unless we `block_until_ready`, we will only time the dispatch, not the actual computation. See [Asynchronous dispatch](https://jax.readthedocs.io/en/latest/async_dispatch.html#asynchronous-dispatch) in the JAX docs.)
+(Technical detail: when a JAX function is called (including `jnp.array`
+creation), the corresponding operation is dispatched to an accelerator to be
+computed asynchronously when possible. The returned array is therefore not
+necessarily 'filled in' as soon as the function returns. Thus, if we don't
+require the result immediately, the computation won't block Python execution.
+Therefore, unless we `block_until_ready` or convert the array to a regular
+Python type, we will only time the dispatch, not the actual computation. See
+[Asynchronous dispatch](https://jax.readthedocs.io/en/latest/async_dispatch.html#asynchronous-dispatch)
+in the JAX docs.)
 
 ```{code-cell} ipython3
 :id: mRvjVxoqo-Bi
