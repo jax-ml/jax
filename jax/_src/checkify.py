@@ -670,18 +670,23 @@ error_checks[lax.cond_p] = cond_error_check
 
 def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
                      num_consts, num_carry, linear, unroll):
-  consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
+  start_stop_done, consts, carry, xs = split_list(in_flat, [3, num_consts, num_carry])
+  start_stop_done_lin, consts_lin, carry_lin, xs_lin = split_list(linear, [3, num_consts, num_carry])
   checked_jaxpr_, msgs_ = checkify_jaxpr(jaxpr, error, enabled_errors)
   tomove = [False] * 3 + [True] * len(consts) + [False] * (len(carry) + len(xs))
   checked_jaxpr = pe.move_binders_to_front(checked_jaxpr_, tomove)
-  new_linear = (False, False, False, *linear)
-  new_in_flat = [*consts, error.err, error.code, error.payload, *carry, *xs]
-  err, code, payload, *outs = lax.scan_p.bind(
+  err_outvars, [done], other_outvars = split_list(checked_jaxpr.jaxpr.outvars, [3, 1])
+  new_outvars = [done] + err_outvars + other_outvars
+  checked_jaxpr = checked_jaxpr.replace(jaxpr=checked_jaxpr.jaxpr.replace(outvars=new_outvars))
+  new_linear = (*start_stop_done_lin, *consts_lin, False, False, False, *carry_lin, *xs_lin)
+  new_in_flat = [*start_stop_done, *consts, error.err, error.code, error.payload, *carry, *xs]
+  outs = lax.scan_p.bind(
       *new_in_flat, reverse=reverse, length=length, jaxpr=checked_jaxpr,
       num_consts=len(consts), num_carry=len(carry)+3,
       linear=new_linear, unroll=unroll)
+  start_stop_done_outs, [err, code, payload], rest_outs = split_list(outs, [3, 3])
   new_msgs = {**error.msgs, **msgs_}
-  return outs, Error(err, code, new_msgs, payload)
+  return start_stop_done_outs + rest_outs, Error(err, code, new_msgs, payload)
 error_checks[lax.scan_p] = scan_error_check
 
 def checkify_while_body_jaxpr(cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts):

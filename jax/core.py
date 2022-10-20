@@ -2464,9 +2464,9 @@ class JaxprTypeError(TypeError): pass
 
 custom_typechecks: Dict[Primitive, Callable] = {}
 
-def _check_closed_call(*in_atoms, call_jaxpr):
+def _check_closed_call(*in_atoms, call_jaxpr, name=None):
   in_avals = [x.aval for x in in_atoms]
-  if list(in_avals) != list(call_jaxpr.in_avals):
+  if in_avals != list(call_jaxpr.in_avals):
     raise JaxprTypeError("Closed call in_avals mismatch")
   return call_jaxpr.out_avals, call_jaxpr.effects
 custom_typechecks[closed_call_p] = _check_closed_call

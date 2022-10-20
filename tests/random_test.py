@@ -1553,11 +1553,11 @@ class KeyArrayTest(jtu.JaxTestCase):
     f = lambda ks: jax.lax.scan(lambda _, k: (None, k.T), None, ks)
     jaxpr = jax.make_jaxpr(f)(ks).jaxpr
     # { lambda ; a:key<fry>[3,4,5]. let
-    #     b:key<fry>[3,5,4] = scan[
+    #     _:i32[] _:i32[] _:bool[] b:key<fry>[3,5,4] = scan[
     #       jaxpr={ lambda ; c:key<fry>[4,5]. let
     #           d:key<fry>[5,4] = transpose[permutation=(1, 0)] c
-    #         in (d,) }
-    #     ] a
+    #         in (False, d) }
+    #     ] 0 3 False a
     #   in (b,) }
     self.assertLen(jaxpr.invars, 1)
     a, = jaxpr.invars
@@ -1566,8 +1566,8 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertIs(type(a.aval.dtype), prng_internal.KeyTy)
     self.assertLen(jaxpr.eqns, 1)
     e, = jaxpr.eqns
-    self.assertLen(e.outvars, 1)
-    b, = e.outvars
+    self.assertLen(e.outvars, 4)
+    *_, b = e.outvars
     self.assertIsInstance(b.aval, core.ShapedArray)
     self.assertEqual(b.aval.shape, (3, 5, 4))
     self.assertIs(type(b.aval.dtype), prng_internal.KeyTy)

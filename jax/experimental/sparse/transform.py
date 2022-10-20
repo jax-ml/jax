@@ -711,31 +711,36 @@ def _duplicate_for_sparse_spvalues(spvalues, params):
     yield from [param, param] if spvalue.is_sparse() else [param]
 
 def _scan_sparse(spenv, *spvalues, jaxpr, num_consts, num_carry, **params):
-  const_spvalues, carry_spvalues, xs_spvalues = split_list(
-    spvalues, [num_consts, num_carry])
+  start_stop_done_spvalues, const_spvalues, carry_spvalues, xs_spvalues = split_list(
+    spvalues, [3, num_consts, num_carry])
   if xs_spvalues:
     # TODO(jakevdp): we don't want to pass xs_spvalues, we want to pass one row
     # of xs spvalues. How to do this?
     raise NotImplementedError("sparse rule for scan with x values.")
   sp_jaxpr, _ = _sparsify_jaxpr(spenv, jaxpr, *const_spvalues, *carry_spvalues, *xs_spvalues)
 
+  start_stop_done, start_stop_done_tree = tree_flatten(
+        spvalues_to_arrays(spenv, start_stop_done_spvalues))
   consts, _ = tree_flatten(spvalues_to_arrays(spenv, const_spvalues))
   carry, carry_tree = tree_flatten(spvalues_to_arrays(spenv, carry_spvalues))
   xs, xs_tree = tree_flatten(spvalues_to_arrays(spenv, xs_spvalues))
 
   # params['linear'] has one entry per arg; expand it to match the sparsified args.
-  const_linear, carry_linear, xs_linear = split_list(
-    params.pop('linear'), [num_consts, num_carry])
+  start_stop_done_linear, const_linear, carry_linear, xs_linear = split_list(
+    params.pop('linear'), [3, num_consts, num_carry])
   sp_linear = tuple([
+    *_duplicate_for_sparse_spvalues(start_stop_done_spvalues, start_stop_done_linear),
     *_duplicate_for_sparse_spvalues(const_spvalues, const_linear),
     *_duplicate_for_sparse_spvalues(carry_spvalues, carry_linear),
     *_duplicate_for_sparse_spvalues(xs_spvalues, xs_linear)])
 
-  out = lax.scan_p.bind(*consts, *carry, *xs, jaxpr=sp_jaxpr, linear=sp_linear,
-                        num_consts=len(consts), num_carry=len(carry), **params)
-  carry_out = tree_unflatten(carry_tree, out[:len(carry)])
-  xs_out = tree_unflatten(xs_tree, out[len(carry):])
-  return arrays_to_spvalues(spenv, carry_out + xs_out)
+  out = lax.scan_p.bind(*start_stop_done, *consts, *carry, *xs, jaxpr=sp_jaxpr,
+                        linear=sp_linear, num_consts=len(consts), num_carry=len(carry),
+                        **params)
+  start_stop_done_out = tree_unflatten(start_stop_done_tree, out[:3])
+  carry_out = tree_unflatten(carry_tree, out[3:3+len(carry)])
+  xs_out = tree_unflatten(xs_tree, out[3+len(carry):])
+  return arrays_to_spvalues(spenv, start_stop_done_out + carry_out + xs_out)
 
 sparse_rules[lax.scan_p] = _scan_sparse
 
