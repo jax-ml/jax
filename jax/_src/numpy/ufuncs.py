@@ -20,14 +20,16 @@ Implements ufuncs for jax.numpy.
 from functools import partial
 import operator
 from textwrap import dedent
+from typing import Any, Callable, Tuple, Union, overload
 
 import numpy as np
 
 from jax._src.api import jit, custom_jvp
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
+from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
-   _check_arraylike, _promote_args, _promote_args_inexact,
+   _asarray, _check_arraylike, _promote_args, _promote_args_inexact,
    _promote_args_numeric, _promote_dtypes_inexact, _promote_dtypes_numeric,
    _promote_shapes, _where, _wraps)
 from jax import core
@@ -41,29 +43,37 @@ _INT_DTYPES = {
   64: np.int64,
 }
 
+UnOp = Callable[[ArrayLike], Array]
+BinOp = Callable[[ArrayLike, ArrayLike], Array]
+
 
 def _constant_like(x, const):
   return np.array(const, dtype=dtypes.dtype(x))
 
 
-def _replace_inf(x):
+def _replace_inf(x: ArrayLike) -> Array:
   return lax.select(isposinf(real(x)), lax_internal._zeros(x), x)
 
 
-def _one_to_one_unop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False):
+def _one_to_one_unop(
+    numpy_fn: Callable[..., Any], lax_fn: UnOp,
+    promote_to_inexact: bool = False, lax_doc: bool = False) -> UnOp:
   if promote_to_inexact:
     fn = lambda x: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x))
   else:
     fn = lambda x: lax_fn(*_promote_args(numpy_fn.__name__, x))
   fn = jit(fn, inline=True)
   if lax_doc:
-    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
+    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
     return _wraps(numpy_fn, lax_description=doc, module='numpy')(fn)
   else:
     return _wraps(numpy_fn, module='numpy')(fn)
 
 
-def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False, promote_to_numeric=False):
+def _one_to_one_binop(
+    numpy_fn: Callable[..., Any], lax_fn: BinOp,
+    promote_to_inexact: bool = False, lax_doc: bool = False,
+    promote_to_numeric: bool = False) -> BinOp:
   if promote_to_inexact:
     fn = lambda x1, x2: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x1, x2))
   elif promote_to_numeric:
@@ -72,25 +82,27 @@ def _one_to_one_binop(numpy_fn, lax_fn, promote_to_inexact=False, lax_doc=False,
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
   fn = jit(fn, inline=True)
   if lax_doc:
-    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
+    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
     return _wraps(numpy_fn, lax_description=doc, module='numpy')(fn)
   else:
     return _wraps(numpy_fn, module='numpy')(fn)
 
 
-def _maybe_bool_binop(numpy_fn, lax_fn, bool_lax_fn, lax_doc=False):
+def _maybe_bool_binop(
+    numpy_fn: Callable[..., Any], lax_fn: BinOp, bool_lax_fn: BinOp,
+    lax_doc: bool = False) -> BinOp:
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
     return lax_fn(x1, x2) if x1.dtype != np.bool_ else bool_lax_fn(x1, x2)
   fn = jit(fn, inline=True)
   if lax_doc:
-    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()
+    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
     return _wraps(numpy_fn, lax_description=doc, module='numpy')(fn)
   else:
     return _wraps(numpy_fn, module='numpy')(fn)
 
 
-def _comparison_op(numpy_fn, lax_fn):
+def _comparison_op(numpy_fn: Callable[..., Any], lax_fn: BinOp) -> BinOp:
   @partial(jit, inline=True)
   def fn(x1, x2):
     x1, x2 =  _promote_args(numpy_fn.__name__, x1, x2)
@@ -104,8 +116,14 @@ def _comparison_op(numpy_fn, lax_fn):
     return lax_fn(x1, x2)
   return _wraps(numpy_fn, module='numpy')(fn)
 
+@overload
+def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp) -> UnOp: ...
+@overload
+def _logical_op(np_op: Callable[..., Any], bitwise_op: BinOp) -> BinOp: ...
+@overload
+def _logical_op(np_op: Callable[..., Any], bitwise_op: Union[UnOp, BinOp]) -> Union[UnOp, BinOp]: ...
 
-def _logical_op(np_op, bitwise_op):
+def _logical_op(np_op: Callable[..., Any], bitwise_op: Union[UnOp, BinOp]) -> Union[UnOp, BinOp]:
   @_wraps(np_op, update_doc=False, module='numpy')
   @partial(jit, inline=True)
   def op(*args):
@@ -120,7 +138,7 @@ fabs = _one_to_one_unop(np.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
 invert = _one_to_one_unop(np.invert, lax.bitwise_not)
 negative = _one_to_one_unop(np.negative, lax.neg)
-positive = _one_to_one_unop(np.positive, lambda x: x)
+positive = _one_to_one_unop(np.positive, lambda x: _asarray(x))
 floor = _one_to_one_unop(np.floor, lax.floor, True)
 ceil = _one_to_one_unop(np.ceil, lax.ceil, True)
 exp = _one_to_one_unop(np.exp, lax.exp, True)
@@ -169,7 +187,7 @@ logical_xor = _logical_op(np.logical_xor, lax.bitwise_xor)
 
 @_wraps(np.arccosh, module='numpy')
 @jit
-def arccosh(x):
+def arccosh(x: ArrayLike) -> Array:
   # Note: arccosh is multi-valued for complex input, and lax.acosh uses a different
   # convention than np.arccosh.
   out = lax.acosh(*_promote_args_inexact("arccosh", x))
@@ -180,7 +198,7 @@ def arccosh(x):
 
 @_wraps(np.right_shift, module='numpy')
 @partial(jit, inline=True)
-def right_shift(x1, x2):
+def right_shift(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_numeric(np.right_shift.__name__, x1, x2)
   lax_fn = lax.shift_right_logical if \
     np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
@@ -189,19 +207,19 @@ def right_shift(x1, x2):
 
 @_wraps(np.absolute, module='numpy')
 @partial(jit, inline=True)
-def absolute(x):
+def absolute(x: ArrayLike) -> Array:
   _check_arraylike('absolute', x)
   dt = dtypes.dtype(x)
-  return x if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
+  return _asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
 abs = _wraps(np.abs, module='numpy')(absolute)
 
 
 @_wraps(np.rint, module='numpy')
 @jit
-def rint(x):
+def rint(x: ArrayLike) -> Array:
   _check_arraylike('rint', x)
   dtype = dtypes.dtype(x)
-  if dtype == bool or dtypes.issubdtype(x.dtype, np.integer):
+  if dtype == bool or dtypes.issubdtype(dtype, np.integer):
     return lax.convert_element_type(x, dtypes.float_)
   if dtypes.issubdtype(dtype, np.complexfloating):
     return lax.complex(rint(lax.real(x)), rint(lax.imag(x)))
@@ -210,7 +228,7 @@ def rint(x):
 
 @_wraps(np.sign, module='numpy')
 @jit
-def sign(x):
+def sign(x: ArrayLike) -> Array:
   _check_arraylike('sign', x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.complexfloating):
@@ -222,7 +240,7 @@ def sign(x):
 
 @_wraps(np.copysign, module='numpy')
 @jit
-def copysign(x1, x2):
+def copysign(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_inexact("copysign", x1, x2)
   if dtypes.issubdtype(dtypes.dtype(x1), np.complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
@@ -231,7 +249,7 @@ def copysign(x1, x2):
 
 @_wraps(np.true_divide, module='numpy')
 @partial(jit, inline=True)
-def true_divide(x1, x2):
+def true_divide(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_inexact("true_divide", x1, x2)
   return lax.div(x1, x2)
 
@@ -240,7 +258,7 @@ divide = true_divide
 
 @_wraps(np.floor_divide, module='numpy')
 @jit
-def floor_divide(x1, x2):
+def floor_divide(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_numeric("floor_divide", x1, x2)
   dtype = dtypes.dtype(x1)
   if dtypes.issubdtype(dtype, np.integer):
@@ -265,7 +283,7 @@ def floor_divide(x1, x2):
 
 @_wraps(np.divmod, module='numpy')
 @jit
-def divmod(x1, x2):
+def divmod(x1: ArrayLike, x2: ArrayLike) -> Tuple[Array, Array]:
   x1, x2 = _promote_args_numeric("divmod", x1, x2)
   if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
@@ -273,7 +291,7 @@ def divmod(x1, x2):
     return _float_divmod(x1, x2)
 
 
-def _float_divmod(x1, x2):
+def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> Tuple[Array, Array]:
   # see float_divmod in floatobject.c of CPython
   mod = lax.rem(x1, x2)
   div = lax.div(lax.sub(x1, mod), x2)
@@ -286,7 +304,7 @@ def _float_divmod(x1, x2):
 
 
 @partial(jit, inline=True)
-def _power(x1, x2):
+def _power(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_numeric("power", x1, x2)
   dtype = dtypes.dtype(x1)
   if not dtypes.issubdtype(dtype, np.integer):
@@ -308,7 +326,7 @@ def _power(x1, x2):
 
 
 @_wraps(np.power, module='numpy')
-def power(x1, x2):
+def power(x1: ArrayLike, x2: ArrayLike) -> Array:
   _check_arraylike("power", x1, x2)
   # Special case for concrete integer scalars: use binary exponentiation.
   # Using lax.pow may be imprecise for floating-point values; the goal of this
@@ -316,7 +334,7 @@ def power(x1, x2):
   # pattern ``x ** 2`` or similar.
   if isinstance(core.get_aval(x2), core.ConcreteArray):
     try:
-      x2 = operator.index(x2)
+      x2 = operator.index(x2)  # type: ignore[arg-type]
     except TypeError:
       pass
     else:
@@ -328,7 +346,7 @@ def power(x1, x2):
 @custom_jvp
 @_wraps(np.logaddexp, module='numpy')
 @jit
-def logaddexp(x1, x2):
+def logaddexp(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_inexact("logaddexp", x1, x2)
   amax = lax.max(x1, x2)
   if dtypes.issubdtype(x1.dtype, np.floating):
@@ -366,7 +384,7 @@ def _logaddexp_jvp(primals, tangents):
 @custom_jvp
 @_wraps(np.logaddexp2, module='numpy')
 @jit
-def logaddexp2(x1, x2):
+def logaddexp2(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_inexact("logaddexp2", x1, x2)
   amax = lax.max(x1, x2)
   if dtypes.issubdtype(x1.dtype, np.floating):
@@ -394,28 +412,28 @@ def _logaddexp2_jvp(primals, tangents):
 
 @_wraps(np.log2, module='numpy')
 @partial(jit, inline=True)
-def log2(x):
+def log2(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("log2", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
 @_wraps(np.log10, module='numpy')
 @partial(jit, inline=True)
-def log10(x):
+def log10(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("log10", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 
 
 @_wraps(np.exp2, module='numpy')
 @partial(jit, inline=True)
-def exp2(x):
+def exp2(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("exp2", x)
   return lax.exp(lax.mul(lax.log(_constant_like(x, 2)), x))
 
 
 @_wraps(np.signbit, module='numpy')
 @jit
-def signbit(x):
+def signbit(x: ArrayLike) -> Array:
   x, = _promote_args("signbit", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.integer):
@@ -429,8 +447,8 @@ def signbit(x):
   # TPU supports BF16 but not S16 types, so as a workaround, convert BF16 to
   # F32.
   if dtype == dtypes.bfloat16:
-    dtype = np.float32
-    x = lax.convert_element_type(x, np.float32)
+    dtype = np.dtype('float32')
+    x = lax.convert_element_type(x, dtype)
 
   info = dtypes.finfo(dtype)
   if info.bits not in _INT_DTYPES:
@@ -452,7 +470,7 @@ def _normalize_float(x):
 
 @_wraps(np.ldexp, module='numpy')
 @jit
-def ldexp(x1, x2):
+def ldexp(x1: ArrayLike, x2: ArrayLike) -> Array:
   _check_arraylike("ldexp", x1, x2)
   x1_dtype = dtypes.dtype(x1)
   x2_dtype = dtypes.dtype(x2)
@@ -475,13 +493,13 @@ def ldexp(x1, x2):
   x2 += e + ((x >> info.nmant) & mask) - bias
 
   # find underflow/overflow before denormalization
-  underflow_cond = x2 < -(bias + info.nmant)
-  overflow_cond = x2 > bias
+  underflow_cond = less(x2, -(bias + info.nmant))
+  overflow_cond = greater(x2, bias)
 
   m = lax.full_like(x, 1, dtype=dtype)
 
   # denormals
-  cond = x2 < -bias + 1
+  cond = less(x2, -bias + 1)
   x2 = _where(cond, x2 + info.nmant, x2)
   m = _where(cond, m / (1 << info.nmant), m)
 
@@ -501,7 +519,7 @@ def ldexp(x1, x2):
 
 @_wraps(np.frexp, module='numpy')
 @jit
-def frexp(x):
+def frexp(x: ArrayLike) -> Tuple[Array, Array]:
   _check_arraylike("frexp", x)
   x, = _promote_dtypes_inexact(x)
   if dtypes.issubdtype(x.dtype, np.complexfloating):
@@ -525,7 +543,7 @@ def frexp(x):
 
 @_wraps(np.remainder, module='numpy')
 @jit
-def remainder(x1, x2):
+def remainder(x1: ArrayLike, x2: ArrayLike) -> Array:
   x1, x2 = _promote_args_numeric("remainder", x1, x2)
   zero = _constant_like(x1, 0)
   trunc_mod = lax.rem(x1, x2)
@@ -538,7 +556,7 @@ mod = _wraps(np.mod, module='numpy')(remainder)
 
 @_wraps(np.fmod, module='numpy')
 @jit
-def fmod(x1, x2):
+def fmod(x1: ArrayLike, x2: ArrayLike) -> Array:
   _check_arraylike("fmod", x1, x2)
   if dtypes.issubdtype(dtypes.result_type(x1, x2), np.integer):
     x2 = _where(x2 == 0, lax_internal._ones(x2), x2)
@@ -547,7 +565,7 @@ def fmod(x1, x2):
 
 @_wraps(np.square, module='numpy')
 @partial(jit, inline=True)
-def square(x):
+def square(x: ArrayLike) -> Array:
   _check_arraylike("square", x)
   x, = _promote_dtypes_numeric(x)
   return lax.integer_pow(x, 2)
@@ -555,14 +573,14 @@ def square(x):
 
 @_wraps(np.deg2rad, module='numpy')
 @partial(jit, inline=True)
-def deg2rad(x):
+def deg2rad(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("deg2rad", x)
   return lax.mul(x, _lax_const(x, np.pi / 180))
 
 
 @_wraps(np.rad2deg, module='numpy')
 @partial(jit, inline=True)
-def rad2deg(x):
+def rad2deg(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("rad2deg", x)
   return lax.mul(x, _lax_const(x, 180 / np.pi))
 
@@ -573,28 +591,28 @@ radians = deg2rad
 
 @_wraps(np.conjugate, module='numpy')
 @partial(jit, inline=True)
-def conjugate(x):
+def conjugate(x: ArrayLike) -> Array:
   _check_arraylike("conjugate", x)
-  return lax.conj(x) if np.iscomplexobj(x) else x
+  return lax.conj(x) if np.iscomplexobj(x) else _asarray(x)
 conj = conjugate
 
 
 @_wraps(np.imag)
 @partial(jit, inline=True)
-def imag(val):
+def imag(val: ArrayLike) -> Array:
   _check_arraylike("imag", val)
   return lax.imag(val) if np.iscomplexobj(val) else lax.full_like(val, 0)
 
 
 @_wraps(np.real)
 @partial(jit, inline=True)
-def real(val):
+def real(val: ArrayLike) -> Array:
   _check_arraylike("real", val)
-  return lax.real(val) if np.iscomplexobj(val) else val
+  return lax.real(val) if np.iscomplexobj(val) else _asarray(val)
 
 @_wraps(np.modf, module='numpy', skip_params=['out'])
 @jit
-def modf(x, out=None):
+def modf(x: ArrayLike, out=None) -> Tuple[Array, Array]:
   _check_arraylike("modf", x)
   x, = _promote_dtypes_inexact(x)
   if out is not None:
@@ -605,7 +623,7 @@ def modf(x, out=None):
 
 @_wraps(np.isfinite, module='numpy')
 @jit
-def isfinite(x):
+def isfinite(x: ArrayLike) -> Array:
   _check_arraylike("isfinite", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
@@ -618,7 +636,7 @@ def isfinite(x):
 
 @_wraps(np.isinf, module='numpy')
 @jit
-def isinf(x):
+def isinf(x: ArrayLike) -> Array:
   _check_arraylike("isinf", x)
   dtype = dtypes.dtype(x)
   if dtypes.issubdtype(dtype, np.floating):
@@ -632,7 +650,7 @@ def isinf(x):
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-def _isposneginf(infinity, x, out):
+def _isposneginf(infinity: float, x: ArrayLike, out) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to isneginf/isposinf is not supported.")
   dtype = dtypes.dtype(x)
@@ -644,26 +662,26 @@ def _isposneginf(infinity, x, out):
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-isposinf = _wraps(np.isposinf, skip_params=['out'])(
+isposinf: UnOp = _wraps(np.isposinf, skip_params=['out'])(
   lambda x, out=None: _isposneginf(np.inf, x, out)
 )
 
 
-isneginf = _wraps(np.isneginf, skip_params=['out'])(
+isneginf: UnOp = _wraps(np.isneginf, skip_params=['out'])(
   lambda x, out=None: _isposneginf(-np.inf, x, out)
 )
 
 
 @_wraps(np.isnan, module='numpy')
 @jit
-def isnan(x):
+def isnan(x: ArrayLike) -> Array:
   _check_arraylike("isnan", x)
   return lax.ne(x, x)
 
 
 @_wraps(np.heaviside, module='numpy')
 @jit
-def heaviside(x1, x2):
+def heaviside(x1: ArrayLike, x2: ArrayLike) -> Array:
   _check_arraylike("heaviside", x1, x2)
   x1, x2 = _promote_dtypes_inexact(x1, x2)
   zero = _lax_const(x1, 0)
@@ -673,7 +691,7 @@ def heaviside(x1, x2):
 
 @_wraps(np.hypot, module='numpy')
 @jit
-def hypot(x1, x2):
+def hypot(x1: ArrayLike, x2: ArrayLike) -> Array:
   _check_arraylike("hypot", x1, x2)
   x1, x2 = _promote_dtypes_inexact(x1, x2)
   x1 = lax.abs(x1)
@@ -684,7 +702,7 @@ def hypot(x1, x2):
 
 @_wraps(np.reciprocal, module='numpy')
 @partial(jit, inline=True)
-def reciprocal(x):
+def reciprocal(x: ArrayLike) -> Array:
   _check_arraylike("reciprocal", x)
   x, = _promote_dtypes_inexact(x)
   return lax.integer_pow(x, -1)
@@ -692,7 +710,7 @@ def reciprocal(x):
 
 @_wraps(np.sinc, update_doc=False)
 @jit
-def sinc(x):
+def sinc(x: ArrayLike) -> Array:
   _check_arraylike("sinc", x)
   x, = _promote_dtypes_inexact(x)
   eq_zero = lax.eq(x, _lax_const(x, 0))

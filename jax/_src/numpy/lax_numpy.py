@@ -2151,7 +2151,7 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize] = None,
     if (not dtypes.issubdtype(start_dtype, np.integer) and
         not core.is_opaque_dtype(start_dtype)):
       ceil_ = ceil if isinstance(start, core.Tracer) else np.ceil
-      start = ceil_(start).astype(int)
+      start = ceil_(start).astype(int)  # type: ignore
     return lax.iota(dtype, start)
   else:
     start = require(start, msg("start"))
