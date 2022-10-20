@@ -94,7 +94,10 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
       raise unittest.SkipTest('Tests only for GPU.')
 
     port = portpicker.pick_unused_port()
-    num_gpus = 4
+    if jtu.is_device_rocm():
+      num_gpus = 2
+    else:
+      num_gpus = 4
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
@@ -105,8 +108,12 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         env["JAX_PORT"] = str(port)
         env["NUM_TASKS"] = str(num_tasks)
         env["TASK"] = str(task)
-        env["CUDA_VISIBLE_DEVICES"] = ",".join(
-            str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+        if jtu.is_device_rocm():
+          env["HIP_VISIBLE_DEVICES"] = ",".join(
+              str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
+        else:
+          env["CUDA_VISIBLE_DEVICES"] = ",".join(
+              str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
         args = [
             sys.executable,
             "-c",
@@ -132,14 +139,16 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 
   @unittest.skipIf(xla_extension_version < 91,
                    "Test requires jaxlib 0.3.17 or newer")
-  @jtu.skip_on_devices("rocm")
-  def test_distributed_jax_cuda_visible_devices(self):
-    """Test jax_cuda_visible_devices works in distributed settings."""
+  def test_distributed_jax_visible_devices(self):
+    """Test jax_visible_devices works in distributed settings."""
     if jtu.device_under_test() != 'gpu':
       raise unittest.SkipTest('Tests only for GPU.')
 
     port = portpicker.pick_unused_port()
-    num_gpus = 4
+    if jtu.is_device_rocm():
+      num_gpus = 2
+    else:
+      num_gpus = 4
     num_gpus_per_task = 1
     num_tasks = num_gpus // num_gpus_per_task
 
@@ -152,15 +161,27 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         env["TASK"] = str(task)
         visible_devices = ",".join(
             str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-        program = (
-          'import jax, os; '
-          f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
-          'jax.distributed.initialize('
-          'f\'localhost:{os.environ["JAX_PORT"]}\', '
-          'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
-          's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
-          'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
-        )
+        
+        if jtu.is_device_rocm():
+          program = (
+            'import jax, os; '
+            f'jax.config.update("jax_rocm_visible_devices", "{visible_devices}"); '
+            'jax.distributed.initialize('
+            'f\'localhost:{os.environ["JAX_PORT"]}\', '
+            'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
+            'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
+          )
+        else:
+          program = (
+            'import jax, os; '
+            f'jax.config.update("jax_cuda_visible_devices", "{visible_devices}"); '
+            'jax.distributed.initialize('
+            'f\'localhost:{os.environ["JAX_PORT"]}\', '
+            'int(os.environ["NUM_TASKS"]), int(os.environ["TASK"])); '
+            's = jax.pmap(lambda x: jax.lax.psum(x, "i"), axis_name="i")(jax.numpy.ones(jax.local_device_count())); '
+            'print(f\'{jax.local_device_count()},{jax.device_count()},{s}\', end=""); '
+          )
         args = [sys.executable, "-c", program]
         proc = subprocess.Popen(args, env=env, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, universal_newlines=True)
