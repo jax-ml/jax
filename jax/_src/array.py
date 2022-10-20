@@ -100,7 +100,7 @@ def _single_device_array_from_buf(buf, committed):
                    committed=committed, _skip_checks=True)
 
 
-@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 97 else None)
+@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 99 else None)
 class ArrayImpl(basearray.Array):
   # TODO(yashkatariya): Add __slots__ here.
 
@@ -415,6 +415,7 @@ class ArrayImpl(basearray.Array):
     self._arrays = None
     self._npy_value = None
 
+  @pxla.use_cpp_method
   def is_deleted(self):
     if self._arrays is None:
       return True
@@ -424,7 +425,7 @@ class ArrayImpl(basearray.Array):
     return any(buf.is_deleted() for buf in self._arrays)
 
   def _check_if_deleted(self):
-    if self._arrays is None:
+    if self.is_deleted():
       raise RuntimeError("Array has been deleted.")
 
   @pxla.use_cpp_method
@@ -573,6 +574,7 @@ def _array_rest_shard_arg(x: ArrayImpl, devices, indices, mode):
 
 
 def _array_shard_arg(x, devices, indices, mode):
+  x._check_if_deleted()
   if mode == pxla.InputsHandlerMode.pmap:
     return _array_pmap_shard_arg(x, devices, indices, mode)
   else:
