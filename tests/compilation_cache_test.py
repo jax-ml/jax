@@ -36,12 +36,14 @@ from jax._src.lib import xla_client
 import numpy as np
 
 from jax.config import config
-from jax._src.config import raise_persistent_cache_errors
+from jax._src.config import (persistent_cache_min_instruction_count,
+                             raise_persistent_cache_errors)
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-@jtu.with_config(jax_raise_persistent_cache_errors=True)
+@jtu.with_config(jax_raise_persistent_cache_errors=True,
+                 jax_persistent_cache_min_instruction_count=0)
 class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -330,6 +332,24 @@ class CompilationCacheTest(jtu.JaxTestCase):
             "Error reading persistent compilation cache entry "
             "for 'jit__lambda_': RuntimeError: test error",
             str(w[0].message))
+
+  def test_min_instruction_count(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      cc.initialize_cache(tmpdir)
+
+      with persistent_cache_min_instruction_count(20):
+        # 2 instructions at time of writing
+        jit(lambda x: x * x)(2)
+        files_in_cache = len(os.listdir(tmpdir))
+        self.assertEqual(files_in_cache, 0)
+
+        def f(xs):
+          c, b = jax.lax.scan(lambda c, x: (c + x, c + x), 0, xs)
+          return c + 1, b
+        # 32 instructions at time of writing
+        jit(f)(jax.numpy.ones(8))
+        files_in_cache = len(os.listdir(tmpdir))
+        self.assertEqual(files_in_cache, 1)
 
   def create_new_debug_options(self, debug_options_obj):
     debug_options_obj.xla_cpu_enable_fast_math = False

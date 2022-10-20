@@ -4,13 +4,14 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 
 <!--
 Remember to align the itemized text with the first line of an item within a list.
-
-PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
 -->
 
 ## jax 0.3.24
   * JAX should be faster to import. We now import scipy lazily, which accounted
     for a significant fraction of JAX's import time.
+  * Setting the env var `JAX_PERSISTENT_CACHE_MIN_INSTRUCTION_COUNT=$N` can be
+    used to limit the number of cache entries written to the persistent
+    cache. By default, computations with 6 or more instructions will be cached.
 
 ## jaxlib 0.3.24
 
