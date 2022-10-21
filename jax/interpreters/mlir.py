@@ -143,8 +143,8 @@ def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
-  # in the MHLO builder, -1 indicates a '?' axis size
-  shape = [d if type(d) is int else -1 for d in aval.shape]
+  dyn_size = ir.ShapedType.get_dynamic_size() if mlir_api_version >= 35 else -1
+  shape = [d if type(d) is int else dyn_size for d in aval.shape]
   return (ir.RankedTensorType.get(shape, dtype_to_ir_type(aval.dtype)),)
 
 ir_type_handlers: Dict[Type[core.AbstractValue],
