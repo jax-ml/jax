@@ -508,7 +508,7 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
   f, out_batched = _batch_jaxpr_inner(f, axis_size, out_axes_dest)
   f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
-              else aval for aval, b in zip(closed_jaxpr.in_avals, in_axes)]
+              else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
@@ -523,7 +523,7 @@ def _batch_jaxpr_inner(axis_size, out_axes_dest, main, in_axes, *in_vals):
 
   out_axes_dest = [(None if src is not_mapped else 0)
                    if dst is zero_if_mapped else dst
-                   for src, dst in zip(out_axes, out_axes_dest)]
+                   for src, dst in unsafe_zip(out_axes, out_axes_dest)]
   if len(out_axes_dest) != len(out_axes):
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
@@ -538,7 +538,7 @@ def _batch_jaxpr_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
-             else ax for x, ax in zip(in_vals, in_dims)]
+             else ax for x, ax in unsafe_zip(in_vals, in_dims)]
   with core.new_main(main_type, axis_name=axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
       out_vals = yield (main, in_dims, *in_vals), {}
