@@ -55,6 +55,8 @@ def _triage_segments(window: Union[ArrayLike, str, Tuple[Any, ...]], nperseg: Op
       nperseg_int = win.size
     elif nperseg != win.size:
       raise ValueError("value specified for nperseg is different from length of window")
+    else:
+      nperseg_int = int(nperseg)
   return win, nperseg_int
 
 
