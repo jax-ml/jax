@@ -379,6 +379,16 @@ class GDATest(jtu.JaxTestCase):
     gda, global_data = create_gda(input_shape, global_mesh, mesh_axes)
     self.assertArraysEqual(gda._value, global_data)
 
+  def test_gda_delete(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    input_shape = (8, 2)
+    gda, _ = create_gda(input_shape, global_mesh, P("x", "y"))
+    gda._check_if_deleted()
+    gda.delete()
+    with self.assertRaisesRegex(RuntimeError,
+                                "GlobalDeviceArray has been deleted."):
+      gda._check_if_deleted()
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

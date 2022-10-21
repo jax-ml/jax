@@ -27,6 +27,7 @@ from jax._src.config import config
 from jax.interpreters import pxla, xla, mlir
 from jax._src.util import prod, safe_zip
 from jax._src.api import device_put
+from jax._src.lib import xla_extension_version
 from jax.interpreters.pxla import PartitionSpec
 
 Shape = Tuple[int, ...]
@@ -331,6 +332,7 @@ class GlobalDeviceArray:
 
   @property
   def _device_buffers(self):
+    self._check_if_deleted()
     if self._maybe_device_buffers is None:
       self._maybe_device_buffers = self._sharded_buffer.get_device_buffers()  # type: ignore
     return self._maybe_device_buffers
@@ -393,14 +395,17 @@ class GlobalDeviceArray:
 
   @pxla.maybe_cached_property
   def local_shards(self) -> Sequence[Shard]:
+    self._check_if_deleted()
     return self._create_local_shards()
 
   @pxla.maybe_cached_property
   def addressable_shards(self) -> Sequence[Shard]:
+    self._check_if_deleted()
     return self.local_shards
 
   @property
   def global_shards(self) -> Sequence[Shard]:
+    self._check_if_deleted()
     if self.mesh.size == len(self._local_devices):
       return self.addressable_shards
 
@@ -424,6 +429,7 @@ class GlobalDeviceArray:
 
   @property
   def _value(self):
+    self._check_if_deleted()
     if self.is_fully_replicated:
       return np.asarray(self._device_buffers[0])
 
@@ -440,15 +446,19 @@ class GlobalDeviceArray:
     return npy_value
 
   def __array__(self, dtype=None, context=None):
+    self._check_if_deleted()
     return self._value if dtype is None else self._value.astype(dtype)
 
   def local_data(self, index) -> DeviceArray:
+    self._check_if_deleted()
     return pxla._set_aval(self._device_buffers[index])
 
   def addressable_data(self, index) -> DeviceArray:
+    self._check_if_deleted()
     return self.local_data(index)
 
   def block_until_ready(self):
+    self._check_if_deleted()
     # self._sharded_buffer can be None if xla_extension_version < 90 or
     # _DeviceArray is used.
     if self._sharded_buffer is None:
@@ -457,6 +467,26 @@ class GlobalDeviceArray:
     else:
       self._sharded_buffer.block_until_ready()  # type: ignore
     return self
+
+  def _check_if_deleted(self):
+    if self.is_deleted():
+      raise RuntimeError("GlobalDeviceArray has been deleted.")
+
+  def is_deleted(self):
+    return self._sharded_buffer is None and self._maybe_device_buffers is None
+
+  def delete(self):
+    if self._sharded_buffer:
+      if xla_extension_version >= 101:
+        self._sharded_buffer.delete()
+      else:
+        for b in self._sharded_buffer.get_device_buffers():
+          b.delete()
+      self._sharded_buffer = None
+    if self._maybe_device_buffers:
+      for b in self._maybe_device_buffers:
+        b.delete()
+      self._maybe_device_buffers = None
 
   @property
   def sharding(self):
@@ -635,6 +665,7 @@ mlir.register_constant_handler(GlobalDeviceArray, _gda_mlir_constant_handler)
 
 
 def _gda_shard_arg(x, devices, indices, mode):
+  x._check_if_deleted()
   if mode == pxla.InputsHandlerMode.pmap:
     raise RuntimeError('GDA is not supported with pmap.')
   # self._sharded_buffer can be None if xla_extension_version < 90 or
