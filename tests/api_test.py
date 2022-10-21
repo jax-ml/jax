@@ -2751,45 +2751,42 @@ class APITest(jtu.JaxTestCase):
       return x + y
 
     with self.assertRaisesRegex(
-        ValueError, "vmap got inconsistent sizes for array axes to be mapped:\n"
-        "the tree of axis sizes is:\n"
-        r"\(\(1,\), \{'y': 2\}\)"):
-      f(jnp.array([1]), y=jnp.array([1, 2]))
+        ValueError,
+        "vmap got inconsistent sizes for array axes to be mapped:\n"
+        r"  \* one axis had size 1: axis 0 of argument x of type int32\[1\];"
+        "\n"
+        r"  \* one axis had size 2: axis 0 of argument y of type int32\[2\]"):
+      f(jnp.array([1], 'int32'), y=jnp.array([1, 2], 'int32'))
 
   def test_vmap_mismatched_axis_sizes_error_message_issue_705(self):
     # https://github.com/google/jax/issues/705
     def h(a, b):
       return jnp.sum(a) + jnp.sum(b)
 
-    X = self.rng().randn(10, 4)
-    U = self.rng().randn(10, 2)
+    X = self.rng().randn(10, 4).astype('float32')
+    U = self.rng().randn(10, 2).astype('float32')
 
     with self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
-        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
-        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
-        "so\n"
-        "arg 0 has an axis to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2"):
+        r"  \* one axis had size 10: axis 0 of argument a of type float32\[10,4\];""\n"
+        r"  \* one axis had size 2: axis 1 of argument b of type float32\[10,2\]"):
       api.vmap(h, in_axes=(0, 1))(X, U)
 
     with self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
-        r"arg 0 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
-        r"arg 1 has shape \(10, 2\) and axis 1 is to be mapped" "\n"
-        r"arg 2 has shape \(10, 4\) and axis 0 is to be mapped" "\n"
-        "so\n"
-        "args 0, 2 have axes to be mapped of size 10\n"
-        "arg 1 has an axis to be mapped of size 2"):
+        r"  \* most axes \(2 of them\) had size 10, e.g. axis 0 of argument x "
+        r"of type float32\[10,4\];" "\n"
+        r"  \* one axis had size 2: axis 1 of argument y of type float32\[10,2\]"):
       api.vmap(lambda x, y, z: None, in_axes=(0, 1, 0))(X, U, X)
 
     with self.assertRaisesRegex(
         ValueError,
         "vmap got inconsistent sizes for array axes to be mapped:\n"
-        "the tree of axis sizes is:\n"
-        r"\(10, \[2, 2\]\)"):
+        r"  \* most axes \(2 of them\) had size 2, e.g. axis 1 of argument b\[0\] "
+        r"of type float32\[10,2\];" "\n"
+        r"  \* one axis had size 10: axis 0 of argument a of type float32\[10,4\]"):
       api.vmap(h, in_axes=(0, 1))(X, [U, U])
 
     error = (r"vmap was requested to map its argument along axis 0, which "

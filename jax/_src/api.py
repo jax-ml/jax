@@ -44,7 +44,6 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
                            treedef_is_leaf, treedef_children,
                            Partial, PyTreeDef, all_leaves, treedef_tuple)
-
 from jax._src import callback as jcb
 from jax._src import device_array
 from jax._src import dispatch
@@ -63,7 +62,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import broadcast_prefix
+from jax._src.tree_util import broadcast_prefix, _generate_key_paths
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            extend_name_stack, new_name_stack, wrap_name, cache,
                            wraps, HashableFunction, weakref_lru_cache)
@@ -1664,8 +1663,7 @@ def vmap(fun: F,
     flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
     in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
     axis_size_ = (axis_size if axis_size is not None else
-                  _mapped_axis_size(in_tree, args_flat, in_axes_flat, "vmap",
-                                    kws=True))
+                  _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     out_flat = batching.batch(
         flat_fun, axis_name, axis_size_, in_axes_flat,
         lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),
@@ -1675,7 +1673,7 @@ def vmap(fun: F,
 
   return vmap_f
 
-def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
+def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:
     args, kwargs = tree_unflatten(tree, vals)
     raise ValueError(
@@ -1689,53 +1687,56 @@ def _mapped_axis_size(tree, vals, dims, name, *, kws=False):
       return shape[axis]
     except (IndexError, TypeError) as e:
       min_rank = axis + 1 if axis >= 0 else -axis
+      # TODO(mattjj): better error message here
       raise ValueError(
           f"{name} was requested to map its argument along axis {axis}, "
           f"which implies that its rank should be at least {min_rank}, "
           f"but is only {len(shape)} (its shape is {shape})") from e
 
-  axis_sizes = core.dedup_referents(
-      _get_axis_size(name, np.shape(x), d) for x, d in zip(vals, dims)
-      if d is not None)
-  if len(axis_sizes) == 1:
-    return axis_sizes[0]
-  if not axis_sizes:
+  sizes = core.dedup_referents(_get_axis_size(name, np.shape(x), d)
+                               for x, d in zip(vals, dims) if d is not None)
+  if len(sizes) == 1:
+    sz, = sizes
+    return sz
+  if not sizes:
     msg = f"{name} must have at least one non-None value in in_axes"
     raise ValueError(msg)
-  msg = f"{name} got inconsistent sizes for array axes to be mapped:\n" + "{}"
-  # we switch the error message based on whether args is a tuple of arrays,
-  # in which case we can produce an error message based on argument indices,
-  # or if it has nested containers.
-  if kws:
-    position_only_tree, leaf = treedef_children(tree)
-    if not treedef_is_leaf(leaf):
-      sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
-      sizes = tree_unflatten(tree, sizes)
-      raise ValueError(msg.format(f"the tree of axis sizes is:\n{sizes}")) from None
-    # if keyword arguments are included in the tree, we adapt the error
-    # message only to be about the positional arguments
-    tree = position_only_tree
 
-  # TODO(mattjj,phawkins): add a way to inspect pytree kind more directly
-  if tree == tree_flatten((0,) * tree.num_leaves)[1]:
-    lines1 = [f"arg {i} has shape {np.shape(x)} and axis {d} is to be mapped"
-              for i, (x, d) in enumerate(zip(vals, dims))]
-    sizes = collections.defaultdict(list)
-    for i, (x, d) in enumerate(zip(vals, dims)):
-      if d is not None:
-        sizes[x.shape[d]].append(i)
-    lines2 = ["{} {} {} {} to be mapped of size {}".format(
-                "args" if len(idxs) > 1 else "arg",
-                ", ".join(map(str, idxs)),
-                "have" if len(idxs) > 1 else "has",
-                "axes" if len(idxs) > 1 else "an axis",
-                size)
-              for size, idxs in sizes.items()]
-    raise ValueError(msg.format("\n".join(lines1 + ["so"] + lines2))) from None
+  msg = [f"{name} got inconsistent sizes for array axes to be mapped:\n"]
+  args, kwargs = tree_unflatten(tree, vals)
+  try:
+    ba = inspect.signature(fn).bind(*args, **kwargs)
+  except (TypeError, ValueError):
+    ba = None
+  if ba is None:
+    args_paths = [f'args{p.pprint("")} '
+                  f'of type {shaped_abstractify(x).str_short()}'
+                  for p, x in _generate_key_paths(args)]
+    kwargs_paths = [f'kwargs{p.pprint("")} '
+                    f'of type {shaped_abstractify(x).str_short()}'
+                    for p, x in _generate_key_paths(kwargs)]
+    key_paths = [*args_paths, *kwargs_paths]
   else:
-    sizes = [x.shape[d] if d is not None else None for x, d in zip(vals, dims)]
-    sizes = tree_unflatten(tree, sizes)
-    raise ValueError(msg.format(f"the tree of axis sizes is:\n{sizes}")) from None
+    key_paths = [f'argument {name}{p.pprint("")} '
+                 f'of type {shaped_abstractify(x).str_short()}'
+                 for name, arg in ba.arguments.items()
+                 for p, x in _generate_key_paths(arg)]
+  all_sizes = [_get_axis_size(name, np.shape(x), d) if d is not None else None
+               for x, d in zip(vals, dims)]
+  size_counts = collections.Counter(s for s in all_sizes if s is not None)
+  (sz, ct), *other_counts = counts = size_counts.most_common()
+  ex, *examples = [key_paths[all_sizes.index(sz)] for sz, _ in counts]
+  ax, *axs = [dims[all_sizes.index(sz)] for sz, _ in counts]
+  if ct == 1:
+    msg.append(f"  * one axis had size {sz}: axis {ax} of {ex};\n")
+  else:
+    msg.append(f"  * most axes ({ct} of them) had size {sz}, e.g. axis {ax} of {ex};\n")
+  for ex, ax, (sz, ct) in zip(examples, axs, other_counts):
+    if ct == 1:
+      msg.append(f"  * one axis had size {sz}: axis {ax} of {ex};\n")
+    else:
+      msg.append(f"  * some axes ({ct} of them) had size {sz}, e.g. axis {ax} of {ex};\n")
+  raise ValueError(''.join(msg)[:-2])  # remove last semicolon and newline
 
 
 def pmap(
@@ -2036,8 +2037,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   global_arg_shapes_flat = tuple(flatten_axes(
       "pmap global_arg_shapes", in_tree, (dyn_global_arg_shapes, None),
       kws=True))
-  local_axis_size = _mapped_axis_size(
-      in_tree, args, in_axes_flat, "pmap", kws=True)
+  local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
   flat_fun, out_tree = flatten_fun(f, in_tree)
 

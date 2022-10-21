@@ -411,9 +411,9 @@ class KeyPath(NamedTuple):
     if isinstance(other, KeyPathEntry):
       return KeyPath(self.keys + (other,))
     raise TypeError(type(other))
-  def pprint(self) -> str:
+  def pprint(self, root: str = ' tree root') -> str:
     if not self.keys:
-      return ' tree root'
+      return root
     return ''.join(k.pprint() for k in self.keys)
 
 class GetitemKeyPathEntry(KeyPathEntry):
@@ -452,6 +452,19 @@ register_keypaths(list,
                   lambda lst: [GetitemKeyPathEntry(i) for i in range(len(lst))])
 register_keypaths(dict,
                   lambda dct: [GetitemKeyPathEntry(k) for k in sorted(dct)])
+
+def _generate_key_paths(tree: Any) -> List[Tuple[KeyPath, Any]]:
+  return list(_generate_key_paths_(KeyPath(()), tree))
+
+def _generate_key_paths_(key_path: KeyPath, tree: Any
+                         ) -> Iterable[Tuple[KeyPath, Any]]:
+  if treedef_is_strict_leaf(tree_structure(tree)):
+    yield key_path, tree
+  else:
+    child_keys = _child_keys(tree)
+    tree_children, _ = flatten_one_level(tree)
+    for k, c in zip(child_keys, tree_children):
+      yield from _generate_key_paths_(key_path + k, c)
 
 def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
                   is_leaf: Optional[Callable[[Any], bool]] = None,
