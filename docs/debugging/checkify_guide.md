@@ -251,7 +251,42 @@ jax.grad(assert_gradient_negative)(-1.)
 # ValueError: gradient needs to be negative!
 ```
 
-<!-- TODO: scan? -->
+### `scan`/`while_loop`/`cond`
+
+Checkify works with all higher-order control flow operators, like `scan`,
+`while_loop` and `cond`.
+
+For example, you can have a `scan` in your checked function, and the body of the
+`scan` can have a `checkify.check`:
+
+```
+def scan_body(carry, x):
+  checkify.check(jnp.all(x>0), "x needs to be strictly positive")
+  return carry-1, x/carry
+
+@jax.jit
+def f(xs):
+  return jax.lax.scan(scan_body, 5, xs)
+
+f = checkify.checkify(f, errors=checkify.user_checks|checkify.div_checks)
+
+err, out = f(jnp.arange(6))
+print(err.get())
+# x needs to be strictly positive (check failed at <...>:2 (scan_body))
+
+err, out = f(jnp.arange(6)+1)
+print(err.get())
+# divided by zero at <...>:3 (scan_body)
+
+err, out = f(jnp.arange(4)+1)
+print(err.get())
+# None
+```
+
+Like always, this will report the first error which occurred. In this case while iterating the
+`scan_body`, either when one of the inputs is equal to zero, or later when we
+divide by zero.
+
 <!-- TODO: check\_error -->
 
 ## Strengths and limitations of `jax.experimental.checkify`

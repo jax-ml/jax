@@ -13,8 +13,6 @@ API
    checkify
    check
    check_error
-   Error
-   ErrorCategory
    user_checks
    nan_checks
    index_checks
