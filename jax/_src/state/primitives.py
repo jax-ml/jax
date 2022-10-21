@@ -68,7 +68,7 @@ get_p.def_impl(_get_impl)
 Indexer = Tuple[Union[int, slice, jnp.ndarray], ...]
 
 def _unpack_idx(idx: Indexer, ndim: int
-               ) -> Tuple[Tuple[int, ...], Tuple[bool, ...]]:
+               ) -> Tuple[Tuple[Array, ...], Tuple[bool, ...]]:
   indexed_dims_ = [type(i) != slice for i in idx]
   _, non_slice_idx = partition_list(indexed_dims_, idx)
   indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
