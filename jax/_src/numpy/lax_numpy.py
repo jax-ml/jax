@@ -26,10 +26,10 @@ rules for the underlying :code:`lax` primitives.
 
 import builtins
 import collections
-from functools import partial, wraps as functools_wraps
+from functools import partial
 import operator
 import types
-from typing import overload, Any, Callable, Sequence, FrozenSet, Optional, Tuple, Union
+from typing import overload, Any, Callable, Dict, Sequence, FrozenSet, Optional, Tuple, Union
 from textwrap import dedent as _dedent
 import warnings
 
@@ -50,7 +50,7 @@ from jax._src import device_array
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
-                              _sort_le_comparator)
+                              _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.reductions import (  # noqa: F401
@@ -77,7 +77,7 @@ from jax._src.numpy.util import (  # noqa: F401
   _register_stackable, _stackable, _where, _wraps)
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
 from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
@@ -145,7 +145,9 @@ def iscomplexobj(x):
 shape = _shape = np.shape
 ndim = _ndim = np.ndim
 size = np.size
-_dtype = partial(dtypes.dtype, canonicalize=True)
+
+def _dtype(x: Any) -> DType:
+  return dtypes.dtype(x, canonicalize=True)
 
 # At present JAX doesn't have a reason to distinguish between scalars and arrays
 # in its object system. Further, we want JAX scalars to have the same type
@@ -154,22 +156,22 @@ _dtype = partial(dtypes.dtype, canonicalize=True)
 # types return JAX arrays when instantiated.
 
 class _ScalarMeta(type):
-  def __hash__(self):
+  def __hash__(self) -> int:
     return hash(self.dtype.type)
 
-  def __eq__(self, other):
+  def __eq__(self, other: Any) -> bool:
     return id(self) == id(other) or self.dtype.type == other
 
-  def __ne__(self, other):
+  def __ne__(self, other: Any) -> bool:
     return not (self == other)
 
-  def __call__(self, x):
+  def __call__(self, x: Any) -> Array:
     return asarray(x, dtype=self.dtype)
 
-  def __instancecheck__(self, instance):
+  def __instancecheck__(self, instance: Any) -> bool:
     return isinstance(instance, self.dtype.type)
 
-def _make_scalar_type(np_scalar_type):
+def _make_scalar_type(np_scalar_type: type) -> _ScalarMeta:
   meta = _ScalarMeta(np_scalar_type.__name__, (object,),
                      {"dtype": np.dtype(np_scalar_type)})
   meta.__module__ = _PUBLIC_MODULE_NAME
@@ -226,7 +228,8 @@ save = np.save
 savez = np.savez
 
 @_wraps(np.dtype)
-def _jnp_dtype(obj, align=False, copy=False):
+def _jnp_dtype(obj: Optional[DTypeLike], *, align: bool = False,
+               copy: bool = False) -> DType:
   """Similar to np.dtype, but respects JAX dtype defaults."""
   if obj is None:
     obj = dtypes.float_
@@ -236,7 +239,7 @@ def _jnp_dtype(obj, align=False, copy=False):
 
 ### utility functions
 
-_DEFAULT_TYPEMAP = {
+_DEFAULT_TYPEMAP: Dict[type, _ScalarMeta] = {
   np.bool_: bool_,
   np.int_: int_,
   np.float_: float_,
@@ -246,13 +249,13 @@ _DEFAULT_TYPEMAP = {
 _lax_const = lax_internal._const
 
 
-def _result_dtype(op, *args):
+def _result_dtype(op: Callable[..., ArrayLike], *args: Any) -> DType:
   """Compute result dtype of applying op to arguments with given dtypes."""
-  args = [np.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
-  return _dtype(op(*args))
+  np_args = [np.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
+  return _dtype(op(*np_args))
 
 
-def _convert_and_clip_integer(val, dtype):
+def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
   """
   Convert integer-typed val to specified integer dtype, clipping to dtype
   range rather than wrapping.
@@ -294,7 +297,7 @@ def _convert_and_clip_integer(val, dtype):
 
 
 @_wraps(np.load, update_doc=False)
-def load(*args, **kwargs):
+def load(*args: Any, **kwargs: Any) -> Array:
   # The main purpose of this wrapper is to recover bfloat16 data types.
   # Note: this will only work for files created via np.save(), not np.savez().
   out = np.load(*args, **kwargs)
@@ -312,20 +315,20 @@ def load(*args, **kwargs):
 
 @_wraps(np.fmin, module='numpy')
 @jit
-def fmin(x1, x2):
-  return where((x1 < x2) | isnan(x2), x1, x2)
+def fmin(x1: ArrayLike, x2: ArrayLike) -> Array:
+  return where(less(x1, x2) | isnan(x2), x1, x2)
 
 @_wraps(np.fmax, module='numpy')
 @jit
-def fmax(x1, x2):
-  return where((x1 > x2) | isnan(x2), x1, x2)
+def fmax(x1: ArrayLike, x2: ArrayLike) -> Array:
+  return where(greater(x1, x2) | isnan(x2), x1, x2)
 
 @_wraps(np.issubdtype)
-def issubdtype(arg1, arg2):
+def issubdtype(arg1: DTypeLike, arg2: DTypeLike) -> bool:
   return dtypes.issubdtype(arg1, arg2)
 
 @_wraps(np.isscalar)
-def isscalar(element):
+def isscalar(element: Any) -> bool:
   if hasattr(element, '__jax_array__'):
     element = element.__jax_array__()
   return dtypes.is_python_scalar(element) or np.isscalar(element)
@@ -333,36 +336,36 @@ def isscalar(element):
 iterable = np.iterable
 
 @_wraps(np.result_type)
-def result_type(*args):
+def result_type(*args: ArrayLike) -> DType:
   return dtypes.result_type(*args)
 
 
 @_wraps(np.trapz)
 @partial(jit, static_argnames=('axis',))
-def trapz(y, x=None, dx=1.0, axis: int = -1):
+def trapz(y: ArrayLike, x: Optional[ArrayLike] = None, dx: ArrayLike = 1.0, axis: int = -1) -> Array:
   if x is None:
     _check_arraylike('trapz', y)
-    y, = _promote_dtypes_inexact(y)
+    y_arr, = _promote_dtypes_inexact(y)
   else:
     _check_arraylike('trapz', y, x)
-    y, x = _promote_dtypes_inexact(y, x)
-    if ndim(x) == 1:
-      dx = diff(x)
+    y_arr, x_arr = _promote_dtypes_inexact(y, x)
+    if x_arr.ndim == 1:
+      dx = diff(x_arr)
     else:
-      dx = moveaxis(diff(x, axis=axis), axis, -1)
-  y = moveaxis(y, axis, -1)
-  return 0.5 * (dx * (y[..., 1:] + y[..., :-1])).sum(-1)
+      dx = moveaxis(diff(x_arr, axis=axis), axis, -1)
+  y_arr = moveaxis(y_arr, axis, -1)
+  return 0.5 * (dx * (y_arr[..., 1:] + y_arr[..., :-1])).sum(-1)
 
 
 @_wraps(np.trunc, module='numpy')
 @jit
-def trunc(x):
+def trunc(x: ArrayLike) -> Array:
   _check_arraylike('trunc', x)
   return where(lax.lt(x, _lax_const(x, 0)), ceil(x), floor(x))
 
 
 @partial(jit, static_argnums=(2, 3, 4))
-def _conv(x, y, mode, op, precision):
+def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike) -> Array:
   if ndim(x) != 1 or ndim(y) != 1:
     raise ValueError(f"{op}() only support 1-dimensional inputs.")
   x, y = _promote_dtypes_inexact(x, y)
@@ -396,49 +399,57 @@ def _conv(x, y, mode, op, precision):
 
 @_wraps(np.convolve, lax_description=_PRECISION_DOC)
 @partial(jit, static_argnames=('mode', 'precision'))
-def convolve(a, v, mode='full', *, precision=None):
+def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
+             precision: PrecisionLike = None) -> Array:
   _check_arraylike("convolve", a, v)
-  return _conv(a, v, mode, 'convolve', precision)
+  return _conv(asarray(a), asarray(v), mode, 'convolve', precision)
 
 
 @_wraps(np.correlate, lax_description=_PRECISION_DOC)
 @partial(jit, static_argnames=('mode', 'precision'))
-def correlate(a, v, mode='valid', *, precision=None):
+def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
+              precision: PrecisionLike = None) -> Array:
   _check_arraylike("correlate", a, v)
-  return _conv(a, v, mode, 'correlate', precision)
+  return _conv(asarray(a), asarray(v), mode, 'correlate', precision)
 
 
 @_wraps(np.histogram_bin_edges)
-def histogram_bin_edges(a, bins=10, range=None, weights=None):
+def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
+                        range: Union[None, Array, Sequence[ArrayLike]] = None,
+                        weights: Optional[ArrayLike] = None) -> Array:
   del weights  # unused, because string bins is not supported.
   if isinstance(bins, str):
     raise NotImplementedError("string values for `bins` not implemented.")
   _check_arraylike("histogram_bin_edges", a, bins)
-  a = ravel(a)
-  dtype = dtypes.to_inexact_dtype(_dtype(a))
+  arr = ravel(a)
+  dtype = dtypes.to_inexact_dtype(arr.dtype)
   if _ndim(bins) == 1:
     return asarray(bins, dtype=dtype)
   bins = core.concrete_or_error(operator.index, bins,
                                 "bins argument of histogram_bin_edges")
   if range is None:
-    range = [a.min(), a.max()]
+    range = [arr.min(), arr.max()]
   range = asarray(range, dtype=dtype)
-  if range.shape != (2,):
+  if shape(range) != (2,):
     raise ValueError("`range` must be either None or a sequence of scalars.")
   range = (where(ptp(range) == 0, range[0] - 0.5, range[0]),
            where(ptp(range) == 0, range[1] + 0.5, range[1]))
+  assert range is not None
   return linspace(range[0], range[1], bins + 1, dtype=dtype)
 
 
 @_wraps(np.histogram)
-def histogram(a, bins=10, range=None, weights=None, density=None):
+def histogram(a: ArrayLike, bins: ArrayLike = 10,
+              range: Optional[Sequence[ArrayLike]] = None,
+              weights: Optional[ArrayLike] = None,
+              density: Optional[bool] = None) -> Tuple[Array, Array]:
   if weights is None:
     _check_arraylike("histogram", a, bins)
     a = ravel(*_promote_dtypes_inexact(a))
     weights = ones_like(a)
   else:
     _check_arraylike("histogram", a, bins, weights)
-    if a.shape != weights.shape:
+    if shape(a) != shape(weights):
       raise ValueError("weights should have the same shape as a.")
     a, weights = map(ravel, _promote_dtypes_inexact(a, weights))
 
@@ -528,11 +539,11 @@ view of the input.
 """
 
 @_wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
-def transpose(a, axes=None):
+def transpose(a: ArrayLike, axes: Optional[Sequence[int]] = None) -> Array:
   _stackable(a) or _check_arraylike("transpose", a)
-  axes = np.arange(ndim(a))[::-1] if axes is None else axes
-  axes = tuple(_canonicalize_axis(i, ndim(a)) for i in axes)
-  return lax.transpose(a, axes)
+  axes_ = list(range(ndim(a))[::-1]) if axes is None else axes
+  axes_ = [_canonicalize_axis(i, ndim(a)) for i in axes_]
+  return lax.transpose(a, axes_)
 
 
 @_wraps(np.rot90, lax_description=_ARRAY_VIEW_DOC)
@@ -744,12 +755,13 @@ def isrealobj(x):
 
 
 @_wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
-def reshape(a, newshape, order="C"):
+def reshape(a: ArrayLike, newshape: Shape, order: str = "C") -> Array:
   _stackable(a) or _check_arraylike("reshape", a)
   try:
-    return a.reshape(newshape, order=order)  # forward to method for ndarrays
+    # forward to method for ndarrays
+    return a.reshape(newshape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
-    return _reshape(a, newshape, order=order)
+    return _reshape(asarray(a), newshape, order=order)
 
 def _compute_newshape(a, newshape):
   """Fixes a -1 value in newshape, if present."""
@@ -764,19 +776,19 @@ def _compute_newshape(a, newshape):
                for d in newshape)
 
 
-def _reshape(a, *args, order="C"):
+def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
   if order == "C":
     return lax.reshape(a, newshape, None)
   elif order == "F":
-    dims = np.arange(ndim(a))[::-1]
+    dims = list(range(ndim(a))[::-1])
     return lax.reshape(a, newshape[::-1], dims).T
   elif order == "A":
     raise NotImplementedError("np.reshape order=A is not implemented.")
   else:
     raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
-def _transpose(a, *args):
+def _transpose(a: Array, *args: Any) -> Array:
   if not args:
     axis = None
   elif len(args) == 1:
@@ -787,7 +799,7 @@ def _transpose(a, *args):
 
 @_wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('order',), inline=True)
-def ravel(a, order="C"):
+def ravel(a: ArrayLike, order: str = "C") -> Array:
   _stackable(a) or _check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")

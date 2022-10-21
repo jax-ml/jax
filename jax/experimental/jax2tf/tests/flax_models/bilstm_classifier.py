@@ -124,7 +124,7 @@ class Embedder(nn.Module):
   word_dropout_rate: float = 0.
   unk_idx: Optional[int] = None
   deterministic: Optional[bool] = None
-  dtype: jnp.dtype = jnp.float32
+  dtype: jnp.dtype = jnp.dtype('float32')
 
   def setup(self):
     self.embedding = self.param(
