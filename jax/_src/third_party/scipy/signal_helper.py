@@ -39,7 +39,7 @@ def _triage_segments(window: Union[ArrayLike, str, Tuple[Any, ...]], nperseg: Op
       256. If window is array_like, nperseg is set to the length of the window.
   """
   if isinstance(window, (str, tuple)):
-    nperseg_int = 256 if nperseg is None else int(nperseg)
+    nperseg_int = input_length if nperseg is None else int(nperseg)
     if nperseg_int > input_length:
       warnings.warn(f'nperseg = {nperseg_int} is greater than input length '
                     f' = {input_length}, using nperseg = {input_length}')
@@ -47,16 +47,13 @@ def _triage_segments(window: Union[ArrayLike, str, Tuple[Any, ...]], nperseg: Op
     win = jnp.array(osp_signal.get_window(window, nperseg_int), dtype=dtype)
   else:
     win = jnp.asarray(window)
+    nperseg_int = win.size if nperseg is None else int(nperseg)
     if win.ndim != 1:
       raise ValueError('window must be 1-D')
     if input_length < win.size:
       raise ValueError('window is longer than input signal')
-    if nperseg is None:
-      nperseg_int = win.size
-    elif nperseg != win.size:
+    if nperseg_int != win.size:
       raise ValueError("value specified for nperseg is different from length of window")
-    else:
-      nperseg_int = int(nperseg)
   return win, nperseg_int
 
 
