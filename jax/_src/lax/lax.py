@@ -960,13 +960,13 @@ def transpose(operand: ArrayLike, permutation: Sequence[int]) -> Array:
     return transpose_p.bind(operand, permutation=permutation)
 
 def argmin(operand: ArrayLike, axis: int,
-           index_dtype: DTypeLike) -> Tuple[Array, Array]:
+           index_dtype: DTypeLike) -> Array:
   """Computes the index of the minimum element along ``axis``."""
   return argmin_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
 
 def argmax(operand: ArrayLike, axis: int,
-           index_dtype: DTypeLike) -> Tuple[Array, Array]:
+           index_dtype: DTypeLike) -> Array:
   """Computes the index of the maximum element along ``axis``."""
   return argmax_p.bind(operand, axes=(axis,),
                        index_dtype=dtypes.canonicalize_dtype(index_dtype))
