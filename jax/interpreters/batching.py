@@ -295,10 +295,10 @@ class BatchTrace(Trace):
                      for out_axis, d in zip(out_axes_thunk(), dims_out()))
       new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
       vals_out = map_primitive.bind(f, *vals, **new_params)
-      dims_out = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
-                  for d, out_axis in zip(dims_out(), out_axes_thunk())]
+      dims_out_ = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
+                   for d, out_axis in zip(dims_out(), out_axes_thunk())]
       src = source_info_util.current()
-      return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out)]
+      return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out_)]
 
   def post_process_map(self, call_primitive, out_tracers, params):
     vals, dims, srcs = unzip3((t.val, t.batch_dim, t.source_info)
