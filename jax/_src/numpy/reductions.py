@@ -73,8 +73,11 @@ def _reduction(a, name, np_fun, op, init_val, has_identity=True,
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
   if initial is None and not has_identity and where_ is not None:
-    raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
-                     f"where mask one has to specify 'initial'")
+    if not _all(core.greater_equal_dim(d, 1) for d in np.shape(a)):
+      raise ValueError(f"zero-size array to reduction operation {name} which has no identity. got shape: {np.shape(a)}")
+    if where_ is not None:
+      raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
+                       f"where mask one has to specify 'initial'")
 
   a = a if isinstance(a, ndarray) else _asarray(a)
   a = preproc(a) if preproc else a
