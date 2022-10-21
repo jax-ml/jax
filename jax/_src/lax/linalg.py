@@ -379,12 +379,6 @@ def _T(x: Array) -> Array: return jnp.swapaxes(x, -1, -2)
 def _H(x: Array) -> Array: return jnp.conj(_T(x))
 def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 
-def _unpack_tuple(f: TFun, n: int) -> TFun:
-  def g(c, *args, **kwargs):
-    t = f(c, *args, **kwargs)
-    return (xops.GetTupleElement(t, i) for i in range(n))
-  return cast(TFun, g)
-
 # primitives
 
 _cpu_lapack_types = {np.dtype(np.float32), np.dtype(np.float64),
@@ -1434,15 +1428,6 @@ mlir.register_lowering(
 def _qr_impl(operand, *, full_matrices):
   q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
   return q, r
-
-def _qr_translation_rule(ctx, avals_in, avals_out, operand, *, full_matrices):
-  operand_aval, = avals_in
-  shape = operand_aval.shape
-  m, n = shape[-2:]
-  if m == 0 or n == 0:
-    return [_eye_like_xla(ctx.builder, avals_out[0]),
-            _zeros_like_xla(ctx.builder, avals_out[1])]
-  return xops.QR(operand, full_matrices)
 
 def _qr_abstract_eval(operand, *, full_matrices):
   if isinstance(operand, ShapedArray):
