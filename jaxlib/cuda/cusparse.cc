@@ -295,7 +295,7 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
   CudaConst beta = CudaZero(y.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
-      CUSPARSE_SPMV_CSR_ALG2, &buffer_size)));
+      CUSPARSE_MV_ALG_DEFAULT, &buffer_size)));
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
@@ -468,7 +468,7 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
   CudaConst beta = CudaZero(y.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
-      CUSPARSE_SPMV_COO_ALG2, &buffer_size)));
+      CUSPARSE_MV_ALG_DEFAULT, &buffer_size)));
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
