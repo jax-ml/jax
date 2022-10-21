@@ -53,10 +53,10 @@ def _triage_segments(window: Union[ArrayLike, str, Tuple[Any, ...]], nperseg: Op
       raise ValueError('window is longer than input signal')
     if nperseg is None:
       nperseg_int = win.size
+    elif nperseg != win.size:
+      raise ValueError("value specified for nperseg is different from length of window")
     else:
-      if nperseg != win.size:
-        raise ValueError("value specified for nperseg is different from length of window")
-      nperseg_int = win.size
+      nperseg_int = int(nperseg)
   return win, nperseg_int
 
 
