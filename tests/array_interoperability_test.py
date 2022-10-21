@@ -137,6 +137,14 @@ class DLPackTest(jtu.JaxTestCase):
     y = tf.experimental.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np, y.numpy())
 
+  @unittest.skipIf(not tf, "Test requires TensorFlow")
+  def testTensorFlowToJaxInt64(self):
+    # See https://github.com/google/jax/issues/11895
+    x = jax.dlpack.from_dlpack(
+        tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
+    dtype_expected = jnp.int64 if config.x64_enabled else jnp.int32
+    self.assertEqual(x.dtype, dtype_expected)
+
   @jtu.sample_product(
     shape=all_shapes,
     dtype=torch_dtypes,
@@ -181,6 +189,14 @@ class DLPackTest(jtu.JaxTestCase):
     dlpack = jax.dlpack.to_dlpack(x)
     y = torch.utils.dlpack.from_dlpack(dlpack)
     self.assertAllClose(np, y.cpu().numpy())
+
+  @unittest.skipIf(not torch, "Test requires PyTorch")
+  def testTorchToJaxInt64(self):
+    # See https://github.com/google/jax/issues/11895
+    x = jax.dlpack.from_dlpack(
+        torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
+    dtype_expected = jnp.int64 if config.x64_enabled else jnp.int32
+    self.assertEqual(x.dtype, dtype_expected)
 
   @jtu.sample_product(
     shape=all_shapes,
