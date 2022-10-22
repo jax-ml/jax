@@ -20,6 +20,7 @@ import sys
 from typing import List, Optional
 
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
+from jax._src import path as pathlib
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_client
 from jax.interpreters import xla
@@ -31,8 +32,18 @@ logger = logging.getLogger(__name__)
 
 def initialize_cache(path):
   """Creates a global cache object. Should only be called once per process.
+
+  Will throw an assertion error if called a second time with a different path.
+
+  Args:
+    path: path for the cache directory.
+
   """
   global _cache
+  if _cache is not None and _cache._path == pathlib.Path(path):
+    logger.warning("Cache already previoulsy initialized at %s", _cache._path)
+    return
+
   assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
   _cache = GFileCache(path)
   logger.warning("Initialized persistent compilation cache at %s", path)
