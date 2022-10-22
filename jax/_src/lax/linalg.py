@@ -41,6 +41,7 @@ from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 from jax._src.lib import lapack
+from jax._src.lib import mlir_api_version
 
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
@@ -873,10 +874,16 @@ def _triangular_solve_lowering(
     transpose = "NO_TRANSPOSE"
   else:
     transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
-  return mhlo.TriangularSolveOp(
-      mlir.aval_to_ir_type(out_aval), a, b, ir.BoolAttr.get(left_side),
-      ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-      mhlo.TransposeAttr.get(transpose)).results
+  if mlir_api_version < 36:
+    return mhlo.TriangularSolveOp(
+        mlir.aval_to_ir_type(out_aval), a, b, ir.BoolAttr.get(left_side),
+        ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
+        mhlo.TransposeAttr.get(transpose)).results
+  else:
+    return mhlo.TriangularSolveOp(
+        a, b, ir.BoolAttr.get(left_side),
+        ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
+        mhlo.TransposeAttr.get(transpose)).results
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
@@ -900,10 +907,16 @@ def _triangular_solve_cpu_lower(
       transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
     else:
       transpose = "NO_TRANSPOSE"
-    return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
-                                  ir.BoolAttr.get(lower),
-                                  ir.BoolAttr.get(unit_diagonal),
-                                  mhlo.TransposeAttr.get(transpose)).results
+    if mlir_api_version < 36:
+      return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
+                                    ir.BoolAttr.get(lower),
+                                    ir.BoolAttr.get(unit_diagonal),
+                                    mhlo.TransposeAttr.get(transpose)).results
+    else:
+      return mhlo.TriangularSolveOp(a, b, ir.BoolAttr.get(left_side),
+                                    ir.BoolAttr.get(lower),
+                                    ir.BoolAttr.get(unit_diagonal),
+                                    mhlo.TransposeAttr.get(transpose)).results
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
