@@ -41,7 +41,7 @@ def initialize_cache(path):
   """
   global _cache
   if _cache is not None and _cache._path == pathlib.Path(path):
-    logger.warning("Cache already previoulsy initialized at %s", _cache._path)
+    logger.warning("Cache already previously initialized at %s", _cache._path)
     return
 
   assert _cache == None, f"The cache path has already been initialized to {_cache._path}"
