@@ -29,7 +29,6 @@ from jax.config import config
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_bridge
 from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer, _promote_dtypes_inexact
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
