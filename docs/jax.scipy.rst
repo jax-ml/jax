@@ -318,6 +318,19 @@ jax.scipy.stats.t
    logpdf
    pdf
 
+jax.scipy.stats.truncnorm
+~~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.truncnorm
+.. autosummary::
+  :toctree: _autosummary
+
+   cdf
+   logcdf
+   logpdf
+   logsf
+   pdf
+   sf
+
 jax.scipy.stats.uniform
 ~~~~~~~~~~~~~~~~~~~~~~~
 .. automodule:: jax.scipy.stats.uniform
