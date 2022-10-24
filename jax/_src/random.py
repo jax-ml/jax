@@ -29,6 +29,7 @@ from jax.config import config
 from jax.core import NamedShape
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_bridge
 from jax._src.numpy.lax_numpy import _arraylike, _check_arraylike, _convert_and_clip_integer, _promote_dtypes_inexact
 from jax.numpy.linalg import cholesky, svd, eigh
 from jax.interpreters import ad
@@ -1005,7 +1006,10 @@ def _gamma_grad(sample, a, *, log_space):
     gamma_grad = lambda alpha, sample: lax.random_gamma_grad(alpha, sample) / sample
   else:
     gamma_grad = lax.random_gamma_grad
-  grads = vmap(gamma_grad)(alphas, samples)
+  if xla_bridge.get_backend().platform == 'cpu':
+    grads = lax.map(lambda args: gamma_grad(*args), (alphas, samples))
+  else:
+    grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
 def _gamma_impl(key, a, *, log_space, use_vmap=False):
