@@ -953,13 +953,12 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
-    # TODO: use lax.cond when its batching rule is supported
-    # The reason is to avoid evaluating second condition which involves log+log
-    # if the first condition is satisfied
-    cond = lax.bitwise_and(lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X)))),
-                           lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
+    pred = lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X))))
+    true_fun = lambda: lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
                                                       lax.mul(d, lax.add(lax.sub(one, V),
-                                                                         lax.log(V))))))
+                                                                         lax.log(V)))))
+    false_fun = lambda: False
+    cond = lax.cond(pred, true_fun, false_fun)
     return cond
 
   def _body_fn(kXVU):
