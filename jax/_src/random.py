@@ -953,7 +953,8 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
 
   def _cond_fn(kXVU):
     _, X, V, U = kXVU
-    pred = lax.ge(U, lax.sub(one, lax.mul(squeeze_const, lax.mul(X, X))))
+    X_X = lax.mul(X, X)
+    pred = lax.ge(U, lax.sub(one, lax.mul(squeeze_const, X_X)))
     true_fun = lambda: lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
                                                       lax.mul(d, lax.add(lax.sub(one, V),
                                                                          lax.log(V)))))
