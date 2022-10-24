@@ -19,7 +19,7 @@ import jaxlib.mlir.dialects.mhlo as mhlo
 
 
 from .mhlo_helpers import custom_call
-from . import _ducc_fft
+from .cpu import _ducc_fft
 import numpy as np
 
 from jaxlib import xla_client

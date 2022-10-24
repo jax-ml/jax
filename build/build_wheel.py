@@ -169,9 +169,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
   copy_to_jaxlib(f"__main__/jaxlib/cpu_feature_guard.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
-  copy_to_jaxlib(f"__main__/jaxlib/_lapack.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/mhlo_helpers.py")
-  copy_to_jaxlib(f"__main__/jaxlib/_ducc_fft.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")
@@ -180,6 +178,10 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/version.py")
   copy_to_jaxlib("__main__/jaxlib/xla_client.py")
   copy_to_jaxlib(f"__main__/jaxlib/xla_extension.{pyext}")
+  cpu_dir = os.path.join(jaxlib_dir, "cpu")
+  os.makedirs(cpu_dir)
+  copy_file(f"__main__/jaxlib/cpu/_lapack.{pyext}", dst_dir=cpu_dir)
+  copy_file(f"__main__/jaxlib/cpu/_ducc_fft.{pyext}", dst_dir=cpu_dir)
 
   cuda_dir = os.path.join(jaxlib_dir, "cuda")
   if exists(f"__main__/jaxlib/cuda/_cusolver.{pyext}"):

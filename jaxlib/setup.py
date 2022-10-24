@@ -61,6 +61,7 @@ setup(
             '*.so',
             '*.pyd*',
             'py.typed',
+            'cpu/*',
             'cuda/*',
             'cuda/nvvm/libdevice/libdevice*',
             'mlir/*.py',

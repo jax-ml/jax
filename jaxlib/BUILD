@@ -17,7 +17,6 @@
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
-    "flatbuffer_cc_library",
     "if_windows",
     "pybind_extension",
 )
@@ -42,9 +41,9 @@ py_library(
     ],
     data = [":xla_extension"],
     deps = [
-        ":_ducc_fft",
-        ":_lapack",
         ":cpu_feature_guard",
+        "//jaxlib/cpu:_ducc_fft",
+        "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:chlo_dialect",
@@ -132,8 +131,8 @@ cc_library(
     ],
 )
 
-# CPU kernels
-
+# This isn't a CPU kernel. This exists to catch cases where jaxlib is built for the wrong
+# target architecture.
 pybind_extension(
     name = "cpu_feature_guard",
     srcs = ["cpu_feature_guard.c"],
@@ -143,89 +142,14 @@ pybind_extension(
     ],
 )
 
-# LAPACK
+# CPU kernels
 
-cc_library(
-    name = "lapack_kernels",
-    srcs = ["lapack_kernels.cc"],
-    hdrs = ["lapack_kernels.h"],
-    deps = [
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@com_google_absl//absl/base:dynamic_annotations",
-    ],
-)
-
-cc_library(
-    name = "lapack_kernels_using_lapack",
-    srcs = ["lapack_kernels_using_lapack.cc"],
-    deps = [":lapack_kernels"],
-    alwayslink = 1,
-)
-
-pybind_extension(
-    name = "_lapack",
-    srcs = ["lapack.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "_lapack",
-    deps = [
-        ":kernel_pybind11_helpers",
-        ":lapack_kernels",
-        "@pybind11",
-    ],
-)
-
-# DUCC (CPU FFTs)
-
-flatbuffer_cc_library(
-    name = "ducc_fft_flatbuffers_cc",
-    srcs = ["ducc_fft.fbs"],
-)
-
-cc_library(
-    name = "ducc_fft_kernels",
-    srcs = ["ducc_fft_kernels.cc"],
-    hdrs = ["ducc_fft_kernels.h"],
-    copts = ["-fexceptions"],  # DUCC may throw.
-    features = ["-use_header_modules"],
-    deps = [
-        ":ducc_fft_flatbuffers_cc",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@ducc",
-        "@flatbuffers//:runtime_cc",
-    ],
-)
-
-pybind_extension(
-    name = "_ducc_fft",
-    srcs = ["ducc_fft.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "_ducc_fft",
-    deps = [
-        ":ducc_fft_flatbuffers_cc",
-        ":ducc_fft_kernels",
-        ":kernel_pybind11_helpers",
-        "@flatbuffers//:runtime_cc",
-        "@pybind11",
-    ],
-)
-
+# TODO(phawkins): Remove this forwarding target.
 cc_library(
     name = "cpu_kernels",
-    srcs = ["cpu_kernels.cc"],
     visibility = ["//visibility:public"],
     deps = [
-        ":ducc_fft_kernels",
-        ":lapack_kernels",
-        ":lapack_kernels_using_lapack",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+        "//jaxlib/cpu:cpu_kernels",
     ],
     alwayslink = 1,
 )

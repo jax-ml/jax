@@ -22,7 +22,7 @@ import numpy as np
 from jaxlib import xla_client
 
 from .mhlo_helpers import custom_call
-from . import _lapack
+from .cpu import _lapack
 
 for _name, _value in _lapack.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")

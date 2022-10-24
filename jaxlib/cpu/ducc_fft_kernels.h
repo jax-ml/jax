@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#ifndef JAXLIB_CPU_DUCC_FFT_KERNELS_H_
+#define JAXLIB_CPU_DUCC_FFT_KERNELS_H_
+
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
@@ -20,3 +23,5 @@ namespace jax {
 void DuccFft(void* out, void** in, XlaCustomCallStatus*);
 
 }  // namespace jax
+
+#endif  // JAXLIB_CPU_DUCC_FFT_KERNELS_H_

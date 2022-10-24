@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/lapack_kernels.h"
+#include "jaxlib/cpu/lapack_kernels.h"
 
 // From a Python binary, JAX obtains its LAPACK/BLAS kernels from Scipy, but
 // a C++ user should link against LAPACK directly. This is needed when using

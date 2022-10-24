@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/lapack_kernels.h"
+#include "jaxlib/cpu/lapack_kernels.h"
 
 #include <cmath>
 #include <cstring>

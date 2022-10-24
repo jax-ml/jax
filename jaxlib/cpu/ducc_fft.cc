@@ -18,8 +18,8 @@ limitations under the License.
 
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
-#include "jaxlib/ducc_fft_generated.h"
-#include "jaxlib/ducc_fft_kernels.h"
+#include "jaxlib/cpu/ducc_fft_generated.h"
+#include "jaxlib/cpu/ducc_fft_kernels.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 
 namespace py = pybind11;

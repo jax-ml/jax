@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_LAPACK_KERNELS_H_
-#define JAXLIB_LAPACK_KERNELS_H_
+#ifndef JAXLIB_CPU_LAPACK_KERNELS_H_
+#define JAXLIB_CPU_LAPACK_KERNELS_H_
 
 #include <complex>
 #include <cstdint>
@@ -178,4 +178,4 @@ struct ComplexGees {
 
 }  // namespace jax
 
-#endif  // JAXLIB_LAPACK_KERNELS_H_
+#endif  // JAXLIB_CPU_LAPACK_KERNELS_H_

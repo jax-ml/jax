@@ -16,7 +16,7 @@ limitations under the License.
 #include <complex>
 
 #include "flatbuffers/flatbuffers.h"
-#include "jaxlib/ducc_fft_generated.h"
+#include "jaxlib/cpu/ducc_fft_generated.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 #include "ducc/src/ducc0/fft/fft.h"
 
