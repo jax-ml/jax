@@ -149,7 +149,7 @@ level.
 [as a Bazel submodule](https://github.com/google/jax/blob/main/WORKSPACE).
 To update the version of XLA used during the build, one must update the pinned
 version in the Bazel `WORKSPACE`. This is done manually on an
-as-needed basis, but can be overriden on a build-by-build basis.
+as-needed basis, but can be overridden on a build-by-build basis.
 
 
 ## How do we make changes across the `jax` and `jaxlib` boundary between releases?
