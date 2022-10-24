@@ -927,6 +927,7 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
   zero = _lax_const(alpha, 0)
   one = _lax_const(alpha, 1)
+  false = _lax_const(alpha, False)
   minus_one = _lax_const(alpha, -1)
   one_over_two = _lax_const(alpha, 0.5)
   one_over_three = _lax_const(alpha, 1. / 3.)
@@ -957,7 +958,7 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
     true_fun = lambda: lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
                                                       lax.mul(d, lax.add(lax.sub(one, V),
                                                                          lax.log(V)))))
-    false_fun = lambda: False
+    false_fun = lambda: lax.le(one, zero)
     cond = lax.cond(pred, true_fun, false_fun)
     return cond
 
@@ -1006,10 +1007,7 @@ def _gamma_grad(sample, a, *, log_space):
     gamma_grad = lambda alpha, sample: lax.random_gamma_grad(alpha, sample) / sample
   else:
     gamma_grad = lax.random_gamma_grad
-  if xla_bridge.get_backend().platform == 'cpu':
-    grads = lax.map(lambda args: gamma_grad(*args), (alphas, samples))
-  else:
-    grads = vmap(gamma_grad)(alphas, samples)
+  grads = vmap(gamma_grad)(alphas, samples)
   return grads.reshape(np.shape(a))
 
 def _gamma_impl(key, a, *, log_space, use_vmap=False):
