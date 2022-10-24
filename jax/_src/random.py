@@ -927,7 +927,6 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
   # https://en.wikipedia.org/wiki/Gamma_distribution#Generating_gamma-distributed_random_variables
   zero = _lax_const(alpha, 0)
   one = _lax_const(alpha, 1)
-  false = _lax_const(alpha, False)
   minus_one = _lax_const(alpha, -1)
   one_over_two = _lax_const(alpha, 0.5)
   one_over_three = _lax_const(alpha, 1. / 3.)
@@ -958,7 +957,7 @@ def _gamma_one(key: KeyArray, alpha, log_space) -> Array:
     true_fun = lambda: lax.ge(lax.log(U), lax.add(lax.mul(X, one_over_two),
                                                       lax.mul(d, lax.add(lax.sub(one, V),
                                                                          lax.log(V)))))
-    false_fun = lambda: lax.le(one, zero)
+    false_fun = lambda: np.bool_(False)
     cond = lax.cond(pred, true_fun, false_fun)
     return cond
 
