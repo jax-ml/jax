@@ -154,6 +154,10 @@ def _wraps(
       be determined from the wrapped function itself.
   """
   def wrap(op):
+    op.__np_wrapped__ = fun
+    # Allows this pattern: @wraps(getattr(np, 'new_function', None))
+    if fun is None:
+      return op
     docstr = getattr(fun, "__doc__", None)
     name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
     try:
@@ -203,7 +207,6 @@ def _wraps(
         docstr = fun.__doc__
 
     op.__doc__ = docstr
-    op.__np_wrapped__ = fun
     for attr in ['__name__', '__qualname__']:
       try:
         value = getattr(fun, attr)
