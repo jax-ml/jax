@@ -30,7 +30,7 @@ from functools import partial
 import operator
 import types
 from typing import (
-  overload, Any, Callable, Dict, Sequence, FrozenSet, List, Optional, Tuple, Union)
+  overload, Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -706,11 +706,12 @@ def ediff1d(ary: ArrayLike, to_end: Optional[ArrayLike] = None,
 
 @_wraps(np.gradient, skip_params=['edge_order'])
 @partial(jit, static_argnames=('axis', 'edge_order'))
-def gradient(f: ArrayLike, *varargs, axis: Optional[Union[int, Tuple[int, ...]]] = None,
+def gradient(f: ArrayLike, *varargs: ArrayLike,
+             axis: Optional[Union[int, Tuple[int, ...]]] = None,
              edge_order: Optional[int] = None) -> Union[Array, List[Array]]:
-  # TODO(jakevdp): call check_arraylike on f
   if edge_order is not None:
     raise NotImplementedError("The 'edge_order' argument to jnp.gradient is not supported.")
+  a, *spacing = _promote_args_inexact("gradient", f, *varargs)
 
   def gradient_along_axis(a, h, axis):
     sliced = partial(lax.slice_in_dim, a, axis=axis)
@@ -721,8 +722,6 @@ def gradient(f: ArrayLike, *varargs, axis: Optional[Union[int, Tuple[int, ...]]]
     ), axis)
     return a_grad / h
 
-  a = asarray(f)
-  axis_tuple: Tuple[int, ...]
   if axis is None:
     axis_tuple = tuple(range(a.ndim))
   else:
@@ -738,23 +737,18 @@ def gradient(f: ArrayLike, *varargs, axis: Optional[Union[int, Tuple[int, ...]]]
     raise ValueError("Shape of array too small to calculate "
                      "a numerical gradient, "
                      "at least 2 elements are required.")
-  len_axes = len(axis_tuple)
-  n = len(varargs)
-  if n == 0 or varargs is None:
-    # no spacing
-    dx = [1.0] * len_axes
-  elif n == 1:
-    # single value for all axes
-    dx = list(varargs) * len_axes
-  elif n == len_axes:
-    dx = list(varargs)
+  if len(spacing) == 0:
+    dx: Sequence[ArrayLike] = [1.0] * len(axis_tuple)
+  elif len(spacing) == 1:
+    dx = list(spacing) * len(axis_tuple)
+  elif len(spacing) == len(axis_tuple):
+    dx = list(spacing)
   else:
-    TypeError("Invalid number of spacing arguments %d" % n)
+    TypeError(f"Invalid number of spacing arguments {len(spacing)} for axis={axis}")
 
   if ndim(dx[0]) != 0:
     raise NotImplementedError("Non-constant spacing not implemented")
 
-  # TODO: use jax.lax loop tools if possible
   a_grad = [gradient_along_axis(a, h, ax) for ax, h in zip(axis_tuple, dx)]
   return a_grad[0] if len(axis_tuple) == 1 else a_grad
 
