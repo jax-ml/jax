@@ -1040,6 +1040,9 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   # TODO(b/232263664): Remove check when JitRt is enabled by default.
   if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("gpu")
+  # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
+  if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
+    supported_platforms.append("cpu")
   if cc.is_initialized() and backend.platform in supported_platforms:
     cached_executable = _cache_read(serialized_computation, module_name,
                                     compile_options, backend)
