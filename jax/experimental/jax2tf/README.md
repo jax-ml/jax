@@ -634,7 +634,7 @@ jax2tf.convert(jnp.sin)(3.14)  # Has type float32
 jax2tf.convert(jnp.sin)(np.float64(3.14))  # Has type float32
 
 # The following will still compute `sin` in float32 (with a tf.cast on the argument).
-tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, tf.float64))
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64))
 ```
 
 When the `JAX_ENABLE_X64` flas is set, JAX uses 64-bit types
@@ -649,7 +649,7 @@ tf.math.sin(3.14)  # Has type float32
 jax2tf.convert(jnp.sin)(3.14)  # Has type float64
 
 # The following will compute `sin` in float64.
-tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, tf.float64))
+tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64))
 
 # The following will compute `sin` in float32.
 tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14))

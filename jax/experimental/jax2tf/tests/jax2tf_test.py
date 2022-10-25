@@ -218,31 +218,40 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jnp.sin(big_const),
                         f_conv(tf.constant(big_const)))
 
-  def test_64bit_behavior_enable_x64(self):
+  def test_64bit_behavior_enable_x64_readme(self):
+    # Tests some of the examples from the README
     if not config.jax_enable_x64:
       self.skipTest("requires x64 mode")
 
     # JAX and TF have different default float types if JAX_ENABLE_X64=1
-    self.assertEqual(tf.math.sin(0.7).dtype, tf.float32)
-    self.assertEqual(jnp.sin(0.7).dtype, jnp.float64)
+    self.assertEqual(tf.math.sin(3.14).dtype, tf.float32)
+    self.assertEqual(jnp.sin(3.14).dtype, jnp.float64)
 
     # jax2tf.convert has the same behavior as JAX
-    self.assertEqual(jax2tf.convert(jnp.sin)(0.7).dtype, tf.float64)
+    self.assertEqual(jax2tf.convert(jnp.sin)(3.14).dtype, tf.float64)
+    # The following will compute `sin` in float64.
+    self.assertEqual(tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64)).dtype, tf.float64)
 
-  def test_64bit_behavior_not_enable_x64(self):
+    # The following will compute `sin` in float32.
+    self.assertEqual(tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14)).dtype, tf.float32)
+
+  def test_64bit_behavior_not_enable_x64_readme(self):
+    # Tests some of the examples from the README
     if config.jax_enable_x64:
       self.skipTest("requires not x64 mode")
 
-    # JAX and TF have same default float types if JAX_ENABLE_X64=1
-    self.assertEqual(tf.math.sin(0.7).dtype, tf.float32)
-    self.assertEqual(jnp.sin(0.7).dtype, jnp.float32)
+    # JAX and TF have same default float types if JAX_ENABLE_X64=0
+    self.assertEqual(tf.math.sin(3.14).dtype, tf.float32)
+    self.assertEqual(jnp.sin(3.14).dtype, jnp.float32)
 
-    # Except that JAX forces values to 32-bit
-    self.assertEqual(jnp.sin(np.float64(0.7)).dtype, jnp.float32)
+    self.assertEqual(tf.math.sin(np.float64(3.14)).dtype, tf.float64)
+    # JAX forces values to 32-bit
+    self.assertEqual(jnp.sin(np.float64(3.14)).dtype, jnp.float32)
 
     # jax2tf.convert has the same behavior as JAX
-    self.assertEqual(jax2tf.convert(jnp.sin)(0.7).dtype, tf.float32)
-    self.assertEqual(jax2tf.convert(jnp.sin)(np.float64(0.7)).dtype, tf.float32)
+    self.assertEqual(jax2tf.convert(jnp.sin)(3.14).dtype, tf.float32)
+    self.assertEqual(jax2tf.convert(jnp.sin)(np.float64(3.14)).dtype, tf.float32)
+    self.assertEqual(tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64)).dtype, tf.float32)
 
   def test_function(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
