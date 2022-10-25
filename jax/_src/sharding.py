@@ -358,7 +358,7 @@ class PmapSharding(XLACompatibleSharding):
     return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
 
 
-class DevicesSharding(XLACompatibleSharding):
+class ReshapeableDevicesSharding(XLACompatibleSharding):
   _devices: List[xc.Device]
   _ids: np.ndarray  # dtype DeviceIdSet
 
@@ -367,18 +367,22 @@ class DevicesSharding(XLACompatibleSharding):
       devices = np.array(devices, dtype='object')
     if not devices.size:
       raise ValueError(f"{self.__class__.__name__}.__init__ requires at least "
-                       f"one devices, got {devices}")
+                       f"one device, got {devices}")
     self._devices = list(devices.flat)
     name = self._devices[0].platform.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
-                         dtype='object')
+                         dtype='object').reshape(devices.shape)
 
   shape = property(op.attrgetter('_ids.shape'))
   ndim = property(op.attrgetter('_ids.ndim'))
 
   def __repr__(self) -> str:
     cls_name = self.__class__.__name__
-    body = np.array2string(self._ids, prefix=cls_name + '(', suffix=')',
+    ids = self._ids.copy()
+    platform_name = self._devices[0].platform.upper()
+    for idx, x in np.ndenumerate(ids):
+      ids[idx] = DeviceIdSet(platform_name, *(self._devices[i].id for i in x))
+    body = np.array2string(ids, prefix=cls_name + '(', suffix=')',
                            max_line_width=100)
     return f'{cls_name}({body})'
 
@@ -394,7 +398,8 @@ class DevicesSharding(XLACompatibleSharding):
     return self.remake(self._devices, new_ids)
 
   @classmethod
-  def remake(cls, devices: List[xc.Device], ids: np.ndarray) -> DevicesSharding:
+  def remake(cls, devices: List[xc.Device], ids: np.ndarray
+             ) -> ReshapeableDevicesSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -406,7 +411,7 @@ class DevicesSharding(XLACompatibleSharding):
     return id(self._devices)
 
   def __eq__(self, other) -> bool:
-    return (isinstance(other, DevicesSharding) and
+    return (isinstance(other, ReshapeableDevicesSharding) and
             id(self._devices) == id(other._devices) and
             bool(np.all(self._ids == other._ids)))
 
