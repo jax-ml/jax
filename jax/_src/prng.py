@@ -1049,14 +1049,57 @@ def _threefry_fold_in(key, data):
 
 def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
-  return _threefry_random_bits(key, bit_width, shape)
-
-@partial(jit, static_argnums=(1, 2), inline=True)
-def _threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   if not _is_threefry_prng_key(key):
     raise TypeError("threefry_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
     raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+
+  if (config.jax_threefry_partitionable and bit_width == 32 and
+      not any(core.is_special_dim_size(d) for d in shape)):
+    return _threefry_random_bits_partitionable(key, bit_width, shape)
+  else:
+    return _threefry_random_bits_original(key, bit_width, shape)
+
+def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
+  if all(core.is_constant_dim(d) for d in shape) and prod(shape) > 2 ** 64:
+    raise NotImplementedError('random bits array of size exceeding 2 ** 64')
+
+  size = prod(shape)
+  n, r = divmod(bit_width * size, 32)
+  if r > 0:
+    n += 1
+  even_size = n + (n % 2)
+
+  if not shape:
+    counts = jnp.arange(n, dtype=jnp.uint32).reshape(shape)
+  else:
+    iotas = [lax.broadcasted_iota(jnp.dtype('uint32'), shape, i)
+            for i in range(len(shape))]
+    strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
+    counts = sum(s * i for i, s in zip(iotas, strides))  # type: ignore
+  circ0 = counts % (even_size // 2)
+  circ1 = (circ0 + even_size // 2) % n
+  k1, k2 = key
+  bits_xx, bits_yy = threefry2x32_p.bind(k1, k2, circ0, circ1)
+
+  dtype = UINT_DTYPES[bit_width]
+  if bit_width == 64:
+    assert n == even_size
+    assert False  # broken...
+    bits_x, bits_y = bits_xx[:size // 2], bits_yy[:size // 2]
+    bits_x = lax.convert_element_type(bits_x, dtype)
+    bits_y = lax.convert_element_type(bits_y, dtype)
+    bits = lax.shift_left(bits_x, dtype(32)) | bits_y
+  else:
+    bits = jnp.where(counts < even_size // 2, bits_xx, bits_yy)
+    if bit_width != 32:
+      assert False  # broken...
+      bits = bits.view(dtype)
+
+  return bits
+
+@partial(jit, static_argnums=(1, 2), inline=True)
+def _threefry_random_bits_original(key: jnp.ndarray, bit_width, shape):
   size = prod(shape)
   # Compute ceil(bit_width * size / 32) in a way that is friendly to shape
   # polymorphism
