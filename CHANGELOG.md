@@ -14,6 +14,9 @@ Remember to align the itemized text with the first line of an item within a list
     cache. By default, computations with 6 or more instructions will be cached.
   * Changes
     * Added {func}`jax.scipy.stats.mode`.
+  * Breaking Changes
+    * {func}`jax.numpy.gradient` now behaves like most other functions in {mod}`jax.numpy`,
+      and forbids passing lists or tuples in place of arrays ({jax-issue}`#12958`)
 
 ## jaxlib 0.3.24
 
