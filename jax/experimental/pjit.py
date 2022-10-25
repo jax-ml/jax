@@ -1217,12 +1217,18 @@ def _pjit_partial_eval(trace, *in_tracers,
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
+  if not resource_env.physical_mesh.empty:
+    da = list(resource_env.physical_mesh.devices.flat)
+  else:
+    # TODO(yashkatariya): Figure out a way to look at the device assignment
+    # across all the input, output and jaxpr shardings when mesh is empty.
+    # Possibly look at the device_assignment on MeshExecutable after compilation
+    # is done below.
+    da = None
+
   if config.jax_array:
     residual_shardings = (_UNSPECIFIED,) * num_residuals
   else:
-    # Using fast path to get the device assignment because mesh is used to
-    # create the shardings. So the device assignment is always the same.
-    da = _fast_path_get_device_assignment(it.chain(in_shardings, out_shardings))
     residual_shardings = (OpShardingSharding.get_replicated(da),) * num_residuals
   # Compute the known outputs
   known_params = dict(
@@ -1236,9 +1242,7 @@ def _pjit_partial_eval(trace, *in_tracers,
       in_positional_semantics=keep_where(in_positional_semantics, known_ins),
       out_positional_semantics=out_positional_semantics)
 
-  # Skip this for Arrays because Arrays support UNSPECIFIED in out_shardings. So
-  # there is no need to find out the residual shardings from XLA here.
-  if not config.jax_array:
+  if da is not None:
     if num_residuals:
       in_is_global = _calc_is_global_sequence(
           known_params['in_positional_semantics'], known_params['in_shardings'])

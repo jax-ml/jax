@@ -582,8 +582,6 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @check_1d_2d_mesh(set_mesh=True)
   def testAutodiff(self, mesh, resources):
-    if config.jax_array:
-      raise unittest.SkipTest('Does not work with Array. Investigate more.')
     if len(mesh) != 2: return
     assert resources == ('x', 'y')
     # Add a constant captured by the nested pjit to make things more complicated
