@@ -5134,7 +5134,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
       'asarray': ['like'],
-      'broadcast_to': ['subok', 'array'],
+      'broadcast_to': ['subok'],
       'clip': ['kwargs'],
       'copy': ['subok'],
       'corrcoef': ['ddof', 'bias', 'dtype'],
@@ -5164,7 +5164,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     }
 
     extra_params = {
-      'broadcast_to': ['arr'],
       'einsum': ['precision'],
       'einsum_path': ['subscripts'],
       'take_along_axis': ['mode'],

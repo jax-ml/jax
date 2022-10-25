@@ -414,8 +414,7 @@ def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
 # `np.where(np.zeros(1000), 7, 4)`. In op-by-op mode, we don't want to
 # materialize the broadcast forms of scalar arguments.
 @api.jit
-def _where(condition: ArrayLike, x: Optional[ArrayLike] = None,
-           y: Optional[ArrayLike] = None) -> Array:
+def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
   if x is None or y is None:
     raise ValueError("Either both or neither of the x and y arguments should "
                      "be provided to jax.numpy.where, got {} and {}."

@@ -165,7 +165,7 @@ def _minimize_lbfgs(
     gamma = rho_k_inv / jnp.real(_dot(jnp.conj(y_k), y_k))
 
     # replacements for next iteration
-    status = 0
+    status = jnp.array(0)
     status = jnp.where(state.f_k - f_kp1 < ftol, 4, status)
     status = jnp.where(state.ngev >= maxgrad, 3, status)  # type: ignore
     status = jnp.where(state.nfev >= maxfun, 2, status)  # type: ignore
