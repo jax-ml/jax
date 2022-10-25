@@ -319,6 +319,17 @@ class PmapSharding(XLACompatibleSharding):
       self._hash = hash((tuple(self.devices.flat), self.sharding_spec))
     return self._hash
 
+  def __str__(self):
+    device_ids = [d.id for d in self.devices.flat]
+    return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
+            f'device_ids={device_ids}, '
+            f'device_platform={self.devices.flat[0].platform.upper()}, '
+            f'device_shape={self.devices.shape})')
+
+  def __repr__(self):
+    return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
+            f'devices={self.devices})')
+
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
     return set(self.devices.flat)

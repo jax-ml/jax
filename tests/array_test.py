@@ -742,6 +742,13 @@ class ShardingTest(jtu.JaxTestCase):
                      devices_sharding.shard_shape(value_shape))
     self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
 
+  def test_pmap_sharding_repr(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test needs >= 2 devices.')
+    out = jax.pmap(lambda x: x)(jnp.arange(2.))
+    str(out.sharding)  # doesn't crash
+    repr(out.sharding)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
