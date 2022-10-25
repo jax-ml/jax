@@ -2503,6 +2503,36 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp_data)
 
   @jax_array(True)
+  def test_trivial_computation_with_sharded_const(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    const = jax.device_put(np.arange(16).reshape(8, 2),
+                           MeshPspecSharding(mesh, P('x', 'y')))
+    with mesh:
+      out = pjit(lambda: const)()
+    self.assertIsInstance(out, array.ArrayImpl)
+    self.assertArraysEqual(out, np.arange(16).reshape(8, 2))
+
+  @jax_array(True)
+  def test_trivial_computation_with_sharded_const_using_transposed_mesh(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    const = jax.device_put(np.arange(16).reshape(8, 2),
+                           MeshPspecSharding(mesh, P('x', 'y')))
+    mesh2 = jtu.create_global_mesh((1, 2), ('x', 'y'))
+    with mesh2:
+      out = pjit(lambda: const)()
+    self.assertIsInstance(out, array.ArrayImpl)
+    self.assertArraysEqual(out, np.arange(16).reshape(8, 2))
+
+  @jax_array(True)
+  def test_trivial_computation_with_replicated_literal(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    with mesh:
+      out = pjit(lambda: 1)()
+    self.assertIsInstance(out, array.ArrayImpl)
+    self.assertEqual(out, 1)
+
+
+  @jax_array(True)
   def test_multi_device_pjit_mul(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
