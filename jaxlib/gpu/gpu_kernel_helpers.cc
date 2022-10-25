@@ -1,4 +1,4 @@
-/* Copyright 2021 The JAX Authors.
+/* Copyright 2019 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,17 +13,83 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/rocm/hip_gpu_kernel_helpers.h"
-
-#include <stdexcept>
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
+
 namespace {
-std::string ErrorString(hipError_t error) { return hipGetErrorString(error); }
+std::string ErrorString(gpuError_t error) { return gpuGetErrorString(error); }
+
+#ifdef JAX_GPU_CUDA
+
+std::string ErrorString(gpusparseStatus_t status) {
+  return cusparseGetErrorString(status);
+}
+
+std::string ErrorString(gpusolverStatus_t status) {
+  switch (status) {
+    case CUSOLVER_STATUS_SUCCESS:
+      return "cuSolver success.";
+    case CUSOLVER_STATUS_NOT_INITIALIZED:
+      return "cuSolver has not been initialized";
+    case CUSOLVER_STATUS_ALLOC_FAILED:
+      return "cuSolver allocation failed";
+    case CUSOLVER_STATUS_INVALID_VALUE:
+      return "cuSolver invalid value error";
+    case CUSOLVER_STATUS_ARCH_MISMATCH:
+      return "cuSolver architecture mismatch error";
+    case CUSOLVER_STATUS_MAPPING_ERROR:
+      return "cuSolver mapping error";
+    case CUSOLVER_STATUS_EXECUTION_FAILED:
+      return "cuSolver execution failed";
+    case CUSOLVER_STATUS_INTERNAL_ERROR:
+      return "cuSolver internal error";
+    case CUSOLVER_STATUS_MATRIX_TYPE_NOT_SUPPORTED:
+      return "cuSolver matrix type not supported error";
+    case CUSOLVER_STATUS_NOT_SUPPORTED:
+      return "cuSolver not supported error";
+    case CUSOLVER_STATUS_ZERO_PIVOT:
+      return "cuSolver zero pivot error";
+    case CUSOLVER_STATUS_INVALID_LICENSE:
+      return "cuSolver invalid license error";
+    default:
+      return absl::StrCat("Unknown cuSolver error: ", status);
+  }
+}
+
+std::string ErrorString(gpublasStatus_t status) {
+  switch (status) {
+    case CUBLAS_STATUS_SUCCESS:
+      return "cuBlas success";
+    case CUBLAS_STATUS_NOT_INITIALIZED:
+      return "cuBlas has not been initialized";
+    case CUBLAS_STATUS_ALLOC_FAILED:
+      return "cuBlas allocation failure";
+    case CUBLAS_STATUS_INVALID_VALUE:
+      return "cuBlas invalid value error";
+    case CUBLAS_STATUS_ARCH_MISMATCH:
+      return "cuBlas architecture mismatch";
+    case CUBLAS_STATUS_MAPPING_ERROR:
+      return "cuBlas mapping error";
+    case CUBLAS_STATUS_EXECUTION_FAILED:
+      return "cuBlas execution failed";
+    case CUBLAS_STATUS_INTERNAL_ERROR:
+      return "cuBlas internal error";
+    case CUBLAS_STATUS_NOT_SUPPORTED:
+      return "cuBlas not supported error";
+    case CUBLAS_STATUS_LICENSE_ERROR:
+      return "cuBlas license error";
+    default:
+      return "Unknown cuBlas error";
+  }
+}
+
+#else
 
 std::string ErrorString(hipsparseStatus_t status) {
   // TODO(reza): check and see if we can use hipify
@@ -115,6 +181,8 @@ std::string ErrorString(hipblasStatus_t status) {
   }
 }
 
+#endif
+
 template <typename T>
 std::string ErrorString(T status, const char* file, std::int64_t line,
                         const char* expr) {
@@ -123,37 +191,37 @@ std::string ErrorString(T status, const char* file, std::int64_t line,
 }
 }  // namespace
 
-absl::Status AsStatus(hipError_t error, const char* file, std::int64_t line,
+absl::Status AsStatus(gpuError_t error, const char* file, std::int64_t line,
                       const char* expr) {
-  if (error != hipSuccess)
+  if (error != gpuSuccess)
     return absl::InternalError(ErrorString(error, file, line, expr));
   return absl::OkStatus();
 }
 
-absl::Status AsStatus(hipsolverStatus_t status, const char* file,
+absl::Status AsStatus(gpusolverStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
-  if (status != HIPSOLVER_STATUS_SUCCESS)
+  if (status != GPUSOLVER_STATUS_SUCCESS)
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }
 
-absl::Status AsStatus(hipsparseStatus_t status, const char* file,
+absl::Status AsStatus(gpusparseStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
-  if (status != HIPSPARSE_STATUS_SUCCESS)
+  if (status != GPUSPARSE_STATUS_SUCCESS)
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }
 
-absl::Status AsStatus(hipblasStatus_t status, const char* file,
+absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
-  if (status != HIPBLAS_STATUS_SUCCESS)
+  if (status != GPUBLAS_STATUS_SUCCESS)
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::unique_ptr<void* []>>
-MakeBatchPointers(hipStream_t stream, void* buffer, void* dev_ptrs, int batch,
-                  int batch_elem_size) {
+absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(
+    gpuStream_t stream, void* buffer, void* dev_ptrs, int batch,
+    int batch_elem_size) {
   char* ptr = static_cast<char*>(buffer);
   auto host_ptrs = absl::make_unique<void*[]>(batch);
   for (int i = 0; i < batch; ++i) {
@@ -161,8 +229,10 @@ MakeBatchPointers(hipStream_t stream, void* buffer, void* dev_ptrs, int batch,
     ptr += batch_elem_size;
   }
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      hipMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
-                     hipMemcpyHostToDevice, stream)));
+      gpuMemcpyAsync(dev_ptrs, host_ptrs.get(), sizeof(void*) * batch,
+                     gpuMemcpyHostToDevice, stream)));
   return std::move(host_ptrs);
 }
+
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

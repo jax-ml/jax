@@ -20,29 +20,27 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "jaxlib/cuda/cublas_kernels.h"
+#include "jaxlib/gpu/blas_kernels.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/numpy.h"
 #include "include/pybind11/pybind11.h"
 #include "include/pybind11/stl.h"
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 namespace {
 
 namespace py = pybind11;
 
 // Converts a NumPy dtype to a Type.
-CublasType DtypeToCublasType(const py::dtype& np_type) {
-  static auto* types =
-      new absl::flat_hash_map<std::pair<char, int>, CublasType>({
-          {{'f', 4}, CublasType::F32},
-          {{'f', 8}, CublasType::F64},
-          {{'c', 8}, CublasType::C64},
-          {{'c', 16}, CublasType::C128},
-      });
+BlasType DtypeToBlasType(const py::dtype& np_type) {
+  static auto* types = new absl::flat_hash_map<std::pair<char, int>, BlasType>({
+      {{'f', 4}, BlasType::F32},
+      {{'f', 8}, BlasType::F64},
+      {{'c', 8}, BlasType::C64},
+      {{'c', 16}, BlasType::C128},
+  });
   auto it = types->find({np_type.kind(), np_type.itemsize()});
   if (it == types->end()) {
     throw std::invalid_argument(
@@ -54,7 +52,7 @@ CublasType DtypeToCublasType(const py::dtype& np_type) {
 // Returns the descriptor for a GetrfBatched operation.
 std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
                                                          int b, int n) {
-  CublasType type = DtypeToCublasType(dtype);
+  BlasType type = DtypeToBlasType(dtype);
   size_t size = b * sizeof(void*);
   return {size, PackDescriptor(GetrfBatchedDescriptor{type, b, n})};
 }
@@ -62,23 +60,24 @@ std::pair<size_t, py::bytes> BuildGetrfBatchedDescriptor(const py::dtype& dtype,
 // Returns the descriptor for a GetrfBatched operation.
 std::pair<size_t, py::bytes> BuildGeqrfBatchedDescriptor(const py::dtype& dtype,
                                                          int b, int m, int n) {
-  CublasType type = DtypeToCublasType(dtype);
+  BlasType type = DtypeToBlasType(dtype);
   size_t size = b * sizeof(void*);
   return {size, PackDescriptor(GeqrfBatchedDescriptor{type, b, m, n})};
 }
 
 py::dict Registrations() {
   py::dict dict;
-  dict["cublas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
-  dict["cublas_geqrf_batched"] = EncapsulateFunction(GeqrfBatched);
+  dict[JAX_GPU_PREFIX "blas_getrf_batched"] = EncapsulateFunction(GetrfBatched);
+  dict[JAX_GPU_PREFIX "blas_geqrf_batched"] = EncapsulateFunction(GeqrfBatched);
   return dict;
 }
 
-PYBIND11_MODULE(_cublas, m) {
+PYBIND11_MODULE(_blas, m) {
   m.def("registrations", &Registrations);
   m.def("build_getrf_batched_descriptor", &BuildGetrfBatchedDescriptor);
   m.def("build_geqrf_batched_descriptor", &BuildGeqrfBatchedDescriptor);
 }
 
 }  // namespace
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

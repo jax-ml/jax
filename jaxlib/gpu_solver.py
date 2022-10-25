@@ -27,14 +27,14 @@ from jaxlib import xla_client
 from .mhlo_helpers import custom_call
 
 try:
-  from .cuda import _cublas
+  from .cuda import _blas as _cublas
   for _name, _value in _cublas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   _cublas = None
 
 try:
-  from .cuda import _cusolver
+  from .cuda import _solver as _cusolver
   for _name, _value in _cusolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
@@ -42,14 +42,14 @@ except ImportError:
 
 
 try:
-  from .rocm import _hipblas
+  from .rocm import _blas as _hipblas
   for _name, _value in _hipblas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:
   _hipblas = None
 
 try:
-  from .rocm import _hipsolver
+  from .rocm import _solver as _hipsolver
   for _name, _value in _hipsolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:

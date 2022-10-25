@@ -1,4 +1,4 @@
-/* Copyright 2021 The JAX Authors.
+/* Copyright 2019 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,23 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/rocm/hip_prng_kernels.h"
+#include "jaxlib/gpu/prng_kernels.h"
 
 #include <array>
 #include <cstddef>
 
+#include "jaxlib/gpu/vendor.h"
+
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 namespace {
 
-__global__ void
-ThreeFry2x32Kernel(const std::uint32_t* key0, const std::uint32_t* key1,
-                   const std::uint32_t* data0, const std::uint32_t* data1,
-                   std::uint32_t* out0, std::uint32_t* out1, std::int64_t n) {
+__global__ void ThreeFry2x32Kernel(const std::uint32_t* key0,
+                                   const std::uint32_t* key1,
+                                   const std::uint32_t* data0,
+                                   const std::uint32_t* data1,
+                                   std::uint32_t* out0, std::uint32_t* out1,
+                                   std::int64_t n) {
   for (std::int64_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < n;
        idx += blockDim.x * gridDim.x) {
     // Rotation distances specified by the Threefry2x32 algorithm.
@@ -94,7 +99,7 @@ ThreeFry2x32Kernel(const std::uint32_t* key0, const std::uint32_t* key1,
 
 }  // namespace
 
-void LaunchThreeFry2x32Kernel(hipStream_t stream, void** buffers,
+void LaunchThreeFry2x32Kernel(gpuStream_t stream, void** buffers,
                               ThreeFry2x32Descriptor descriptor) {
   std::array<const std::uint32_t*, 2> keys;
   keys[0] = reinterpret_cast<const std::uint32_t*>(buffers[0]);
@@ -113,4 +118,5 @@ void LaunchThreeFry2x32Kernel(hipStream_t stream, void** buffers,
                                  out[1], descriptor.n);
 }
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

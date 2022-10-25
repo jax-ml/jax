@@ -13,12 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda/cuda_lu_pivot_kernels.h"
+#include "jaxlib/gpu/lu_pivot_kernels.h"
 
 #include <array>
 #include <iostream>
 
+#include "jaxlib/gpu/vendor.h"
+
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 namespace {
 
 __device__ void ComputePermutation(const std::int32_t* pivots,
@@ -58,7 +61,7 @@ __global__ void LuPivotsToPermutationKernel(
 }  // namespace
 
 void LaunchLuPivotsToPermutationKernel(
-    cudaStream_t stream, void** buffers,
+    gpuStream_t stream, void** buffers,
     LuPivotsToPermutationDescriptor descriptor) {
   const std::int32_t* pivots =
       reinterpret_cast<const std::int32_t*>(buffers[0]);
@@ -74,4 +77,5 @@ void LaunchLuPivotsToPermutationKernel(
       descriptor.permutation_size);
 }
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

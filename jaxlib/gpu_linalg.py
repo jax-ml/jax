@@ -23,14 +23,14 @@ from .mhlo_helpers import custom_call
 from jaxlib import xla_client
 
 try:
-  from .cuda import _cuda_linalg
+  from .cuda import _linalg as _cuda_linalg
   for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   _cuda_linalg = None
 
 try:
-  from .rocm import _hip_linalg
+  from .rocm import _linalg as _hip_linalg
   for _name, _value in _hip_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:
@@ -65,7 +65,7 @@ def _lu_pivots_to_permutation_mhlo(platform, gpu_linalg, pivots, *, permutation_
       operand_layouts=[pivots_layout],
       result_layouts=[permutations_layout])
 
-cuda_lu_pivots_to_permutation = partial(
-    _lu_pivots_to_permutation_mhlo, "cuda", _cuda_linalg)
+cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_mhlo, "cu",
+                                        _cuda_linalg)
 hip_lu_pivots_to_permutation = partial(
     _lu_pivots_to_permutation_mhlo, "hip", _hip_linalg)

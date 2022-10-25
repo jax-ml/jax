@@ -25,16 +25,27 @@ licenses(["notice"])
 
 package(default_visibility = ["//:__subpackages__"])
 
+cc_library(
+    name = "hip_vendor",
+    hdrs = [
+        "//jaxlib/gpu:vendor.h",
+    ],
+    defines = ["JAX_GPU_HIP=1"],
+    deps = [
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
 
 cc_library(
     name = "hip_gpu_kernel_helpers",
-    srcs = if_rocm_is_configured(["hip_gpu_kernel_helpers.cc"]),
-    hdrs = if_rocm_is_configured(["hip_gpu_kernel_helpers.h"]),
+    srcs = if_rocm_is_configured(["//jaxlib/gpu:gpu_kernel_helpers.cc"]),
+    hdrs = if_rocm_is_configured(["//jaxlib/gpu:gpu_kernel_helpers.h"]),
     copts = [
         "-fexceptions",
     ],
     features = ["-use_header_modules"],
     deps = [
+        ":hip_vendor",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -46,11 +57,12 @@ cc_library(
 
 cc_library(
     name = "hipblas_kernels",
-    srcs = ["hipblas_kernels.cc"],
-    hdrs = ["hipblas_kernels.h"],
+    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
     deps = [
-        "//jaxlib:handle_pool",
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -68,15 +80,16 @@ cc_library(
 )
 
 pybind_extension(
-    name = "_hipblas",
-    srcs = ["hipblas.cc"],
+    name = "_blas",
+    srcs = ["//jaxlib/gpu:blas.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "_hipblas",
+    module_name = "_blas",
     deps = [
+        ":hip_vendor",
         ":hipblas_kernels",
         "//jaxlib:kernel_pybind11_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -89,11 +102,12 @@ pybind_extension(
 
 cc_library(
     name = "hipsolver_kernels",
-    srcs = ["hipsolver_kernels.cc"],
-    hdrs = ["hipsolver_kernels.h"],
+    srcs = ["//jaxlib/gpu:solver_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:solver_kernels.h"],
     deps = [
-        "//jaxlib:handle_pool",
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -105,16 +119,17 @@ cc_library(
 )
 
 pybind_extension(
-    name = "_hipsolver",
-    srcs = ["hipsolver.cc"],
+    name = "_solver",
+    srcs = ["//jaxlib/gpu:solver.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "_hipsolver",
+    module_name = "_solver",
     deps = [
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
         ":hipsolver_kernels",
         "//jaxlib:kernel_pybind11_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -127,11 +142,12 @@ pybind_extension(
 
 cc_library(
     name = "hipsparse_kernels",
-    srcs = ["hipsparse_kernels.cc"],
-    hdrs = ["hipsparse_kernels.h"],
+    srcs = ["//jaxlib/gpu:sparse_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:sparse_kernels.h"],
     deps = [
-        "//jaxlib:handle_pool",
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -143,16 +159,17 @@ cc_library(
 )
 
 pybind_extension(
-    name = "_hipsparse",
-    srcs = ["hipsparse.cc"],
+    name = "_sparse",
+    srcs = ["//jaxlib/gpu:sparse.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "_hipsparse",
+    module_name = "_sparse",
     deps = [
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
         ":hipsparse_kernels",
         "//jaxlib:kernel_pybind11_helpers",
         "@com_google_absl//absl/algorithm:container",
@@ -172,13 +189,12 @@ pybind_extension(
 
 cc_library(
     name = "hip_lu_pivot_kernels",
-    srcs = [
-        "hip_lu_pivot_kernels.cc",
-    ],
-    hdrs = ["hip_lu_pivot_kernels.h"],
+    srcs = ["//jaxlib/gpu:lu_pivot_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:lu_pivot_kernels.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_lu_pivot_kernels_impl",
+        ":hip_vendor",
         "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
@@ -187,12 +203,11 @@ cc_library(
 
 rocm_library(
     name = "hip_lu_pivot_kernels_impl",
-    srcs = [
-        "hip_lu_pivot_kernels.hip.cc",
-    ],
-    hdrs = ["hip_lu_pivot_kernels.h"],
+    srcs = ["//jaxlib/gpu:lu_pivot_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:lu_pivot_kernels.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
         "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
@@ -200,18 +215,19 @@ rocm_library(
 )
 
 pybind_extension(
-    name = "_hip_linalg",
-    srcs = ["hip_linalg.cc"],
+    name = "_linalg",
+    srcs = ["//jaxlib/gpu:linalg.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "_hip_linalg",
+    module_name = "_linalg",
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_lu_pivot_kernels",
         ":hip_lu_pivot_kernels_impl",
+        ":hip_vendor",
         "//jaxlib:kernel_pybind11_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@pybind11",
@@ -220,13 +236,12 @@ pybind_extension(
 
 cc_library(
     name = "hip_prng_kernels",
-    srcs = [
-        "hip_prng_kernels.cc",
-    ],
-    hdrs = ["hip_prng_kernels.h"],
+    srcs = ["//jaxlib/gpu:prng_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:prng_kernels.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_prng_kernels_impl",
+        ":hip_vendor",
         "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
@@ -235,12 +250,11 @@ cc_library(
 
 rocm_library(
     name = "hip_prng_kernels_impl",
-    srcs = [
-        "hip_prng_kernels.hip.cc",
-    ],
-    hdrs = ["hip_prng_kernels.h"],
+    srcs = ["//jaxlib/gpu:prng_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:prng_kernels.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
         "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
@@ -248,17 +262,18 @@ rocm_library(
 )
 
 pybind_extension(
-    name = "_hip_prng",
-    srcs = ["hip_prng.cc"],
+    name = "_prng",
+    srcs = ["//jaxlib/gpu:prng.cc"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
     features = ["-use_header_modules"],
-    module_name = "_hip_prng",
+    module_name = "_prng",
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_prng_kernels",
+        ":hip_vendor",
         "//jaxlib:kernel_pybind11_helpers",
         "@local_config_rocm//rocm:rocm_headers",
         "@pybind11",
@@ -268,11 +283,10 @@ pybind_extension(
 py_library(
     name = "rocm_gpu_support",
     deps = [
-        ":_hip_linalg",
-        ":_hip_prng",
-        ":_hipblas",
-        ":_hipsolver",
-        ":_hipsparse",
+        ":_blas",
+        ":_linalg",
+        ":_prng",
+        ":_solver",
+        ":_sparse",
     ],
 )
-

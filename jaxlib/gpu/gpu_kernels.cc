@@ -16,21 +16,23 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
-#include "jaxlib/cuda/cublas_kernels.h"
-#include "jaxlib/cuda/cuda_lu_pivot_kernels.h"
-#include "jaxlib/cuda/cuda_prng_kernels.h"
-#include "jaxlib/cuda/cusolver_kernels.h"
-#include "jaxlib/cuda/cusparse_kernels.h"
+#include "jaxlib/gpu/blas_kernels.h"
+#include "jaxlib/gpu/lu_pivot_kernels.h"
+#include "jaxlib/gpu/prng_kernels.h"
+#include "jaxlib/gpu/solver_kernels.h"
+#include "jaxlib/gpu/sparse_kernels.h"
+#include "jaxlib/gpu/vendor.h"
 #include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 namespace {
 
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_getrf_batched", GetrfBatched,
                                          "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cuda_lu_pivots_to_permutation",
-                                         CudaLuPivotsToPermutation, "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cuda_threefry2x32", CudaThreeFry2x32,
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_lu_pivots_to_permutation",
+                                         LuPivotsToPermutation, "CUDA");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_threefry2x32", ThreeFry2x32,
                                          "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_potrf", Potrf, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_getrf", Getrf, "CUDA");
@@ -66,4 +68,5 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_gtsv2_f64", gtsv2_f64,
                                          "CUDA");
 
 }  // namespace
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

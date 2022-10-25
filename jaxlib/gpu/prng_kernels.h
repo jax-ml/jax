@@ -1,4 +1,4 @@
-/* Copyright 2021 The JAX Authors.
+/* Copyright 2019 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,27 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_HIP_PRNG_KERNELS_H_
-#define JAXLIB_HIP_PRNG_KERNELS_H_
+#ifndef JAXLIB_GPU_PRNG_KERNELS_H_
+#define JAXLIB_GPU_PRNG_KERNELS_H_
 
 #include <cstddef>
 #include <string>
 
-#include "rocm/include/hip/hip_runtime_api.h"
+#include "jaxlib/gpu/vendor.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 
 struct ThreeFry2x32Descriptor {
   std::int64_t n;
 };
 
-void LaunchThreeFry2x32Kernel(hipStream_t stream, void** buffers,
+void LaunchThreeFry2x32Kernel(gpuStream_t stream, void** buffers,
                               ThreeFry2x32Descriptor descriptor);
 
-void HipThreeFry2x32(hipStream_t stream, void** buffers, const char* opaque,
-                     size_t opaque_len, XlaCustomCallStatus* status);
+void ThreeFry2x32(gpuStream_t stream, void** buffers, const char* opaque,
+                  size_t opaque_len, XlaCustomCallStatus* status);
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 
-#endif  // JAXLIB_HIP_PRNG_KERNELS_H_
+#endif  // JAXLIB_GPU_PRNG_KERNELS_H_

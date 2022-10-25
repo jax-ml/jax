@@ -26,7 +26,7 @@ from jaxlib import xla_client
 from .mhlo_helpers import custom_call
 
 try:
-  from .cuda import _cusparse
+  from .cuda import _sparse as _cusparse
 except ImportError:
   _cusparse = None
 else:
@@ -34,7 +34,7 @@ else:
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
 try:
-  from .rocm import _hipsparse
+  from .rocm import _sparse as _hipsparse
 except ImportError:
   _hipsparse = None
 else:
@@ -42,8 +42,8 @@ else:
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 
 
-cuda_is_supported : bool = _cusparse and _cusparse.cusparse_supported
-rocm_is_supported : bool = _hipsparse and _hipsparse.hipsparse_supported
+cuda_is_supported : bool = _cusparse and _cusparse.sparse_supported
+rocm_is_supported : bool = _hipsparse and _hipsparse.sparse_supported
 
 
 def _validate_csr_mhlo(data, indices, indptr, shape):

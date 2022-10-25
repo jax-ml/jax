@@ -184,25 +184,25 @@ def prepare_wheel(sources_path):
   copy_file(f"__main__/jaxlib/cpu/_ducc_fft.{pyext}", dst_dir=cpu_dir)
 
   cuda_dir = os.path.join(jaxlib_dir, "cuda")
-  if exists(f"__main__/jaxlib/cuda/_cusolver.{pyext}"):
+  if exists(f"__main__/jaxlib/cuda/_solver.{pyext}"):
     libdevice_dir = os.path.join(cuda_dir, "nvvm", "libdevice")
     os.makedirs(libdevice_dir)
     copy_file("local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc", dst_dir=libdevice_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cusolver.{pyext}", dst_dir=cuda_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cublas.{pyext}", dst_dir=cuda_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cuda_linalg.{pyext}", dst_dir=cuda_dir)
-    copy_file(f"__main__/jaxlib/cuda/_cuda_prng.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_solver.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_blas.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_linalg.{pyext}", dst_dir=cuda_dir)
+    copy_file(f"__main__/jaxlib/cuda/_prng.{pyext}", dst_dir=cuda_dir)
   rocm_dir = os.path.join(jaxlib_dir, "rocm")
-  if exists(f"__main__/jaxlib/rocm/_hipsolver.{pyext}"):
+  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}"):
     os.makedirs(rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hipsolver.{pyext}", dst_dir=rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hipblas.{pyext}", dst_dir=rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hip_linalg.{pyext}", dst_dir=rocm_dir)
-    copy_file(f"__main__/jaxlib/rocm/_hip_prng.{pyext}", dst_dir=rocm_dir)
-  if exists(f"__main__/jaxlib/cuda/_cusparse.{pyext}"):
-    copy_file(f"__main__/jaxlib/cuda/_cusparse.{pyext}", dst_dir=cuda_dir)
-  if exists(f"__main__/jaxlib/rocm/_hipsparse.{pyext}"):
-    copy_file(f"__main__/jaxlib/rocm/_hipsparse.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_solver.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_blas.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_linalg.{pyext}", dst_dir=rocm_dir)
+    copy_file(f"__main__/jaxlib/rocm/_prng.{pyext}", dst_dir=rocm_dir)
+  if exists(f"__main__/jaxlib/cuda/_sparse.{pyext}"):
+    copy_file(f"__main__/jaxlib/cuda/_sparse.{pyext}", dst_dir=cuda_dir)
+  if exists(f"__main__/jaxlib/rocm/_sparse.{pyext}"):
+    copy_file(f"__main__/jaxlib/rocm/_sparse.{pyext}", dst_dir=rocm_dir)
 
 
   mlir_dir = os.path.join(jaxlib_dir, "mlir")

@@ -1,4 +1,4 @@
-/* Copyright 2019 The JAX Authors.
+/* Copyright 2021 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,27 +13,33 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_CUDA_PRNG_KERNELS_H_
-#define JAXLIB_CUDA_PRNG_KERNELS_H_
+#ifndef JAXLIB_GPU_LU_PIVOT_KERNELS_H_
+#define JAXLIB_GPU_LU_PIVOT_KERNELS_H_
 
 #include <cstddef>
 #include <string>
 
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "jaxlib/gpu/vendor.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 
-struct ThreeFry2x32Descriptor {
-  std::int64_t n;
+struct LuPivotsToPermutationDescriptor {
+  std::int64_t batch_size;
+  std::int32_t pivot_size;
+  std::int32_t permutation_size;
 };
 
-void LaunchThreeFry2x32Kernel(cudaStream_t stream, void** buffers,
-                              ThreeFry2x32Descriptor descriptor);
+void LaunchLuPivotsToPermutationKernel(
+    gpuStream_t stream, void** buffers,
+    LuPivotsToPermutationDescriptor descriptor);
 
-void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
-                      size_t opaque_len, XlaCustomCallStatus* status);
+void LuPivotsToPermutation(gpuStream_t stream, void** buffers,
+                           const char* opaque, size_t opaque_len,
+                           XlaCustomCallStatus* status);
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 
-#endif  // JAXLIB_CUDA_PRNG_KERNELS_H_
+#endif  // JAXLIB_GPU_LU_PIVOT_KERNELS_H_

@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda/cusolver_kernels.h"
+#include "jaxlib/gpu/solver_kernels.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -24,38 +24,40 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusolverDn.h"
-#include "third_party/gpus/cuda/include/cusolverSp.h"
-#include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
+
+#ifdef JAX_GPU_CUDA
+#include "third_party/gpus/cuda/include/cusolverSp.h"
+#endif  // JAX_GPU_CUDA
 
 namespace jax {
 
 template <>
 /*static*/ absl::StatusOr<SolverHandlePool::Handle> SolverHandlePool::Borrow(
-    cudaStream_t stream) {
+    gpuStream_t stream) {
   SolverHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
-  cusolverDnHandle_t handle;
+  gpusolverDnHandle_t handle;
   if (pool->handles_[stream].empty()) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCreate(&handle)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCreate(&handle)));
   } else {
     handle = pool->handles_[stream].back();
     pool->handles_[stream].pop_back();
   }
   if (stream) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSetStream(handle, stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSetStream(handle, stream)));
   }
   return Handle(pool, handle, stream);
 }
 
+#ifdef JAX_GPU_CUDA
+
 template <>
 /*static*/ absl::StatusOr<SpSolverHandlePool::Handle>
-SpSolverHandlePool::Borrow(cudaStream_t stream) {
+SpSolverHandlePool::Borrow(gpuStream_t stream) {
   SpSolverHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
   cusolverSpHandle_t handle;
@@ -71,22 +73,26 @@ SpSolverHandlePool::Borrow(cudaStream_t stream) {
   return Handle(pool, handle, stream);
 }
 
-static int SizeOfCusolverType(CusolverType type) {
+#endif  // JAX_GPU_CUDA
+
+namespace JAX_GPU_NAMESPACE {
+
+static int SizeOfSolverType(SolverType type) {
   switch (type) {
-    case CusolverType::F32:
+    case SolverType::F32:
       return sizeof(float);
-    case CusolverType::F64:
+    case SolverType::F64:
       return sizeof(double);
-    case CusolverType::C64:
-      return sizeof(cuComplex);
-    case CusolverType::C128:
-      return sizeof(cuDoubleComplex);
+    case SolverType::C64:
+      return sizeof(gpuComplex);
+    case SolverType::C128:
+      return sizeof(gpuDoubleComplex);
   }
 }
 
 // potrf: Cholesky decomposition
 
-static absl::Status Potrf_(cudaStream_t stream, void** buffers,
+static absl::Status Potrf_(gpuStream_t stream, void** buffers,
                            const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<PotrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -95,77 +101,84 @@ static absl::Status Potrf_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        cudaMemcpyAsync(buffers[1], buffers[0],
-                        SizeOfCusolverType(d.type) * d.batch * d.n * d.n,
-                        cudaMemcpyDeviceToDevice, stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
+        buffers[1], buffers[0], SizeOfSolverType(d.type) * d.batch * d.n * d.n,
+        gpuMemcpyDeviceToDevice, stream)));
   }
 
   int* info = static_cast<int*>(buffers[2]);
   void* workspace = buffers[3];
   if (d.batch == 1) {
     switch (d.type) {
-      case CusolverType::F32: {
+      case SolverType::F32: {
         float* a = static_cast<float*>(buffers[1]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnSpotrf(handle.get(), d.uplo, d.n, a, d.n,
-                             static_cast<float*>(workspace), d.lwork, info)));
+            gpusolverDnSpotrf(handle.get(), d.uplo, d.n, a, d.n,
+                              static_cast<float*>(workspace), d.lwork, info)));
         break;
       }
-      case CusolverType::F64: {
+      case SolverType::F64: {
         double* a = static_cast<double*>(buffers[1]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnDpotrf(handle.get(), d.uplo, d.n, a, d.n,
-                             static_cast<double*>(workspace), d.lwork, info)));
+            gpusolverDnDpotrf(handle.get(), d.uplo, d.n, a, d.n,
+                              static_cast<double*>(workspace), d.lwork, info)));
         break;
       }
-      case CusolverType::C64: {
-        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCpotrf(
+      case SolverType::C64: {
+        gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCpotrf(
             handle.get(), d.uplo, d.n, a, d.n,
-            static_cast<cuComplex*>(workspace), d.lwork, info)));
+            static_cast<gpuComplex*>(workspace), d.lwork, info)));
         break;
       }
-      case CusolverType::C128: {
-        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZpotrf(
+      case SolverType::C128: {
+        gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZpotrf(
             handle.get(), d.uplo, d.n, a, d.n,
-            static_cast<cuDoubleComplex*>(workspace), d.lwork, info)));
+            static_cast<gpuDoubleComplex*>(workspace), d.lwork, info)));
         break;
       }
     }
   } else {
     auto buffer_ptrs_host =
         MakeBatchPointers(stream, buffers[1], workspace, d.batch,
-                          SizeOfCusolverType(d.type) * d.n * d.n);
+                          SizeOfSolverType(d.type) * d.n * d.n);
     JAX_RETURN_IF_ERROR(buffer_ptrs_host.status());
     // Make sure that accesses to buffer_ptrs_host complete before we delete it.
     // TODO(phawkins): avoid synchronization here.
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaStreamSynchronize(stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     switch (d.type) {
-      case CusolverType::F32: {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSpotrfBatched(
+      case SolverType::F32: {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSpotrfBatched(
             handle.get(), d.uplo, d.n, static_cast<float**>(workspace), d.n,
-
-            info, d.batch)));
+            reinterpret_cast<float*>(static_cast<float**>(workspace) + d.batch),
+            d.lwork, info, d.batch)));
         break;
       }
-      case CusolverType::F64: {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnDpotrfBatched(
+      case SolverType::F64: {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnDpotrfBatched(
             handle.get(), d.uplo, d.n, static_cast<double**>(workspace), d.n,
-            info, d.batch)));
+            reinterpret_cast<double*>(static_cast<double**>(workspace) +
+                                      d.batch),
+            d.lwork, info, d.batch)));
         break;
       }
-      case CusolverType::C64: {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCpotrfBatched(
-            handle.get(), d.uplo, d.n, static_cast<cuComplex**>(workspace), d.n,
-            info, d.batch)));
+      case SolverType::C64: {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCpotrfBatched(
+            handle.get(), d.uplo, d.n, static_cast<gpuComplex**>(workspace),
+            d.n,
+            reinterpret_cast<gpuComplex*>(static_cast<gpuComplex**>(workspace) +
+                                          d.batch),
+            d.lwork, info, d.batch)));
         break;
       }
-      case CusolverType::C128: {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZpotrfBatched(
+      case SolverType::C128: {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZpotrfBatched(
             handle.get(), d.uplo, d.n,
-            static_cast<cuDoubleComplex**>(workspace), d.n, info, d.batch)));
+            static_cast<gpuDoubleComplex**>(workspace), d.n,
+            reinterpret_cast<gpuDoubleComplex*>(
+                static_cast<gpuDoubleComplex**>(workspace) + d.batch),
+            d.lwork, info, d.batch)));
         break;
       }
     }
@@ -173,7 +186,7 @@ static absl::Status Potrf_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
+void Potrf(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Potrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -184,7 +197,7 @@ void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
 
 // getrf: LU decomposition
 
-static absl::Status Getrf_(cudaStream_t stream, void** buffers,
+static absl::Status Getrf_(gpuStream_t stream, void** buffers,
                            const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -193,59 +206,59 @@ static absl::Status Getrf_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
         buffers[1], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+        SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
             static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
+        gpuMemcpyDeviceToDevice, stream)));
   }
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
   void* workspace = buffers[4];
   switch (d.type) {
-    case CusolverType::F32: {
+    case SolverType::F32: {
       float* a = static_cast<float*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnSgetrf(handle.get(), d.m, d.n, a, d.m,
-                             static_cast<float*>(workspace), ipiv, info)));
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSgetrf(
+            handle.get(), d.m, d.n, a, d.m, static_cast<float*>(workspace),
+            d.lwork, ipiv, info)));
         a += d.m * d.n;
         ipiv += std::min(d.m, d.n);
         ++info;
       }
       break;
     }
-    case CusolverType::F64: {
+    case SolverType::F64: {
       double* a = static_cast<double*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnDgetrf(handle.get(), d.m, d.n, a, d.m,
-                             static_cast<double*>(workspace), ipiv, info)));
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnDgetrf(
+            handle.get(), d.m, d.n, a, d.m, static_cast<double*>(workspace),
+            d.lwork, ipiv, info)));
         a += d.m * d.n;
         ipiv += std::min(d.m, d.n);
         ++info;
       }
       break;
     }
-    case CusolverType::C64: {
-      cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+    case SolverType::C64: {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnCgetrf(handle.get(), d.m, d.n, a, d.m,
-                             static_cast<cuComplex*>(workspace), ipiv, info)));
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCgetrf(
+            handle.get(), d.m, d.n, a, d.m, static_cast<gpuComplex*>(workspace),
+            d.lwork, ipiv, info)));
         a += d.m * d.n;
         ipiv += std::min(d.m, d.n);
         ++info;
       }
       break;
     }
-    case CusolverType::C128: {
-      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+    case SolverType::C128: {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZgetrf(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZgetrf(
             handle.get(), d.m, d.n, a, d.m,
-            static_cast<cuDoubleComplex*>(workspace), ipiv, info)));
+            static_cast<gpuDoubleComplex*>(workspace), d.lwork, ipiv, info)));
         a += d.m * d.n;
         ipiv += std::min(d.m, d.n);
         ++info;
@@ -256,7 +269,7 @@ static absl::Status Getrf_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
+void Getrf(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Getrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -267,7 +280,7 @@ void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
 
 // geqrf: QR decomposition
 
-static absl::Status Geqrf_(cudaStream_t stream, void** buffers,
+static absl::Status Geqrf_(gpuStream_t stream, void** buffers,
                            const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -276,62 +289,62 @@ static absl::Status Geqrf_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
         buffers[1], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+        SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
             static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
+        gpuMemcpyDeviceToDevice, stream)));
   }
 
   int* info = static_cast<int*>(buffers[3]);
   void* workspace = buffers[4];
   switch (d.type) {
-    case CusolverType::F32: {
+    case SolverType::F32: {
       float* a = static_cast<float*>(buffers[1]);
       float* tau = static_cast<float*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnSgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
-                             static_cast<float*>(workspace), d.lwork, info)));
+            gpusolverDnSgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
+                              static_cast<float*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += std::min(d.m, d.n);
         ++info;
       }
       break;
     }
-    case CusolverType::F64: {
+    case SolverType::F64: {
       double* a = static_cast<double*>(buffers[1]);
       double* tau = static_cast<double*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnDgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
-                             static_cast<double*>(workspace), d.lwork, info)));
+            gpusolverDnDgeqrf(handle.get(), d.m, d.n, a, d.m, tau,
+                              static_cast<double*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += std::min(d.m, d.n);
         ++info;
       }
       break;
     }
-    case CusolverType::C64: {
-      cuComplex* a = static_cast<cuComplex*>(buffers[1]);
-      cuComplex* tau = static_cast<cuComplex*>(buffers[2]);
+    case SolverType::C64: {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
+      gpuComplex* tau = static_cast<gpuComplex*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCgeqrf(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCgeqrf(
             handle.get(), d.m, d.n, a, d.m, tau,
-            static_cast<cuComplex*>(workspace), d.lwork, info)));
+            static_cast<gpuComplex*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += std::min(d.m, d.n);
         ++info;
       }
       break;
     }
-    case CusolverType::C128: {
-      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
-      cuDoubleComplex* tau = static_cast<cuDoubleComplex*>(buffers[2]);
+    case SolverType::C128: {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
+      gpuDoubleComplex* tau = static_cast<gpuDoubleComplex*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZgeqrf(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZgeqrf(
             handle.get(), d.m, d.n, a, d.m, tau,
-            static_cast<cuDoubleComplex*>(workspace), d.lwork, info)));
+            static_cast<gpuDoubleComplex*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += std::min(d.m, d.n);
         ++info;
@@ -342,7 +355,7 @@ static absl::Status Geqrf_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
+void Geqrf(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Geqrf_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -351,9 +364,11 @@ void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+#ifdef JAX_GPU_CUDA
+
 // csrlsvqr: Linear system solve via Sparse QR
 
-static absl::Status Csrlsvqr_(cudaStream_t stream, void** buffers,
+static absl::Status Csrlsvqr_(gpuStream_t stream, void** buffers,
                               const char* opaque, size_t opaque_len,
                               int& singularity) {
   auto s = UnpackDescriptor<CsrlsvqrDescriptor>(opaque, opaque_len);
@@ -373,7 +388,7 @@ static absl::Status Csrlsvqr_(cudaStream_t stream, void** buffers,
       cusparseSetMatIndexBase(matdesc, CUSPARSE_INDEX_BASE_ZERO)));
 
   switch (d.type) {
-    case CusolverType::F32: {
+    case SolverType::F32: {
       float* csrValA = static_cast<float*>(buffers[0]);
       int* csrRowPtrA = static_cast<int*>(buffers[1]);
       int* csrColIndA = static_cast<int*>(buffers[2]);
@@ -381,12 +396,12 @@ static absl::Status Csrlsvqr_(cudaStream_t stream, void** buffers,
       float* x = static_cast<float*>(buffers[4]);
 
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpScsrlsvqr(
-          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
-          b, (float)d.tol, d.reorder, x, &singularity)));
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA, b,
+          (float)d.tol, d.reorder, x, &singularity)));
 
       break;
     }
-    case CusolverType::F64: {
+    case SolverType::F64: {
       double* csrValA = static_cast<double*>(buffers[0]);
       int* csrRowPtrA = static_cast<int*>(buffers[1]);
       int* csrColIndA = static_cast<int*>(buffers[2]);
@@ -394,34 +409,34 @@ static absl::Status Csrlsvqr_(cudaStream_t stream, void** buffers,
       double* x = static_cast<double*>(buffers[4]);
 
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpDcsrlsvqr(
-          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
-          b, d.tol, d.reorder, x, &singularity)));
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA, b,
+          d.tol, d.reorder, x, &singularity)));
 
       break;
     }
-    case CusolverType::C64: {
-      cuComplex* csrValA = static_cast<cuComplex*>(buffers[0]);
+    case SolverType::C64: {
+      gpuComplex* csrValA = static_cast<gpuComplex*>(buffers[0]);
       int* csrRowPtrA = static_cast<int*>(buffers[1]);
       int* csrColIndA = static_cast<int*>(buffers[2]);
-      cuComplex* b = static_cast<cuComplex*>(buffers[3]);
-      cuComplex* x = static_cast<cuComplex*>(buffers[4]);
+      gpuComplex* b = static_cast<gpuComplex*>(buffers[3]);
+      gpuComplex* x = static_cast<gpuComplex*>(buffers[4]);
 
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpCcsrlsvqr(
-          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
-          b, (float)d.tol, d.reorder, x, &singularity)));
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA, b,
+          (float)d.tol, d.reorder, x, &singularity)));
 
       break;
     }
-    case CusolverType::C128: {
-      cuDoubleComplex* csrValA = static_cast<cuDoubleComplex*>(buffers[0]);
+    case SolverType::C128: {
+      gpuDoubleComplex* csrValA = static_cast<gpuDoubleComplex*>(buffers[0]);
       int* csrRowPtrA = static_cast<int*>(buffers[1]);
       int* csrColIndA = static_cast<int*>(buffers[2]);
-      cuDoubleComplex* b = static_cast<cuDoubleComplex*>(buffers[3]);
-      cuDoubleComplex* x = static_cast<cuDoubleComplex*>(buffers[4]);
+      gpuDoubleComplex* b = static_cast<gpuDoubleComplex*>(buffers[3]);
+      gpuDoubleComplex* x = static_cast<gpuDoubleComplex*>(buffers[4]);
 
       JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverSpZcsrlsvqr(
-          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA,
-          b, (float)d.tol, d.reorder, x, &singularity)));
+          handle.get(), d.n, d.nnz, matdesc, csrValA, csrRowPtrA, csrColIndA, b,
+          (float)d.tol, d.reorder, x, &singularity)));
 
       break;
     }
@@ -431,7 +446,7 @@ static absl::Status Csrlsvqr_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Csrlsvqr(cudaStream_t stream, void** buffers, const char* opaque,
+void Csrlsvqr(gpuStream_t stream, void** buffers, const char* opaque,
               size_t opaque_len, XlaCustomCallStatus* status) {
   // Is >= 0 if A is singular.
   int singularity = -1;
@@ -448,9 +463,11 @@ void Csrlsvqr(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+#endif  // JAX_GPU_CUDA
+
 // orgqr/ungqr: apply elementary Householder transformations
 
-static absl::Status Orgqr_(cudaStream_t stream, void** buffers,
+static absl::Status Orgqr_(gpuStream_t stream, void** buffers,
                            const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -459,62 +476,62 @@ static absl::Status Orgqr_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[2] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
         buffers[2], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+        SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
             static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
+        gpuMemcpyDeviceToDevice, stream)));
   }
 
   int* info = static_cast<int*>(buffers[3]);
   void* workspace = buffers[4];
   switch (d.type) {
-    case CusolverType::F32: {
+    case SolverType::F32: {
       float* a = static_cast<float*>(buffers[2]);
       float* tau = static_cast<float*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnSorgqr(handle.get(), d.m, d.n, d.k, a, d.m, tau,
-                             static_cast<float*>(workspace), d.lwork, info)));
+            gpusolverDnSorgqr(handle.get(), d.m, d.n, d.k, a, d.m, tau,
+                              static_cast<float*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += d.k;
         ++info;
       }
       break;
     }
-    case CusolverType::F64: {
+    case SolverType::F64: {
       double* a = static_cast<double*>(buffers[2]);
       double* tau = static_cast<double*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnDorgqr(handle.get(), d.m, d.n, d.k, a, d.m, tau,
-                             static_cast<double*>(workspace), d.lwork, info)));
+            gpusolverDnDorgqr(handle.get(), d.m, d.n, d.k, a, d.m, tau,
+                              static_cast<double*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += d.k;
         ++info;
       }
       break;
     }
-    case CusolverType::C64: {
-      cuComplex* a = static_cast<cuComplex*>(buffers[2]);
-      cuComplex* tau = static_cast<cuComplex*>(buffers[1]);
+    case SolverType::C64: {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[2]);
+      gpuComplex* tau = static_cast<gpuComplex*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCungqr(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCungqr(
             handle.get(), d.m, d.n, d.k, a, d.m, tau,
-            static_cast<cuComplex*>(workspace), d.lwork, info)));
+            static_cast<gpuComplex*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += d.k;
         ++info;
       }
       break;
     }
-    case CusolverType::C128: {
-      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[2]);
-      cuDoubleComplex* tau = static_cast<cuDoubleComplex*>(buffers[1]);
+    case SolverType::C128: {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[2]);
+      gpuDoubleComplex* tau = static_cast<gpuDoubleComplex*>(buffers[1]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZungqr(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZungqr(
             handle.get(), d.m, d.n, d.k, a, d.m, tau,
-            static_cast<cuDoubleComplex*>(workspace), d.lwork, info)));
+            static_cast<gpuDoubleComplex*>(workspace), d.lwork, info)));
         a += d.m * d.n;
         tau += d.k;
         ++info;
@@ -525,7 +542,7 @@ static absl::Status Orgqr_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
+void Orgqr(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Orgqr_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -536,7 +553,7 @@ void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
 
 // Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
 
-static absl::Status Syevd_(cudaStream_t stream, void** buffers,
+static absl::Status Syevd_(gpuStream_t stream, void** buffers,
                            const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SyevdDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -544,61 +561,61 @@ static absl::Status Syevd_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
       buffers[1], buffers[0],
-      SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+      SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
           static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
-      cudaMemcpyDeviceToDevice, stream)));
-  cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_VECTOR;
+      gpuMemcpyDeviceToDevice, stream)));
+  gpusolverEigMode_t jobz = GPUSOLVER_EIG_MODE_VECTOR;
   int* info = static_cast<int*>(buffers[3]);
   void* work = buffers[4];
   switch (d.type) {
-    case CusolverType::F32: {
+    case SolverType::F32: {
       float* a = static_cast<float*>(buffers[1]);
       float* w = static_cast<float*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnSsyevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-                             static_cast<float*>(work), d.lwork, info)));
+            gpusolverDnSsyevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+                              static_cast<float*>(work), d.lwork, info)));
         a += d.n * d.n;
         w += d.n;
         ++info;
       }
       break;
     }
-    case CusolverType::F64: {
+    case SolverType::F64: {
       double* a = static_cast<double*>(buffers[1]);
       double* w = static_cast<double*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnDsyevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-                             static_cast<double*>(work), d.lwork, info)));
+            gpusolverDnDsyevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+                              static_cast<double*>(work), d.lwork, info)));
         a += d.n * d.n;
         w += d.n;
         ++info;
       }
       break;
     }
-    case CusolverType::C64: {
-      cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+    case SolverType::C64: {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
       float* w = static_cast<float*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnCheevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-                             static_cast<cuComplex*>(work), d.lwork, info)));
+            gpusolverDnCheevd(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+                              static_cast<gpuComplex*>(work), d.lwork, info)));
         a += d.n * d.n;
         w += d.n;
         ++info;
       }
       break;
     }
-    case CusolverType::C128: {
-      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+    case SolverType::C128: {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
       double* w = static_cast<double*>(buffers[2]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZheevd(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZheevd(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-            static_cast<cuDoubleComplex*>(work), d.lwork, info)));
+            static_cast<gpuDoubleComplex*>(work), d.lwork, info)));
         a += d.n * d.n;
         w += d.n;
         ++info;
@@ -609,7 +626,7 @@ static absl::Status Syevd_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Syevd(cudaStream_t stream, void** buffers, const char* opaque,
+void Syevd(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Syevd_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -621,7 +638,7 @@ void Syevd(cudaStream_t stream, void** buffers, const char* opaque,
 // Symmetric (Hermitian) eigendecomposition, Jacobi algorithm: syevj/heevj
 // Supports batches of matrices up to size 32.
 
-absl::Status Syevj_(cudaStream_t stream, void** buffers, const char* opaque,
+absl::Status Syevj_(gpuStream_t stream, void** buffers, const char* opaque,
                     size_t opaque_len) {
   auto s = UnpackDescriptor<SyevjDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -630,88 +647,88 @@ absl::Status Syevj_(cudaStream_t stream, void** buffers, const char* opaque,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
   if (buffers[1] != buffers[0]) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
         buffers[1], buffers[0],
-        SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+        SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
             static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.n),
-        cudaMemcpyDeviceToDevice, stream)));
+        gpuMemcpyDeviceToDevice, stream)));
   }
-  syevjInfo_t params;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCreateSyevjInfo(&params)));
-  std::unique_ptr<syevjInfo, void (*)(syevjInfo*)> params_cleanup(
-      params, [](syevjInfo* p) { cusolverDnDestroySyevjInfo(p); });
+  gpuSyevjInfo_t params;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCreateSyevjInfo(&params)));
+  std::unique_ptr<gpuSyevjInfo, void (*)(gpuSyevjInfo_t)> params_cleanup(
+      params, [](gpuSyevjInfo_t p) { gpusolverDnDestroySyevjInfo(p); });
 
-  cusolverEigMode_t jobz = CUSOLVER_EIG_MODE_VECTOR;
+  gpusolverEigMode_t jobz = GPUSOLVER_EIG_MODE_VECTOR;
   int* info = static_cast<int*>(buffers[3]);
   void* work = buffers[4];
   if (d.batch == 1) {
     switch (d.type) {
-      case CusolverType::F32: {
+      case SolverType::F32: {
         float* a = static_cast<float*>(buffers[1]);
         float* w = static_cast<float*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSsyevj(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSsyevj(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
             static_cast<float*>(work), d.lwork, info, params)));
         break;
       }
-      case CusolverType::F64: {
+      case SolverType::F64: {
         double* a = static_cast<double*>(buffers[1]);
         double* w = static_cast<double*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnDsyevj(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnDsyevj(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
             static_cast<double*>(work), d.lwork, info, params)));
         break;
       }
-      case CusolverType::C64: {
-        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+      case SolverType::C64: {
+        gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
         float* w = static_cast<float*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCheevj(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCheevj(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-            static_cast<cuComplex*>(work), d.lwork, info, params)));
+            static_cast<gpuComplex*>(work), d.lwork, info, params)));
         break;
       }
-      case CusolverType::C128: {
-        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+      case SolverType::C128: {
+        gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
         double* w = static_cast<double*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZheevj(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZheevj(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-            static_cast<cuDoubleComplex*>(work), d.lwork, info, params)));
+            static_cast<gpuDoubleComplex*>(work), d.lwork, info, params)));
         break;
       }
     }
   } else {
     switch (d.type) {
-      case CusolverType::F32: {
+      case SolverType::F32: {
         float* a = static_cast<float*>(buffers[1]);
         float* w = static_cast<float*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSsyevjBatched(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSsyevjBatched(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
             static_cast<float*>(work), d.lwork, info, params, d.batch)));
         break;
       }
-      case CusolverType::F64: {
+      case SolverType::F64: {
         double* a = static_cast<double*>(buffers[1]);
         double* w = static_cast<double*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnDsyevjBatched(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnDsyevjBatched(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
             static_cast<double*>(work), d.lwork, info, params, d.batch)));
         break;
       }
-      case CusolverType::C64: {
-        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+      case SolverType::C64: {
+        gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
         float* w = static_cast<float*>(buffers[2]);
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCheevjBatched(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCheevjBatched(
             handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-            static_cast<cuComplex*>(work), d.lwork, info, params, d.batch)));
+            static_cast<gpuComplex*>(work), d.lwork, info, params, d.batch)));
         break;
       }
-      case CusolverType::C128: {
-        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+      case SolverType::C128: {
+        gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
         double* w = static_cast<double*>(buffers[2]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-            cusolverDnZheevjBatched(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
-                                    static_cast<cuDoubleComplex*>(work),
-                                    d.lwork, info, params, d.batch)));
+            gpusolverDnZheevjBatched(handle.get(), jobz, d.uplo, d.n, a, d.n, w,
+                                     static_cast<gpuDoubleComplex*>(work),
+                                     d.lwork, info, params, d.batch)));
         break;
       }
     }
@@ -719,7 +736,7 @@ absl::Status Syevj_(cudaStream_t stream, void** buffers, const char* opaque,
   return absl::OkStatus();
 }
 
-void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
+void Syevj(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Syevj_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -730,7 +747,7 @@ void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
 
 // Singular value decomposition using QR algorithm: gesvd
 
-static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
+static absl::Status Gesvd_(gpuStream_t stream, void** buffers,
                            const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -738,22 +755,22 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
       buffers[1], buffers[0],
-      SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+      SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
           static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-      cudaMemcpyDeviceToDevice, stream)));
+      gpuMemcpyDeviceToDevice, stream)));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   int64_t k = d.jobu == 'A' ? d.m : d.n;
   switch (d.type) {
-    case CusolverType::F32: {
+    case SolverType::F32: {
       float* a = static_cast<float*>(buffers[1]);
       float* s = static_cast<float*>(buffers[2]);
       float* u = static_cast<float*>(buffers[3]);
       float* vt = static_cast<float*>(buffers[4]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSgesvd(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSgesvd(
             handle.get(), d.jobu, d.jobvt, d.m, d.n, a, d.m, s, u, d.m, vt, d.n,
             static_cast<float*>(work), d.lwork,
             /*rwork=*/nullptr, info)));
@@ -765,13 +782,13 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
       }
       break;
     }
-    case CusolverType::F64: {
+    case SolverType::F64: {
       double* a = static_cast<double*>(buffers[1]);
       double* s = static_cast<double*>(buffers[2]);
       double* u = static_cast<double*>(buffers[3]);
       double* vt = static_cast<double*>(buffers[4]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnDgesvd(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnDgesvd(
             handle.get(), d.jobu, d.jobvt, d.m, d.n, a, d.m, s, u, d.m, vt, d.n,
             static_cast<double*>(work), d.lwork,
             /*rwork=*/nullptr, info)));
@@ -783,15 +800,15 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
       }
       break;
     }
-    case CusolverType::C64: {
-      cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+    case SolverType::C64: {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
       float* s = static_cast<float*>(buffers[2]);
-      cuComplex* u = static_cast<cuComplex*>(buffers[3]);
-      cuComplex* vt = static_cast<cuComplex*>(buffers[4]);
+      gpuComplex* u = static_cast<gpuComplex*>(buffers[3]);
+      gpuComplex* vt = static_cast<gpuComplex*>(buffers[4]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCgesvd(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnCgesvd(
             handle.get(), d.jobu, d.jobvt, d.m, d.n, a, d.m, s, u, d.m, vt, d.n,
-            static_cast<cuComplex*>(work), d.lwork, /*rwork=*/nullptr, info)));
+            static_cast<gpuComplex*>(work), d.lwork, /*rwork=*/nullptr, info)));
         a += d.m * d.n;
         s += std::min(d.m, d.n);
         u += d.m * k;
@@ -800,15 +817,15 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
       }
       break;
     }
-    case CusolverType::C128: {
-      cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+    case SolverType::C128: {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
       double* s = static_cast<double*>(buffers[2]);
-      cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
-      cuDoubleComplex* vt = static_cast<cuDoubleComplex*>(buffers[4]);
+      gpuDoubleComplex* u = static_cast<gpuDoubleComplex*>(buffers[3]);
+      gpuDoubleComplex* vt = static_cast<gpuDoubleComplex*>(buffers[4]);
       for (int i = 0; i < d.batch; ++i) {
-        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZgesvd(
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZgesvd(
             handle.get(), d.jobu, d.jobvt, d.m, d.n, a, d.m, s, u, d.m, vt, d.n,
-            static_cast<cuDoubleComplex*>(work), d.lwork,
+            static_cast<gpuDoubleComplex*>(work), d.lwork,
             /*rwork=*/nullptr, info)));
         a += d.m * d.n;
         s += std::min(d.m, d.n);
@@ -822,7 +839,7 @@ static absl::Status Gesvd_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
+void Gesvd(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Gesvd_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -831,9 +848,11 @@ void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+#ifdef JAX_GPU_CUDA
+
 // Singular value decomposition using Jacobi algorithm: gesvdj
 
-static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
+static absl::Status Gesvdj_(gpuStream_t stream, void** buffers,
                             const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<GesvdjDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -841,11 +860,11 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
   auto h = SolverHandlePool::Borrow(stream);
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cudaMemcpyAsync(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
       buffers[1], buffers[0],
-      SizeOfCusolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+      SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
           static_cast<std::int64_t>(d.m) * static_cast<std::int64_t>(d.n),
-      cudaMemcpyDeviceToDevice, stream)));
+      gpuMemcpyDeviceToDevice, stream)));
   int* info = static_cast<int*>(buffers[5]);
   void* work = buffers[6];
   gesvdjInfo_t params;
@@ -854,50 +873,50 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
       params, [](gesvdjInfo* p) { cusolverDnDestroyGesvdjInfo(p); });
   if (d.batch == 1) {
     switch (d.type) {
-      case CusolverType::F32: {
+      case SolverType::F32: {
         float* a = static_cast<float*>(buffers[1]);
         float* s = static_cast<float*>(buffers[2]);
         float* u = static_cast<float*>(buffers[3]);
         float* v = static_cast<float*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnSgesvdj(
-            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
-            d.n, static_cast<float*>(work), d.lwork, info, params)));
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<float*>(work), d.lwork, info, params)));
         break;
       }
-      case CusolverType::F64: {
+      case SolverType::F64: {
         double* a = static_cast<double*>(buffers[1]);
         double* s = static_cast<double*>(buffers[2]);
         double* u = static_cast<double*>(buffers[3]);
         double* v = static_cast<double*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnDgesvdj(
-            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
-            d.n, static_cast<double*>(work), d.lwork, info, params)));
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<double*>(work), d.lwork, info, params)));
         break;
       }
-      case CusolverType::C64: {
-        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+      case SolverType::C64: {
+        gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
         float* s = static_cast<float*>(buffers[2]);
-        cuComplex* u = static_cast<cuComplex*>(buffers[3]);
-        cuComplex* v = static_cast<cuComplex*>(buffers[4]);
+        gpuComplex* u = static_cast<gpuComplex*>(buffers[3]);
+        gpuComplex* v = static_cast<gpuComplex*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCgesvdj(
-            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
-            d.n, static_cast<cuComplex*>(work), d.lwork, info, params)));
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<gpuComplex*>(work), d.lwork, info, params)));
         break;
       }
-      case CusolverType::C128: {
-        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+      case SolverType::C128: {
+        gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
         double* s = static_cast<double*>(buffers[2]);
-        cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
-        cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
+        gpuDoubleComplex* u = static_cast<gpuDoubleComplex*>(buffers[3]);
+        gpuDoubleComplex* v = static_cast<gpuDoubleComplex*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZgesvdj(
-            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v,
-            d.n, static_cast<cuDoubleComplex*>(work), d.lwork, info, params)));
+            handle.get(), d.jobz, d.econ, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
+            static_cast<gpuDoubleComplex*>(work), d.lwork, info, params)));
         break;
       }
     }
   } else {
     switch (d.type) {
-      case CusolverType::F32: {
+      case SolverType::F32: {
         float* a = static_cast<float*>(buffers[1]);
         float* s = static_cast<float*>(buffers[2]);
         float* u = static_cast<float*>(buffers[3]);
@@ -907,7 +926,7 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
             static_cast<float*>(work), d.lwork, info, params, d.batch)));
         break;
       }
-      case CusolverType::F64: {
+      case SolverType::F64: {
         double* a = static_cast<double*>(buffers[1]);
         double* s = static_cast<double*>(buffers[2]);
         double* u = static_cast<double*>(buffers[3]);
@@ -917,24 +936,24 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
             static_cast<double*>(work), d.lwork, info, params, d.batch)));
         break;
       }
-      case CusolverType::C64: {
-        cuComplex* a = static_cast<cuComplex*>(buffers[1]);
+      case SolverType::C64: {
+        gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
         float* s = static_cast<float*>(buffers[2]);
-        cuComplex* u = static_cast<cuComplex*>(buffers[3]);
-        cuComplex* v = static_cast<cuComplex*>(buffers[4]);
+        gpuComplex* u = static_cast<gpuComplex*>(buffers[3]);
+        gpuComplex* v = static_cast<gpuComplex*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnCgesvdjBatched(
             handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
-            static_cast<cuComplex*>(work), d.lwork, info, params, d.batch)));
+            static_cast<gpuComplex*>(work), d.lwork, info, params, d.batch)));
         break;
       }
-      case CusolverType::C128: {
-        cuDoubleComplex* a = static_cast<cuDoubleComplex*>(buffers[1]);
+      case SolverType::C128: {
+        gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
         double* s = static_cast<double*>(buffers[2]);
-        cuDoubleComplex* u = static_cast<cuDoubleComplex*>(buffers[3]);
-        cuDoubleComplex* v = static_cast<cuDoubleComplex*>(buffers[4]);
+        gpuDoubleComplex* u = static_cast<gpuDoubleComplex*>(buffers[3]);
+        gpuDoubleComplex* v = static_cast<gpuDoubleComplex*>(buffers[4]);
         JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusolverDnZgesvdjBatched(
             handle.get(), d.jobz, d.m, d.n, a, d.m, s, u, d.m, v, d.n,
-            static_cast<cuDoubleComplex*>(work), d.lwork, info, params,
+            static_cast<gpuDoubleComplex*>(work), d.lwork, info, params,
             d.batch)));
         break;
       }
@@ -943,7 +962,7 @@ static absl::Status Gesvdj_(cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
+void Gesvdj(gpuStream_t stream, void** buffers, const char* opaque,
             size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = Gesvdj_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -952,4 +971,7 @@ void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
   }
 }
 
+#endif  // JAX_GPU_CUDA
+
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

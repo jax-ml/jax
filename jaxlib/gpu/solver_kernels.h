@@ -17,28 +17,36 @@ limitations under the License.
 #define JAXLIB_CUSOLVER_KERNELS_H_
 
 #include "absl/status/statusor.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusolverDn.h"
-#include "third_party/gpus/cuda/include/cusolverSp.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
+#ifdef JAX_GPU_CUDA
+#include "third_party/gpus/cuda/include/cusolverSp.h"
+#endif  // JAX_GPU_CUDA
+
 namespace jax {
 
-using SolverHandlePool = HandlePool<cusolverDnHandle_t, cudaStream_t>;
-using SpSolverHandlePool = HandlePool<cusolverSpHandle_t, cudaStream_t>;
+using SolverHandlePool = HandlePool<gpusolverDnHandle_t, gpuStream_t>;
 
 template <>
 absl::StatusOr<SolverHandlePool::Handle> SolverHandlePool::Borrow(
-    cudaStream_t stream);
+    gpuStream_t stream);
+
+#ifdef JAX_GPU_CUDA
+
+using SpSolverHandlePool = HandlePool<cusolverSpHandle_t, gpuStream_t>;
 
 template <>
 absl::StatusOr<SpSolverHandlePool::Handle> SpSolverHandlePool::Borrow(
-    cudaStream_t stream);
+    gpuStream_t stream);
+
+#endif  // JAX_GPU_CUDA
+
+namespace JAX_GPU_NAMESPACE {
 
 // Set of types known to Cusolver.
-enum class CusolverType {
+enum class SolverType {
   F32,
   F64,
   C64,
@@ -48,105 +56,114 @@ enum class CusolverType {
 // potrf: Cholesky decomposition
 
 struct PotrfDescriptor {
-  CusolverType type;
-  cublasFillMode_t uplo;
+  SolverType type;
+  gpusolverFillMode_t uplo;
   std::int64_t batch, n;
   int lwork;
 };
 
-void Potrf(cudaStream_t stream, void** buffers, const char* opaque,
+void Potrf(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 // getrf: LU decomposition
 
 struct GetrfDescriptor {
-  CusolverType type;
-  int batch, m, n;
+  SolverType type;
+  int batch, m, n, lwork;
 };
 
-void Getrf(cudaStream_t stream, void** buffers, const char* opaque,
+void Getrf(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 
 // geqrf: QR decomposition
 
 struct GeqrfDescriptor {
-  CusolverType type;
+  SolverType type;
   int batch, m, n, lwork;
 };
 
-void Geqrf(cudaStream_t stream, void** buffers, const char* opaque,
+void Geqrf(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
+
+#ifdef JAX_GPU_CUDA
 
 // csrlsvpr: Linear system solve via Sparse QR
 
 struct CsrlsvqrDescriptor {
-  CusolverType type;
+  SolverType type;
   int n, nnz, reorder;
   double tol;
 };
 
-void Csrlsvqr(cudaStream_t stream, void** buffers, const char* opaque,
+void Csrlsvqr(gpuStream_t stream, void** buffers, const char* opaque,
               size_t opaque_len, XlaCustomCallStatus* status);
+
+#endif  // JAX_GPU_CUDA
 
 // orgqr/ungqr: apply elementary Householder transformations
 
 struct OrgqrDescriptor {
-  CusolverType type;
+  SolverType type;
   int batch, m, n, k, lwork;
 };
 
-void Orgqr(cudaStream_t stream, void** buffers, const char* opaque,
+void Orgqr(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 
 // Symmetric (Hermitian) eigendecomposition, QR algorithm: syevd/heevd
 
 struct SyevdDescriptor {
-  CusolverType type;
-  cublasFillMode_t uplo;
+  SolverType type;
+  gpusolverFillMode_t uplo;
   int batch, n;
   int lwork;
 };
 
-void Syevd(cudaStream_t stream, void** buffers, const char* opaque,
+void Syevd(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 
 // Symmetric (Hermitian) eigendecomposition, Jacobi algorithm: syevj/heevj
 // Supports batches of matrices up to size 32.
 
 struct SyevjDescriptor {
-  CusolverType type;
-  cublasFillMode_t uplo;
+  SolverType type;
+  gpusolverFillMode_t uplo;
   int batch, n;
   int lwork;
 };
 
-void Syevj(cudaStream_t stream, void** buffers, const char* opaque,
+void Syevj(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 
 // Singular value decomposition using QR algorithm: gesvd
 
 struct GesvdDescriptor {
-  CusolverType type;
+  SolverType type;
   int batch, m, n;
   int lwork;
   signed char jobu, jobvt;
 };
 
-void Gesvd(cudaStream_t stream, void** buffers, const char* opaque,
+void Gesvd(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
+
+#ifdef JAX_GPU_CUDA
 
 // Singular value decomposition using Jacobi algorithm: gesvdj
 
 struct GesvdjDescriptor {
-  CusolverType type;
+  SolverType type;
   int batch, m, n;
   int lwork;
-  cusolverEigMode_t jobz;
+  gpusolverEigMode_t jobz;
   int econ;
 };
 
-void Gesvdj(cudaStream_t stream, void** buffers, const char* opaque,
+void Gesvdj(gpuStream_t stream, void** buffers, const char* opaque,
             size_t opaque_len, XlaCustomCallStatus* status);
 
+#endif  // JAX_GPU_CUDA
+
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 
 #endif  // JAXLIB_CUSOLVER_KERNELS_H_

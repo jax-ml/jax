@@ -1,4 +1,4 @@
-/* Copyright 2021 The JAX Authors.
+/* Copyright 2019 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,31 +13,32 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/rocm/hip_prng_kernels.h"
-
-#include "jaxlib/rocm/hip_gpu_kernel_helpers.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/pybind11.h"
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 namespace {
 
-std::string BuildHipThreeFry2x32Descriptor(std::int64_t n) {
+std::string BuildThreeFry2x32Descriptor(std::int64_t n) {
   return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
 }
 pybind11::dict Registrations() {
   pybind11::dict dict;
-  dict["hip_threefry2x32"] = EncapsulateFunction(HipThreeFry2x32);
+  dict[JAX_GPU_PREFIX "_threefry2x32"] = EncapsulateFunction(ThreeFry2x32);
   return dict;
 }
 
-PYBIND11_MODULE(_hip_prng, m) {
+PYBIND11_MODULE(_prng, m) {
   m.def("registrations", &Registrations);
   m.def("threefry2x32_descriptor", [](std::int64_t n) {
-    std::string result = BuildHipThreeFry2x32Descriptor(n);
+    std::string result = BuildThreeFry2x32Descriptor(n);
     return pybind11::bytes(result);
   });
 }
 
 }  // namespace
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

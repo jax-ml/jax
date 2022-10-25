@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cuda/cusparse_kernels.h"
+#include "jaxlib/gpu/sparse_kernels.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -24,60 +24,46 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
-#include "third_party/gpus/cuda/include/cuComplex.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#if JAX_CUDA_11080
-#include "third_party/gpus/cuda/include/cuda_fp8.h"
-#endif
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusparse.h"
-#include "jaxlib/cuda/cuda_gpu_kernel_helpers.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_helpers.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
-
-// cuSPARSE generic APIs are not supported on Windows until 11.0
-// cusparseIndexType_t is used in very limited scope so manually define will
-// workaround compiling issue without harm.
-#if defined(_WIN32) && (CUSPARSE_VERSION < 11000)
-typedef enum {
-  CUSPARSE_INDEX_16U = 1,
-  CUSPARSE_INDEX_32I = 2,
-  CUSPARSE_INDEX_64I = 3
-} cusparseIndexType_t;
-#endif
 
 namespace jax {
 
 template <>
 /*static*/ absl::StatusOr<SparseHandlePool::Handle> SparseHandlePool::Borrow(
-    cudaStream_t stream) {
+    gpuStream_t stream) {
   SparseHandlePool* pool = Instance();
   absl::MutexLock lock(&pool->mu_);
-  cusparseHandle_t handle;
+  gpusparseHandle_t handle;
   if (pool->handles_[stream].empty()) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreate(&handle)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreate(&handle)));
   } else {
     handle = pool->handles_[stream].back();
     pool->handles_[stream].pop_back();
   }
   if (stream) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSetStream(handle, stream)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSetStream(handle, stream)));
   }
   return Handle(pool, handle, stream);
 }
 
-CudaConst CudaZero(cudaDataType type) {
-  CudaConst c;
+namespace JAX_GPU_NAMESPACE {
+
+SparseConst ConstZero(gpuDataType type) {
+  SparseConst c;
   std::memset(&c, 0, sizeof(c));
   return c;
 }
 
-CudaConst CudaOne(cudaDataType type) {
-  CudaConst c;
+SparseConst ConstOne(gpuDataType type) {
+  SparseConst c;
   std::memset(&c, 0, sizeof(c));
   switch (type) {
-#if JAX_CUSPARSE_11300
+#ifdef JAX_GPU_CUDA
+#if JAX_GPU_HAVE_SPARSE
     // TODO(jakevdp): 4I/4U here might break on big endian platforms.
     case CUDA_R_4I:
     case CUDA_C_4I:
@@ -86,7 +72,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_8I:
       c.i8[0] = 1;
       break;
-#if JAX_CUSPARSE_11300
+#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_4U:
     case CUDA_C_4U:
 #endif
@@ -94,7 +80,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_8U:
       c.u8[0] = 1;
       break;
-#if JAX_CUSPARSE_11300
+#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_16I:
     case CUDA_C_16I:
       c.i16[0] = 1;
@@ -112,7 +98,7 @@ CudaConst CudaOne(cudaDataType type) {
     case CUDA_C_32U:
       c.u32[0] = 1;
       break;
-#if JAX_CUSPARSE_11300
+#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_64I:
     case CUDA_C_64I:
       c.i64[0] = 1;
@@ -130,33 +116,36 @@ CudaConst CudaOne(cudaDataType type) {
       c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E5M2);
       break;
 #endif
-    // TODO(jakevdp): 16F/16BF here might break on big endian platforms.
-    case CUDA_R_16F:
-    case CUDA_C_16F:
-      c.u16[0] = 0b11110000000000;  // 1.0 in little-endian float16
-      break;
-#if JAX_CUSPARSE_11300
+#if JAX_GPU_HAVE_SPARSE
     case CUDA_R_16BF:
     case CUDA_C_16BF:
       c.u16[0] = 0b11111110000000;  // 1.0 in little-endian bfloat16
       break;
 #endif
-    case CUDA_R_32F:
-    case CUDA_C_32F:
+#endif  // JAX_GPU_CUDA
+    // TODO(rocm): add more data types if new rocm supports them.
+
+    // TODO(jakevdp): 16F/16BF here might break on big endian platforms.
+    case GPU_R_16F:
+    case GPU_C_16F:
+      c.u16[0] = 0b11110000000000;  // 1.0 in little-endian float16
+      break;
+    case GPU_R_32F:
+    case GPU_C_32F:
       c.f32[0] = 1.0;
       break;
-    case CUDA_R_64F:
-    case CUDA_C_64F:
+    case GPU_R_64F:
+    case GPU_C_64F:
       c.f64[0] = 1.0;
       break;
   }
   return c;
 }
 
-#if JAX_CUSPARSE_11300
+#if JAX_GPU_HAVE_SPARSE
 // CsrToDense: Convert CSR matrix to dense matrix
 
-static absl::Status CsrToDense_(cudaStream_t stream, void** buffers,
+static absl::Status CsrToDense_(gpuStream_t stream, void** buffers,
                                 const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -165,28 +154,28 @@ static absl::Status CsrToDense_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cusparseSpMatDescr_t mat_a = 0;
-  cusparseDnMatDescr_t mat_b = 0;
+  gpusparseSpMatDescr_t mat_a = 0;
+  gpusparseDnMatDescr_t mat_b = 0;
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
-                        /*csrRowOffsets=*/buffers[2],
-                        /*csrColInd=*/buffers[1],
-                        /*csrValues=*/buffers[0], d.index_type, d.index_type,
-                        CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      gpusparseCreateCsr(&mat_a, d.rows, d.cols, d.nnz,
+                         /*csrRowOffsets=*/buffers[2],
+                         /*csrColInd=*/buffers[1],
+                         /*csrValues=*/buffers[0], d.index_type, d.index_type,
+                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_b, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[3], d.value_type, CUSPARSE_ORDER_ROW)));
+      /*ld=*/d.cols, buffers[3], d.value_type, GPUSPARSE_ORDER_ROW)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseSparseToDense(handle.get(), mat_a, mat_b,
-                            CUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
+      gpusparseSparseToDense(handle.get(), mat_a, mat_b,
+                             GPUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
   return absl::OkStatus();
 }
 
-void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrToDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -197,7 +186,7 @@ void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CsrFromDense: Convert dense matrix to CSR matrix
 
-static absl::Status CsrFromDense_(cudaStream_t stream, void** buffers,
+static absl::Status CsrFromDense_(gpuStream_t stream, void** buffers,
                                   const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -206,29 +195,29 @@ static absl::Status CsrFromDense_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cusparseDnMatDescr_t mat_a = 0;
-  cusparseSpMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+  gpusparseDnMatDescr_t mat_a = 0;
+  gpusparseSpMatDescr_t mat_b = 0;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_a, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[0], d.value_type, CUSPARSE_ORDER_ROW)));
+      /*ld=*/d.cols, buffers[0], d.value_type, GPUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
-                        /*csrRowOffsets=*/buffers[3],
-                        /*csrColInd=*/buffers[2],
-                        /*csrValues=*/buffers[1], d.index_type, d.index_type,
-                        CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_analysis(
-      handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
+      gpusparseCreateCsr(&mat_b, d.rows, d.cols, d.nnz,
+                         /*csrRowOffsets=*/buffers[3],
+                         /*csrColInd=*/buffers[2],
+                         /*csrValues=*/buffers[1], d.index_type, d.index_type,
+                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_analysis(
+      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
       buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_convert(
-      handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_convert(
+      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
       buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
   return absl::OkStatus();
 }
 
-void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrFromDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -239,7 +228,7 @@ void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CsrMatvec: Product of CSR matrix and dense vector.
 
-static absl::Status CsrMatvec_(cudaStream_t stream, void** buffers,
+static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
                                const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CsrMatvecDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -259,33 +248,33 @@ static absl::Status CsrMatvec_(cudaStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  CudaConst alpha = CudaOne(d.y.type);
-  CudaConst beta = CudaZero(d.y.type);
+  SparseConst alpha = ConstOne(d.y.type);
+  SparseConst beta = ConstZero(d.y.type);
 
-  cusparseSpMatDescr_t mat_a = 0;
-  cusparseDnVecDescr_t vec_x = 0;
-  cusparseDnVecDescr_t vec_y = 0;
+  gpusparseSpMatDescr_t mat_a = 0;
+  gpusparseDnVecDescr_t vec_x = 0;
+  gpusparseDnVecDescr_t vec_y = 0;
+
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
+      &mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets, csr_col_ind,
+      csr_values, d.A.index_type, d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO,
+      d.A.value_type)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseCreateCsr(&mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets,
-                        csr_col_ind, csr_values, d.A.index_type, d.A.index_type,
-                        CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
+      gpusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
+                    d.y.type, GPUSPARSE_MV_ALG_DEFAULT, buf)));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                   d.y.type, CUSPARSE_MV_ALG_DEFAULT, buf)));
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_y)));
   return absl::OkStatus();
 }
 
-void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrMatvec(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrMatvec_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -296,7 +285,7 @@ void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CsrMatmat: Product of CSR matrix and dense matrix.
 
-static absl::Status CsrMatmat_(cudaStream_t stream, void** buffers,
+static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
                                const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CsrMatmatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -316,34 +305,34 @@ static absl::Status CsrMatmat_(cudaStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  CudaConst alpha = CudaOne(d.C.type);
-  CudaConst beta = CudaZero(d.C.type);
+  SparseConst alpha = ConstOne(d.C.type);
+  SparseConst beta = ConstZero(d.C.type);
 
-  cusparseSpMatDescr_t mat_a = 0;
-  cusparseDnMatDescr_t mat_b = 0;
-  cusparseDnMatDescr_t mat_c = 0;
+  gpusparseSpMatDescr_t mat_a = 0;
+  gpusparseDnMatDescr_t mat_b = 0;
+  gpusparseDnMatDescr_t mat_c = 0;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseCreateCsr(&mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets,
-                        csr_col_ind, csr_values, d.A.index_type, d.A.index_type,
-                        CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCsr(
+      &mat_a, d.A.rows, d.A.cols, d.A.nnz, csr_row_offsets, csr_col_ind,
+      csr_values, d.A.index_type, d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO,
+      d.A.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_b, d.B.rows, d.B.cols,
-      /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      /*ld=*/d.B.cols, Bbuf, d.B.type, GPUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_c, d.C.rows, d.C.cols,
-      /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
-      handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf)));
+      /*ld=*/d.C.cols, Cbuf, d.C.type, GPUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM(
+      handle.get(), d.op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_ALG_DEFAULT, buf)));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_c)));
   return absl::OkStatus();
 }
 
-void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrMatmat(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CsrMatmat_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -354,7 +343,7 @@ void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CooToDense: Convert COO matrix to dense matrix
 
-static absl::Status CooToDense_(cudaStream_t stream, void** buffers,
+static absl::Status CooToDense_(gpuStream_t stream, void** buffers,
                                 const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -363,28 +352,28 @@ static absl::Status CooToDense_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cusparseSpMatDescr_t mat_a = 0;
-  cusparseDnMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz,
-                                      /*cooRowInd=*/buffers[1],
-                                      /*cooColInd=*/buffers[2],
-                                      /*cooValues=*/buffers[0], d.index_type,
-                                      CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+  gpusparseSpMatDescr_t mat_a = 0;
+  gpusparseDnMatDescr_t mat_b = 0;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      gpusparseCreateCoo(&mat_a, d.rows, d.cols, d.nnz,
+                         /*cooRowInd=*/buffers[1],
+                         /*cooColInd=*/buffers[2],
+                         /*cooValues=*/buffers[0], d.index_type,
+                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_b, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[3], d.value_type, CUSPARSE_ORDER_ROW)));
+      /*ld=*/d.cols, buffers[3], d.value_type, GPUSPARSE_ORDER_ROW)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseSparseToDense(handle.get(), mat_a, mat_b,
-                            CUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
+      gpusparseSparseToDense(handle.get(), mat_a, mat_b,
+                             GPUSPARSE_SPARSETODENSE_ALG_DEFAULT, buffers[4])));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
   return absl::OkStatus();
 }
 
-void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CooToDense(gpuStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooToDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -395,7 +384,7 @@ void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CooFromDense: Convert dense matrix to COO matrix
 
-static absl::Status CooFromDense_(cudaStream_t stream, void** buffers,
+static absl::Status CooFromDense_(gpuStream_t stream, void** buffers,
                                   const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<SparseMatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -404,29 +393,29 @@ static absl::Status CooFromDense_(cudaStream_t stream, void** buffers,
   JAX_RETURN_IF_ERROR(h.status());
   auto& handle = *h;
 
-  cusparseDnMatDescr_t mat_a = 0;
-  cusparseSpMatDescr_t mat_b = 0;
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+  gpusparseDnMatDescr_t mat_a = 0;
+  gpusparseSpMatDescr_t mat_b = 0;
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_a, d.rows, d.cols,
-      /*ld=*/d.cols, buffers[0], d.value_type, CUSPARSE_ORDER_ROW)));
-  JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz,
-                                      /*cooRowInd=*/buffers[2],
-                                      /*cooColInd=*/buffers[3],
-                                      /*cooValues=*/buffers[1], d.index_type,
-                                      CUSPARSE_INDEX_BASE_ZERO, d.value_type)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_analysis(
-      handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
+      /*ld=*/d.cols, buffers[0], d.value_type, GPUSPARSE_ORDER_ROW)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+      gpusparseCreateCoo(&mat_b, d.rows, d.cols, d.nnz,
+                         /*cooRowInd=*/buffers[2],
+                         /*cooColInd=*/buffers[3],
+                         /*cooValues=*/buffers[1], d.index_type,
+                         GPUSPARSE_INDEX_BASE_ZERO, d.value_type)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_analysis(
+      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
       buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDenseToSparse_convert(
-      handle.get(), mat_a, mat_b, CUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDenseToSparse_convert(
+      handle.get(), mat_a, mat_b, GPUSPARSE_DENSETOSPARSE_ALG_DEFAULT,
       buffers[4])));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_b)));
   return absl::OkStatus();
 }
 
-void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CooFromDense(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooFromDense_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -437,7 +426,7 @@ void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CooMatvec: Product of COO matrix and dense vector.
 
-static absl::Status CooMatvec_(cudaStream_t stream, void** buffers,
+static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
                                const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CooMatvecDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -457,32 +446,32 @@ static absl::Status CooMatvec_(cudaStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  CudaConst alpha = CudaOne(d.y.type);
-  CudaConst beta = CudaZero(d.y.type);
+  SparseConst alpha = ConstOne(d.y.type);
+  SparseConst beta = ConstZero(d.y.type);
 
-  cusparseSpMatDescr_t mat_a = 0;
-  cusparseDnVecDescr_t vec_x = 0;
-  cusparseDnVecDescr_t vec_y = 0;
+  gpusparseSpMatDescr_t mat_a = 0;
+  gpusparseDnVecDescr_t vec_x = 0;
+  gpusparseDnVecDescr_t vec_y = 0;
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
-      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+      d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
+      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_x, d.x.size, xbuf, d.x.type)));
   JAX_RETURN_IF_ERROR(
-      JAX_AS_STATUS(cusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
+      JAX_AS_STATUS(gpusparseCreateDnVec(&vec_y, d.y.size, ybuf, d.y.type)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-      cusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                   d.y.type, CUSPARSE_MV_ALG_DEFAULT, buf)));
+      gpusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
+                    d.y.type, GPUSPARSE_MV_ALG_DEFAULT, buf)));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_x)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnVec(vec_y)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_y)));
   return absl::OkStatus();
 }
 
-void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
+void CooMatvec(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooMatvec_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -493,7 +482,7 @@ void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
 
 // CooMatmat: Product of COO matrix and dense matrix.
 
-static absl::Status CooMatmat_(cudaStream_t stream, void** buffers,
+static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
                                const char* opaque, size_t opaque_len) {
   auto s = UnpackDescriptor<CooMatmatDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
@@ -513,43 +502,42 @@ static absl::Status CooMatmat_(cudaStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  CudaConst alpha = CudaOne(d.C.type);
-  CudaConst beta = CudaZero(d.C.type);
+  SparseConst alpha = ConstOne(d.C.type);
+  SparseConst beta = ConstZero(d.C.type);
 
-  cusparseSpMatDescr_t mat_a = 0;
-  cusparseDnMatDescr_t mat_b = 0;
-  cusparseDnMatDescr_t mat_c = 0;
+  gpusparseSpMatDescr_t mat_a = 0;
+  gpusparseDnMatDescr_t mat_b = 0;
+  gpusparseDnMatDescr_t mat_c = 0;
 
-
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateCoo(
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateCoo(
       &mat_a, d.A.rows, d.A.cols, d.A.nnz, coo_row_ind, coo_col_ind, coo_values,
-      d.A.index_type, CUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
+      d.A.index_type, GPUSPARSE_INDEX_BASE_ZERO, d.A.value_type)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-    cusparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
-                               /*batchStride=*/d.A.batch_stride)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      gpusparseCooSetStridedBatch(mat_a, /*batchCount=*/d.A.batch_count,
+                                  /*batchStride=*/d.A.batch_stride)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_b, d.B.rows, d.B.cols,
-      /*ld=*/d.B.cols, Bbuf, d.B.type, CUSPARSE_ORDER_ROW)));
+      /*ld=*/d.B.cols, Bbuf, d.B.type, GPUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-    cusparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
-                                 /*batchStride=*/d.B.batch_stride)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseCreateDnMat(
+      gpusparseDnMatSetStridedBatch(mat_b, /*batchCount=*/d.B.batch_count,
+                                    /*batchStride=*/d.B.batch_stride)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseCreateDnMat(
       &mat_c, d.C.rows, d.C.cols,
-      /*ld=*/d.C.cols, Cbuf, d.C.type, CUSPARSE_ORDER_ROW)));
+      /*ld=*/d.C.cols, Cbuf, d.C.type, GPUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-    cusparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
-                                 /*batchStride=*/d.C.batch_stride)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseSpMM(
-      handle.get(), d.op_A, /*opB=*/CUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, CUSPARSE_SPMM_ALG_DEFAULT, buf)));
+      gpusparseDnMatSetStridedBatch(mat_c, /*batchCount=*/d.C.batch_count,
+                                    /*batchStride=*/d.C.batch_stride)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM(
+      handle.get(), d.op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
+      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_ALG_DEFAULT, buf)));
 
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroySpMat(mat_a)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_b)));
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(cusparseDestroyDnMat(mat_c)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_c)));
   return absl::OkStatus();
 }
 
-void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
+void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status) {
   auto s = CooMatmat_(stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
@@ -557,10 +545,10 @@ void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
                                   s.message().length());
   }
 }
-#endif  // if JAX_CUSPARSE_11300
+#endif  // if JAX_GPU_HAVE_SPARSE
 
 template <typename T, typename F>
-static absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
+static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
                           const char* opaque, std::size_t opaque_len) {
   auto h = SparseHandlePool::Borrow();
   JAX_RETURN_IF_ERROR(h.status());
@@ -589,7 +577,7 @@ static absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
   if (X != B) {
     size_t B_bytes = ldb * n * sizeof(T);
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
-        cudaMemcpyAsync(X, B, B_bytes, cudaMemcpyDeviceToDevice, stream)));
+        gpuMemcpyAsync(X, B, B_bytes, gpuMemcpyDeviceToDevice, stream)));
   }
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
@@ -597,22 +585,23 @@ static absl::Status gtsv2(F computeGtsv2, cudaStream_t stream, void** buffers,
   return absl::OkStatus();
 }
 
-void gtsv2_f32(cudaStream_t stream, void** buffers, const char* opaque,
+void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = gtsv2<float>(cusparseSgtsv2, stream, buffers, opaque, opaque_len);
+  auto s = gtsv2<float>(gpusparseSgtsv2, stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
     XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
                                   s.message().length());
   }
 }
 
-void gtsv2_f64(cudaStream_t stream, void** buffers, const char* opaque,
+void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status) {
-  auto s = gtsv2<double>(cusparseDgtsv2, stream, buffers, opaque, opaque_len);
+  auto s = gtsv2<double>(gpusparseDgtsv2, stream, buffers, opaque, opaque_len);
   if (!s.ok()) {
     XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
                                   s.message().length());
   }
 }
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

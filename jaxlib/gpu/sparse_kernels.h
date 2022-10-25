@@ -13,8 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_CUSPARSE_KERNELS_H_
-#define JAXLIB_CUSPARSE_KERNELS_H_
+#ifndef JAXLIB_GPU_SPARSE_KERNELS_H_
+#define JAXLIB_GPU_SPARSE_KERNELS_H_
 
 #include <algorithm>
 #include <cstdint>
@@ -23,27 +23,21 @@ limitations under the License.
 #include <vector>
 
 #include "absl/status/statusor.h"
-#include "third_party/gpus/cuda/include/cuComplex.h"
-#include "third_party/gpus/cuda/include/cuda.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusparse.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
-// Some functionality defined here is only available in CUSPARSE 11.3 or newer.
-#define JAX_CUSPARSE_11300 (CUSPARSE_VERSION >= 11300)
-// CUDA-11.8 introduces FP8 E4M3/E5M2 types.
-#define JAX_CUDA_11080 (CUDA_VERSION >= 11080)
-
 namespace jax {
 
-using SparseHandlePool = HandlePool<cusparseHandle_t, cudaStream_t>;
+using SparseHandlePool = HandlePool<gpusparseHandle_t, gpuStream_t>;
 
 template <>
 /*static*/ absl::StatusOr<SparseHandlePool::Handle> SparseHandlePool::Borrow(
-    cudaStream_t stream);
+    gpuStream_t stream);
 
-union CudaConst {
+namespace JAX_GPU_NAMESPACE {
+
+union SparseConst {
   int8_t i8[2];
   int16_t i16[2];
   int32_t i32[2];
@@ -56,38 +50,38 @@ union CudaConst {
   double f64[2];
 };
 
-CudaConst CudaZero(cudaDataType type);
-CudaConst CudaOne(cudaDataType type);
+SparseConst ConstZero(gpuDataType type);
+SparseConst ConstOne(gpuDataType type);
 
 struct SparseMatDescriptor {
-  cudaDataType value_type;
-  cusparseIndexType_t index_type;
+  gpuDataType value_type;
+  gpusparseIndexType_t index_type;
   int rows, cols, nnz;
   int batch_count = 1;
   int batch_stride = 0;
 };
 
 struct DenseMatDescriptor {
-  cudaDataType type;
+  gpuDataType type;
   int rows, cols;
   int batch_count = 1;
   int batch_stride = 0;
 };
 
 struct DenseVecDescriptor {
-  cudaDataType type;
+  gpuDataType type;
   int size;
 };
 
-#if JAX_CUSPARSE_11300
+#if JAX_GPU_HAVE_SPARSE
 // CsrToDense: Convert CSR matrix to dense matrix
 
-void CsrToDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrToDense(gpuStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status);
 
 // CsrFromDense: Convert dense matrix to CSR matrix
 
-void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrFromDense(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status);
 
 // CsrMatvec: Product of CSR matrix and dense vector.
@@ -95,10 +89,10 @@ void CsrFromDense(cudaStream_t stream, void** buffers, const char* opaque,
 struct CsrMatvecDescriptor {
   SparseMatDescriptor A;
   DenseVecDescriptor x, y;
-  cusparseOperation_t op;
+  gpusparseOperation_t op;
 };
 
-void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrMatvec(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status);
 
 // CsrMatmat: Product of CSR matrix and dense matrix.
@@ -106,20 +100,20 @@ void CsrMatvec(cudaStream_t stream, void** buffers, const char* opaque,
 struct CsrMatmatDescriptor {
   SparseMatDescriptor A;
   DenseMatDescriptor B, C;
-  cusparseOperation_t op_A;
+  gpusparseOperation_t op_A;
 };
 
-void CsrMatmat(cudaStream_t stream, void** buffers, const char* opaque,
+void CsrMatmat(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status);
 
 // CooToDense: Convert COO matrix to dense matrix
 
-void CooToDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CooToDense(gpuStream_t stream, void** buffers, const char* opaque,
                 size_t opaque_len, XlaCustomCallStatus* status);
 
 // CooFromDense: Convert dense matrix to COO matrix
 
-void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
+void CooFromDense(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status);
 
 // CooMatvec: Product of COO matrix and dense vector.
@@ -127,10 +121,10 @@ void CooFromDense(cudaStream_t stream, void** buffers, const char* opaque,
 struct CooMatvecDescriptor {
   SparseMatDescriptor A;
   DenseVecDescriptor x, y;
-  cusparseOperation_t op;
+  gpusparseOperation_t op;
 };
 
-void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
+void CooMatvec(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status);
 
 // CooMatmat: Product of COO matrix and dense matrix.
@@ -138,23 +132,24 @@ void CooMatvec(cudaStream_t stream, void** buffers, const char* opaque,
 struct CooMatmatDescriptor {
   SparseMatDescriptor A;
   DenseMatDescriptor B, C;
-  cusparseOperation_t op_A;
+  gpusparseOperation_t op_A;
 };
 
-void CooMatmat(cudaStream_t stream, void** buffers, const char* opaque,
+void CooMatmat(gpuStream_t stream, void** buffers, const char* opaque,
                size_t opaque_len, XlaCustomCallStatus* status);
-#endif  // if JAX_CUSPARSE_11300
+#endif  // JAX_GPU_HAVE_SPARSE
 
 struct Gtsv2Descriptor {
   int m, n, ldb;
 };
 
-void gtsv2_f32(cudaStream_t stream, void** buffers, const char* opaque,
+void gtsv2_f32(gpuStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status);
 
-void gtsv2_f64(cudaStream_t stream, void** buffers, const char* opaque,
+void gtsv2_f64(gpuStream_t stream, void** buffers, const char* opaque,
                std::size_t opaque_len, XlaCustomCallStatus* status);
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 
-#endif  // JAXLIB_CUSPARSE_KERNELS_H_
+#endif  // JAXLIB_GPU_SPARSE_KERNELS_H_

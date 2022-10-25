@@ -13,19 +13,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_CUDA_GPU_KERNEL_HELPERS_H_
-#define JAXLIB_CUDA_GPU_KERNEL_HELPERS_H_
+#ifndef JAXLIB_GPU_GPU_KERNEL_HELPERS_H_
+#define JAXLIB_GPU_GPU_KERNEL_HELPERS_H_
 
 #include <memory>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "third_party/gpus/cuda/include/cublas_v2.h"
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
-#include "third_party/gpus/cuda/include/cusolverDn.h"
-#include "third_party/gpus/cuda/include/cusparse.h"
+#include "jaxlib/gpu/vendor.h"
 
-#define JAX_AS_STATUS(expr) jax::AsStatus(expr, __FILE__, __LINE__, #expr)
+#define JAX_AS_STATUS(expr) \
+  jax::JAX_GPU_NAMESPACE::AsStatus(expr, __FILE__, __LINE__, #expr)
 
 #define JAX_THROW_IF_ERROR(expr)                                           \
   {                                                                        \
@@ -40,27 +38,29 @@ limitations under the License.
   }
 
 namespace jax {
+namespace JAX_GPU_NAMESPACE {
 
 // Used via JAX_AS_STATUS(expr) macro.
-absl::Status AsStatus(cudaError_t error, const char* file, std::int64_t line,
+absl::Status AsStatus(gpuError_t error, const char* file, std::int64_t line,
                       const char* expr);
-absl::Status AsStatus(cusolverStatus_t status, const char* file,
+absl::Status AsStatus(gpusolverStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
-absl::Status AsStatus(cusparseStatus_t status, const char* file,
+absl::Status AsStatus(gpusparseStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
-absl::Status AsStatus(cublasStatus_t status, const char* file,
+absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream
 // synchronization) until the copy enqueued by MakeBatchPointers on `stream`
 // completes.
-absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(cudaStream_t stream,
+absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(gpuStream_t stream,
                                                            void* buffer,
                                                            void* dev_ptrs,
                                                            int batch,
                                                            int batch_elem_size);
 
+}  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 
-#endif  // JAXLIB_CUDA_GPU_KERNEL_HELPERS_H_
+#endif  // JAXLIB_GPU_GPU_KERNEL_HELPERS_H_
