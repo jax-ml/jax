@@ -13,6 +13,7 @@
 # limitations under the License.
 """Microbenchmarks for JAX `api` functions."""
 
+import enum
 import functools
 import operator
 
@@ -25,6 +26,7 @@ from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
 from jax._src.lib import xla_client as xc
+from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax._src import array
 from jax._src import sharding
@@ -47,9 +49,14 @@ def required_devices(num_devices_required):
     return helper2
   return helper1
 
+
 def swap(a, b):
   return b, a
 
+
+class AnEnum(enum.IntEnum):
+  A = 123
+  B = 456
 
 @google_benchmark.register
 def eager_unary_dispatch(state):
@@ -553,6 +560,30 @@ def bench_shaped_abstractify(state):
   args = [jax.device_put_replicated(1, [device])] * 1000
   while state:
     _ = [shaped_abstractify(x) for x in args]
+
+
+def _run_benchmark_for_xla_abstractify(arg, state):
+  while state:
+    xla.abstractify(arg)
+
+def bench_xla_abstractify():
+  _abstractify_args = [
+      (3, 'scalar_int'),
+      (3.5, 'scalar_float'),
+      (np.int32(3), 'scalar_numpy_int32'),
+      (np.uint32(7), 'scalar_numpy_uint32'),
+      (np.random.randn(3, 4, 5, 6), 'numpy_random'),
+      (np.arange(100, dtype=np.float32), 'numpy_arange_100_float32'),
+      (AnEnum.B, 'enum'),
+  ]
+  benchmarks = []
+  for a, name in _abstractify_args:
+    benchmarks.extend([
+        google_benchmark.register(
+            partial(_run_benchmark_for_xla_abstractify, a),
+            name=f'bench_xla_abstractify_{name}'),
+    ])
+bench_xla_abstractify()
 
 
 @google_benchmark.register
