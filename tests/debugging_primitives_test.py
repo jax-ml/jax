@@ -1164,6 +1164,9 @@ class InspectShardingTest(jtu.JaxTestCase):
     if jaxlib.xla_extension_version < 94:
       raise unittest.SkipTest("Inspect sharding not supported.")
 
+    if jtu.is_cloud_tpu():
+      raise unittest.SkipTest("Inspect sharding is not supported on libtpu.")
+
     is_called = False
     def _cb(sd):
       nonlocal is_called

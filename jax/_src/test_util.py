@@ -255,6 +255,9 @@ def is_device_rocm():
 def is_device_cuda():
   return xla_bridge.get_backend().platform_version.startswith('cuda')
 
+def is_cloud_tpu():
+  return 'libtpu' in xla_bridge.get_backend().platform_version
+
 def is_device_tpu_v4():
   return jax.devices()[0].device_kind == "TPU v4"
 

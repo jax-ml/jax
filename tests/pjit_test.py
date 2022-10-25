@@ -1096,6 +1096,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     if xla_extension_version < 95:
       raise unittest.SkipTest('Must support custom partitioning.')
 
+    if jtu.is_cloud_tpu():
+      raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
+
     def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
       self.assertEqual(arg_shardings[0], result_sharding)
       self.assertEqual(P(('x',)), result_sharding.spec)
