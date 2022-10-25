@@ -3214,6 +3214,7 @@ def _get_op_sharding_shardings_from_executable(
   # TODO(b/245667823): Remove this when XLA fixes this.
   if len(out_shardings_xla) == 1 and len(out_shardings_xla) < num_out_avals:
     out_shardings_xla = out_shardings_xla * num_out_avals
+  assert len(out_shardings_xla) == len(num_out_avals)
   return in_shardings_xla, out_shardings_xla
 
 

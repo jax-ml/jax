@@ -1245,10 +1245,18 @@ def _pjit_partial_eval(trace, *in_tracers,
             _allow_propagation_to_outputs=True,
             _allow_compile_replicated=False)
     da = compiled._device_assignment
-    _, out_op_shardings = _get_op_sharding_from_executable(compiled.xla_executable)
+    _, out_op_sharding_shardings = pxla._get_op_sharding_shardings_from_executable(
+        compiled.xla_executable, da, len(known_jaxpr.in_avals),
+        len(known_jaxpr.out_avals))
+    assert len(out_op_sharding_shardings) == len(known_jaxpr.out_avals), (
+        len(out_op_shardings), len(known_jaxpr.out_avals))
+    out_op_shardings = [o._to_xla_op_sharding(a.ndim) for o, a in
+                        safe_zip(out_op_sharding_shardings, known_jaxpr.out_avals)]
     residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
   else:
     residual_op_shardings = ()
+  assert len(residual_shardings) == len(residual_op_shardings), (
+      len(residual_shardings), len(residual_op_shardings))
   residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
   known_params['out_shardings'] = (
       keep_where(out_shardings, known_outs) + residual_shardings)
