@@ -92,12 +92,12 @@ setup(
 
         # CUDA installations require adding jax releases URL; e.g.
         # Cuda installation defaulting to a CUDA and Cudnn version defined above.
-        # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
         'cuda': [f"jaxlib=={_current_jaxlib_version}+cuda{_default_cuda_version}.cudnn{_default_cudnn_version}"],
 
         # CUDA installations require adding jax releases URL; e.g.
-        # $ pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_releases.html
-        # $ pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_releases.html
+        # $ pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        # $ pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
         **{f'cuda{cuda_version}_cudnn{cudnn_version}': f"jaxlib=={_current_jaxlib_version}+cuda{cuda_version}.cudnn{cudnn_version}"
            for cuda_version in _available_cuda_versions for cudnn_version in _available_cudnn_versions}
     },
