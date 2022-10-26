@@ -181,6 +181,13 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testDefaultDeviceOrdering(self):
+    # Users rely on the fact that the default order of jax.devices() matches
+    # the default order of pmap for single-host jobs.
+    device_order = jax.devices()
+    pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
+    self.assertListEqual(device_order, pmap_sharding.devices.tolist())
+
   def testLowerCompile(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)

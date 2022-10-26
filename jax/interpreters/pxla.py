@@ -1538,11 +1538,10 @@ class PmapExecutable(stages.XlaExecutable):
                                     xb.device_count(pci.backend),
                                     replicas.num_global_replicas,
                                     parts.num_partitions))
-      # On a single host, we use the platform's default device assignment to
-      # potentially take advantage of device locality. On multiple hosts, the
-      # default device assignment may interleave different hosts' replicas,
-      # violating pmap's semantics where data is sharded across replicas in
-      # row-major order. Instead, manually create a device assignment that ensures
+      # On a single host, we simply grab the first N devices from jax.devices().
+      # In the single host case, we want the default device order of pmap to
+      # match jax.devices().
+      # On multiple hosts, we create a default device assignment that ensures
       # each host is responsible for a continguous set of replicas.
       if shards.num_global_shards > shards.num_local_shards:
         # TODO(skye): use a locality-aware assignment that satisfies the above
@@ -1550,8 +1549,7 @@ class PmapExecutable(stages.XlaExecutable):
         devices = [d for process_index in range(xb.process_count(pci.backend))
                   for d in xb.local_devices(process_index, pci.backend)]
       else:
-        devices = xb.get_backend(pci.backend).get_default_device_assignment(
-            replicas.num_global_replicas, parts.num_partitions)
+        devices = xb.local_devices(backend=pci.backend)[:shards.num_local_shards]
     else:
       if shards.num_local_shards != len(pci.local_devices):
         local_devices_str = ", ".join(map(str, pci.local_devices))
@@ -1577,7 +1575,7 @@ class PmapExecutable(stages.XlaExecutable):
     # get_default_device_assignment() returns 2D assignment, caller may have
     # provided 1D list of devices).
     # Convert to 2D in case it's 1D and we have > 1 partitions.
-    device_assignment = np.array(devices).reshape(
+    device_assignment: np.ndarray = np.array(devices).reshape(
         (replicas.num_global_replicas, parts.num_partitions))
     # TODO(b/162356737): Enabling SPMD partitioning causes issues with some
     # non-partitioned workloads, so disable unless needed.

@@ -7,14 +7,18 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## jax 0.3.24
+* Changes
   * JAX should be faster to import. We now import scipy lazily, which accounted
     for a significant fraction of JAX's import time.
   * Setting the env var `JAX_PERSISTENT_CACHE_MIN_INSTRUCTION_COUNT=$N` can be
     used to limit the number of cache entries written to the persistent
     cache. By default, computations with 6 or more instructions will be cached.
-  * Changes
     * Added {func}`jax.scipy.stats.mode`.
-  * Breaking Changes
+  * The default device order used by `pmap` on TPU if no order is specified now
+    matches `jax.devices()` for single-process jobs. Previously the
+    two orderings differed, which could lead to unnecessary copies or
+    out-of-memory errors. Requiring the orderings to agree simplifies matters.
+* Breaking Changes
     * {func}`jax.numpy.gradient` now behaves like most other functions in {mod}`jax.numpy`,
       and forbids passing lists or tuples in place of arrays ({jax-issue}`#12958`)
 
