@@ -431,19 +431,19 @@ It is acceptable to omit a named dimension from _all arguments and the result_ i
 ```{code-cell} ipython3
 :id: rQgkof6lyJps
 
-if False:  # TODO: Implement all necessary cases in xeinsum
-  def named_batch_matrix_single_matrix(
-      x: f32[(5,), {'b': 20, 'k': 7}],
-      y: f32[(), {'k': 7, 'm': 11}]) \
-        -> f32[(5,), {'b': 20, 'm': 11}]:
-    return jnp.einsum('n{b,k},{k,m}->n{b,m}', x, y)
+def named_batch_matrix_single_matrix(
+    x: f32[(5,), {'b': 20, 'k': 7}],
+    y: f32[(), {'k': 7, 'm': 11}]) \
+      -> f32[(5,), {'b': 20, 'm': 11}]:
+  return jnp.einsum('n{b,k},{k,m}->n{b,m}', x, y)
 
-  x = jnp.ones((20, 5, 7))
-  y = jnp.ones((7, 11))
-  z = jnp.einsum('bnk,km->bnm', x, y)
-  zx = xmap(named_batch_matrix_single_matrix,
-            in_axes=[{0: 'b', 2: 'k'}, ['k', 'm', ...]],
-            out_axes=['b', 'n', 'm', ...])(x, y)
+x = jnp.ones((20, 5, 7))
+y = jnp.ones((7, 11))
+z = jnp.einsum('bnk,km->bnm', x, y)
+zx = xmap(named_batch_matrix_single_matrix,
+          in_axes=[{0: 'b', 2: 'k'}, ['k', 'm', ...]],
+          out_axes={0: 'b', 2: 'm'})(x, y)
+np.testing.assert_allclose(z, zx)
 ```
 
 +++ {"id": "JuFg25Yro4kZ"}
