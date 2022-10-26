@@ -3018,6 +3018,8 @@ def _shard_value(val: TfVal,
                  aval: core.ShapedArray,
                  sd: sharding.XLACompatibleSharding) -> TfVal:
   """Apply sharding to a TfVal."""
+  if pxla._is_unspecified(sd):
+    return val
   sharding_proto: xla_client.OpSharding = cast(
       xla_client.OpSharding, sd._to_xla_op_sharding(aval.ndim))
 
