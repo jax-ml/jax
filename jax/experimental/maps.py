@@ -490,6 +490,16 @@ def xmap(fun: Callable,
       return name
     return r
 
+  axes_with_resources = set(axis_resources.keys())
+  if axes_with_resources - defined_names:
+    raise ValueError(f"All axes that were assigned resources have to appear in "
+                     f"in_axes or axis_sizes, but the following are missing: "
+                     f"{axes_with_resources - defined_names}")
+  if out_axes_names - defined_names:
+    raise ValueError(f"All axis names appearing in out_axes must also appear in "
+                     f"in_axes or axis_sizes, but the following are missing: "
+                     f"{out_axes_names - defined_names}")
+
   normalized_axis_resources: Dict[AxisName, Tuple[ResourceAxisName, ...]] = {}
   for axis in defined_names:
     resources = axis_resources.get(axis, ())
@@ -498,16 +508,6 @@ def xmap(fun: Callable,
     normalized_axis_resources[axis] = tuple(unsafe_map(normalize_resource, resources))
   frozen_axis_resources = FrozenDict(normalized_axis_resources)
   necessary_resources = set(it.chain(*frozen_axis_resources.values()))
-
-  axes_with_resources = set(frozen_axis_resources.keys())
-  if axes_with_resources > defined_names:
-    raise ValueError(f"All axes that were assigned resources have to appear in "
-                     f"in_axes or axis_sizes, but the following are missing: "
-                     f"{axes_with_resources - defined_names}")
-  if out_axes_names > defined_names:
-    raise ValueError(f"All axis names appearing in out_axes must also appear in "
-                     f"in_axes or axis_sizes, but the following are missing: "
-                     f"{out_axes_names - defined_names}")
 
   for axis, resources in frozen_axis_resources.items():
     if len(set(resources)) != len(resources):  # type: ignore
