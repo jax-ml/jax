@@ -19,6 +19,9 @@ Remember to align the itemized text with the first line of an item within a list
       and forbids passing lists or tuples in place of arrays ({jax-issue}`#12958`)
 
 ## jaxlib 0.3.24
+* Changes
+  * Buffer donation now works on CPU. This may break code that marked buffers
+    for donation on CPU but relied on donation not being implemented.
 
 ## jax 0.3.23 (Oct 12, 2022)
 * Changes

@@ -62,6 +62,7 @@ from jax._src import custom_derivatives
 from jax._src import device_array
 from jax._src import prng
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
@@ -411,8 +412,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
           "Some donated buffers were not usable:",
           str(w[-1].message))
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_invalidates_input(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     # We can't just use `lambda x: x` because JAX simplifies this away to an
     # empty XLA computation.
     move = self.jit(lambda x: x + x - x, donate_argnums=0)
@@ -421,31 +423,34 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
     self.assertEqual(y, 1.)
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_static_argnums(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     jit_fun = self.jit(
         lambda a, b, c, d: ((a + b + c), (a + b + d)),
         static_argnums=(0, 1),
         donate_argnums=(2, 3))
 
-    c = jax.device_put(jnp.array([1., 1.]))
-    d = jax.device_put(jnp.array([1., 1., 1.]))
+    c = jax.device_put(jnp.array([2., 2.]))
+    d = jax.device_put(jnp.array([1., 1., 1., 1.]))
     e, f = jit_fun(1, 2, c, d)
-    np.testing.assert_allclose(e, jnp.array([4., 4.]))
-    np.testing.assert_allclose(f, jnp.array([4., 4., 4.]))
+    np.testing.assert_allclose(e, jnp.array([5., 5.]))
+    np.testing.assert_allclose(f, jnp.array([4., 4., 4., 4.]))
     self.assertDeleted(c)
     self.assertDeleted(d)
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jit_donate_argnums_weak_type(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     # input has weak-type, output does not have weak-type
     move = self.jit(lambda x: x.astype(int), donate_argnums=0)
     x = jnp.broadcast_to(2, (3,))
     move(x)
     self.assertDeleted(x)
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_jnp_array_copy(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     # https://github.com/google/jax/issues/3412
 
     @partial(self.jit, donate_argnums=(0,))
@@ -1013,8 +1018,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f_exe = self.jit(f).lower(1., 1.).compile()
     self.assertAllClose(f_exe(1., 1.), 1.)
 
-  @jtu.skip_on_devices("cpu")   # no donation on cpu, so this would warn
   def test_jit_lower_donate_argnums_available(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     def f(*args):
       x, *_ = args
       return x + 4.
@@ -2582,9 +2588,10 @@ class APITest(jtu.JaxTestCase):
     f = lambda: jax.lax.psum(1, "i")
     api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
 
-  @jtu.skip_on_devices("cpu")
   @jtu.ignore_warning(message="Some donated buffers were not usable")
   def test_xla_computation_donate_argnums(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
 
   def test_xla_computation_lower_fun_axis_env(self):
@@ -9089,8 +9096,9 @@ class CustomApiTest(jtu.JaxTestCase):
 
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
-  @jtu.skip_on_devices("cpu")  # In/out aliasing not supported on CPU.
   def test_pmap_donate_argnums_invalidates_input(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     move = api.pmap(lambda x: x + x - x, donate_argnums=0)
     n = jax.local_device_count()
     x = api.pmap(lambda x: x)(jnp.ones([n]))

@@ -34,7 +34,7 @@ from jax import linear_util as lu
 from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
-from jax._src.lib import mlir_api_version
+from jax._src.lib import mlir_api_version, xla_extension_version
 from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -570,6 +570,12 @@ class LoweringResult(NamedTuple):
   host_callbacks: List[Any]
 
 
+if xla_extension_version >= 102:
+  _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
+else:
+  _platforms_with_donation = ["cuda", "rocm", "tpu"]
+
+
 def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
@@ -608,8 +614,7 @@ def lower_jaxpr_to_module(
         out_aval, = out_aval.dtype._rules.physical_avals(out_aval)
       out_avals.append(sharded_aval(out_aval, out_sharding))
 
-  platforms_with_donation = ("cuda", "rocm", "tpu")
-  if platform in platforms_with_donation:
+  if platform in _platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         in_avals, out_avals, donated_args)
   if any(eff not in lowerable_effects for eff in jaxpr.effects):
@@ -619,7 +624,7 @@ def lower_jaxpr_to_module(
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args)
                         if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
-    if platform not in platforms_with_donation:
+    if platform not in _platforms_with_donation:
       msg = f"Donation is not implemented for {platform}.\n{msg}"
     warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
 
