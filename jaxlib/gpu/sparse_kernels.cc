@@ -108,7 +108,7 @@ SparseConst ConstOne(gpuDataType type) {
       c.u64[0] = 1;
       break;
 #endif
-#if JAX_CUDA_11080
+#if JAX_GPU_HAVE_FP8
     case CUDA_R_8F_E4M3:
       c.u8[0] = __nv_cvt_float_to_fp8(1.0f, __NV_NOSAT, __NV_E4M3);
       break;
