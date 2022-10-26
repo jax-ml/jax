@@ -35,7 +35,6 @@ from jax._src import ad_util
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src.lib import mlir_api_version, xla_extension_version
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import mhlo
@@ -335,10 +334,7 @@ def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
   context = ir.Context()
   mhlo.register_mhlo_dialect(context)
-  if mlir_api_version < 33:
-    chlo.register_chlo_dialect(context)
-  else:
-    chlo.register_dialect(context)
+  chlo.register_dialect(context)
   return context
 
 
@@ -1554,9 +1550,6 @@ def emit_python_callback(
     ) -> Tuple[List[ir.Value], Any, Any]:
   """Emits MHLO that calls back to a provided Python function."""
   platform = ctx.module_context.platform
-  if platform in {"tpu"} and jaxlib_version < (0, 3, 15):
-    raise ValueError(
-        "`EmitPythonCallback` on TPU only supported on jaxlib >= 0.3.15")
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
         f"`EmitPythonCallback` not supported on {platform} backend.")

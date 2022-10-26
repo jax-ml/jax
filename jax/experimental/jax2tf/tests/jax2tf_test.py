@@ -27,7 +27,6 @@ from jax import ad_checkpoint
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
-from jax._src import lib as jaxlib
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 import jax._src.lib.xla_bridge
@@ -1239,8 +1238,6 @@ def get_serialized_computation(
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   mhlo_module = lowered.compiler_ir(dialect='mhlo')
   mhlo_module_text = mlir.module_to_string(mhlo_module)
-  if jaxlib.version <= (0, 3, 14):
-    mhlo_module_text = jax2tf.jax2tf._fixup_mhlo_module_text(mhlo_module_text)
   logging.info(f'Serialized ir.Module = {mhlo_module_text}')
   return mhlo_module_text
 

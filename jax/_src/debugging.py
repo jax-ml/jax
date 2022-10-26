@@ -34,7 +34,6 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax._src import ad_checkpoint
 from jax._src import custom_derivatives
-from jax._src import lib as jaxlib
 from jax._src import util
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
@@ -145,9 +144,8 @@ mlir.register_lowering(debug_callback_p, debug_callback_lowering,
                        platform="cpu")
 mlir.register_lowering(
     debug_callback_p, debug_callback_lowering, platform="gpu")
-if jaxlib.version >= (0, 3, 15):
-  mlir.register_lowering(
-      debug_callback_p, debug_callback_lowering, platform="tpu")
+mlir.register_lowering(
+    debug_callback_p, debug_callback_lowering, platform="tpu")
 
 def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # The default behavior for effectful primitives is to not stage them if
@@ -379,11 +377,10 @@ def inspect_sharding_infer_sharding_from_operands(arg_shapes, arg_shardings,
   del arg_shapes, shape, backend_string
   return arg_shardings[0]
 
-if jaxlib.xla_extension_version >= 95:
-  xc.register_custom_call_partitioner(  # pytype: disable=module-attr
-      _INSPECT_SHARDING_CALL_NAME, inspect_sharding_prop_user_sharding,
-      inspect_sharding_partition, inspect_sharding_infer_sharding_from_operands,
-      True)
+xc.register_custom_call_partitioner(  # pytype: disable=module-attr
+    _INSPECT_SHARDING_CALL_NAME, inspect_sharding_prop_user_sharding,
+    inspect_sharding_partition, inspect_sharding_infer_sharding_from_operands,
+    True)
 
 def _slice_to_chunk_idx(size: int, slc: slice) -> int:
   if slc.stop == slc.start == None:
@@ -525,9 +522,6 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
   ...
   MeshPspecSharding(mesh={'dev': 8}, partition_spec=PartitionSpec(('dev',),))
   """
-  if jaxlib.xla_extension_version < 94:
-    raise NotImplementedError("`inspect_array_sharding` not implemented. "
-                              "Please upgrade `jaxlib` to the latest version.")
   def _inspect(val):
     inspect_sharding_p.bind(val, callback=callback)
   tree_util.tree_map(_inspect, value)

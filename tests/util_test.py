@@ -16,11 +16,9 @@ from absl.testing import absltest
 
 from jax import linear_util as lu
 from jax._src import test_util as jtu
-import unittest
 
 from jax.config import config
 from jax._src.util import weakref_lru_cache
-from jax._src.lib import xla_extension_version
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
@@ -81,8 +79,6 @@ class UtilTest(jtu.JaxTestCase):
       example_cached_fn(stable_keys[i % len(stable_keys)])
       example_cached_fn(Key())
 
-  @unittest.skipIf(xla_extension_version < 95,
-                   "Test requires jaxlib 0.3.19 or newer")
   def test_weakref_lru_cache_asan_problem(self):
 
     @weakref_lru_cache

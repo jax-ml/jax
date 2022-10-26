@@ -308,25 +308,20 @@ class GlobalDeviceArray:
 
     # ShardedBuffer is the fast path for managing sharded buffers that avoids
     # creating python objects for every device.
-    if xb.use_sharded_buffer:
-      if isinstance(device_buffers, xc.ShardedBuffer):
-        # if ShardedBuffer is provided, we don't need to use `_device_buffers`
-        self._sharded_buffer = device_buffers  # type: ignore
-      elif isinstance(device_buffers[0], DeviceArray):  # type: ignore
-        # if xla_client.Buffer is provided, we convert it to ShardedBuffer.
-        self._sharded_buffer = xc.ShardedBuffer.create_sharded_buffer(device_buffers)
-      elif isinstance(device_buffers[0], ArrayImpl):
-        self._sharded_buffer = None
-        self._maybe_device_buffers = [db._arrays[0] for db in device_buffers]
-      else:
-        # if `device_buffers` is any other types that cannot
-        # be converted to ShardedBuffer, then we use `device_buffers`.
-        # TODO(yashkatariya,chky): Remove this branch once everyone is using
-        # sharded_buffer
-        self._sharded_buffer = None
-        self._maybe_device_buffers = device_buffers
+    if isinstance(device_buffers, xc.ShardedBuffer):
+      # if ShardedBuffer is provided, we don't need to use `_device_buffers`
+      self._sharded_buffer = device_buffers  # type: ignore
+    elif isinstance(device_buffers[0], DeviceArray):  # type: ignore
+      # if xla_client.Buffer is provided, we convert it to ShardedBuffer.
+      self._sharded_buffer = xc.ShardedBuffer.create_sharded_buffer(device_buffers)
+    elif isinstance(device_buffers[0], ArrayImpl):
+      self._sharded_buffer = None
+      self._maybe_device_buffers = [db._arrays[0] for db in device_buffers]
     else:
-      # TODO: Remove this after bumping the minimum jaxlib version.
+      # if `device_buffers` is any other types that cannot
+      # be converted to ShardedBuffer, then we use `device_buffers`.
+      # TODO(yashkatariya,chky): Remove this branch once everyone is using
+      # sharded_buffer
       self._sharded_buffer = None
       self._maybe_device_buffers = device_buffers
 
@@ -459,8 +454,7 @@ class GlobalDeviceArray:
 
   def block_until_ready(self):
     self._check_if_deleted()
-    # self._sharded_buffer can be None if xla_extension_version < 90 or
-    # _DeviceArray is used.
+    # self._sharded_buffer can be None if _DeviceArray is used.
     if self._sharded_buffer is None:
       for db in self._device_buffers:
         db.block_until_ready()
@@ -668,8 +662,7 @@ def _gda_shard_arg(x, devices, indices, mode):
   x._check_if_deleted()
   if mode == pxla.InputsHandlerMode.pmap:
     raise RuntimeError('GDA is not supported with pmap.')
-  # self._sharded_buffer can be None if xla_extension_version < 90 or
-  # _DeviceArray is used.
+  # self._sharded_buffer can be None if _DeviceArray is used.
   if x._sharded_buffer is None:
     return x._device_buffers
   return x._sharded_buffer

@@ -24,7 +24,6 @@ from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax._src import debugger
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
 import jax.numpy as jnp
@@ -54,17 +53,10 @@ def setUpModule():
 def tearDownModule():
   prev_xla_flags()
 
-# TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
-#                 version is >= 0.3.15
-disabled_backends = []
-if jaxlib.version < (0, 3, 15):
-  disabled_backends.append("tpu")
-
 foo = 2
 
 class CliDebuggerTest(jtu.JaxTestCase):
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_eof(self):
     stdin, stdout = make_fake_stdin_stdout([])
 
@@ -76,7 +68,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
       f(2.)
       jax.effects_barrier()
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_continue(self):
     stdin, stdout = make_fake_stdin_stdout(["c"])
 
@@ -91,7 +82,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     (jdb) """)
     self.assertEqual(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_print_value(self):
     stdin, stdout = make_fake_stdin_stdout(["p x", "c"])
 
@@ -111,7 +101,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_print_value_in_jit(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -131,7 +120,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_print_multiple_values(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -151,7 +139,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_print_context(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -177,7 +164,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     \(jdb\) """)
     self.assertRegex(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_print_backtrace(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -197,7 +183,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_can_work_with_multiple_stack_frames(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -239,7 +224,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_use_multiple_breakpoints(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -268,7 +252,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_works_with_vmap(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -301,7 +284,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_works_with_pmap(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -330,7 +312,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_works_with_pjit(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -360,7 +341,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
       jax.effects_barrier()
       self.assertRegex(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_uses_local_before_global_scope(self):
     stdin, stdout = make_fake_stdin_stdout(["p foo", "c"])
 
@@ -382,7 +362,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     self.assertRegex(stdout.getvalue(), expected)
 
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debugger_accesses_globals(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -401,7 +380,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_limit_num_frames(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')

@@ -21,7 +21,6 @@ from typing import Any, Callable, Sequence
 from jax import core
 from jax import tree_util
 from jax._src import dtypes
-from jax._src import lib as jaxlib
 from jax._src import util
 from jax._src import dispatch
 from jax.interpreters import ad
@@ -100,10 +99,6 @@ batching.primitive_batchers[pure_callback_p] = pure_callback_batching_rule
 
 
 def pure_callback_lowering(ctx, *args, callback, **params):
-
-  if ctx.module_context.platform == "TPU" and jaxlib.version < (0, 3, 15):
-    raise NotImplementedError("Pure callbacks on TPU not supported. "
-                              "Please upgrade to a jaxlib >= 0.3.15.")
 
   def _callback(*flat_args):
     return tuple(pure_callback_impl(*flat_args, callback=callback, **params))

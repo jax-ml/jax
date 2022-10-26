@@ -42,7 +42,6 @@ from jax._src.lax.lax import (
   DotDimensionNumbers)
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge
-from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.numpy.setops import _unique
 
@@ -922,7 +921,7 @@ def _bcoo_dot_general_gpu_lowering(
           n_sparse == 2 and rhs_aval.ndim == 2 and
           len(lhs_contract) == 1 and lhs_contract[0] in [1, 2] and
           len(rhs_contract) == 1 and rhs_contract[0] in [0, 1] and
-          cuda_version >= 11061 and jaxlib_version >= (0, 3, 18))
+          cuda_version >= 11061)
       if not cuda_supported_batch_mode:
         warnings.warn("bcoo_dot_general GPU lowering currently does not "
                       "support this batch-mode computation. Falling back to "

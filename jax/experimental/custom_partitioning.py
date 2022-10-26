@@ -28,7 +28,6 @@ from jax.interpreters import xla
 from jax.interpreters import partial_eval as pe
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
-from jax._src import lib as jaxlib
 from jax._src.api_util import flatten_fun_nokwargs
 
 import weakref
@@ -268,9 +267,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
 mlir.register_lowering(custom_partitioning_p,
                        _custom_partitioning_lowering_rule)
 
-if jaxlib.xla_extension_version >= 95:
-  xc.register_custom_call_partitioner(  # pytype: disable=module-attr
-      _CUSTOM_PARTITIONING_CALL_NAME,
-      _custom_partitioning_propagate_user_sharding,
-      _custom_partitioning_partition,
-      _custom_partitioning_infer_sharding_from_operands, True)
+xc.register_custom_call_partitioner(  # pytype: disable=module-attr
+    _CUSTOM_PARTITIONING_CALL_NAME,
+    _custom_partitioning_propagate_user_sharding,
+    _custom_partitioning_partition,
+    _custom_partitioning_infer_sharding_from_operands, True)
