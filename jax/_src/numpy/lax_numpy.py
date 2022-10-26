@@ -30,7 +30,8 @@ from functools import partial
 import operator
 import types
 from typing import (
-  overload, Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple, Union)
+  overload, Any, Callable, Dict, FrozenSet, List, Optional,
+  Sequence, Tuple, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -85,6 +86,7 @@ from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip,
 from jax._src.array import ArrayImpl
 
 newaxis = None
+T = TypeVar('T')
 
 
 # Like core.canonicalize_shape, but also accept int-like (non-sequence)
@@ -1375,35 +1377,68 @@ def unwrap(p: ArrayLike, discont: Optional[ArrayLike] = None,
   return up
 
 
-### Array-creation functions
+### Padding
 
-def _check_no_padding(axis_padding, mode):
+PadValueLike = Union[T, Sequence[T], Sequence[Sequence[T]]]
+PadValue = Tuple[Tuple[T, T], ...]
+# TODO(jakevdp): make this a protocol
+PadStatFunc = Callable[..., Array]
+
+
+def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
+  nvals = np.asarray(tree_map(
+    lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
+    nvals))
+  if nvals.dtype.kind == 'O':
+    raise TypeError(f'`{name}` entries must be the same shape.')
+
+  if nvals.shape == (nd, 2):
+    # ((before_1, after_1), ..., (before_N, after_N))
+    return tuple((nval[0], nval[1]) for nval in nvals)
+  elif nvals.shape == (1, 2):
+    # ((before, after),)
+    return tuple((nvals[0, 0], nvals[0, 1]) for i in range(nd))
+  elif nvals.shape == (2,):
+    # (before, after)  (not in the numpy docstring but works anyway)
+    return tuple((nvals[0], nvals[1]) for i in range(nd))
+  elif nvals.shape == (1,):
+    # (pad,)
+    return tuple((nvals[0], nvals[0]) for i in range(nd))
+  elif nvals.shape == ():
+    # pad
+    return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
+  else:
+    raise ValueError(f"jnp.pad: {name} with nd={nd} has unsupported shape {nvals.shape}. "
+                     f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
+
+
+def _check_no_padding(axis_padding: Tuple[Any, Any], mode: str):
   if (axis_padding[0] > 0 or axis_padding[1] > 0):
     msg = "Cannot apply '{}' padding to empty axis"
     raise ValueError(msg.format(mode))
 
 
-def _pad_constant(array, pad_width, constant_values):
+def _pad_constant(array: Array, pad_width: PadValue[int], constant_values: Array) -> Array:
   nd = ndim(array)
-  constant_values = broadcast_to(asarray(constant_values), (nd, 2))
+  constant_values = broadcast_to(constant_values, (nd, 2))
   constant_values = lax_internal._convert_element_type(
       constant_values, array.dtype, dtypes.is_weakly_typed(array))
   for i in range(nd):
     widths = [(0, 0, 0)] * nd
-    widths[i] = (pad_width[i, 0], 0, 0)
+    widths[i] = (pad_width[i][0], 0, 0)
     array = lax.pad(array, constant_values[i, 0], widths)
-    widths[i] = (0, pad_width[i, 1], 0)
+    widths[i] = (0, pad_width[i][1], 0)
     array = lax.pad(array, constant_values[i, 1], widths)
   return array
 
 
-def _pad_wrap(array, pad_width):
+def _pad_wrap(array: Array, pad_width: PadValue[int]) -> Array:
   for i in range(ndim(array)):
     if array.shape[i] == 0:
       _check_no_padding(pad_width[i], "wrap")
       continue
     size = array.shape[i]
-    repeats, (left_remainder, right_remainder) = _divmod(pad_width[i], size)
+    repeats, (left_remainder, right_remainder) = np.divmod(pad_width[i], size)
     total_repeats = repeats.sum() + 1
     parts = []
     if left_remainder:
@@ -1415,7 +1450,8 @@ def _pad_wrap(array, pad_width):
   return array
 
 
-def _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type):
+def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
+                              mode: str, reflect_type: str) -> Array:
   assert mode in ("symmetric", "reflect")
   assert reflect_type in ("even", "odd")
 
@@ -1461,12 +1497,12 @@ def _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type):
           array = lax.concatenate([array, x], dimension=i)
       return array
 
-    array = build_padding(array, pad_width[i, 0], before=True)
-    array = build_padding(array, pad_width[i, 1], before=False)
+    array = build_padding(array, pad_width[i][0], before=True)
+    array = build_padding(array, pad_width[i][1], before=False)
   return array
 
 
-def _pad_edge(array, pad_width):
+def _pad_edge(array: Array, pad_width: PadValue[int]) -> Array:
   nd = ndim(array)
   for i in range(nd):
     if array.shape[i] == 0:
@@ -1486,7 +1522,8 @@ def _pad_edge(array, pad_width):
   return array
 
 
-def _pad_linear_ramp(array, pad_width, end_values):
+def _pad_linear_ramp(array: Array, pad_width: PadValue[int],
+                     end_values: PadValue[ArrayLike]) -> Array:
   for axis in range(ndim(array)):
     edge_before = lax.slice_in_dim(array, 0, 1, axis=axis)
     edge_after = lax.slice_in_dim(array, -1, None, axis=axis)
@@ -1518,7 +1555,8 @@ def _pad_linear_ramp(array, pad_width, end_values):
   return array
 
 
-def _pad_stats(array, pad_width, stat_length, stat_func):
+def _pad_stats(array: Array, pad_width: PadValue[int], stat_length: Optional[PadValue[int]],
+               stat_func: PadStatFunc) -> Array:
   nd = ndim(array)
   for i in range(nd):
     if stat_length is None:
@@ -1556,7 +1594,7 @@ def _pad_stats(array, pad_width, stat_length, stat_func):
   return array
 
 
-def _pad_empty(array, pad_width):
+def _pad_empty(array: Array, pad_width: PadValue[int]) -> Array:
   # Note: jax.numpy.empty = jax.numpy.zeros
   for i in range(ndim(array)):
     shape_before = array.shape[:i] + (pad_width[i][0],) + array.shape[i + 1:]
@@ -1568,67 +1606,44 @@ def _pad_empty(array, pad_width):
   return array
 
 
-def _pad_func(array, pad_width, func, **kwargs):
+def _pad_func(array: Array, pad_width: PadValue[int], func: Callable[..., Any], **kwargs) -> Array:
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
-  padded = _pad_constant(array, np.array(pad_width), 0)
+  padded = _pad_constant(array, pad_width, asarray(0))
   for axis in range(ndim(padded)):
     padded = apply_along_axis(func, axis, padded, pad_width[axis], axis, kwargs)
   return padded
 
 
-def _broadcast_to_pairs(nvals, nd, name):
-  nvals = np.asarray(tree_map(
-    lambda x: core.concrete_or_error(np.array, x, context=f"{name} argument of jnp.pad"),
-    nvals))
-  if nvals.dtype.kind == 'O':
-    raise TypeError(f'`{name}` entries must be the same shape.')
-
-  if nvals.shape == (nd, 2):
-    # ((before_1, after_1), ..., (before_N, after_N))
-    return tuple(tuple(nval) for nval in nvals)
-  elif nvals.shape == (1, 2):
-    # ((before, after),)
-    return tuple(tuple(nvals[0]) for i in range(nd))
-  elif nvals.shape == (2,):
-    # (before, after)  (not in the numpy docstring but works anyway)
-    return tuple(tuple(nvals) for i in range(nd))
-  elif nvals.shape == (1,):
-    # (pad,)
-    return tuple((nvals[0], nvals[0]) for i in range(nd))
-  elif nvals.shape == ():
-    # pad
-    return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
-  else:
-    raise ValueError(f"jnp.pad: {name} with nd={nd} has unsupported shape {nvals.shape}. "
-                     f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
-
-
 @partial(jit, static_argnums=(1, 2, 4, 5, 6))
-def _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type):
+def _pad(array: ArrayLike, pad_width: PadValueLike[int],
+         mode: Union[str, PadStatFunc],
+         constant_values: ArrayLike, stat_length: PadValueLike[int],
+         end_values: PadValueLike[ArrayLike], reflect_type: str):
   array = asarray(array)
   nd = ndim(array)
 
   if nd == 0:
     return array
 
-  stat_funcs = {"maximum": amax, "minimum": amin,
-                "mean": mean, "median": median}
+  stat_funcs: Dict[str, PadStatFunc] = {
+    "maximum": amax, "minimum": amin, "mean": mean, "median": median}
 
   pad_width = _broadcast_to_pairs(pad_width, nd, "pad_width")
-  pad_width = np.array(pad_width)
-  assert pad_width.shape == (nd, 2), pad_width
+  pad_width_arr = np.array(pad_width)
+  if pad_width_arr.shape != (nd, 2):
+    raise ValueError(f"Expected pad_width to have shape {(nd, 2)}; got {pad_width_arr.shape}.")
 
-  if np.any(pad_width < 0):
+  if np.any(pad_width_arr < 0):
     raise ValueError("index can't contain negative values")
 
   if mode == "constant":
-    return _pad_constant(array, pad_width, constant_values)
+    return _pad_constant(array, pad_width, asarray(constant_values))
 
   elif mode == "wrap":
     return _pad_wrap(array, pad_width)
 
   elif mode in ("symmetric", "reflect"):
-    return _pad_symmetric_or_reflect(array, pad_width, mode, reflect_type)
+    return _pad_symmetric_or_reflect(array, pad_width, str(mode), reflect_type)
 
   elif mode == "edge":
     return _pad_edge(array, pad_width)
@@ -1640,7 +1655,7 @@ def _pad(array, pad_width, mode, constant_values, stat_length, end_values, refle
   elif mode in stat_funcs:
     if stat_length is not None:
       stat_length = _broadcast_to_pairs(stat_length, nd, "stat_length")
-    return _pad_stats(array, pad_width, stat_length, stat_funcs[mode])
+    return _pad_stats(array, pad_width, stat_length, stat_funcs[str(mode)])
 
   elif mode == "empty":
     return _pad_empty(array, pad_width)
@@ -1655,14 +1670,15 @@ Unlike numpy, JAX "function" mode's argument (which is another function) should 
 the modified array. This is because Jax arrays are immutable.
 (In numpy, "function" mode's argument should modify a rank 1 array in-place.)
 """)
-def pad(array, pad_width, mode="constant", **kwargs):
+def pad(array: ArrayLike, pad_width: PadValueLike[int],
+        mode: Union[str, Callable[..., Any]] = "constant", **kwargs) -> Array:
   _check_arraylike("pad", array)
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
   if pad_width and np.array(pad_width).dtype.kind != 'i':
     raise TypeError('`pad_width` must be of integral type.')
 
   if callable(mode):
-    return _pad_func(array, pad_width, mode, **kwargs)
+    return _pad_func(asarray(array), pad_width, mode, **kwargs)
 
   allowed_kwargs = {
       'empty': [], 'edge': [], 'wrap': [],
@@ -1676,7 +1692,7 @@ def pad(array, pad_width, mode="constant", **kwargs):
       'symmetric': ['reflect_type'],
   }
   try:
-    unsupported_kwargs = set(kwargs) - set(allowed_kwargs[mode])
+    unsupported_kwargs = set(kwargs) - set(allowed_kwargs[mode])  # type: ignore[call-overload]
   except KeyError:
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
@@ -1690,6 +1706,8 @@ def pad(array, pad_width, mode="constant", **kwargs):
   reflect_type = kwargs.get('reflect_type', "even")
 
   return _pad(array, pad_width, mode, constant_values, stat_length, end_values, reflect_type)
+
+### Array-creation functions
 
 
 @_wraps(np.stack, skip_params=['out'])
