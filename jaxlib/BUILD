@@ -40,7 +40,10 @@ py_library(
         ":version",
         ":xla_client",
     ],
-    data = [":xla_extension", "jax_custom_call.h"],
+    data = [
+        "jax_custom_call.h",
+        ":xla_extension",
+    ],
     deps = [
         ":cpu_feature_guard",
         "//jaxlib/cpu:_ducc_fft",
@@ -167,14 +170,14 @@ cc_library(
 
 pybind_extension(
     name = "_jax_custom_call",
-    hdrs = [
-      "jax_custom_call.h",
-      "jax_custom_call_internal.h"
-    ],
     srcs = ["jax_custom_call.cc"],
+    hdrs = [
+        "jax_custom_call.h",
+        "jax_custom_call_internal.h",
+    ],
     deps = [
-      "@pybind11",
-      "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
-      "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+        "@pybind11",
     ],
 )
