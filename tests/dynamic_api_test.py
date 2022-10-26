@@ -1427,6 +1427,16 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertEqual(y.shape, (sz, 4))
     self.assertAllClose(y._data, x)
 
+  def test_shape_tuple_argument_to_zeros(self):
+    @partial(jax.jit, abstracted_axes=(('n',), ('n',)))
+    def f(x, y):
+      zero =  jnp.zeros(jnp.shape(x))
+      return zero * y
+
+    x = jnp.arange(3.0)
+    y = jnp.arange(3.0) + 1
+    jax.make_jaxpr(f)(x, y)  # doesn't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

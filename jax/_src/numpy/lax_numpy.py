@@ -90,7 +90,8 @@ newaxis = None
 # Like core.canonicalize_shape, but also accept int-like (non-sequence)
 # arguments for `shape`.
 def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
-  if getattr(shape, 'ndim', None) == 0 or ndim(shape) == 0:
+  if (not isinstance(shape, (tuple, list)) and
+      (getattr(shape, 'ndim', None) == 0 or ndim(shape) == 0)):
     return core.canonicalize_shape((shape,), context)  # type: ignore
   else:
     return core.canonicalize_shape(shape, context)  # type: ignore
