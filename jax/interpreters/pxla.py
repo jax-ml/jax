@@ -3214,6 +3214,7 @@ def _get_op_sharding_shardings_from_executable(
   # TODO(b/245667823): Remove this when XLA fixes this.
   if len(out_shardings_xla) == 1 and len(out_shardings_xla) < num_out_avals:
     out_shardings_xla = out_shardings_xla * num_out_avals
+  assert len(out_shardings_xla) == num_out_avals
   return in_shardings_xla, out_shardings_xla
 
 
@@ -3232,10 +3233,11 @@ def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
 class MeshExecutable(stages.XlaExecutable):
   __slots__ = ['xla_executable', 'unsafe_call', 'in_avals',
                '_in_shardings', '_out_shardings', '_auto_spmd_lowering',
-               '_kept_var_idx']
+               '_kept_var_idx', '_device_assignment']
 
   def __init__(self, xla_executable, unsafe_call, in_avals,
-               in_shardings, out_shardings, auto_spmd_lowering, kept_var_idx):
+               in_shardings, out_shardings, auto_spmd_lowering, kept_var_idx,
+               device_assignment):
     self.xla_executable = xla_executable
     self.unsafe_call = unsafe_call
     # in_avals is a list of global and local avals. Aval is global if input
@@ -3245,6 +3247,7 @@ class MeshExecutable(stages.XlaExecutable):
     self._out_shardings = out_shardings
     self._auto_spmd_lowering = auto_spmd_lowering
     self._kept_var_idx = kept_var_idx
+    self._device_assignment = device_assignment
 
   @staticmethod
   def from_hlo(name: str,
@@ -3379,7 +3382,7 @@ class MeshExecutable(stages.XlaExecutable):
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
                           in_shardings, out_shardings, auto_spmd_lowering,
-                          kept_var_idx)
+                          kept_var_idx, device_assignment)
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, global_in_avals, global_out_avals,
@@ -3405,7 +3408,7 @@ class MeshExecutable(stages.XlaExecutable):
     unsafe_call = partial(_execute_trivial, jaxpr, consts, handle_ins,
                           handle_outs, kept_var_idx)
     return MeshExecutable(None, unsafe_call, global_in_avals, in_shardings,
-                          out_shardings, False, kept_var_idx)
+                          out_shardings, False, kept_var_idx, device_assignment)
 
   # -- stages.XlaExecutable overrides
 

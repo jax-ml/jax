@@ -1217,18 +1217,10 @@ def _pjit_partial_eval(trace, *in_tracers,
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
-  if not resource_env.physical_mesh.empty:
-    da = list(resource_env.physical_mesh.devices.flat)
-  else:
-    # TODO(yashkatariya): Figure out a way to look at the device assignment
-    # across all the input, output and jaxpr shardings when mesh is empty.
-    # Possibly look at the device_assignment on MeshExecutable after compilation
-    # is done below.
-    da = None
-
   if config.jax_array:
     residual_shardings = (_UNSPECIFIED,) * num_residuals
   else:
+    da = list(resource_env.physical_mesh.devices.flat)
     residual_shardings = (OpShardingSharding.get_replicated(da),) * num_residuals
   # Compute the known outputs
   known_params = dict(
@@ -1242,24 +1234,32 @@ def _pjit_partial_eval(trace, *in_tracers,
       in_positional_semantics=keep_where(in_positional_semantics, known_ins),
       out_positional_semantics=out_positional_semantics)
 
-  if da is not None:
-    if num_residuals:
-      in_is_global = _calc_is_global_sequence(
-          known_params['in_positional_semantics'], known_params['in_shardings'])
-      compiled = _pjit_lower(
-          known_params["jaxpr"], known_params["in_shardings"],
-          known_params["out_shardings"], known_params["resource_env"],
-          known_params["donated_invars"], known_params["name"],
-          in_is_global, always_lower=False).compile(
-              _allow_propagation_to_outputs=True,
-              _allow_compile_replicated=False)
-      _, out_op_shardings = _get_op_sharding_from_executable(compiled.xla_executable)
-      residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
-    else:
-      residual_op_shardings = ()
-    residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
-    known_params['out_shardings'] = (
-        keep_where(out_shardings, known_outs) + residual_shardings)
+  if num_residuals:
+    in_is_global = _calc_is_global_sequence(
+        known_params['in_positional_semantics'], known_params['in_shardings'])
+    compiled = _pjit_lower(
+        known_params["jaxpr"], known_params["in_shardings"],
+        known_params["out_shardings"], known_params["resource_env"],
+        known_params["donated_invars"], known_params["name"],
+        in_is_global, always_lower=False).compile(
+            _allow_propagation_to_outputs=True,
+            _allow_compile_replicated=False)
+    da = compiled._device_assignment
+    _, out_op_sharding_shardings = pxla._get_op_sharding_shardings_from_executable(
+        compiled.xla_executable, da, len(known_jaxpr.in_avals),
+        len(known_jaxpr.out_avals))
+    assert len(out_op_sharding_shardings) == len(known_jaxpr.out_avals), (
+        len(out_op_sharding_shardings), len(known_jaxpr.out_avals))
+    out_op_shardings = [o._to_xla_op_sharding(a.ndim) for o, a in
+                        safe_zip(out_op_sharding_shardings, known_jaxpr.out_avals)]
+    residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
+  else:
+    residual_op_shardings = ()
+  assert len(residual_shardings) == len(residual_op_shardings), (
+      len(residual_shardings), len(residual_op_shardings))
+  residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
+  known_params['out_shardings'] = (
+      keep_where(out_shardings, known_outs) + residual_shardings)
 
   all_known_outs = pjit_p.bind(
       *(pv.get_known() for pv in in_pvals if pv.is_known()),
