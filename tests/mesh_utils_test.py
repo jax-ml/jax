@@ -96,9 +96,9 @@ def mock_4x4_devices():
   return mock_tpu_devices(4, 4, 1, 'TPU v3', False)
 
 
-def mock_8x8_devices():
+def mock_8x8_devices(one_device_per_chip=False):
   """Hard-coded reproduction of jax.devices() output on v3-8x8."""
-  return mock_tpu_devices(8, 8, 1, 'TPU v3', False)
+  return mock_tpu_devices(8, 8, 1, 'TPU v3', one_device_per_chip)
 
 
 def mock_2x2x1_devices(one_device_per_chip):
@@ -182,6 +182,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
       ('4x8x8', mock_4x8x8_devices, [1, 32, 8], [(), (0, 2), (1,)]),
       ('8x8x8', mock_8x8x8_devices, [1, 64, 8], [(), (1, 2), (0,)]),
       ('8x8x16', mock_8x8x16_devices, [1, 64, 16], [(), (0, 1), (2,)]),
+      ('8x8', mock_8x8_devices, [8, 8], [(1,), (0, 2)])
   )
   def test_create_device_mesh_for_nd_torus(self, devices, mesh_shape,
                                            expected_assignment):

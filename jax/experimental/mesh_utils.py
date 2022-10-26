@@ -247,8 +247,8 @@ def create_device_mesh(
   if np.prod(mesh_shape) != len(devices):
     raise ValueError(f'Number of devices {len(devices)} must equal the product '
                      f'of mesh_shape {mesh_shape}')
-  device_kind = devices[-1].device_kind
-  if device_kind in (_TPU_V2, _TPU_V3):
+  last_device = devices[-1]
+  if last_device.device_kind in (_TPU_V2, _TPU_V3):
     if len(devices) == 8:
       logger.info('Reordering mesh to physical ring order on single-tray TPU v2/v3.')
       device_mesh = np.asarray(devices)
@@ -266,7 +266,7 @@ def create_device_mesh(
       # https://github.com/tensorflow/lingvo/blob/0df40cf604dfcd14e28f7087d73687a0bd2fe5c6/lingvo/core/gshard_utils.py#L187
       # (possibly replaces above mesh_shape[-1] == 8 case)
       return np.asarray(devices).reshape(mesh_shape)
-  elif device_kind == _TPU_V4:
+  elif last_device.platform == 'tpu':
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
