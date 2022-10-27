@@ -24,7 +24,6 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 from jax._src.util import prod, safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
@@ -696,8 +695,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertFalse(issubclass(array.ArrayImpl, np.ndarray))
 
   def test_op_sharding_sharding_repr(self):
-    if xla_extension_version < 96:
-      self.skipTest('This test only works with the latest HloSharding repr.')
     op = xc.OpSharding()
     op.type = xc.OpSharding.Type.OTHER
     op.tile_assignment_dimensions = [4, 1, 2]

@@ -50,7 +50,6 @@ from jax._src import util
 from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
                            split_list)
 from jax.tree_util import tree_map
-from jax._src.lib import mlir_api_version
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
@@ -1809,11 +1808,7 @@ def asin_impl(x):
 
 asin_p = standard_unop(_float | _complex, 'asin')
 ad.defjvp(asin_p, lambda g, x: mul(g, rsqrt(_const(x, 1) - square(x))))
-if mlir_api_version < 31:
-  mlir.register_lowering(asin_p, mlir.lower_fun(asin_impl,
-                                                multiple_results=False))
-else:
-  mlir.register_lowering(asin_p, partial(_nary_lower_mhlo, chlo.AsinOp))
+mlir.register_lowering(asin_p, partial(_nary_lower_mhlo, chlo.AsinOp))
 
 def acos_impl(x):
   if dtypes.issubdtype(_dtype(x), np.complexfloating):
@@ -1842,11 +1837,7 @@ def atan_impl(x):
 
 atan_p = standard_unop(_float | _complex, 'atan')
 ad.defjvp(atan_p, lambda g, x: div(g, _const(x, 1) + square(x)))
-if mlir_api_version < 31:
-  mlir.register_lowering(atan_p, mlir.lower_fun(atan_impl,
-                                                multiple_results=False))
-else:
-  mlir.register_lowering(atan_p, partial(_nary_lower_mhlo, chlo.AtanOp))
+mlir.register_lowering(atan_p, partial(_nary_lower_mhlo, chlo.AtanOp))
 
 atan2_p = standard_naryop([_float | _complex, _float | _complex], 'atan2')
 ad.defjvp(atan2_p,
@@ -1936,12 +1927,9 @@ xla.register_translation(bessel_i0e_p, standard_translate(bessel_i0e_p))
 ad.defjvp2(bessel_i0e_p, lambda g, y, x: g * (bessel_i1e(x) - sign(x) * y))
 
 bessel_i1e_p = standard_unop(_float, 'bessel_i1e')
-xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
-if mlir_api_version < 32:
-  xla.register_translation(bessel_i1e_p, standard_translate(bessel_i1e_p))
-else:
-  mlir.register_lowering(bessel_i1e_p,
-                         partial(_nary_lower_mhlo, chlo.BesselI1eOp))
+mlir.register_lowering(bessel_i1e_p,
+                        partial(_nary_lower_mhlo, chlo.BesselI1eOp))
+
 def _bessel_i1e_jvp(g, y, x):
   eps = dtypes.finfo(_dtype(x)).eps
   x_is_not_tiny = abs(x) > eps
@@ -2993,12 +2981,8 @@ ad.defjvp(clamp_p,
           lambda g, min, operand, max:
           select(lt(max, operand), g, _zeros(operand)))
 batching.primitive_batchers[clamp_p] = _clamp_batch_rule
-if mlir_api_version < 30:
-  mlir.register_lowering(
-      clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp, explicit_type=True))
-else:
-  mlir.register_lowering(
-      clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp))
+mlir.register_lowering(
+    clamp_p, partial(_nary_lower_mhlo, mhlo.ClampOp))
 pe.def_trivial_padding(clamp_p)
 
 def _concatenate_shape_rule(*operands, **kwargs):

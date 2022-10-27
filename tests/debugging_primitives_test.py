@@ -27,7 +27,6 @@ from jax._src import sharding
 from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
 import jax.numpy as jnp
@@ -56,12 +55,6 @@ def setUpModule():
 def tearDownModule():
   prev_xla_flags()
 
-# TODO(sharadmv): remove jaxlib guards for TPU tests when jaxlib minimum
-#                 version is >= 0.3.15
-disabled_backends = []
-if jaxlib.version < (0, 3, 15):
-  disabled_backends.append("tpu")
-
 class DummyDevice:
   def __init__(self, platform, id):
     self.platform = platform
@@ -73,7 +66,6 @@ class DebugPrintTest(jtu.JaxTestCase):
     super().tearDown()
     dispatch.runtime_tokens.clear()
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_simple_debug_print_works_in_eager_mode(self):
     def f(x):
       debug_print('x: {}', x)
@@ -82,7 +74,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debug_print_works_with_named_format_strings(self):
     def f(x):
       debug_print('x: {x}', x=x)
@@ -91,7 +82,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_multiple_debug_prints_should_print_multiple_values(self):
     def f(x):
       debug_print('x: {x}', x=x)
@@ -101,7 +91,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\ny: 3\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_debug_print(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -114,7 +103,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_debug_print_with_donate_argnums(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -131,7 +119,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -144,7 +131,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print_with_donate_argnums(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -161,7 +147,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_prints_with_donate_argnums(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -179,7 +164,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\nx: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_double_stage_out_ordered_print(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -193,7 +177,6 @@ class DebugPrintTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "x: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_stage_out_ordered_print_with_pytree(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -423,7 +406,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     # print.
     self.assertEqual(output(), "y: 3.0, z: 6.0\n" * 2)
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debug_print_in_staged_out_custom_jvp(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -451,7 +433,6 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "goodbye: 2.0 3.0\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_debug_print_in_staged_out_custom_vjp(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -496,7 +477,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
     self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_scan(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -517,7 +497,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       """))
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_for_loop(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -549,7 +528,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       self._assertLinesEqual(output(), expected)
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_body(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -573,7 +551,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       """))
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_while_loop_cond(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -606,7 +583,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       """))
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_in_batched_while_cond(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -667,7 +643,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       self._assertLinesEqual(output(), expected)
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_cond(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -694,7 +669,6 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       """))
 
   @jtu.sample_product(ordered=[False, True])
-  @jtu.skip_on_devices(*disabled_backends)
   def test_can_print_inside_switch(self, ordered):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -738,7 +712,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
     self.assertDictEqual(_count(text1.split("\n")), _count(text2.split("\n")))
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_ordered_print_not_supported_in_pmap(self):
 
     @jax.pmap
@@ -748,7 +721,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         ValueError, "Ordered effects not supported in `pmap`."):
       f(jnp.arange(jax.local_device_count()))
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_works_in_pmap(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -774,13 +746,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self._assertLinesEqual(output(), "hello: 0\nhello: 1\nhello: 2\nhello: 3\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_pjit(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
-
-    if jax.default_backend() in {"cpu", "gpu"} and jaxlib.version < (0, 3, 16):
-      raise unittest.SkipTest("`pjit` of callback not supported.")
 
     def f(x):
       debug_print("{}", x, ordered=False)
@@ -810,14 +778,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_while(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
-
-    if (jax.default_backend() in {"cpu", "gpu"}
-        and jaxlib.xla_extension_version < 81):
-      raise unittest.SkipTest("`pjit` of callback not supported.")
 
     def f(x):
       def cond(carry):
@@ -847,14 +810,9 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
           "[ 3  4  5  6  7  8  9 10]\n"
           "[ 4  5  6  7  8  9 10 11]\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_of_pjit_of_xmap(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
-
-    if (jax.default_backend() in {"cpu", "gpu"}
-        and jaxlib.xla_extension_version < 81):
-      raise unittest.SkipTest("`pjit` of callback not supported.")
 
     def f(x):
       def foo(x):
@@ -880,7 +838,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         jax.effects_barrier()
         self._assertLinesEqual(output(), "\n".join(lines))
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_with_xmap(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -896,7 +853,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       lines = [f"{i}\n" for i in range(40)]
       self._assertLinesEqual(output(), "".join(lines))
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_unordered_print_works_in_pmap_of_while(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')
@@ -921,7 +877,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         output(), "hello: 0\nhello: 1\nhello: 2\n"
         "hello: 1\nhello: 2\n")
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_incorrectly_formatted_string(self):
 
     @jax.jit
@@ -942,7 +897,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       f(jnp.arange(2))
       jax.effects_barrier()
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_format_string_errors_with_unused_args(self):
 
     @jax.jit
@@ -963,7 +917,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       g(jnp.arange(2))
       jax.effects_barrier()
 
-  @jtu.skip_on_devices(*disabled_backends)
   def test_accidental_fstring(self):
 
     @jax.jit
@@ -1161,9 +1114,6 @@ class InspectShardingTest(jtu.JaxTestCase):
 
   def test_inspect_sharding_is_called_in_pjit(self):
 
-    if jaxlib.xla_extension_version < 94:
-      raise unittest.SkipTest("Inspect sharding not supported.")
-
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Inspect sharding is not supported on libtpu.")
 
@@ -1191,9 +1141,6 @@ class InspectShardingTest(jtu.JaxTestCase):
     self.assertTrue(is_called)
 
   def test_inspect_sharding_is_called_in_jit(self):
-
-    if jaxlib.xla_extension_version < 94:
-      raise unittest.SkipTest("Inspect sharding not supported.")
 
     if not config.jax_array:
       raise unittest.SkipTest("jax_array to work inside of `jit`.")

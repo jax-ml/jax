@@ -695,12 +695,10 @@ parallel_functions_output_gda = config.define_bool_state(
     help='If True, pjit will output GDAs.')
 
 def _update_jax_array_global(val):
-  if lib.xla_extension_version >= 92:
-    lib.jax_jit.global_state().jax_array = val
+  lib.jax_jit.global_state().jax_array = val
 
 def _update_jax_array_thread_local(val):
-  if lib.xla_extension_version >= 92:
-    lib.jax_jit.thread_local_state().jax_array = val
+  lib.jax_jit.thread_local_state().jax_array = val
 
 jax_array = config.define_bool_state(
     name='jax_array',
@@ -946,7 +944,7 @@ config.define_bool_state(
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
-    default=(lib.xla_extension_version >= 80),
+    default=True,
     help=(
          'Use coordination service (experimental) instead of the default PjRT '
          'distributed runtime.'

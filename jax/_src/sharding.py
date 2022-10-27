@@ -23,7 +23,6 @@ from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
 from jax._src.util import safe_map, safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax.interpreters import pxla, mlir
 
 import numpy as np
@@ -476,14 +475,6 @@ class DeviceIdSet:
             self._ids == other._ids)
 
 
-# TODO(yashkatariya): Remove this when minimum_jaxlib version is 0.3.17
-def _hash_op_sharding(op: xc.OpSharding):
-  if op.type == xc.OpSharding.Type.TUPLE:
-    return hash(tuple(_hash_op_sharding(o) for o in  op.tuple_shardings))
-  return hash((tuple(op.tile_assignment_devices), tuple(op.tile_assignment_dimensions),
-               op.type, op.replicate_on_last_tile_dim, tuple(op.last_tile_dims)))
-
-
 @pxla.use_cpp_class(xc.OpShardingSharding if xc._version >= 95 else None)
 class OpShardingSharding(XLACompatibleSharding):
 
@@ -494,10 +485,7 @@ class OpShardingSharding(XLACompatibleSharding):
 
   @pxla.maybe_cached_property
   def _op_sharding_hash(self):
-    if xla_extension_version >= 81:
-      return hash(xc.HloSharding.from_proto(self._op_sharding))
-    else:
-      return _hash_op_sharding(self._op_sharding)
+    return hash(xc.HloSharding.from_proto(self._op_sharding))
 
   def __eq__(self, other):
     if not isinstance(other, OpShardingSharding):
@@ -513,12 +501,7 @@ class OpShardingSharding(XLACompatibleSharding):
     return self._hash
 
   def __repr__(self):
-    if xla_extension_version >= 96:
-      return f'OpShardingSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
-    else:
-      if pxla.is_op_sharding_replicated(self._op_sharding):
-        return 'OpShardingSharding(REPLICATED)'
-      return f'OpShardingSharding({repr(self._op_sharding)})'
+    return f'OpShardingSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
     num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(self._op_sharding)

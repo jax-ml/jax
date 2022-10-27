@@ -49,7 +49,6 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
 from jax.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src.lib import xla_client as xc, xla_bridge
-from jax._src.lib import xla_extension_version
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
@@ -1093,9 +1092,6 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner(self):
-    if xla_extension_version < 95:
-      raise unittest.SkipTest('Must support custom partitioning.')
-
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
 
@@ -2925,14 +2921,13 @@ class UtilTest(jtu.JaxTestCase):
     self.assertFalse(pxla.are_op_shardings_equal(op1, op3))
     self.assertFalse(pxla.are_op_shardings_equal(op2, op3))
 
-    if xla_extension_version >= 81:
-      hs1 = xc.HloSharding.from_proto(op1)
-      hs2 = xc.HloSharding.from_proto(op2)
-      hs3 = xc.HloSharding.from_proto(op3)
+    hs1 = xc.HloSharding.from_proto(op1)
+    hs2 = xc.HloSharding.from_proto(op2)
+    hs3 = xc.HloSharding.from_proto(op3)
 
-      self.assertEqual(hash(hs1), hash(hs2))
-      self.assertNotEqual(hash(hs1), hash(hs3))
-      self.assertNotEqual(hash(hs2), hash(hs3))
+    self.assertEqual(hash(hs1), hash(hs2))
+    self.assertNotEqual(hash(hs1), hash(hs3))
+    self.assertNotEqual(hash(hs2), hash(hs3))
 
   def test_op_sharding_partial_sharding(self):
     op1 = xc.OpSharding()
@@ -2949,10 +2944,9 @@ class UtilTest(jtu.JaxTestCase):
 
     self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
 
-    if xla_extension_version >= 81:
-      hs1 = xc.HloSharding.from_proto(op1)
-      hs2 = xc.HloSharding.from_proto(op2)
-      self.assertEqual(hash(hs1), hash(hs2))
+    hs1 = xc.HloSharding.from_proto(op1)
+    hs2 = xc.HloSharding.from_proto(op2)
+    self.assertEqual(hash(hs1), hash(hs2))
 
   def test_op_sharding_tuple_shardings(self):
     top1 = xc.OpSharding()
@@ -2977,16 +2971,11 @@ class UtilTest(jtu.JaxTestCase):
 
     self.assertFalse(pxla.are_op_shardings_equal(op1, op2))
 
-    if xla_extension_version >= 81:
-      hs1 = xc.HloSharding.from_proto(op1)
-      hs2 = xc.HloSharding.from_proto(op2)
-      self.assertNotEqual(hash(hs1), hash(hs2))
+    hs1 = xc.HloSharding.from_proto(op1)
+    hs2 = xc.HloSharding.from_proto(op2)
+    self.assertNotEqual(hash(hs1), hash(hs2))
 
   def test_device_indices_cache(self):
-    if xla_extension_version < 81:
-      raise unittest.SkipTest('HloSharding is available after '
-                              'xla_extension_version >= 81')
-
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [1, 1, 2, 1]
@@ -3018,10 +3007,6 @@ class UtilTest(jtu.JaxTestCase):
 
 
   def test_op_sharding_semantically_replicated(self):
-    if xla_extension_version < 81:
-      raise unittest.SkipTest(
-          'HloSharding is not available for this test so it cannot be tested.')
-
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [1, 1, 2]
@@ -3051,10 +3036,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(pxla.are_op_shardings_equal(op3, op4))
 
   def test_op_sharding_manual_replicated(self):
-    if xla_extension_version < 81:
-      raise unittest.SkipTest(
-          'HloSharding is not available for this test so it cannot be tested.')
-
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [1, 1, 2, 1]

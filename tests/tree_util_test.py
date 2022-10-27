@@ -16,7 +16,6 @@ import collections
 import functools
 import pickle
 import re
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -25,12 +24,9 @@ import jax
 from jax import tree_util
 from jax import flatten_util
 from jax._src import test_util as jtu
-from jax._src.lib import pytree as pytree
 from jax._src.tree_util import prefix_errors
 import jax.numpy as jnp
 
-
-pytree_version = getattr(pytree, "version", 0)
 
 def _dummy_func(*args, **kwargs):
   return
@@ -361,7 +357,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(expected, actual)
 
   @parameterized.parameters([(*t, s) for t, s in zip(TREES, TREE_STRINGS)])
-  @unittest.skipIf(pytree_version < 2, "Requires jaxlib 0.3.15")
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
@@ -371,7 +366,6 @@ class TreeTest(jtu.JaxTestCase):
     self.assertEqual(str(tree_util.tree_structure({})), "PyTreeDef({})")
 
   @parameterized.parameters(*TREES)
-  @unittest.skipIf(pytree_version < 3, "Requires jaxlib 0.3.16")
   def testPickleRoundTrip(self, tree):
     treedef = tree_util.tree_structure(tree)
     treedef_restored = pickle.loads(pickle.dumps(treedef))

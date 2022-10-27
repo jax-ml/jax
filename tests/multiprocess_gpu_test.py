@@ -29,7 +29,6 @@ from jax import experimental
 from jax.config import config
 from jax._src import distributed
 import jax.numpy as jnp
-from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import global_device_array
@@ -130,8 +129,6 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         for proc in subprocesses:
           proc.kill()
 
-  @unittest.skipIf(xla_extension_version < 91,
-                   "Test requires jaxlib 0.3.17 or newer")
   @jtu.skip_on_devices("rocm")
   def test_distributed_jax_cuda_visible_devices(self):
     """Test jax_cuda_visible_devices works in distributed settings."""

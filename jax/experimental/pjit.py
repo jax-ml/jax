@@ -1154,7 +1154,7 @@ pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
     s: OpShardingSharding, dim: int, val: Tuple[str, ...], mesh, ndim: int):
-  if not val and xla_extension_version >= 83:
+  if not val:
     new_op = s._op_sharding.clone()
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)

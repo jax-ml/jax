@@ -34,10 +34,8 @@ from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax.experimental.sparse.util import _csr_to_coo
 from jax import lax
-from jax._src.lib import xla_extension_version
 from jax._src.lib import gpu_sparse
 from jax._src.lib import xla_bridge
-from jax._src.lib import version as jaxlib_version
 from jax._src.util import unzip2
 from jax import jit
 from jax import tree_util
@@ -1206,8 +1204,7 @@ class BCOOTest(jtu.JaxTestCase):
 
     cuda_version_11061_and_beyond = _is_required_cuda_version_satisfied(
         cuda_version=11061)
-    jaxlib_version_0318_and_beyond = jaxlib_version >= (0, 3, 18)
-    if cuda_version_11061_and_beyond and jaxlib_version_0318_and_beyond:
+    if cuda_version_11061_and_beyond:
       # TODO(tianjianlu): In some cases, this fails python_should_be_executing.
       # self._CompileAndCheck(f_sparse, args_maker)
       self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
@@ -2609,7 +2606,6 @@ class SparseSolverTest(jtu.JaxTestCase):
   )
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/cusolver")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
-  @unittest.skipIf(xla_extension_version < 86, "test requires jaxlib version 86")
   @jtu.skip_on_devices("rocm")
   def test_sparse_qr_linear_solver(self, size, reorder, dtype):
     rng = rand_sparse(self.rng())

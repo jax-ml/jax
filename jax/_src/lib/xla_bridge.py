@@ -48,9 +48,8 @@ traceback_util.register_exclusion(__file__)
 
 XlaBackend = xla_client._xla.Client
 
-use_sharded_buffer = xla_client._version >= 90
-# TODO(chky): Change ShardedBuffer to xla_client.ShardedBuffer when the minimum
-# jaxlib version is updated.
+# TODO(phawkins): replace with xla_client.ShardedBuffer after fixing type
+# errors.
 ShardedBuffer = Any
 
 FLAGS = flags.FLAGS
@@ -224,15 +223,14 @@ register_backend_factory('tpu_driver', _make_tpu_driver_client,
 
 def make_gpu_client(*, platform_name, visible_devices_flag):
   visible_devices = getattr(FLAGS, visible_devices_flag, "all")
-  # Pass allowed_devices unconditionally when jaxlib 0.3.15 is the minimum.
-  kwargs = {}
+  allowed_devices = None
   if visible_devices != "all":
-    kwargs["allowed_devices"] = {int(x) for x in visible_devices.split(",")}
+    allowed_devices = {int(x) for x in visible_devices.split(",")}
   return xla_client.make_gpu_client(
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
     platform_name=platform_name,
-    **kwargs)
+    allowed_devices=allowed_devices)
 
 if hasattr(xla_client, "make_gpu_client"):
   register_backend_factory(

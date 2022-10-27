@@ -76,7 +76,6 @@ from jax._src.config import config
 from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
@@ -674,8 +673,7 @@ def make_sharded_device_array(
 
   if (_USE_CPP_SDA and
       (not device_buffers or
-       (xb.use_sharded_buffer and
-        isinstance(device_buffers, xb.xla_client.ShardedBuffer)) or
+       isinstance(device_buffers, xb.xla_client.ShardedBuffer) or
        isinstance(device_buffers[0], xb.xla_client.Buffer))):
     return pmap_lib.ShardedDeviceArray.make(
         aval, sharding_spec, device_buffers,
@@ -2069,11 +2067,11 @@ class ExecuteReplicated:
           input_bufs)
     if dispatch.needs_check_special():
       for bufs in out_bufs:
-        if xb.use_sharded_buffer and isinstance(bufs, xc.ShardedBuffer):
+        if isinstance(bufs, xc.ShardedBuffer):
           bufs = cast(xc.ShardedBuffer, bufs).get_device_buffers()
         dispatch.check_special(self.name, bufs)
     # TODO(yashkatariya): Remove once migration to Array is completed.
-    if (config.jax_array and out_bufs and xb.use_sharded_buffer and
+    if (config.jax_array and out_bufs and
         isinstance(out_bufs[0], xc.ShardedBuffer)):
       out_bufs = [o.get_device_buffers() for o in out_bufs]
     return self.out_handler(out_bufs)
@@ -3503,28 +3501,15 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
 def are_op_shardings_equal(op1, op2) -> bool:
   if id(op1) == id(op2):
     return True
-  if xla_extension_version >= 81:
-    if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
-      return True
-    return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
-  else:
-    if op1.type == xc.OpSharding.Type.TUPLE:
-      return all(are_op_shardings_equal(i, j)
-                 for i, j in safe_zip(op1.tuple_shardings, op2.tuple_shardings))
-    return (op1.type == op2.type and
-            op1.tile_assignment_dimensions == op2.tile_assignment_dimensions and
-            op1.tile_assignment_devices == op2.tile_assignment_devices and
-            op1.last_tile_dims == op2.last_tile_dims and
-            op1.replicate_on_last_tile_dim == op2.replicate_on_last_tile_dim)
+  if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
+    return True
+  return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
 
 
 def is_op_sharding_replicated(op: xc.OpSharding) -> bool:
-  if xla_extension_version >= 82:
-    if len(op.tile_assignment_devices) == 1:
-      return True
-    return xc.HloSharding.from_proto(op).is_replicated()  # type: ignore
-  else:
-    return op.type == xc.OpSharding.Type.REPLICATED
+  if len(op.tile_assignment_devices) == 1:
+    return True
+  return xc.HloSharding.from_proto(op).is_replicated()  # type: ignore
 
 
 _forbidden_primitives = {
