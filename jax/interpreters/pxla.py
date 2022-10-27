@@ -1623,11 +1623,9 @@ class PmapExecutable(stages.XlaExecutable):
     handle_outs = local_avals_to_results_handler(local_unmapped_avals, out_shardings)
 
     if hasattr(pci.backend, "compile_replicated"):
-      execute_fun = pci.backend.compile_replicated(
-          xla_computation, compile_options, host_callbacks, pci.avals,
-          input_indices, in_shardings, InputsHandlerMode.pmap, handle_outs)
-      # TODO(frostig): need `compile_replicated` to give us the XLA executable
-      return PmapExecutable(None, execute_fun, None, pci.avals)
+      return _compile_replicated_pmap_executable_from_hlo(
+          xla_computation, pci, input_indices, in_shardings, handle_outs,
+          compile_options, host_callbacks)
 
     with dispatch.log_elapsed_time(
         f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec"):
@@ -1858,7 +1856,8 @@ def _get_sharding_specs(
             for aval, s in safe_zip(avals, shardings)]
   else:
     raise ValueError('Getting sharding spec is only supported for '
-                     'PmapSharding and MeshPspecSharding.')
+                     "PmapSharding and MeshPspecSharding, "
+                     f"but got {shardings}.")
 
 def local_avals_to_results_handler(
     unmapped_local_out_avals: Sequence[ShapedArray],
@@ -2825,12 +2824,11 @@ def lower_sharding_computation(
   # and don't need to evaluate their arguments.
   if (not always_lower and not (jaxpr.effects or has_outfeed) and
       (not jaxpr.eqns and all(kept_outputs) or not jaxpr.outvars) and
-      all(_is_unspecified(o) for o in out_shardings) and  # type: ignore
-      not hasattr(backend, "compile_replicated")):  # this means 'not pathways'
+      all(_is_unspecified(o) for o in out_shardings)):  # type: ignore
     return MeshComputation(
         str(name_stack), None, True, donated_invars, jaxpr=jaxpr, consts=consts,
         global_in_avals=global_in_avals, global_out_avals=global_out_avals,
-        in_shardings=in_shardings,
+        in_shardings=in_shardings, backend=backend,
         device_assignment=device_assignment, committed=committed,
         kept_var_idx=kept_var_idx, keepalive=None)
 
@@ -3310,18 +3308,11 @@ class MeshExecutable(stages.XlaExecutable):
         _allow_propagation_to_outputs
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
-      assert not auto_spmd_lowering
-      in_shardings, input_indices, input_avals = _get_input_metadata(
-          global_in_avals, in_shardings, in_is_global)  # type: ignore
-      are_out_shardings_from_xla: Sequence[bool] = [False] * len(global_out_avals)
-      handle_outs = global_avals_to_results_handler(
-          global_out_avals, out_shardings, committed, are_out_shardings_from_xla)  # type: ignore  # arg-type
-      unsafe_call = backend.compile_replicated(computation, compile_options,
-                                               host_callbacks, input_avals,
-                                               input_indices, in_shardings,
-                                               InputsHandlerMode.pjit_or_xmap,
-                                               handle_outs)
-      xla_executable = None
+      return _compile_replicated_mesh_executable_from_hlo(
+          name, computation, global_in_avals, global_out_avals, in_shardings,
+          out_shardings, in_is_global, auto_spmd_lowering, compile_options,
+          host_callbacks, kept_var_idx, backend, device_assignment, committed,
+          pmap_nreps)
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
                                      "in {elapsed_time} sec"):
@@ -3350,7 +3341,7 @@ class MeshExecutable(stages.XlaExecutable):
         ]
         out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
       else:
-        are_out_shardings_from_xla = [False] * len(global_out_avals)
+        are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
       in_shardings, input_indices, input_avals = _get_input_metadata(
           global_in_avals, in_shardings, in_is_global)  # type: ignore
@@ -3371,10 +3362,10 @@ class MeshExecutable(stages.XlaExecutable):
             kept_var_idx, bool(host_callbacks),
             from_lower_sharding_computation=True)
       else:
-        unsafe_call = ExecuteReplicated(xla_executable, name, backend, handle_args,
-                                        handle_outs, unordered_effects,
-                                        ordered_effects, keepalive,
-                                        bool(host_callbacks), kept_var_idx)
+        unsafe_call = ExecuteReplicated(  # type: ignore  # assignment
+            xla_executable, name, backend, handle_args,
+            handle_outs, unordered_effects, ordered_effects, keepalive,
+            bool(host_callbacks), kept_var_idx)
 
     return MeshExecutable(xla_executable, unsafe_call, input_avals,
                           in_shardings, out_shardings, auto_spmd_lowering,
@@ -3382,9 +3373,14 @@ class MeshExecutable(stages.XlaExecutable):
 
   @staticmethod
   def from_trivial_jaxpr(jaxpr, consts, global_in_avals, global_out_avals,
-                         in_shardings, device_assignment,
+                         in_shardings, backend, device_assignment,
                          committed, kept_var_idx, keepalive) -> MeshExecutable:
     assert keepalive is None
+    if hasattr(backend, "compile_replicated"):
+      return _compile_replicated_mesh_executable_from_trivial_jaxpr(
+          jaxpr, consts, global_in_avals, global_out_avals, in_shardings,
+          backend, device_assignment, committed, kept_var_idx)
+
     out_shardings = _out_shardings_for_trivial(
         jaxpr, consts, in_shardings, device_assignment)
     if config.jax_array or config.jax_parallel_functions_output_gda:
@@ -3458,6 +3454,76 @@ def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args
   outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
           for v in jaxpr.outvars]
   return out_handler(in_handler(outs))
+
+
+def _compile_replicated_pmap_executable_from_hlo(xla_computation, pci,
+                                                 input_indices, in_shardings,
+                                                 handle_outs, compile_options,
+                                                 host_callbacks):
+  # Use the standard out_handler.
+  execute_fun = pci.backend.compile_replicated(
+      is_trivial=False, name=pci.name, computation=xla_computation,
+      compile_options=compile_options, host_callbacks=host_callbacks,
+      in_avals=pci.avals, in_indices=input_indices,
+      in_shardings=in_shardings, kept_var_idx=set(range(len(pci.avals))),
+      mode=InputsHandlerMode.pmap, out_handler=handle_outs)
+  # TODO(frostig): need `compile_replicated` to give us the XLA executable
+  return PmapExecutable(None, execute_fun, None, pci.avals)
+
+
+
+def _compile_replicated_mesh_executable_from_hlo(
+    name, computation, global_in_avals, global_out_avals, in_shardings,
+    out_shardings, in_is_global, auto_spmd_lowering, compile_options,
+    host_callbacks, kept_var_idx, backend, device_assignment, committed,
+    pmap_nreps):
+  assert not auto_spmd_lowering
+  in_shardings, input_indices, input_avals = _get_input_metadata(
+      global_in_avals, in_shardings, in_is_global)  # type: ignore
+  if pmap_nreps > 1:
+    # For a jit wrapping a pmap, replicate each input index to match the
+    # devices of the replicated jit computation.
+    input_indices = [index * pmap_nreps for index in input_indices]
+
+  # Will compute out_handler with executable information.
+  unsafe_call = backend.compile_replicated(
+      is_trivial=False, name=name, computation=computation,
+      compile_options=compile_options, host_callbacks=host_callbacks,
+      in_avals=input_avals, in_indices=input_indices,
+      in_shardings=in_shardings, kept_var_idx=kept_var_idx,
+      mode=InputsHandlerMode.pjit_or_xmap, out_avals=global_out_avals,
+      out_shardings=out_shardings, committed=committed)
+  xla_executable = None
+  return MeshExecutable(xla_executable, unsafe_call, input_avals,
+                        in_shardings, out_shardings, auto_spmd_lowering,
+                        kept_var_idx, device_assignment)
+
+
+def _compile_replicated_mesh_executable_from_trivial_jaxpr(
+    jaxpr, consts, global_in_avals, global_out_avals, in_shardings, backend,
+    device_assignment, committed, kept_var_idx):
+  out_shardings = _out_shardings_for_trivial(
+      jaxpr, consts, in_shardings, device_assignment)
+
+  if config.jax_array or config.jax_parallel_functions_output_gda:
+    in_is_global = [True] * len(global_in_avals)
+  else:
+    in_is_global = [False] * len(global_in_avals)
+  in_shardings, input_indices, input_avals = _get_input_metadata(
+      global_in_avals, in_shardings, in_is_global)  # type: ignore
+  handle_outs = global_avals_to_results_handler(
+      global_out_avals, out_shardings, committed,
+      [False] * len(global_out_avals))
+  # Use the standard out_handler.
+  unsafe_call = backend.compile_replicated(
+      is_trivial=True, jaxpr=jaxpr, consts=consts,
+      device_assignment=device_assignment, in_avals=input_avals,
+      in_indices=input_indices, in_shardings=in_shardings,
+      kept_var_idx=kept_var_idx, mode=InputsHandlerMode.pjit_or_xmap,
+      out_handler=handle_outs, out_shardings=out_shardings)
+  return MeshExecutable(None, unsafe_call, global_in_avals, in_shardings,
+                        out_shardings, False, kept_var_idx,
+                        device_assignment)
 
 
 @lru_cache()
