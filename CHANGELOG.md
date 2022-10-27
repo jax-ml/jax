@@ -21,6 +21,9 @@ Remember to align the itemized text with the first line of an item within a list
 * Breaking Changes
     * {func}`jax.numpy.gradient` now behaves like most other functions in {mod}`jax.numpy`,
       and forbids passing lists or tuples in place of arrays ({jax-issue}`#12958`)
+    * Functions in {mod}`jax.numpy.linalg` and {mod}`jax.numpy.fft` now uniformly
+      require inputs to be array-like: i.e. lists and tuples cannot be used in place
+      of arrays. Part of {jax-issue}`#7737`.
 
 ## jaxlib 0.3.24
 * Changes
