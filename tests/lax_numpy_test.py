@@ -2441,6 +2441,21 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
+    [dict(name=name, **kwds)
+      for name in ['blackman', 'bartlett', 'hamming', 'hanning', 'kaiser']
+      for kwds in ([dict(beta=1), dict(beta=0.5)] if name == 'kaiser' else [{}])
+    ],
+    size = [0, 1, 5, 10],
+  )
+  def testWindowFunction(self, name, size, **kwds):
+    print(name, size)
+    jnp_fun = partial(getattr(jnp, name), size, **kwds)
+    np_fun = partial(getattr(np, name), size, **kwds)
+    args_maker = lambda: []
+    self._CheckAgainstNumpy(jnp_fun, np_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
     [dict(shape=shape, fill_value_shape=fill_value_shape)
       for shape in array_shapes + [3, np.array(7, dtype=np.int32)]
       for fill_value_shape in _compatible_shapes(shape)],

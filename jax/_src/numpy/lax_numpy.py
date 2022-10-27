@@ -2259,20 +2259,6 @@ def arange(start: core.DimSize, stop: Optional[core.DimSize] = None,
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
 
-def _wrap_numpy_nullary_function(f):
-  """Adapts `f` to return a DeviceArray instead of an np.ndarray.
-
-  `f` cannot have any non-static array arguments.
-  """
-  @_wraps(f, update_doc=False)
-  def wrapper(*args, **kwargs):
-    args = [core.concrete_or_error(None, arg, f"the error occurred in argument {i} jnp.{f.__name__}()")
-            for i, arg in enumerate(args)]
-    kwargs = {key: core.concrete_or_error(None, val, f"the error occurred in argument '{key}' jnp.{f.__name__}()")
-              for key, val in kwargs.items()}
-    return asarray(f(*args, **kwargs))
-  return wrapper
-
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: Literal[False] = False,
@@ -4281,12 +4267,56 @@ def _static_idx(idx: slice, size: core.DimSize):
     return stop + k + 1, start + 1, -step, True
 
 
-blackman = _wrap_numpy_nullary_function(np.blackman)
-bartlett = _wrap_numpy_nullary_function(np.bartlett)
-hamming = _wrap_numpy_nullary_function(np.hamming)
-hanning = _wrap_numpy_nullary_function(np.hanning)
-# TODO: lower `kaiser` via lax to allow non-constant beta values.
-kaiser = _wrap_numpy_nullary_function(np.kaiser)
+@_wraps(np.blackman)
+def blackman(M: int) -> Array:
+  M = core.concrete_or_error(int, M, "M argument of jnp.blackman")
+  dtype = dtypes.canonicalize_dtype(float_)
+  if M <= 1:
+    return ones(M, dtype)
+  n = (1 - M) + 2 * lax.iota(dtype, M)
+  return 0.42 + 0.5 * cos(pi * n / (M - 1)) + 0.08 * cos(2 * pi * n / (M - 1))
+
+
+@_wraps(np.bartlett)
+def bartlett(M: int) -> Array:
+  M = core.concrete_or_error(int, M, "M argument of jnp.bartlett")
+  dtype = dtypes.canonicalize_dtype(float_)
+  if M <= 1:
+    return ones(M, dtype)
+  n = (1 - M) + 2 * lax.iota(dtype, M)
+  return 1 - abs(n) / (M - 1)
+
+
+@_wraps(np.hamming)
+def hamming(M: int) -> Array:
+  M = core.concrete_or_error(int, M, "M argument of jnp.hamming")
+  dtype = dtypes.canonicalize_dtype(float_)
+  if M <= 1:
+    return ones(M, dtype)
+  n = (1 - M) + 2 * lax.iota(dtype, M)
+  return 0.54 + 0.46 * cos(pi * n / (M - 1))
+
+
+@_wraps(np.hanning)
+def hanning(M: int) -> Array:
+  M = core.concrete_or_error(int, M, "M argument of jnp.hanning")
+  dtype = dtypes.canonicalize_dtype(float_)
+  if M <= 1:
+    return ones(M, dtype)
+  n = (1 - M) + 2 * lax.iota(dtype, M)
+  return 0.5 * (1 + cos(pi * n / (M - 1)))
+
+
+@_wraps(np.kaiser)
+def kaiser(M: int, beta: ArrayLike) -> Array:
+  M = core.concrete_or_error(int, M, "M argument of jnp.kaiser")
+  dtype = dtypes.canonicalize_dtype(float_)
+  if M <= 1:
+    return ones(M, dtype)
+  n = lax.iota(dtype, M)
+  alpha = 0.5 * (M - 1)
+  return i0(beta * sqrt(1 - ((n - alpha) / alpha) ** 2)) / i0(beta)
+
 
 def _gcd_cond_fn(xs):
   x1, x2 = xs
