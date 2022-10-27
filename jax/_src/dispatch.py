@@ -222,8 +222,9 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 
 # JIT execution
 
-def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
-                   donated_invars, inline, keep_unused: bool):
+
+def _xla_call_impl_lazy(fun: lu.WrappedFun, *args, device, backend, name,
+                        donated_invars, inline, keep_unused: bool):
   del inline  # Only used at tracing time
   if fun.in_type is None:
     arg_specs: Iterable[Any] = unsafe_map(arg_spec, args)
@@ -232,8 +233,23 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
     if config.jax_array:
       raise NotImplementedError('Dynamic shapes do not work with Array.')
     arg_specs = [(None, getattr(x, '_device', None)) for x in args]
-  compiled_fun = xla_callable(fun, device, backend, name, donated_invars,
-                              keep_unused, *arg_specs)
+  return xla_callable(fun, device, backend, name, donated_invars, keep_unused,
+                      *arg_specs)
+
+
+def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
+                   donated_invars, inline, keep_unused: bool):
+  compiled_fun = _xla_call_impl_lazy(
+      fun,
+      *args,
+      device=device,
+      backend=backend,
+      name=name,
+      donated_invars=donated_invars,
+      inline=inline,
+      keep_unused=keep_unused)
+  # TODO(parkers): Maybe apply this more generally in the case of the c++
+  # fallback.
   try:
     return compiled_fun(*args)
   except FloatingPointError:

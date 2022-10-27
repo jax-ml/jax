@@ -949,7 +949,7 @@ _register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl(fun: lu.WrappedFun, *args,
+def xla_pmap_impl_lazy(fun: lu.WrappedFun, *args,
                   backend: Optional[str],
                   axis_name: core.AxisName,
                   axis_size: int,
@@ -963,12 +963,14 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args,
   if (config.jax_disable_jit and config.jax_eager_pmap and
       global_axis_size is None and not any(d for d in donated_invars) and
       not all(g is not None for g in global_arg_shapes)):
-    return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
+    def _emap_apply_fn(*args):
+      return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
                       axis_size=axis_size, global_axis_size=global_axis_size,
                       devices=devices, name=name, in_axes=in_axes,
                       out_axes_thunk=out_axes_thunk,
                       donated_invars=donated_invars,
                       global_arg_shapes=global_arg_shapes)
+    return _emap_apply_fn
   abstract_args = unsafe_map(xla.abstractify, args)
   compiled_fun, fingerprint = parallel_callable(
       fun, backend, axis_name, axis_size, global_axis_size, devices, name,
@@ -982,6 +984,10 @@ def xla_pmap_impl(fun: lu.WrappedFun, *args,
                           ("devices", devices),
                           ("abstract args", map(xla.abstractify, args)),
                           ("fingerprint", fingerprint))
+  return compiled_fun
+
+def xla_pmap_impl(fun: lu.WrappedFun, *args, **params):
+  compiled_fun = xla_pmap_impl_lazy(fun, *args, **params)
   return compiled_fun(*args)
 
 class EmapInfo(NamedTuple):

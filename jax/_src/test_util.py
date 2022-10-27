@@ -800,8 +800,6 @@ class JaxTestCase(parameterized.TestCase):
   def tearDown(self):
     for key, value in self._original_config.items():
       config.update(key, value)
-    # TODO(parkers): Remove this when a real fix for most_recent_entry lands.
-    dispatch.xla_callable.most_recent_entry()
     super().tearDown()
 
   def rng(self):

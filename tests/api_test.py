@@ -1142,7 +1142,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
-    jit_impl = dispatch._xla_call_impl
+    jit_impl = dispatch._xla_call_impl_lazy
     count = 0
 
     def jit_impl_and_count(*args, **kwargs):
@@ -1153,7 +1153,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     f = self.jit(lambda x: x + 1)
 
     try:
-      xla.xla_call_p.def_impl(jit_impl_and_count)
+      dispatch._xla_call_impl_lazy = jit_impl_and_count
       f(0)
       self.assertEqual(count, 1)
       f(0)
@@ -1163,7 +1163,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       f(2)
       self.assertEqual(count, 1)
     finally:
-      xla.xla_call_p.def_impl(jit_impl)
+      dispatch._xla_call_impl_lazy = jit_impl
 
   def test_caches_depend_on_axis_env(self):
     # https://github.com/google/jax/issues/9187

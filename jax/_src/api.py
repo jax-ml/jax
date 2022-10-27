@@ -604,10 +604,24 @@ def _cpp_jit(
     if jax.config.jax_dynamic_shapes:
       in_type = pe.infer_lambda_input_type(None, args_flat)
       flat_fun = lu.annotate(flat_fun, in_type)
-    out_flat = xla.xla_call(
-        flat_fun, *args_flat,
-        device=device, backend=backend, name=flat_fun.__name__,
-        donated_invars=donated_invars, inline=inline, keep_unused=keep_unused)
+
+    primitive = xla.xla_call_p
+    call_bind_continuation, top_trace, fun_, tracers, params = (
+        core.call_bind_with_continuation(primitive, flat_fun, *args_flat,
+        device=device,
+        backend=backend,
+        name=flat_fun.__name__,
+        donated_invars=donated_invars,
+        inline=inline,
+        keep_unused=keep_unused))
+    execute = None
+    if isinstance(top_trace, core.EvalTrace) and not (
+        jax.config.jax_debug_nans or jax.config.jax_debug_infs):
+      execute = dispatch._xla_call_impl_lazy(fun_, *tracers, **params)
+      out_flat = call_bind_continuation(execute(*args_flat))
+    else:
+      out_flat = call_bind_continuation(
+          top_trace.process_call(primitive, fun_, tracers, params))
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 
@@ -616,7 +630,6 @@ def _cpp_jit(
     # to know whether `jax.jit(f)(x)` will execute or trace, it's not enough to
     # inspect the argument x, we actually do need to execute it and look at the
     # outputs that could be tracers (if f is capturing `Tracer` by closure).
-    execute = dispatch.xla_callable.most_recent_entry()
 
     fastpath_data = None
 
@@ -2210,41 +2223,55 @@ def _cpp_pmap(
 
   @api_boundary
   def cache_miss(*args, **kwargs):
-    f_pmapped_ = _get_f_mapped(
-        fun=fun,
-        axis_name=axis_name,
-        in_axes=in_axes,
-        out_axes=out_axes,
-        static_broadcasted_tuple=static_broadcasted_tuple,
-        devices=devices,
-        backend=backend,
-        axis_size=axis_size,
-        global_arg_shapes=global_arg_shapes,
-        donate_tuple=donate_tuple)
+    p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
+                      donate_tuple, global_arg_shapes, devices, args, kwargs)
+    for arg in p.flat_args:
+      _check_arg(arg)
 
-    out_tree, out_flat = f_pmapped_(*args, **kwargs)
+    params = dict(
+        backend=backend,
+        axis_name=axis_name,
+        axis_size=p.local_axis_size,
+        global_axis_size=axis_size,
+        devices=p.devices,
+        in_axes=p.in_axes_flat,
+        out_axes_thunk=p.out_axes_thunk,
+        name=p.flat_fun.__name__,
+        donated_invars=p.donated_invars,
+        global_arg_shapes=p.global_arg_shapes_flat)
+
+    map_bind_continuation, top_trace, fun_, tracers, params = (
+        core.map_bind_with_continuation(pxla.xla_pmap_p, p.flat_fun,
+                                        *p.flat_args, **params))
+    execute: Optional[functools.partial] = None
+    if isinstance(top_trace, core.EvalTrace):
+      execute = pxla.xla_pmap_impl_lazy(fun_, *tracers, **params)
+      out = map_bind_continuation(execute(*tracers))
+    else:
+      out = map_bind_continuation(
+          pxla.xla_pmap_p.process(top_trace, fun_, tracers, params))
+
+    out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 
     ### Decide whether we can support the C++ fast path
-    execute: Optional[functools.partial] = None
-    execute = pxla.parallel_callable.most_recent_entry()
     use_fastpath = (
         execute is not None and
         # We don't support JAX extension backends.
-        isinstance(execute[0], pxla.ExecuteReplicated) and
+        isinstance(execute, pxla.ExecuteReplicated) and
         # TODO(sharadmv): Enable effects in replicated computation
-        not execute[0].has_unordered_effects and
-        not execute[0].has_host_callbacks and
+        not execute.has_unordered_effects and not execute.has_host_callbacks and
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(
             isinstance(x, device_array.DeviceArray) or
-            xc._version >= 96 and isinstance(x, xc.ArrayImpl) for x in out_flat))
+            xc._version >= 96 and isinstance(x, xc.ArrayImpl)
+            for x in out_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
-      execute_replicated = execute[0]
+      execute_replicated = execute
       out_handler = execute_replicated.out_handler
       in_handler = execute_replicated.in_handler
       out_indices = [tuple(s.devices_indices_map(a.shape).values())

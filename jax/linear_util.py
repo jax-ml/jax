@@ -63,7 +63,6 @@ data must be immutable, because it will be stored in function memoization tables
 """
 from __future__ import annotations
 
-import threading
 from functools import partial
 from typing import Any, Tuple, Callable
 import weakref
@@ -271,13 +270,6 @@ def _check_input_type(in_type: core.InputType) -> None:
   assert all(provided)
 
 
-class _CacheLocalContext(threading.local):
-
-  def __init__(self):
-    super().__init__()
-    self.most_recent_entry = None
-
-
 def cache(call: Callable):
   """Memoization decorator for functions taking a WrappedFun as first argument.
 
@@ -290,7 +282,6 @@ def cache(call: Callable):
      A memoized version of ``call``.
   """
   fun_caches: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
-  thread_local: threading.local = _CacheLocalContext()
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, {})
@@ -309,20 +300,11 @@ def cache(call: Callable):
       ans = call(fun, *args)
       cache[key] = (ans, fun.stores)
 
-    thread_local.most_recent_entry = weakref.ref(ans)
     return ans
-
-  def _most_recent_entry():
-    most_recent_entry = thread_local.most_recent_entry
-    if most_recent_entry is not None:
-      result = most_recent_entry()
-      thread_local.most_recent_entry = None
-      return result
 
   def _evict_function(f):
     fun_caches.pop(f, None)
 
-  memoized_fun.most_recent_entry = _most_recent_entry  # type: ignore
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
 

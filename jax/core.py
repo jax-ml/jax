@@ -1936,7 +1936,10 @@ class CallPrimitive(Primitive):
   call_primitive = True
 
   def bind(self, fun, *args, **params):
-    return call_bind(self, fun, *args, **params)
+    call_bind_continuation, top_trace, fun_, tracers, params = (
+        call_bind_with_continuation(self, fun, *args, **params))
+    outs = top_trace.process_call(self, fun_, tracers, params)
+    return call_bind_continuation(outs)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -1946,14 +1949,16 @@ class CallPrimitive(Primitive):
       subfun = lu.annotate(subfun, _jaxpr_type_to_callable_annotation(jaxpr))
     return [subfun], new_params
 
-def call_bind(primitive: CallPrimitive, fun, *args, **params):
+def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
   top_trace = find_top_trace(args)
   fun_, env_trace_todo = process_env_traces_call(
       fun, primitive, top_trace and top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
   fun_ = lu.annotate(fun_, fun.in_type)
-  outs = top_trace.process_call(primitive, fun_, tracers, params)
-  return map(full_lower, apply_todos(env_trace_todo(), outs))
+
+  def call_bind_continuation(outs):
+    return map(full_lower, apply_todos(env_trace_todo(), outs))
+  return call_bind_continuation, top_trace, fun_, tracers, params
 
 @lu.transformation_with_aux
 def process_env_traces_call(primitive: CallPrimitive, level: Optional[int],
@@ -2055,7 +2060,9 @@ class MapPrimitive(Primitive):
     new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
     return [subfun], new_params
 
-def map_bind(primitive: MapPrimitive, fun, *args, out_axes_thunk, **params):
+
+def map_bind_with_continuation(primitive: MapPrimitive, fun, *args,
+                               out_axes_thunk, **params):
   # The new thunk depends deterministically on the old thunk and the wrapped
   # function. Any caching already has to include the wrapped function as part
   # of the key, so we only use the previous thunk for equality checks.
@@ -2071,9 +2078,19 @@ def map_bind(primitive: MapPrimitive, fun, *args, out_axes_thunk, **params):
   fun, todo_and_xforms = process_env_traces_map(
       fun, primitive, top_trace and top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
-  outs = primitive.process(top_trace, fun, tracers, params)
-  env_trace_todo, _ = todo_and_xforms()
-  return map(full_lower, apply_todos(env_trace_todo, outs))
+
+  def map_bind_continuation(outs):
+    env_trace_todo, _ = todo_and_xforms()
+    return map(full_lower, apply_todos(env_trace_todo, outs))
+
+  return map_bind_continuation, top_trace, fun, tracers, params
+
+
+def map_bind(primitive: MapPrimitive, fun, *args, **params):
+  map_bind_continuation, top_trace, fun, tracers, params = (
+      map_bind_with_continuation(primitive, fun, *args, **params))
+  return map_bind_continuation(
+      primitive.process(top_trace, fun, tracers, params))
 
 @lu.transformation_with_aux
 def process_env_traces_map(primitive: MapPrimitive, level: int,
