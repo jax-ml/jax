@@ -413,7 +413,7 @@ pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2014` wheels.
+`manylinux2014` wheels. Also note that for Linux, we currently release wheels for `x86_64` architectures only, other architectures require building from source. Trying to pip install with other Linux architectures may lead to `jaxlib` not being installed alongside `jax`, although `jax` may successfully install (but fail at runtime). 
 **These `pip` installations do not work with Windows, and may fail silently; see
 [above](#installation).**
 
@@ -427,7 +427,7 @@ learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
 package.
 
 JAX provides pre-built CUDA-compatible wheels for **Linux only**,
-with CUDA 11.1 or newer, and CuDNN 8.0.5 or newer. Other combinations of
+with CUDA 11.1 or newer, and CuDNN 8.0.5 or newer. Note these existing wheels are currently for `x86_64` architectures only. Other combinations of
 operating system, CUDA, and CuDNN are possible, but require [building from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
