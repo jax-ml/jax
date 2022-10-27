@@ -700,6 +700,7 @@ jax_test(
     srcs = ["sparsify_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
     shard_count = {
+        "cpu": 5,
         "gpu": 20,
         "tpu": 10,
     },
