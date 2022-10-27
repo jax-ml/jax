@@ -16,8 +16,8 @@
 # checking on import.
 
 import gc
+import pathlib
 import re
-import os
 from typing import Optional, Tuple
 
 try:
@@ -115,9 +115,22 @@ import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 mlir_api_version = xla_client.mlir_api_version
 
 # TODO(rocm): check if we need the same for rocm.
-cuda_path: Optional[str]
-cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
-if not os.path.isdir(cuda_path):
-  cuda_path = None
+
+def _cuda_path() -> Optional[str]:
+  _jaxlib_path = pathlib.Path(jaxlib.__file__).parent
+  # If the pip package nvidia-cuda-nvcc-cu11 is installed, it should have
+  # both of the things XLA looks for in the cuda path, namely bin/ptxas and
+  # nvvm/libdevice/libdevice.10.bc
+  path = _jaxlib_path.parent / "nvidia" / "cuda_nvcc"
+  if path.is_dir():
+    return str(path)
+  # Failing that, we use the copy of libdevice.10.bc we include with jaxlib and
+  # hope that the user has ptxas in their PATH.
+  path = _jaxlib_path / "cuda"
+  if path.is_dir():
+    return str(path)
+  return None
+
+cuda_path = _cuda_path()
 
 transfer_guard_lib = xla_client._xla.transfer_guard_lib

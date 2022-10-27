@@ -439,18 +439,17 @@ source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source
   * cuDNN 8.6 or newer. We recommend using the cuDNN 8.6 wheel if your cuDNN
     installation is new enough, since it supports additional functionality.
   * cuDNN 8.2 or newer.
-* You *must* use an NVidia driver version that is at least as new as your
+* You *must* use an NVIDIA driver version that is at least as new as your
   [CUDA toolkit's corresponding driver version](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cuda-major-component-versions__table-cuda-toolkit-driver-versions).
-  For example, if you have CUDA 11.4 update 4 installed, you must use NVidia
+  For example, if you have CUDA 11.4 update 4 installed, you must use NVIDIA
   driver 470.82.01 or newer if on Linux. This is a strict requirement that
   exists because JAX relies on JIT-compiling code; older drivers may lead to
   failures.
   * If you need to use an newer CUDA toolkit with an older driver, for example
-    on a cluster where you cannot update the NVidia driver easily, you may be
+    on a cluster where you cannot update the NVIDIA driver easily, you may be
     able to use the
     [CUDA forward compatibility packages](https://docs.nvidia.com/deploy/cuda-compatibility/)
-    that NVidia provides for this purpose.
-
+    that NVIDIA provides for this purpose.
 
 Next, run
 
@@ -527,7 +526,7 @@ simply run
 conda install jax -c conda-forge
 ```
 
-To install on a machine with an NVidia GPU, run
+To install on a machine with an NVIDIA GPU, run
 ```bash
 conda install jaxlib=*=*cuda* jax cuda-nvcc -c conda-forge -c nvidia
 ```

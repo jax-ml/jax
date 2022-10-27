@@ -22,10 +22,9 @@ from setuptools import setup, find_packages
 _current_jaxlib_version = '0.4.6'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.4.6'
-_available_cuda_versions = ['11']
-_default_cuda_version = '11'
-_available_cudnn_versions = ['82', '86']
-_default_cudnn_version = '86'
+_available_cuda11_cudnn_versions = ['82', '86']
+_default_cuda11_cudnn_version = '86'
+_default_cuda12_cudnn_version = '88'
 _libtpu_version = '0.1.dev20230309'
 
 _dct = {}
@@ -90,16 +89,52 @@ setup(
         # $ pip install jax[australis]
         'australis': ['protobuf>=3.13,<4'],
 
-        # CUDA installations require adding jax releases URL; e.g.
+        # CUDA installations require adding the JAX CUDA releases URL.
+        # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        'cuda': [
+          f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}",
+        ],
+
         # Cuda installation defaulting to a CUDA and Cudnn version defined above.
         # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-        'cuda': [f"jaxlib=={_current_jaxlib_version}+cuda{_default_cuda_version}.cudnn{_default_cudnn_version}"],
+        'cuda': [f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}"],
+
+        'cuda11_pip': [
+          f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}",
+          "nvidia-cublas-cu11",
+          "nvidia-cuda-nvcc-cu11",
+          "nvidia-cuda-runtime-cu11",
+          "nvidia-cudnn-cu11",
+          "nvidia-cufft-cu11",
+          "nvidia-cusolver-cu11",
+          "nvidia-cusparse-cu11",
+        ],
+
+        'cuda12_pip': [
+          f"jaxlib=={_current_jaxlib_version}+cuda12.cudnn{_default_cuda12_cudnn_version}",
+          "nvidia-cublas-cu12",
+          "nvidia-cuda-nvcc-cu12",
+          "nvidia-cuda-runtime-cu12",
+          "nvidia-cudnn-cu12",
+          "nvidia-cufft-cu12",
+          "nvidia-cusolver-cu12",
+          "nvidia-cusparse-cu12",
+        ],
+
+        # Target that does not depend on the CUDA pip wheels, for those who want
+        # to use a preinstalled CUDA.
+        'cuda11_local': [
+          f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}",
+        ],
+        'cuda12_local': [
+          f"jaxlib=={_current_jaxlib_version}+cuda12.cudnn{_default_cuda12_cudnn_version}",
+        ],
 
         # CUDA installations require adding jax releases URL; e.g.
         # $ pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
         # $ pip install jax[cuda11_cudnn86] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-        **{f'cuda{cuda_version}_cudnn{cudnn_version}': f"jaxlib=={_current_jaxlib_version}+cuda{cuda_version}.cudnn{cudnn_version}"
-           for cuda_version in _available_cuda_versions for cudnn_version in _available_cudnn_versions}
+        **{f'cuda11_cudnn{cudnn_version}': f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{cudnn_version}"
+           for cudnn_version in _available_cuda11_cudnn_versions}
     },
     url='https://github.com/google/jax',
     license='Apache-2.0',
