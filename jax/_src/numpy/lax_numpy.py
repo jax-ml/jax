@@ -4273,8 +4273,8 @@ def blackman(M: int) -> Array:
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
     return ones(M, dtype)
-  n = (1 - M) + 2 * lax.iota(dtype, M)
-  return 0.42 + 0.5 * cos(pi * n / (M - 1)) + 0.08 * cos(2 * pi * n / (M - 1))
+  n = lax.iota(dtype, M)
+  return 0.42 - 0.5 * cos(2 * pi * n / (M - 1)) + 0.08 * cos(4 * pi * n / (M - 1))
 
 
 @_wraps(np.bartlett)
@@ -4283,8 +4283,8 @@ def bartlett(M: int) -> Array:
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
     return ones(M, dtype)
-  n = (1 - M) + 2 * lax.iota(dtype, M)
-  return 1 - abs(n) / (M - 1)
+  n = lax.iota(dtype, M)
+  return 1 - abs(2 * n + 1 - M) / (M - 1)
 
 
 @_wraps(np.hamming)
@@ -4293,8 +4293,8 @@ def hamming(M: int) -> Array:
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
     return ones(M, dtype)
-  n = (1 - M) + 2 * lax.iota(dtype, M)
-  return 0.54 + 0.46 * cos(pi * n / (M - 1))
+  n = lax.iota(dtype, M)
+  return 0.54 - 0.46 * cos(2 * pi * n / (M - 1))
 
 
 @_wraps(np.hanning)
@@ -4303,8 +4303,8 @@ def hanning(M: int) -> Array:
   dtype = dtypes.canonicalize_dtype(float_)
   if M <= 1:
     return ones(M, dtype)
-  n = (1 - M) + 2 * lax.iota(dtype, M)
-  return 0.5 * (1 + cos(pi * n / (M - 1)))
+  n = lax.iota(dtype, M)
+  return 0.5 * (1 - cos(2 * pi * n / (M - 1)))
 
 
 @_wraps(np.kaiser)

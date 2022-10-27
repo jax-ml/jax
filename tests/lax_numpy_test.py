@@ -2448,7 +2448,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     size = [0, 1, 5, 10],
   )
   def testWindowFunction(self, name, size, **kwds):
-    print(name, size)
     jnp_fun = partial(getattr(jnp, name), size, **kwds)
     np_fun = partial(getattr(np, name), size, **kwds)
     args_maker = lambda: []
