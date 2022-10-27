@@ -775,21 +775,15 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # The computation of grad_f computes "sin" 5 times, 3 for the forward pass
     # and then to rematerialize "x2" and "x3" in the backward pass.
     arg = np.array(3.)
-    # Check that we have a Sin under a conditional
-    f_tf = tf.function(jax2tf.convert(jax.grad(remat_f)), autograph=False)
-    f_tf_graph = f_tf.get_concrete_function(arg).graph.as_graph_def()
+    f_tf = jax2tf.convert(jax.grad(remat_f))
+    f_tf_hlo = self.TfToHlo(f_tf, arg)
     if jax.config.jax_remat_opt_barrier:
-      if config.jax2tf_default_experimental_native_lowering:
-        self.assertRegex(
-          str(f_tf_graph), r"mhlo.optimization_barrier")
-      else:
-        self.assertRegex(
-            str(f_tf_graph), r"XlaOptimizationBarrier")
+      self.assertRegex(f_tf_hlo, r"opt-barrier")
     elif config.jax_experimental_name_stack:
-      self.assertRegex(str(f_tf_graph),
+      self.assertRegex(f_tf_hlo,
                        r'transpose/jax2tf_f_/jvp/checkpoint/cond/branch_1_fun/Sin')
     else:
-      self.assertRegex(str(f_tf_graph),
+      self.assertRegex(f_tf_hlo,
                        r'switch_case/indexed_case/Sin')
 
   def test_remat_free_var(self):
@@ -815,12 +809,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # in JAX prior to conversion).
     def f_jax():
       return jnp.sin(1.)
-    f_tf = tf.function(jax2tf.convert(f_jax), autograph=False)
-    f_tf_graph = f_tf.get_concrete_function().graph.as_graph_def()
-    if config.jax2tf_default_experimental_native_lowering:
-      self.assertIn("mhlo.sine", str(f_tf_graph))
-    else:
-      self.assertIn('op: "Sin"', str(f_tf_graph))
+    f_tf = jax2tf.convert(f_jax)
+    # for native lowering the HLO we get from TF is constant-folded, so this
+    # test fails.
+    if not config.jax2tf_default_experimental_native_lowering:
+      self.assertIn("sine(", self.TfToHlo(f_tf))
 
   def test_convert_of_nested_independent_jit(self):
     def func(x):
@@ -857,7 +850,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         ValueError, "convert must be used outside all JAX transformations"):
       jax2tf.convert(outer)(2.)
 
-
   @jtu.sample_product(transform=["jit", "jvp", "grad", "vmap"])
   def test_convert_under_transform_error(self, transform="vmap"):
     def outer(y):
@@ -878,23 +870,21 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.TransformConvertAndCompare(outer, np.ones((4,)), transform)
 
   def test_name_scope(self):
-    @tf.function(autograph=False)
-    def run():
+    def run_tf():
       @jax.named_call
-      def my_test_function(x):
+      def my_test_function_jax(x):
         return x * x
 
-      def caller(x):
-        return my_test_function(jnp.sin(x))
+      def caller_jax(x):
+        return my_test_function_jax(jnp.sin(x))
 
-      out = jax2tf.convert(caller, with_gradient=False)(2.)
+      out = jax2tf.convert(caller_jax, with_gradient=False)(2.)
       return out
-    run_graph = run.get_concrete_function().graph.as_graph_def()
-    print(str(run_graph))
     if config.jax2tf_default_experimental_native_lowering:
-      self.assertIn("my_test_function/mul", str(run_graph))
+      self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
-      self.assertIn("my_test_function/jit_fn_/Mul", str(run_graph))
+      self.assertIn("my_test_function_jax/jit_fn_/Mul",
+                    str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def()))
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/google/jax/issues/3942
@@ -919,6 +909,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     def f(x):
       return x + const + const + const + const
@@ -929,6 +921,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     x = np.ones((256,), dtype=np.float32)
     def f1(x):
@@ -941,6 +935,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     xs = np.ones((8, 256), dtype=np.float32)
     def f1(xs):
@@ -957,6 +953,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_jit(self):
     # We do not share constants under jit.
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
     const = np.random.uniform(size=(16, 16)).astype(np.float32)  # A shared constant
     @jax.jit
     def g_jit(x):

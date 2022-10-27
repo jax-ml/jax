@@ -14,11 +14,12 @@
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 from functools import partial
 import contextlib
-import logging
 import os
 import re
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union, cast
+
+from absl import logging
 
 import jax
 from jax import lax
@@ -90,8 +91,6 @@ _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/-]")
 
 map = util.safe_map
 zip = util.safe_zip
-
-logger = logging.getLogger(__name__)
 
 
 def _sanitize_scope_name(name):
@@ -634,27 +633,11 @@ def _lower_native_and_run(fun_jax: Callable,
     fun_jax_lower = fun_jax.lower
   lowered = fun_jax_lower(*arg_specs_jax)._lowering
   mhlo_module = lowered.mhlo()
-  mhlo_module_text = mlir.module_to_string(mhlo_module)
-  logger.debug("XlaCallModule %s", mhlo_module_text)
-  # We do not support custom_call, try to give an error for now
-  if "mhlo.custom_call" in mhlo_module_text:
-    # Try to give a nice error message. We could just dump the module...
-    msg = ("experimental_native_lowering does not work with custom calls. "
-           "Most likely you are running this on CPU or GPU for JAX programs that "
-           "use custom calls on those platforms. The serialization should "
-           "work on TPU.")
-    custom_calls = re.findall(r'mhlo.custom_call.*call_target_name\s+=\s+"([^"]+)".*loc\(([^\)]+)\)',
-                              mhlo_module_text)
-    bad_custom_calls = tuple(filter(lambda cc: cc[0] != "Sharding", custom_calls))
-    if bad_custom_calls:
-      for cc in bad_custom_calls:
-        msg += f"\n{cc[0]}"
-        # Get the line number
-        m = re.search('^' + cc[1] + ' =.*', mhlo_module_text, re.MULTILINE)
-        if m:
-          msg += f"\n  from line {m.group(0)}"
-      raise NotImplementedError(msg)
+  if logging.vlog_is_on(3):
+    mhlo_module_text = mlir.module_to_string(mhlo_module)
+    logging.vlog(3, "XlaCallModule %s", mhlo_module_text)
 
+  mhlo_serialized_module = mlir.module_to_bytecode(mhlo_module)
   # Figure out the result types and shapes
   if "global_out_avals" in lowered.compile_args:
     # This is currently the case for pjit
@@ -686,7 +669,7 @@ def _lower_native_and_run(fun_jax: Callable,
       map(_shard_value, args_tf, args_avals, lowered.compile_args["in_shardings"]))
   res = tfxla.call_module(
       args_tf,
-      module=mhlo_module_text,
+      module=mhlo_serialized_module,
       Tout=out_types,
       Sout=out_shapes,
       dim_args_spec=dim_args_spec)

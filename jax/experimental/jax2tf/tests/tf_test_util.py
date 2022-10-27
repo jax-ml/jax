@@ -409,6 +409,14 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         self.assertEqual(tuple(expected.shape), tuple(found))
     return f_tf
 
+  def TfToHlo(self, tf_fun: Callable, *args):
+    # Converts a tf.function to HLO text which we can inspect for occurrence of
+    # substrings. This works whether we use native lowering or not.
+    tf_function = tf.function(tf_fun, autograph=False, jit_compile=True)
+    device_name = f"/device:{jtu.device_under_test().upper()}:0"
+    return tf_function.experimental_get_compiler_ir(*args)(stage="hlo",
+                                                           device_name=device_name)
+
   def CountLargeTfConstants(self, tf_fun: Callable, *args,
                             at_least=256):
     # A hacky way to count how many "large" constants are embedded in the
