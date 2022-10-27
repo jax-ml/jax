@@ -266,7 +266,7 @@ static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       gpusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                    d.y.type, GPUSPARSE_MV_ALG_DEFAULT, buf)));
+                    d.y.type, GPUSPARSE_SPMV_CSR_ALG, buf)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
@@ -324,7 +324,7 @@ static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
       /*ld=*/d.C.cols, Cbuf, d.C.type, GPUSPARSE_ORDER_ROW)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM(
       handle.get(), d.op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_ALG_DEFAULT, buf)));
+      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_CSR_ALG, buf)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
@@ -463,7 +463,7 @@ static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
       gpusparseSpMV(handle.get(), d.op, &alpha, mat_a, vec_x, &beta, vec_y,
-                    d.y.type, GPUSPARSE_MV_ALG_DEFAULT, buf)));
+                    d.y.type, GPUSPARSE_SPMV_COO_ALG, buf)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
@@ -529,7 +529,7 @@ static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
                                     /*batchStride=*/d.C.batch_stride)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM(
       handle.get(), d.op_A, /*opB=*/GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha,
-      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_ALG_DEFAULT, buf)));
+      mat_a, mat_b, &beta, mat_c, d.C.type, GPUSPARSE_SPMM_COO_ALG, buf)));
 
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));

@@ -1208,7 +1208,11 @@ class BCOOTest(jtu.JaxTestCase):
       # TODO(tianjianlu): In some cases, this fails python_should_be_executing.
       # self._CompileAndCheck(f_sparse, args_maker)
       self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-      self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
+      if dtype is np.complex128:
+        atol = 1E-1
+      else:
+        atol = 1E-2
+      self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker, atol=atol, rtol=1E-6)
     else:
       lhs_bcoo, lhs, rhs = args_maker()
       matmat_expected = f_dense(lhs_bcoo, lhs, rhs)
