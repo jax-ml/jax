@@ -761,6 +761,24 @@ class ShardingTest(jtu.JaxTestCase):
     str(out.sharding)  # doesn't crash
     repr(out.sharding)  # doesn't crash
 
+  @parameterized.named_parameters(
+      ('sharded_dim_0', (4, 2), 0),
+      ('sharded_dim_1_0', (4, 2), 1),
+      ('sharded_dim_2', (4, 2, 4), 2),
+      ('sharded_dim_1_1', (2, 4), 1)
+  )
+  def test_default_pmap_sharding(self, shape, sharded_dim):
+    if jax.device_count() < 4:
+      self.skipTest('Test needs >= 4 devices.')
+    ps = sharding.PmapSharding.default(shape, sharded_dim)
+
+    inp = jnp.arange(np.prod(shape)).reshape(shape)
+    compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
+    pmap_in_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
+
+    self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
+    self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

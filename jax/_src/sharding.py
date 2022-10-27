@@ -20,6 +20,7 @@ import operator as op
 from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
                     FrozenSet, Union, cast)
 
+import jax
 from jax._src.util import safe_map, safe_zip
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -328,6 +329,33 @@ class PmapSharding(XLACompatibleSharding):
   def __repr__(self):
     return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
             f'devices={self.devices})')
+
+  # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
+  @classmethod
+  def default(cls, shape: Shape, sharded_dim: int = 0) -> PmapSharding:
+    """Creates a `PmapSharding` which matches the implicit device order used by
+    `pmap`.
+
+    Args:
+      shape: The shape of the input array.
+      sharded_dim: Dimension the input array is sharded on. Defaults to 0.
+    """
+    # The dtype doesn't matter here. Its only used for creating the
+    # sharding_spec.
+    aval = jax.ShapedArray(shape, np.int32)
+    sharding_spec = pxla._create_pmap_sharding_spec(aval, sharded_dim)
+
+    num_ways_sharded = None
+    for s in sharding_spec.sharding:
+      if isinstance(s, pxla.Unstacked):
+        num_ways_sharded = s.size
+    if num_ways_sharded is None:
+      raise NotImplementedError(
+          '`None` to sharded_dim is not supported. Please file a jax '
+          'issue if you need this feature.')
+
+    pmap_devices = jax.local_devices()[:num_ways_sharded]
+    return cls(pmap_devices, sharding_spec)
 
   @pxla.maybe_cached_property
   def device_set(self) -> Set[Device]:
