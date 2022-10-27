@@ -1004,8 +1004,8 @@ def reduce(operands: Any,
     flat_init_avals = safe_map(_abstractify, flat_init_values)
     jaxpr, consts, out_tree = _variadic_reduction_jaxpr(
         computation, tuple(flat_init_avals), init_value_tree)
-    out = reduce_p.bind(*(flat_operands + flat_init_values), computation=computation,
-                         jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
+    out = reduce_p.bind(*flat_operands, *flat_init_values, computation=computation,
+                        jaxpr=jaxpr, consts=consts, dimensions=tuple(dimensions))
     return tree_util.tree_unflatten(out_tree, out)
 
 @cache()
