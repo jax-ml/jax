@@ -73,7 +73,7 @@ build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --@org_tensorflow//tensorflow/compiler/xla/python:enable_gpu=true
 build:rocm --define=xla_python_enable_gpu=true
 build:rocm --repo_env TF_NEED_ROCM=1
-build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908"
+build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908,gfx90a,gfx1030"
 
 build:nonccl --define=no_nccl_support=true
 
