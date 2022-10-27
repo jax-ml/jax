@@ -1053,7 +1053,7 @@ def sph_harm(m: Array,
     phi = jnp.array([phi])
 
   if n_max is None:
-    n_max = jnp.max(n)
+    n_max = np.max(n)
   n_max = core.concrete_or_error(
       int, n_max, 'The `n_max` argument of `jnp.scipy.special.sph_harm` must '
       'be statically specified to use `sph_harm` within JAX transformations.')

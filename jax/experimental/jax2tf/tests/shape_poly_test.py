@@ -1179,7 +1179,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   [RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
                   poly_axes=[0, 1]),
     _make_harness("add_transpose", "",
-                  jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=0) + x)),
+                  jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=False) + x)),
                   [RandArg((3, 4), _f32)],
                   poly_axes=[0]),
     _make_harness("arange", "start",
