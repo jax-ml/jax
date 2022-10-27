@@ -261,7 +261,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       return x, t
 
     def f(x):
-      x = jnp.sin(x)
+      x = jnp.square(x)
       x = print_tangent(x)
       return x
 
@@ -269,7 +269,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       x = jnp.array(1., jnp.float32)
       jax.jvp(f, (x,), (x,))
       jax.effects_barrier()
-    expected = jnp.cos(jnp.array(1., jnp.float32))
+    expected = jnp.array(2., jnp.float32)
     self.assertEqual(output(), f"x_tangent: {expected}\n")
 
   @unittest.skip("doesn't work yet!")  # TODO(mattjj,sharadmv)
@@ -318,12 +318,12 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
     def f(x):
       debug_print("x: {}", x)
       x = print_grad(x)
-      return jnp.sin(x)
+      return jnp.square(x)
 
     with jtu.capture_stdout() as output:
       jax.grad(f)(jnp.array(1., jnp.float32))
       jax.effects_barrier()
-    expected = jnp.cos(jnp.array(1., jnp.float32))
+    expected = jnp.array(2., jnp.float32)
     self.assertEqual(output(), f"x: 1.0\nx_grad: {expected}\n")
 
   def test_debug_print_transpose_rule(self):
