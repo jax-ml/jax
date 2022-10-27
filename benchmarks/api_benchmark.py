@@ -34,6 +34,10 @@ from jax.experimental import pjit as pjit_lib
 import jax.numpy as jnp
 import numpy as np
 
+from jax.config import config
+
+config.parse_flags_with_absl()
+
 
 partial = functools.partial
 
