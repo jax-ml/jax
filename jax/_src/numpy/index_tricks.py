@@ -47,7 +47,7 @@ class _IndexGrid(abc.ABC):
   sparse: bool
   op_name: str
 
-  def __getitem__(self, key: Union[slice, Tuple[slice, ...]]) -> Array:
+  def __getitem__(self, key: Union[slice, Tuple[slice, ...]]) -> Union[Array, List[Array]]:
     if isinstance(key, slice):
       return _make_1d_grid_from_slice(key, op_name=self.op_name)
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name=self.op_name) for k in key)
