@@ -1815,10 +1815,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_unspecified_out_axis_resources(self):
-    # TODO(https://github.com/google/jax/issues/12927): Fix cloud TPU SE backend.
-    if (xla_bridge.get_backend().runtime_type == 'stream_executor' and
-        jtu.device_under_test() == 'tpu'):
-      self.skipTest('Does not work with the cloud TPU SE runtime.')
+    if xc._version < 102:  # Remove when jaxlib 0.3.23 is released
+      if (xla_bridge.get_backend().runtime_type == 'stream_executor' and
+          jtu.device_under_test() == 'tpu'):
+        self.skipTest('Does not work with the cloud TPU SE runtime.')
 
     def _checks(out, input_data):
       self.assertIsInstance(out, array.ArrayImpl)
@@ -1852,10 +1852,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
   @jax_array(True)
   def test_pjit_array_multi_input_multi_output(self, mesh_shape, s1_shape,
                                                s2_shape, s3_shape, s4_shape):
-    # TODO(https://github.com/google/jax/issues/12927): Fix cloud TPU SE backend.
-    if (xla_bridge.get_backend().runtime_type == 'stream_executor' and
-        jtu.device_under_test() == 'tpu'):
-      self.skipTest('Does not work with the cloud TPU SE runtime.')
+    if xc._version < 102:  # Remove when jaxlib 0.3.23 is released
+      if (xla_bridge.get_backend().runtime_type == 'stream_executor' and
+          jtu.device_under_test() == 'tpu'):
+        self.skipTest('Does not work with the cloud TPU SE runtime.')
 
     global_mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
     global_input_shape = (8, 2)
