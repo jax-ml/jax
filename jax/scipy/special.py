@@ -31,6 +31,7 @@ from jax._src.scipy.special import (
   i0e as i0e,
   i1 as i1,
   i1e as i1e,
+  jv as jv,
   logit as logit,
   logsumexp as logsumexp,
   lpmn as lpmn,

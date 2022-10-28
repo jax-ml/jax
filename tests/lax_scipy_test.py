@@ -318,6 +318,30 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
 
   @jtu.sample_product(
+    [dict(v=v, z=z, n_iter=n_iter)
+     for v, z, n_iter in zip(
+         [1], [1.1], [20]
+     )],
+    # v=[0, 1, 2, 3, 6],
+    # z=[0.01, 1.1, 11.4, 100.6],
+    dtype=float_dtypes,
+  )
+  def testJn(self, v, z, n_iter, dtype):
+    actual_results = lsp_special.jv(v, z, n_iter=n_iter)
+    expected_results = np.zeros_like(actual_results)
+    for order in range(v+1):
+      expected_results[order] = osp_special.jv(order, z)
+    self.assertAllClose(expected_results, actual_results, rtol=1E-6)
+    # def scipy_fun(z, m=l_max, n=l_max):
+    #   # scipy only supports scalar inputs for z, so we must loop here.
+    #   vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
+    #   return np.dstack(vals), np.dstack(derivs)
+
+    # self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5,
+    #                         atol=3e-3, check_dtypes=False)
+    # self._CompileAndCheck(lax_fun, args_maker, rtol=1E-5, atol=3e-3)
+
+  @jtu.sample_product(
     l_max=[1, 2, 3, 6],
     shape=[(5,), (10,)],
     dtype=float_dtypes,

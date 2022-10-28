@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import partial
-from typing import cast, Any, List, Optional, Tuple
+from typing import cast, Any, List, Optional, Tuple, Union
 
 import numpy as np
 import scipy.special as osp_special
@@ -639,6 +639,122 @@ def i1(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
 
+
+def _jn_check_n_iter(z, n_iter):
+  for nt in range(1, 901):
+    mt = int(0.5 * jnp.log10(6.28 * nt) - nt * jnp.log10(1.36 * jnp.abs(z) / nt))
+    if mt > 20:
+      break
+  if abs(nt - n_iter) > 50:
+    raise ValueError(f'Use `n_iter={nt}` for better accuracy.')
+  return nt
+
+def jn(v: int, z: float, n_iter: int = 200) -> Array:
+  """Bessel function of the first kind of integer order and real argument.
+
+  Args:
+    v: The order (int) of the Bessel function.
+    z: A vector of type `float32` or `float64` containing the sampling
+      points at which the Bessel function are computed.
+    n_iter: The number of iterations required for updating the function
+      values. As a rule of thumb, `n_iter` is computed by
+      `floor(0.5 * log10(6.28 + n_iter) - n_iter *  log10(1.36 + abs(z) / n_iter) - 20)`.
+      Details can be found in `BJNDD` (https://people.sc.fsu.edu/~jburkardt/f77_src/special_functions/special_functions.f)
+
+  Returns:
+    A vector containing the values of the Bessel function of
+    orders 0, 1, ..., v. The return type matches the type of `z`.
+
+  Raises:
+    NotImplementedError if `v` is not integer.
+    NotImplementedError if elements of array `z` are not in (float32, float64).
+  """
+  order_dtype = lax.dtype(v)
+  if order_dtype not in (jnp.int32, jnp.int64):
+    raise NotImplementedError(
+        'order dtype={} is not supported.'.format(order_dtype))
+
+  z_dtype = lax.dtype(z)
+  if z_dtype not in (jnp.float32, jnp.float64):
+    raise NotImplementedError(
+        'z.dtype={} is not supported, see docstring for supported types.'
+        .format(z_dtype))
+
+  v = core.concrete_or_error(int, v, 'Argument v of jn.')
+  z = core.concrete_or_error(float, z, 'Argument z of jn.')
+
+  _ = _jn_check_n_iter(z, n_iter)
+
+  j_vals = jnp.zeros(shape=(n_iter + 1), dtype=z_dtype)
+  f0 = 0.0
+  f1 = 1E-16
+  f = 0.0
+  bs = 0.0
+
+  def body_fun(i, val):
+    j_vals, f0, f1, f, bs = val
+    k = n_iter - i
+    f = 2.0 * (k + 1.0) * f1 / z - f0
+    j_vals = j_vals.at[k].set(f)
+
+    def true_fn_update_bs(u):
+      bs, f = u
+      return bs + 2.0 * f
+
+    def false_fn_update_bs(u):
+      bs, _ = u
+      return bs
+
+    bs = lax.cond(jnp.mod(k, 2) == 0, true_fn_update_bs,
+                  false_fn_update_bs, operand=(bs, f))
+
+    f0 = f1
+    f1 = f
+    return j_vals, f0, f1, f, bs
+
+  j_vals, _, _, f, bs = lax.fori_loop(
+      lower=0, upper=n_iter+1, body_fun=body_fun,
+      init_val=(j_vals, f0, f1, f, bs))
+
+  j_vals = j_vals[:v+1]
+  j_vals = j_vals / (bs - f)
+
+  return j_vals
+
+def jv(v, z, n_iter=200) -> Array:
+  """Bessel function of the first kind of real order and complex argument.
+
+  Args:
+    v: The order of the Bessel function.
+    z: A vector of type `float32` or `float64` containing the sampling
+      points at which the Bessel function are computed.
+    n_iter: The number of iterations required for updating the function
+      values. As a rule of thumb, `n_iter` is computed by
+      `floor(0.5 * log10(6.28 + n_iter) - n_iter *  log10(1.36 + abs(z) / n_iter) - 20)`.
+      Details can be found in `BJNDD` (https://people.sc.fsu.edu/~jburkardt/f77_src/special_functions/special_functions.f)
+
+  Returns:
+    A vector containing the values of the Bessel function of
+    orders 0, 1, ..., v. The return type matches the type of `z`.
+
+  Raises:
+    NotImplementedError if `v` is not integer.
+    NotImplementedError if elements of array `z` are not in (float32, float64).
+  """
+  order_dtype = lax.dtype(v)
+  if order_dtype not in (jnp.int32, jnp.int64):
+    raise NotImplementedError(
+        'order dtype={} is not supported.'.format(order_dtype))
+
+  z_dtype = lax.dtype(z)
+  if z_dtype not in (jnp.float32, jnp.float64):
+    raise NotImplementedError(
+        'z.dtype={} is not supported, see docstring for supported types.'
+        .format(z_dtype))
+
+  v = core.concrete_or_error(int, v, 'Argument v of jn.')
+  z = core.concrete_or_error(float, z, 'Argument z of jn.')
+  return jn(v, z, n_iter)
 
 def _gen_recurrence_mask(
     l_max: int, is_normalized: bool, dtype: Any
