@@ -703,7 +703,8 @@ def pjit_check_aval_sharding(
         raise ValueError(f"One of {what_aval} was given the sharding "
                          f"of {s}, which implies that "
                          f"the{global_str} size of its dimension {i} should be "
-                         f"divisible by {size}, but it is equal to {shape[i]}")
+                         f"divisible by {size}, but it is equal to {shape[i]} "
+                         f"(full shape: {shape}) ")
 
 
 class SpecSync(IntEnum):

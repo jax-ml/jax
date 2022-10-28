@@ -2577,7 +2577,8 @@ class PJitErrorTest(jtu.JaxTestCase):
     error = re.compile(
         r"One of pjit arguments.*" + spec_regex(spec) + r".*"
         r"implies that the size of its dimension 0 should be "
-        r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
+        r"divisible by " + mesh_size + r", but it is equal to 3 "
+        r"\(full shape: \(3, 2\)\)", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, in_axis_resources=spec, out_axis_resources=None)(x)
 
