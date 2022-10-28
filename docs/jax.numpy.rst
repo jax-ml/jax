@@ -302,6 +302,7 @@ namespace; they are listed below.
     pad
     percentile
     piecewise
+    place
     poly
     polyadd
     polyder
@@ -318,6 +319,7 @@ namespace; they are listed below.
     product
     promote_types
     ptp
+    put
     quantile
     r_
     rad2deg
