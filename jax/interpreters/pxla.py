@@ -2414,8 +2414,8 @@ class Mesh(ContextDecorator):
 
   @maybe_cached_property
   def local_devices(self):
-    process_index = xb.process_index()
-    return [d for d in self.devices.flat if d.process_index == process_index]
+    return [d for d in self.devices.flat
+            if d.process_index == d.client.process_index()]
 
   def _local_to_global(self, axes: ArrayMapping, aval):
     return untile_aval_nd(self.shape, axes,
@@ -2805,9 +2805,8 @@ def lower_sharding_computation(
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
     del kept_const_idx
 
-  process_index = xb.process_index()
   local_device_assignment = [d for d in device_assignment
-                             if d.process_index == process_index]
+                             if d.process_index == d.client.process_index()]
   if len(device_assignment) != len(local_device_assignment):
     check_multihost_collective_allowlist(jaxpr)
     # TODO(yashkatariya): Raise an error here and add a context manager.
@@ -3395,9 +3394,8 @@ class MeshExecutable(stages.XlaExecutable):
       are_global = [False] * len(global_out_avals)
     _, indices, _ = _get_input_metadata(global_out_avals, out_shardings,
                                         are_global)
-    process_index = xb.process_index()
     local_device_assignment = [d for d in device_assignment
-                               if d.process_index == process_index]
+                               if d.process_index == d.client.process_index()]
     handle_ins = InputsHandler(local_device_assignment, out_shardings, indices,
                                InputsHandlerMode.pjit_or_xmap)
     handle_outs = global_avals_to_results_handler(

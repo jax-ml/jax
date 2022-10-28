@@ -22,7 +22,6 @@ from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
 
 import jax
 from jax._src.util import safe_map, safe_zip
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import pxla, mlir
 
@@ -62,8 +61,8 @@ class Sharding(metaclass=abc.ABCMeta):
   @pxla.maybe_cached_property
   def addressable_devices(self) -> Set[Device]:
     """A set of addressable devices by the current process"""
-    process_index = xb.process_index()
-    return {d for d in self.device_set if d.process_index == process_index}
+    return {d for d in self.device_set
+            if d.process_index == d.client.process_index()}
 
   @pxla.maybe_cached_property
   def is_fully_addressable(self) -> bool:
@@ -77,9 +76,8 @@ class Sharding(metaclass=abc.ABCMeta):
   @functools.lru_cache(maxsize=4096)
   def addressable_devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
-    process_index = xb.process_index()
     return {d: ind for d, ind in self.devices_indices_map(global_shape).items()
-            if d.process_index == process_index}
+            if d.process_index == d.client.process_index()}
 
 
 @pxla.use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
@@ -107,8 +105,8 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
 
   @pxla.maybe_cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
-    process_index = xb.process_index()
-    return [d for d in self._device_assignment if d.process_index == process_index]
+    return [d for d in self._device_assignment
+            if d.process_index == d.client.process_index()]
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:

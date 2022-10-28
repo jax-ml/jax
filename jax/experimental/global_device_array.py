@@ -270,7 +270,6 @@ class GlobalDeviceArray:
 
     # Optionally precomputed for performance.
     self._gda_fast_path_args = _gda_fast_path_args
-    self._current_process = xb.process_index()
 
     if self._gda_fast_path_args is None:
       self._local_devices = self._global_mesh.local_devices
@@ -414,7 +413,7 @@ class GlobalDeviceArray:
     device_to_buffer = {db.device(): db for db in self._device_buffers}
     global_shards = []
     for device, (index, rid) in global_indices_rid.items():
-      local_shard = device.process_index == self._current_process
+      local_shard = device.process_index == device.client.process_index()
       buf = device_to_buffer[device] if local_shard else None
       if buf is not None and buf.aval is None:
         buf.aval = core.ShapedArray(buf.shape, buf.dtype)
