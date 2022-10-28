@@ -1631,7 +1631,8 @@ class PmapExecutable(stages.XlaExecutable):
     if hasattr(pci.backend, "compile_replicated"):
       return _compile_replicated_pmap_executable_from_hlo(
           xla_computation, pci, input_indices, in_shardings, handle_outs,
-          compile_options, host_callbacks)
+          compile_options, host_callbacks, bool(unordered_effects),
+          ordered_effects)
 
     with dispatch.log_elapsed_time(
         f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec"):
@@ -3316,8 +3317,8 @@ class MeshExecutable(stages.XlaExecutable):
       return _compile_replicated_mesh_executable_from_hlo(
           name, computation, global_in_avals, global_out_avals, in_shardings,
           out_shardings, in_is_global, auto_spmd_lowering, compile_options,
-          host_callbacks, kept_var_idx, backend, device_assignment, committed,
-          pmap_nreps)
+          host_callbacks, bool(unordered_effects), ordered_effects,
+          kept_var_idx, backend, device_assignment, committed, pmap_nreps)
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
                                      "in {elapsed_time} sec"):
@@ -3460,17 +3461,18 @@ def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args
   return out_handler(in_handler(outs))
 
 
-def _compile_replicated_pmap_executable_from_hlo(xla_computation, pci,
-                                                 input_indices, in_shardings,
-                                                 handle_outs, compile_options,
-                                                 host_callbacks):
+def _compile_replicated_pmap_executable_from_hlo(
+    xla_computation, pci, input_indices, in_shardings, handle_outs,
+    compile_options, host_callbacks, has_unordered_effects, ordered_effects):
   # Use the standard out_handler.
   execute_fun = pci.backend.compile_replicated(
       is_trivial=False, name=pci.name, computation=xla_computation,
       compile_options=compile_options, host_callbacks=host_callbacks,
-      in_avals=pci.avals, in_indices=input_indices,
-      in_shardings=in_shardings, kept_var_idx=set(range(len(pci.avals))),
-      mode=InputsHandlerMode.pmap, out_handler=handle_outs)
+      has_unordered_effects=has_unordered_effects,
+      ordered_effects=ordered_effects, in_avals=pci.avals,
+      in_indices=input_indices, in_shardings=in_shardings,
+      kept_var_idx=set(range(len(pci.avals))), mode=InputsHandlerMode.pmap,
+      out_handler=handle_outs)
   # TODO(frostig): need `compile_replicated` to give us the XLA executable
   return PmapExecutable(None, execute_fun, None, pci.avals)
 
@@ -3479,8 +3481,8 @@ def _compile_replicated_pmap_executable_from_hlo(xla_computation, pci,
 def _compile_replicated_mesh_executable_from_hlo(
     name, computation, global_in_avals, global_out_avals, in_shardings,
     out_shardings, in_is_global, auto_spmd_lowering, compile_options,
-    host_callbacks, kept_var_idx, backend, device_assignment, committed,
-    pmap_nreps):
+    host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
+    backend, device_assignment, committed, pmap_nreps):
   assert not auto_spmd_lowering
   in_shardings, input_indices, input_avals = _get_input_metadata(
       global_in_avals, in_shardings, in_is_global)  # type: ignore
@@ -3493,10 +3495,12 @@ def _compile_replicated_mesh_executable_from_hlo(
   unsafe_call = backend.compile_replicated(
       is_trivial=False, name=name, computation=computation,
       compile_options=compile_options, host_callbacks=host_callbacks,
-      in_avals=input_avals, in_indices=input_indices,
-      in_shardings=in_shardings, kept_var_idx=kept_var_idx,
-      mode=InputsHandlerMode.pjit_or_xmap, out_avals=global_out_avals,
-      out_shardings=out_shardings, committed=committed)
+      has_unordered_effects=has_unordered_effects,
+      ordered_effects=ordered_effects, in_avals=input_avals,
+      in_indices=input_indices, in_shardings=in_shardings,
+      kept_var_idx=kept_var_idx, mode=InputsHandlerMode.pjit_or_xmap,
+      out_avals=global_out_avals, out_shardings=out_shardings,
+      committed=committed)
   xla_executable = None
   return MeshExecutable(xla_executable, unsafe_call, input_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
