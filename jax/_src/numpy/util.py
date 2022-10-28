@@ -177,12 +177,18 @@ def _wraps(
           parameters = _parse_parameters(parsed.sections['Parameters'])
           if extra_params:
             parameters.update(_parse_extra_params(extra_params))
-          parsed.sections['Parameters'] = (
-            "Parameters\n"
-            "----------\n" +
-            "\n".join(_versionadded.split(desc)[0].rstrip() for p, desc in parameters.items()
-                      if (code is None or p in code.co_varnames) and p not in skip_params)
-          )
+          parameters = {p: desc for p, desc in parameters.items()
+                        if (code is None or p in code.co_varnames)
+                        and p not in skip_params}
+          if parameters:
+            parsed.sections['Parameters'] = (
+              "Parameters\n"
+              "----------\n" +
+              "\n".join(_versionadded.split(desc)[0].rstrip()
+                        for p, desc in parameters.items())
+            )
+          else:
+            del parsed.sections['Parameters']
 
         docstr = parsed.summary.strip() + "\n" if parsed.summary else ""
         docstr += f"\nLAX-backend implementation of :func:`{name}`.\n"
