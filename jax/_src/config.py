@@ -126,6 +126,10 @@ class Config:
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, int, args, kwargs, update_hook=update_hook)
 
+  def DEFINE_float(self, name, default, *args, **kwargs):
+    update_hook = kwargs.pop("update_hook", None)
+    self.add_option(name, default, float, args, kwargs, update_hook=update_hook)
+
   def DEFINE_string(self, name, default, *args, **kwargs):
     update_hook = kwargs.pop("update_hook", None)
     self.add_option(name, default, str, args, kwargs, update_hook=update_hook)
@@ -144,6 +148,7 @@ class Config:
     self.absl_flags = absl_flags
     absl_defs = { bool: absl_flags.DEFINE_bool,
                   int:  absl_flags.DEFINE_integer,
+                  float: absl_flags.DEFINE_float,
                   str:  absl_flags.DEFINE_string,
                   'enum': absl_flags.DEFINE_enum }
 
@@ -323,6 +328,47 @@ class Config:
     def validate(new_val):
       if new_val is not None and not isinstance(new_val, int):
         raise ValueError(f'new int config value must be None or of type int, '
+                         f'got {new_val} of type {type(new_val)}')
+
+    return _StateContextManager(name, help, update_thread_local_hook, validate)
+
+  def define_float_state(
+      self, name: str, default: Optional[float],
+      help: str, update_global_hook: Optional[Callable[[str], None]] = None,
+      update_thread_local_hook: Optional[Callable[[Optional[str]], None]] \
+        = None):
+    """Set up thread-local state and return a contextmanager for managing it.
+    Args:
+      name: string, converted to lowercase to define the name of the config
+        option (and absl flag). It is converted to uppercase to define the
+        corresponding shell environment variable.
+      enum_values: list of strings representing the possible values for the
+        option.
+      default: optional float, default value.
+      help: string, used to populate the flag help information as well as the
+        docstring of the returned context manager.
+    Returns:
+      A contextmanager to control the thread-local state value.
+    See docstring for ``define_bool_state``.
+    """
+    name = name.lower()
+    default_env = os.getenv(name.upper(), default)
+    if default_env is not None:
+      try:
+        default = float(default_env)
+      except ValueError:
+        raise ValueError(f"Invalid value \"{default_env}\" for JAX flag {name}")
+    self.DEFINE_float(name, default, help=help, update_hook=update_global_hook)
+    self._contextmanager_flags.add(name)
+
+    def get_state(self):
+      val = getattr(_thread_local_state, name, unset)
+      return val if val is not unset else self._read(name)
+    setattr(Config, name, property(get_state))
+
+    def validate(new_val):
+      if new_val is not None and not isinstance(new_val, (float, int)):
+        raise ValueError(f'new float config value must be None or of type float, '
                          f'got {new_val} of type {type(new_val)}')
 
     return _StateContextManager(name, help, update_thread_local_hook, validate)
@@ -765,15 +811,12 @@ raise_persistent_cache_errors = config.define_bool_state(
           'continue. Defaults to false so cache bugs or intermittent issues '
           'are non-fatal.'))
 
-persistent_cache_min_instruction_count = config.define_int_state(
-    name='jax_persistent_cache_min_instruction_count',
-    default=6,
-    help=('The minimum number of instructions a computation needs to have to '
-          'be written to the persistent compilation cache. This threshold can '
-          'be raised to decrease the number of entries written to the cache. '
-          'The (unoptimized) instruction count is meant to be a proxy for '
-          'compile time, so programs with longer compile times are still '
-          'cached.'))
+persistent_cache_min_compile_time_secs = config.define_float_state(
+    name='jax_persistent_cache_min_compile_time_secs',
+    default=1,
+    help=('The minimum compile time of a computation to be written to the '
+          'persistent compilation cache. This threshold can be raised to '
+          'decrease the number of entries written to the cache.'))
 
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
