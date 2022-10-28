@@ -72,6 +72,7 @@ except ModuleNotFoundError:
   # This can be removed when TF 2.10 support is no longer needed.
   from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
 from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
+from tensorflow.python.eager import context as tf_context  # type: ignore[import]
 # pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
@@ -3003,8 +3004,13 @@ def _shard_value(val: TfVal,
   """Apply sharding to a TfVal."""
   if pxla._is_unspecified(sd):
     return val
+
   sharding_proto: xla_client.OpSharding = cast(
       xla_client.OpSharding, sd._to_xla_op_sharding(aval.ndim))
+  # Do not apply XlaSharding for REPLICATED. This is an agreed convention, and
+  # also improves usability under TF eager. See b/255511660.
+  if pxla.is_op_sharding_replicated(sharding_proto):
+    return val
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
   xla_sharding_proto: xla_data_pb2.OpSharding = (
@@ -3014,6 +3020,11 @@ def _shard_value(val: TfVal,
           tile_assignment_devices=sharding_proto.tile_assignment_devices,
           replicate_on_last_tile_dim=sharding_proto.replicate_on_last_tile_dim,
           last_tile_dims=sharding_proto.last_tile_dims))
+  if tf_context.executing_eagerly():
+    raise ValueError(
+        "A jit function with sharded (not replicated) arguments or results must be used under a `tf.function` context. "
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
+
   return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
       val, use_sharding_op=True)
 

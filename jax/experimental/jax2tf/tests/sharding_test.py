@@ -184,11 +184,10 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         jax_func, [x, x],
         expected=[
             r"f32\[8,10\].*sharding={devices=\[2,1\]",  # x and y
-            r"f32\[8,10\].*sharding={replicated",  # output
+            # r"f32\[8,10\].*sharding={replicated",  # output  - OMITTED
         ],
         expected_opt=[
             r"f32\[4,10\].*sharding={devices=\[2,1\]",  # x and y
-            # TODO: why don't we see "sharding={replicated"
             r"f32\[8,10\]",  # output
         ],
         num_partitions=2)
@@ -211,11 +210,10 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         jax_func, [x, x],
         expected=[
             r"f32\[8,10\].*sharding={devices=\[2,1\]",  # x and y
-            r"f32\[8,10\].*sharding={replicated",  # output
+            # r"f32\[8,10\].*sharding={replicated",  # output  - OMITTED
         ],
         expected_opt=[
             r"f32\[4,10\].*sharding={devices=\[2,1\]",  # x and y
-            # TODO: why don't we see "sharding={replicated"
             r"f32\[8,10\]",  # output
         ],
         num_partitions=2,
@@ -293,12 +291,12 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     self._check_sharding_annotations(
         jax_func, [x],
         expected=[
-            r"f32\[12,8\].*sharding={replicated}",  # x
+            # r"f32\[12,8\].*sharding={replicated}",  # x  - OMITTED
             r"f32\[24,8\].*sharding={devices=\[2,1\]0,1",  # y
-            r"f32\[6,8\].*sharding={replicated}",  # output
+            # r"f32\[6,8\].*sharding={replicated}",  # output  - OMITTED
         ],
         expected_opt=[
-            r"f32\[12,8\].*sharding={replicated}",  # x
+            # r"f32\[12,8\].*sharding={replicated}",  # x  - OMITTED
             # TODO: why can't we see "sharding={devices=\[2,1\]0,1"
             r"f32\[12,8\]",  # y
             # TODO: why can't we see "sharding={replicated}" ?
@@ -334,9 +332,16 @@ class PjitTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_tf.numpy(), res_jax)
 
     # Run the converted function in TF eager mode
-    # TODO(b/255511660: fails on TPU in eager mode)
-    # res_tf = func_tf(x)
-    # self.assertAllClose(res_tf.numpy(), res_jax)
+    with self.assertRaisesRegex(
+        ValueError,
+        r"A jit function with sharded .* arguments or results must be used under a `tf.function` context"):
+      func_tf(x)
+
+    # However, if we use REPLICATED sharding we can run in eager mode
+    res_tf = jax2tf.convert(pjit.pjit(func_jax,
+                                      in_axis_resources=None,
+                                      out_axis_resources=None))(x)
+    self.assertAllClose(res_tf.numpy(), res_jax)
 
 
 if __name__ == "__main__":

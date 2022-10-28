@@ -260,10 +260,18 @@ you will not be able to compute the gradients of the function loaded from the Sa
 
 ## Support for partitioning
 
-jax2tf supports JAX functions that use `jax.pjit`, for single-host meshes.
+jax2tf supports JAX functions that use `jax.pjit` and `jax.jit` with sharded
+arguments and results, for single-host meshes.
 The lowering is actually similar as for a `jax.jit`, except that the
 arguments and results will be wrapped with
 `tensorflow.python.compiler.xla.experimental.xla_sharding.XlaSharding` TensorFlow ops.
+The `XlaSharding` ops are omitted if the arguments or
+results are replicated.
+
+A limitation of `XlaSharding` is that it cannot be used in TensorFlow eager
+mode. Therefore, `jax2tf` will give an error when lowering a function that
+requires sharded (not replicated) arguments or results and the lowered
+function is used outside a `tf.function` context (see b/255511660).
 
 Note that when saving a model, the parameters to the model are wrapped with
 `tf.Variable` before calling the lowered function (see [above](#saved_model_with_parameters)),

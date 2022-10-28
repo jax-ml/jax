@@ -30,13 +30,6 @@ config.parse_flags_with_absl()
 
 class ControlFlowOpsTest(tf_test_util.JaxToTfTestCase):
 
-  def setUp(self):
-    super().setUp()
-    # TODO(b/255511660): re-enable these tests
-    if (config.jax_array and
-        config.jax2tf_default_experimental_native_lowering):
-      raise unittest.SkipTest("Test disabled for JAX_ARRAY and native_lowering")
-
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype .* requested in array is not available")
   def test_cond(self):
