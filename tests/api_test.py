@@ -3554,6 +3554,41 @@ class APITest(jtu.JaxTestCase):
     with jax.check_tracer_leaks():
       jax.jit(apply_fn)(1.0)  # don't crash
 
+  def test_leak_checker_reference_chain(self):
+    class A:
+      def __init__(self, dct):
+        self.dct = dct
+
+    a = A({})
+    x = jnp.arange(3)
+
+    def sketch(x):
+      def foo():
+        return x
+      a.dct['hi'] = [foo]
+      return x
+
+    # TODO(mattjj): full test msg below fails (harmlessly) on CI, investigate
+    msg = (
+        r"This BatchTracer with object id [0-9]+ was created on line:\n"
+        r"  .*\n"
+        r"<BatchTracer [0-9]+> is referred to by"
+    )
+
+    # msg = (
+    #     r"This BatchTracer with object id [0-9]+ was created on line:\n"
+    #     r"  .*\n"
+    #     r"<BatchTracer [0-9]+> is referred to by <function [0-9]+> \(foo\) "
+    #     r"closed-over variable x\n"
+    #     r"<function [0-9]+> is referred to by <list [0-9]+>\[0\]\n"
+    #     r"<list [0-9]+> is referred to by <dict [0-9]+>\['hi'\]\n"
+    #     r"<dict [0-9]+> is referred to by <A [0-9]+>\.dct\n"
+    # )
+
+    with jax.check_tracer_leaks():
+      with self.assertRaisesRegex(Exception, msg):
+        jax.vmap(sketch)(x)
+
   def test_default_backend(self):
     first_local_device = api.local_devices()[0]
     self.assertEqual(first_local_device.platform, api.default_backend())

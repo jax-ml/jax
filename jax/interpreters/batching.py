@@ -164,8 +164,8 @@ class BatchTracer(Tracer):
   def _origin_msg(self):
     if self.source_info is None:
       return ""
-    return ("\nThis Tracer was created on line "
-            f"{source_info_util.summarize(self.source_info)}")
+    return (f"\nThis BatchTracer with object id {id(self)} was created on line:"
+            f"\n  {source_info_util.summarize(self.source_info)}")
 
   def _contents(self):
     return [('val', self.val), ('batch_dim', self.batch_dim)]

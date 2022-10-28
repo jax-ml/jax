@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import functools
 from functools import partial, partialmethod, total_ordering
 import gc
+import inspect
 import itertools as it
 import operator
 from operator import attrgetter
@@ -888,7 +889,9 @@ def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]
   """
   if not getattr(threading.current_thread(), 'pydev_do_not_trace', True):
     warnings.warn(TRACER_LEAK_DEBUGGER_WARNING)
-  # Trigger garbage collection to filter out cyclical dependency false positives
+  # Trigger garbage collection to filter out unreachable objects that are alive
+  # only due to cyclical dependencies. (We don't care about unreachable leaked
+  # tracers since they can't interact with user code and cause a problem.)
   gc.collect()
   traces = list(filter(lambda x: isinstance(x, Trace), gc.get_referrers(x)))
   tracers = list(filter(lambda x: isinstance(x, Tracer), gc.get_referrers(*traces)))
@@ -896,8 +899,70 @@ def maybe_find_leaked_tracers(x: Optional[Union[MainTrace, Sublevel]]
 
 def leaked_tracer_error(name: str, t, tracers: List[Tracer]) -> Exception:
   assert tracers
-  msgs = '\n\n'.join(f'{tracer}{tracer._origin_msg()}' for tracer in tracers)
+  why = partial(_why_alive, {id(tracers)})
+  msgs = '\n\n'.join(f'{tracers[i]}{tracers[i]._origin_msg()}{why(tracers[i])}'
+                     for i in range(len(tracers)))
   return Exception(f'Leaked {name} {t}. Leaked tracer(s):\n\n{msgs}\n')
+
+def _why_alive(ignore_ids: Set[int], x: Any) -> str:
+  parents = lambda x: [r for r in gc.get_referrers(x) if id(r) not in ignore_ids]
+  child, lines, seen = x, [], set()
+  while (id(child) not in seen and type(child) is not types.ModuleType
+         and parents(child)):
+    parent = parents(child)[0]  # just pick one parent
+
+    # For namespaces (like modules and class instances) and closures, the
+    # references may form a simple chain: e.g. instance refers to its own
+    # __dict__ which refers to child, or function refers to its __closure__
+    # which refers to cells which refer to child. In these cases, we can provide
+    # a more intuitive description by collapsing the chain into a single
+    # parent->child jump. We do that by setting `parent` here to be a
+    # grandparent (or great-grandparent) of `child`, and then handling that case
+    # in _why_alive_container_info. See example:
+    #  https://github.com/google/jax/pull/13022#discussion_r1008456599
+    # To prevent this collapsing behavior, just comment out this code block.
+    # TODO(mattjj): after Python 3.7 is unsupported, replace with types.CellType
+    cell_type = type((lambda x: lambda: x)(10.28).__closure__[0]) # type: ignore
+    if (isinstance(parent, dict) and
+        getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
+      parent = parents(parent)[0]
+    elif type(parent) is cell_type:
+      parent = parents(parents(parent)[0])[0]
+
+    line = f'<{type(child).__name__} {id(child)}> is referred to by '
+    lines.append(line + _why_alive_container_info(parent, id(child)))
+    seen.add(id(child))
+    child = parent
+  return '\n' + '\n'.join(lines) if lines else ''
+
+def _why_alive_container_info(container, obj_id) -> str:
+  name = f'<{type(container).__name__} {id(container)}>'
+  if type(container) is types.ModuleType:
+    name = getattr(container, '__name__', name)
+  if type(container) is types.FunctionType:
+    name_ = getattr(container, '__name__', '<no-name>')
+    closure = inspect.getclosurevars(container)
+    keys = [k for k, v in dict(closure.nonlocals, **closure.globals).items()
+            if id(v) == obj_id]
+    if len(keys) == 1: return f'{name} ({name_}) closed-over variable {keys[0]}'
+    elif len(keys) > 1: return (f'{name} in closed-over variables ' +
+                                ', '.join(map(repr, keys)))
+  if hasattr(container, '__dict__'):
+    keys = [k for k in vars(container) if id(vars(container)[k]) == obj_id]
+    if len(keys) == 1: return f'{name}.{str(keys[0])}'
+    elif len(keys) > 1: return f'{name} in vars ' + ', '.join(map(repr, keys))
+  if isinstance(container, (list, tuple)):
+    idxs = [i for i, x in enumerate(container) if id(x) == obj_id]
+    if len(idxs) == 1: return f'{name}[{idxs[0]}]'
+    else: return f'{name} at indices ' + ', '.join(map(str, idxs))
+  if isinstance(container, dict):
+    keys = [k for k in container if id(container[k]) == obj_id]
+    if len(keys) == 1: return f'{name}[{repr(keys[0])}]'
+    else: return f'{name} at keys ' + ', '.join(map(repr, keys))
+  if isinstance(container, types.ModuleType):
+    return f' named {container.__name__}'
+  return name
+
 
 @contextmanager
 def new_main(trace_type: Type[Trace],

@@ -1460,7 +1460,7 @@ class DynamicJaxprTracer(core.Tracer):
     if not self._trace.main.jaxpr_stack:  # type: ignore
       # If this Tracer has been leaked the jaxpr stack may no longer be
       # available. So we can't print as much origin information.
-      return ("\nThis Tracer was created on line "
+      return ("\nThis DynamicJaxprTracer was created on line "
               f"{source_info_util.summarize(self._line_info)}")
     else:
       invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
