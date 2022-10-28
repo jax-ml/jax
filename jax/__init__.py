@@ -97,6 +97,7 @@ from jax._src.api import (
   local_devices as local_devices,
   linearize as linearize,
   linear_transpose as linear_transpose,
+  live_arrays as live_arrays,
   make_jaxpr as make_jaxpr,
   named_call as named_call,
   named_scope as named_scope,

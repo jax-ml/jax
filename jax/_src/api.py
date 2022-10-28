@@ -3409,3 +3409,14 @@ def clear_backends():
   dispatch.xla_primitive_callable.cache_clear()
   _cpp_jit_cache.clear()
   jax_jit.CompiledFunctionCache.clear_all()
+
+def live_arrays(platform=None):
+  """Return all live arrays in the backend for `platform`.
+
+  If platform is None, it is the default backend.
+  """
+  if xc._version >= 102:
+    return xb.get_backend(platform).live_arrays()
+
+  raise RuntimeError(
+      "live_arrays() is not supported yet. Please update your jaxlib package.")
