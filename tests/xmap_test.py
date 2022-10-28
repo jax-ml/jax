@@ -1776,6 +1776,22 @@ class XMapErrorTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, error):
       fm(x, y)
 
+  def testUndefinedOutAxis(self):
+    error = (r"All axis names appearing in out_axes must also appear in "
+             r"in_axes or axis_sizes, but the following are missing: {'c'}")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x, y: x + y,
+           in_axes=(['a', ...], ['b', ...]), out_axes=['c', ...])
+
+  @jtu.with_mesh([('x', 2)])
+  def testUndefinedAxisInAxisResources(self):
+    error = (r"All axes that were assigned resources have to appear in in_axes "
+             r"or axis_sizes, but the following are missing: {'b'}")
+    with self.assertRaisesRegex(ValueError, error):
+      xmap(lambda x, y: x + y,
+           in_axes=(['a', ...], ['a', ...]), out_axes=['a', ...],
+           axis_resources={'b': 'x'})
+
   @jtu.with_mesh([('x', 2)])
   def testResourceConflictArgs(self):
     fm = xmap(lambda x: lax.psum(x, ('a', 'b')),
