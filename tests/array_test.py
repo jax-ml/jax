@@ -30,6 +30,7 @@ from jax.experimental.pjit import pjit
 from jax.experimental import PartitionSpec as P
 from jax._src import sharding
 from jax._src import array
+from jax._src import prng
 from jax.experimental import maps
 
 from jax.config import config
@@ -779,6 +780,85 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
     self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
+
+@jtu.with_config(jax_array=True)
+class RngShardingTest(jtu.JaxTestCase):
+  # tests that the PRNGs are automatically sharded as expected
+
+  @parameterized.named_parameters(("3", 3), ("4", 4), ("5", 5))
+  def test_random_bits_is_pure_map_1d(self, num_devices):
+    @jax.jit
+    def f(x):
+      bits = prng.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
+                                       32, x.shape)
+      return bits + x
+
+    mesh = jtu.create_global_mesh((num_devices,), ('x',))
+    s = sharding.MeshPspecSharding(mesh, P('x'))
+
+    n = num_devices ** 2
+    global_x = jnp.arange(n).astype('uint32')
+    x = array.make_array_from_callback(global_x.shape, s, lambda i: global_x[i])
+
+    # check computation is fully partitioned and without any communication
+    jax.config.update('jax_threefry_partitionable', True)
+    unopt_txt = f.lower(x).as_text(dialect='hlo')
+    opt_txt = f.lower(x).compile().as_text()
+    self.assertIn(   f'[{n}]', unopt_txt)
+    self.assertNotIn(f'[{n}]', opt_txt)
+    self.assertNotIn('all-reduce', opt_txt)
+    self.assertNotIn('collective-permute', opt_txt)
+
+    # check against single-device reference
+    y = f(x)
+    y_ref1 = f(jax.device_put(x, jax.devices()[0]))
+    self.assertArraysEqual(y, y_ref1)
+
+    # check against single-device previous implementation reference
+    jax.config.update('jax_threefry_partitionable', False)
+    y_ref2 = f(jax.device_put(x, jax.devices()[0]))
+    self.assertArraysEqual(y, y_ref2)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{mesh_shape}_{pspec}",
+       "mesh_shape": mesh_shape, "pspec": pspec}
+      for mesh_shape in [(3, 2), (4, 2), (2, 3)]
+      for pspec in [P('x', None), P(None, 'y'), P('x', 'y')])
+  def test_random_bits_is_pure_map_2d(self, mesh_shape, pspec):
+    @jax.jit
+    def f(x):
+      bits = prng.threefry_random_bits(jnp.array([0, 0], dtype='uint32'),
+                                       32, x.shape)
+      return bits + x
+
+    global_shape = tuple(np.square(mesh_shape))
+
+    mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
+    s = sharding.MeshPspecSharding(mesh, pspec)
+
+    n = prod(global_shape)
+    global_x = jnp.arange(n).astype('uint32').reshape(global_shape)
+    x = array.make_array_from_callback(global_x.shape, s, lambda i: global_x[i])
+
+    # check computation is fully partitioned and without any communication
+    jax.config.update('jax_threefry_partitionable', True)
+    unopt_txt = f.lower(x).as_text(dialect='hlo')
+    opt_txt = f.lower(x).compile().as_text()
+    global_shape_fmt = ','.join(str(x) for x in global_shape)
+    self.assertIn(   f'[{global_shape_fmt}]', unopt_txt)
+    self.assertNotIn(f'[{global_shape_fmt}]', opt_txt)
+    self.assertNotIn('all-reduce', opt_txt)
+    self.assertNotIn('collective-permute', opt_txt)
+
+    # check against single-device reference
+    y = f(x)
+    y_ref1 = f(jax.device_put(x, jax.devices()[0]))
+    self.assertArraysEqual(y, y_ref1)
+
+    # check against single-device previous implementation reference
+    jax.config.update('jax_threefry_partitionable', False)
+    y_ref2 = f(jax.device_put(x, jax.devices()[0]))
+    self.assertArraysEqual(y, y_ref2)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
