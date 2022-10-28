@@ -232,6 +232,7 @@ class PrngTest(jtu.JaxTestCase):
     finally:
       xla.apply_primitive = apply_primitive
 
+  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
   def testRngRandomBits(self):
     # Test specific outputs to ensure consistent random values between JAX versions.
 
@@ -295,6 +296,7 @@ class PrngTest(jtu.JaxTestCase):
       self.assertEqual(bits64.shape, (3,))
       self.assertEqual(bits64.dtype, expected_dtype)
 
+  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
   def testRngRandomBitsViewProperty(self):
     # TODO: add 64-bit if it ever supports this property.
     # TODO: will this property hold across endian-ness?
@@ -313,6 +315,7 @@ class PrngTest(jtu.JaxTestCase):
 
 
   @jtu.sample_product(case=_RANDOM_VALUES_CASES)
+  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testRandomDistributionValues(self, case):
     """
@@ -334,6 +337,7 @@ class PrngTest(jtu.JaxTestCase):
         actual = func(key, **case.params, shape=case.shape)
       self.assertAllClose(actual, case.expected, atol=case.atol, rtol=case.rtol)
 
+  @skipIf(config.jax_threefry_partitionable, 'changed random bit values')
   def testPRNGValues(self):
     # Test to ensure consistent random values between JAX versions
     k = random.PRNGKey(0)
@@ -952,7 +956,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
       # TODO(shoyer): determine error bounds for moments more rigorously (e.g.,
       # based on the central limit theorem).
-      self.assertAllClose(samples.mean(), lam, rtol=0.01, check_dtypes=False)
+      self.assertAllClose(samples.mean(), lam, rtol=0.02, check_dtypes=False)
       self.assertAllClose(samples.var(), lam, rtol=0.03, check_dtypes=False)
 
   def testPoissonBatched(self):

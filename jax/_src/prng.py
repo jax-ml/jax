@@ -14,7 +14,7 @@
 
 
 import abc
-from functools import partial
+from functools import partial, reduce
 import operator as op
 from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
 
@@ -987,6 +987,7 @@ def iota_32x2_shape(shape):
 
 iota_32x2_shape_p = core.Primitive('iota_32x2_shape')
 iota_32x2_shape_p.multiple_results = True
+iota_32x2_shape_p.def_impl(partial(xla.apply_primitive, iota_32x2_shape_p))
 
 @iota_32x2_shape_p.def_abstract_eval
 def iota_32x2_shape_abstract_eval(*, shape):
@@ -1013,14 +1014,14 @@ def iota_32x2_shape_lowering(ctx, *, shape):
            for dimension in range(len(shape))]
   strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
   counts = _sum(_mul(s, i) for i, s in zip(iotas, strides))  # type: ignore
-  counts_shifted = mlir.mhlo.ShiftRightLogicalOp(
-      counts, mlir.ir_constant(np.full(shape, 32, np.dtype('uint64')),
-                               canonicalize_types=False)).result
+  shift = mlir.ir_constant(np.array(32, np.dtype('uint64')),
+                           canonicalize_types=False)
+  shift = mlir.mhlo.BroadcastOp(shift, mlir.dense_int_elements(shape)).result
+  counts_shifted = mlir.mhlo.ShiftRightLogicalOp(counts, shift).result
   counts_lo = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
   counts_hi = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
                                   counts_shifted).result
   return (counts_hi, counts_lo)
-
 mlir.register_lowering(iota_32x2_shape_p, iota_32x2_shape_lowering)
 
 
@@ -1093,39 +1094,19 @@ def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
   if all(core.is_constant_dim(d) for d in shape) and prod(shape) > 2 ** 64:
     raise NotImplementedError('random bits array of size exceeding 2 ** 64')
 
-  size = prod(shape)
-  n, r = divmod(bit_width * size, 32)
-  if r > 0:
-    n += 1
-  even_size = n + (n % 2)
-
-  if not shape:
-    counts = jnp.arange(n, dtype=jnp.uint32).reshape(shape)
-  else:
-    iotas = [lax.broadcasted_iota(jnp.dtype('uint32'), shape, i)
-            for i in range(len(shape))]
-    strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
-    counts = sum(s * i for i, s in zip(iotas, strides))  # type: ignore
-  circ0 = counts % (even_size // 2)
-  circ1 = (circ0 + even_size // 2) % n
   k1, k2 = key
-  bits_xx, bits_yy = threefry2x32_p.bind(k1, k2, circ0, circ1)
+  counts1, counts2 = iota_32x2_shape(shape)
+  bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
 
   dtype = UINT_DTYPES[bit_width]
   if bit_width == 64:
-    assert n == even_size
-    assert False  # broken...
-    bits_x, bits_y = bits_xx[:size // 2], bits_yy[:size // 2]
-    bits_x = lax.convert_element_type(bits_x, dtype)
-    bits_y = lax.convert_element_type(bits_y, dtype)
-    bits = lax.shift_left(bits_x, dtype(32)) | bits_y
+    bits_hi = lax.convert_element_type(bits1, dtype)
+    bits_lo = lax.convert_element_type(bits2, dtype)
+    return lax.shift_left(bits_hi, dtype(32)) | bits_lo
+  elif bit_width == 32:
+    return bits1 ^ bits2
   else:
-    bits = jnp.where(counts < even_size // 2, bits_xx, bits_yy)
-    if bit_width != 32:
-      assert False  # broken...
-      bits = bits.view(dtype)
-
-  return bits
+    return lax.convert_element_type(bits1 ^ bits2, dtype)
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _threefry_random_bits_original(key: jnp.ndarray, bit_width, shape):

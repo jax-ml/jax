@@ -1226,6 +1226,7 @@ tf_not_yet_impl = [
     "shard_to_full",
     "pure_callback",
     "inspect_sharding",
+    "iota_32x2_shape",
 
     # Not high priority?
     "after_all",
