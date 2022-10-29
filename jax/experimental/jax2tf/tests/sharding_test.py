@@ -309,8 +309,6 @@ class PjitTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.with_mesh([("axis", 2)])
   def test_pjit_basic1D(self):
-    if jtu.device_under_test() == "cpu":
-      raise unittest.SkipTest("b/255511660 Fails on CPU")
     def func_jax(x):
       return x + x
 
