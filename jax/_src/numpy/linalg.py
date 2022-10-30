@@ -41,11 +41,21 @@ def _H(x: ArrayLike) -> Array:
   return jnp.conjugate(jnp.swapaxes(x, -1, -2))
 
 
-@_wraps(np.linalg.cholesky)
+@_wraps(np.linalg.cholesky, lax_description="""
+The JAX version symmetrizes the input by default, which will produce different
+outputs than {func}`numpy.linalg.cholesky` when the input matrix is not symmetric.
+To match NumPy's behavior and only access the lower triangular portion of the
+input array, set ``symmetrize_input=False``.
+""", extra_params="""
+symmetrize_input : boolean, default=True
+    If ``True``, the matrix is symmetrized before the eigendecomposition by
+    computing :math:`\\frac{1}{2}(x + x^H)`, which ensures symmetric gradients
+    when used within automatic differentiation.
+""")
 @jit
-def cholesky(a: ArrayLike) -> Array:
+def cholesky(a: ArrayLike, *, symmetrize_input=True) -> Array:
   a, = _promote_dtypes_inexact(jnp.asarray(a))
-  return lax_linalg.cholesky(a)
+  return lax_linalg.cholesky(a, symmetrize_input=symmetrize_input)
 
 @overload
 def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[True],
@@ -373,27 +383,47 @@ def eigvals(a: ArrayLike) -> Array:
                         compute_right_eigenvectors=False)[0]
 
 
-@_wraps(np.linalg.eigh)
+_EIGH_DESCRIPTION = """
+The JAX version symmetrizes the input by default, which will produce different
+outputs than {func}`numpy.linalg.eigh` when the input matrix is not symmetric.
+To match NumPy's behavior, set ``symmetrize_input=False``. If ``symmetrize_input``
+is True, passing a value to the UPLO parameter will lead to an error.
+"""
+_SYMMETRIZE_INPUT_DOC = """
+symmetrize_input : boolean, default=True
+    If ``True``, the matrix is symmetrized before the eigendecomposition by
+    computing :math:`\\frac{1}{2}(x + x^H)`, which ensures symmetric gradients
+    when used within automatic differentiation. When symmetrize_input is True,
+    passing an non-None value to the ``UPLO`` parameter will result in an error.
+"""
+
+@_wraps(np.linalg.eigh, lax_description=_EIGH_DESCRIPTION,
+        extra_params=_SYMMETRIZE_INPUT_DOC)
 @partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a: ArrayLike, UPLO: Optional[str] = None,
          symmetrize_input: bool = True) -> Tuple[Array, Array]:
+  if symmetrize_input and UPLO is not None:
+    raise ValueError(
+      "jnp.linalg.eigh: to use a non-default value for the UPLO parameter you must pass "
+      "symmetrize_input=False. See the jnp.linalg.eigh docstring for more information.")
   if UPLO is None or UPLO == "L":
     lower = True
   elif UPLO == "U":
     lower = False
   else:
-    msg = f"UPLO must be one of None, 'L', or 'U', got {UPLO}"
-    raise ValueError(msg)
+    raise ValueError(f"UPLO must be one of None, 'L', or 'U', got {UPLO}")
 
   a, = _promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower, symmetrize_input=symmetrize_input)
   return w, v
 
 
-@_wraps(np.linalg.eigvalsh)
-@partial(jit, static_argnames=('UPLO',))
-def eigvalsh(a: ArrayLike, UPLO: Optional[str] = 'L') -> Array:
-  w, _ = eigh(a, UPLO)
+@_wraps(np.linalg.eigvalsh, lax_description=_EIGH_DESCRIPTION,
+        extra_params=_SYMMETRIZE_INPUT_DOC)
+@partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
+def eigvalsh(a: ArrayLike, UPLO: Optional[str] = None,
+             symmetrize_input: bool = True) -> Array:
+  w, _ = eigh(a, UPLO, symmetrize_input=symmetrize_input)
   return w
 
 
