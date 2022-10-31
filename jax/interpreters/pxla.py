@@ -39,7 +39,6 @@ import itertools as it
 import logging
 import operator as op
 import sys
-import warnings
 import threading
 import types
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
@@ -2810,9 +2809,16 @@ def lower_sharding_computation(
                              if d.process_index == d.client.process_index()]
   if len(device_assignment) != len(local_device_assignment):
     check_multihost_collective_allowlist(jaxpr)
-    # TODO(yashkatariya): Raise an error here and add a context manager.
-    if config.jax_array and api_name == 'jit':
-      warnings.warn(
+    # TODO(yashkatariya): Once jit and pjit's frontend is merged, use the
+    # argument on jit `_allow_multiprocess` (which will be added later) instead
+    # of the `api_name` check here.
+    # Furthermore, `allow_jit` is not allowed yet because `allow_jit` only
+    # allows explicit `jax.jit` to work but not implicitly jitted `jnp`.
+    # operations. This restriction will be relaxed in the future when the
+    # default value of `spmd_mode` config changes to `allow_jit`.
+    if (config.jax_array and api_name == 'jit' and
+        config.jax_spmd_mode != 'allow_all'):
+      raise RuntimeError(
           "Running operations on `Array`s that are not fully addressable by this "
           "process (i.e. `Array`s with data sharded across multiple devices and "
           "processes.) is dangerous. It’s very important that all processes run "
@@ -2820,7 +2826,9 @@ def lower_sharding_computation(
           "can lead to hangs.\n"
           "If you’re not already familiar with JAX’s multi-process "
           "programming model, please read "
-          "https://jax.readthedocs.io/en/latest/multi_process.html.")
+          "https://jax.readthedocs.io/en/latest/multi_process.html\n"
+          "To fix this error, run your `jitted` computation inside "
+          "`with jax.spmd_mode('allow_all'):` context manager.")
 
   has_outfeed = core.jaxpr_uses_outfeed(jaxpr)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
