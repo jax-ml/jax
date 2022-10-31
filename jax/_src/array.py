@@ -407,6 +407,28 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(db.device(), self.sharding, self.shape, array))
     return out
 
+  @property
+  def global_shards(self) -> Sequence[Shard]:
+    """Returns list of all `Shard`s of the Array across all devices.
+
+    The result includes shards that are not addressable by the current process.
+    If a `Shard` is not addressable, then its `data` will be `None`.
+    """
+    self._check_if_deleted()
+    if self.is_fully_addressable:  # pylint: disable=using-constant-test
+      return self.addressable_shards
+
+    out = []
+    device_id_to_buffer = {db.device().id: db for db in self._arrays}
+    for global_d in self.sharding.device_set:
+      if device_id_to_buffer.get(global_d.id, None) is not None:
+        array = _single_device_array_from_buf(
+            device_id_to_buffer[global_d.id], self._committed)
+      else:
+        array = None
+      out.append(Shard(global_d, self.sharding, self.shape, array))
+    return out
+
   def delete(self):
     if self._arrays is None:
       return

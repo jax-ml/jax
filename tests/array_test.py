@@ -139,6 +139,13 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data, global_input_data[s.index])
       self.assertArraysEqual(s.data, arr.addressable_data(i))
 
+    for g, l in safe_zip(arr.global_shards, arr.addressable_shards):
+      self.assertEqual(g.device, l.device)
+      self.assertEqual(g.index, l.index)
+      self.assertEqual(g.replica_id, l.replica_id)
+      self.assertEqual(g.data.aval, l.data.aval)
+      self.assertArraysEqual(g.data, l.data)
+
   def test_addressable_data(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape = (8, 2)
