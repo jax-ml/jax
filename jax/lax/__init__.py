@@ -304,6 +304,8 @@ from jax._src.lax.control_flow import (
   associative_scan as associative_scan,
   cond as cond,
   cond_p as cond_p,
+  cumlogsumexp as cumlogsumexp,
+  cumlogsumexp_p as cumlogsumexp_p,
   cummax as cummax,
   cummax_p as cummax_p,
   cummin as cummin,

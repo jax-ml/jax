@@ -43,6 +43,7 @@ from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
+from jax._src.numpy.ufuncs import logaddexp
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (
     extend_name_stack,
@@ -1906,6 +1907,10 @@ def cummin(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
   """Computes a cumulative minimum along `axis`."""
   return cummin_p.bind(operand, axis=int(axis), reverse=bool(reverse))
 
+def cumlogsumexp(operand: Array, axis: int = 0, reverse: bool = False) -> Array:
+  """Computes a cumulative logsumexp along `axis`."""
+  return cumlogsumexp_p.bind(operand, axis=int(axis), reverse=bool(reverse))
+
 def _cumred_shape_rule(x, *, axis: int, reverse: bool):
   if axis < 0 or axis >= x.ndim:
     raise ValueError(
@@ -1983,6 +1988,9 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
 
 cumsum_p = _cumulative_reduction_primitive("cumsum", lax.add, windowed_reductions._reduce_window_sum)
 ad.deflinear2(cumsum_p, _cumsum_transpose_rule)
+
+cumlogsumexp_p = _cumulative_reduction_primitive(
+    "cumlogsumexp", logaddexp, windowed_reductions._reduce_window_logaddexp)
 cumprod_p = _cumulative_reduction_primitive("cumprod", lax.mul, windowed_reductions._reduce_window_prod)
 cummax_p = _cumulative_reduction_primitive("cummax", lax.max, windowed_reductions._reduce_window_max)
 cummin_p = _cumulative_reduction_primitive("cummin", lax.min, windowed_reductions._reduce_window_min)
@@ -1997,6 +2005,7 @@ def _cumulative_jvp_rule(primals, tangents, *, axis: int, reverse: bool,
                          reverse=reverse),
                  primals, tangents)
 
+ad.primitive_jvps[cumlogsumexp_p] = partial(_cumulative_jvp_rule, combine_fn=logaddexp)
 ad.primitive_jvps[cumprod_p] = partial(_cumulative_jvp_rule, combine_fn=lax.mul)
 ad.primitive_jvps[cummin_p] = partial(_cumulative_jvp_rule, combine_fn=lax.min)
 ad.primitive_jvps[cummax_p] = partial(_cumulative_jvp_rule, combine_fn=lax.max)

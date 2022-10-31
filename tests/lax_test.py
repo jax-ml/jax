@@ -1898,6 +1898,26 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(np_fun, fun, args_maker)
 
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+     for shape in [[10], [3, 4, 5]] for axis in range(len(shape))],
+    dtype=float_dtypes,
+    reverse=[False, True],
+  )
+  def testCumulativeLogSumExp(self, shape, dtype, axis, reverse):
+    # This op only works on floating-point types, so we've separated out the
+    # test.
+    rng = jtu.rand_small(self.rng())
+    fun = partial(lax.cumlogsumexp, axis=axis, reverse=reverse)
+    def np_fun(x):
+      if reverse:
+        return np.flip(np.logaddexp.accumulate(
+            np.flip(x, axis), axis=axis, dtype=dtype), axis)
+      else:
+        return np.logaddexp.accumulate(x, axis=axis, dtype=dtype)
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, fun, args_maker)
 
   @jtu.sample_product(
     shape=[(), (3,), (3, 4)],

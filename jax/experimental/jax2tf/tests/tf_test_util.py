@@ -31,7 +31,7 @@ from jax import tree_util
 from jax.config import config
 from jax.experimental import jax2tf
 from jax._src import util
-import jax._src.lib.xla_bridge
+from jax._src.lib import xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
@@ -313,21 +313,15 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         logging.info("[%s] TF NON OPT HLO\n{%s}", self._testMethodName,
                      tf_hlo)
 
-        backend = jax._src.lib.xla_bridge.get_backend()
+        backend = xla_bridge.get_backend()
         modules = backend.compile(jax_comp).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
         logging.info("[%s] JAX OPT HLO\n%s", self._testMethodName,
                      jax_opt_hlo)
 
-        # TODO(b/189265364): Remove this workaround
-        if (jtu.device_under_test() == "gpu" and
-            "dot_general" in self._testMethodName):
-          print(f"[{self._testMethodName}] Not logging TF OPT HLO because of "
-                f"crash in tf.experimental_get_compiler_ir (b/189265364)")
-        else:
-          tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
-                      stage="optimized_hlo")
-          logging.info("[%s] TF OPT HLO\n%s", self._testMethodName, tf_opt_hlo)
+        tf_opt_hlo = tf_func_compiled.experimental_get_compiler_ir(*tf_args_no_scalars)(
+                    stage="optimized_hlo")
+        logging.info("[%s] TF OPT HLO\n%s", self._testMethodName, tf_opt_hlo)
 
         raise
 

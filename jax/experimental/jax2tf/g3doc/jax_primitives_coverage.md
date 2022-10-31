@@ -1,11 +1,11 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2022-05-09* (YYYY-MM-DD)
+*Last generated on: 2022-10-26* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 3075 test harnesses to test
-the implementation of 127 numeric JAX primitives.
+We use a set of 7296 test harnesses to test
+the implementation of 129 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
 The following table shows the dtypes at which primitives
@@ -64,7 +64,7 @@ be updated.
 | complex | 4 | float32, float64 | bfloat16, bool, complex, float16, integer |
 | concatenate | 17 | all |  |
 | conj | 5 | complex, float32, float64 | bfloat16, bool, float16, integer |
-| conv_general_dilated | 96 | inexact, int16, int32, int8 | bool, int64, unsigned |
+| conv_general_dilated | 114 | inexact, int16, int32, int8 | bool, int64, unsigned |
 | convert_element_type | 201 | all |  |
 | cos | 6 | inexact | bool, integer |
 | cosh | 6 | inexact | bool, integer |
@@ -77,8 +77,8 @@ be updated.
 | digamma | 4 | floating | bool, complex, integer |
 | div | 20 | inexact, integer | bool |
 | dot_general | 245 | all |  |
-| dynamic_slice | 64 | all |  |
-| dynamic_update_slice | 42 | all |  |
+| dynamic_slice | 68 | all |  |
+| dynamic_update_slice | 46 | all |  |
 | eig | 72 | inexact | bool, integer |
 | eigh | 36 | inexact | bool, integer |
 | eq | 17 | all |  |
@@ -89,7 +89,7 @@ be updated.
 | expm1 | 6 | inexact | bool, integer |
 | fft | 20 | complex, float32, float64 | bfloat16, bool, float16, integer |
 | floor | 4 | floating | bool, complex, integer |
-| gather | 136 | all |  |
+| gather | 150 | all |  |
 | ge | 17 | all |  |
 | gt | 17 | all |  |
 | igamma | 6 | floating | bool, complex, integer |
@@ -102,6 +102,7 @@ be updated.
 | lgamma | 4 | floating | bool, complex, integer |
 | log | 6 | inexact | bool, integer |
 | log1p | 6 | inexact | bool, integer |
+| logistic | 6 | inexact | bool, integer |
 | lt | 17 | all |  |
 | lu | 18 | inexact | bool, integer |
 | max | 33 | all |  |
@@ -128,9 +129,9 @@ be updated.
 | reduce_or | 1 | bool | inexact, integer |
 | reduce_prod | 14 | inexact, integer | bool |
 | reduce_sum | 14 | inexact, integer | bool |
-| reduce_window_add | 33 | inexact, integer | bool |
-| reduce_window_max | 39 | all |  |
-| reduce_window_min | 15 | all |  |
+| reduce_window_add | 50 | inexact, integer | bool |
+| reduce_window_max | 66 | all |  |
+| reduce_window_min | 27 | all |  |
 | reduce_window_mul | 42 | inexact, integer | bool |
 | regularized_incomplete_beta | 4 | floating | bool, complex, integer |
 | rem | 18 | floating, integer | bool, complex |
@@ -139,10 +140,11 @@ be updated.
 | rng_bit_generator | 36 | uint32, uint64 | bool, inexact, signed, uint16, uint8 |
 | round | 6 | floating | bool, complex, integer |
 | rsqrt | 6 | inexact | bool, integer |
-| scatter_add | 15 | all |  |
-| scatter_max | 15 | all |  |
-| scatter_min | 24 | all |  |
-| scatter_mul | 15 | all |  |
+| scatter | 645 | all |  |
+| scatter_add | 885 | all |  |
+| scatter_max | 885 | all |  |
+| scatter_min | 888 | all |  |
+| scatter_mul | 885 | all |  |
 | select_and_gather_add | 15 | floating | bool, complex, integer |
 | select_and_scatter_add | 27 | bool, floating, integer | complex |
 | select_n | 32 | all |  |

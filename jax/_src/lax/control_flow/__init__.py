@@ -13,7 +13,8 @@
 # limitations under the License.
 """Module for the control flow primitives."""
 from jax._src.lax.control_flow.loops import (associative_scan, cummax, cummax_p,
-                                             cummin, cummin_p, cumprod,
+                                             cummin, cummin_p, cumlogsumexp,
+                                             cumlogsumexp_p, cumprod,
                                              cumprod_p, cumsum, cumsum_p,
                                              cumred_reduce_window_impl,
                                              fori_loop, map,

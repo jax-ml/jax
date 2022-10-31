@@ -52,6 +52,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
+from jax._src.numpy.ufuncs import logaddexp
 
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.jax2tf import shape_poly
@@ -2281,6 +2282,10 @@ tf_impl_with_avals[lax.cummin_p] = _cumred(
     lax_reduce_window_fn=lax_windowed_reductions._reduce_window_min,
     lax_reduce_fn=lax.min,
     extra_name_stack="cummin")
+tf_impl_with_avals[lax.cumlogsumexp_p] = _cumred(
+    lax_reduce_window_fn=lax_windowed_reductions._reduce_window_logaddexp,
+    lax_reduce_fn=logaddexp,
+    extra_name_stack="cumlogsumexp")
 tf_impl_with_avals[lax.cumsum_p] = _cumred(
     lax_reduce_window_fn=lax_windowed_reductions._reduce_window_sum,
     lax_reduce_fn=lax.add,

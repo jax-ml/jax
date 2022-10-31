@@ -34,6 +34,7 @@ import jax._src.lax.convolution as convolution
 import jax._src.lax.slicing as slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import mhlo
+from jax._src.numpy.ufuncs import logaddexp
 import jax._src.util as util
 
 map = util.safe_map
@@ -173,6 +174,26 @@ def _reduce_window_min(operand: Array, window_dimensions: core.Shape,
       window_strides=tuple(window_strides), padding=tuple(padding),
       base_dilation=tuple(base_dilation),
       window_dilation=tuple(window_dilation))
+
+def _reduce_window_logaddexp(
+    operand: Array, window_dimensions: core.Shape,
+    window_strides: Sequence[int],
+    padding: Sequence[Tuple[int, int]],
+    base_dilation: Optional[Sequence[int]] = None,
+    window_dilation: Optional[Sequence[int]] = None) -> Array:
+  init_value = lax._const(operand, -np.inf)
+  jaxpr, consts = lax._reduction_jaxpr(logaddexp, lax._abstractify(init_value))
+  if base_dilation is None:
+    base_dilation = (1,) * len(window_dimensions)
+  if window_dilation is None:
+    window_dilation = (1,) * len(window_dimensions)
+  out, = reduce_window_p.bind(
+      operand, init_value, jaxpr=jaxpr, consts=consts,
+      window_dimensions=tuple(window_dimensions),
+      window_strides=tuple(window_strides), padding=tuple(padding),
+      base_dilation=tuple(base_dilation),
+      window_dilation=tuple(window_dilation))
+  return out
 
 def _select_and_scatter(operand: Array, select: Callable,
                         window_dimensions: core.Shape,
