@@ -2831,14 +2831,15 @@ def make_jaxpr(fun: Callable,
 
 
 def device_put(
-    x, device: Optional[Union[xc.Device, jax.sharding.Sharding]] = None):
+    x, device: Union[None, xc.Device, jax.sharding.Sharding, Any] = None):
   """Transfers ``x`` to ``device``.
 
   Args:
     x: An array, scalar, or (nested) standard Python container thereof.
-    device: The (optional) :py:class:`Device` or `Sharding` representing the
-      device(s) to which ``x`` should be transferred. If given, then the result
-      is committed to the device(s).
+    device: The (optional) :py:class:`Device`, `Sharding`, or a (nested)
+      `Sharding` in standard Python container (must be a tree prefix of ``x``),
+      representing the device(s) to which ``x`` should be transferred. If
+      given, then the result is committed to the device(s).
 
   Returns:
     A copy of ``x`` that resides on ``device``.
@@ -2854,7 +2855,16 @@ def device_put(
   blocking the calling Python thread until any transfers are completed.
   """
   with config_explicit_device_put_scope():
-    return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
+    if device is None or isinstance(device, (xc.Device, jax.sharding.Sharding)):
+      return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
+
+    x_flat, treedef = tree_flatten(x)
+    device_flat = flatten_axes("device_put device", treedef, device)
+    out_flat = [
+        dispatch.device_put_p.bind(y, device=d)
+        for y, d in zip(x_flat, device_flat)
+    ]
+    return tree_unflatten(treedef, out_flat)
 
 
 def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # noqa: F811

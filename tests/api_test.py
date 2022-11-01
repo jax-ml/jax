@@ -1516,6 +1516,95 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysAllClose(u, y)
     self.assertEqual(u.device(), jax.devices()[0])
 
+  @jax_config.jax_array(True)
+  def test_device_put_sharding_tree(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices")
+
+    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    s1 = sharding.MeshPspecSharding(mesh, P("x"))
+    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+    s3 = sharding.MeshPspecSharding(mesh, P("x", "y"))
+
+    x = jnp.arange(2)
+    y = jnp.arange(2) + 10
+    z = (jnp.arange(2) + 100).reshape((2, 1))
+
+    out = jax.device_put((x, (y, z)), device=(s1, (s2, s3)))
+    self.assertEqual(out[0].sharding, s1)
+    self.assertEqual(out[1][0].sharding, s2)
+    self.assertEqual(out[1][1].sharding, s3)
+
+    self.assertArraysAllClose(out[0], x)
+    self.assertArraysAllClose(out[1][0], y)
+    self.assertArraysAllClose(out[1][1], z)
+
+  @jax_config.jax_array(True)
+  def test_device_put_sharding_tree_prefix(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices")
+
+    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    s1 = sharding.MeshPspecSharding(mesh, P("x"))
+    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+
+    x = jnp.arange(2)
+    y = jnp.arange(2) + 10
+    z = jnp.arange(2) + 100
+
+    out = jax.device_put((x, (y, z)), device=(s1, s2))
+    self.assertEqual(out[0].sharding, s1)
+    self.assertEqual(out[1][0].sharding, s2)
+    self.assertEqual(out[1][1].sharding, s2)
+
+    self.assertArraysAllClose(out[0], x)
+    self.assertArraysAllClose(out[1][0], y)
+    self.assertArraysAllClose(out[1][1], z)
+
+  @jax_config.jax_array(True)
+  def test_device_put_sharding_mismatched_tree_same_leaf_count(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices")
+
+    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    s1 = sharding.MeshPspecSharding(mesh, P("x"))
+    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+
+    x = jnp.arange(2)
+    y = jnp.arange(2) + 10
+    z = jnp.arange(2) + 100
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "device_put device specification must be a tree prefix of the "
+        r"corresponding value, got specification \(\(MeshPspecSharding\(.*\), "
+        r"MeshPspecSharding\(.*\)\), MeshPspecSharding\(.*\)\) for value tree "
+        r"PyTreeDef\(\(\*, \(\*, \*\)\)\)."
+    ):
+      jax.device_put((x, (y, z)), device=((s1, s2), s2))
+
+  @jax_config.jax_array(True)
+  def test_device_put_sharding_mismatched_tree_different_leaf_count(self):
+    if jax.device_count() < 2:
+      raise unittest.SkipTest("Test requires >= 2 devices")
+
+    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    s1 = sharding.MeshPspecSharding(mesh, P("x"))
+    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+
+    x = jnp.arange(2)
+    y = jnp.arange(2) + 10
+    z = jnp.arange(2) + 100
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "device_put device specification must be a tree prefix of the "
+        r"corresponding value, got specification \(MeshPspecSharding\(.*\), "
+        r"MeshPspecSharding\(.*\)\) for value tree PyTreeDef\(\(\*, \*, \*\)\)."
+    ):
+      jax.device_put((x, y, z), device=(s1, s2))
+
+
   def test_device_get_scalar(self):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
