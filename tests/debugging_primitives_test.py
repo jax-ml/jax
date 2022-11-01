@@ -1003,9 +1003,9 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd, scale=8.)
     self.assertEqual(output(), _format_multiline("""
-    ┌──────────────┐
-    │    CPU 0     │
-    └──────────────┘
+    ┌──────────────────────────────────────┐
+    │                CPU 0                 │
+    └──────────────────────────────────────┘
     """))
 
   def test_full_sharding(self):
