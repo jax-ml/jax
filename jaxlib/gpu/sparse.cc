@@ -294,7 +294,7 @@ std::pair<size_t, py::bytes> BuildCsrMatvecDescriptor(
   SparseConst beta = ConstZero(y.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
-      GPUSPARSE_MV_ALG_DEFAULT, &buffer_size)));
+      GPUSPARSE_SPMV_CSR_ALG, &buffer_size)));
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
@@ -346,7 +346,7 @@ std::pair<size_t, py::bytes> BuildCsrMatmatDescriptor(
   SparseConst beta = ConstZero(C.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM_bufferSize(
       handle.get(), op_A, GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
-      mat_b, &beta, mat_c, C.type, GPUSPARSE_SPMM_ALG_DEFAULT, &buffer_size)));
+      mat_b, &beta, mat_c, C.type, GPUSPARSE_SPMM_CSR_ALG, &buffer_size)));
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
@@ -467,7 +467,7 @@ std::pair<size_t, py::bytes> BuildCooMatvecDescriptor(
   SparseConst beta = ConstZero(y.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMV_bufferSize(
       handle.get(), op, &alpha, mat_a, vec_x, &beta, vec_y, y.type,
-      GPUSPARSE_MV_ALG_DEFAULT, &buffer_size)));
+      GPUSPARSE_SPMV_COO_ALG, &buffer_size)));
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnVec(vec_x)));
@@ -537,7 +537,7 @@ std::pair<size_t, py::bytes> BuildCooMatmatDescriptor(
   SparseConst beta = ConstZero(C.type);
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseSpMM_bufferSize(
       handle.get(), op_A, GPUSPARSE_OPERATION_NON_TRANSPOSE, &alpha, mat_a,
-      mat_b, &beta, mat_c, C.type, GPUSPARSE_SPMM_ALG_DEFAULT, &buffer_size)));
+      mat_b, &beta, mat_c, C.type, GPUSPARSE_SPMM_COO_ALG, &buffer_size)));
 
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroySpMat(mat_a)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusparseDestroyDnMat(mat_b)));
