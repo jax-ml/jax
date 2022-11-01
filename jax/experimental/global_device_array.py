@@ -501,7 +501,7 @@ class GlobalDeviceArray:
       ...
       >>> global_input_shape = (8, 8)
       >>> mesh_axes = P('x', 'y')
-      >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
+      >>> global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
       ...
       >>> def cb(index):
@@ -548,7 +548,7 @@ class GlobalDeviceArray:
       ...
       >>> global_input_shape = (8, 2)
       >>> mesh_axes = P('x')
-      >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
+      >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
       ...
       >>> def batched_cb(indices):
@@ -567,7 +567,7 @@ class GlobalDeviceArray:
       data_callback : Callback that takes a batch of indices into the global array value with
         length equal to the number of local devices as input and returns the corresponding data for each index.
         The data can be returned as any array-like objects, e.g. ``numpy.ndarray``
-"""
+    """
     global_indices_rid = get_shard_indices_replica_ids(
         global_shape, global_mesh, mesh_axes)
     local_devices = global_mesh.local_devices
@@ -595,7 +595,7 @@ class GlobalDeviceArray:
       ...
       >>> global_input_shape = (8, 2)
       >>> mesh_axes = P(('x', 'y'))
-      >>> global_mesh = global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
+      >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
       >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
       ...
       >>> def cb(cb_inp):
@@ -619,7 +619,7 @@ class GlobalDeviceArray:
       data_callback : Callback that takes agets batch of indices into the global array value with
         length equal to the number of local devices as input and returns the corresponding data for
         each index. The data must be returned as jax DeviceArrays.
-"""
+    """
     global_indices_rid = get_shard_indices_replica_ids(
         global_shape, global_mesh, mesh_axes)
     local_devices = global_mesh.local_devices
