@@ -333,7 +333,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)
 
-  mhlo.CustomCallOp([ir.TupleType.get_tuple([])], [value],
+  mhlo.CustomCallOp([value.type], [value],
                     call_target_name=ir.StringAttr.get(
                       _INSPECT_SHARDING_CALL_NAME),
                     has_side_effect=ir.BoolAttr.get(True),
