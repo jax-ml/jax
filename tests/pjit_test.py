@@ -2404,6 +2404,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(a, s2)
     self.assertEqual(b.sharding, s2)
 
+  # TODO(yashkatariya): Remove this test once jax_array is enabled globally.
+  def test_device_put_sharding_error(self):
+    if config.jax_array:
+      self.skipTest('This test is only when jax_array is not enabled.')
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    x = jnp.arange(8).reshape(4, 2)
+    s1 = MeshPspecSharding(mesh, P('x'))
+
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "Please enable `jax_array` to use device_put with a `Sharding`"):
+      jax.device_put(x, s1)
+
   @jax_array(True)
   def test_with_sharding_constraint_jit(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))

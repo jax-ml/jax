@@ -1355,6 +1355,12 @@ def _device_put_impl(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
   if isinstance(device, sharding.Sharding):
+    if not jax.config.jax_array:
+      raise RuntimeError(
+          "Please enable `jax_array` to use device_put with a `Sharding`. "
+          "You can use jax.config.update('jax_array', True) or set JAX_ARRAY=1 "
+          "environment variable or set the `jax_array` boolean flag to "
+          "something true-like.")
     s = device
     if not s.is_fully_addressable:  # type: ignore
       raise ValueError(
