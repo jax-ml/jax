@@ -717,6 +717,7 @@ jax_test(
 jax_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
+    pjrt_c_api_bypass = True,
 )
 
 jax_test(
