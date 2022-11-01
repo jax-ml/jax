@@ -55,6 +55,8 @@ For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorp
 
 See also some internal ongoing design discussions at `go/jax2tf-doc`.
 
+[TOC]
+
 ## Usage: basic functions.
 
 As a rule of thumb, if you can `jax.jit` your function then you should be able
