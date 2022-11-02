@@ -14,11 +14,12 @@
 """Module for state types."""
 from __future__ import annotations
 
-from typing import Any, Optional,  Union
+from typing import Any, List, Optional, Sequence, Set, Union
 
 from jax import core
 from jax._src.lib import xla_bridge, xla_client
 from jax._src.util import safe_map, safe_zip, tuple_insert, tuple_delete, prod
+from jax._src.lax.control_flow import common
 
 xc = xla_client
 xb = xla_bridge
@@ -33,6 +34,7 @@ Array = Any
 class RefEffect:
   def __init__(self, ref_aval: ShapedArrayRef):
     self.ref_aval = ref_aval
+    common.allowed_effects.add(self)
 
   def __eq__(self, other):
     if not isinstance(other, self.__class__):
@@ -130,3 +132,10 @@ def _unmap_ref(size, axis_name, axis, aval):
   return ShapedArrayRef(tuple_insert(aval.shape, axis, size), aval.dtype)
 
 core.aval_mapping_handlers[ShapedArrayRef] = (_map_ref, _unmap_ref)
+
+def get_ref_state_effects(
+    avals: Sequence[core.AbstractValue],
+    effects: core.Effects) -> List[Set[StateEffect]]:
+  return [{eff for eff in effects
+           if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
+           and eff.ref_aval is aval} for aval in avals]

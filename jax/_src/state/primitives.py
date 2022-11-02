@@ -21,18 +21,18 @@ from jax import core
 from jax import lax
 from jax._src import ad_util
 from jax._src import pretty_printer as pp
+from jax._src.typing import Array
 from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-import jax.numpy as jnp
+import numpy as np
 
 from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
                                   AccumEffect)
 
 ## General utilities
 
-Array = Any
 T = TypeVar('T')
 class Ref(Protocol):
 
@@ -65,13 +65,14 @@ def _get_impl(ref: Ref, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
 
-Indexer = Tuple[Union[int, slice, jnp.ndarray], ...]
+Indexer = Tuple[Union[int, slice, Array], ...]
 
 def _unpack_idx(idx: Indexer, ndim: int
                ) -> Tuple[Tuple[Array, ...], Tuple[bool, ...]]:
   indexed_dims_ = [type(i) != slice for i in idx]
   _, non_slice_idx = partition_list(indexed_dims_, idx)
   indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
+  import jax.numpy as jnp
   return (tuple(map(jnp.int32, non_slice_idx)), tuple(indexed_dims))
 
 def _get_slice_output_shape(in_shape: Tuple[int, ...],
@@ -85,8 +86,8 @@ def _get_slice_output_shape(in_shape: Tuple[int, ...],
 
 def ref_get(ref: Ref, idx: Tuple[Union[int, slice], ...]) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  idx, indexed_dims = _unpack_idx(idx, ref.ndim)
-  return get_p.bind(ref, *idx, indexed_dims=indexed_dims)
+  non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  return get_p.bind(ref, *non_slice_idx, indexed_dims=indexed_dims)
 
 # `swap` mutates a `Ref`, setting its value and returns its previous value.
 # b = swap_p.bind(x, a)
@@ -113,8 +114,8 @@ swap_p.def_impl(_swap_impl)
 
 def ref_swap(ref: Ref, idx: Tuple[int, ...], value: Array) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
-  idx, indexed_dims = _unpack_idx(idx, ref.ndim)
-  return swap_p.bind(ref, value, *idx, indexed_dims=indexed_dims)
+  non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  return swap_p.bind(ref, value, *non_slice_idx, indexed_dims=indexed_dims)
 
 def ref_set(ref: Ref, idx: Tuple[int, ...], value: Array) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
@@ -141,8 +142,8 @@ addupdate_p.def_impl(_addupdate_impl)
 
 def ref_addupdate(ref: Ref, idx: Tuple[int, ...], x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  idx, indexed_dims = _unpack_idx(idx, ref.ndim)
-  return addupdate_p.bind(ref, x, *idx, indexed_dims=indexed_dims)
+  non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  return addupdate_p.bind(ref, x, *non_slice_idx, indexed_dims=indexed_dims)
 
 ## get/set/addupdate abstract evaluation rules
 
@@ -374,7 +375,7 @@ def _get_vmap(batched_args, batched_dims, *, indexed_dims):
       # `idxs` doesn't include the non indexed dims.
       idx_place = [i for i, i_dim in enumerate(indexed_dims)
                    if i_dim].index(ref_dim)
-      iota = lax.broadcasted_iota(jnp.dtype('int32'), idxs_shape, 0)
+      iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
       idxs = tuple_insert(idxs, idx_place, iota)
     else:
       bdim_out = _output_bdim(indexed_dims, ref_dim, idxs_shape)
@@ -407,7 +408,7 @@ def _swap_vmap(batched_args, batched_dims, *, indexed_dims):
     indexed_dims = tuple_insert(indexed_dims, ref_dim, True)
     idx_place = [i for i, i_dim in enumerate(indexed_dims)
                  if i_dim].index(ref_dim)
-    iota = lax.broadcasted_iota(jnp.dtype('int32'), idxs_shape, 0)
+    iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
     val = batching.moveaxis(val, val_dim, 0)
     bdim_out = 0
@@ -440,7 +441,7 @@ def _addupdate_vmap(batched_args, batched_dims, *, indexed_dims):
     idx_place = [i for i, i_dim in enumerate(indexed_dims)
                  if i_dim].index(ref_dim)
     idxs_shape, = {i.shape for i in idxs} or [()]
-    iota = lax.broadcasted_iota(jnp.dtype('int32'), idxs_shape, 0)
+    iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
     val = batching.moveaxis(val, val_dim, 0)
   return addupdate_p.bind(ref, val, *idxs, indexed_dims=indexed_dims), []

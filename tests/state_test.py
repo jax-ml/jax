@@ -28,6 +28,7 @@ from jax.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
 from jax._src.util import tuple_insert
 import jax.numpy as jnp
+from jax._src.lax.control_flow import for_loop
 
 try:
   import hypothesis as hp
@@ -928,6 +929,87 @@ if CAN_USE_HYPOTHESIS:
 
       self.assertAllClose(discharge_of_vmap_ans, vmap_of_discharge_ans,
                           check_dtypes=False)
+
+
+class StateControlFlowTest(jtu.JaxTestCase):
+
+  def test_simple_cond(self):
+    def f(pred):
+      def body(x_ref):
+        def true_fun():
+          x_ref[()] = 1.
+        def false_fun():
+          pass
+        lax.cond(pred, true_fun, false_fun)
+      return for_loop.run_state(body, 0.)
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(True), 1.)
+    self.assertAllClose(jax.jit(f)(False), 0.)
+
+  def test_nested_cond(self):
+    def f(pred):
+      def body(x_ref):
+        def true_fun():
+          def true_fun_inner():
+            x_ref[()] = 1.
+          def false_fun_inner():
+            pass
+          return lax.cond(pred, true_fun_inner, false_fun_inner)
+        def false_fun():
+          pass
+        lax.cond(pred, true_fun, false_fun)
+      return for_loop.run_state(body, 0.)
+    jaxpr = jax.make_jaxpr(f)(True).jaxpr
+    self.assertEmpty(jaxpr.effects)
+    self.assertAllClose(jax.jit(f)(True), 1.)
+    self.assertAllClose(jax.jit(f)(False), 0.)
+
+  def test_cond_jvp_with_state(self):
+    def f(pred, init_value):
+      def body(x_ref):
+        def true_fun():
+          x_ref[()] = x_ref[()] ** 2
+        def false_fun():
+          pass
+        lax.cond(pred, true_fun, false_fun)
+      return for_loop.run_state(body, init_value)
+
+    out_primal, out_tangent = jax.jvp(partial(f, True), (3.,), (1.,))
+    self.assertAllClose(out_primal, 9.)
+    self.assertAllClose(out_tangent, 6.)
+
+    out_primal, out_tangent = jax.jvp(partial(f, False), (3.,), (1.,))
+    self.assertAllClose(out_primal, 3.)
+    self.assertAllClose(out_tangent, 1.)
+
+  def test_cond_vmap_not_implemented(self):
+    @jax.jit
+    def f(init_value):
+      def body(x_ref):
+        def true_fun():
+          x_ref[()] = x_ref[()] ** 2
+        def false_fun():
+          pass
+        lax.cond(x_ref[()] < 1, true_fun, false_fun)
+      return for_loop.run_state(body, init_value)
+
+    with self.assertRaises(NotImplementedError):
+      jax.vmap(f)(jnp.arange(2.))
+
+  def test_cond_grad_not_implemented(self):
+    @jax.jit
+    def f(init_value):
+      def body(x_ref):
+        def true_fun():
+          x_ref[()] = x_ref[()] ** 2
+        def false_fun():
+          pass
+        lax.cond(True, true_fun, false_fun)
+      return for_loop.run_state(body, init_value)
+
+    with self.assertRaises(NotImplementedError):
+      jax.grad(f)(3.)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

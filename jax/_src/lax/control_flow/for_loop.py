@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for the `for_loop` primitive."""
-from functools import partial
+import functools
 import operator
 
 from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple, TypeVar, Union
@@ -152,7 +152,8 @@ def for_loop(nsteps: Union[int, Sequence[int]],
     outer_step, *rest_steps = nsteps
     def wrapped_body(i, refs):
       vals = tree_map(lambda ref: state.ref_get(ref, ()), refs)
-      vals = for_loop(rest_steps, partial(body, i), vals, unroll=unroll)
+      vals = for_loop(
+          rest_steps, functools.partial(body, i), vals, unroll=unroll)
       tree_map(lambda ref, val: state.ref_set(ref, (), val), refs, vals)
     return for_loop(outer_step, wrapped_body, init_state, unroll=unroll)
   nsteps, = nsteps
@@ -243,16 +244,11 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                          unroll=unroll)
   return init, ys
 
-def _get_ref_state_effects(jaxpr: core.Jaxpr) -> List[Set[StateEffect]]:
-  all_effects = jaxpr.effects
-  return [{eff for eff in all_effects
-           if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
-           and eff.ref_aval is v.aval} for v in jaxpr.invars]
-
 @for_p.def_effectful_abstract_eval
 def _for_abstract_eval(*avals, jaxpr, **__):
   # Find out for each of the `Ref`s in our jaxpr what effects they have.
-  jaxpr_aval_effects = _get_ref_state_effects(jaxpr)[1:]
+  jaxpr_aval_effects = state.get_ref_state_effects(
+      [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
   aval_effects = [set(eff.replace(ref_aval=aval) for eff in effs) for aval, effs
                   in zip(avals, jaxpr_aval_effects)
                   if isinstance(aval, ShapedArrayRef)]
@@ -260,7 +256,7 @@ def _for_abstract_eval(*avals, jaxpr, **__):
   return list(avals), nonlocal_state_effects
 
 @state.register_discharge_rule(for_p)
-def _for_discharge_rule(in_avals, *args: Any, jaxpr: core.Jaxpr,
+def _for_discharge_rule(in_avals, _, *args: Any, jaxpr: core.Jaxpr,
                         reverse: bool, which_linear: Sequence[bool],
                         nsteps: int, unroll: int
                         ) -> Tuple[Sequence[Optional[Any]], Sequence[Any]]:
@@ -302,7 +298,7 @@ def _for_impl_unrolled(body, nsteps, unroll, *args):
   return state
 
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
-for_p.def_impl(partial(xla.apply_primitive, for_p))
+for_p.def_impl(functools.partial(xla.apply_primitive, for_p))
 
 def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
               jaxpr, nsteps, reverse, which_linear, unroll):
@@ -390,7 +386,8 @@ def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
 
 def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
   # Get effects for each of the jaxpr inputs and remove the loop index.
-  ref_effects = _get_ref_state_effects(jaxpr)[1:]
+  ref_effects = state.get_ref_state_effects(
+      [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
   # We first assume that *read-only `Ref`s* are loop-invariant. We can safely do
   # this because the only way something can be loop-varying is if we write to it
   # at some point. It's *possible* that read-write `Ref`s are loop-invariant but
@@ -786,3 +783,9 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
     return out_flat
   out_flat = loops.fori_loop(0, nsteps, fori_body, flat_state)
   return tree_unflatten(state_tree, out_flat)
+
+def run_state(f, init_state):
+  @functools.wraps(f)
+  def wrapped_body(_, *args):
+    return f(*args)
+  return for_loop(1, wrapped_body, init_state)

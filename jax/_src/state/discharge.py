@@ -71,7 +71,8 @@ class Environment:
 
 class DischargeRule(Protocol):
 
-  def __call__(self, in_avals: Sequence[core.AbstractValue], *args: Any,
+  def __call__(self, in_avals: Sequence[core.AbstractValue],
+      out_avals: Sequence[core.AbstractValue], *args: Any,
       **params: Any) -> Tuple[Sequence[Optional[Any]], Sequence[Any]]:
     ...
 
@@ -107,8 +108,9 @@ def _eval_jaxpr_discharge_state(
             f"primitive: {eqn.primitive}")
       invals = map(env.read, eqn.invars)
       in_avals = [v.aval for v in eqn.invars]
-      new_invals, ans = _discharge_rules[eqn.primitive](in_avals, *invals,
-                                                        **eqn.params)
+      out_avals = [v.aval for v in eqn.outvars]
+      new_invals, ans = _discharge_rules[eqn.primitive](
+          in_avals, out_avals, *invals, **eqn.params)
       for new_inval, invar in zip(new_invals, eqn.invars):
         if new_inval is not None:
           env.write(invar, new_inval)  # type: ignore[arg-type]
@@ -132,8 +134,11 @@ def _eval_jaxpr_discharge_state(
   return out_vals + ref_vals
 
 @register_discharge_rule(get_p)
-def _get_discharge_rule(_: Sequence[core.AbstractValue], x, *non_slice_idx,
-                        indexed_dims: Sequence[bool]):
+def _get_discharge_rule(
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue], x, *non_slice_idx,
+    indexed_dims: Sequence[bool]):
+  del in_avals, out_avals
   y = _get_discharge(x, non_slice_idx, indexed_dims)
   return (None,) * (len(non_slice_idx) + 1), y
 
@@ -163,8 +168,11 @@ def _indexer(idx, indexed_dims):
   return indexer
 
 @register_discharge_rule(swap_p)
-def _swap_discharge_rule(_: Sequence[core.AbstractValue], x, val, *non_slice_idx,
-                         indexed_dims: Sequence[bool]):
+def _swap_discharge_rule(
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue], x, val, *non_slice_idx,
+    indexed_dims: Sequence[bool]):
+  del in_avals, out_avals
   if not any(indexed_dims):
     z, x_new = x, val
   z, x_new = _swap_discharge(x, val, non_slice_idx, indexed_dims)
@@ -182,8 +190,11 @@ def _swap_discharge(x, val, idx, indexed_dims):
   return z, x_new
 
 @register_discharge_rule(addupdate_p)
-def _addupdate_discharge_rule(_: Sequence[core.AbstractValue], x, val,
-                              *non_slice_idx, indexed_dims: Sequence[bool]):
+def _addupdate_discharge_rule(
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue], x, val, *non_slice_idx,
+    indexed_dims: Sequence[bool]):
+  del in_avals, out_avals
   ans = _addupdate_discharge(x, val, non_slice_idx, indexed_dims)
   return (ans, None) + (None,) * len(non_slice_idx), []
 
@@ -214,8 +225,9 @@ def _dynamic_update_index(x, idx, val, indexed_dims):
   return lax.dynamic_update_slice(x, val.reshape(sizes), starts)
 
 @register_discharge_rule(core.closed_call_p)
-def _closed_call_discharge_rule(in_avals: Sequence[core.AbstractValue], *args,
-                                call_jaxpr: core.ClosedJaxpr):
+def _closed_call_discharge_rule(
+    in_avals: Sequence[core.AbstractValue], _,*args,
+    call_jaxpr: core.ClosedJaxpr):
   jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   num_outs = len(jaxpr.outvars)
   discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)

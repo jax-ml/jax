@@ -1226,6 +1226,7 @@ tf_not_yet_impl = [
     "full_to_shard",
     "shard_to_full",
     "pure_callback",
+    "for",
     "inspect_sharding",
     "iota_32x2_shape",
 
