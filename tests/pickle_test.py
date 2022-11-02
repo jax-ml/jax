@@ -30,6 +30,8 @@ from jax import numpy as jnp
 from jax.config import config
 from jax.interpreters import pxla
 from jax._src import test_util as jtu
+from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -134,6 +136,25 @@ class PickleTest(jtu.JaxTestCase):
   def testPickleTracerError(self):
     with self.assertRaises(core.ConcretizationTypeError):
       jax.jit(pickle.dumps)(0)
+
+  def testPickleSharding(self):
+    if xla_extension_version < 104:
+      raise unittest.SkipTest('CPU buffer donation requires jaxlib > 0.3.22')
+    sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked(
+        (2, 2)), pxla.Unstacked(3)), (pxla.ShardedAxis(0), pxla.ShardedAxis(1),
+                                      pxla.ShardedAxis(2), pxla.Replicated(4)))
+    self.assertEqual(pickle.loads(pickle.dumps(sharding)), sharding)
+
+  def testPickleOpSharding(self):
+    if xla_extension_version < 104:
+      raise unittest.SkipTest('CPU buffer donation requires jaxlib > 0.3.22')
+    sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
+                                 (pxla.ShardedAxis(0), pxla.ShardedAxis(1)))
+    op_sharding = sharding.sharding_proto()
+    self.assertTrue(
+        xc.HloSharding.from_proto(pickle.loads(pickle.dumps(op_sharding))),
+        xc.HloSharding.from_proto(op_sharding))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
