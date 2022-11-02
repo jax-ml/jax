@@ -275,6 +275,11 @@ mode. Therefore, `jax2tf` will give an error when lowering a function that
 requires sharded (not replicated) arguments or results and the lowered
 function is used outside a `tf.function` context (see b/255511660).
 
+Another limitation is that today only TPUs have integrated with XLA SPMD
+support in serving, while CPUs and GPUs don't have e2e XLA SPMD support yet in
+TensorFlow. Executing a jax2tf converted tf.function with `XlaSharding` ops on
+CPUs and GPUs will simply ignore all the `XlaSharding` ops.
+
 Note that when saving a model, the parameters to the model are wrapped with
 `tf.Variable` before calling the lowered function (see [above](#saved_model_with_parameters)),
 therefore outside of the `XlaSharding` wrapper.
