@@ -48,7 +48,7 @@ from jax.experimental.pjit import (pjit, pjit_p, with_sharding_constraint,
                                    FROM_GDA, AUTO)
 from jax.interpreters import pxla
 from jax.interpreters import mlir
-from jax._src.lib import xla_client as xc, xla_bridge
+from jax._src.lib import xla_client as xc, xla_bridge, xla_extension_version
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
@@ -2094,6 +2094,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     @pjit
     def add(x, y):
       return x + y
+
     out = add(a, b)
     cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertIsInstance(out, array.ArrayImpl)
@@ -2119,12 +2120,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
 
     out4 = add(out3, out3)
-    cache_info4 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertArraysEqual(out4, 4 * c)
     self.assertTrue(out4._committed)
-
-    self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
-    self.assertEqual(cache_info4.misses, cache_info3.misses)
 
   @jax_array(True)
   def test_pjit_single_device_sharding_mul(self):
@@ -2558,6 +2555,63 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out1.shape, (8, 8))
     self.assertArraysEqual(out2, inp_data * 2)
     self.assertEqual(out2.shape, (8, 2))
+
+  @jax_array(True)
+  def test_single_device_pjit_perf(self):
+    if xla_extension_version < 103:
+      self.skipTest('Does not work for xla_extension_version < 103')
+
+    shape = (8, 2)
+    mesh = jtu.create_global_mesh((1,), ('x',))
+    inp_data = np.arange(prod(shape)).reshape(shape)
+
+    original_pjit_lower = pjit_lib._pjit_lower
+    count = 0
+
+    def pjit_lower_and_count(*args, **kwargs):
+      nonlocal count
+      count += 1
+      return original_pjit_lower(*args, **kwargs)
+
+    f = pjit(lambda x: x @ x.T, in_axis_resources=None, out_axis_resources=None)
+
+    try:
+      pjit_lib._pjit_lower = pjit_lower_and_count
+      for _ in range(10):
+        arr1 = jax.device_put(
+            inp_data, jax.sharding.MeshPspecSharding(mesh, P('x')))
+        with mesh:
+          f(arr1)
+        self.assertEqual(count, 1)
+    finally:
+      pjit_lib._pjit_lower = original_pjit_lower
+
+  @jax_array(True)
+  def test_single_device_add_single_compile(self):
+    if xla_extension_version < 103:
+      self.skipTest('Does not work for xla_extension_version < 103')
+
+    f1 = pjit(lambda x, y: x + y)
+    a = jax.device_put(jnp.array([1, 2, 3], dtype=jnp.float32),
+                       jax.devices()[0])
+    b = jax.device_put(jnp.array([4, 5, 6], dtype=jnp.float32),
+                       jax.devices()[0])
+
+    original_pjit_lower = pjit_lib._pjit_lower
+    count = 0
+
+    def pjit_lower_and_count(*args, **kwargs):
+      nonlocal count
+      count += 1
+      return original_pjit_lower(*args, **kwargs)
+
+    try:
+      pjit_lib._pjit_lower = pjit_lower_and_count
+      for _ in range(2):
+        f1(a, b)
+        self.assertEqual(count, 1)
+    finally:
+      pjit_lib._pjit_lower = original_pjit_lower
 
 
 class TempSharding(Sharding):
