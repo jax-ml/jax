@@ -668,8 +668,8 @@ jax_test(
     name = "scipy_stats_test",
     srcs = ["scipy_stats_test.py"],
     shard_count = {
-        "cpu": 10,
-        "gpu": 20,
+        "cpu": 20,
+        "gpu": 30,
         "tpu": 10,
         "iree": 10,
     },
