@@ -1066,9 +1066,11 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
       logger.info("Persistent compilation cache hit for '%s'", module_name)
       return cached_executable
     else:
+      start_time = time.monotonic()
       compiled = backend_compile(backend, serialized_computation,
                                  compile_options, host_callbacks)
-      _cache_write(computation, serialized_computation, module_name,
+      compile_time = time.monotonic() - start_time
+      _cache_write(serialized_computation, compile_time, module_name,
                    compile_options, backend, compiled)
       return compiled
 
@@ -1094,27 +1096,27 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
     return None
 
 
-def _cache_write(computation: ir.Module,
-                 serialized_computation: Union[str, bytes, ir.Module],
+def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
+                 compile_time_secs: float,
                  module_name: str, compile_options: CompileOptions,
                  backend: Backend, compiled: XlaLoadedExecutable):
   """Writes `serialized_computation` to the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
 
-  min_instr_count = config.jax_persistent_cache_min_instruction_count
-  if min_instr_count:
-    count = _instruction_count(computation, max_count=min_instr_count)
-    if count < min_instr_count:
+  min_compile_time = config.jax_persistent_cache_min_compile_time_secs
+  if min_compile_time:
+    if compile_time_secs < min_compile_time:
       logging.info(
-          "Not writing persistent cache entry for '%s' because it has "
-          "fewer than %i instructions", module_name, min_instr_count)
+          "Not writing persistent cache entry for '%s' because it took < %.2f "
+          "seconds to compile (%.2fs)", module_name, min_compile_time,
+          compile_time_secs)
       return
     else:
-      # Don't log `count` because it won't be more than max_count
       logging.info(
-          "'%s' has at least %i instructions, writing persistent cache entry",
-          module_name, min_instr_count)
+          "'%s' took at least %.2f seconds to compile (%.2fs), writing "
+          "persistent cache entry", module_name, min_compile_time,
+          compile_time_secs)
 
   try:
     cc.put_executable(module_name, serialized_computation, compile_options,

@@ -36,14 +36,14 @@ from jax._src.lib import xla_client
 import numpy as np
 
 from jax.config import config
-from jax._src.config import (persistent_cache_min_instruction_count,
+from jax._src.config import (persistent_cache_min_compile_time_secs,
                              raise_persistent_cache_errors)
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
 @jtu.with_config(jax_raise_persistent_cache_errors=True,
-                 jax_persistent_cache_min_instruction_count=0)
+                 jax_persistent_cache_min_compile_time_secs=0)
 class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -335,21 +335,20 @@ class CompilationCacheTest(jtu.JaxTestCase):
             "for 'jit__lambda_': RuntimeError: test error",
             str(w[0].message))
 
-  def test_min_instruction_count(self):
-    with tempfile.TemporaryDirectory() as tmpdir:
+  def test_min_compile_time(self):
+    with tempfile.TemporaryDirectory() as tmpdir, \
+         persistent_cache_min_compile_time_secs(2):
       cc.initialize_cache(tmpdir)
 
-      with persistent_cache_min_instruction_count(20):
-        # 2 instructions at time of writing
-        jit(lambda x: x * x)(2)
+      # Mock time to progress in small intervals so compilation time is small.
+      with mock.patch("time.monotonic", side_effect=np.arange(0, 10, .1)):
+        jit(lambda x: x + 1)(1)
         files_in_cache = len(os.listdir(tmpdir))
         self.assertEqual(files_in_cache, 0)
 
-        def f(xs):
-          c, b = jax.lax.scan(lambda c, x: (c + x, c + x), 0, xs)
-          return c + 1, b
-        # 32 instructions at time of writing
-        jit(f)(jax.numpy.ones(8))
+      # Mock time to progress in large intervals so compilation time is large.
+      with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
+        jit(lambda x: x + 2)(1)
         files_in_cache = len(os.listdir(tmpdir))
         self.assertEqual(files_in_cache, 1)
 

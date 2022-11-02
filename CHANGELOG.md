@@ -10,9 +10,10 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * JAX should be faster to import. We now import scipy lazily, which accounted
     for a significant fraction of JAX's import time.
-  * Setting the env var `JAX_PERSISTENT_CACHE_MIN_INSTRUCTION_COUNT=$N` can be
-    used to limit the number of cache entries written to the persistent
-    cache. By default, computations with 6 or more instructions will be cached.
+  * Setting the env var `JAX_PERSISTENT_CACHE_MIN_COMPILE_TIME_SECS=$N` can be
+    used to limit the number of cache entries written to the persistent cache.
+    By default, computations that take 1 second or more to compile will be
+    cached.
     * Added {func}`jax.scipy.stats.mode`.
   * The default device order used by `pmap` on TPU if no order is specified now
     matches `jax.devices()` for single-process jobs. Previously the
