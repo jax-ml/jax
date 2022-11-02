@@ -118,6 +118,19 @@ core.axis_substitution_rules[ensure_bdim_p] = partial(
 def ensure_bdim(x, axis_name, bdim):
   return ensure_bdim_p.bind(x, axis_name=(axis_name,), bdim=bdim)
 
+# When we use the SPMD lowering, we vmap the xmap body to make all named
+# axes positional again. This lowering can introduce constants, which we
+# have to handle properly in the lowering rule.
+constant_introducing_p = core.Primitive('introduce_constant')
+constant_introducing_p.def_abstract_eval(lambda x, **_: core.raise_to_shaped(x))
+def _constant_introducing_batcher(_1, _2, _3, xs, ds, axis_name):
+  (x,), (d,) = xs, ds
+  # Introduce a constant
+  return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
+batching.axis_primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
+core.axis_substitution_rules[constant_introducing_p] = partial(
+  lax_parallel._subst_all_names_in_param, 'axis_name')
+
 # -------------------- Axis resources generation --------------------
 
 AxisResources = Dict[str, Union[str, Tuple[str, ...]]]
@@ -489,6 +502,17 @@ class XMapTest(XMapTestCase):
     f(x)
     self.assertDeleted(x)
 
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  def testConstantsInLowering(self):
+    h = xmap(partial(constant_introducing_p.bind, axis_name='i'),
+             in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
+    f = xmap(h, in_axes=['j', ...], out_axes=['j', ...], axis_resources={'j': 'y'})
+
+    yp = 1 + jnp.arange(10, dtype=np.float32)
+    self.assertAllClose(
+      f(jnp.ones((2, 20), dtype=np.float32)),
+      jnp.broadcast_to(jnp.concatenate([yp, yp]), (2, 20)))
+
   def testControlFlow(self):
     x = jnp.arange(5)
     xmap(lambda x: lax.fori_loop(0, 10, lambda _, x: lax.psum(x, 'i'), x),
@@ -808,6 +832,16 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
     finally:
       config.update("experimental_xmap_ensure_fixed_sharding", False)
 
+  @jtu.with_mesh([('x', 2)])
+  def testConstantsInLowering(self):
+    h = xmap(partial(constant_introducing_p.bind, axis_name='i'),
+             in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
+    f = pjit(h, in_axis_resources=None, out_axis_resources=None)
+    yp = 1 + jnp.arange(10, dtype=np.float32)
+    self.assertAllClose(
+      f(jnp.ones(20, dtype=np.float32)),
+      jnp.concatenate([yp, yp]))
+
 
 class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
   @jtu.with_mesh([('x', 2)])
@@ -872,7 +906,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     self.assertAllClose(x.sum(0), y)
 
   @jtu.with_mesh([('x', 2)])
-  def testRepro(self):
+  def testPPermute(self):
     if mlir_api_version < 35:
       self.skipTest('MLIR api version should be greater than 35 for manual '
                     'lowering of ppermute.')
@@ -883,6 +917,16 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
              in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
     g = pjit(f, in_axis_resources=P('x'), out_axis_resources=P('x'))
     self.assertAllClose(g(x), x[::-1])
+
+  @jtu.with_mesh([('x', 2)])
+  def testConstantsInLowering(self):
+    h = xmap(partial(constant_introducing_p.bind, axis_name='i'),
+             in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
+    f = pjit(h, in_axis_resources=None, out_axis_resources=None)
+    yp = 1 + jnp.arange(10, dtype=np.float32)
+    self.assertAllClose(
+      f(jnp.ones(20, dtype=np.float32)),
+      jnp.concatenate([yp, yp]))
 
 
 class NamedNumPyTest(XMapTestCase):

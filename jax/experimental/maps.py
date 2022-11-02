@@ -1366,7 +1366,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   #       them!
   vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(f, local_avals)
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
-  assert not consts
+  const_nodes = map(mlir.ir_constants, consts)
 
   local_mesh_shape = mesh.local_mesh.shape
   tiled_ins = (
@@ -1389,7 +1389,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
                                        wrap_name(name, 'xmap')))
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
-  tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(), (), *tiled_ins)
+  tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(),
+                                     const_nodes, *tiled_ins)
 
   outs = [
       mlir.lower_fun(
@@ -1438,7 +1439,6 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   add_spmd_axes(mesh_out_axes, spmd_out_axes)
   global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
-  assert not consts
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
   sharded_global_in_nodes = [
@@ -1446,6 +1446,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
     if aval_axes else [node]
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
+  const_nodes = map(mlir.ir_constants, consts)
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -1455,7 +1456,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
-      mlir.TokenSet(), (), *sharded_global_in_nodes)
+      mlir.TokenSet(), const_nodes, *sharded_global_in_nodes)
 
   sharded_global_out_nodes = [
     mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())
@@ -1494,7 +1495,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   #       them!
   global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
-  assert not consts
+  const_nodes = map(mlir.ir_constants, consts)
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -1506,7 +1507,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
-      mlir.TokenSet(), (), *([n] for n in global_in_nodes))
+      mlir.TokenSet(), const_nodes, *([n] for n in global_in_nodes))
 
   return global_out_nodes
 
