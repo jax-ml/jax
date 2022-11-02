@@ -3773,13 +3773,16 @@ def _rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
   # followed by an optional reverse and broadcast_in_dim.
 
   # Handle some special cases, falling back if error messages might differ.
-  if (arr.ndim > 0 and isinstance(idx, (int, np.integer)) and
-      not isinstance(idx, (bool, np.bool_)) and isinstance(arr.shape[0], int)):
-    if 0 <= idx < arr.shape[0]:
-      if _any(isinstance(d, core.Tracer) for d in arr.shape[1:]):
-        return lax.dynamic_index_in_dim(arr, idx, keepdims=False)
-      else:
-        return lax.index_in_dim(arr, idx, keepdims=False)
+  try: idx_aval = core.get_aval(idx)
+  except: idx_aval = None
+  if (idx_aval is not None and arr.ndim > 0 and not idx_aval.shape and
+      dtypes.issubdtype(idx_aval.dtype, np.integer) and
+      not dtypes.issubdtype(idx_aval.dtype, np.bool_) and
+      isinstance(arr.shape[0], int)):
+    if not isinstance(idx, core.Tracer) and 0 <= idx < arr.shape[0]:
+      return lax.index_in_dim(arr, idx, keepdims=False)
+    else:
+      return lax.dynamic_index_in_dim(arr, idx, keepdims=False)
   if (arr.ndim > 0 and isinstance(arr.shape[0], int) and
       isinstance(idx, slice) and
       (type(idx.start) is int or idx.start is None) and
@@ -5216,6 +5219,18 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
+    try: idx_aval = core.get_aval(self.index)
+    except: idx_aval = None
+    if (idx_aval is not None and not idx_aval.shape and self.array.ndim > 0 and
+        dtypes.issubdtype(idx_aval.dtype, np.integer) and
+        not dtypes.issubdtype(idx_aval.dtype, np.bool_) and
+        _dtype(self.array) == _dtype(values) and
+        shape(values) == self.array.shape[1:]):
+      out = lax.dynamic_update_index_in_dim(self.array, values, self.index, 0)
+      if dtypes.is_weakly_typed(self.array) and dtypes.is_weakly_typed(self.index):
+        out = lax_internal._convert_element_type(out, out.dtype, weak_type=True)
+      return out
+    # TODO(mattjj): when self.index is a slice, also use a DUS
     return scatter._scatter_update(self.array, self.index, values, lax.scatter,
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
