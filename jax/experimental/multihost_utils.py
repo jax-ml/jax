@@ -258,7 +258,17 @@ def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
     local_inputs: A Pytree of host local values.
     global_mesh: The global mesh.
     pspecs: A Pytree of PartitionSpecs.
+
+  Raises:
+    RuntimeError: If `jax.config.jax_array` not previously enabled.
   """
+  if not jax.config.jax_array:
+    raise RuntimeError(
+        "Please enable `jax_array` to use `host_local_array_to_global_array`. "
+        "You can use jax.config.update('jax_array', True) or set the "
+        "environment variable  JAX_ARRAY=1 , or set the `jax_array` boolean "
+        "flag to something true-like.")
+
   def _convert(arr, pspec):
     if isinstance(arr, array.ArrayImpl) and isinstance(
         arr.sharding, jax.sharding.PmapSharding):
@@ -313,7 +323,16 @@ def global_array_to_host_local_array(global_inputs, global_mesh, pspecs):
     global_inputs: A Pytree of global `jax.Array`s.
     global_mesh: The global mesh.
     pspecs: A Pytree of PartitionSpecs.
+
+  Raises:
+    RuntimeError: If `jax.config.jax_array` not previously enabled.
   """
+  if not jax.config.jax_array:
+    raise RuntimeError(
+        "Please enable `jax_array` to use `global_array_to_host_local_array`. "
+        "You can use jax.config.update('jax_array', True) or set the "
+        "environment variable  JAX_ARRAY=1 , or set the `jax_array` boolean "
+        "flag to something true-like.")
   def _convert(arr, pspec):
     local_aval = global_mesh._global_to_local(
         pxla._get_array_mapping(pspec), arr.aval)
