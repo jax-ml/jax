@@ -311,7 +311,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_cummin(self):     self.unary_check(partial(lax.cummin, axis=0))
   @jtu.skip_on_devices("tpu")
-  def test_dynamic_slice(self):     self.unary_check(partial(lax.dynamic_slice, start_indices=(0,0), slice_sizes=(1,1)))
+  def test_dynamic_slice(self): self.unary_check(partial(lax.dynamic_slice, start_indices=(1,2), slice_sizes=(1,1)))
   @jtu.skip_on_devices("tpu")
   def test_dynamic_update_slice(self): self.unary_check(partial(lax.dynamic_update_slice, start_indices=(1,2), update=jnp.arange(6.0).reshape(2, 3)))
 
