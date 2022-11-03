@@ -129,7 +129,8 @@ def _hash_computation(hash_obj, xla_computation):
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 33
+  # TODO(parkers): simplify this code when jaxlib >= 0.3.23 is the minimum.
+  expected_num_compile_options = 35 if xla_client._version >= 104 else 33
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
