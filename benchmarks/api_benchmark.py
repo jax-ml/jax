@@ -663,6 +663,19 @@ def bench_slicing_compilation2(state):
   while state:
     jax.jit(lambda x: (x[:1], x[1:2], x[2:3])).lower(x).compile()
 
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_repeated_static_indexing(state):
+  x = jnp.arange(500)
+  while state:
+    jax.block_until_ready([x[i] for i in range(500)])
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_repeated_static_slicing(state):
+  x = jnp.arange(1000)
+  while state:
+    jax.block_until_ready([x[i:i + 2] for i in range(0, 1000, 2)])
 
 def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   spec = pjit_lib.PartitionSpec('x')
