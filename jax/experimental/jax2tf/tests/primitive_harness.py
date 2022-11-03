@@ -2737,6 +2737,14 @@ def _make_dot_general_harness(name,
     suffix += f"_precision={precision}"
   if preferred_element_type is not None:
     suffix += f"_preferred={jtu.dtype_str(preferred_element_type)}"
+
+  # Check if dtype/preferred_element_type combination is allowed
+  floating_point_types = [np.float16, dtypes.bfloat16, np.float32, np.float64, np.complex64, np.complex128]
+  limitations = []
+  if preferred_element_type is not None and dtype in floating_point_types and dtype != preferred_element_type:
+    # Create limitation
+    limitations = [Limitation("Floating point types must match", devices="gpu", enabled=False)]
+
   define(
       lax.dot_general_p,
       f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
@@ -2755,6 +2763,7 @@ def _make_dot_general_harness(name,
       dimension_numbers=dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
+      jax_unimplemented=limitations
   )
 
 
