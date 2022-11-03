@@ -52,6 +52,7 @@ from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
+from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import array, sharding
@@ -4402,6 +4403,16 @@ class RematTest(jtu.JaxTestCase):
     ans = api.jacrev(g)(x)
     expected = np.diag(np.cos(np.sin(x)) * np.cos(x))
     self.assertAllClose(ans, expected, check_dtypes=False)
+
+    # Make sure that introducing constants in vmap works.
+    constant_introducing_p = core.Primitive('introduce_constant')
+    constant_introducing_p.def_abstract_eval(core.raise_to_shaped)
+    def _constant_introducing_batcher(xs, ds):
+      (x,), (d,) = xs, ds
+      return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
+    batching.primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
+
+    api.vmap(remat(constant_introducing_p.bind))(jnp.ones(20))
 
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
