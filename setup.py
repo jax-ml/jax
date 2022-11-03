@@ -19,14 +19,14 @@ import sys
 
 from setuptools import setup, find_packages
 
-_current_jaxlib_version = '0.3.22'
+_current_jaxlib_version = '0.3.24'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.3.22'
 _available_cuda_versions = ['11']
 _default_cuda_version = '11'
 _available_cudnn_versions = ['82', '805']
 _default_cudnn_version = '82'
-_libtpu_version = '0.1.dev20221011'
+_libtpu_version = '0.1.dev20221103'
 
 _dct = {}
 with open('jax/version.py') as f:
