@@ -1314,16 +1314,23 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         tf.nest.map_structure(lambda t: t.numpy(), res), jax_res)
 
-  # TODO(necula): figure out this failure
-  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
   def test_global_device_array(self):
+    if config.jax2tf_default_experimental_native_lowering:
+      jax.config.update("jax_array", True)
 
     def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
       if global_data is None:
         global_data = np.arange(np.prod(global_shape)).reshape(global_shape)
-      return GlobalDeviceArray.from_callback(
-          global_shape, global_mesh, mesh_axes,
-          lambda idx: global_data[idx]), global_data
+      if jax.config.jax_array:
+        arr = jax.make_array_from_callback(
+            global_shape,
+            jax.sharding.MeshPspecSharding(global_mesh, mesh_axes),
+            lambda idx: global_data[idx])
+      else:
+        arr = GlobalDeviceArray.from_callback(global_shape, global_mesh,
+                                              mesh_axes,
+                                              lambda idx: global_data[idx])
+      return arr, global_data
 
     global_mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     mesh_axes = P(("x", "y"))
