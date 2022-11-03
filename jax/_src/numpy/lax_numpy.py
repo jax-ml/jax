@@ -1191,9 +1191,11 @@ def _split(op: str, ary: ArrayLike, indices_or_sections: Union[int, ArrayLike],
            + ((r + 1) * (part_size + 1) - 1)])
     else:
       raise ValueError("array split does not result in an equal division")
-  starts, ends = [0] * ndim(ary), shape(ary)
+  starts, sizes = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
-  return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
+  # Use dynamic rather than static slice to prevent slow execution of large
+  # number of splits; see https://github.com/google/jax/issues/12999
+  return [lax.dynamic_slice(ary, _subval(starts, axis, start), _subval(sizes, axis, end - start))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
 @_wraps(np.split, lax_description=_ARRAY_VIEW_DOC)
