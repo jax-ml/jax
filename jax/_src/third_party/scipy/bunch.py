@@ -1,6 +1,7 @@
 import sys as _sys
 from keyword import iskeyword as _iskeyword
 
+from jax._src.tree_util import register_pytree_node
 
 def _validate_names(typename, field_names, extra_field_names):
     """
@@ -221,5 +222,15 @@ def __setattr__(self, key, val):
     if module is not None:
         result.__module__ = module
         __new__.__module__ = module
+
+    def flatten_tuple(obj):
+        return tuple(obj._asdict().values()), tuple(obj._asdict().keys())
+
+    def unflatten_tuple(aux_data, children):
+        args={k:v for k,v in zip(aux_data, children)}
+        return result(**args)
+
+    # Make it a pytree
+    register_pytree_node(result, flatten_tuple, unflatten_tuple)
 
     return result
