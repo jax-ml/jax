@@ -27,7 +27,7 @@ from jax.tree_util import (tree_leaves, tree_map, tree_structure,
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.util import safe_map as map
-
+from jax._src.third_party.scipy.bunch import make_tuple_bunch
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
 _vdot = partial(jnp.vdot, precision=lax.Precision.HIGHEST)
@@ -243,6 +243,8 @@ def _isolve(_isolve_solve, A, b, x0=None, *, tol=1e-5, atol=0.0,
       A, b, solve=isolve_solve, transpose_solve=isolve_solve,
       symmetric=symmetric, has_aux=has_aux)
 
+CGSolveResult = make_tuple_bunch("CGSolveResult", ["solution", "niter"], ["converged", "error"])
+
 def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   """Use Conjugate Gradient iteration to solve ``Ax = b``.
 
@@ -296,9 +298,11 @@ def cg(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   scipy.sparse.linalg.cg
   jax.lax.custom_linear_solve
   """
-  return _isolve(_cg_solve,
+  sol, info = _isolve(_cg_solve,
                  A=A, b=b, x0=x0, tol=tol, atol=atol,
                  maxiter=maxiter, M=M, check_symmetric=True, has_aux=True)
+
+  return CGSolveResult(solution=sol, niter=info["niter"], converged=info["converged"], error=info["error"])
 
 
 def _safe_normalize(x, thresh=None):
@@ -715,6 +719,7 @@ def gmres(A, b, x0=None, *, tol=1e-5, atol=0.0, restart=20, maxiter=None,
   info = jnp.where(failed, x=-1, y=0)
   return x, info
 
+BICGSSolveResult = make_tuple_bunch("BICGSSolveResult", ["solution", "niter"], ["converged", "error"])
 
 def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   """Use Bi-Conjugate Gradient Stable iteration to solve ``Ax = b``.
@@ -771,6 +776,8 @@ def bicgstab(A, b, x0=None, *, tol=1e-5, atol=0.0, maxiter=None, M=None):
   jax.lax.custom_linear_solve
   """
 
-  return _isolve(_bicgstab_solve,
+  sol, info = _isolve(_bicgstab_solve,
                  A=A, b=b, x0=x0, tol=tol, atol=atol,
                  maxiter=maxiter, M=M, has_aux=True)
+
+  return BICGSSolveResult(solution=sol, niter=info["niter"], converged=info["converged"], error=info["error"])
