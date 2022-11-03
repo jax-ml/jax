@@ -4095,6 +4095,14 @@ class APITest(jtu.JaxTestCase):
 
     b(8)  # don't crash
 
+  def test_vjp_multiple_arguments_error_message(self):
+    # https://github.com/google/jax/issues/13099
+    def foo(x):
+      return (x, x)
+    _, f_vjp = jax.vjp(foo, 1.0)
+    with self.assertRaisesRegex(TypeError, "applied to foo"):
+      f_vjp(1.0, 1.0)
+
 
 @jtu.with_config(jax_experimental_subjaxpr_lowering_cache=True)
 class SubcallTraceCacheTest(jtu.JaxTestCase):
