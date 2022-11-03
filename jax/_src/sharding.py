@@ -194,7 +194,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
 
   def __repr__(self):
-    return f'MeshPspecSharding(mesh={dict(self.mesh.shape)}, partition_spec={self.spec})'
+    return f'NamedSharding(mesh={dict(self.mesh.shape)}, partition_spec={self.spec})'
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
@@ -251,6 +251,10 @@ class MeshPspecSharding(XLACompatibleSharding):
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
     return sharding_spec.sharding_proto(special_axes=special_axes)
+
+
+# New name of MeshPspecSharding to match with PositionalSharding below.
+NamedSharding = MeshPspecSharding
 
 
 @functools.lru_cache()
@@ -383,7 +387,7 @@ class PmapSharding(XLACompatibleSharding):
     return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
 
 
-class ReshapeableDevicesSharding(XLACompatibleSharding):
+class PositionalSharding(XLACompatibleSharding):
   _devices: List[xc.Device]
   _ids: np.ndarray  # dtype DeviceIdSet
 
@@ -423,8 +427,8 @@ class ReshapeableDevicesSharding(XLACompatibleSharding):
     return self.remake(self._devices, new_ids)
 
   @classmethod
-  def remake(cls, devices: List[xc.Device], ids: np.ndarray
-             ) -> ReshapeableDevicesSharding:
+  def remake(
+      cls, devices: List[xc.Device], ids: np.ndarray) -> PositionalSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -436,7 +440,7 @@ class ReshapeableDevicesSharding(XLACompatibleSharding):
     return id(self._devices)
 
   def __eq__(self, other) -> bool:
-    return (isinstance(other, ReshapeableDevicesSharding) and
+    return (isinstance(other, PositionalSharding) and
             id(self._devices) == id(other._devices) and
             bool(np.all(self._ids == other._ids)))
 

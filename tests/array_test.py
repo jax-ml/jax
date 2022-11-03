@@ -692,7 +692,7 @@ class ShardingTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r"Sharding MeshPspecSharding\(mesh={'replica': 1, 'data': 1, 'mdl': 2}, "
+        r"Sharding NamedSharding\(mesh={'replica': 1, 'data': 1, 'mdl': 2}, "
         r"partition_spec=PartitionSpec\(None, \('mdl',\), None, None\)\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
       new_mps.is_compatible_aval(shape)
@@ -733,9 +733,9 @@ class ShardingTest(jtu.JaxTestCase):
     value_shape = (8, 4)
 
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mps = sharding.MeshPspecSharding(mesh, pspec)
+    mps = sharding.NamedSharding(mesh, pspec)
 
-    devices_sharding = sharding.ReshapeableDevicesSharding(jax.devices())
+    devices_sharding = sharding.PositionalSharding(jax.devices())
     devices_sharding = devices_sharding.reshape(shape).replicate(axes)
     if transpose:
       devices_sharding = devices_sharding.T
@@ -753,7 +753,7 @@ class ShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = sharding.MeshPspecSharding(mesh, P('x', 'y'))
 
-    devices_sharding = sharding.ReshapeableDevicesSharding(mesh.devices)
+    devices_sharding = sharding.PositionalSharding(mesh.devices)
 
     op1 = mps._to_xla_op_sharding(len(value_shape))
     op2 = devices_sharding._to_xla_op_sharding(len(value_shape))

@@ -1577,8 +1577,8 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "device_put device specification must be a tree prefix of the "
-        r"corresponding value, got specification \(\(MeshPspecSharding\(.*\), "
-        r"MeshPspecSharding\(.*\)\), MeshPspecSharding\(.*\)\) for value tree "
+        r"corresponding value, got specification \(\(NamedSharding\(.*\), "
+        r"NamedSharding\(.*\)\), NamedSharding\(.*\)\) for value tree "
         r"PyTreeDef\(\(\*, \(\*, \*\)\)\)."
     ):
       jax.device_put((x, (y, z)), device=((s1, s2), s2))
@@ -1599,8 +1599,8 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "device_put device specification must be a tree prefix of the "
-        r"corresponding value, got specification \(MeshPspecSharding\(.*\), "
-        r"MeshPspecSharding\(.*\)\) for value tree PyTreeDef\(\(\*, \*, \*\)\)."
+        r"corresponding value, got specification \(NamedSharding\(.*\), "
+        r"NamedSharding\(.*\)\) for value tree PyTreeDef\(\(\*, \*, \*\)\)."
     ):
       jax.device_put((x, y, z), device=(s1, s2))
 

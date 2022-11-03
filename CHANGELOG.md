@@ -25,6 +25,9 @@ Remember to align the itemized text with the first line of an item within a list
     * Functions in {mod}`jax.numpy.linalg` and {mod}`jax.numpy.fft` now uniformly
       require inputs to be array-like: i.e. lists and tuples cannot be used in place
       of arrays. Part of {jax-issue}`#7737`.
+* Deprecations
+  * `jax.sharding.MeshPspecSharding` has been renamed to `jax.sharding.NamedSharding`.
+    `jax.sharding.MeshPspecSharding` name will be removed in 3 months.
 
 ## jaxlib 0.3.24
 * Changes
