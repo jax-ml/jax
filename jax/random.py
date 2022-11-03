@@ -99,26 +99,31 @@ The possible reasons not use the default RNG are:
 
 1.  it may be slow to compile (specifically for Google Cloud TPUs)
 2.  it's slower to execute on TPUs
+3.  it doesn't support efficient automatic sharding / partitioning
 
 Here is a short summary:
 
 .. table::
    :widths: auto
 
-   =================================   =================  ===  ==========
-   Property                            ThreeFry, default  rbg  unsafe_rbg
-   =================================   =================  ===  ==========
-   Fast on TPU                                             ✅   ✅
-   always correct w/ scan               ✅                 ✅
-   always correct w/ remat              ✅                 ✅
-   identical across CPU/GPU/TPU         ✅                 ✅
+   =================================   ========  ===  ==========  =======  ==============
+   Property                            Threefry  rbg  unsafe_rbg  rbg (*)  unsafe_rbg (*)
+   =================================   ========  ===  ==========  =======  ==============
+   Fastest on TPU                                ✅   ✅          ✅       ✅
+   efficiently shardable (w/ pjit)                                ✅       ✅
+   identical across shardings           ✅       ✅   ✅
+   identical across CPU/GPU/TPU         ✅
    identical across JAX/XLA versions    ✅
-   identical across shardings           ✅                 ✅   ✅
-   =================================   =================  ===  ==========
+   =================================   ========  ===  ==========  =======  ==============
 
-NOTE: RNGs are currently identical across shardings because the random value
-is first materialized replicated on each device and then the slice that each
-device needs is later sliced out.
+(*): with XLA_FLAGS=xla_tpu_spmd_rng_bit_generator_unsafe=1 set
+
+The difference between "rbg" and "unsafe_rbg" is that while "rbg" uses a less
+robust/studied hash function for random value generation (but not for
+`jax.random.split` or `jax.random.fold_in`), "unsafe_rbg" additionally uses less
+robust hash functions for `jax.random.split` and `jax.random.fold_in`. Therefore
+less safe in the sense that the quality of random streams it generates from
+different keys is less well understood.
 """
 
 from jax._src.prng import PRNGKeyArray as _PRNGKeyArray
