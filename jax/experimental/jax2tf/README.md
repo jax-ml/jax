@@ -149,6 +149,7 @@ GraphDef part of the SavedModel, or you may want to fine-tune the
 model and change the value of the parameters.
 
 For example, consider the following function:
+
 ```python
 def model_jax(inputs):
   return param0 + param1 * inputs
@@ -195,7 +196,6 @@ subject to the 2GB limitation).
 
 For examples of how to save a Flax model as a SavedModel see the
 [examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
-
 
 ### Saved model and differentiation
 
@@ -908,6 +908,25 @@ Later the user can use `tree_unflatten` for the reverse process:
 ```python
 input_data = jax.tree_util.tree_unflatten(m.input_data['tree_def'], m.input_data['flat'])
 ```
+
+### Large saved_model.pb due too many PRNG operations
+
+The default `threefry2x32` PRNG is implemented in JAX with dozens
+of additions and bitwise operations. This means that a single PRNG
+operation in JAX will result in dozens of TF ops after jax2tf.
+If the number of RPNG operations
+is large, the generated TF graph will be very large.
+
+To reduce the TF graph size and the compilation time
+one can use the `unsafe_rbg` PRNG implementation by
+setting `jax.config.update('jax_default_prng_impl', 'unsafe_rbg')`.
+The `unsafe_rbg` implementation will be lowered to a TF op and several
+casts and reshapes, thus significantly reducing the number of TF ops
+per PRNG operation. The "unsafe" part is that it doesn't guarantee
+determinism across JAX/XLA versions, and the quality of random
+streams it generates from different keys is less well understood.
+Nevertheless, this should be fine for most inference/serving cases.
+See more details in the [JAX PRNG documentation](https://jax.readthedocs.io/en/latest/jax.random.html?highlight=unsafe_rbg#advanced-rng-configuration).
 
 ### Unimplemented jax2tf features
 
