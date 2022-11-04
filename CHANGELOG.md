@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.3.24
+## jax 0.3.25
+
+## jaxlib 0.3.25
+
+## jax 0.3.24 (Nov 4, 2022)
 * Changes
   * JAX should be faster to import. We now import scipy lazily, which accounted
     for a significant fraction of JAX's import time.
@@ -29,7 +33,7 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.sharding.MeshPspecSharding` has been renamed to `jax.sharding.NamedSharding`.
     `jax.sharding.MeshPspecSharding` name will be removed in 3 months.
 
-## jaxlib 0.3.24
+## jaxlib 0.3.24 (Nov 4, 2022)
 * Changes
   * Buffer donation now works on CPU. This may break code that marked buffers
     for donation on CPU but relied on donation not being implemented.
