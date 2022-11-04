@@ -100,6 +100,7 @@ py_library_providing_imports_info(
         "experimental/pjit.py",
         "experimental/global_device_array.py",
         "experimental/multihost_utils.py",
+        "experimental/shard_map.py",
         # until checkify is moved out of experimental
         "experimental/checkify.py",
         # to avoid circular dependencies

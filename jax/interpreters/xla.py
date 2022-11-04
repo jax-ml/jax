@@ -426,7 +426,9 @@ def jaxpr_collectives(jaxpr):
 xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
 xla_call = xla_call_p.bind
 
-def _xla_call_partial_eval_update_params(params, kept_inputs, num_new_inputs):
+def _xla_call_partial_eval_update_params(
+    params: core.ParamDict, kept_inputs: Sequence[bool], num_new_inputs: int
+  ) -> core.ParamDict:
   donated_invars = params['donated_invars']
   if not kept_inputs and donated_invars:
     # JaxprTrace.post_process_call creates a call with no input tracers

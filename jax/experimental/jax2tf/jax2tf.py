@@ -1316,6 +1316,7 @@ tf_not_yet_impl = [
     "for",
     "inspect_sharding",
     "io_callback",
+    "shard_map",
 
     # Not high priority?
     "after_all",

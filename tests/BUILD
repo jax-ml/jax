@@ -1008,6 +1008,11 @@ jax_test(
 )
 
 jax_test(
+    name = "shard_map_test",
+    srcs = ["shard_map_test.py"],
+)
+
+jax_test(
     name = "clear_backends_test",
     srcs = ["clear_backends_test.py"],
 )

@@ -542,6 +542,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     # this expansion.
     for p in xb.expand_platform_alias(platform):
       _platform_specific_lowerings[p][prim] = rule
+  return rule
 
 
 def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
