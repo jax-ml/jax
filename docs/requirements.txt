@@ -1,3 +1,4 @@
+absl-py
 sphinx >=3
 sphinx-autodoc-typehints
 sphinx-book-theme>=0.3.3
