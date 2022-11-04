@@ -32,8 +32,8 @@ from jax._src import api_util
 from jax._src import dtypes
 from jax._src import profiler
 from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
-from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
-                                tree_leaves)
+from jax._src.tree_util import (PyTreeDef, treedef_children,
+                                treedef_tuple, tree_unflatten, tree_leaves)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache)
@@ -475,16 +475,25 @@ class JaxprTrace(Trace):
     raise NotImplementedError  # TODO(mattjj)
 
   def process_custom_transpose(self, prim, call, tracers, **params):
-    res_ts, lin_ts = split_list(tracers, [params['res_tree'].num_leaves])
-    assert all(t.is_known()     for t in res_ts)
-    lin_all_known   = all(t.is_known()     for t in lin_ts)
+    res_tree = params['res_tree']
+    res_ts, lin_ts = split_list(tracers, [res_tree.num_leaves])
+    assert all(t.is_known() for t in res_ts)
+    lin_all_known = all(t.is_known() for t in lin_ts)
     if lin_all_known:
       res_cvals = [t.pval[1] for t in res_ts]
       lin_cvals = [t.pval[1] for t in lin_ts]
       return prim.bind(call, *res_cvals, *lin_cvals, **params)
     else:
-      out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
-                     for aval in params['out_types']]
+      if params['out_avals'] is None:
+        res_tree_in, _ = treedef_children(res_tree)
+        _, res_ts_out = split_list(res_ts, [res_tree_in.num_leaves])
+        out_avals = [core.get_aval(t) for t in res_ts_out]
+      else:
+        call.call_wrapped(*tracers)
+        out_avals = params['out_avals']()
+      out_tracers = [
+          JaxprTracer(self, PartialVal.unknown(aval.at_least_vspace()), None)
+          for aval in out_avals]
       in_tracers = map(self.instantiate_const, tracers)
       new_params = dict(params, call=call)
       eqn = new_eqn_recipe(in_tracers, out_tracers, prim, new_params,
@@ -1859,38 +1868,42 @@ class DynamicJaxprTrace(core.Trace):
   def post_process_custom_vjp_call(self, out_tracers, _):
     assert False  # unreachable
 
-  def process_custom_transpose(self, prim, call, tracers,
-                               transpose, out_types,
-                               lin_tree, res_tree, out_tree):
-    tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
+  def process_custom_transpose(self, prim, call, tracers, transpose,
+                               lin_tree, res_tree, out_tree, out_avals):
+    if out_avals is None:
+      in_res_tree, out_res_tree = treedef_children(res_tree)
 
-    in_avals_p = [t.aval for t in tracers]
-    in_avals_t = [*[t.aval for t in tracers_res], *out_types]
+      tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
+      _, tracers_res_out = split_list(tracers_res, [in_res_tree.num_leaves])
+      out_avals_lin = [t.aval.at_least_vspace() for t in tracers_res_out]
+
+      in_avals_transpose = [*[t.aval for t in tracers_res], *out_avals_lin]
+    else:
+      in_avals_transpose = None #out_avals()
 
     with core.new_sublevel():
-      call_jaxpr, out_avals, call_consts = trace_to_subjaxpr_dynamic(
-          call, self.main, in_avals_p)
+      call_jaxpr, call_out_avals, call_consts = trace_to_subjaxpr_dynamic(
+          call, self.main, [t.aval for t in tracers])
     closed_call_jaxpr = core.ClosedJaxpr(
         convert_constvars_jaxpr(call_jaxpr), ())
 
-    transpose_flat, in_tree2 = flatten_fun_nokwargs(
-        lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
+    # TODO(frostig): check out_avals and call_out_avals correspond?
 
     main_ = ref(self.main)
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
     transpose_jaxpr_thunk = _memoize(
         lambda: trace_to_subjaxpr_dynamic(
-            transpose_flat, main_(), in_avals_t)[::2])
+            transpose, main_(), in_avals_transpose or call_out_avals)[::2])
 
-    out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
+    out_tracers = [DynamicJaxprTracer(self, a) for a in call_out_avals]
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(self.instantiate_const, call_consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_call_jaxpr,
                              transpose_jaxpr_thunk=transpose_jaxpr_thunk,
-                             out_types=out_types, res_tree=res_tree,
-                             lin_tree=lin_tree, out_tree=out_tree),
+                             res_tree=res_tree, lin_tree=lin_tree,
+                             out_tree=out_tree, out_avals=out_avals),
                         closed_call_jaxpr.effects,
                         source_info_util.current())
     self.frame.add_eqn(eqn)
