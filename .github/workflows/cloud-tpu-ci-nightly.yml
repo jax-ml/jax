@@ -56,4 +56,4 @@ jobs:
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
-        run: python -m pytest --tb=short tests examples
+        run: python -m pytest --tb=short -W default tests examples
