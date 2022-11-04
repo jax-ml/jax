@@ -16,6 +16,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read  # to fetch code
+  actions: write  # to cancel previous workflows
+
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-latest
