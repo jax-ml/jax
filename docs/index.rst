@@ -1,7 +1,8 @@
 JAX reference documentation
 ===========================
 
-JAX is Autograd_ and XLA_, brought together for high-performance numerical computing and machine learning research.
+JAX is Autograd_ and XLA_, brought together for high-performance numerical computing and 
+`machine learning research`__.
 It provides composable transformations of Python+NumPy programs: differentiate, vectorize,
 parallelize, Just-In-Time compile to GPU/TPU, and more.
 
@@ -93,3 +94,5 @@ Indices and tables
 
 .. _Autograd: https://github.com/hips/autograd
 .. _XLA: https://www.tensorflow.org/xla
+.. _machine_learning_research: https://flax.readthedocs.io/
+__ machine_learning_research_
