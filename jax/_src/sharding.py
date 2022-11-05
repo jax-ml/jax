@@ -178,6 +178,9 @@ class MeshPspecSharding(XLACompatibleSharding):
     self._parsed_pspec = _parsed_pspec
     self._preprocess()
 
+  def __reduce__(self):
+    raise ValueError('MeshPspecSharding is not serializable')
+
   def _preprocess(self):
     # This split exists because you can pass `_parsed_pspec` that has been
     # modified from the original. For example: Adding extra dimension to
@@ -264,12 +267,27 @@ def _get_replicated_op_sharding():
   return proto
 
 
+def _get_device_by_id(device_id: int) -> Device:
+  for device in jax.devices():
+    if device.id == device_id:
+      return device
+  raise ValueError(f'Device {device_id} was not found')
+
+
 @pxla.use_cpp_class(xc.SingleDeviceSharding if xc._version >= 95 else None)
 class SingleDeviceSharding(XLACompatibleSharding):
 
   @pxla.use_cpp_method
   def __init__(self, device: Device):
     self._device = device
+
+  @classmethod
+  def unpickle(cls, device_id: int):
+    device = _get_device_by_id(device_id)
+    return cls(device)
+
+  def __reduce__(self):
+    return type(self).unpickle, (self._device.id,)
 
   def __repr__(self):
     return f"SingleDeviceSharding(device={repr(self._device)})"
@@ -307,6 +325,17 @@ class PmapSharding(XLACompatibleSharding):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
+
+  @classmethod
+  def unpickle(cls, device_ids: np.ndarray, sharding_spec: pxla.ShardingSpec):
+    devices = np.array([_get_device_by_id(d) for d in device_ids])
+    devices = devices.reshape(device_ids.shape)
+    return cls(devices, sharding_spec)
+
+  def __reduce__(self):
+    device_ids = (
+        np.array([d.id for d in self.devices.flat]).reshape(self.devices.shape))
+    return type(self).unpickle, (device_ids, self.sharding_spec)
 
   def __eq__(self, other):
     if not isinstance(other, PmapSharding):
@@ -512,6 +541,15 @@ class OpShardingSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
     self._devices = tuple(devices)
     self._op_sharding = op_sharding
+
+  @classmethod
+  def unpickle(cls, device_ids: np.ndarray, op_sharding: xc.OpSharding):
+    devices = [_get_device_by_id(d) for d in device_ids]
+    return cls(devices, op_sharding)
+
+  def __reduce__(self):
+    device_ids = [d.id for d in self._devices]
+    return type(self).unpickle, (device_ids, self._op_sharding)
 
   @pxla.maybe_cached_property
   def _op_sharding_hash(self):

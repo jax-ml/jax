@@ -29,6 +29,8 @@ from jax import core
 from jax import numpy as jnp
 from jax.config import config
 from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax._src import sharding
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
@@ -155,6 +157,26 @@ class PickleTest(jtu.JaxTestCase):
         xc.HloSharding.from_proto(pickle.loads(pickle.dumps(op_sharding))),
         xc.HloSharding.from_proto(op_sharding))
 
+  def test_pickle_single_device_sharding(self):
+    s = sharding.SingleDeviceSharding(jax.devices()[0])
+    self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  @unittest.skipIf(xla_extension_version < 104,
+                   'ShardingSpec pickling requires newer jaxlib.')
+  def test_pickle_pmap_sharding(self):
+    ss = pxla.ShardingSpec(
+        sharding=(pxla.Unstacked(8),),
+        mesh_mapping=(pxla.ShardedAxis(0),))
+    s = sharding.PmapSharding(jax.devices(), ss)
+    self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  @unittest.skipIf(xla_extension_version < 104,
+                   'OpSharding pickling requires newer jaxlib.')
+  def test_pickle_op_sharding_sharding(self):
+    op_sharding = xla.xc.OpSharding()
+    op_sharding.type = xla.xc.OpSharding.Type.REPLICATED
+    s = sharding.OpShardingSharding(jax.devices(), op_sharding)
+    self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
