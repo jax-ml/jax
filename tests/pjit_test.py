@@ -926,7 +926,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     exe = f.lower(x_f32, x_f32).compile()
     self.assertRaisesRegex(
         TypeError,
-        "Computation compiled for input types:\n.*float32.*\n"
+        "Computation was compiled for different input types and called with "
+        "different types. One of the mismatches is:\n"
+        "Compiled with:\n.*float32.*\n"
         "called with:\n.*int32.*",
         lambda: exe(x_i32, x_i32))
 

@@ -239,7 +239,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     f_exe = f.lower(x_f32).compile()
     self.assertRaisesRegex(
         TypeError,
-        "Computation compiled for input types:\n.*float32.*\n"
+        "Computation was compiled for different input types and called with "
+        "different types. One of the mismatches is:\n"
+        "Compiled with:\n.*float32.*\n"
         "called with:\n.*int32.*",
         lambda: f_exe(x_i32))
 

@@ -1244,11 +1244,11 @@ def check_arg_avals_for_call(ref_avals, arg_avals):
         f"but called with {len(arg_avals)}")
   for ref_aval, arg_aval in zip(ref_avals, arg_avals):
     if not core.typematch(ref_aval, arg_aval):
-      ref_avals_fmt = ', '.join(str(a) for a in ref_avals)
-      arg_avals_fmt = ', '.join(str(a) for a in arg_avals)
       raise TypeError(
-        f"Computation compiled for input types:\n  {ref_avals_fmt}\n"
-        f"called with:\n  {arg_avals_fmt}")
+        "Computation was compiled for different input types and called with "
+        "different types. One of the mismatches is:\n"
+        f"Compiled with:\n {ref_aval}\n"
+        f"called with:\n {arg_aval}")
 
 
 def device_put(x, device: Optional[Device] = None) -> Tuple[Any, ...]:
