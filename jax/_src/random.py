@@ -1327,10 +1327,12 @@ def categorical(key: KeyArray,
     shape = tuple(shape)
     _check_shape("categorical", shape, batch_shape)
 
-  sample_shape = shape[:len(shape)-len(batch_shape)]
+  shape_prefix = shape[:len(shape)-len(batch_shape)]
+  logits_shape = list(shape[len(shape) - len(batch_shape):])
+  logits_shape.insert(axis % len(logits_arr.shape), logits_arr.shape[axis])
   return jnp.argmax(
-      gumbel(key, sample_shape + logits_arr.shape, logits_arr.dtype) +
-      lax.expand_dims(logits_arr, tuple(range(len(sample_shape)))),
+      gumbel(key, (*shape_prefix, *logits_shape), logits_arr.dtype) +
+      lax.expand_dims(logits_arr, tuple(range(len(shape_prefix)))),
       axis=axis)
 
 

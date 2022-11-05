@@ -1429,6 +1429,19 @@ class LaxRandomTest(jtu.JaxTestCase):
     # just lower, don't run, takes too long
     jax.jit(f).lower()
 
+  @jtu.sample_product(shape=[(3, 4)],
+                      logits_shape_base=[(3, 4), (3, 1), (1, 4)],
+                      axis=[-3, -2, -1, 0, 1, 2])
+  def test_categorical_shape_argument(self, shape, logits_shape_base, axis):
+    # https://github.com/google/jax/issues/13124
+    logits_shape = list(logits_shape_base)
+    logits_shape.insert(axis % (len(logits_shape_base) + 1), 10)
+    assert logits_shape[axis] == 10
+    logits = jnp.ones(logits_shape)
+    samples = jax.random.categorical(jax.random.PRNGKey(0), logits=logits,
+                                     axis=axis, shape=shape)
+    self.assertEqual(samples.shape, shape)
+
 
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
