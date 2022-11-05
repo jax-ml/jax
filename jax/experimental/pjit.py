@@ -927,7 +927,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '
                            f'Got pjit sharding: {op},\n'
-                           f'arg sharding: {arg_s}')
+                           f'arg sharding: {arg_s} for arg: {arg}')
       resolved_in_shardings.append(pjit_in_s)
 
   return tuple(resolved_in_shardings)
