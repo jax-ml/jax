@@ -270,6 +270,9 @@ def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
         "flag to something true-like.")
 
   def _convert(arr, pspec):
+    # If the Array is not fully addressable i.e. not host local, return it.
+    if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
+      return arr
     if isinstance(arr, array.ArrayImpl) and isinstance(
         arr.sharding, jax.sharding.PmapSharding):
       arr = np.array(arr)
@@ -333,7 +336,11 @@ def global_array_to_host_local_array(global_inputs, global_mesh, pspecs):
         "You can use jax.config.update('jax_array', True) or set the "
         "environment variable  JAX_ARRAY=1 , or set the `jax_array` boolean "
         "flag to something true-like.")
+
   def _convert(arr, pspec):
+    # If the Array is already fully addressable i.e. host local, return it.
+    if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
+      return arr
     local_aval = global_mesh._global_to_local(
         pxla._get_array_mapping(pspec), arr.aval)
     return array.ArrayImpl(

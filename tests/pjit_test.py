@@ -40,6 +40,7 @@ from jax.experimental import maps
 from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
+from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import MeshPspecSharding, Sharding, OpShardingSharding
@@ -2615,6 +2616,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertEqual(count, 1)
     finally:
       pjit_lib._pjit_lower = original_pjit_lower
+
+  @jax_array(True)
+  def test_global_array_to_host_local_array_already_host_local(self):
+    inp_shape = (8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    pspec = P('x', 'y')
+
+    arr, _ = create_array(inp_shape, mesh, pspec)
+    out = multihost_utils.global_array_to_host_local_array(arr, mesh, pspec)
+    self.assertEqual(id(arr), id(out))
 
 
 class TempSharding(Sharding):
