@@ -301,7 +301,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
-    bufs = [jax.device_put(inp_data[s.device_indices(d, shape)], d)
+    di_map = s.devices_indices_map(shape)
+    bufs = [jax.device_put(inp_data[di_map[d]], d)
             for d in jax.local_devices()]
     with self.assertRaisesRegex(
         ValueError,

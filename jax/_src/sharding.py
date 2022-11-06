@@ -69,10 +69,6 @@ class Sharding(metaclass=abc.ABCMeta):
     # The pytype disable is because pytype can't recognize a cached property.
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
-  def device_indices(self, device: Device,
-                     global_shape: Shape) -> Optional[Index]:
-    return self.devices_indices_map(global_shape)[device]
-
   @functools.lru_cache(maxsize=4096)
   def addressable_devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:

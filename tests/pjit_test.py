@@ -2208,7 +2208,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # Explicitly put on the ordering of devices which does not match the mesh
     # ordering to make sure we reorder them in the constructor and the output
     # is correct.
-    bufs = [jax.device_put(inp_data[s.device_indices(d, shape)], d)
+    di_map = s.devices_indices_map(shape)
+    bufs = [jax.device_put(inp_data[di_map[d]], d)
             for d in jax.local_devices()]
     arr = array.ArrayImpl(jax.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
