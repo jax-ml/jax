@@ -25,7 +25,7 @@ from jax._src.lax import lax
 from jax._src import ad_util
 from jax._src import util
 from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
-from jax.tree_util import tree_map, tree_unflatten, tree_structure
+from jax.tree_util import tree_map, tree_unflatten
 
 map, unsafe_map = safe_map, map
 
@@ -114,7 +114,7 @@ def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=Fa
 
     if len(actual_tree_children) == 2:
       # select first child as result tree
-      actual_tree = tree_structure(actual_tree_children[0])
+      actual_tree = actual_tree_children[0]
     else:
       raise ValueError(
         f"{func_name}() produced a pytree with structure "

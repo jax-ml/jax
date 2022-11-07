@@ -393,6 +393,33 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
             out_axes=[0, 0, 0, 0, 0, None, None]), (mat, b),
         order=2)
 
+
+
+  def test_custom_linear_solve_pytree_with_aux(self):
+    # Check that lax.custom_linear_solve handles
+    # pytree inputs + has_aux=True
+    # https://github.com/google/jax/pull/13093
+
+    aux_orig = {'a': 1, 'b': 2}
+    b = {'c': jnp.ones(2), 'd': jnp.ones(3)}
+
+    def solve_with_aux(matvec, b):
+      return b, aux_orig
+
+    sol, aux = lax.custom_linear_solve(
+          lambda x:x,
+          b,
+          solve_with_aux,
+          solve_with_aux,
+          has_aux=True)
+
+    assert len(aux.keys()) == 2
+    assert 'a' in aux
+    assert 'b' in aux
+    self.assertAllClose(aux['a'], aux_orig['a'], check_dtypes=False)
+    self.assertAllClose(aux['b'], aux_orig['b'], check_dtypes=False)
+
+
   def test_custom_linear_solve_errors(self):
 
     solve = lambda f, x: x
