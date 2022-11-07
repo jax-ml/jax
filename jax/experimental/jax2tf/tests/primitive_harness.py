@@ -13,10 +13,10 @@
 # limitations under the License.
 """Defines test inputs and invocations for JAX primitives.
 
-The idea is that we want to list all the JAX numeric primitives along with
-a set of inputs that should cover the use cases for each primitive.
-We want these separate from any particular test suite so we can reuse it
-to build multiple kinds of tests. For example, we can use the harnesses to check
+A primitive harness encodes one use case for one JAX numeric primitives. It
+describes how to generate the inputs and parameters and how to invoke the
+JAX primitive. A primitive harness can be used in multiple kinds of tests.
+For example, we can use the harnesses to check
 that each primitive is compiled correctly, or that we can apply a certain
 transformation, e.g., `vmap`.
 
@@ -25,7 +25,7 @@ use case of one primitive.
 
 Some use cases are known to be partially implemented
 in JAX, e.g., because of an implementation limitation. We do have harnesses
-for those cases too, but we filter them out.
+for those cases too, but there is a mechanism to filter them out.
 Instead of writing this information as conditions inside one
 particular test, we write them as `Limitation` objects that can be reused in
 multiple tests and can also be used to generate documentation, e.g.,
@@ -118,7 +118,6 @@ class Harness:
   For that purpose, you can use `harness.dyn_fun(*
   harness.dyn_args_maked(rng))`,
   where `harness.dyn_fun` is `harness.fun` specialized to the static arguments.
-
 
   For example, a harness for ``lax.take(arr, indices, axis=None)`` may want
   to expose as external (non-static) argument the array and the indices, and
@@ -310,7 +309,7 @@ class Limitation:
       *,
       enabled: bool = True,
       devices: Union[str, Sequence[str]] = ("cpu", "gpu", "tpu"),
-      dtypes: Union[DType, Sequence[DType]] = (),
+      dtypes: Sequence[DType] = (),
       skip_run: bool = False,
   ):
     """Args:
@@ -321,10 +320,14 @@ class Limitation:
         it appears. This is only used during testing to know whether to ignore
         harness errors. Use this sparingly, prefer `devices` and
         `dtypes` for enabled conditions that are included in reports.
-      devices: the list of device types for which this applies. Used for
-        filtering during harness execution, and for reports.
-      dtypes: the list of dtypes for which this applies. Used for filtering
-        during harness execution, and for reports.
+      devices: a device type (string) or a sequence of device types
+        for which this applies. By default, it applies to all devices types.
+        Used for filtering during harness execution, and for reports.
+      dtypes: the sequence of dtypes for which this applies. An empty sequence
+        denotes all dtypes. Used for filtering during harness execution, and
+        for reports.
+      skip_run: this harness should not even be invoked (typically because it
+        results in a crash). This should be rare.
     """
     assert isinstance(description, str), f"{description}"
     self.description = description
@@ -334,10 +337,8 @@ class Limitation:
     else:
       devices = tuple(devices)
     self.devices = devices
-    if not isinstance(dtypes, Iterable):
-      dtypes = (dtypes,)
-    else:
-      dtypes = tuple(dtypes)
+    assert isinstance(dtypes, Iterable)
+    dtypes = tuple(dtypes)
     self.dtypes = dtypes
     self.enabled = enabled  # Does it apply to the current harness?
 
@@ -1266,7 +1267,7 @@ def _make_scatter_harness(name,
         jax_unimplemented=[
             Limitation(
                 "unimplemented",
-                dtypes=np.bool_,
+                dtypes=[np.bool_],
                 enabled=(f_lax in [lax.scatter_add, lax.scatter_mul])),
         ],
         f_lax=f_lax,
@@ -2738,13 +2739,6 @@ def _make_dot_general_harness(name,
   if preferred_element_type is not None:
     suffix += f"_preferred={jtu.dtype_str(preferred_element_type)}"
 
-  # Check if dtype/preferred_element_type combination is allowed
-  floating_point_types = [np.float16, dtypes.bfloat16, np.float32, np.float64, np.complex64, np.complex128]
-  limitations = []
-  if preferred_element_type is not None and dtype in floating_point_types and dtype != preferred_element_type:
-    # Create limitation
-    limitations = [Limitation("Floating point types must match", devices="gpu", enabled=False)]
-
   define(
       lax.dot_general_p,
       f"{name}_lhs={jtu.format_shape_dtype_string(lhs_shape, dtype)}_rhs={jtu.format_shape_dtype_string(rhs_shape, dtype)}_dimensionnumbers={dimension_numbers}{suffix}"
@@ -2763,7 +2757,12 @@ def _make_dot_general_harness(name,
       dimension_numbers=dimension_numbers,
       precision=precision,
       preferred_element_type=preferred_element_type,
-      jax_unimplemented=limitations
+      jax_unimplemented=[
+          Limitation("preferred_element_type must match dtype for floating point",
+                     devices="gpu",
+                     dtypes=[np.float16, dtypes.bfloat16, np.float32, np.float64, np.complex64, np.complex128],
+                     enabled=(preferred_element_type is not None and preferred_element_type != dtype))
+      ]
   )
 
 

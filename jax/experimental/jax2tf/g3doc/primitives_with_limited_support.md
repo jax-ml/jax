@@ -1,6 +1,6 @@
 # Primitives with limited support for jax2tf
 
-*Last generated on (YYYY-MM-DD): 2022-10-26*
+*Last generated on (YYYY-MM-DD): 2022-11-07*
 
 This document summarizes known limitations of the jax2tf conversion.
 There are several kinds of limitations.
@@ -70,6 +70,7 @@ More detailed information can be found in the
 | div | TF error: TF integer division fails if divisor contains 0; JAX returns NaN | integer | cpu, gpu, tpu | compiled, eager, graph |
 | dot_general | TF error: Numeric comparison disabled: Large tolerances when upcasting with preferred_element_type on CPU (b/241740367) | all | cpu, gpu, tpu | compiled, eager, graph |
 | dot_general | TF error: Numeric comparison disabled: Non-deterministic NaN for dot_general with preferred_element_type on GPU (b/189287598) | bfloat16, complex64, float16, float32 | gpu | compiled, eager, graph |
+| dot_general | TF test skipped: Not implemented in JAX: preferred_element_type must match dtype for floating point | inexact | gpu | compiled, eager, graph |
 | dot_general | TF error: op not defined for dtype | bool | cpu, gpu, tpu | compiled, eager, graph |
 | eig | TF test skipped: Not implemented in JAX: only supported on CPU in JAX | all | gpu, tpu | compiled, eager, graph |
 | eig | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu | compiled, eager, graph |
