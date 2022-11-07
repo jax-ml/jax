@@ -232,22 +232,23 @@ def pjit(fun: Callable,
   the output partitioning specified in ``out_axis_resources``. The resources
   specified in those two arguments must refer to mesh axes, as defined by
   the :py:func:`jax.experimental.maps.Mesh` context manager. Note that the mesh
-  definition at ``pjit`` application time is ignored, and the returned function
+  definition at :func:`~pjit` application time is ignored, and the returned function
   will use the mesh definition available at each call site.
 
-  Inputs to a pjit'd function will be automatically partitioned across devices
+  Inputs to a :func:`~pjit`'d function will be automatically partitioned across devices
   if they're not already correctly partitioned based on ``in_axis_resources``.
   In some scenarios, ensuring that the inputs are already correctly pre-partitioned
-  can increase performance. For example, if passing the output of one pjit'd function
-  to another pjit’d function (or the same pjit’d function in a loop), make sure the
-  relevant ``out_axis_resources`` match the corresponding ``in_axis_resources``.
+  can increase performance. For example, if passing the output of one
+  :func:`~pjit`'d function to another :func:`~pjit`’d function (or the same
+  :func:`~pjit`’d function in a loop), make sure the relevant
+  ``out_axis_resources`` match the corresponding ``in_axis_resources``.
 
   .. note::
     **Multi-process platforms:** On multi-process platforms such as TPU pods,
-    ``pjit`` can be used to run computations across all available devices across
-    processes. To achieve this, ``pjit`` is designed to be used in SPMD Python
+    :func:`~pjit` can be used to run computations across all available devices across
+    processes. To achieve this, :func:`~pjit` is designed to be used in SPMD Python
     programs, where every process is running the same Python code such that all
-    processes run the same pjit'd function in the same order.
+    processes run the same :func:`~pjit`'d function in the same order.
 
     When running in this configuration, the mesh should contain devices across
     all processes. However, any input argument dimensions partitioned over
@@ -256,7 +257,7 @@ def pjit(fun: Callable,
     mesh. ``fun`` will still be executed across *all* devices in the mesh,
     including those from other processes, and will be given a global view of the
     data spread across multiple processes as a single array. However, outside
-    of ``pjit`` every process only "sees" its local piece of the input and output,
+    of :func:`~pjit` every process only "sees" its local piece of the input and output,
     corresponding to its local sub-mesh.
 
     This means that each process's participating local devices must form a
@@ -264,7 +265,7 @@ def pjit(fun: Callable,
     sub-mesh is one where all of its devices are adjacent within the global
     mesh, and form a rectangular prism.
 
-    The SPMD model also requires that the same multi-process ``pjit``'d
+    The SPMD model also requires that the same multi-process :func:`~pjit`'d
     functions must be run in the same order on all processes, but they can be
     interspersed with arbitrary operations running in a single process.
 
@@ -320,7 +321,7 @@ def pjit(fun: Callable,
     automaticly partitioned by the mesh available at each call site.
 
   For example, a convolution operator can be automatically partitioned over
-  an arbitrary set of devices by a single ``pjit`` application:
+  an arbitrary set of devices by a single :func:`~pjit` application:
 
   >>> import jax
   >>> import jax.numpy as jnp

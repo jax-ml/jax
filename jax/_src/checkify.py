@@ -373,7 +373,7 @@ def check(pred: Bool, msg: str) -> None:
   """Check a predicate, add an error with msg if predicate is False.
 
   This is an effectful operation, and can't be staged (jitted/scanned/...).
-  Before staging a function with checks, ``checkify`` it!
+  Before staging a function with checks, :func:`~checkify` it!
 
   Args:
     pred: if False, an error is added.
@@ -407,7 +407,7 @@ def is_scalar_pred(pred) -> bool:
           pred.dtype == jnp.dtype('bool'))
 
 def check_error(error: Error) -> None:
-  """Raise an Exception if ``error`` represents a failure. Functionalized by ``checkify``.
+  """Raise an Exception if ``error`` represents a failure. Functionalized by :func:`~checkify`.
 
   The semantics of this function are equivalent to:
 
@@ -415,34 +415,38 @@ def check_error(error: Error) -> None:
   ...   err.throw()  # can raise ValueError
 
   But unlike that implementation, ``check_error`` can be functionalized using
-  the ``checkify`` transformation.
+  the :func:`~checkify` transformation.
 
-  This function is similar to ``check`` but with a different signature: whereas
-  ``check`` takes as arguments a boolean predicate and a new error message
-  string, this function takes an ``Error`` value as argument. Both ``check``
+  This function is similar to :func:`~check` but with a different signature: whereas
+  :func:`~check` takes as arguments a boolean predicate and a new error message
+  string, this function takes an ``Error`` value as argument. Both :func:`~check`
   and this function raise a Python Exception on failure (a side-effect), and
-  thus cannot be staged out by ``jit``, ``pmap``, ``scan``, etc. Both also can
-  be functionalized by using ``checkify``.
+  thus cannot be staged out by :func:`~jax.jit`, :func:`~jax.pmap`,
+  :func:`~jax.lax.scan`, etc. Both also can
+  be functionalized by using :func:`~checkify`.
 
-  But unlike ``check``, this function is like a direct inverse of ``checkify``:
-  whereas ``checkify`` takes as input a function which can raise a Python
+  But unlike :func:`~check`, this function is like a direct inverse of
+  :func:`~checkify`:
+  whereas :func:`~checkify` takes as input a function which
+  can raise a Python
   Exception and produces a new function without that effect but which produces
   an ``Error`` value as output, this ``check_error`` function can accept an
   ``Error`` value as input and can produce the side-effect of raising an
-  Exception. That is, while ``checkify`` goes from functionalizable Exception
+  Exception. That is, while :func:`~checkify` goes from
+  functionalizable Exception
   effect to error value, this ``check_error`` goes from error value to
   functionalizable Exception effect.
 
   ``check_error`` is useful when you want to turn checks represented by an
-  ``Error`` value (produced by functionalizing ``checks`` via ``checkify``)
-  back into Python Exceptions.
+  ``Error`` value (produced by functionalizing ``checks`` via
+  :func:`~checkify`) back into Python Exceptions.
 
   Args:
     error: Error to check.
 
   For example, you might want to functionalize part of your program through
-  checkify, stage out your functionalized code through ``jit``, then re-inject
-  your error value outside of the ``jit``:
+  checkify, stage out your functionalized code through :func:`~jax.jit`, then
+  re-inject your error value outside of the :func:`~jax.jit`:
 
   >>> import jax
   >>> from jax.experimental import checkify
@@ -874,7 +878,7 @@ def checkify(fun: Callable[..., Out],
              ) -> Callable[..., Tuple[Error, Out]]:
   """Functionalize `check` calls in `fun`, and optionally add run-time error checks.
 
-  Run-time errors are either user-added ``checkify.check`` assertions, or
+  Run-time errors are either user-added :func:`~check` assertions, or
   automatically added checks like NaN checks, depending on the ``errors``
   argument.
 
@@ -884,11 +888,11 @@ def checkify(fun: Callable[..., Out],
   will correspond to the first error which occurred. ``err.throw()`` will raise
   a ValueError with the error message if an error occurred.
 
-  By default only user-added ``checkify.check`` assertions are enabled. You can
+  By default only user-added :func:`~check` assertions are enabled. You can
   enable automatic checks through the ``errors`` argument.
 
   The automatic check sets which can be enabled, and when an error is generated:
-    - ``user_checks``: a ``checkify.check`` evaluated to False.
+    - ``user_checks``: a :func:`~check` evaluated to False.
     - ``nan_checks``: a floating-point operation generated a NaN value
       as output.
     - ``div_checks``: a division by zero.
@@ -899,7 +903,7 @@ def checkify(fun: Callable[..., Out],
   re-combined (eg. ``errors=float_checks|user_checks``)
 
   Args:
-    fun: Callable which can contain user checks (see ``check``).
+    fun: Callable which can contain user checks (see :func:`~check`).
     errors: A set of ErrorCategory values which defines the set of enabled
       checks. By default only explicit ``checks`` are enabled
       (``user_checks``). You can also for example enable NAN and
@@ -909,7 +913,7 @@ def checkify(fun: Callable[..., Out],
   Returns:
     A function which accepts the same arguments as ``fun`` and returns as output
     a pair where the first element is an ``Error`` value, representing the first
-    failed ``check``, and the second element is the original output of ``fun``.
+    failed :func:`~check`, and the second element is the original output of ``fun``.
 
   For example:
 

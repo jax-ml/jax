@@ -430,9 +430,9 @@ class UnexpectedTracerError(JAXTypeError):
   in an outer scope, return that value from the transformed function explictly.
 
   Specifically, a ``Tracer`` is JAX's internal representation of a function's
-  intermediate values during transformations, e.g. within ``jit``, ``pmap``,
-  ``vmap``, etc. Encountering a ``Tracer`` outside of a transformation implies a
-  leak.
+  intermediate values during transformations, e.g. within :func:`~jax.jit`,
+  :func:`~jax.pmap`, :func:`~jax.vmap`, etc. Encountering a ``Tracer`` outside
+  of a transformation implies a leak.
 
   Life-cycle of a leaked value
     Consider the following example of a transformed function which leaks a value
@@ -460,7 +460,7 @@ class UnexpectedTracerError(JAXTypeError):
 
     This example also demonstrates the life-cycle of a leaked value:
 
-      1. A function is transformed (in this case, by ``jit``)
+      1. A function is transformed (in this case, by :func:`~jax.jit`)
       2. The transformed function is called (initiating an abstract trace of the
          function and turning ``x`` into a ``Tracer``)
       3. The intermediate value ``y``, which will later be leaked, is created
@@ -473,7 +473,7 @@ class UnexpectedTracerError(JAXTypeError):
     code by including information about each stage. Respectively:
 
       1. The name of the transformed function (``side_effecting``) and which
-         transform kicked of the trace (``jit``).
+         transform kicked of the trace  :func:`~jax.jit`).
       2. A reconstructed stack trace of where the leaked Tracer was created,
          which includes where the transformed function was called.
          (``When the Tracer was created, the final 5 stack frames were...``).

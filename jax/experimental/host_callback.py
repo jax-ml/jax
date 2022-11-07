@@ -457,8 +457,8 @@ receiver, it may be hard to debug the calls. In particular, the stack trace
 will not include the calling code. You can use the flag
 ``jax_host_callback_inline`` (or the environment variable
 ``JAX_HOST_CALLBACK_INLINE``) to ensure that the calls to the callbacks are
-inlined. This works only if the calls are outside a staging context (``jit``
-or a control-flow primitive).
+inlined. This works only if the calls are outside a staging context
+(:func:`~jax.jit` or a control-flow primitive).
 
 The C++ `receiver
 <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/outfeed_receiver.cc>`_

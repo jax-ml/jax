@@ -140,19 +140,19 @@ def api_boundary(fun: C) -> C:
   stack trace of the original exception, but with JAX-internal frames removed.
 
   This boundary annotation works in composition with itself. The topmost frame
-  corresponding to an ``api_boundary`` is the one below which stack traces are
-  filtered. In other words, if ``api_boundary(f)`` calls ``api_boundary(g)``,
-  directly or indirectly, the filtered stack trace provided is the same as if
-  ``api_boundary(f)`` were to simply call ``g`` instead.
+  corresponding to an :func:`~api_boundary` is the one below which stack traces
+  are filtered. In other words, if ``api_boundary(f)`` calls
+  ``api_boundary(g)``, directly or indirectly, the filtered stack trace provided
+  is the same as if ``api_boundary(f)`` were to simply call ``g`` instead.
 
   This annotation is primarily useful in wrapping functions output by JAX's
   transformations. For example, consider ``g = jax.jit(f)``. When ``g`` is
   called, JAX's JIT compilation machinery is invoked, which in turn calls ``f``
   in order to trace and translate it. If the function ``f`` raises an exception,
   the stack unwinds through JAX's JIT internals up to the original call site of
-  ``g``. Because the function returned by ``jax.jit`` is annotated as an
-  ``api_boundary``, such an exception is accompanied by an additional traceback
-  that excludes the frames specific to JAX's implementation.
+  ``g``. Because the function returned by :func:`~jax.jit` is annotated as an
+  :func:`~api_boundary`, such an exception is accompanied by an additional
+  traceback that excludes the frames specific to JAX's implementation.
   '''
 
   @util.wraps(fun)

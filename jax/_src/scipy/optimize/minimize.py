@@ -66,7 +66,7 @@ def minimize(
   - Optimization results may differ from SciPy due to differences in the line
     search implementation.
 
-  ``minimize`` supports ``jit`` compilation. It does not yet support
+  ``minimize`` supports :func:`~jax.jit` compilation. It does not yet support
   differentiation or arguments in the form of multi-dimensional arrays, but
   support for both is planned.
 

@@ -209,7 +209,7 @@ def segment_sum(data: Array,
       would support all indices in ``segment_ids``, calculated as
       ``max(segment_ids) + 1``.
       Since `num_segments` determines the size of the output, a static value
-      must be provided to use ``segment_sum`` in a ``jit``-compiled function.
+      must be provided to use ``segment_sum`` in a JIT-compiled function.
     indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_sum`` is
@@ -265,7 +265,7 @@ def segment_prod(data: Array,
       would support all indices in ``segment_ids``, calculated as
       ``max(segment_ids) + 1``.
       Since `num_segments` determines the size of the output, a static value
-      must be provided to use ``segment_prod`` in a ``jit``-compiled function.
+      must be provided to use ``segment_prod`` in a JIT-compiled function.
     indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_prod`` is
@@ -321,7 +321,7 @@ def segment_max(data: Array,
       would support all indices in ``segment_ids``, calculated as
       ``max(segment_ids) + 1``.
       Since `num_segments` determines the size of the output, a static value
-      must be provided to use ``segment_max`` in a ``jit``-compiled function.
+      must be provided to use ``segment_max`` in a JIT-compiled function.
     indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_max`` is
@@ -376,7 +376,7 @@ def segment_min(data: Array,
       would support all indices in ``segment_ids``, calculated as
       ``max(segment_ids) + 1``.
       Since `num_segments` determines the size of the output, a static value
-      must be provided to use ``segment_min`` in a ``jit``-compiled function.
+      must be provided to use ``segment_min`` in a JIT-compiled function.
     indices_are_sorted: whether ``segment_ids`` is known to be sorted.
     unique_indices: whether `segment_ids` is known to be free of duplicates.
     bucket_size: size of bucket to group indices into. ``segment_min`` is

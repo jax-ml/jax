@@ -14,7 +14,7 @@
 
 """Utilities for pseudo-random number generation.
 
-The ``jax.random`` package provides a number of routines for deterministic
+The :mod:`jax.random` package provides a number of routines for deterministic
 generation of sequences of pseudorandom numbers.
 
 Basic usage

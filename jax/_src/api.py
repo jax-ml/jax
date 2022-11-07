@@ -753,11 +753,11 @@ def disable_jit(disable: bool = True):
 
   For debugging it is useful to have a mechanism that disables :py:func:`jit`
   everywhere in a dynamic context. Note that this not only disables explicit
-  uses of `jit` by the user, but will also remove any implicit JIT compilation
+  uses of :func:`jit` by the user, but will also remove any implicit JIT compilation
   used by the JAX library: this includes implicit JIT computation of `body` and
-  `cond` functions passed to higher-level primitives like :func:`scan` and
-  :func:`while_loop`, JIT used in implementations of :mod:`jax.numpy` functions,
-  and any other case where `jit` is used within an API's implementation.
+  `cond` functions passed to higher-level primitives like :func:`~jax.lax.scan` and
+  :func:`~jax.lax.while_loop`, JIT used in implementations of :mod:`jax.numpy` functions,
+  and any other case where :func:`jit` is used within an API's implementation.
 
   Values that have a data dependence on the arguments to a jitted function are
   traced and abstracted. For example, an abstract value may be a
@@ -2671,7 +2671,7 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False, reduce_axes=()):
 def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   """Transpose a function that is promised to be linear.
 
-  For linear functions, this transformation is equivalent to ``vjp``, but
+  For linear functions, this transformation is equivalent to :py:func:`vjp`, but
   avoids the overhead of computing the forward pass.
 
   The outputs of the transposed function will always have the exact same dtypes
@@ -3379,7 +3379,7 @@ def block_until_ready(x):
 
 def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
                   *args: Any, **kwargs: Any):
-  """Applies a functionally pure Python callable. Works under `jit`/`pmap`/etc.
+  """Applies a functionally pure Python callable. Works under :func:`jit`/:func:`~pmap`/etc.
 
   ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
   The input ``callback`` will be passed NumPy arrays in place of JAX arrays and
@@ -3388,12 +3388,12 @@ def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
 
   The callback is treated as functionally pure, meaning it has no side-effects
   and its output value depends only on its argument values. As a consequence, it
-  is safe to be called multiple times (e.g. when transformed by ``vmap`` or
-  ``pmap``), or not to be called at all when e.g. the output of a
+  is safe to be called multiple times (e.g. when transformed by :func:`~vmap` or
+  :func:`~pmap`), or not to be called at all when e.g. the output of a
   `jit`-decorated function has no data dependence on its value. Pure callbacks
   may also be reordered if data-dependence allows.
 
-  When ``pmap``-ed, the pure callback will be called several times (one on each
+  When :func:`~pmap`-ed, the pure callback will be called several times (one on each
   axis of the map). When `vmap`-ed the behavior will depend on the value of the
   ``vectorized`` keyword argument. When ``vectorized`` is ``True``, the callback
   is assumed to obey
