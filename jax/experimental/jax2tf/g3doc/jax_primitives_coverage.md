@@ -1,11 +1,11 @@
 # Primitives with limited JAX support
 
-*Last generated on: 2022-10-26* (YYYY-MM-DD)
+*Last generated on: 2022-11-07* (YYYY-MM-DD)
 
 ## Supported data types for primitives
 
-We use a set of 7296 test harnesses to test
-the implementation of 129 numeric JAX primitives.
+We use a set of 7308 test harnesses to test
+the implementation of 130 numeric JAX primitives.
 We consider a JAX primitive supported for a particular data
 type if it is supported on at least one device type.
 The following table shows the dtypes at which primitives
@@ -68,6 +68,7 @@ be updated.
 | convert_element_type | 201 | all |  |
 | cos | 6 | inexact | bool, integer |
 | cosh | 6 | inexact | bool, integer |
+| cumlogsumexp | 12 | float16, float32, float64 | bfloat16, bool, complex, integer |
 | cummax | 34 | inexact, integer | bool |
 | cummin | 34 | inexact, integer | bool |
 | cumprod | 34 | inexact, integer | bool |
@@ -194,6 +195,7 @@ and search for "limitation".
 |cholesky|unimplemented|float16|cpu, gpu|
 |clamp|unimplemented|bool, complex|cpu, gpu, tpu|
 |conv_general_dilated|preferred_element_type not implemented for integers|int16, int32, int8|gpu|
+|dot_general|preferred_element_type must match dtype for floating point|inexact|gpu|
 |eig|only supported on CPU in JAX|all|tpu, gpu|
 |eig|unimplemented|bfloat16, float16|cpu|
 |eigh|unimplemented|bfloat16, float16|cpu, gpu|

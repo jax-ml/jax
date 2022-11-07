@@ -53,6 +53,8 @@ class JaxPrimitiveTest(jtu.JaxTestCase):
                       message="Using reduced precision for gradient.*")
   def test_jax_implemented(self, harness: primitive_harness.Harness):
     """Runs all harnesses just with JAX to verify the jax_unimplemented field.
+
+    Runs also harnesses that have jax_unimplemented but ignores their errors.
     """
     jax_unimpl = [l for l in harness.jax_unimplemented
                   if l.filter(device=jtu.device_under_test(),
