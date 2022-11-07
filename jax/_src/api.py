@@ -413,7 +413,9 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
   f, args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
   f, kwargs = argnames_partial_except(f, static_argnames, kwargs)
   args_flat, in_tree = tree_flatten((args, kwargs))
-  if donate_argnums:
+  # Argument donation is incompatible with jax_debug_nans because it re-uses
+  # donated buffers when rerunning the user's function.
+  if donate_argnums and not config.jax_debug_nans:
     donated_invars = donation_vector(donate_argnums, args, kwargs)
   else:
     donated_invars = (False,) * len(args_flat)
@@ -2042,7 +2044,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
     dyn_global_arg_shapes = global_arg_shapes
   args, in_tree = tree_flatten((dyn_args, kwargs))
 
-  if donate_tuple:
+  if donate_tuple and not config.jax_debug_nans:
     donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
   else:
     donated_invars = (False,) * len(args)

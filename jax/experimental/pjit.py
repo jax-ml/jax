@@ -385,7 +385,7 @@ def pjit(fun: Callable,
 
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-    if donate_argnums:
+    if donate_argnums and not config.jax_debug_nans:
       donated_invars = donation_vector(donate_argnums, dyn_args, ())
     else:
       donated_invars = (False,) * len(args_flat)
