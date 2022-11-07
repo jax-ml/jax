@@ -45,6 +45,7 @@ from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax.interpreters.batching import ConcatAxis
 import jax._src.pretty_printer as pp
 from jax._src import util
 from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
@@ -2597,6 +2598,21 @@ def _dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
                             precision,
                             preferred_element_type: Optional[DTypeLike]):
   lhs, rhs = batched_args
+  lbd, rbd = batch_dims
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  if (type(lbd) is type(rbd) is ConcatAxis and
+      lbd.axis in lhs_contract and rbd.axis in rhs_contract):
+    # first handle any other part of the dot with these as batch dims
+    lhs_contract_ = [d for d in lhs_contract if d != lbd.axis]
+    rhs_contract_ = [d for d in rhs_contract if d != rbd.axis]
+    lhs_batch_ = (lbd.axis, *lhs_batch)
+    rhs_batch_ = (rbd.axis, *rhs_batch)
+    new_dnums = ((lhs_contract_, rhs_contract_), (lhs_batch_, rhs_batch_))
+    out = dot_general(lhs, rhs, new_dnums, precision=precision,
+                      preferred_element_type=preferred_element_type)
+    # now a segment sum along that batch axis
+    return batching.segment_sum(out, lbd.segment_lengths), 0
+
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
       (lhs.ndim, rhs.ndim), batch_dims, dimension_numbers)
   batched_out = dot_general(lhs, rhs, new_dimension_numbers,
@@ -2617,31 +2633,52 @@ def _dot_general_batch_dim_nums(ndims, batch_dims, dimension_numbers):
   def bump_dims(dims, b):
     return tuple(np.add(dims, np.greater_equal(dims, b)))
 
-  if lbd is not None and rbd is not None:
+  if type(lbd) is type(rbd) is int:
     # adding a batch dimension
     lhs_batch = (lbd,) + bump_dims(lhs_batch, lbd)
     rhs_batch = (rbd,) + bump_dims(rhs_batch, rbd)
     lhs_contract = bump_dims(lhs_contract, lbd)
     rhs_contract = bump_dims(rhs_contract, rbd)
     result_batch_dim = 0
-  else:
-    # adding a tensor product dimension
-    if lbd is not None:
-      other = tuple(d for d in range(lhs_ndim)
-                    if d not in lhs_batch and d not in lhs_contract)
-      result_batch_dim = (len(lhs_batch) + sum(np.less(other, lbd)))
-      lhs_batch = bump_dims(lhs_batch, lbd)
-      lhs_contract = bump_dims(lhs_contract, lbd)
+  elif rbd is None and type(lbd) is ConcatAxis and lbd.axis not in lhs_contract:
+    if lbd.axis in lhs_batch:
+      axis = int(np.sum(np.less(lhs_batch, lbd.axis)))
     else:
-      other = tuple(d for d in range(rhs_ndim)
-                    if d not in rhs_batch and d not in rhs_contract)
-      result_batch_dim = (lhs_ndim - len(lhs_contract) +
-                          sum(np.less(other, rbd)))
-      rhs_batch = bump_dims(rhs_batch, rbd)
-      rhs_contract = bump_dims(rhs_contract, rbd)
+      lhs_tensor = [d for d in range(lhs_ndim)
+                    if d not in lhs_batch and d not in lhs_contract]
+      axis = len(lhs_batch) + int(np.sum(np.less(lhs_tensor, lbd.axis)))
+    result_batch_dim = ConcatAxis(axis, lbd.segment_lengths)
+  elif lbd is None and type(rbd) is ConcatAxis and rbd.axis not in rhs_contract:
+    if rbd.axis in rhs_batch:
+      axis = int(np.sum(np.less(rhs_batch, rbd.axis)))
+    else:
+      rhs_tensor = [d for d in range(rhs_ndim)
+                    if d not in rhs_batch and d not in rhs_contract]
+      axis = (lhs_ndim - len(lhs_contract) +
+              int(sum(np.less(rhs_tensor, rbd.axis))))
+    result_batch_dim = ConcatAxis(axis, rbd.segment_lengths)
+  elif (type(lbd) is int and
+        (rbd is None or type(rbd) is ConcatAxis and
+         rbd.axis not in rhs_contract)):
+    lhs_tensor = [d for d in range(lhs_ndim)
+                  if d not in lhs_batch and d not in lhs_contract]
+    result_batch_dim = len(lhs_batch) + int(sum(np.less(lhs_tensor, lbd)))
+    lhs_batch = bump_dims(lhs_batch, lbd)
+    lhs_contract = bump_dims(lhs_contract, lbd)
+  elif (type(rbd) is int and
+        (lbd is None or type(lbd) is ConcatAxis and
+         lbd.axis not in lhs_contract)):
+    rhs_tensor = [d for d in range(rhs_ndim)
+                  if d not in rhs_batch and d not in rhs_contract]
+    result_batch_dim = (lhs_ndim - len(lhs_contract) +
+                        int(sum(np.less(rhs_tensor, rbd))))
+    rhs_batch = bump_dims(rhs_batch, rbd)
+    rhs_contract = bump_dims(rhs_contract, rbd)
+  else:
+    assert False
 
   new_dimension_numbers = ((lhs_contract, rhs_contract), (lhs_batch, rhs_batch))
-  return new_dimension_numbers, int(result_batch_dim)
+  return new_dimension_numbers, result_batch_dim
 
 def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
                               dimension_numbers, **params):
@@ -2782,15 +2819,27 @@ def _broadcast_in_dim_transpose_rule(ct, operand, *dyn_shape,
   return ([expand_dims(_reduce_sum(ct, axes), unit_dims)] +
           [None] * len(dyn_shape))
 
-def _broadcast_in_dim_batch_rule(batched_args, batch_dims, *dyn_shape, shape,
+def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
                                  broadcast_dimensions):
-  if dyn_shape: raise NotImplementedError  # TODO(mattjj)
-  operand, = batched_args
-  bdim, = batch_dims
-  new_operand = batching.moveaxis(operand, bdim, 0)
-  new_shape = (operand.shape[bdim],) + shape
-  new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
-  return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
+  operand, *dyn_shape = batched_args
+  operand_bdim, *dyn_shape_bdims = batch_dims
+  if len(dyn_shape) > 1: raise NotImplementedError
+  if (operand_bdim is not None and
+      (not dyn_shape_bdims or dyn_shape_bdims[0] is None)):
+    new_operand = batching.moveaxis(operand, operand_bdim, 0)
+    new_shape = (operand.shape[operand_bdim],) + shape
+    new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
+    return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
+  elif (operand_bdim is None and dyn_shape_bdims and
+        dyn_shape_bdims[0] is not None):
+    (d,), (d_bdim,) = dyn_shape, dyn_shape_bdims  # NotImplementedError above
+    assert d_bdim == 0  # must be scalar in the program to be batched
+    new_shape = _merge_dyn_shape(shape, (int(d.sum()),))
+    out = broadcast_in_dim(operand, new_shape, broadcast_dimensions)
+    idx, = (i for i, s in enumerate(shape) if s is None)
+    return out, batching.ConcatAxis(idx, d)
+  else:
+    raise NotImplementedError  # TODO(mattjj)
 
 def _broadcast_in_dim_fwd_rule(eqn):
   v, *dyn = eqn.invars
@@ -4470,6 +4519,13 @@ def _iota_lower(ctx, *dyn_shape, dtype, shape, dimension):
     return mhlo.IotaOp(mlir.aval_to_ir_type(aval_out),
                        mlir.i64_attr(dimension)).results
 mlir.register_lowering(iota_p, _iota_lower)
+
+def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
+  (segment_lengths,), (ax,) = in_vals, in_dims
+  shapes = [_merge_dyn_shape(shape, (d,)) for d in segment_lengths]
+  iotas = [broadcasted_iota(dtype, s, dimension) for s in shapes]
+  return concatenate(iotas, dimension), batching.ConcatAxis(ax, segment_lengths)
+batching.primitive_batchers[iota_p] = _iota_batching_rule
 
 def _iota_pp_rule(eqn, context, settings):
   printed_params = {}
