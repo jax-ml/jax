@@ -172,9 +172,8 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
   return wraps(fun)(cpp_pjit_f)
 
 class _CppPjitAotCall:
-  def __init__(self, fun: Callable, static_argnums: Any):
+  def __init__(self, fun: Callable):
     self._fun = fun
-    self._static_argnums = static_argnums
 
   def __call__(self, params: CompiledCallParams):
 
@@ -206,8 +205,7 @@ class _CppPjitAotCall:
 
       return outs, fastpath_data
 
-    self._cpp_aot_pjit_f = xc._xla.pjit(self._fun, aot_cache_miss,
-                                        self._static_argnums)
+    self._cpp_aot_pjit_f = xc._xla.pjit(self._fun, aot_cache_miss, [])
     return self._cpp_aot_pjit_f
 
 
@@ -472,7 +470,9 @@ def pjit(fun: Callable,
         in_is_global, always_lower=True)
 
     if FLAGS.experimental_cpp_pjit and xc._version >= 96:
-      create_cpp_call = _CppPjitAotCall(fun, static_argnums)
+      # This is only used for execution of the compiled object. It is not used
+      # for lowering.
+      create_cpp_call = _CppPjitAotCall(fun)
     else:
       create_cpp_call = None
 

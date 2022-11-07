@@ -2627,6 +2627,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = multihost_utils.global_array_to_host_local_array(arr, mesh, pspec)
     self.assertEqual(id(arr), id(out))
 
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  @jax_array(True)
+  def testLowerCompileWithStaticArguments(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),), static_argnums=0)
+    def f(c, x):
+      return x if c == 0 else x + 1
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    exe = f.lower(1, x).compile()
+
+    self.assertAllClose(exe(x), x + 1, check_dtypes=False)
+
+
 
 class TempSharding(Sharding):
 
