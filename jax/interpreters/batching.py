@@ -70,6 +70,15 @@ class Pile:
   aval: PileTy
   data: Array
 
+# To vmap over a pile, one must specify the axis as PileAxis.
+class PileAxis: pass
+pile_axis = PileAxis()
+
+# As a temporary measure before we have more general JITable / ADable interfaces
+# (analogues to vmappable), to enable Piles to be used with other
+# transformations and higher-order primitives (primarily jit, though also grad
+# with allow_int=True) we register them as pytrees.
+# TODO(mattjj): add JITable / ADable interfaces, remove this pytree registration
 def _pile_flatten(pile):
   lengths = []
   new_shape = [lengths.append(d.lengths) or d.replace(lengths=len(lengths))
@@ -78,7 +87,6 @@ def _pile_flatten(pile):
   elt_ty = pile.aval.elt_ty.update(shape=tuple(new_shape))
   aval = pile.aval.replace(elt_ty=elt_ty)
   return (lengths, pile.data), aval
-
 def _pile_unflatten(aval, x):
   lengths, data = x
   new_shape = [d.replace(lengths=lengths[d.lengths - 1])
@@ -87,7 +95,6 @@ def _pile_unflatten(aval, x):
   elt_ty = aval.elt_ty.update(shape=tuple(new_shape))
   aval = aval.replace(elt_ty=elt_ty)
   return Pile(aval, data)
-
 register_pytree_node(Pile, _pile_flatten, _pile_unflatten)
 
 def _pile_result(axis_size, axis, segment_lens, x):
@@ -170,6 +177,8 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
   if handler:
     return handler(partial(to_elt, trace, get_idx), get_idx, x, spec)
   elif type(x) is Pile:
+    if spec is not pile_axis:
+      raise TypeError("pile input without using pile_axis in_axes spec")
     (d, ias), = ((i, sz) for i, sz in enumerate(x.aval.elt_ty.shape)
                  if type(sz) is IndexedAxisSize)
     return BatchTracer(trace, x.data, ConcatAxis(d, ias.lengths))  # type: ignore
@@ -189,6 +198,9 @@ def from_elt(trace: 'BatchTrace', axis_size: AxisSize, x: Elt, spec: MapSpec
   x_ = trace.full_raise(x)
   val, bdim = x_.val, x_.batch_dim
   if type(bdim) is ConcatAxis:
+    if spec is not pile_axis:
+      # TODO(mattjj): improve this error message
+      raise TypeError("ragged output without using pile_axis out_axes spec")
     return _pile_result(axis_size, bdim.axis, bdim.segment_lengths, val)
   else:
     return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
@@ -211,7 +223,7 @@ def register_vmappable(data_type: Type, spec_type: Type, axis_size_type: Type,
   from_elt_handlers[data_type] = from_elt
   if make_iota: make_iota_handlers[axis_size_type] = make_iota
 vmappables: Dict[Type, Tuple[Type, Type]] = {}
-spec_types: Set[Type] = set()
+spec_types: Set[Type] = {PileAxis}
 
 def unregister_vmappable(data_type: Type) -> None:
   spec_type, axis_size_type = vmappables.pop(data_type)
@@ -848,6 +860,12 @@ def broadcast(x, sz, axis):
   return jax.lax.broadcast_in_dim(x, shape, broadcast_dims)
 
 def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
+  if dst == pile_axis:
+    x = bdim_at_front(x, src, sz)
+    elt_ty = x.aval.update(shape=x.shape[1:])
+    aval = PileTy(core.Var(0, '', core.ShapedArray((), np.dtype('int32'))),
+                  x.shape[0], elt_ty)
+    return Pile(aval, x)
   try:
     _ = core.get_aval(x)
   except TypeError as e:
