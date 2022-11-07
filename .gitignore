@@ -17,6 +17,7 @@ docs/notebooks/.ipynb_checkpoints/
 docs/_autosummary
 .idea
 .vscode
+.envrc
 jax.iml
 
 # virtualenv/venv directories
