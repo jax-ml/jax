@@ -152,7 +152,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
         env["TASK"] = str(task)
         visible_devices = ",".join(
             str((task * num_gpus_per_task) + i) for i in range(num_gpus_per_task))
-        
+
         if jtu.is_device_rocm():
           program = (
             'import jax, os; '
