@@ -798,21 +798,28 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jnp.linalg.inv, args_maker)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (2, 70, 7), (2000, 7), (7, 1000), (70, 7, 2),
-           (2, 0, 0), (3, 0, 2), (1, 0)],
+    [dict(shape=shape, hermitian=hermitian)
+     for shape in [(1, 1), (4, 4), (3, 10, 10), (2, 70, 7), (2000, 7),
+                   (7, 1000), (70, 7, 2), (2, 0, 0), (3, 0, 2), (1, 0)]
+     for hermitian in ([False, True] if shape[-1] == shape[-2] else [False])],
     dtype=float_types + complex_types,
   )
   @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
-  def testPinv(self, shape, dtype):
+  def testPinv(self, shape, hermitian, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    self._CheckAgainstNumpy(np.linalg.pinv, jnp.linalg.pinv, args_maker,
-                            tol=1e-2)
-    self._CompileAndCheck(jnp.linalg.pinv, args_maker)
+    jnp_fn = partial(jnp.linalg.pinv, hermitian=hermitian)
+    def np_fn(a):
+      # Symmetrize the input matrix to match the jnp behavior.
+      if hermitian:
+        a = (a + T(a.conj())) / 2
+      return np.linalg.pinv(a, hermitian=hermitian)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker)
 
     # TODO(phawkins): 1e-1 seems like a very loose tolerance.
-    jtu.check_grads(jnp.linalg.pinv, args_maker(), 2, rtol=1e-1, atol=2e-1)
+    jtu.check_grads(jnp_fn, args_maker(), 1, rtol=3e-2, atol=1e-3)
 
   def testPinvGradIssue2792(self):
     def f(p):
