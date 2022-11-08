@@ -338,7 +338,10 @@ class SparsifyTest(jtu.JaxTestCase):
     [dict(shape=shape, new_shape=new_shape, n_batch=n_batch, n_dense=n_dense)
       for shape, new_shape, n_batch, n_dense in [
         [(6,), (2, 3), 0, 0],
+        [(6,), (2, 3), 1, 0],
         [(1, 4), (2, 2), 0, 0],
+        [(4, 1), (4,), 1, 0],
+        [(1, 4), (4,), 1, 0],
         [(12, 2), (2, 3, 4), 0, 0],
         [(1, 3, 2), (2, 3), 0, 0],
         [(1, 6), (2, 3, 1), 0, 0],
