@@ -13,8 +13,13 @@
 # limitations under the License.
 
 import abc
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
 import numpy as np
+
+# TODO(jakevdp) make this equal jax._src.sharding.Sharding
+Sharding = Any
+# TODO(jakevdp) make this equal jax._src.array.Shard
+Shard = Any
 
 
 class Array(abc.ABC):
@@ -25,6 +30,12 @@ class Array(abc.ABC):
 
   @property
   def shape(self) -> Tuple[int, ...]: ...
+
+  @property
+  def sharding(self) -> Sharding: ...
+
+  @property
+  def addressable_shards(self) -> Sequence[Shard]: ...
 
   def __init__(self, shape, dtype=None, buffer=None, offset=0, strides=None,
                order=None):

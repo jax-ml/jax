@@ -560,6 +560,19 @@ class Tracer(typing.Array):
     return self.aval._len(self)
 
   @property
+  def sharding(self):
+    # This attribute is part of the jax.Array API, but only defined on concrete arrays.
+    # Raising a ConcretizationTypeError would make sense, but for backward compatibility
+    # we raise an AttributeError so that hasattr() and getattr() work as expected.
+    raise AttributeError(self,
+      f"The 'sharding' attribute is not available on the JAX Tracer object {self}")
+
+  @property
+  def addressable_shards(self):
+    raise ConcretizationTypeError(self,
+      f"The 'addressable_shards' attribute is not available on the JAX Tracer object {self}")
+
+  @property
   def at(self):
     return self.aval.at.fget(self)
 
