@@ -598,6 +598,40 @@ class JaxArrayTest(jtu.JaxTestCase):
             output_shardings._to_xla_op_sharding(x_dummy.ndim),
             s._to_xla_op_sharding(x_dummy.ndim)))
 
+  # TODO(skyewm): remove this test when we can remove the workaround manual
+  # defragment API
+  @jtu.skip_on_devices('cpu')  # defragment not implemented for TFRT CPU
+  def test_defragment(self):
+    if xc._version < 105:
+      self.skipTest('Test needs jaxlib 0.3.25 or greater to pass')
+
+    # Create a few arrays
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    shape = (8, 2)
+    mpsharding = sharding.MeshPspecSharding(global_mesh, P('x', 'y'))
+    arr1, data = create_array(shape, mpsharding)
+    arr2, _ = create_array(shape, mpsharding, data)
+    arr3, _ = create_array(shape, mpsharding, data)
+
+    min_device_address = min(buf.unsafe_buffer_pointer()
+                             for arr in (arr1, arr2, arr3)
+                             for buf in arr._arrays)
+
+    # Delete one of them
+    arr2.delete()
+
+    # Defragment
+    xb.get_backend().defragment()
+
+    # Sanity check remaining arrays
+    self.assertArraysEqual(arr1, data)
+    self.assertArraysEqual(arr1 + arr3, data * 2)
+
+    # Check that defragmentation actually happened. TPU allocations grow down.
+    new_min_device_address = min(buf.unsafe_buffer_pointer()
+                                 for arr in (arr1, arr3)
+                                 for buf in arr._arrays)
+    self.assertGreater(new_min_device_address, min_device_address)
 
 
 @jtu.with_config(jax_array=True)
