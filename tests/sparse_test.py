@@ -1208,7 +1208,7 @@ class BCOOTest(jtu.JaxTestCase):
       # TODO(tianjianlu): In some cases, this fails python_should_be_executing.
       # self._CompileAndCheck(f_sparse, args_maker)
       self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-      if dtype == np.complex128:
+      if dtype in [np.complex128, np.complex64]:
         atol = 1E-1
       else:
         atol = 1E-2
