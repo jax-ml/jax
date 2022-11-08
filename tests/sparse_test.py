@@ -2537,6 +2537,8 @@ class SparseObjectTest(jtu.JaxTestCase):
     self.assertArraysEqual(M.sum(1), Msp.sum(1).todense())
     self.assertArraysEqual(M.sum(), Msp.sum())
 
+    self.assertArraysEqual(M.astype(float), Msp.astype(float).todense())
+
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch)
       for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
