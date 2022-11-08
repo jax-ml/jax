@@ -1831,7 +1831,7 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
   if mat.n_batch:
     batch_size = np.prod(mat.shape[:mat.n_batch])
     cuml_shape = np.cumprod(new_sizes)
-    if batch_size not in cuml_shape:
+    if batch_size != 1 and batch_size not in cuml_shape:
       raise ValueError("bcoo_reshape: new shape cannot mix batch and sparse dimensions; "
                       f"got shape={mat.shape} new_shape={new_sizes} with n_batch={mat.n_batch}")
     ind = cuml_shape.searchsorted(batch_size, side='right')
@@ -1853,16 +1853,19 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
     dimensions=(*batch_perm, *range(mat.n_batch, mat.indices.ndim)))
 
   # Reshape the sparse dimensions: this is accomplished by re-indexing.
-  index_cols = tuple(indices[..., i] for i in sparse_perm)
-  sparse_shape = tuple(mat.shape[mat.n_batch + i] for i in sparse_perm)
-  flat_indices = jnp.ravel_multi_index(index_cols, dims=sparse_shape, mode='clip')
-  new_index_cols = jnp.unravel_index(flat_indices, sparse_sizes)
-  new_indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
-  with jax.numpy_rank_promotion('allow'):
-    oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:], dtype=indices.dtype)).any(-1)
-  new_indices = new_indices.at[oob_indices].set(jnp.array(sparse_sizes, dtype=new_indices.dtype))
+  if not sparse_sizes:
+    indices = jnp.empty_like(indices, shape=(*indices.shape[:-1], 0))
+  elif sparse_perm:
+    index_cols = tuple(indices[..., i] for i in sparse_perm)
+    sparse_shape = tuple(mat.shape[mat.n_batch + i] for i in sparse_perm)
+    flat_indices = jnp.ravel_multi_index(index_cols, dims=sparse_shape, mode='clip')
+    with jax.numpy_rank_promotion('allow'):
+      oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:], dtype=indices.dtype)).any(-1)
+    new_index_cols = jnp.unravel_index(flat_indices, sparse_sizes)
+    indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
+    indices = indices.at[oob_indices].set(jnp.array(sparse_sizes, dtype=indices.dtype))
 
-  return BCOO((data, new_indices), shape=new_sizes)
+  return BCOO((data, indices), shape=new_sizes)
 
 
 def bcoo_slice(mat, *, start_indices: Sequence[int], limit_indices: Sequence[int],
