@@ -787,6 +787,10 @@ def _reshape(self, *args, **kwargs):
   """Sum array along axis."""
   return sparsify(lambda x: x.reshape(*args, **kwargs))(self)
 
+def _astype(self, *args, **kwargs):
+  """Copy the array and cast to a specified dtype."""
+  return sparsify(lambda x: x.astype(*args, **kwargs))(self)
+
 def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
                            mode=None, fill_value=None):
   # Only sparsify the array argument; sparse indices not yet supported
@@ -801,8 +805,9 @@ def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=Fa
 _swap_args = lambda f: lambda a, b: f(b, a)
 
 _bcoo_methods = {
-  'reshape': _reshape,
-  'sum': _sum,
+  "astype": _astype,
+  "reshape": _reshape,
+  "sum": _sum,
   "__neg__": sparsify(jnp.negative),
   "__pos__": sparsify(jnp.positive),
   "__matmul__": sparsify(jnp.matmul),
