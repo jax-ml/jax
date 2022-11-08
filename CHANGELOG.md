@@ -7,6 +7,8 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## jax 0.3.25
+* Changes
+  * {func}`jax.numpy.linalg.pinv` now supports the `hermitian` option.
 
 ## jaxlib 0.3.25
 
