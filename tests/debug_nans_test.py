@@ -24,11 +24,12 @@ from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
-import jax._src.lib
+from jax._src.lib import xla_client
 
 from jax.config import config
 config.parse_flags_with_absl()
 
+xla_extension_version = getattr(xla_client, "_version", 0)
 
 class DebugNaNsTest(jtu.JaxTestCase):
 
@@ -152,6 +153,44 @@ class DebugNaNsTest(jtu.JaxTestCase):
     f = pjit.pjit(lambda x: 0. / x,
                   in_axis_resources=p,
                   out_axis_resources=p)
+
+    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+      with self.assertRaises(FloatingPointError):
+        ans = f(jnp.array([0., 1.]))
+        ans.block_until_ready()
+
+  def testDebugNansJitWithDonation(self):
+    # https://github.com/google/jax/issues/12514
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
+
+    a = jnp.array(0.)
+    with self.assertRaises(FloatingPointError):
+      ans = jax.jit(lambda x: 0. / x, donate_argnums=(0,))(a)
+      ans.block_until_ready()
+
+  def testDebugNansPmapWithDonation(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
+
+    a = jnp.zeros((1,))
+    with self.assertRaises(FloatingPointError):
+      ans = jax.pmap(lambda x: 0. / x, donate_argnums=(0,))(a)
+      ans.block_until_ready()
+
+  @jtu.ignore_warning(message=".*is an experimental.*")
+  def testDebugNansPjitWithDonation(self):
+    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
+      raise SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
+
+    if jax.device_count() < 2:
+      raise SkipTest("test requires >=2 devices")
+
+    p = pjit.PartitionSpec('x')
+    f = pjit.pjit(lambda x: 0. / x,
+                  in_axis_resources=p,
+                  out_axis_resources=p,
+                  donate_argnums=(0,))
 
     with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
