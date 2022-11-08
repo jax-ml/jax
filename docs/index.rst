@@ -15,7 +15,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/Common_Gotchas_in_JAX
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
 
    jax-101/index
 
@@ -54,6 +54,23 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/xmap_tutorial
    multi_process
 
+
+.. toctree::
+   :maxdepth: 1
+   :caption: Developer documentation
+
+   contributing
+   developer
+   jax_internal_api
+   autodidax
+   jep/index
+
+.. toctree::
+   :maxdepth: 1
+   :caption: API documentation
+
+   jax
+
 .. toctree::
    :maxdepth: 1
    :caption: Notes
@@ -65,22 +82,6 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    profiling
    device_memory_profiling
    rank_promotion_warning
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Developer documentation
-
-   contributing
-   developer
-   jax_internal_api
-   autodidax
-   jep/index
-
-.. toctree::
-   :maxdepth: 3
-   :caption: API documentation
-
-   jax
 
 
 Indices and tables
