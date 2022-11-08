@@ -15,7 +15,6 @@
 """Tests for the LAPAX linear algebra module."""
 
 from functools import partial
-import unittest
 
 import numpy as np
 import scipy
@@ -478,11 +477,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   def testNorm(self, shape, dtype, ord, axis, keepdims):
     rng = jtu.rand_default(self.rng())
-    if (ord in ('nuc', 2, -2) and (
-        jtu.device_under_test() != "cpu" or
-        (isinstance(axis, tuple) and len(axis) == 2))):
-      raise unittest.SkipTest("No adequate SVD implementation available")
-
     args_maker = lambda: [rng(shape, dtype)]
     np_fn = partial(np.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
     jnp_fn = partial(jnp.linalg.norm, ord=ord, axis=axis, keepdims=keepdims)
@@ -663,7 +657,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       phases = np.divide(sum_of_ratios, np.abs(sum_of_ratios))
       q1 *= phases
       nm = norm(q1 - q2)
-      self.assertTrue(np.all(nm < 140), msg=f"norm={np.amax(nm)}")
+      self.assertTrue(np.all(nm < 160), msg=f"norm={np.amax(nm)}")
 
     # Check a ~= qr
     self.assertTrue(np.all(norm(a - np.matmul(lq, lr)) < 40))
