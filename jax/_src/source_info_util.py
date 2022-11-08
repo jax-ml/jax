@@ -17,6 +17,7 @@ import dataclasses
 import functools
 import itertools
 import os.path
+import sysconfig
 import threading
 import types
 from typing import Optional, Iterator, NamedTuple, Union, Tuple
@@ -39,7 +40,13 @@ class Frame(NamedTuple):
   end_column: int
 
 
-_exclude_paths = [os.path.dirname(jax.version.__file__)]
+_exclude_paths = [
+    os.path.dirname(jax.version.__file__),
+    # Also exclude stdlib as user frames. In a non-standard Python runtime,
+    # the following two may be different.
+    sysconfig.get_path('stdlib'),
+    os.path.dirname(sysconfig.__file__)
+]
 
 def register_exclusion(path):
   _exclude_paths.append(path)
@@ -131,12 +138,12 @@ else:
 
 def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   """Iterator over the user's frames, filtering jax-internal frames."""
-  # Guess the user's frame is the innermost frame not in the jax source tree
-  # We don't use traceback_util.path_starts_with because that incurs filesystem
-  # access, which may be slow; we call this function when e.g. adding source
-  # provenance annotations to XLA lowerings, so we don't want to incur the cost.
-  # We consider files that end with _test.py as user frames, to allow testing
-  # this mechanism from tests.
+  # Guess the user's frame is the innermost frame not in the jax source tree or
+  # Python stdlib. We don't use traceback_util.path_starts_with because that
+  # incurs filesystem access, which may be slow; we call this function when
+  # e.g. adding source provenance annotations to XLA lowerings, so we don't
+  # want to incur the cost. We consider files that end with _test.py as user
+  # frames, to allow testing this mechanism from tests.
   traceback = source_info.traceback
   code, lasti = traceback.raw_frames() if traceback else ([], [])
   return (_raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore

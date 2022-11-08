@@ -14,9 +14,11 @@
 
 from absl.testing import absltest
 
+import os
 import gzip
 import json
 
+import jax
 from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
@@ -81,6 +83,17 @@ class JaxprStatsTest(jtu.JaxTestCase):
 
     hist = jaxpr_util.source_locations(make_jaxpr(f)(1., 1.).jaxpr)
     self.assertEqual(sum(hist.values()), 4)
+
+  def test_source_locations_exclude_contextlib(self):
+
+    def f(x):
+      # This generates a stack where the most recent non-jax frame
+      # comes from contextlib.
+      return jax.named_call(jnp.cos, name='test')(x)
+
+    hist = jaxpr_util.source_locations(make_jaxpr(f)(1.).jaxpr)
+    for filename in hist.keys():
+      self.assertIn(os.path.basename(__file__), filename)
 
   def test_print_histogram(self):
     def f(x, y):
