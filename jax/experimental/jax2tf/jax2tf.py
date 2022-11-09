@@ -1253,7 +1253,9 @@ tf_not_yet_impl = [
     "lu_pivots_to_permutation",
     "xla_pmap",
     "geqrf",
-    "orgqr",
+    "householder_product",
+    "hessenberg",
+    "tridiagonal",
     "eigh_jacobi",
 ]
 

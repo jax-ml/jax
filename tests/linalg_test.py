@@ -15,6 +15,7 @@
 """Tests for the LAPAX linear algebra module."""
 
 from functools import partial
+import unittest
 
 import numpy as np
 import scipy
@@ -28,6 +29,7 @@ from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 
 from jax.config import config
@@ -1243,6 +1245,96 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1E-5, atol=1E-5)
     self._CompileAndCheck(jsp_func, args_maker)
+
+  @jtu.sample_product(
+      [dict(shape=shape, k=k)
+       for shape in [(1, 1), (3, 4, 4), (10, 5)]
+       # TODO(phawkins): there are some test failures on GPU for k=0
+       for k in range(1, shape[-1] + 1)],
+      dtype=float_types + complex_types,
+  )
+  def testHouseholderProduct(self, shape, k, dtype):
+
+    @partial(np.vectorize, signature='(m,n),(k)->(m,n)')
+    def reference_fn(a, taus):
+      if dtype == np.float32:
+        q, _, info = scipy.linalg.lapack.sorgqr(a, taus)
+      elif dtype == np.float64:
+        q, _, info = scipy.linalg.lapack.dorgqr(a, taus)
+      elif dtype == np.complex64:
+        q, _, info = scipy.linalg.lapack.cungqr(a, taus)
+      elif dtype == np.complex128:
+        q, _, info = scipy.linalg.lapack.zungqr(a, taus)
+      else:
+        assert False, dtype
+      assert info == 0, info
+      return q
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype), rng(shape[:-2] + (k,), dtype)]
+    tol = {np.float32: 1e-5, np.complex64: 1e-5, np.float64: 1e-12,
+           np.complex128: 1e-12}
+    self._CheckAgainstNumpy(reference_fn, lax.linalg.householder_product,
+                            args_maker, rtol=tol, atol=tol)
+    self._CompileAndCheck(lax.linalg.householder_product, args_maker)
+
+  @jtu.sample_product(
+      shape=[(1, 1), (2, 4, 4), (0, 100, 100), (10, 10)],
+      dtype=float_types + complex_types,
+      calc_q=[False, True],
+  )
+  @jtu.skip_on_devices("gpu", "tpu")
+  @unittest.skipIf(jaxlib_version < (0, 3, 25), "Test requires jaxlib 0.3.25")
+  def testHessenberg(self, shape, dtype, calc_q):
+    rng = jtu.rand_default(self.rng())
+    jsp_func = partial(jax.scipy.linalg.hessenberg, calc_q=calc_q)
+    if calc_q:
+      sp_func = np.vectorize(partial(scipy.linalg.hessenberg, calc_q=True),
+                             otypes=(dtype, dtype),
+                             signature='(n,n)->(n,n),(n,n)')
+    else:
+      sp_func = np.vectorize(scipy.linalg.hessenberg, signature='(n,n)->(n,n)',
+                             otypes=(dtype,))
+    args_maker = lambda: [rng(shape, dtype)]
+    # scipy.linalg.hessenberg sometimes returns a float Q matrix for complex
+    # inputs
+    self._CheckAgainstNumpy(sp_func, jsp_func, args_maker, rtol=1e-5, atol=1e-5,
+                            check_dtypes=not calc_q)
+    self._CompileAndCheck(jsp_func, args_maker)
+
+  @jtu.sample_product(
+      shape=[(1, 1), (4, 4), (10, 10)],
+      dtype=float_types + complex_types,
+      lower=[False, True],
+  )
+  @unittest.skipIf(jaxlib_version < (0, 3, 25), "Test requires jaxlib 0.3.25")
+  @jtu.skip_on_devices("gpu", "tpu")
+  def testTridiagonal(self, shape, dtype, lower):
+    rng = jtu.rand_default(self.rng())
+    def jax_func(a):
+      return lax.linalg.tridiagonal(a, lower=lower)
+
+    @partial(np.vectorize, otypes=(dtype, dtype),
+            signature='(n,n)->(n,n),(k)')
+    def sp_func(a):
+      if dtype == np.float32:
+        c, d, e, tau, info = scipy.linalg.lapack.ssytrd(a, lower=lower)
+      elif dtype == np.float64:
+        c, d, e, tau, info = scipy.linalg.lapack.dsytrd(a, lower=lower)
+      elif dtype == np.complex64:
+        c, d, e, tau, info = scipy.linalg.lapack.chetrd(a, lower=lower)
+      elif dtype == np.complex128:
+        c, d, e, tau, info = scipy.linalg.lapack.zhetrd(a, lower=lower)
+      else:
+        assert False, dtype
+      del d, e
+      assert info == 0
+      return c, tau
+
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-5, atol=1e-5,
+                            check_dtypes=False)
+
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],

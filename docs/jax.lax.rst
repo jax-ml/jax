@@ -205,7 +205,9 @@ Linear algebra operators (jax.lax.linalg)
     cholesky
     eig
     eigh
+    hessenberg
     lu
+    householder_product
     qdwh
     qr
     schur

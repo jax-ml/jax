@@ -66,6 +66,16 @@ jax::RealGees<double>::FnType dgees_;
 jax::ComplexGees<std::complex<float>>::FnType cgees_;
 jax::ComplexGees<std::complex<double>>::FnType zgees_;
 
+jax::Gehrd<float>::FnType sgehrd_;
+jax::Gehrd<double>::FnType dgehrd_;
+jax::Gehrd<std::complex<float>>::FnType cgehrd_;
+jax::Gehrd<std::complex<double>>::FnType zgehrd_;
+
+jax::Sytrd<float>::FnType ssytrd_;
+jax::Sytrd<double>::FnType dsytrd_;
+jax::Sytrd<std::complex<float>>::FnType chetrd_;
+jax::Sytrd<std::complex<double>>::FnType zhetrd_;
+
 }  // extern "C"
 
 namespace jax {
@@ -107,6 +117,15 @@ static auto init = []() -> int {
   RealGees<double>::fn = dgees_;
   ComplexGees<std::complex<float>>::fn = cgees_;
   ComplexGees<std::complex<double>>::fn = zgees_;
+  Gehrd<float>::fn = sgehrd_;
+  Gehrd<double>::fn = dgehrd_;
+  Gehrd<std::complex<float>>::fn = cgehrd_;
+  Gehrd<std::complex<double>>::fn = zgehrd_;
+  Sytrd<float>::fn = ssytrd_;
+  Sytrd<double>::fn = dsytrd_;
+  Sytrd<std::complex<float>>::fn = chetrd_;
+  Sytrd<std::complex<double>>::fn = zhetrd_;
+
   return 0;
 }();
 

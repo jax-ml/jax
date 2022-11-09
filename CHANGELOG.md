@@ -9,8 +9,16 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.3.25
 * Changes
   * {func}`jax.numpy.linalg.pinv` now supports the `hermitian` option.
+  * {func}`jax.scipy.linalg.hessenberg` is now supported on CPU only. Requires
+    jaxlib > 0.3.24.
+  * New functions {func}`jax.lax.linalg.hessenberg`,
+    {func}`jax.lax.linalg.tridiagonal`, and
+    {func}`jax.lax.linalg.householder_product` were added. Householder and
+    tridiagonal reductions are supported on CPU only.
 
 ## jaxlib 0.3.25
+* Changes
+  * Added support for upper Hessenberg and tridiagonal reductions on CPU.
 
 ## jax 0.3.24 (Nov 4, 2022)
 * Changes

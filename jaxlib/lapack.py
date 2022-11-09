@@ -628,3 +628,117 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
     return (out[0], out[3], out[4], out[5])
   else:
     return (out[0], out[3], out[5])
+
+
+# gehrd: Reduction of a non-symmetric square matrix to upper Hessenberg form.
+def gehrd_mhlo(dtype, a):
+  _initialize()
+  a_type = ir.RankedTensorType(a.type)
+  dims = a_type.shape
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n, (m, n)
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+
+  if dtype == np.float32:
+    fn = b"lapack_sgehrd"
+    lwork = _lapack.lapack_sgehrd_workspace(n, n, 1, n)
+  elif dtype == np.float64:
+    fn = b"lapack_dgehrd"
+    lwork = _lapack.lapack_dgehrd_workspace(n, n, 1, n)
+  elif dtype == np.complex64:
+    fn = b"lapack_cgehrd"
+    lwork = _lapack.lapack_cgehrd_workspace(n, n, 1, n)
+  elif dtype == np.complex128:
+    fn = b"lapack_zgehrd"
+    lwork = _lapack.lapack_zgehrd_workspace(n, n, 1, n)
+  else:
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  i32_type = ir.IntegerType.get_signless(32)
+  out = custom_call(
+      fn,
+      [
+        a.type,
+        ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+        ir.RankedTensorType.get(batch_dims, i32_type),
+        ir.RankedTensorType.get([lwork], a_type.element_type),
+      ],
+      [_mhlo_s32(n), _mhlo_s32(1), _mhlo_s32(n), _mhlo_s32(n), _mhlo_s32(b),
+       _mhlo_s32(lwork), a],
+      operand_layouts=[[]] * 6 + [layout],
+      result_layouts=[
+        layout,
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ],
+      operand_output_aliases={6: 0},
+  )
+  return out[:3]
+
+
+# sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
+def sytrd_mhlo(dtype, a, *, lower):
+  _initialize()
+  a_type = ir.RankedTensorType(a.type)
+  dims = a_type.shape
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n, (m, n)
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+
+  if dtype == np.float32:
+    fn = b"lapack_ssytrd"
+    lwork = _lapack.lapack_ssytrd_workspace(n, n)
+    diag_type = a_type.element_type
+  elif dtype == np.float64:
+    fn = b"lapack_dsytrd"
+    lwork = _lapack.lapack_dsytrd_workspace(n, n)
+    diag_type = a_type.element_type
+  elif dtype == np.complex64:
+    fn = b"lapack_chetrd"
+    lwork = _lapack.lapack_chetrd_workspace(n, n)
+    diag_type = ir.ComplexType.get(ir.F32Type.get())
+  elif dtype == np.complex128:
+    fn = b"lapack_zhetrd"
+    lwork = _lapack.lapack_zhetrd_workspace(n, n)
+    diag_type = ir.ComplexType.get(ir.F64Type.get())
+  else:
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  i32_type = ir.IntegerType.get_signless(32)
+  out = custom_call(
+      fn,
+      [
+        a.type,
+        ir.RankedTensorType.get(batch_dims + (n,), diag_type),
+        ir.RankedTensorType.get(batch_dims + (n - 1,), diag_type),
+        ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+        ir.RankedTensorType.get(batch_dims, i32_type),
+        ir.RankedTensorType.get([lwork], a_type.element_type),
+      ],
+      [_mhlo_s32(n), _mhlo_s32(1 if lower else 0), _mhlo_s32(max(1, n)),
+       _mhlo_s32(b), _mhlo_s32(lwork), a],
+      operand_layouts=[[]] * 5 + [layout],
+      result_layouts=[
+        layout,
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ],
+      operand_output_aliases={5: 0},
+  )
+  return out[:5]

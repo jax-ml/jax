@@ -753,11 +753,11 @@ mlir.register_lowering(
     platform='tpu')
 
 
-triangular_solve_dtype_rule = partial(
+_triangular_solve_dtype_rule = partial(
     naryop_dtype_rule, _input_dtype, (_float | _complex, _float | _complex),
     'triangular_solve')
 
-def triangular_solve_shape_rule(a, b, *, left_side=False, **unused_kwargs):
+def _triangular_solve_shape_rule(a, b, *, left_side=False, **unused_kwargs):
   if a.ndim < 2:
     msg = "triangular_solve requires a.ndim to be at least 2, got {}."
     raise TypeError(msg.format(a.ndim))
@@ -778,7 +778,7 @@ def triangular_solve_shape_rule(a, b, *, left_side=False, **unused_kwargs):
     raise TypeError(msg.format(a.shape, b.shape))
   return b.shape
 
-def triangular_solve_jvp_rule_a(
+def _triangular_solve_jvp_rule_a(
     g_a, ans, a, b, *, left_side, lower, transpose_a, conjugate_a,
     unit_diagonal):
   m, n = b.shape[-2:]
@@ -811,7 +811,7 @@ def triangular_solve_jvp_rule_a(
     else:
       return dot(ans, a_inverse(g_a))  # X (∂A A^{-1})
 
-def triangular_solve_transpose_rule(
+def _triangular_solve_transpose_rule(
     cotangent, a, b, *, left_side, lower, transpose_a, conjugate_a,
     unit_diagonal):
   # Triangular solve is nonlinear in its first argument and linear in its second
@@ -827,7 +827,7 @@ def triangular_solve_transpose_rule(
   return [None, cotangent_b]
 
 
-def triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
+def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
                                    lower, transpose_a, conjugate_a,
                                    unit_diagonal):
   x, y = batched_args
@@ -856,13 +856,13 @@ def triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
                             unit_diagonal=unit_diagonal), 0
 
 triangular_solve_p = standard_primitive(
-    triangular_solve_shape_rule, triangular_solve_dtype_rule,
+    _triangular_solve_shape_rule, _triangular_solve_dtype_rule,
     'triangular_solve')
 ad.defjvp2(triangular_solve_p,
-           triangular_solve_jvp_rule_a,
+           _triangular_solve_jvp_rule_a,
            lambda g_b, _, a, b, **kws: triangular_solve(a, g_b, **kws))
-ad.primitive_transposes[triangular_solve_p] = triangular_solve_transpose_rule
-batching.primitive_batchers[triangular_solve_p] = triangular_solve_batching_rule
+ad.primitive_transposes[triangular_solve_p] = _triangular_solve_transpose_rule
+batching.primitive_batchers[triangular_solve_p] = _triangular_solve_batching_rule
 
 
 def _triangular_solve_lowering(
@@ -1363,9 +1363,9 @@ mlir.register_lowering(
     platform='rocm')
 
 
-# orgqr: product of elementary Householder reflectors
+# householder_product: product of elementary Householder reflectors
 
-def orgqr(a: ArrayLike, taus: ArrayLike) -> Array:
+def householder_product(a: ArrayLike, taus: ArrayLike) -> Array:
   """Product of elementary Householder reflectors.
 
   Args:
@@ -1378,31 +1378,34 @@ def orgqr(a: ArrayLike, taus: ArrayLike) -> Array:
     A batch of orthogonal (unitary) matrices with the same shape as ``a``,
     containing the products of the elementary Householder reflectors.
   """
-  return orgqr_p.bind(a, taus)
+  return householder_product_p.bind(a, taus)
 
 
-def _orgqr_abstract_eval(a, taus):
+def _householder_product_abstract_eval(a, taus):
   if not isinstance(a, ShapedArray) or not isinstance(taus, ShapedArray):
-    raise NotImplementedError("Unsupported aval in orgqr_abstract_eval: "
+    raise NotImplementedError("Unsupported aval in householder_product_abstract_eval: "
                               f"{a.aval} {taus.aval}")
   if a.ndim < 2:
-    raise ValueError("Argument to QR decomposition must have ndims >= 2")
+    raise ValueError("Argument to Householder product must have ndims >= 2")
   *batch_dims, m, n = a.shape
   *taus_batch_dims, k = taus.shape
   if a.dtype != taus.dtype or batch_dims != taus_batch_dims or k > min(m, n):
-    raise ValueError(f"Type mismatch for orgqr: a={a} taus={taus}")
+    raise ValueError(f"Type mismatch for Householder product: a={a} taus={taus}")
+  if m < n:
+    raise ValueError("Householder product inputs must have at least as many "
+                     f"rows as columns, got shape {a.shape}")
   return a
 
-def _orgqr_batching_rule(batched_args, batch_dims):
+def _householder_product_batching_rule(batched_args, batch_dims):
   a, taus = batched_args
   b_a, b_taus, = batch_dims
-  return orgqr(batching.moveaxis(a, b_a, 0),
+  return householder_product(batching.moveaxis(a, b_a, 0),
                batching.moveaxis(taus, b_taus, 0)), (0,)
 
-def _orgqr_translation_rule(ctx, avals_in, avals_out, a, taus):
+def _householder_product_translation_rule(ctx, avals_in, avals_out, a, taus):
   return [xops.ProductOfElementaryHouseholderReflectors(a, taus)]
 
-def _orgqr_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
+def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
   a_aval, _ = ctx.avals_in
   *batch_dims, m, n = a_aval.shape
 
@@ -1420,22 +1423,23 @@ def _orgqr_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
   return [a]
 
 
-orgqr_p = Primitive('orgqr')
-orgqr_p.def_impl(partial(xla.apply_primitive, orgqr_p))
-orgqr_p.def_abstract_eval(_orgqr_abstract_eval)
-batching.primitive_batchers[orgqr_p] = _orgqr_batching_rule
-xla.register_translation(orgqr_p, _orgqr_translation_rule)
+householder_product_p = Primitive('householder_product')
+householder_product_p.def_impl(partial(xla.apply_primitive, householder_product_p))
+householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
+batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
+xla.register_translation(householder_product_p, _householder_product_translation_rule)
 
 mlir.register_lowering(
-    orgqr_p, partial(_orgqr_cpu_gpu_lowering, lapack.orgqr_mhlo),
+    householder_product_p,
+    partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_mhlo),
     platform='cpu')
 mlir.register_lowering(
-    orgqr_p,
-    partial(_orgqr_cpu_gpu_lowering, gpu_solver.cuda_orgqr),
+    householder_product_p,
+    partial(_householder_product_cpu_gpu_lowering, gpu_solver.cuda_orgqr),
     platform='cuda')
 mlir.register_lowering(
-    orgqr_p,
-    partial(_orgqr_cpu_gpu_lowering, gpu_solver.rocm_orgqr),
+    householder_product_p,
+    partial(_householder_product_cpu_gpu_lowering, gpu_solver.rocm_orgqr),
     platform='rocm')
 
 
@@ -1492,13 +1496,13 @@ def _qr_lowering(a, *, full_matrices):
 
   r, taus = geqrf(a)
   if m < n:
-    q = orgqr(r[..., :m, :m], taus)
+    q = householder_product(r[..., :m, :m], taus)
   elif full_matrices:
     pads = [(0, 0, 0)] * (len(batch_dims) + 1) + [(0, m - n, 0)]
     q = lax.pad(r, lax_internal._zero(r), pads)
-    q = orgqr(q, taus)
+    q = householder_product(q, taus)
   else:
-    q = orgqr(r, taus)
+    q = householder_product(r, taus)
     r = r[..., :n, :n]
   r = jnp.triu(r)
   return q, r
@@ -1918,6 +1922,146 @@ mlir.register_lowering(schur_p, _schur_lowering)
 mlir.register_lowering(schur_p, _schur_cpu_lowering, platform='cpu')
 batching.primitive_batchers[schur_p] = _schur_batching_rule
 ad.primitive_jvps[schur_p] = _schur_jvp_rule
+
+
+# hessenberg: Upper Hessenberg reduction
+
+def hessenberg(a: ArrayLike) -> Tuple[Array, Array]:
+  """Reduces a square matrix to upper Hessenberg form.
+
+  Args:
+    a: A floating point or complex square matrix or batch of matrices.
+
+  Returns:
+  A ``(a, taus)`` pair, where the upper triangle and first subdiagonal of ``a``
+  contain the upper Hessenberg matrix, and the elements below the first
+  subdiagonal contain the Householder reflectors. For each Householder
+  reflector ``taus`` contains the scalar factors of the elementary Householder
+  reflectors.
+  """
+  return hessenberg_p.bind(a)
+
+def _hessenberg_abstract_eval(a):
+  if a.ndim < 2:
+    msg = "hessenberg requires a.ndim to be at least 2, got {}."
+    raise TypeError(msg.format(a.ndim))
+  if a.shape[-1] != a.shape[-2]:
+    msg = ("hessenberg requires the last two dimensions of a to be equal "
+           "in size, got a.shape of {}.")
+    raise TypeError(msg.format(a.shape))
+  return [a, ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype)]
+
+hessenberg_p = Primitive("hessenberg")
+hessenberg_p.def_impl(partial(xla.apply_primitive, hessenberg_p))
+hessenberg_p.def_abstract_eval(_hessenberg_abstract_eval)
+hessenberg_p.multiple_results = True
+
+def _hessenberg_batching_rule(batched_args, batch_dims):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.moveaxis(x, bd, 0)
+  return hessenberg(x), 0
+
+batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
+
+def _hessenberg_cpu_mhlo(ctx, a):
+  # TODO(phawkins): remove this test after jaxlib 0.3.25 is the minimum.
+  if not hasattr(lapack, "gehrd_mhlo"):
+    raise RuntimeError("Hessenberg reduction on CPU requires jaxlib 0.3.25 or "
+                       "newer")
+  a_aval, = ctx.avals_in
+  batch_dims = a_aval.shape[:-2]
+  a, taus, info = lapack.gehrd_mhlo(a_aval.dtype, a)
+  ok = mlir.compare_mhlo(
+      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      "EQ", "SIGNED")
+  return [
+    _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1, 1),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      a, _nan_like_mhlo(ctx.avals_out[0])),
+    _broadcasting_select_mhlo(
+      mhlo.BroadcastInDimOp(
+          ir.RankedTensorType.get(batch_dims + (1,),
+                                  ir.IntegerType.get_signless(1)),
+          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
+      taus, _nan_like_mhlo(ctx.avals_out[1])),
+    ]
+
+mlir.register_lowering(hessenberg_p, _hessenberg_cpu_mhlo, platform='cpu')
+
+
+# tridiagonal: Upper Hessenberg reduction
+
+def tridiagonal(a: ArrayLike, *, lower=True) -> Tuple[Array, Array]:
+  """Reduces a symmetric/Hermitian matrix to tridiagonal form.
+
+  Args:
+    a: A floating point or complex matrix or batch of matrices.
+    lower: Describes which triangle of the input matrices to use.
+      The other triangle is ignored and not accessed.
+
+  Returns:
+  A ``(a, taus)`` pair. If ``lower=True``, the diagonal and first subdiagonal of
+  matrix (or batch of matrices) ``a`` contain the tridiagonal representation,
+  and elements below the first subdiagonal contain the elementary Householder
+  reflectors. If ``lower=False`` the diagonal and first superdiagonal of the
+  matrix contains the tridiagonal representation, and elements above the first
+  superdiagonal contain the elementary Householder reflectors.
+  ``taus`` contains the scalar factors of the elementary Householder
+  reflectors.
+  """
+  arr, taus, info = tridiagonal_p.bind(jnp.asarray(a), lower=lower)
+  nan = arr.dtype.type(jnp.nan)
+  if jnp.issubdtype(arr.dtype, np.complexfloating):
+    nan = nan + arr.dtype.type(jnp.nan * 1j)
+  arr = jnp.where((info == 0)[..., None, None], arr, nan)
+  taus = jnp.where((info == 0)[..., None], taus, nan)
+  return arr, taus
+
+def _tridiagonal_abstract_eval(a, *, lower):
+  if a.ndim < 2:
+    msg = "tridiagonal requires a.ndim to be at least 2, got {}."
+    raise TypeError(msg.format(a.ndim))
+  if a.shape[-1] != a.shape[-2]:
+    msg = ("tridiagonal requires the last two dimensions of a to be equal "
+           "in size, got a.shape of {}.")
+    raise TypeError(msg.format(a.shape))
+  if a.shape[-1] == 0:
+    msg = ("tridiagonal requires the last two dimensions of a to be non-zero, "
+           "got a.shape of {}.")
+    raise TypeError(msg.format(a.shape))
+  return [a, ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype),
+          ShapedArray(a.shape[:-2], np.int32)]
+
+tridiagonal_p = Primitive("tridiagonal")
+tridiagonal_p.def_impl(partial(xla.apply_primitive, tridiagonal_p))
+tridiagonal_p.def_abstract_eval(_tridiagonal_abstract_eval)
+tridiagonal_p.multiple_results = True
+
+def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
+  x, = batched_args
+  bd, = batch_dims
+  x = batching.moveaxis(x, bd, 0)
+  return tridiagonal(x), 0
+
+batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
+
+def _tridiagonal_cpu_mhlo(ctx, a, *, lower):
+  a_aval, = ctx.avals_in
+  # TODO(phawkins): remove this test after jaxlib 0.3.25 is the minimum.
+  if not hasattr(lapack, "sytrd_mhlo"):
+    raise RuntimeError("Tridiagonal reduction on CPU requires jaxlib 0.3.25 or "
+                       "newer")
+
+  a, d, e, taus, info = lapack.sytrd_mhlo(a_aval.dtype, a, lower=lower)
+  del d, e
+  return a, taus, info
+
+mlir.register_lowering(tridiagonal_p, _tridiagonal_cpu_mhlo, platform='cpu')
+
 
 
 # Utilities

@@ -775,4 +775,111 @@ template struct RealGees<double>;
 template struct ComplexGees<std::complex<float>>;
 template struct ComplexGees<std::complex<double>>;
 
+template <typename T>
+typename Gehrd<T>::FnType* Gehrd<T>::fn = nullptr;
+
+template <typename T>
+void Gehrd<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
+  int32_t n = *reinterpret_cast<int32_t*>(data[0]);
+  int32_t ilo = *reinterpret_cast<int32_t*>(data[1]);
+  int32_t ihi = *reinterpret_cast<int32_t*>(data[2]);
+  int32_t lda = *reinterpret_cast<int32_t*>(data[3]);
+  int32_t batch = *reinterpret_cast<int32_t*>(data[4]);
+  int32_t lwork = *reinterpret_cast<int32_t*>(data[5]);
+  T* a = reinterpret_cast<T*>(data[6]);
+
+  void** out = reinterpret_cast<void**>(out_tuple);
+  T* a_out = reinterpret_cast<T*>(out[0]);
+  T* tau = reinterpret_cast<T*>(out[1]);
+  int* info = reinterpret_cast<int*>(out[2]);
+  T* work = reinterpret_cast<T*>(out[3]);
+
+  if (a_out != a) {
+    std::memcpy(a_out, a,
+                static_cast<int64_t>(batch) * static_cast<int64_t>(n) *
+                    static_cast<int64_t>(n) * sizeof(T));
+  }
+
+  int64_t a_plus = static_cast<int64_t>(lda) * static_cast<int64_t>(n);
+
+  for (int i = 0; i < batch; ++i) {
+    fn(&n, &ilo, &ihi, a_out, &lda, tau, work, &lwork, info);
+    a_out += a_plus;
+    tau += n - 1;
+    ++info;
+  }
+}
+
+template <typename T>
+int64_t Gehrd<T>::Workspace(lapack_int lda, lapack_int n, lapack_int ilo,
+                            lapack_int ihi) {
+  T work = 0;
+  lapack_int lwork = -1;
+  lapack_int info = 0;
+  fn(&n, &ilo, &ihi, nullptr, &lda, nullptr, &work, &lwork, &info);
+  return info == 0 ? static_cast<int64_t>(std::real(work)) : -1;
+}
+
+template struct Gehrd<float>;
+template struct Gehrd<double>;
+template struct Gehrd<std::complex<float>>;
+template struct Gehrd<std::complex<double>>;
+
+template <typename T>
+typename Sytrd<T>::FnType* Sytrd<T>::fn = nullptr;
+
+template <typename T>
+void Sytrd<T>::Kernel(void* out_tuple, void** data, XlaCustomCallStatus*) {
+  int32_t n = *reinterpret_cast<int32_t*>(data[0]);
+  int32_t lower = *reinterpret_cast<int32_t*>(data[1]);
+  int32_t lda = *reinterpret_cast<int32_t*>(data[2]);
+  int32_t batch = *reinterpret_cast<int32_t*>(data[3]);
+  int32_t lwork = *reinterpret_cast<int32_t*>(data[4]);
+  T* a = reinterpret_cast<T*>(data[5]);
+
+  void** out = reinterpret_cast<void**>(out_tuple);
+  T* a_out = reinterpret_cast<T*>(out[0]);
+  typedef typename real_type<T>::type Real;
+  Real* d = reinterpret_cast<Real*>(out[1]);
+  Real* e = reinterpret_cast<Real*>(out[2]);
+  T* tau = reinterpret_cast<T*>(out[3]);
+  int* info = reinterpret_cast<int*>(out[4]);
+  T* work = reinterpret_cast<T*>(out[5]);
+
+  if (a_out != a) {
+    std::memcpy(a_out, a,
+                static_cast<int64_t>(batch) * static_cast<int64_t>(n) *
+                    static_cast<int64_t>(n) * sizeof(T));
+  }
+
+  char cuplo = lower ? 'L' : 'U';
+
+  int64_t a_plus = static_cast<int64_t>(lda) * static_cast<int64_t>(n);
+
+  for (int i = 0; i < batch; ++i) {
+    fn(&cuplo, &n, a_out, &lda, d, e, tau, work, &lwork, info);
+    a_out += a_plus;
+    d += n;
+    e += n - 1;
+    tau += n - 1;
+    ++info;
+  }
+}
+
+template <typename T>
+int64_t Sytrd<T>::Workspace(lapack_int lda, lapack_int n) {
+  char cuplo = 'L';
+  T work = 0;
+  lapack_int lwork = -1;
+  lapack_int info = 0;
+  fn(&cuplo, &n, nullptr, &lda, nullptr, nullptr, nullptr, &work, &lwork,
+     &info);
+  return info == 0 ? static_cast<int64_t>(std::real(work)) : -1;
+}
+
+template struct Sytrd<float>;
+template struct Sytrd<double>;
+template struct Sytrd<std::complex<float>>;
+template struct Sytrd<std::complex<double>>;
+
 }  // namespace jax

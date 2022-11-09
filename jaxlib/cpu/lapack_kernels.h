@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <complex>
 #include <cstdint>
+
 #include "tensorflow/compiler/xla/service/custom_call_status.h"
 
 // Underlying function pointers (e.g., Trsm<double>::Fn) are initialized either
@@ -88,8 +89,8 @@ struct RealGesdd {
   static FnType* fn;
   static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 
-  static int64_t Workspace(lapack_int m, lapack_int n,
-                           bool job_opt_compute_uv, bool job_opt_full_matrices);
+  static int64_t Workspace(lapack_int m, lapack_int n, bool job_opt_compute_uv,
+                           bool job_opt_full_matrices);
 };
 
 lapack_int ComplexGesddRworkSize(int64_t m, int64_t n, int compute_uv);
@@ -104,10 +105,9 @@ struct ComplexGesdd {
   static FnType* fn;
   static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 
-  static int64_t Workspace(lapack_int m, lapack_int n,
-                           bool job_opt_compute_uv, bool job_opt_full_matrices);
+  static int64_t Workspace(lapack_int m, lapack_int n, bool job_opt_compute_uv,
+                           bool job_opt_full_matrices);
 };
-
 
 lapack_int SyevdWorkSize(int64_t n);
 lapack_int SyevdIworkSize(int64_t n);
@@ -174,6 +174,45 @@ struct ComplexGees {
                       lapack_int* info);
   static FnType* fn;
   static void Kernel(void* out, void** data, XlaCustomCallStatus*);
+};
+
+// Gehrd: Reduces a non-symmetric square matrix to upper Hessenberg form.
+template <typename T>
+struct Gehrd {
+  using FnType = void(lapack_int* n, lapack_int* ilo, lapack_int* ihi, T* a,
+                      lapack_int* lda, T* tau, T* work, lapack_int* lwork,
+                      lapack_int* info);
+
+  static FnType* fn;
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
+
+  static int64_t Workspace(lapack_int lda, lapack_int n, lapack_int ilo,
+                           lapack_int ihi);
+};
+
+template <typename T>
+struct real_type {
+  typedef T type;
+};
+template <typename T>
+struct real_type<std::complex<T>> {
+  typedef T type;
+};
+
+// Sytrd/Hetrd: Reduces a symmetric (Hermitian) square matrix to tridiagonal
+// form.
+template <typename T>
+struct Sytrd {
+  using FnType = void(char* uplo, lapack_int* n, T* a, lapack_int* lda,
+                      typename real_type<T>::type* d,
+                      typename real_type<T>::type* e,
+                      T* tau, T* work,
+                      lapack_int* lwork, lapack_int* info);
+
+  static FnType* fn;
+  static void Kernel(void* out, void** data, XlaCustomCallStatus*);
+
+  static int64_t Workspace(lapack_int lda, lapack_int n);
 };
 
 }  // namespace jax

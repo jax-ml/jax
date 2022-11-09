@@ -15,8 +15,8 @@ limitations under the License.
 
 #include <complex>
 
-#include "jaxlib/kernel_pybind11_helpers.h"
 #include "jaxlib/cpu/lapack_kernels.h"
+#include "jaxlib/kernel_pybind11_helpers.h"
 #include "include/pybind11/pybind11.h"
 
 namespace jax {
@@ -127,6 +127,27 @@ void GetLapackKernelsFromScipy() {
   ComplexGees<std::complex<double>>::fn =
       reinterpret_cast<ComplexGees<std::complex<double>>::FnType*>(
           lapack_ptr("zgees"));
+  Gehrd<float>::fn =
+      reinterpret_cast<Gehrd<float>::FnType*>(lapack_ptr("sgehrd"));
+  Gehrd<double>::fn =
+      reinterpret_cast<Gehrd<double>::FnType*>(lapack_ptr("dgehrd"));
+  Gehrd<std::complex<float>>::fn =
+      reinterpret_cast<Gehrd<std::complex<float>>::FnType*>(
+          lapack_ptr("cgehrd"));
+  Gehrd<std::complex<double>>::fn =
+      reinterpret_cast<Gehrd<std::complex<double>>::FnType*>(
+          lapack_ptr("zgehrd"));
+  Sytrd<float>::fn =
+      reinterpret_cast<Sytrd<float>::FnType*>(lapack_ptr("ssytrd"));
+  Sytrd<double>::fn =
+      reinterpret_cast<Sytrd<double>::FnType*>(lapack_ptr("dsytrd"));
+  Sytrd<std::complex<float>>::fn =
+      reinterpret_cast<Sytrd<std::complex<float>>::FnType*>(
+          lapack_ptr("chetrd"));
+  Sytrd<std::complex<double>>::fn =
+      reinterpret_cast<Sytrd<std::complex<double>>::FnType*>(
+          lapack_ptr("zhetrd"));
+
   initialized = true;
 }
 
@@ -185,6 +206,21 @@ py::dict Registrations() {
       EncapsulateFunction(ComplexGees<std::complex<float>>::Kernel);
   dict["lapack_zgees"] =
       EncapsulateFunction(ComplexGees<std::complex<double>>::Kernel);
+
+  dict["lapack_sgehrd"] = EncapsulateFunction(Gehrd<float>::Kernel);
+  dict["lapack_dgehrd"] = EncapsulateFunction(Gehrd<double>::Kernel);
+  dict["lapack_cgehrd"] =
+      EncapsulateFunction(Gehrd<std::complex<float>>::Kernel);
+  dict["lapack_zgehrd"] =
+      EncapsulateFunction(Gehrd<std::complex<double>>::Kernel);
+
+  dict["lapack_ssytrd"] = EncapsulateFunction(Sytrd<float>::Kernel);
+  dict["lapack_dsytrd"] = EncapsulateFunction(Sytrd<double>::Kernel);
+  dict["lapack_chetrd"] =
+      EncapsulateFunction(Sytrd<std::complex<float>>::Kernel);
+  dict["lapack_zhetrd"] =
+      EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
+
   return dict;
 }
 
@@ -211,6 +247,14 @@ PYBIND11_MODULE(_lapack, m) {
   m.def("syevd_iwork_size", &SyevdIworkSize);
   m.def("heevd_work_size", &HeevdWorkSize);
   m.def("heevd_rwork_size", &HeevdRworkSize);
+  m.def("lapack_sgehrd_workspace", &Gehrd<float>::Workspace);
+  m.def("lapack_dgehrd_workspace", &Gehrd<double>::Workspace);
+  m.def("lapack_cgehrd_workspace", &Gehrd<std::complex<float>>::Workspace);
+  m.def("lapack_zgehrd_workspace", &Gehrd<std::complex<double>>::Workspace);
+  m.def("lapack_ssytrd_workspace", &Sytrd<float>::Workspace);
+  m.def("lapack_dsytrd_workspace", &Sytrd<double>::Workspace);
+  m.def("lapack_chetrd_workspace", &Sytrd<std::complex<float>>::Workspace);
+  m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace);
 }
 
 }  // namespace
