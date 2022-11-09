@@ -1,27 +1,29 @@
 name: Cloud TPU nightly
+
 on:
   schedule:
-    - cron: "0 14 * * *" # daily at 7am PST
-  workflow_dispatch: # allows triggering the workflow run manually
+    - cron: "0 14 * * *"  # daily at 7am PST
+  workflow_dispatch:  # allows triggering the workflow run manually
+
 # This should also be set to read-only in the project settings, but it's nice to
 # document and enforce the permissions here.
 permissions:
   contents: read
+
 jobs:
   cloud-tpu-test:
     runs-on: [self-hosted, tpu, v4-8]
     strategy:
-      fail-fast: false # don't cancel all jobs on failure
+      fail-fast: false  # don't cancel all jobs on failure
       matrix:
-        python-version: ["3.10"] # TODO(jakevdp): update to 3.11 when available.
+        python-version: ["3.10"]  # TODO(jakevdp): update to 3.11 when available.
         jaxlib-version: [latest, nightly]
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
-      # mandates using a specific commit for non-Google actions. We use
-      # https://github.com/sethvargo/ratchet to pin specific versions.
-      - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
+      # mandates using a specific commit for non-Google actions.
+      - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # v3
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
+        uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # v4
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
@@ -50,6 +52,7 @@ jobs:
           python3 -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
           python3 -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
+
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
@@ -57,8 +60,8 @@ jobs:
       - name: Send chat on failure
         if: failure()
         run: |
-          curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
-          --header 'Content-Type: application/json' \
-          --data-raw "{
-          'text': '\"$GITHUB_WORKFLOW\" job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
-          }"
+            curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
+            --header 'Content-Type: application/json' \
+            --data-raw "{
+            'text': '\"$GITHUB_WORKFLOW\" job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
+            }"

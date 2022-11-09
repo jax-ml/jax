@@ -14,6 +14,7 @@
 """Tests for GlobalDeviceArray."""
 
 import os
+import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -28,9 +29,12 @@ from jax._src.util import prod, safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
 from jax.experimental import PartitionSpec as P
+from jax.experimental.serialize_executable import (
+    compile_and_serialize, load_compiled)
 from jax._src import sharding
 from jax._src import array
 from jax._src import prng
+from jax._src.lib import xla_extension_version
 from jax.experimental import maps
 
 from jax.config import config
@@ -898,6 +902,40 @@ class RngShardingTest(jtu.JaxTestCase):
     jax.config.update('jax_threefry_partitionable', False)
     y_ref2 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref2)
+
+  @unittest.skipIf(xla_extension_version < 106,
+                   'Pjit pickling requires newer jaxlib.')
+  def test_pickle_pjit_lower(self):
+    example_exe = jax.jit(lambda x: x * x).lower(
+        jax.core.ShapedArray(
+            (2, 2), dtype=np.float32)).compile()._executable.xla_executable
+
+    # Skip if CompileOptions is not available. This is true on
+    # CPU/GPU/Cloud TPU for now.
+    try:
+      example_exe.compile_options()
+    except Exception as e:
+      if str(e) == 'UNIMPLEMENTED: CompileOptions not available.':
+        raise unittest.SkipTest('Serialization not supported')
+      raise e
+
+    def fun(x):
+      return x * x
+
+    with maps.Mesh(np.array(jax.devices()), ('data',)):
+      lowered = pjit(
+          fun,
+          in_axis_resources=P('data'),
+          out_axis_resources=P(None, 'data'),
+      ).lower(jax.ShapedArray(shape=(8, 8), dtype=np.float32))
+
+    def verify_serialization(lowered):
+      serialized, in_tree, out_tree = compile_and_serialize(lowered)
+      compiled = load_compiled(serialized, in_tree, out_tree)
+      self.assertEqual(compiled.as_text(), lowered.compile().as_text())
+
+    verify_serialization(lowered)
+    verify_serialization(jax.jit(lambda x: x * x).lower(np.arange(100)))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
