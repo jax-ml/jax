@@ -62,6 +62,7 @@ from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
 from jax._src import prng
+from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
@@ -1046,18 +1047,24 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
     self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+    if mlir_api_version >= 37:
+      self.assertIsInstance(f.as_text(dialect="stablehlo"), str)
 
   def test_jit_lower_compiler_ir(self):
     f = self.jit(lambda x: x + 4).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+    if mlir_api_version >= 37:
+      self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_lower_trivial_compiler_ir(self):
     f = self.jit(lambda x: x).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+    if mlir_api_version >= 37:
+      self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_lower_no_prunning(self):
     compiled = self.jit(lambda x, y: x + y).lower(1., 2.).compile()
@@ -2612,6 +2619,10 @@ class APITest(jtu.JaxTestCase):
     mhlo = str(api.jit(e).lower(2.).compiler_ir(dialect="mhlo"))
     self.assertIn('mhlo.cosine', mhlo)
     self.assertIn('mhlo.sine', mhlo)
+    if mlir_api_version >= 37:
+      stablehlo = str(api.jit(e).lower(2.).compiler_ir(dialect="stablehlo"))
+      self.assertIn("stablehlo.cosine", stablehlo)
+      self.assertIn("stablehlo.sine", stablehlo)
 
   def test_staging_out_multi_replica(self):
     def f(x):

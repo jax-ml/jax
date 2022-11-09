@@ -44,7 +44,8 @@ from jax.lib import xla_client as xc
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src.lib import mlir
+from jax._src.lib.mlir import ir
+from jax.interpreters import mlir
 from jax.interpreters import xla
 
 
@@ -245,9 +246,18 @@ class XlaLowering(Lowering):
     """Return an HLO representation of this computation."""
     raise NotImplementedError("must override")
 
-  def mhlo(self) -> mlir.ir.Module:
+  def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""
     raise NotImplementedError("must override")
+
+  def stablehlo(self) -> ir.Module:
+    """Return a StableHLO representation of this computation."""
+    if xc.mlir_api_version < 37:
+      raise NotImplementedError("unsupported in older versions of jaxlib")
+    module_str = xla_extension.mlir.mhlo_to_stablehlo(
+        mlir.module_to_string(self.mhlo()))
+    with mlir.make_ir_context():
+      return ir.Module.parse(module_str)
 
   def compile(self) -> Executable:
     raise NotImplementedError("must override")
@@ -255,6 +265,8 @@ class XlaLowering(Lowering):
   def as_text(self, dialect: Optional[str] = None) -> str:
     if dialect is None or dialect == "mhlo":
       return str(self.mhlo())
+    elif dialect == "stablehlo":
+      return str(self.stablehlo())
     elif dialect == "hlo":
       return self.hlo().as_hlo_text()
     else:
@@ -263,6 +275,8 @@ class XlaLowering(Lowering):
   def compiler_ir(self, dialect: Optional[str] = None) -> Any:
     if dialect is None or dialect == "mhlo":
       return self.mhlo()
+    elif dialect == "stablehlo":
+      return self.stablehlo()
     elif dialect == "hlo":
       return self.hlo()
     else:
