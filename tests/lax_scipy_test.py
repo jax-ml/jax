@@ -357,6 +357,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lax_fun, args_maker, rtol=1E-8)
 
   @jtu.sample_product(
+    [dict(v=v, z=z, n_iter=n_iter)
+     for v, z, n_iter in zip(
+         [0, 1, 2, 3, 6], [0.01, 1.1, 11.4, 30.0, 100.6], [5, 20, 50, 80, 200]
+     )],
+  )
+  def testBesselJnDerivatives(self, v, z, n_iter):
+
+    def partial_lax_fun(z):
+      return lsp_special.bessel_jn(z, v=v, n_iter=n_iter)
+
+    jtu.check_grads(partial_lax_fun, z, order=1)
+
+  @jtu.sample_product(
     l_max=[1, 2, 3, 6],
     shape=[(5,), (10,)],
     dtype=float_dtypes,

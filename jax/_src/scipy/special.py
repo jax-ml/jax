@@ -641,6 +641,7 @@ def i1(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
 
+
 def _bessel_jn_scan_body_fun(carry, k):
   f0, f1, bs, z = carry
   f = 2.0 * (k + 1.0) * f1 / z - f0
@@ -661,7 +662,7 @@ def _bessel_jn_scan_body_fun(carry, k):
   return (f0, f1, bs, z), f
 
 
-def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
+def _bessel_jn_fun(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   f0 = _lax_const(z, 0.0)
   f1 = _lax_const(z, 1E-16)
   f = _lax_const(z, 0.0)
@@ -678,7 +679,39 @@ def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   return j_vals
 
 
+@partial(api.custom_jvp, nondiff_argnums=(1, 2))
 @partial(jit, static_argnames=["v", "n_iter"])
+def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
+  z = jnp.asarray(z)
+  z, = _promote_dtypes_inexact(z)
+  z_dtype = lax.dtype(z)
+  if dtypes.issubdtype(z_dtype, complex):
+    raise ValueError("complex input not supported.")
+
+  v = core.concrete_or_error(operator.index, v, 'Argument v of bessel_jn.')
+  n_iter = core.concrete_or_error(int, n_iter, 'Argument n_iter of bessel_jn.')
+
+  bessel_jn_fun = partial(_bessel_jn_fun, v=v, n_iter=n_iter)
+  for _ in range(z.ndim):
+    bessel_jn_fun = vmap(bessel_jn_fun)
+  return moveaxis(bessel_jn_fun(z), -1, 0)
+
+
+@_bessel_jn.defjvp
+def _bessel_jn_jvp(v, n_iter, primals, tangents):
+  z, = primals
+  z_dot, = tangents
+  jn_out = _bessel_jn(z, v=v+1, n_iter=n_iter)
+  primal_out = jn_out[:-1]
+  djn_dz = -jn_out[1:]
+  djn_dz.at[1:].add(jn_out[:-2])
+  djn_dz.at[0].add(-jn_out[1])
+  djn_dz *= 0.5
+  tangent_out = z_dot * djn_dz
+
+  return primal_out, tangent_out
+
+
 def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   """Bessel function of the first kind of integer order and real argument.
 
@@ -704,19 +737,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
     TypeError if `v` is not integer.
     ValueError if elements of array `z` are not float.
   """
-  z = jnp.asarray(z)
-  z, = _promote_dtypes_inexact(z)
-  z_dtype = lax.dtype(z)
-  if dtypes.issubdtype(z_dtype, complex):
-    raise ValueError("complex input not supported.")
-
-  v = core.concrete_or_error(operator.index, v, 'Argument v of bessel_jn.')
-  n_iter = core.concrete_or_error(int, n_iter, 'Argument n_iter of bessel_jn.')
-
-  bessel_jn_fun = partial(_bessel_jn, v=v, n_iter=n_iter)
-  for _ in range(z.ndim):
-    bessel_jn_fun = vmap(bessel_jn_fun)
-  return moveaxis(bessel_jn_fun(z), -1, 0)
+  return _bessel_jn(z, v=v, n_iter=n_iter)
 
 
 def _gen_recurrence_mask(
