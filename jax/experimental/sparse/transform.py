@@ -65,7 +65,6 @@ from jax.util import safe_map, safe_zip, split_list
 from jax._src.config import config
 from jax._src.lax.control_flow import _check_tree_and_avals
 from jax._src.numpy import lax_numpy
-from jax._src.util import canonicalize_axis
 from jax.experimental import sparse
 from jax.experimental.sparse import BCOO
 
@@ -622,22 +621,9 @@ def _concatenate_sparse(spenv, *spvalues, dimension):
 sparse_rules[lax.concatenate_p] = _concatenate_sparse
 
 def _squeeze_sparse(spenv, *spvalues, dimensions):
-  arr, = spvalues
-  dimensions = tuple(canonicalize_axis(dim, arr.ndim) for dim in dimensions)
-  if any(arr.shape[dim] != 1 for dim in dimensions):
-    raise ValueError("cannot select an axis to squeeze out which has size not equal to one, "
-                     f"got shape={arr.shape} and dimensions={dimensions}")
-  data = spenv.data(arr)
-  indices = spenv.indices(arr)
-  n_sparse = indices.shape[-1]
-  n_batch = indices.ndim - 2
-  batch_dims = tuple(d for d in dimensions if d < n_batch)
-  sparse_dims = np.array([i for i in range(n_sparse) if i + n_batch not in dimensions], dtype=int)
-  dense_dims = tuple(d - n_sparse + 1 for d in dimensions if d >= n_batch + n_sparse)
-  data_out = lax.squeeze(data, batch_dims + dense_dims)
-  indices_out = lax.squeeze(indices[..., sparse_dims], batch_dims)
-  out_shape = tuple(s for i, s in enumerate(arr.shape) if i not in dimensions)
-  return (spenv.sparse(out_shape, data_out, indices_out),)
+  arr, = spvalues_to_arrays(spenv, spvalues)
+  result = sparse.bcoo_squeeze(arr, dimensions=dimensions)
+  return arrays_to_spvalues(spenv, (result,))
 
 sparse_rules[lax.squeeze_p] = _squeeze_sparse
 

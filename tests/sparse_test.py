@@ -1959,6 +1959,21 @@ class BCOOTest(jtu.JaxTestCase):
     tol = {np.float32: 1E-6, np.float64: 1E-14}
     self.assertAllClose(result_dense, result_sparse, atol=tol, rtol=tol)
 
+  def test_bcoo_squeeze(self):
+    # more comprehensive tests in sparsify_test:testSparseSqueeze
+    rng = rand_sparse(self.rng())
+    shape = (1, 2, 1, 3, 4)
+    dimensions = (0, 2)
+    M = rng(shape, 'float32')
+    M_bcoo = sparse.BCOO.fromdense(M)
+
+    M2 = lax.squeeze(M, dimensions=dimensions)
+    M2_bcoo = sparse.bcoo_squeeze(M_bcoo, dimensions=dimensions)
+    M2_bcoo_jit = jax.jit(partial(sparse.bcoo_squeeze, dimensions=dimensions))(M_bcoo)
+
+    self.assertArraysEqual(M2, M2_bcoo.todense())
+    self.assertArraysEqual(M2, M2_bcoo_jit.todense())
+
   def test_bcoo_reshape_error(self):
     x = sparse.BCOO.fromdense(jnp.ones((2, 2, 3)), n_batch=1)
     with self.assertRaisesRegex(ValueError, ".*cannot mix batch and sparse dimensions.*"):
