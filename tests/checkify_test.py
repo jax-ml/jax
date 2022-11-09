@@ -643,6 +643,12 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertIn("division by zero", errs.get())
     self.assertIn("index 100", errs.get())
 
+  def test_checking_key_split_with_nan_check(self):
+    cf = checkify.checkify(
+        lambda k: jax.random.permutation(k, jnp.array([0, 1, 2])),
+        errors=checkify.float_checks)
+    cf(jax.random.PRNGKey(123))  # does not crash.
+
 
 class AssertPrimitiveTests(jtu.JaxTestCase):
 
