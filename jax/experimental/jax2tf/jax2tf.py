@@ -313,8 +313,8 @@ def convert(fun_jax: Callable,
     args_flat_tf, args_avals_flat = util.unzip2(args_and_avals)
 
     dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(args_avals_flat)
-    dim_values, _ = _interpret_fun_jax(get_dim_values_jax,
-                                       args_flat_tf, args_avals_flat, "")
+    dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
+                                       args_avals_flat, name_stack)
     shape_env = zip(dim_vars, dim_values)
 
     try:
