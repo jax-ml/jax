@@ -46,6 +46,7 @@ from jax._src.lib import xla_bridge
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import mhlo
 from jax._src.numpy.setops import _unique
+from jax._src.typing import Array
 from jax._src.util import canonicalize_axis
 
 
@@ -459,7 +460,7 @@ mlir.register_lowering(bcoo_extract_p, mlir.lower_fun(
 bcoo_transpose_p = core.Primitive('bcoo_transpose')
 bcoo_transpose_p.multiple_results = True
 
-def bcoo_transpose(mat, *, permutation: Sequence[int]):
+def bcoo_transpose(mat: BCOO, *, permutation: Sequence[int]) -> BCOO:
   """Transpose a BCOO-format array.
 
   Args:
@@ -474,10 +475,12 @@ def bcoo_transpose(mat, *, permutation: Sequence[int]):
   Returns:
     A BCOO-format array.
   """
-  return BCOO(_bcoo_transpose(mat.data, mat.indices, permutation=permutation, spinfo=mat._info),
-              shape=mat._info.shape, unique_indices=mat.unique_indices)
+  buffers = _bcoo_transpose(mat.data, mat.indices, permutation=permutation, spinfo=mat._info)
+  out_shape = tuple(mat.shape[p] for p in permutation)
+  return BCOO(buffers, shape=out_shape, unique_indices=mat.unique_indices)
 
-def _bcoo_transpose(data, indices, *, permutation: Sequence[int], spinfo: BCOOInfo):
+def _bcoo_transpose(data: Array, indices: Array, *,
+                    permutation: Sequence[int], spinfo: BCOOInfo) -> Tuple[Array, Array]:
   permutation = tuple(permutation)
   if permutation == tuple(range(len(spinfo.shape))):
     return data, indices

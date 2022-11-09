@@ -920,9 +920,7 @@ class BCOOTest(jtu.JaxTestCase):
     rng = self.rng()
     sprng = rand_sparse(rng)
     M = sprng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-    data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
+    M_bcoo = sparse.BCOO.fromdense(M)
 
     permutation = np.concatenate([
       rng.permutation(range(n_batch)),
@@ -930,9 +928,10 @@ class BCOOTest(jtu.JaxTestCase):
       rng.permutation(range(n_batch + n_sparse, len(shape)))]).astype(int)
 
     M_T = M.transpose(permutation)
-    trans = partial(sparse_bcoo._bcoo_transpose, spinfo=BCOOInfo(shape), permutation=permutation)
-    self.assertArraysEqual(M_T, sparse_bcoo._bcoo_todense(*trans(data, indices), spinfo=BCOOInfo(M_T.shape)))
-    self.assertArraysEqual(M_T, sparse_bcoo._bcoo_todense(*jit(trans)(data, indices), spinfo=BCOOInfo(M_T.shape)))
+    M_T_bcoo = sparse.bcoo_transpose(M_bcoo, permutation=permutation)
+    M_T_bcoo_jit = jit(partial(sparse.bcoo_transpose, permutation=permutation))(M_bcoo)
+    self.assertArraysEqual(M_T, M_T_bcoo.todense())
+    self.assertArraysEqual(M_T, M_T_bcoo_jit.todense())
 
     # test batched
     def trans(M):
