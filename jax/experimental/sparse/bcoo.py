@@ -1901,8 +1901,8 @@ def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
               indices_sorted=arr.indices_sorted, unique_indices=arr.unique_indices)
 
 
-def bcoo_slice(mat, *, start_indices: Sequence[int], limit_indices: Sequence[int],
-               strides: Optional[Sequence[int]]=None):
+def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequence[int],
+               strides: Optional[Sequence[int]] = None) -> BCOO:
   """Sparse implementation of {func}`jax.lax.slice`.
 
   Args:
@@ -1927,8 +1927,10 @@ def bcoo_slice(mat, *, start_indices: Sequence[int], limit_indices: Sequence[int
     strides = [1] * mat.ndim
   if len(start_indices) != len(limit_indices) != len(strides) != mat.ndim:
     raise ValueError(f"bcoo_slice: indices must have size mat.ndim={mat.ndim}")
-  if strides != [1] * mat.ndim:
-    raise NotImplementedError(f"non-unit strides; got {strides}")
+  if len(strides) != mat.ndim:
+    raise ValueError(f"len(strides) = {len(strides)}; expected {mat.ndim}")
+  if any(s <= 0 for s in strides):
+    raise ValueError(f"strides must be a sequence of positive integers; got {strides}")
 
   if not all(0 <= start <= end <= size
              for start, end, size in safe_zip(start_indices, limit_indices, mat.shape)):
@@ -1937,30 +1939,42 @@ def bcoo_slice(mat, *, start_indices: Sequence[int], limit_indices: Sequence[int
 
   start_batch, start_sparse, start_dense = split_list(start_indices, [mat.n_batch, mat.n_sparse])
   end_batch, end_sparse, end_dense = split_list(limit_indices, [mat.n_batch, mat.n_sparse])
+  stride_batch, stride_sparse, stride_dense = split_list(strides, [mat.n_batch, mat.n_sparse])
 
   data_slices = []
   index_slices = []
-  for i, (start, end) in enumerate(zip(start_batch, end_batch)):
-    data_slices.append(slice(None) if mat.data.shape[i] != mat.shape[i] else slice(start, end))
-    index_slices.append(slice(None) if mat.indices.shape[i] != mat.shape[i] else slice(start, end))
+  for i, (start, end, stride) in enumerate(zip(start_batch, end_batch, stride_batch)):
+    data_slices.append(slice(None) if mat.data.shape[i] != mat.shape[i] else slice(start, end, stride))
+    index_slices.append(slice(None) if mat.indices.shape[i] != mat.shape[i] else slice(start, end, stride))
   data_slices.append(slice(None))
   index_slices.extend([slice(None), slice(None)])
-  for i, (start, end) in enumerate(zip(start_dense, end_dense)):
-    data_slices.append(slice(start, end))
+  for i, (start, end, stride) in enumerate(zip(start_dense, end_dense, stride_dense)):
+    data_slices.append(slice(start, end, stride))
   new_data = mat.data[tuple(data_slices)]
   new_indices = mat.indices[tuple(index_slices)]
-  new_shape = [end - start for start, end in safe_zip(start_indices, limit_indices)]
+  new_shape = tuple(
+    (end - start + stride - 1) // stride
+    for start, end, stride in safe_zip(start_indices, limit_indices, strides))
+  _, new_shape_sparse, _ = split_list(new_shape, [mat.n_batch, mat.n_sparse])
 
   if mat.n_sparse:
     starts = jnp.expand_dims(jnp.array(start_sparse, dtype=new_indices.dtype), range(mat.n_batch + 1))
     ends = jnp.expand_dims(jnp.array(end_sparse, dtype=new_indices.dtype), range(mat.n_batch + 1))
-    sparse_shape = jnp.array(mat.shape[mat.n_batch: mat.n_batch + mat.n_sparse], dtype=new_indices.dtype)
+    strides_ = jnp.expand_dims(jnp.array(stride_sparse, dtype=new_indices.dtype), range(mat.n_batch + 1))
 
-    keep = jnp.all((new_indices >= starts) & (new_indices < ends), -1, keepdims=True)
-    new_indices = jnp.where(keep, new_indices - starts, sparse_shape)
+    keep = jnp.all((new_indices >= starts) & (new_indices < ends) &
+                   ((new_indices - starts) % strides_ == 0),
+                   axis=-1, keepdims=True)
+    new_indices = jnp.where(keep, (new_indices - starts + strides_ - 1) // strides_,
+                            (ends - starts + strides_ - 1) // strides_)
 
     keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
     new_data = jnp.where(keep_data, new_data, 0)
+
+    new_nse = np.prod(new_shape_sparse)
+    if mat.nse > new_nse:
+      new_data, new_indices = _bcoo_sum_duplicates(
+        new_data, new_indices, spinfo=BCOOInfo(shape=new_shape), nse=new_nse)
 
   return BCOO((new_data, new_indices), shape=new_shape)
 
