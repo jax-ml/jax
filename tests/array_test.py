@@ -613,10 +613,6 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr2, _ = create_array(shape, mpsharding, data)
     arr3, _ = create_array(shape, mpsharding, data)
 
-    min_device_address = min(buf.unsafe_buffer_pointer()
-                             for arr in (arr1, arr2, arr3)
-                             for buf in arr._arrays)
-
     # Delete one of them
     arr2.delete()
 
@@ -627,11 +623,10 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(arr1, data)
     self.assertArraysEqual(arr1 + arr3, data * 2)
 
-    # Check that defragmentation actually happened. TPU allocations grow down.
-    new_min_device_address = min(buf.unsafe_buffer_pointer()
-                                 for arr in (arr1, arr3)
-                                 for buf in arr._arrays)
-    self.assertGreater(new_min_device_address, min_device_address)
+    # TODO(skyewm): check that defragmentation actually happened. I originally
+    # thought to do this with unsafe_buffer_pointer(), but that's not always the
+    # device memory address. Other ideas include causing enough fragmentation to
+    # OOM, and exposing allocator stats in Python.
 
 
 @jtu.with_config(jax_array=True)
