@@ -1964,7 +1964,7 @@ def bcoo_slice(mat, *, start_indices: Sequence[int], limit_indices: Sequence[int
 
   return BCOO((new_data, new_indices), shape=new_shape)
 
-def bcoo_dynamic_slice(mat, start_indices: Sequence[Any], slice_sizes: Sequence[int]):
+def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Sequence[int]) -> BCOO:
   """Sparse implementation of {func}`jax.lax.dynamic_slice`.
 
   Args:
@@ -2028,10 +2028,15 @@ def bcoo_dynamic_slice(mat, start_indices: Sequence[Any], slice_sizes: Sequence[
     sparse_shape = jnp.expand_dims(sparse_shape, range(mat.n_batch + 1))
 
     keep = jnp.all((new_indices >= starts) & (new_indices < starts + sizes), -1, keepdims=True)
-    new_indices = jnp.where(keep, new_indices - starts, sparse_shape)
+    new_indices = jnp.where(keep, new_indices - starts, sizes)
 
     keep_data = lax.expand_dims(keep[..., 0], range(mat.n_batch + 1, mat.n_batch + 1 + mat.n_dense))
     new_data = jnp.where(keep_data, new_data, 0)
+
+    if mat.nse > np.prod(size_sparse):
+      new_nse = np.prod(size_sparse)
+      new_data, new_indices = _bcoo_sum_duplicates(
+        new_data, new_indices, spinfo=BCOOInfo(shape=new_shape), nse=new_nse)
 
   return BCOO((new_data, new_indices), shape=new_shape)
 
