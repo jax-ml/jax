@@ -335,9 +335,6 @@ def make_ir_context() -> ir.Context:
   context = ir.Context()
   mhlo.register_mhlo_dialect(context)
   chlo.register_dialect(context)
-  if mlir_api_version >= 37:
-    from jax._src.lib.mlir.dialects import stablehlo
-    stablehlo.register_dialect(context)
   return context
 
 
