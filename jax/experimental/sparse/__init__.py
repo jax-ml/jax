@@ -208,6 +208,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_sort_indices as bcoo_sort_indices,
     bcoo_sort_indices_p as bcoo_sort_indices_p,
     bcoo_spdot_general_p as bcoo_spdot_general_p,
+    bcoo_squeeze as bcoo_squeeze,
     bcoo_sum_duplicates as bcoo_sum_duplicates,
     bcoo_sum_duplicates_p as bcoo_sum_duplicates_p,
     bcoo_todense as bcoo_todense,
