@@ -13,18 +13,20 @@
 # limitations under the License.
 
 from functools import partial
+import operator
 from typing import cast, Any, List, Optional, Tuple
 
 import numpy as np
 import scipy.special as osp_special
 
 from jax._src import api
-from jax import jit
+from jax._src import dtypes
+from jax import jit, vmap
 from jax import lax, core
 from jax.interpreters import ad
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.lax_numpy import _promote_args_inexact
+from jax._src.numpy.lax_numpy import moveaxis, _promote_args_inexact, _promote_dtypes_inexact
 from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
 from jax._src.typing import Array, ArrayLike
@@ -638,6 +640,83 @@ def i1e(x: ArrayLike) -> Array:
 def i1(x: ArrayLike) -> Array:
   x, = _promote_args_inexact("i1", x)
   return lax.mul(lax.exp(lax.abs(x)), lax.bessel_i1e(x))
+
+def _bessel_jn_scan_body_fun(carry, k):
+  f0, f1, bs, z = carry
+  f = 2.0 * (k + 1.0) * f1 / z - f0
+
+  def true_fn_update_bs(u):
+    bs, f = u
+    return bs + 2.0 * f
+
+  def false_fn_update_bs(u):
+    bs, _ = u
+    return bs
+
+  bs = lax.cond(jnp.mod(k, 2) == 0, true_fn_update_bs,
+                false_fn_update_bs, operand=(bs, f))
+
+  f0 = f1
+  f1 = f
+  return (f0, f1, bs, z), f
+
+
+def _bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
+  f0 = _lax_const(z, 0.0)
+  f1 = _lax_const(z, 1E-16)
+  f = _lax_const(z, 0.0)
+  bs = _lax_const(z, 0.0)
+
+  (_, _, bs, _), j_vals = lax.scan(
+      f=_bessel_jn_scan_body_fun, init=(f0, f1, bs, z),
+      xs=lax.iota(lax.dtype(z), n_iter+1), reverse=True)
+
+  f = j_vals[0]  # Use the value at the last iteration.
+  j_vals = j_vals[:v+1]
+  j_vals = j_vals / (bs - f)
+
+  return j_vals
+
+
+@partial(jit, static_argnames=["v", "n_iter"])
+def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
+  """Bessel function of the first kind of integer order and real argument.
+
+  Reference:
+  Shanjie Zhang and Jian-Ming Jin. Computation of special functions.
+  Wiley-Interscience, 1996.
+
+  Args:
+    z: The sampling point(s) at which the Bessel function of the first kind are
+      computed.
+    v: The order (int) of the Bessel function.
+    n_iter: The number of iterations required for updating the function
+      values. As a rule of thumb, `n_iter` is the smallest nonnegative integer
+      that satisfies the condition
+      `int(0.5 * log10(6.28 + n_iter) - n_iter *  log10(1.36 + abs(z) / n_iter)) > 20`.
+      Details in `BJNDD` (https://people.sc.fsu.edu/~jburkardt/f77_src/special_functions/special_functions.f)
+
+  Returns:
+    An array of shape `(v+1, *z.shape)` containing the values of the Bessel
+    function of orders 0, 1, ..., v. The return type matches the type of `z`.
+
+  Raises:
+    TypeError if `v` is not integer.
+    ValueError if elements of array `z` are not float.
+  """
+  z = jnp.asarray(z)
+  z, = _promote_dtypes_inexact(z)
+  z_dtype = lax.dtype(z)
+  if dtypes.issubdtype(z_dtype, complex):
+    raise ValueError("complex input not supported.")
+
+  v = core.concrete_or_error(operator.index, v, 'Argument v of bessel_jn.')
+  n_iter = core.concrete_or_error(int, n_iter, 'Argument n_iter of bessel_jn.')
+
+  bessel_jn_fun = partial(_bessel_jn, v=v, n_iter=n_iter)
+  for _ in range(z.ndim):
+    bessel_jn_fun = vmap(bessel_jn_fun)
+  return moveaxis(bessel_jn_fun(z), -1, 0)
 
 
 def _gen_recurrence_mask(

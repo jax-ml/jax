@@ -318,6 +318,45 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
 
   @jtu.sample_product(
+    [dict(order=order, z=z, n_iter=n_iter)
+     for order, z, n_iter in zip(
+         [0, 1, 2, 3, 6], [0.01, 1.1, 11.4, 30.0, 100.6], [5, 20, 50, 80, 200]
+     )],
+  )
+  def testBesselJn(self, order, z, n_iter):
+    def lax_fun(z):
+      return lsp_special.bessel_jn(z, v=order, n_iter=n_iter)
+
+    def scipy_fun(z):
+      vals = [osp_special.jv(v, z) for v in range(order+1)]
+      return np.array(vals)
+
+    args_maker = lambda : [z]
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1E-6)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1E-8)
+
+  @jtu.sample_product(
+    order=[3, 4],
+    shape=[(2,), (3,), (4,), (3, 5), (2, 2, 3)],
+    dtype=float_dtypes,
+  )
+  def testBesselJnRandomPositiveZ(self, order, shape, dtype):
+    rng = jtu.rand_default(self.rng(), scale=1)
+    points = jnp.abs(rng(shape, dtype))
+
+    args_maker = lambda: [points]
+
+    def lax_fun(z):
+      return lsp_special.bessel_jn(z, v=order, n_iter=15)
+
+    def scipy_fun(z):
+      vals = [osp_special.jv(v, z) for v in range(order+1)]
+      return np.stack(vals, axis=0)
+
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1E-6)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=1E-8)
+
+  @jtu.sample_product(
     l_max=[1, 2, 3, 6],
     shape=[(5,), (10,)],
     dtype=float_dtypes,
