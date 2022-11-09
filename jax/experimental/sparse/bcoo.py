@@ -1860,10 +1860,10 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
     sparse_shape = tuple(mat.shape[mat.n_batch + i] for i in sparse_perm)
     flat_indices = jnp.ravel_multi_index(index_cols, dims=sparse_shape, mode='clip')
     with jax.numpy_rank_promotion('allow'):
-      oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:], dtype=indices.dtype)).any(-1)
+      oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:], dtype=indices.dtype)).any(-1, keepdims=True)
     new_index_cols = jnp.unravel_index(flat_indices, sparse_sizes)
     indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
-    indices = indices.at[oob_indices].set(jnp.array(sparse_sizes, dtype=indices.dtype))
+    indices = jnp.where(oob_indices, jnp.array(sparse_sizes, dtype=indices.dtype), indices)
 
   return BCOO((data, indices), shape=new_sizes)
 

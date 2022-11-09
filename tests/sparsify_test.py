@@ -358,8 +358,10 @@ class SparsifyTest(jtu.JaxTestCase):
 
     arr2 = arr.reshape(new_shape)
     arr2_sparse = arr_sparse.reshape(new_shape)
+    arr2_sparse_jit = jax.jit(lambda x: x.reshape(new_shape))(arr_sparse)
 
     self.assertArraysEqual(arr2, arr2_sparse.todense())
+    self.assertArraysEqual(arr2, arr2_sparse_jit.todense())
 
   @jtu.sample_product(
     [dict(shape=shape, new_shape=new_shape, n_batch=n_batch, n_dense=n_dense,
