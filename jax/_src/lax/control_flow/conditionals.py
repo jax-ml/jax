@@ -337,10 +337,17 @@ def _bcast_select_n(pred, *cases):
 def _cond_batching_rule(axis_size, axis_name, main_type, args, dims, branches, linear):
   index, *ops = args
   index_dim, *op_dims = dims
+  # TODO(sharadmv): clean this up by adding a specific blocklist
   if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError(
-        "State effect not supported in cond vmap.")
+        "State effect not supported in vmap-of-cond.")
+  from jax._src.callback import _IOEffect, _OrderedIOEffect
+  if any(eff in branch.effects for eff in [_IOEffect, _OrderedIOEffect]
+      for branch in branches):
+    raise NotImplementedError(
+        "IO effect not supported in vmap-of-cond.")
+
 
   if index_dim is not batching.not_mapped:
     # Convert to a lax.select. While we could get away with not broadcasting

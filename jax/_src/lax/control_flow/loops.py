@@ -1143,6 +1143,12 @@ def _while_loop_abstract_eval(*args, cond_jaxpr, body_jaxpr, **kwargs):
 def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
                               cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
+  from jax._src.callback import _IOEffect, _OrderedIOEffect
+  if any(eff in branch.effects for eff in [_IOEffect, _OrderedIOEffect]
+      for branch in [body_jaxpr, cond_jaxpr]):
+    raise NotImplementedError(
+        "IO effect not supported in vmap-of-while.")
+
   orig_batched = [d is not batching.not_mapped for d in dims]
   cconst_bat, bconst_bat, init_bat = split_list(orig_batched, [cond_nconsts, body_nconsts])
   cconsts, bconsts, init = split_list(args, [cond_nconsts, body_nconsts])
