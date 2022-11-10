@@ -4367,11 +4367,12 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
 def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
   _check_arraylike("lcm", x1, x2)
   x1, x2 = _promote_dtypes(x1, x2)
+  x1, x2 = abs(x1), abs(x2)
   if not issubdtype(_dtype(x1), integer):
     raise ValueError("Arguments to jax.numpy.lcm must be integers.")
   d = gcd(x1, x2)
   return where(d == 0, _lax_const(d, 0),
-               abs(multiply(x1, floor_divide(x2, d))))
+               multiply(x1, floor_divide(x2, d)))
 
 
 @_wraps(np.extract)
