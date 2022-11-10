@@ -2315,6 +2315,44 @@ class BCSRTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  def test_bcsr_dense_round_trip_batched(self, shape, dtype, n_batch):
+    n_sparse = 2
+    n_dense = len(shape) - n_sparse - n_batch
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
+                                             n_dense=n_dense)
+
+    fromdense = partial(sparse_bcsr._bcsr_fromdense, nse=nse, n_batch=0,
+                        n_dense=n_dense)
+    todense = partial(sparse_bcsr._bcsr_todense, shape=shape)
+
+    for _ in range(n_batch):
+      fromdense = jax.vmap(fromdense)
+      todense = jax.vmap(todense)
+
+    data, indices, indptr = fromdense(M)
+
+    self.assertEqual(data.dtype, dtype)
+    self.assertEqual(data.shape,
+                     shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:])
+    self.assertEqual(indices.dtype, jnp.int32)
+    self.assertEqual(indices.shape, shape[:n_batch] + (nse,))
+    self.assertEqual(indptr.dtype, jnp.int32)
+    self.assertEqual(indptr.shape, shape[:n_batch] + (shape[n_batch] + 1,))
+
+    self.assertArraysEqual(M, todense(data, indices, indptr))
+    args_maker_todense = lambda: [data, indices, indptr]
+    self._CompileAndCheck(todense, args_maker_todense)
+
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch)
+      for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(len(shape) - 1)
+    ],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
   def test_bcsr_extract(self, shape, dtype, n_batch):
     n_dense = len(shape) - n_batch - 2
     rng = rand_sparse(self.rng())

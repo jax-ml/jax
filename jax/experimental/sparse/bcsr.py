@@ -179,6 +179,21 @@ def _bcoo_fromdense_abstract_eval(mat, *, nse, n_batch, n_dense, index_dtype):
           core.ShapedArray(indptr_shape, index_dtype))
 
 
+def _bcsr_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch,
+                                  n_dense, index_dtype):
+  M, = batched_args
+  if batch_dims != (0,):
+    raise NotImplementedError(f"batch_dims={batch_dims}")
+  new_n_batch = n_batch + 1
+  n_sparse = M.ndim - n_dense - new_n_batch
+  if n_sparse != 2:
+    raise ValueError("_bcsr_fromdense_batching_rule: must have 2 sparse "
+                     f"dimensions but {n_sparse} is given.")
+  return _bcsr_fromdense(M, nse=nse, n_batch=new_n_batch, n_dense=n_dense,
+                         index_dtype=index_dtype), (0, 0, 0)
+
+
+batching.primitive_batchers[bcsr_fromdense_p] = _bcsr_fromdense_batching_rule
 mlir.register_lowering(bcsr_fromdense_p, mlir.lower_fun(
     _bcsr_fromdense_impl, multiple_results=True))
 
@@ -229,6 +244,20 @@ def _bcsr_todense_abstract_eval(data, indices, indptr, *, shape):
   return core.ShapedArray(shape, data.dtype)
 
 
+def _bcsr_todense_batching_rule(batched_args, batch_dims, *, shape):
+  data, indices, indptr = batched_args
+  if any(b not in [0, None] for b in batch_dims):
+    raise NotImplementedError(f"batch_dims={batch_dims}. "
+                              "Only 0 and None are supported.")
+  if batch_dims[0] is None:
+    data = data[None, ...]
+  if batch_dims[1] is None:
+    indices = indices[None, ...]
+  if batch_dims[2] is None:
+    indptr = indptr[None, ...]
+  return _bcsr_todense(data, indices, indptr, shape=shape), 0
+
+batching.primitive_batchers[bcsr_todense_p] = _bcsr_todense_batching_rule
 mlir.register_lowering(bcsr_todense_p, mlir.lower_fun(
     _bcsr_todense_impl, multiple_results=False))
 
