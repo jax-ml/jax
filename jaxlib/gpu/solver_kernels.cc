@@ -973,5 +973,107 @@ void Gesvdj(gpuStream_t stream, void** buffers, const char* opaque,
 
 #endif  // JAX_GPU_CUDA
 
+// sytrd/hetrd: symmetric (Hermitian) tridiagonal reduction
+
+static absl::Status Sytrd_(gpuStream_t stream, void** buffers,
+                           const char* opaque, size_t opaque_len) {
+  auto s = UnpackDescriptor<SytrdDescriptor>(opaque, opaque_len);
+  JAX_RETURN_IF_ERROR(s.status());
+  const SytrdDescriptor& d = **s;
+  auto h = SolverHandlePool::Borrow(stream);
+  JAX_RETURN_IF_ERROR(h.status());
+  auto& handle = *h;
+  if (buffers[1] != buffers[0]) {
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
+        buffers[1], buffers[0],
+        SizeOfSolverType(d.type) * static_cast<std::int64_t>(d.batch) *
+            static_cast<std::int64_t>(d.n) * static_cast<std::int64_t>(d.lda),
+        gpuMemcpyDeviceToDevice, stream)));
+  }
+
+  int* info = static_cast<int*>(buffers[5]);
+  void* workspace = buffers[6];
+  switch (d.type) {
+    case SolverType::F32: {
+      float* a = static_cast<float*>(buffers[1]);
+      float* d_out = static_cast<float*>(buffers[2]);
+      float* e_out = static_cast<float*>(buffers[3]);
+      float* tau = static_cast<float*>(buffers[4]);
+      for (int i = 0; i < d.batch; ++i) {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnSsytrd(
+            handle.get(), d.uplo, d.n, a, d.lda, d_out, e_out, tau,
+            static_cast<float*>(workspace), d.lwork, info)));
+        a += d.lda * d.n;
+        d_out += d.n;
+        e_out += d.n - 1;
+        tau += d.n - 1;
+        ++info;
+      }
+      break;
+    }
+    case SolverType::F64: {
+      double* a = static_cast<double*>(buffers[1]);
+      double* d_out = static_cast<double*>(buffers[2]);
+      double* e_out = static_cast<double*>(buffers[3]);
+      double* tau = static_cast<double*>(buffers[4]);
+      for (int i = 0; i < d.batch; ++i) {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnDsytrd(
+            handle.get(), d.uplo, d.n, a, d.lda, d_out, e_out, tau,
+            static_cast<double*>(workspace), d.lwork, info)));
+        a += d.lda * d.n;
+        d_out += d.n;
+        e_out += d.n - 1;
+        tau += d.n - 1;
+        ++info;
+      }
+      break;
+    }
+    case SolverType::C64: {
+      gpuComplex* a = static_cast<gpuComplex*>(buffers[1]);
+      float* d_out = static_cast<float*>(buffers[2]);
+      float* e_out = static_cast<float*>(buffers[3]);
+      gpuComplex* tau = static_cast<gpuComplex*>(buffers[4]);
+      for (int i = 0; i < d.batch; ++i) {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnChetrd(
+            handle.get(), d.uplo, d.n, a, d.lda, d_out, e_out, tau,
+            static_cast<gpuComplex*>(workspace), d.lwork, info)));
+        a += d.lda * d.n;
+        d_out += d.n;
+        e_out += d.n - 1;
+        tau += d.n - 1;
+        ++info;
+      }
+      break;
+    }
+    case SolverType::C128: {
+      gpuDoubleComplex* a = static_cast<gpuDoubleComplex*>(buffers[1]);
+      double* d_out = static_cast<double*>(buffers[2]);
+      double* e_out = static_cast<double*>(buffers[3]);
+      gpuDoubleComplex* tau = static_cast<gpuDoubleComplex*>(buffers[4]);
+      for (int i = 0; i < d.batch; ++i) {
+        JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpusolverDnZhetrd(
+            handle.get(), d.uplo, d.n, a, d.lda, d_out, e_out, tau,
+            static_cast<gpuDoubleComplex*>(workspace), d.lwork, info)));
+        a += d.lda * d.n;
+        d_out += d.n;
+        e_out += d.n - 1;
+        tau += d.n - 1;
+        ++info;
+      }
+      break;
+    }
+  }
+  return absl::OkStatus();
+}
+
+void Sytrd(gpuStream_t stream, void** buffers, const char* opaque,
+           size_t opaque_len, XlaCustomCallStatus* status) {
+  auto s = Sytrd_(stream, buffers, opaque, opaque_len);
+  if (!s.ok()) {
+    XlaCustomCallStatusSetFailure(status, std::string(s.message()).c_str(),
+                                  s.message().length());
+  }
+}
+
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

@@ -513,6 +513,41 @@ std::pair<int, py::bytes> BuildGesvdjDescriptor(const py::dtype& dtype,
 
 #endif  // JAX_GPU_CUDA
 
+// Returns the workspace size and a descriptor for a geqrf operation.
+std::pair<int, py::bytes> BuildSytrdDescriptor(const py::dtype& dtype,
+                                               bool lower, int b, int n) {
+  SolverType type = DtypeToSolverType(dtype);
+  auto h = SolverHandlePool::Borrow();
+  JAX_THROW_IF_ERROR(h.status());
+  auto& handle = *h;
+  int lwork;
+  gpusolverFillMode_t uplo =
+      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
+  switch (type) {
+    case SolverType::F32:
+      JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusolverDnSsytrd_bufferSize(
+          handle.get(), uplo, n, /*A=*/nullptr, /*lda=*/n, /*D=*/nullptr,
+          /*E=*/nullptr, /*tau=*/nullptr, &lwork)));
+      break;
+    case SolverType::F64:
+      JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusolverDnDsytrd_bufferSize(
+          handle.get(), uplo, n, /*A=*/nullptr, /*lda=*/n, /*D=*/nullptr,
+          /*E=*/nullptr, /*tau=*/nullptr, &lwork)));
+      break;
+    case SolverType::C64:
+      JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusolverDnChetrd_bufferSize(
+          handle.get(), uplo, n, /*A=*/nullptr, /*lda=*/n, /*D=*/nullptr,
+          /*E=*/nullptr, /*tau=*/nullptr, &lwork)));
+      break;
+    case SolverType::C128:
+      JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpusolverDnZhetrd_bufferSize(
+          handle.get(), uplo, n, /*A=*/nullptr, /*lda=*/n, /*D=*/nullptr,
+          /*E=*/nullptr, /*tau=*/nullptr, &lwork)));
+      break;
+  }
+  return {lwork, PackDescriptor(SytrdDescriptor{type, uplo, b, n, n, lwork})};
+}
+
 py::dict Registrations() {
   py::dict dict;
   dict[JAX_GPU_PREFIX "solver_potrf"] = EncapsulateFunction(Potrf);
@@ -522,6 +557,7 @@ py::dict Registrations() {
   dict[JAX_GPU_PREFIX "solver_syevd"] = EncapsulateFunction(Syevd);
   dict[JAX_GPU_PREFIX "solver_syevj"] = EncapsulateFunction(Syevj);
   dict[JAX_GPU_PREFIX "solver_gesvd"] = EncapsulateFunction(Gesvd);
+  dict[JAX_GPU_PREFIX "solver_sytrd"] = EncapsulateFunction(Sytrd);
 
 #ifdef JAX_GPU_CUDA
   dict["cusolver_csrlsvqr"] = EncapsulateFunction(Csrlsvqr);
@@ -539,6 +575,7 @@ PYBIND11_MODULE(_solver, m) {
   m.def("build_syevd_descriptor", &BuildSyevdDescriptor);
   m.def("build_syevj_descriptor", &BuildSyevjDescriptor);
   m.def("build_gesvd_descriptor", &BuildGesvdDescriptor);
+  m.def("build_sytrd_descriptor", &BuildSytrdDescriptor);
 #ifdef JAX_GPU_CUDA
   m.def("build_csrlsvqr_descriptor", &BuildCsrlsvqrDescriptor);
   m.def("build_gesvdj_descriptor", &BuildGesvdjDescriptor);

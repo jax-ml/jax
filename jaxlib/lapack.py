@@ -708,11 +708,11 @@ def sytrd_mhlo(dtype, a, *, lower):
   elif dtype == np.complex64:
     fn = b"lapack_chetrd"
     lwork = _lapack.lapack_chetrd_workspace(n, n)
-    diag_type = ir.ComplexType.get(ir.F32Type.get())
+    diag_type = ir.F32Type.get()
   elif dtype == np.complex128:
     fn = b"lapack_zhetrd"
     lwork = _lapack.lapack_zhetrd_workspace(n, n)
-    diag_type = ir.ComplexType.get(ir.F64Type.get())
+    diag_type = ir.F64Type.get()
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 

@@ -43,6 +43,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 from jax._src.lib import lapack
 from jax._src.lib import mlir_api_version
+from jax._src.lib import version as jaxlib_version
 
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
@@ -1929,6 +1930,8 @@ ad.primitive_jvps[schur_p] = _schur_jvp_rule
 def hessenberg(a: ArrayLike) -> Tuple[Array, Array]:
   """Reduces a square matrix to upper Hessenberg form.
 
+  Currently implemented on CPU only.
+
   Args:
     a: A floating point or complex square matrix or batch of matrices.
 
@@ -1942,13 +1945,15 @@ def hessenberg(a: ArrayLike) -> Tuple[Array, Array]:
   return hessenberg_p.bind(a)
 
 def _hessenberg_abstract_eval(a):
+  if a.dtype not in (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128):
+    raise TypeError("hessenberg requires a.dtype to be float32, float64, "
+                    f"complex64, or complex128, got {a.dtype}.")
   if a.ndim < 2:
-    msg = "hessenberg requires a.ndim to be at least 2, got {}."
-    raise TypeError(msg.format(a.ndim))
+    raise TypeError("hessenberg requires a.ndim to be at least 2, got "
+                    f"{a.ndim}.")
   if a.shape[-1] != a.shape[-2]:
-    msg = ("hessenberg requires the last two dimensions of a to be equal "
-           "in size, got a.shape of {}.")
-    raise TypeError(msg.format(a.shape))
+    raise TypeError("hessenberg requires the last two dimensions of a to be "
+                    f"equal in size, got a.shape of {a.shape}.")
   return [a, ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype)]
 
 hessenberg_p = Primitive("hessenberg")
@@ -1995,8 +2000,11 @@ mlir.register_lowering(hessenberg_p, _hessenberg_cpu_mhlo, platform='cpu')
 
 # tridiagonal: Upper Hessenberg reduction
 
-def tridiagonal(a: ArrayLike, *, lower=True) -> Tuple[Array, Array]:
+def tridiagonal(a: ArrayLike, *, lower=True
+               ) -> Tuple[Array, Array, Array, Array]:
   """Reduces a symmetric/Hermitian matrix to tridiagonal form.
+
+  Currently implemented on CPU and GPU only.
 
   Args:
     a: A floating point or complex matrix or batch of matrices.
@@ -2004,37 +2012,49 @@ def tridiagonal(a: ArrayLike, *, lower=True) -> Tuple[Array, Array]:
       The other triangle is ignored and not accessed.
 
   Returns:
-  A ``(a, taus)`` pair. If ``lower=True``, the diagonal and first subdiagonal of
+  A ``(a, d, e, taus)`` pair. If ``lower=True``, the diagonal and first subdiagonal of
   matrix (or batch of matrices) ``a`` contain the tridiagonal representation,
   and elements below the first subdiagonal contain the elementary Householder
-  reflectors. If ``lower=False`` the diagonal and first superdiagonal of the
+  reflectors, where additionally ``d`` contains the diagonal of the matrix and ``e`` contains
+  the first subdiagonal.If ``lower=False`` the diagonal and first superdiagonal of the
   matrix contains the tridiagonal representation, and elements above the first
-  superdiagonal contain the elementary Householder reflectors.
-  ``taus`` contains the scalar factors of the elementary Householder
-  reflectors.
+  superdiagonal contain the elementary Householder reflectors, where
+  additionally ``d`` contains the diagonal of the matrix and ``e`` contains the
+  first superdiagonal. ``taus`` contains the scalar factors of the elementary
+  Householder reflectors.
   """
-  arr, taus, info = tridiagonal_p.bind(jnp.asarray(a), lower=lower)
+  arr, d, e, taus, info = tridiagonal_p.bind(jnp.asarray(a), lower=lower)
   nan = arr.dtype.type(jnp.nan)
   if jnp.issubdtype(arr.dtype, np.complexfloating):
     nan = nan + arr.dtype.type(jnp.nan * 1j)
   arr = jnp.where((info == 0)[..., None, None], arr, nan)
+  real_type = jnp.finfo(arr.dtype).dtype.type
+  d = jnp.where((info == 0)[..., None], d, real_type(jnp.nan))
+  e = jnp.where((info == 0)[..., None], e, real_type(jnp.nan))
   taus = jnp.where((info == 0)[..., None], taus, nan)
-  return arr, taus
+  return arr, d, e, taus
 
 def _tridiagonal_abstract_eval(a, *, lower):
+  if a.dtype not in (jnp.float32, jnp.float64, jnp.complex64, jnp.complex128):
+    raise TypeError("tridiagonal requires a.dtype to be float32, float64, "
+                    f"complex64, or complex128, got {a.dtype}.")
   if a.ndim < 2:
-    msg = "tridiagonal requires a.ndim to be at least 2, got {}."
-    raise TypeError(msg.format(a.ndim))
+    raise TypeError("tridiagonal requires a.ndim to be at least 2, got "
+                    f"{a.ndim}.")
   if a.shape[-1] != a.shape[-2]:
-    msg = ("tridiagonal requires the last two dimensions of a to be equal "
-           "in size, got a.shape of {}.")
-    raise TypeError(msg.format(a.shape))
+    raise TypeError("tridiagonal requires the last two dimensions of a to be "
+                    f"equal in size, got a.shape of {a.shape}.")
   if a.shape[-1] == 0:
-    msg = ("tridiagonal requires the last two dimensions of a to be non-zero, "
-           "got a.shape of {}.")
-    raise TypeError(msg.format(a.shape))
-  return [a, ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype),
-          ShapedArray(a.shape[:-2], np.int32)]
+    raise TypeError("tridiagonal requires the last two dimensions of a to be "
+                    f"non-zero, got a.shape of {a.shape}.")
+  real_dtype = jnp.finfo(a.dtype).dtype
+  return [
+      a,
+      ShapedArray(a.shape[:-2] + (a.shape[-1],), real_dtype),
+      ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), real_dtype),
+      ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype),
+      ShapedArray(a.shape[:-2], np.int32)
+  ]
 
 tridiagonal_p = Primitive("tridiagonal")
 tridiagonal_p.def_impl(partial(xla.apply_primitive, tridiagonal_p))
@@ -2049,18 +2069,21 @@ def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
 
 batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
 
-def _tridiagonal_cpu_mhlo(ctx, a, *, lower):
+def _tridiagonal_cpu_gpu_mhlo(sytrd_impl, ctx, a, *, lower):
   a_aval, = ctx.avals_in
-  # TODO(phawkins): remove this test after jaxlib 0.3.25 is the minimum.
-  if not hasattr(lapack, "sytrd_mhlo"):
-    raise RuntimeError("Tridiagonal reduction on CPU requires jaxlib 0.3.25 or "
-                       "newer")
+  a, d, e, taus, info = sytrd_impl(a_aval.dtype, a, lower=lower)
+  return a, d, e, taus, info
 
-  a, d, e, taus, info = lapack.sytrd_mhlo(a_aval.dtype, a, lower=lower)
-  del d, e
-  return a, taus, info
-
-mlir.register_lowering(tridiagonal_p, _tridiagonal_cpu_mhlo, platform='cpu')
+if jaxlib_version >= (0, 3, 25):
+  mlir.register_lowering(
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, lapack.sytrd_mhlo),
+      platform='cpu')
+  mlir.register_lowering(
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, gpu_solver.cuda_sytrd),
+      platform='cuda')
+  mlir.register_lowering(
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, gpu_solver.rocm_sytrd),
+      platform='rocm')
 
 
 

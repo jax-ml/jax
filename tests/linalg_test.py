@@ -991,7 +991,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     p, l, u = jsp.linalg.lu(x)
     self.assertAllClose(x, np.matmul(p, np.matmul(l, u)),
                         rtol={np.float32: 1e-3, np.float64: 1e-12,
-                              np.complex64: 1e-3, np.complex128: 1e-12})
+                              np.complex64: 1e-3, np.complex128: 1e-12},
+                        atol={np.float32: 1e-5})
     self._CompileAndCheck(jsp.linalg.lu, args_maker)
 
   def testLuOfSingularMatrix(self):
@@ -1307,19 +1308,20 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_func, args_maker)
 
   @jtu.sample_product(
-      shape=[(1, 1), (4, 4), (10, 10)],
+      shape=[(1, 1), (2, 2, 2), (4, 4), (10, 10), (2, 5, 5)],
       dtype=float_types + complex_types,
       lower=[False, True],
   )
   @unittest.skipIf(jaxlib_version < (0, 3, 25), "Test requires jaxlib 0.3.25")
-  @jtu.skip_on_devices("gpu", "tpu")
+  @jtu.skip_on_devices("tpu")
   def testTridiagonal(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
     def jax_func(a):
       return lax.linalg.tridiagonal(a, lower=lower)
 
-    @partial(np.vectorize, otypes=(dtype, dtype),
-            signature='(n,n)->(n,n),(k)')
+    real_dtype = jnp.finfo(dtype).dtype
+    @partial(np.vectorize, otypes=(dtype, real_dtype, real_dtype, dtype),
+            signature='(n,n)->(n,n),(n),(k),(k)')
     def sp_func(a):
       if dtype == np.float32:
         c, d, e, tau, info = scipy.linalg.lapack.ssytrd(a, lower=lower)
@@ -1331,12 +1333,11 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         c, d, e, tau, info = scipy.linalg.lapack.zhetrd(a, lower=lower)
       else:
         assert False, dtype
-      del d, e
       assert info == 0
-      return c, tau
+      return c, d, e, tau
 
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-5, atol=1e-5,
+    self._CheckAgainstNumpy(sp_func, jax_func, args_maker, rtol=1e-4, atol=1e-4,
                             check_dtypes=False)
 
 

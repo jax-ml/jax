@@ -468,3 +468,75 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
 
 cuda_gesvd = partial(_gesvd_mhlo, "cu", _cusolver, True)
 rocm_gesvd = partial(_gesvd_mhlo, "hip", _hipsolver, False)
+
+
+def _sytrd_mhlo(platform, gpu_solver, dtype, a, *, lower):
+  """sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form."""
+  a_type = ir.RankedTensorType(a.type)
+  dims = a_type.shape
+  assert len(dims) >= 2
+  m, n = dims[-2:]
+  assert m == n, (m, n)
+  batch_dims = tuple(dims[:-2])
+  num_bd = len(batch_dims)
+  b = 1
+  for d in batch_dims:
+    b *= d
+
+  lwork, opaque = gpu_solver.build_sytrd_descriptor(dtype, lower, b, n)
+  if np.issubdtype(dtype, np.floating):
+    diag_type = a_type.element_type
+  elif dtype == np.complex64:
+    diag_type = ir.F32Type.get()
+  elif dtype == np.complex128:
+    diag_type = ir.F64Type.get()
+  else:
+    raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  i32_type = ir.IntegerType.get_signless(32)
+  a, d, e, taus, info, _ = custom_call(
+      f"{platform}solver_sytrd",
+      [
+        a.type,
+        ir.RankedTensorType.get(batch_dims + (n,), diag_type),
+        ir.RankedTensorType.get(batch_dims + (n - 1,), diag_type),
+        ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+        ir.RankedTensorType.get(batch_dims, i32_type),
+        ir.RankedTensorType.get([lwork], a_type.element_type),
+      ],
+      [a],
+      backend_config=opaque,
+      operand_layouts=[layout],
+      result_layouts=[
+        layout,
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+        [0],
+      ],
+      operand_output_aliases={0: 0},
+  )
+  # Workaround for NVIDIA partners bug #3865118: sytrd returns an incorrect "1"
+  # in the first element of the superdiagonal in the `a` matrix in the
+  # lower=False case. The correct result is returned in the `e` vector so we can
+  # simply copy it back to where it needs to be:
+  intattr = lambda xs: ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
+  if not lower and platform == "cu" and m > 1:
+    start = (0,) * len(batch_dims) + (0,)
+    end = batch_dims + (1,)
+    s = mhlo.SliceOp(e, intattr(start), intattr(end), intattr([1] * len(start)))
+    s_type = ir.RankedTensorType.get(batch_dims + (1, 1), diag_type)
+    s = mhlo.BroadcastInDimOp(s_type, s, intattr(range(len(dims) - 1)))
+    # The diagonals are always real; convert to complex if needed.
+    s = mhlo.ConvertOp(
+        ir.RankedTensorType.get(s_type.shape, a_type.element_type), s)
+    offsets = tuple(mhlo.ConstantOp(intattr(i))
+                    for i in ((0,) * len(batch_dims) + (0, 1)))
+    a = mhlo.DynamicUpdateSliceOp(a.type, a, s, offsets).result
+
+  return a, d, e, taus, info
+
+cuda_sytrd = partial(_sytrd_mhlo, "cu", _cusolver)
+rocm_sytrd = partial(_sytrd_mhlo, "hip", _hipsolver)

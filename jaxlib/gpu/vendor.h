@@ -185,6 +185,14 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
   cusolverDnCgesvd_bufferSize(h, m, n, lwork)
 #define gpusolverDnZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork) \
   cusolverDnZgesvd_bufferSize(h, m, n, lwork)
+#define gpusolverDnSsytrd_bufferSize cusolverDnSsytrd_bufferSize
+#define gpusolverDnDsytrd_bufferSize cusolverDnDsytrd_bufferSize
+#define gpusolverDnChetrd_bufferSize cusolverDnChetrd_bufferSize
+#define gpusolverDnZhetrd_bufferSize cusolverDnZhetrd_bufferSize
+#define gpusolverDnSsytrd cusolverDnSsytrd
+#define gpusolverDnDsytrd cusolverDnDsytrd
+#define gpusolverDnChetrd cusolverDnChetrd
+#define gpusolverDnZhetrd cusolverDnZhetrd
 
 #define GPUSOLVER_FILL_MODE_LOWER CUBLAS_FILL_MODE_LOWER
 #define GPUSOLVER_FILL_MODE_UPPER CUBLAS_FILL_MODE_UPPER
@@ -397,6 +405,14 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
   hipsolverCgesvd_bufferSize(h, jobu, jobvt, m, n, lwork)
 #define gpusolverDnZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork) \
   hipsolverZgesvd_bufferSize(h, jobu, jobvt, m, n, lwork)
+#define gpusolverDnSsytrd_bufferSize hipsolverDnSsytrd_bufferSize
+#define gpusolverDnDsytrd_bufferSize hipsolverDnDsytrd_bufferSize
+#define gpusolverDnChetrd_bufferSize hipsolverDnChetrd_bufferSize
+#define gpusolverDnZhetrd_bufferSize hipsolverDnZhetrd_bufferSize
+#define gpusolverDnSsytrd hipsolverDnSsytrd
+#define gpusolverDnDsytrd hipsolverDnDsytrd
+#define gpusolverDnChetrd hipsolverDnChetrd
+#define gpusolverDnZhetrd hipsolverDnZhetrd
 
 #define GPUSOLVER_FILL_MODE_LOWER HIPSOLVER_FILL_MODE_LOWER
 #define GPUSOLVER_FILL_MODE_UPPER HIPSOLVER_FILL_MODE_UPPER
