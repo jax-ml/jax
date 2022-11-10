@@ -1544,12 +1544,25 @@ def _emit_tpu_python_callback(
   ctx.module_context.add_host_callback(opaque)
   return outputs, token, opaque
 
+def _layout_to_mlir_layout(minor_to_major: Optional[Sequence[int]]):
+  if minor_to_major is None:
+    # Needed for token layouts
+    layout = np.zeros((0,), dtype="int64")
+  else:
+    layout = np.array(minor_to_major, dtype="int64")
+  return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
+
+def _aval_to_default_layout(aval):
+  # Row major order is default for `NumPy`.
+  return list(range(aval.ndim - 1, -1, -1))
 
 def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Optional[Any],
     operands: List[ir.Value], operand_avals: List[core.ShapedArray],
     result_avals: List[core.ShapedArray],
-    has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None
+    has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None,
+    operand_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
+    result_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
     ) -> Tuple[List[ir.Value], Any, Any]:
   """Emits MHLO that calls back to a provided Python function."""
   platform = ctx.module_context.platform
@@ -1561,6 +1574,19 @@ def emit_python_callback(
       [xla.aval_to_xla_shapes(result_aval) for result_aval in result_avals])
   operand_shapes = util.flatten(
       [xla.aval_to_xla_shapes(op_aval) for op_aval in operand_avals])
+  # Handling layouts
+  if operand_layouts is None:
+    operand_layouts = map(_aval_to_default_layout, operand_avals)
+  operand_mlir_layouts = [
+      _layout_to_mlir_layout(_aval_to_default_layout(layout)) if layout is None
+      else _layout_to_mlir_layout(layout) for layout, aval
+      in zip(operand_layouts, operand_avals)]
+  if result_layouts is None:
+    result_layouts = map(_aval_to_default_layout, result_avals)
+  result_mlir_layouts = [
+      _layout_to_mlir_layout(_aval_to_default_layout(aval)) if layout is None
+      else _layout_to_mlir_layout(layout) for layout, aval
+      in zip(result_layouts, result_avals)]
 
   # First we apply checks to ensure output shapes and dtypes match the expected
   # ones.
@@ -1600,6 +1626,13 @@ def emit_python_callback(
     ]
     operands = [token, *operands]
     result_types = [token_type()[0], *result_types]
+    if xla_extension_version >= 105:
+      operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
+      result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
+    else:
+      # Token layouts aren't converted correctly into HLO in older XLA versions.
+      operand_mlir_layouts = None  # type: ignore
+      result_mlir_layouts = None  # type: ignore
   callback_descriptor, keepalive = (
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,
@@ -1607,6 +1640,8 @@ def emit_python_callback(
   descriptor_operand = ir_constant(
       callback_descriptor, canonicalize_types=False)
   callback_operands = [descriptor_operand, *operands]
+  if operand_mlir_layouts is not None:
+    operand_mlir_layouts = [_layout_to_mlir_layout([]), *operand_mlir_layouts]
   result_type = ir.TupleType.get_tuple(result_types)
   call_target_name = ("xla_python_gpu_callback"
                      if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
@@ -1618,8 +1653,12 @@ def emit_python_callback(
       api_version=i32_attr(2),
       called_computations=ir.ArrayAttr.get([]),
       backend_config=ir.StringAttr.get(str(callback_descriptor)),
-      operand_layouts=None,
-      result_layouts=None)
+      operand_layouts=(
+        None if operand_mlir_layouts is None
+        else ir.ArrayAttr.get(operand_mlir_layouts)),
+      result_layouts=(
+        None if result_mlir_layouts is None
+        else ir.ArrayAttr.get(result_mlir_layouts)))
   if sharding is not None:
     set_sharding(result, sharding)
   results = [
