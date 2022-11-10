@@ -338,8 +338,12 @@ def pjit(fun: Callable,
 
   if not config.jax_array and (_is_unspecified(in_axis_resources) or
                                _is_unspecified(out_axis_resources)):
-    raise ValueError('in_axis_resources and out_axis_resouces should not '
-                     'be the unspecified singleton value.')
+    raise ValueError(
+        "in_axis_resources and out_axis_resouces should not "
+        "be the unspecified singleton value. Please enable `jax.Array` to use "
+        "this feature. You can use jax.config.update('jax_array', True) or "
+        "set the environment variable  JAX_ARRAY=1 , or set the `jax_array` "
+        "boolean flag to something true-like.")
 
   if isinstance(in_axis_resources, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a

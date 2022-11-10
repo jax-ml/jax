@@ -2642,6 +2642,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     self.assertAllClose(exe(x), x + 1, check_dtypes=False)
 
+  def test_unspecified_error_without_jax_array(self):
+    if jax.config.jax_array:
+      self.skipTest("This test does not fail if jax.Array is enabled.")
+
+    with self.assertRaisesRegex(
+        ValueError,
+        ("in_axis_resources and out_axis_resouces should not "
+         "be the unspecified singleton value. Please enable `jax.Array` to use "
+         "this feature.")):
+      pjit(lambda x: x)
 
 
 class TempSharding(Sharding):
