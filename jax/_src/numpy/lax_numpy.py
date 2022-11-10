@@ -3712,7 +3712,8 @@ def take_along_axis(arr, indices, axis: Optional[int],
   arr_shape = replace(arr.shape, 1)
   idx_shape = indices.shape
   out_shape = lax.broadcast_shapes(idx_shape, arr_shape)
-
+  if axis_size == 0:
+    return zeros(out_shape, arr.dtype)
   index_dims = [i for i, idx in enumerate(idx_shape) if i == axis or not core.symbolic_equal_dim(idx, 1)]
 
   gather_index_shape = tuple(np.array(out_shape)[index_dims]) + (1,)

@@ -594,7 +594,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     atol = jnp.linalg.norm(H) * eps
     self.assertAllClose(ev_exp, jnp.sort(evs), atol=20 * atol)
     self.assertAllClose(
-        HV, vV, atol=atol * (80 if jnp.issubdtype(dtype, jnp.complexfloating)
+        HV, vV, atol=atol * (140 if jnp.issubdtype(dtype, jnp.complexfloating)
                              else 30))
 
   @jtu.sample_product(

@@ -62,6 +62,7 @@ def _one_to_one_unop(
     fn = lambda x: lax_fn(*_promote_args_inexact(numpy_fn.__name__, x))
   else:
     fn = lambda x: lax_fn(*_promote_args(numpy_fn.__name__, x))
+  fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   if lax_doc:
     doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
@@ -80,6 +81,7 @@ def _one_to_one_binop(
     fn = lambda x1, x2: lax_fn(*_promote_args_numeric(numpy_fn.__name__, x1, x2))
   else:
     fn = lambda x1, x2: lax_fn(*_promote_args(numpy_fn.__name__, x1, x2))
+  fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   if lax_doc:
     doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
@@ -94,6 +96,7 @@ def _maybe_bool_binop(
   def fn(x1, x2):
     x1, x2 = _promote_args(numpy_fn.__name__, x1, x2)
     return lax_fn(x1, x2) if x1.dtype != np.bool_ else bool_lax_fn(x1, x2)
+  fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   if lax_doc:
     doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
@@ -103,7 +106,6 @@ def _maybe_bool_binop(
 
 
 def _comparison_op(numpy_fn: Callable[..., Any], lax_fn: BinOp) -> BinOp:
-  @partial(jit, inline=True)
   def fn(x1, x2):
     x1, x2 =  _promote_args(numpy_fn.__name__, x1, x2)
     # Comparison on complex types are defined as a lexicographic ordering on
@@ -114,6 +116,8 @@ def _comparison_op(numpy_fn: Callable[..., Any], lax_fn: BinOp) -> BinOp:
       return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x1), lax.imag(x2)),
                         lax_fn(rx, ry))
     return lax_fn(x1, x2)
+  fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
+  fn = jit(fn, inline=True)
   return _wraps(numpy_fn, module='numpy')(fn)
 
 @overload

@@ -110,14 +110,16 @@ JAX_REDUCER_RECORDS = [
 
 JAX_REDUCER_INITIAL_RECORDS = [
     op_record("prod", 1, all_dtypes, all_shapes, jtu.rand_small_positive, []),
-    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, []),
+    op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, [],
+              tolerance={jnp.bfloat16: 2e-2}),
     op_record("max", 1, all_dtypes, all_shapes, jtu.rand_default, []),
     op_record("min", 1, all_dtypes, all_shapes, jtu.rand_default, []),
 ]
 if numpy_version >= (1, 22):  # initial & where keywords added in numpy 1.22
   JAX_REDUCER_INITIAL_RECORDS += [
       op_record("nanprod", 1, inexact_dtypes, all_shapes, jtu.rand_small_positive, []),
-      op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
+      op_record("nansum", 1, inexact_dtypes, all_shapes, jtu.rand_default, [],
+                tolerance={jnp.bfloat16: 3e-2}),
       op_record("nanmax", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
       op_record("nanmin", 1, inexact_dtypes, all_shapes, jtu.rand_default, []),
   ]
@@ -135,11 +137,11 @@ JAX_REDUCER_WHERE_NO_INITIAL_RECORDS = [
 if numpy_version >= (1, 22):  # where keyword added in numpy 1.22
   JAX_REDUCER_WHERE_NO_INITIAL_RECORDS += [
       op_record("nanmean", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
-                inexact=True),
+                inexact=True, tolerance={np.float16: 3e-3}),
       op_record("nanvar", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
                 inexact=True, tolerance={np.float16: 3e-3}),
       op_record("nanstd", 1, inexact_dtypes, nonempty_shapes, jtu.rand_default, [],
-                inexact=True),
+                inexact=True, tolerance={np.float16: 1e-3}),
   ]
 
 JAX_REDUCER_NO_DTYPE_RECORDS = [
@@ -215,8 +217,9 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    tol_spec = {np.float16: 1e-2, np.int32: 1E-3, np.float32: 1e-3,
-                np.complex64: 1e-3, np.float64: 1e-5, np.complex128: 1e-5}
+    tol_spec = {np.float16: 1e-2, np.int16: 2e-7, np.int32: 1E-3,
+                np.float32: 1e-3, np.complex64: 1e-3, np.float64: 1e-5,
+                np.complex128: 1e-5}
     tol = jtu.tolerance(dtype, tol_spec)
     tol = max(tol, jtu.tolerance(out_dtype, tol_spec)) if out_dtype else tol
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
@@ -300,7 +303,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     tol = {jnp.bfloat16: 3E-2}
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.parameters(itertools.chain.from_iterable(
@@ -343,8 +346,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
     tol = {jnp.bfloat16: 3E-2}
-    print(jnp_fun(*args_maker()))
-    print(np_fun(*args_maker()))
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -387,7 +388,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
-      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],
+      [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact,
+            tol=rec.tolerance)],
       [dict(shape=shape, axis=axis, dtype=dtype, whereshape=whereshape)
         for shape in rec.shapes for dtype in rec.dtypes
         for axis in list(range(-len(shape), len(shape))) + [None]
@@ -400,7 +402,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     for rec in JAX_REDUCER_INITIAL_RECORDS
   ))
   def testReducerWhere(self, name, rng_factory, shape, dtype, axis,
-                       keepdims, initial, inexact, whereshape):
+                       keepdims, initial, inexact, whereshape, tol):
     np_op = getattr(np, name)
     jnp_op = getattr(jnp, name)
     if (shape in [()] + scalar_shapes and
@@ -426,7 +428,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, where=where)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @parameterized.parameters(itertools.chain.from_iterable(
@@ -577,7 +579,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = partial(jnp.nanvar, dtype=out_dtype, axis=axis, ddof=ddof, keepdims=keepdims)
     tol = jtu.tolerance(out_dtype, {np.float16: 1e-1, np.float32: 1e-3,
                                     np.float64: 1e-3, np.complex64: 1e-3,
-                                    np.complex128: 1e-6})
+                                    np.complex128: 3e-4})
     if (jnp.issubdtype(dtype, jnp.complexfloating) and
         not jnp.issubdtype(out_dtype, jnp.complexfloating)):
       self.assertRaises(ValueError, lambda: jnp_fun(*args_maker()))

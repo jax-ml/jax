@@ -60,7 +60,7 @@ flags.DEFINE_string(
 )
 
 flags.DEFINE_integer(
-  'num_generated_cases',
+  'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
@@ -663,7 +663,7 @@ def assert_dot_precision(expected_precision, fun, *args):
 
 def cases_from_gens(*gens):
   sizes = [1, 3, 10]
-  cases_per_size = int(FLAGS.num_generated_cases / len(sizes)) + 1
+  cases_per_size = int(FLAGS.jax_num_generated_cases / len(sizes)) + 1
   for size in sizes:
     for i in range(cases_per_size):
       yield (f'_{size}_{i}',) + tuple(gen(size) for gen in gens)
@@ -676,7 +676,7 @@ def named_cases_from_sampler(gen):
     if not isinstance(x, (list, tuple)):
       x = list(x)
     return [x[rng.randint(len(x))]]
-  while (len(seen) < FLAGS.num_generated_cases and
+  while (len(seen) < FLAGS.jax_num_generated_cases and
          retries < FLAGS.max_cases_sampling_retries):
     retries += 1
     cases = list(gen(choose_one))
@@ -705,7 +705,7 @@ def sample_product_testcases(*args, **kw):
   kw = [(k, list(v)) for k, v in kw.items()]
   n = prod(len(a) for a in args) * prod(len(v) for _, v in kw)
   testcases = []
-  for i in _choice(n, min(n, FLAGS.num_generated_cases)):
+  for i in _choice(n, min(n, FLAGS.jax_num_generated_cases)):
     testcase = {}
     for a in args:
       testcase.update(a[i % len(a)])

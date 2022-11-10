@@ -320,9 +320,9 @@ jax_test(
     srcs = ["lax_numpy_test.py"],
     pjrt_c_api_bypass = True,
     shard_count = {
-        "cpu": 20,
-        "gpu": 20,
-        "tpu": 10,
+        "cpu": 40,
+        "gpu": 40,
+        "tpu": 40,
     },
 )
 
@@ -331,9 +331,9 @@ jax_test(
     srcs = ["lax_numpy_operators_test.py"],
     pjrt_c_api_bypass = True,
     shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 5,
+        "cpu": 30,
+        "gpu": 30,
+        "tpu": 20,
     },
 )
 
@@ -342,9 +342,9 @@ jax_test(
     srcs = ["lax_numpy_reducers_test.py"],
     pjrt_c_api_bypass = True,
     shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 5,
+        "cpu": 20,
+        "gpu": 20,
+        "tpu": 20,
     },
 )
 
@@ -382,7 +382,7 @@ jax_test(
         "tpu": ["noasan"],  # Test times out.
     },
     shard_count = {
-        "cpu": 20,
+        "cpu": 40,
         "gpu": 40,
         "tpu": 10,
         "iree": 10,
@@ -410,7 +410,7 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 20,
+        "tpu": 30,
         "iree": 40,
     },
 )
@@ -484,7 +484,7 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 10,
+        "tpu": 40,
         "iree": 20,
     },
 )
@@ -601,10 +601,10 @@ jax_test(
     name = "random_test",
     srcs = ["random_test.py"],
     shard_count = {
-        "cpu": 20,
-        "gpu": 20,
-        "tpu": 20,
-        "iree": 20,
+        "cpu": 30,
+        "gpu": 30,
+        "tpu": 30,
+        "iree": 30,
     },
 )
 
@@ -628,6 +628,7 @@ jax_test(
 jax_test(
     name = "scipy_fft_test",
     srcs = ["scipy_fft_test.py"],
+    shard_count = 4,
 )
 
 jax_test(
@@ -658,9 +659,9 @@ jax_test(
         ],  # Test times out under asan/tsan.
     },
     shard_count = {
-        "cpu": 10,
-        "gpu": 10,
-        "tpu": 5,
+        "cpu": 40,
+        "gpu": 40,
+        "tpu": 40,
     },
 )
 
@@ -668,9 +669,9 @@ jax_test(
     name = "scipy_stats_test",
     srcs = ["scipy_stats_test.py"],
     shard_count = {
-        "cpu": 20,
+        "cpu": 40,
         "gpu": 30,
-        "tpu": 10,
+        "tpu": 40,
         "iree": 10,
     },
 )
@@ -685,7 +686,7 @@ jax_test(
         ],
     },
     shard_count = {
-        "cpu": 20,
+        "cpu": 40,
         "gpu": 40,
         "tpu": 40,
         "iree": 10,
@@ -866,7 +867,7 @@ jax_test(
 jax_test(
     name = "ann_test",
     srcs = ["ann_test.py"],
-    shard_count = 2,
+    shard_count = 10,
     deps = [
         ":lax_test_lib",
     ],

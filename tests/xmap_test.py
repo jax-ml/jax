@@ -616,7 +616,7 @@ class XMapTest(XMapTestCase):
     rng = self.rng()
     x = rng.randn(*xshape)
     y = rng.randn(*yshape)
-    self.assertAllClose(fm(x, y), fref(x, y))
+    self.assertAllClose(fm(x, y), fref(x, y), atol={np.float64: 1e-14})
 
   def testBatchingPostProcess(self):
     x = jnp.arange(10).reshape(5, 2)

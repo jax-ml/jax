@@ -527,6 +527,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
+  @jax.default_matmul_precision("float32")
   def testMatmul(self, name, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     def np_fun(x, y):
@@ -535,8 +536,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     tol = {np.float16: 1e-2, np.float32: 2e-2, np.float64: 1e-12,
            np.complex128: 1e-12}
-    if jtu.device_under_test() == "tpu":
-      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 4e-2
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
@@ -1894,7 +1893,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in [None] + list(range(-len(shape), len(shape)))],
     op=["cumsum", "cumprod"],
     dtype=all_dtypes,
-    out_dtype=default_dtypes,
+    out_dtype=[dtype for dtype in default_dtypes if dtype != np.float16],
   )
   def testCumSumProd(self, axis, shape, dtype, out_dtype, op):
     jnp_op = getattr(jnp, op)
@@ -2112,7 +2111,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun_co, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
-    dtype=default_dtypes,
+    dtype=[dtype for dtype in default_dtypes
+           if dtype not in (np.float16, jnp.bfloat16)],
     a_shape=one_dim_array_shapes,
     b_shape=one_dim_array_shapes,
   )
@@ -2139,7 +2139,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         dtypes.bfloat16: 2e-1,
         np.float16: 2e-1,
         np.float32: 5e-2,
-        np.float64: 1e-11
+        np.float64: 5e-7
     }
 
     jnp_compile = jnp.polydiv # Without trim_leading_zeros (trim_zeros make it unable to be compiled by XLA)
@@ -2272,6 +2272,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     offset=list(range(-4, 4)),
   )
   def testTrace(self, shape, dtype, out_dtype, offset, axis1, axis2):
+    if out_dtype == np.uint16:
+      raise unittest.SkipTest("TPU compiler crashes (Google bug b/258450318)")
     rng = jtu.rand_default(self.rng())
     def np_fun(arg):
       if out_dtype == jnp.bfloat16:
@@ -3771,6 +3773,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         "take_along_axis indices must be of integer type, got float32"):
       jnp.take_along_axis(x, idx, axis=0)
 
+  def testTakeAlongAxisWithEmptyArgs(self):
+    # take_along_axis should allow us to gather an empty list of indices from
+    # an empty input axis without raising a shape error.
+    x = jnp.ones((4, 0, 3), dtype=jnp.int32)
+    np.testing.assert_array_equal(x, jnp.take_along_axis(x, x, axis=1))
+
   @jtu.sample_product(
     dtype=inexact_dtypes,
     shape=[0, 5],
@@ -3836,6 +3844,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     sparse=[True, False],
   )
   def testIndices(self, dimensions, dtype, sparse):
+    if jtu.device_under_test() == "tpu" and dtype in (np.int16, np.uint16):
+      raise unittest.SkipTest("Compilation failure on TPU ")
     def args_maker(): return []
     np_fun = partial(np.indices, dimensions=dimensions,
                      dtype=dtype, sparse=sparse)
@@ -5051,6 +5061,9 @@ class NumpyGradTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     tol = jtu.join_tolerance(tol, {np.float32: 1e-1, np.float64: 1e-3,
                                    np.complex64: 1e-1, np.complex128: 1e-3})
+    if jtu.device_under_test() == 'tpu' and op == jnp.arctanh:
+      tol = jtu.join_tolerance(tol, {np.float32: 2e-1})
+
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 

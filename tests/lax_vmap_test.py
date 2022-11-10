@@ -219,6 +219,8 @@ class LaxVmapTest(jtu.JaxTestCase):
     dtype=default_dtypes,
   )
   def testDot(self, lhs_shape, rhs_shape, dtype, bdims):
+    if jtu.device_under_test() == "gpu" and dtype == np.int64:
+      raise unittest.SkipTest("Wrong outputs for batched matmuls (b/258497059)")
     rng = jtu.rand_default(self.rng())
     op = partial(lax.dot, precision=lax.Precision.HIGHEST)
     self._CheckBatching(op, 5, bdims, (lhs_shape, rhs_shape), (dtype, dtype),
@@ -642,7 +644,7 @@ class LaxVmapTest(jtu.JaxTestCase):
     fun = partial(lax.scatter_add, dimension_numbers=dnums)
     self._CheckBatching(fun, 5, bdims, [arg_shape, idxs.shape, update_shape],
                         [dtype, idxs.dtype, dtype], jtu.rand_default(self.rng()),
-                        rtol={np.float16: 5e-3, dtypes.bfloat16: 3e-2})
+                        rtol={np.float16: 5e-3, dtypes.bfloat16: 7e-2})
 
   def testShapeUsesBuiltinInt(self):
     x = lax.iota(np.int32, 3) + 1

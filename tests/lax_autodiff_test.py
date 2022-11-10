@@ -79,7 +79,7 @@ LAX_GRAD_OPS = [
     grad_test_spec(lax.cosh, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes, tol=1e-5),
     grad_test_spec(lax.tanh, nargs=1, order=2, rng_factory=jtu.rand_default,
-                   dtypes=grad_inexact_dtypes, tol=1e-5),
+                   dtypes=grad_inexact_dtypes, tol=1e-4),
     grad_test_spec(lax.sin, nargs=1, order=2, rng_factory=jtu.rand_default,
                    dtypes=grad_inexact_dtypes, tol={np.float32: 5e-1}),
     grad_test_spec(lax.cos, nargs=1, order=2, rng_factory=jtu.rand_default,
@@ -214,7 +214,7 @@ class LaxAutodiffTest(jtu.JaxTestCase):
       if op is lax.cos:
         order = 1  # 2nd-order gradient is imprecise on TPU.
 
-    tol = jtu.join_tolerance(1e-1, tol) if jtu.num_float_bits(dtype) == 32 else tol
+    tol = jtu.join_tolerance(1.5e-1, tol) if jtu.num_float_bits(dtype) == 32 else tol
     args = tuple(rng(shape, dtype) for shape in shapes)
     check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 

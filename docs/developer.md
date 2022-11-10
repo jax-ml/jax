@@ -238,7 +238,7 @@ built-in selection mechanisms, or alternatively you can run a specific test
 file directly to see more detailed information about the cases being run:
 
 ```
-python tests/lax_numpy_test.py --num_generated_cases=5
+JAX_NUM_GENERATED_CASES=5 python tests/lax_numpy_test.py
 ```
 
 You can skip a few tests known to be slow, by passing environment variable
