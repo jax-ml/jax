@@ -993,6 +993,17 @@ class BCOOTest(jtu.JaxTestCase):
     sparse_result = sparse.bcoo_dynamic_slice(Msp, **kwds)
     sparse_result_jit = partial(sparse.bcoo_dynamic_slice, slice_sizes=slice_sizes)(Msp, start_indices)
 
+    # Array layout is the same
+    self.assertEqual(sparse_result.n_batch, Msp.n_batch)
+    self.assertEqual(sparse_result.n_sparse, Msp.n_sparse)
+    self.assertEqual(sparse_result.n_dense, Msp.n_dense)
+
+    # Unnecessary padding eliminated
+    max_nse = np.prod(sparse_result.shape[Msp.n_batch: Msp.n_batch + Msp.n_sparse])
+    self.assertLessEqual(sparse_result.nse, max_nse)
+    self.assertLessEqual(sparse_result_jit.nse, max_nse)
+
+    # Result matches dense computation
     self.assertArraysEqual(dense_result, sparse_result.todense())
     self.assertArraysEqual(dense_result, sparse_result_jit.todense())
 
