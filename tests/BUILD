@@ -656,6 +656,7 @@ jax_test(
         "tpu": [
             "noasan",
             "notsan",
+            "optonly",
         ],  # Test times out under asan/tsan.
     },
     shard_count = {
@@ -684,6 +685,7 @@ jax_test(
         "cpu": [
             "noasan",  # Test times out under asan.
         ],
+        "tpu": ["optonly"],
     },
     shard_count = {
         "cpu": 40,
