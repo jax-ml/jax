@@ -1291,9 +1291,6 @@ partial_eval_jaxpr_custom_rules[core.call_p] = \
             lambda _, __, ___, ____, _____, x, y: (x, y))
 partial_eval_jaxpr_custom_rules[core.closed_call_p] = \
     partial(closed_call_partial_eval_custom_rule, 'call_jaxpr')
-partial_eval_jaxpr_custom_rules[core.named_call_p] = \
-    partial(call_partial_eval_custom_rule, 'call_jaxpr',
-            lambda _, __, ___, ____, _____, x, y: (x, y))
 
 
 def _jaxpr_forwarding(jaxpr: Jaxpr) -> List[Optional[int]]:
@@ -1394,7 +1391,6 @@ def dce_jaxpr_call_rule(used_outputs: List[bool], eqn: JaxprEqn
         eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
     return used_inputs, new_eqn
 dce_rules[core.call_p] = dce_jaxpr_call_rule
-dce_rules[core.named_call_p] = dce_jaxpr_call_rule
 
 
 def dce_jaxpr_closed_call_rule(used_outputs: List[bool], eqn: JaxprEqn

@@ -9286,12 +9286,9 @@ class NamedCallTest(jtu.JaxTestCase):
       return my_test_function(x)
 
     c = jax.xla_computation(f)(2)
-    if config.jax_experimental_name_stack:
-      print_opts = xla_client._xla.HloPrintOptions.short_parsable()
-      print_opts.print_metadata = True
-      hlo_text = c.as_hlo_module().to_string(print_opts)
-    else:
-      hlo_text = c.as_hlo_text()
+    print_opts = xla_client._xla.HloPrintOptions.short_parsable()
+    print_opts.print_metadata = True
+    hlo_text = c.as_hlo_module().to_string(print_opts)
     self.assertIn("my_test_function", hlo_text)
 
   def test_non_jaxtype_arg(self):

@@ -3290,19 +3290,7 @@ def named_call(
   if name is None:
     name = fun.__name__
 
-  _, in_tree = tree_flatten(())
-
-  if config.jax_experimental_name_stack:
-    return source_info_util.extend_name_stack(name)(fun)
-
-  @functools.wraps(fun)
-  def named_call_f(*args, **kwargs):
-    lu_f = lu.wrap_init(lambda: fun(*args, **kwargs))
-    flat_f, out_tree = flatten_fun_nokwargs(lu_f, in_tree)
-    out_flat = core.named_call_p.bind(flat_f, name=name)
-    return tree_unflatten(out_tree(), out_flat)
-
-  return named_call_f
+  return source_info_util.extend_name_stack(name)(fun)
 
 @contextmanager
 def named_scope(

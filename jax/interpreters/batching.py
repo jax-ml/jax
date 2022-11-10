@@ -31,10 +31,9 @@ from jax._src.tree_util import (tree_unflatten, tree_flatten,
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero)
 from jax import linear_util as lu
-from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, wrap_name,
-                           split_list, canonicalize_axis, moveaxis,
-                           as_hashable_function, curry, memoize,
-                           weakref_lru_cache)
+from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
+                           canonicalize_axis, moveaxis, as_hashable_function,
+                           curry, memoize, weakref_lru_cache)
 from jax.interpreters import partial_eval as pe
 
 Array = Any
@@ -352,10 +351,7 @@ class BatchTrace(Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
-    if config.jax_experimental_name_stack:
-      params = dict(params, name=params.get('name', f.__name__))
-    else:
-      params = dict(params, name=wrap_name(params.get('name', f.__name__), 'vmap'))
+    params = dict(params, name=params.get('name', f.__name__))
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims):
       return call_primitive.bind(f, *vals, **params)

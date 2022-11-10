@@ -1001,11 +1001,6 @@ config.define_bool_state(
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
 
-config.define_bool_state(
-    name='jax_experimental_name_stack',
-    default=True,
-    help='Enable using the context manager-based name stack.')
-
 # This flag is temporary during rollout of the remat barrier.
 # TODO(parkers): Remove if there are no complaints.
 config.define_bool_state(

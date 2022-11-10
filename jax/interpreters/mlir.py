@@ -309,13 +309,9 @@ register_constant_handler(
 def _source_info_to_location(
     primitive: core.Primitive, params: Dict,
     source_info: source_info_util.SourceInfo,
-    name_stack: Union[str, source_info_util.NameStack] = "") -> ir.Location:
-  if config.jax_experimental_name_stack:
-    eqn_str = (f'{str(source_info.name_stack)}/'
-               f'{core.str_eqn_compact(primitive.name, params)}')
-  else:
-    assert isinstance(name_stack, str)
-    eqn_str = name_stack + core.str_eqn_compact(primitive.name, params)
+    name_stack: source_info_util.NameStack) -> ir.Location:
+  eqn_str = (f'{str(source_info.name_stack)}/'
+             f'{core.str_eqn_compact(primitive.name, params)}')
   frame = source_info_util.user_frame(source_info)
   if frame is None:
     loc = ir.Location.unknown()
@@ -328,8 +324,6 @@ def _source_info_to_location(
 
 
 # Translation rules
-NameStack = Union[str, source_info_util.NameStack]
-
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
   context = ir.Context()
@@ -414,7 +408,7 @@ class ModuleContext:
   backend_or_name: Optional[Union[str, xb.XlaBackend]]
   platform: str
   axis_context: AxisContext
-  name_stack: NameStack
+  name_stack: source_info_util.NameStack
   keepalives: List[Any]
   channel_iterator: Iterator[int]
   host_callbacks: List[Any]
@@ -432,7 +426,7 @@ class ModuleContext:
       backend_or_name: Optional[Union[str, xb.XlaBackend]],
       platform: str,
       axis_context: AxisContext,
-      name_stack: NameStack,
+      name_stack: source_info_util.NameStack,
       keepalives: List[Any],
       channel_iterator: Iterator[int],
       host_callbacks: List[Any],
@@ -583,7 +577,7 @@ def lower_jaxpr_to_module(
     backend_or_name: Optional[Union[str, xb.XlaBackend]],
     platform: str,
     axis_context: AxisContext,
-    name_stack: NameStack,
+    name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
@@ -1007,14 +1001,11 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   map(write, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
-    if config.jax_experimental_name_stack:
-      assert isinstance(ctx.name_stack, source_info_util.NameStack), type(ctx.name_stack)
-      source_info = eqn.source_info.replace(
-          name_stack=ctx.name_stack + eqn.source_info.name_stack)
-    else:
-      source_info = eqn.source_info
+    assert isinstance(ctx.name_stack, source_info_util.NameStack), type(ctx.name_stack)
+    source_info = eqn.source_info.replace(
+        name_stack=ctx.name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(eqn.primitive, eqn.params, source_info,
-                                   name_stack=ctx.name_stack)
+                                   ctx.name_stack)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       if eqn.primitive in _platform_specific_lowerings[ctx.platform]:
         rule = _platform_specific_lowerings[ctx.platform][eqn.primitive]
@@ -1029,8 +1020,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
             f"MLIR translation rule for primitive '{eqn.primitive.name}' not "
             f"found for platform {ctx.platform}")
 
-      eqn_ctx = (ctx.replace(name_stack=source_info.name_stack) if
-                 config.jax_experimental_name_stack else ctx)
+      eqn_ctx = ctx.replace(name_stack=source_info.name_stack)
       effects = [eff for eff in eqn.effects if eff in core.ordered_effects]
       tokens_in = tokens.subset(effects)
       avals_in = map(aval, eqn.invars)
@@ -1160,21 +1150,16 @@ def _xla_call_lower(ctx, *args,
 
 register_lowering(xla.xla_call_p, _xla_call_lower)
 
-def _named_call_lowering(ctx, *args, name, backend=None,
-                         call_jaxpr):
+def _core_call_lowering(ctx, *args, name, backend=None, call_jaxpr):
   out_nodes, tokens = _call_lowering(
       name, name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args)
   ctx.set_tokens_out(tokens)
   return out_nodes
 
-register_lowering(core.named_call_p, _named_call_lowering)
-register_lowering(core.call_p, partial(_named_call_lowering, name="core_call"))
+register_lowering(core.call_p, partial(_core_call_lowering, name="core_call"))
 register_lowering(core.closed_call_p,
-                  partial(_named_call_lowering, name="core_closed_call"))
-
-register_lowering(core.closed_call_p,
-                  partial(_named_call_lowering, name="core_closed_call"))
+                  partial(_core_call_lowering, name="core_closed_call"))
 
 
 def full_like_aval(value, aval: core.ShapedArray) -> ir.Value:

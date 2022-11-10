@@ -2073,9 +2073,6 @@ call_p: CallPrimitive = CallPrimitive('call')
 call = call_p.bind
 call_p.def_impl(call_impl)
 
-named_call_p: CallPrimitive = CallPrimitive('named_call')
-named_call_p.def_impl(call_impl)
-
 
 class ClosedCallPrimitive(CallPrimitive):
   def get_bind_params(self, params):

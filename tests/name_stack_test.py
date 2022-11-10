@@ -33,17 +33,8 @@ def _get_hlo(f):
     return c.as_hlo_module().to_string(print_opts)
   return wrapped
 
-class _EnableNameStackTestCase(jtu.JaxTestCase):
 
-  def setUp(self):
-    self.cfg = config._read("jax_experimental_name_stack")
-    config.update("jax_experimental_name_stack", True)
-
-  def tearDown(self):
-    config.update("jax_experimental_name_stack", self.cfg)
-
-
-class NameStackTest(_EnableNameStackTestCase):
+class NameStackTest(jtu.JaxTestCase):
 
   def test_trivial_name_stack(self):
 
@@ -135,7 +126,7 @@ class NameStackTest(_EnableNameStackTestCase):
     self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
 
 
-class NameStackTransformationTest(_EnableNameStackTestCase):
+class NameStackTransformationTest(jtu.JaxTestCase):
 
   def test_vmap_should_transform_name_stack(self):
     @jax.vmap
@@ -238,7 +229,7 @@ class NameStackTransformationTest(_EnableNameStackTestCase):
     self.assertIn('transpose(jvp(foo))/jit(f)/bar/mul', hlo_text)
 
 
-class NameStackControlFlowTest(_EnableNameStackTestCase):
+class NameStackControlFlowTest(jtu.JaxTestCase):
 
   def test_while_loop_body_should_not_have_name_stack(self):
 

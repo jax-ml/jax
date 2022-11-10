@@ -771,12 +771,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_tf_hlo = self.TfToHlo(f_tf, arg)
     if jax.config.jax_remat_opt_barrier:
       self.assertRegex(f_tf_hlo, r"opt-barrier")
-    elif config.jax_experimental_name_stack:
-      self.assertRegex(f_tf_hlo,
-                       r'transpose/jax2tf_f_/jvp/checkpoint/cond/branch_1_fun/Sin')
     else:
       self.assertRegex(f_tf_hlo,
-                       r'switch_case/indexed_case/Sin')
+                       r'transpose/jax2tf_f_/jvp/checkpoint/cond/branch_1_fun/Sin')
 
   def test_remat_free_var(self):
     def f(x):

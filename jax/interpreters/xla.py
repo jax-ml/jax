@@ -104,11 +104,8 @@ def make_op_metadata(primitive: core.Primitive,
                      source_info: source_info_util.SourceInfo,
                      name_stack: Union[str, source_info_util.NameStack] = "",
                      ) -> xc.OpMetadata:
-  if config.jax_experimental_name_stack:
-    eqn_str = str(source_info.name_stack) + '/' + str_eqn_compact(primitive.name, params)
-  else:
-    assert isinstance(name_stack, str)
-    eqn_str = name_stack + str_eqn_compact(primitive.name, params)
+  eqn_str = (str(source_info.name_stack) + '/'
+             + str_eqn_compact(primitive.name, params))
   tracebacks[eqn_str] = source_info.traceback
   frame = source_info_util.user_frame(source_info)
   return xc.OpMetadata(

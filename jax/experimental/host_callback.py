@@ -1651,16 +1651,6 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 # compilation to XLA, which does not use those parameters.
                 bwd="illegal param",
                 out_trees="illegal param")))
-  elif eqn.primitive is core.named_call_p:
-    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
-    eqns.append(
-        eqn.replace(
-            invars=eqn.invars + [input_token_var, input_itoken_var],
-            outvars=eqn.outvars + [output_token_var, output_itoken_var],
-            params=dict(
-                eqn.params,
-                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
-            )))
   elif eqn.primitive is pjit.pjit_p:
     jaxpr = cast(core.ClosedJaxpr, eqn.params["jaxpr"])
     eqns.append(

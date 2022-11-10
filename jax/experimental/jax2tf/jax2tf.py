@@ -187,9 +187,7 @@ class _ThreadLocalState(threading.local):
 _thread_local_state = _ThreadLocalState()
 
 def _get_current_name_stack() -> Union[NameStack, str]:
-  if config.jax_experimental_name_stack:
-    return source_info_util.current_name_stack()
-  return _thread_local_state.name_stack
+  return source_info_util.current_name_stack()
 
 @contextlib.contextmanager
 def inside_call_tf():
@@ -530,24 +528,12 @@ def make_custom_gradient_fn_tf(
 
 @contextlib.contextmanager
 def _extended_name_stack(extra_name_stack: Optional[str]):
-  if config.jax_experimental_name_stack:
-    name_ctx = (source_info_util.extend_name_stack(extra_name_stack)
-        if extra_name_stack
-        else contextlib.nullcontext())
-    with name_ctx:
-      yield
-    return
-  prev_name_stack = _thread_local_state.name_stack
-  if extra_name_stack:
-    if not prev_name_stack:
-      _thread_local_state.name_stack = extra_name_stack
-    else:
-      _thread_local_state.name_stack = util.extend_name_stack(
-          _thread_local_state.name_stack, extra_name_stack)
-  try:
+  name_ctx = (source_info_util.extend_name_stack(extra_name_stack)
+      if extra_name_stack
+      else contextlib.nullcontext())
+  with name_ctx:
     yield
-  finally:
-    _thread_local_state.name_stack = prev_name_stack
+  return
 
 
 def _interpret_fun_jax(
@@ -1050,20 +1036,14 @@ class TensorFlowTrace(core.Trace):
         return impl(*args_tf, **params)
 
     current_name_stack = _get_current_name_stack()
-    if config.jax_experimental_name_stack:
-      # We don't use `str(name_stack)` because it uses parentheses for
-      # transformations, which aren't allowed in `name_scope`.
-      scope = '/'.join([s.name for s in current_name_stack.stack])  # type: ignore[union-attr]
-    else:
-      scope = str(current_name_stack)
+    # We don't use `str(name_stack)` because it uses parentheses for
+    # transformations, which aren't allowed in `name_scope`.
+    scope = '/'.join([s.name for s in current_name_stack.stack])  # type: ignore[union-attr]
     # We need to add a '/' to the name stack string to force `tf.name_scope`
     # to interpret it as an absolute scope, not a relative scope.
     scope = scope + '/'
-    name_scope = (
-        tf.name_scope(_sanitize_scope_name(scope)) if
-        config.jax_experimental_name_stack else contextlib.nullcontext())
 
-    with name_scope:
+    with tf.name_scope(_sanitize_scope_name(scope)):
       if _thread_local_state.include_xla_op_metadata:
         op_metadata = xla.make_op_metadata(primitive, params,
                                            name_stack=current_name_stack,
@@ -1109,17 +1089,11 @@ class TensorFlowTrace(core.Trace):
     avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
     interpreted_fun = _interpret_subtrace(fun, self.main, avals)
     extra_name_stack = None
-    if call_primitive == core.named_call_p:
-      extra_name_stack = util.wrap_name(params["name"], "named")
-    elif call_primitive == xla.xla_call_p:
+    if call_primitive == xla.xla_call_p:
       extra_name_stack = util.wrap_name(params["name"], "jit")
     with _extended_name_stack(extra_name_stack):
       with core.new_sublevel():
-        if call_primitive == core.named_call_p:
-          with tf.name_scope(_sanitize_scope_name(params["name"])):
-            vals_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-                interpreted_fun.call_wrapped(*vals)
-        elif call_primitive == xla.xla_call_p:
+        if call_primitive == xla.xla_call_p:
           if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
             # Make a nested tf.function(jit_compile=True)
             store_tf_res_avals: Sequence[core.ShapedArray] = []
@@ -1208,7 +1182,7 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 # Call primitives are inlined
-for unexpected in [core.call_p, core.named_call_p, xla.xla_call_p, maps.xmap_p]:
+for unexpected in [core.call_p, xla.xla_call_p, maps.xmap_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.
@@ -2615,11 +2589,10 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
       for jaxpr in branches
       for i, jaxpr in enumerate(branches)
   ]
-  if config.jax_experimental_name_stack:
-    # Same name stack as XLA translation of cond_p
-    # Note: extend_name_stack is a contextmanager, which is callable as a decorator.
-    branches_tf = list(map(source_info_util.extend_name_stack("cond"),  # type: ignore[arg-type]
-        branches_tf))
+  # Same name stack as XLA translation of cond_p
+  # Note: extend_name_stack is a contextmanager, which is callable as a decorator.
+  branches_tf = list(map(source_info_util.extend_name_stack("cond"),  # type: ignore[arg-type]
+      branches_tf))
   return tf.switch_case(index, branches_tf)
 
 
