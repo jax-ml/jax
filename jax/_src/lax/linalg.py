@@ -1593,10 +1593,10 @@ def _svd_jvp_rule(primals, tangents, *, full_matrices, compute_uv):
   m, n = A.shape[-2:]
   if m > n:
     dAV = dA @ V
-    dU = dU + (dAV - U @ Ut @ dAV) / s_dim.astype(A.dtype)
+    dU = dU + (dAV - U @ (Ut @ dAV)) / s_dim.astype(A.dtype)
   if n > m:
     dAHU = _H(dA) @ U
-    dV = dV + (dAHU - V @ Vt @ dAHU) / s_dim.astype(A.dtype)
+    dV = dV + (dAHU - V @ (Vt @ dAHU)) / s_dim.astype(A.dtype)
 
   return (s, U, Vt), (ds, dU, _H(dV))
 
