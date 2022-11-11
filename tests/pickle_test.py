@@ -38,6 +38,16 @@ from jax._src.lib import xla_extension_version
 config.parse_flags_with_absl()
 
 
+def _get_device_by_id(device_id: int) -> xc.Device:
+  for device in jax.devices():
+    if device.id == device_id:
+      return device
+  raise ValueError(f'Device {device_id} was not found')
+
+
+xc.Device.__reduce__ = lambda d: (_get_device_by_id, (d.id,))
+
+
 class CloudpickleTest(jtu.JaxTestCase):
 
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
