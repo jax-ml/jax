@@ -15,6 +15,8 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`jax.lax.linalg.tridiagonal`, and
     {func}`jax.lax.linalg.householder_product` were added. Householder and
     tridiagonal reductions are supported on CPU only.
+* Breaking Changes
+  * Deleted the `jax_experimental_name_stack` config option.
 
 ## jaxlib 0.3.25
 * Changes
