@@ -486,14 +486,25 @@ def _zero_preserving_unary_op(prim):
 for _prim in _zero_preserving_unary_primitives:
   sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
 
-def _dot_general_sparse(spenv, *spvalues, dimension_numbers, precision, preferred_element_type):
-  # TODO(jakevdp): pass along these unused configurations?
-  del precision, preferred_element_type  # unused
-  result = sparse.bcoo_dot_general(*spvalues_to_arrays(spenv, spvalues),
-                                   dimension_numbers=dimension_numbers)
-  return arrays_to_spvalues(spenv, [result])
+def _standard_sparse_rule(prim, sparse_op):
+  def _sparse_rule(spenv, *spvalues, **kwds):
+    result = sparse_op(*spvalues_to_arrays(spenv, spvalues), **kwds)
+    return arrays_to_spvalues(spenv, result if prim.multiple_results else [result])
+  return _sparse_rule
 
-sparse_rules[lax.dot_general_p] = _dot_general_sparse
+_BCOO_STANDARD_PRIMITIVES = {
+  lax.broadcast_in_dim_p: sparse.bcoo_broadcast_in_dim,
+  lax.concatenate_p: lambda *a, **k: sparse.bcoo_concatenate(a, **k),
+  lax.dot_general_p: sparse.bcoo_dot_general,
+  lax.dynamic_slice_p: lambda *a, **k: sparse.bcoo_dynamic_slice(a[0], a[1:], **k),
+  lax.reshape_p: sparse.bcoo_reshape,
+  lax.slice_p: sparse.bcoo_slice,
+  lax.squeeze_p: sparse.bcoo_squeeze,
+}
+
+for prim, bcoo_impl in _BCOO_STANDARD_PRIMITIVES.items():
+  sparse_rules[prim] = _standard_sparse_rule(prim, bcoo_impl)
+
 
 def _transpose_sparse(spenv, *spvalues, permutation):
   permutation = tuple(permutation)
@@ -604,35 +615,6 @@ def _reduce_sum_sparse(spenv, *spvalues, axes):
 
 sparse_rules[lax.reduce_sum_p] = _reduce_sum_sparse
 
-def _broadcast_in_dim_sparse(spenv, *spvalues, shape, broadcast_dimensions):
-  operand, = spvalues
-  operand_promoted = spvalues_to_arrays(spenv, operand)
-  mat = sparse.bcoo_broadcast_in_dim(operand_promoted, shape=shape,
-                                     broadcast_dimensions=broadcast_dimensions)
-  return (spenv.sparse(shape, mat.data, mat.indices),)
-
-sparse_rules[lax.broadcast_in_dim_p] = _broadcast_in_dim_sparse
-
-def _concatenate_sparse(spenv, *spvalues, dimension):
-  operands = spvalues_to_arrays(spenv, spvalues)
-  result = sparse.bcoo_concatenate(operands, dimension=dimension)
-  return arrays_to_spvalues(spenv, (result,))
-
-sparse_rules[lax.concatenate_p] = _concatenate_sparse
-
-def _squeeze_sparse(spenv, *spvalues, dimensions):
-  arr, = spvalues_to_arrays(spenv, spvalues)
-  result = sparse.bcoo_squeeze(arr, dimensions=dimensions)
-  return arrays_to_spvalues(spenv, (result,))
-
-sparse_rules[lax.squeeze_p] = _squeeze_sparse
-
-def _reshape_sparse(spenv, *spvalues, new_sizes, dimensions):
-  operand, = spvalues_to_arrays(spenv, spvalues)
-  result = sparse.bcoo_reshape(operand, new_sizes=new_sizes, dimensions=dimensions)
-  return arrays_to_spvalues(spenv, (result,))
-
-sparse_rules[lax.reshape_p] = _reshape_sparse
 
 
 def _gather_sparse_rule(spenv, *args, dimension_numbers, slice_sizes, unique_indices,
@@ -757,20 +739,6 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
   return (spenv.dense(out),)
 
 sparse_rules[sparse.todense_p] = _todense_sparse_rule
-
-def _slice_sparse_rule(spenv, *operands, **params):
-  args = spvalues_to_arrays(spenv, operands)
-  out = sparse.bcoo_slice(*args, **params)
-  return arrays_to_spvalues(spenv, [out])
-
-sparse_rules[lax.slice_p] = _slice_sparse_rule
-
-def _dynamic_slice_sparse_rule(spenv, *operands, **params):
-  args = spvalues_to_arrays(spenv, operands)
-  out = sparse.bcoo_dynamic_slice(args[0], args[1:], **params)
-  return arrays_to_spvalues(spenv, [out])
-
-sparse_rules[lax.dynamic_slice_p] = _dynamic_slice_sparse_rule
 
 
 #------------------------------------------------------------------------------
