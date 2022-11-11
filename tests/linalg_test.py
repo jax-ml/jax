@@ -806,7 +806,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, hermitian=hermitian)
      for shape in [(1, 1), (4, 4), (3, 10, 10), (2, 70, 7), (2000, 7),
-                   (7, 1000), (70, 7, 2), (2, 0, 0), (3, 0, 2), (1, 0)]
+                   (7, 1000), (70, 7, 2), (2, 0, 0), (3, 0, 2), (1, 0),
+                   (400000, 2), (2, 400000)]
      for hermitian in ([False, True] if shape[-1] == shape[-2] else [False])],
     dtype=float_types + complex_types,
   )
