@@ -348,6 +348,20 @@ class BCSR(JAXSparse):
     """Create a dense version of the array."""
     return bcsr_todense(self)
 
+  @classmethod
+  def from_scipy_sparse(cls, mat, *, index_dtype=None, n_dense=0, n_batch=0):
+    """Create a BCSR array from a :mod:`scipy.sparse` array."""
+    if n_dense != 0 or n_batch != 0:
+      raise NotImplementedError("BCSR from_scipy_sparse with nonzero n_dense/n_batch.")
+
+    if mat.ndim != 2:
+      raise ValueError(f"BCSR from_scipy_sparse requires 2D array; {mat.ndim}D is given.")
+
+    mat = mat.tocsr()
+    data = jnp.asarray(mat.data)
+    indices = jnp.asarray(mat.indices).astype(index_dtype or jnp.int32)
+    indptr = jnp.asarray(mat.indptr).astype(index_dtype or jnp.int32)
+    return cls((data, indices, indptr), shape=mat.shape)
 
 #--------------------------------------------------------------------
 # vmappable handlers
