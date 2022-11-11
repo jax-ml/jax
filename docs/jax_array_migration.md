@@ -305,8 +305,6 @@ global `jax.Array` and then pass that to `pjit`.
 
 The most common example of such a host local input is a **batch of input data**.
 
-See this cl/486388872 as an example of how to do that.
-
 This will work for any host local input (not just a batch of input data).
 
 ```
