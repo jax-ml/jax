@@ -585,7 +585,7 @@ def _dot_general_validated_shape(lhs_shape: Shape, rhs_shape: Shape, dimension_n
     lhs, rhs, dimension_numbers=dimension_numbers,
     precision=None, preferred_element_type=None)
 
-def bcoo_dot_general(lhs, rhs, *, dimension_numbers):
+def bcoo_dot_general(lhs, rhs, *, dimension_numbers, precision=None, preferred_element_type=None):
   """A general contraction operation.
 
   Args:
@@ -594,12 +594,16 @@ def bcoo_dot_general(lhs, rhs, *, dimension_numbers):
     dimension_numbers: a tuple of tuples of the form
       `((lhs_contracting_dims, rhs_contracting_dims),
       (lhs_batch_dims, rhs_batch_dims))`.
+    precision: unused
+    preferred_element_type: unused
 
   Returns:
     An ndarray or BCOO-format sparse array containing the result. If both inputs
     are sparse, the result will be sparse, of type BCOO. If either input is dense,
     the result will be dense, of type ndarray.
   """
+  # TODO(jakevdp) make use of these?
+  del precision, preferred_element_type  # unused
   if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
     shape = _dot_general_validated_shape(lhs.shape, rhs.shape, dimension_numbers)
     bufs = _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
