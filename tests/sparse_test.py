@@ -1019,18 +1019,31 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertArraysEqual(dense_result, sparse_result_jit.todense())
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, idx=idx)
+      for shape, idx in [
+        [(5,), np.index_exp[:]],
+        [(5,), np.index_exp[4]],
+        [(5,), np.index_exp[::2]],
+        [(5,), np.index_exp[1::2]],
+        [(5,), 1],
+        [(3, 4), np.index_exp[1]],
+        [(3, 4), np.index_exp[1, 2]],
+        [(3, 4), np.index_exp[np.array([1, 2])]],
+        [(3, 4), np.index_exp[np.array([[1], [2]]), 0]],
+        [(3, 4), np.index_exp[np.array([[1], [2]]), 1:]],
+        [(3, 4), np.index_exp[np.array([True, False, True])]],
+        [(3, 4), np.index_exp[:2, np.array([True, False, True, False])]],
+        [(3, 4), np.index_exp[None, 0, np.array([[2]])]],
+        [(3, 4, 5), np.index_exp[2]],
+        [(3, 4, 5), np.index_exp[:, 2]]
+      ]
       for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
+      for n_dense in [0]  # TODO(jakevdp): add tests with n_dense
     ],
-    dtype=jtu.dtypes.floating,
-    idx=[1, slice(1, 3)],
+    dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_getitem(self, shape, dtype, n_batch, n_dense, idx):
-    # Note: __getitem__ is currently only supported for simple slices and indexing
-    rng = self.rng()
-    sprng = rand_sparse(rng)
+    sprng = rand_sparse(self.rng())
     M = sprng(shape, dtype)
     Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
     self.assertArraysEqual(M[idx], Msp[idx].todense())
