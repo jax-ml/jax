@@ -11,9 +11,4 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from jax.experimental.jax2tf.jax2tf import convert
-from jax.experimental.jax2tf.jax2tf_old import (dtype_of_val,
-                                                split_to_logical_devices,
-                                                PolyShape)
-from jax.experimental.jax2tf.call_tf import call_tf
+"""jax2tf common utility function."""
