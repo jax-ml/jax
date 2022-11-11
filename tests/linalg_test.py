@@ -15,6 +15,7 @@
 """Tests for the LAPAX linear algebra module."""
 
 from functools import partial
+import itertools
 import unittest
 
 import numpy as np
@@ -494,14 +495,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       jnp.linalg.norm(jnp.array([1.0, 2.0, 3.0]), ord="inf")
 
   @jtu.sample_product(
-    [dict(m=m, n=n, hermitian=hermitian)
-     for m in [0, 2, 7, 29, 53]
-     for n in [0, 2, 7, 29, 53]
+    [dict(m=m, n=n, full_matrices=full_matrices, hermitian=hermitian)
+     for (m, n), full_matrices in (
+         list(itertools.product(itertools.product([0, 2, 7, 29, 53], repeat=2),
+                                [False, True])) +
+         # Test cases that ensure we are economical when computing the SVD and
+         # its gradient. If we form a 400kx400k matrix explicitly we will OOM.
+         [((400000, 2), False),
+          ((2, 400000), False)]
+     )
      for hermitian in ([False, True] if m == n else [False])
     ],
     b=[(), (3,), (2, 3)],
     dtype=float_types + complex_types,
-    full_matrices=[False, True],
     compute_uv=[False, True],
   )
   @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
@@ -575,7 +581,8 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CompileAndCheck(partial(jnp.linalg.svd, full_matrices=full_matrices,
                                   compute_uv=compute_uv),
                           args_maker)
-    if not compute_uv:
+
+    if not compute_uv and a.size < 100000:
       svd = partial(jnp.linalg.svd, full_matrices=full_matrices,
                     compute_uv=compute_uv)
       # TODO(phawkins): these tolerances seem very loose.
@@ -596,7 +603,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
         return jnp.matmul(jnp.matmul(u, vdiag(s).astype(u.dtype)), v).real
       _, t_out = jvp(f, (1.,), (1.,))
       if dtype == np.complex128:
-        atol = 1e-13
+        atol = 2e-13
       else:
         atol = 5e-4
       self.assertArraysAllClose(t_out, b.real, atol=atol)
