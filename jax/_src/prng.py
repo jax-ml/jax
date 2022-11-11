@@ -31,6 +31,7 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
+from jax._src import basearray
 from jax._src.sharding import (
     MeshPspecSharding, PmapSharding, OpShardingSharding)
 
@@ -258,6 +259,7 @@ lax_numpy._set_device_array_base_attributes(PRNGKeyArray, include=[
     '__getitem__', 'ravel', 'squeeze', 'swapaxes', 'take', 'reshape',
     'transpose', 'flatten', 'T'])
 lax_numpy._register_stackable(PRNGKeyArray)
+basearray.Array.register(PRNGKeyArray)
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed
