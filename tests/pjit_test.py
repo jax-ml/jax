@@ -3219,6 +3219,10 @@ class UtilTest(jtu.JaxTestCase):
     self.assertIsInstance(mesh.devices, np.ndarray)
     self.assertEqual(mesh.size, jax.device_count())
 
+  def test_mesh_with_string_axis_names(self):
+    mesh = maps.Mesh(jax.devices(), 'dp')
+    self.assertTupleEqual(mesh.axis_names, ('dp',))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

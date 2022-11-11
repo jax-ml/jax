@@ -17,6 +17,9 @@ Remember to align the itemized text with the first line of an item within a list
     tridiagonal reductions are supported on CPU only.
 * Breaking Changes
   * Deleted the `jax_experimental_name_stack` config option.
+  * Convert a string `axis_names` arguments to the
+    {class}`jax.experimental.maps.Mesh` constructor into a singleton tuple
+    instead of unpacking the string into a sequence of character axis names.
 
 ## jaxlib 0.3.25
 * Changes
