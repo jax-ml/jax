@@ -59,6 +59,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    :caption: Notes
 
    api_compatibility
+   jax_array_migration
    deprecation
    concurrency
    gpu_memory_allocation
