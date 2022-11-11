@@ -35,6 +35,24 @@ XLADeviceAssignment = Sequence[Device]
 
 @pxla.use_cpp_class(xc.Sharding if xc._version >= 94 else None)
 class Sharding(metaclass=abc.ABCMeta):
+  """Abstract ``Sharding`` interface describes how it is laid out across devices.
+
+  Attributes:
+    device_set: A set of global devices that the ``Sharding`` represents. The
+      devices can span across multiple processes too.
+    devices_indices_map: A global mapping from device to the slice of the global
+      data it contains. The devices in this mapping are global devices.
+    shard_shape: The expected shape of the data on each device. This should
+      match the actual shape of the data.
+    addressable_devices: A set of devices that are addressable by the current
+      process.
+    addressable_devices_indices_map: An addressable mapping from device to the
+      slice of global data it contains. This is calculated by filtering the
+      ``devices_indices_map``
+    is_fully_addressable: Bool, whether all the global devices are addressable
+      by the current process. In other words, all the devices in ``device_set``
+      should belong to one process.
+  """
 
   # Abstract methods below that subclasses should implement.
 
@@ -78,6 +96,14 @@ class Sharding(metaclass=abc.ABCMeta):
 
 @pxla.use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
 class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
+  """A subclass of ``Sharding`` which is compatible with XLA.
+
+  Any ``Sharding`` that is a subclass of ``XLACompatibleSharding`` will work
+  seamlessly with all JAX APIs and transformations that use XLA.
+
+  Shardings that inherit from XLACompatibleSharding should implement the
+  ``_device_assignment`` property and ``_to_xla_op_sharding`` method.
+  """
 
   # Abstract methods below that subclasses should implement.
 
@@ -164,6 +190,20 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
 
 @pxla.use_cpp_class(xc.MeshPspecSharding if xc._version >= 95 else None)
 class MeshPspecSharding(XLACompatibleSharding):
+  """Named Sharding which consists of a ``Mesh`` and ``PartitionSpec``.
+
+  Args:
+    mesh: A ``jax.experimental.maps.Mesh`` object.
+    spec: A ``jax.experimental.PartitionSpec`` object.
+
+  Example:
+
+    >>> from jax.experimental.maps import Mesh
+    >>> from jax.experimental import PartitionSpec as P
+    >>> mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
+    >>> spec = P('x', 'y')
+    >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
+  """
 
   @pxla.use_cpp_method
   def __init__(
@@ -269,6 +309,16 @@ def _get_replicated_op_sharding():
 
 @pxla.use_cpp_class(xc.SingleDeviceSharding if xc._version >= 95 else None)
 class SingleDeviceSharding(XLACompatibleSharding):
+  """A subclass of ``XLACompatibleSharding`` that belongs on one device.
+
+  Args:
+    device: A single :py:class:`Device`.
+
+  Example:
+
+    >>> single_device_sharding = jax.sharding.SingleDeviceSharding(
+    ...     jax.devices()[0])
+  """
 
   @pxla.use_cpp_method
   def __init__(self, device: Device):
