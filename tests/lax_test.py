@@ -2645,8 +2645,6 @@ class LazyConstantTest(jtu.JaxTestCase):
     dtype=default_dtypes,
   )
   def testIotaConstant(self, dtype, shape, dimension):
-    if jtu.device_under_test() == "tpu" and dtype == jnp.int16:
-      raise unittest.SkipTest("Test fails on TPU (b/258483912)")
     make_const = lambda: lax.broadcasted_iota(dtype, shape, dimension)
 
     arr = np.arange(shape[dimension], dtype=dtypes.canonicalize_dtype(dtype))
