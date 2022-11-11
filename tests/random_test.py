@@ -476,6 +476,12 @@ class PrngTest(jtu.JaxTestCase):
     self.assertRaisesRegex(IndexError, 'Too many indices.*',
                            lambda: keys[0, 1, None, 2])
 
+  def test_isinstance(self):
+    if not config.jax_enable_custom_prng:
+      self.skipTest("test requires config.jax_enable_custom_prng")
+    key = random.PRNGKey(0)
+    self.assertIsInstance(key, jnp.ndarray)
+
 
 class LaxRandomTest(jtu.JaxTestCase):
 
