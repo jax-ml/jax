@@ -908,6 +908,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
           ((0, 3), (0,)),
           ((3, 0), (3,)),
           ((3, 1), (3, 0)),
+          ((400000, 2), (400000,)),
       ]
     ],
     rcond=[-1, None, 0.5],
@@ -918,7 +919,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     np_fun = partial(np.linalg.lstsq, rcond=rcond)
     jnp_fun = partial(jnp.linalg.lstsq, rcond=rcond)
     jnp_fun_numpy_resid = partial(jnp.linalg.lstsq, rcond=rcond, numpy_resid=True)
-    tol = {np.float32: 1e-4, np.float64: 1e-12,
+    tol = {np.float32: 1e-3, np.float64: 1e-12,
            np.complex64: 1e-5, np.complex128: 1e-12}
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
 

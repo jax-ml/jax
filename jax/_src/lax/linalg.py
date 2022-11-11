@@ -1569,12 +1569,13 @@ def _svd_jvp_rule(primals, tangents, *, full_matrices, compute_uv):
       "Singular value decomposition JVP not implemented for full matrices")
 
   Ut, V = _H(U), _H(Vt)
+  if not compute_uv:
+    ds = jnp.real(jnp.einsum("...ab,...bc,...ca->...a", Ut, dA, V))
+    return (s,), (ds,)
+
   s_dim = s[..., None, :]
   dS = Ut @ dA @ V
   ds = jnp.real(jnp.diagonal(dS, 0, -2, -1))
-
-  if not compute_uv:
-    return (s,), (ds,)
 
   s_diffs = (s_dim + _T(s_dim)) * (s_dim - _T(s_dim))
   s_diffs_zeros = jnp.eye(s.shape[-1], dtype=s.dtype)  # jnp.ones((), dtype=A.dtype) * (s_diffs == 0.)  # is 1. where s_diffs is 0. and is 0. everywhere else
@@ -1594,7 +1595,7 @@ def _svd_jvp_rule(primals, tangents, *, full_matrices, compute_uv):
   if m > n:
     dAV = dA @ V
     dU = dU + (dAV - U @ (Ut @ dAV)) / s_dim.astype(A.dtype)
-  if n > m:
+  elif n > m:
     dAHU = _H(dA) @ U
     dV = dV + (dAHU - V @ (Vt @ dAHU)) / s_dim.astype(A.dtype)
 
