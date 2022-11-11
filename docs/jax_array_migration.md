@@ -140,12 +140,12 @@ Please use `addressable_shards` and `addressable_data` which are compatible with
 All JAX functions will output `jax.Array` when the `jax_array` flag is True. If
 you were using `GlobalDeviceArray.from_callback` or `make_sharded_device_array`
 or `make_device_array` functions to explicitly create the respective JAX data
-types, you will need to switch them to use `jax.make_array_from_callback` or
-`jax.make_array_from_single_device_arrays`.
+types, you will need to switch them to use {func}`jax.make_array_from_callback`
+or {func}`jax.make_array_from_single_device_arrays`.
 
 **For GDA:**
 
-`GlobalDeviceArray.from_callback(shape, mesh, pspec, callback)` can become 
+`GlobalDeviceArray.from_callback(shape, mesh, pspec, callback)` can become
 `jax.make_array_from_callback(shape, jax.sharding.NamedSharding(mesh, pspec), callback)`
 in a 1:1 switch.
 

@@ -77,6 +77,14 @@ Automatic differentiation
     closure_convert
     checkpoint
 
+jax.Array (:code:`jax.Array`)
+-----------------------------
+
+.. autosummary::
+  :toctree: _autosummary
+
+    make_array_from_callback
+    make_array_from_single_device_arrays
 
 Vectorization (:code:`vmap`)
 ----------------------------
