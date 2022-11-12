@@ -35,42 +35,33 @@ XLADeviceAssignment = Sequence[Device]
 
 @pxla.use_cpp_class(xc.Sharding if xc._version >= 94 else None)
 class Sharding(metaclass=abc.ABCMeta):
-  """Abstract ``Sharding`` interface describes how it is laid out across devices.
-
-  Attributes:
-    device_set: A set of global devices that the ``Sharding`` represents. The
-      devices can span across multiple processes too.
-    devices_indices_map: A global mapping from device to the slice of the global
-      data it contains. The devices in this mapping are global devices.
-    shard_shape: The expected shape of the data on each device. This should
-      match the actual shape of the data.
-    addressable_devices: A set of devices that are addressable by the current
-      process.
-    addressable_devices_indices_map: An addressable mapping from device to the
-      slice of global data it contains. This is calculated by filtering the
-      ``devices_indices_map``
-    is_fully_addressable: Bool, whether all the global devices are addressable
-      by the current process. In other words, all the devices in ``device_set``
-      should belong to one process.
-  """
+  """Abstract ``Sharding`` interface describes how a ``jax.Array`` is laid out across devices."""
 
   # Abstract methods below that subclasses should implement.
 
   @abc.abstractproperty
   def device_set(self) -> Set[Device]:
-    """A unique set of devices that this sharding represents.
+    """A unique set of global devices that this ``Sharding`` represents.
 
-    Devices can be non-addressable too.
+    Devices can be non-addressable too i.e can span across multiple processes.
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
   def devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    """A global mapping from device to the slice of the global data it contains.
+
+    The devices in this mapping are global devices.
+    """
     raise NotImplementedError('Subclasses should implement this method.')
 
   @abc.abstractmethod
   def shard_shape(self, global_shape: Shape) -> Shape:
+    """The expected shape of the data on each device.
+
+    This should match the actual shape of the data.
+    """
     raise NotImplementedError('Subclasses should implement this method.')
 
   #############################################################################
@@ -78,18 +69,27 @@ class Sharding(metaclass=abc.ABCMeta):
 
   @pxla.maybe_cached_property
   def addressable_devices(self) -> Set[Device]:
-    """A set of addressable devices by the current process"""
+    """A set of devices that are addressable by the current process."""
     return {d for d in self.device_set
             if d.process_index == d.client.process_index()}
 
   @pxla.maybe_cached_property
   def is_fully_addressable(self) -> bool:
+    """Bool, whether all the global devices are addressable by the current process.
+
+    In other words, all the devices in ``device_set`` should belong to one process.
+    """
     # The pytype disable is because pytype can't recognize a cached property.
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
   @functools.lru_cache(maxsize=4096)
   def addressable_devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+    """An addressable mapping from device to the slice of global data it contains.
+
+    This is calculated by filtering the ``devices_indices_map`` to only contain
+    the addressable devices i.e. devices that belong to the current process.
+    """
     return {d: ind for d, ind in self.devices_indices_map(global_shape).items()
             if d.process_index == d.client.process_index()}
 

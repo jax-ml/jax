@@ -12,7 +12,7 @@ Classes
    :members:
 .. autoclass:: XLACompatibleSharding
    :members:
-.. autoclass:: NamedSharding
+.. autoclass:: MeshPspecSharding
    :members:
 .. autoclass:: SingleDeviceSharding
    :members:

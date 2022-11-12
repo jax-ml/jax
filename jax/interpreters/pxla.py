@@ -3864,6 +3864,8 @@ def use_cpp_class(cpp_cls):
           _original_func(attr), "_use_cpp"):
         setattr(cpp_cls, attr_name, attr)
 
+    cpp_cls.__doc__ = cls.__doc__
+
     return cpp_cls
 
   return wrapper
