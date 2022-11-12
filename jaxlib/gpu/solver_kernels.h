@@ -160,6 +160,7 @@ struct GesvdjDescriptor {
 
 void Gesvdj(gpuStream_t stream, void** buffers, const char* opaque,
             size_t opaque_len, XlaCustomCallStatus* status);
+#endif  // JAX_GPU_CUDA
 
 // sytrd/hetrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
 struct SytrdDescriptor {
@@ -171,7 +172,6 @@ struct SytrdDescriptor {
 void Sytrd(gpuStream_t stream, void** buffers, const char* opaque,
            size_t opaque_len, XlaCustomCallStatus* status);
 
-#endif  // JAX_GPU_CUDA
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
