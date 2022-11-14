@@ -22,7 +22,7 @@ from jax._src.util import prod
 from jax.interpreters.pxla import PartitionSpec as P
 from jax.interpreters import pxla
 from jax.experimental import global_device_array as gda
-from jax._src.sharding import MeshPspecSharding
+from jax._src.sharding import NamedSharding
 import numpy as np
 
 mesh_shapes_axes = [
@@ -122,7 +122,7 @@ def gda_xla_sharding_match(mesh_shape, mesh_axes, state):
   ]
   gda_inp = gda.GlobalDeviceArray(global_input_shape, global_mesh, mesh_axes,
                                   dbs)
-  in_xla_shardings = MeshPspecSharding(global_mesh, mesh_axes)
+  in_xla_shardings = NamedSharding(global_mesh, mesh_axes)
   while state:
     pxla._check_gda_or_array_xla_sharding_match([gda_inp] * 1000,
                                                 [in_xla_shardings] * 1000)

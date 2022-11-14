@@ -309,7 +309,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
         devices, op_sharding))
     pspec = pjit.parse_flatten_op_sharding(
         op_sharding, mesh)[0].get_partition_spec()
-    return callback(pjit.MeshPspecSharding(mesh, pspec))
+    return callback(pjit.NamedSharding(mesh, pspec))
 
   if len(devices) == 1:
     # If we only have one device in our computation, we can construct a trivial
@@ -568,7 +568,7 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
   >>> with Mesh(jax.devices(), ('dev',)):
   ...   f.lower(x).compile()  # doctest: +SKIP
   ...
-  MeshPspecSharding(mesh={'dev': 8}, partition_spec=PartitionSpec(('dev',),))
+  NamedSharding(mesh={'dev': 8}, partition_spec=PartitionSpec(('dev',),))
   """
   def _inspect(val):
     inspect_sharding_p.bind(val, callback=callback)

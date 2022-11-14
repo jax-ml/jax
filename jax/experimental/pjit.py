@@ -24,7 +24,7 @@ import threading
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax._src.sharding import (
-    MeshPspecSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
+    NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
     XLADeviceAssignment, PmapSharding)
 from jax import core
 from jax import linear_util as lu
@@ -84,8 +84,8 @@ def _is_unspecified_or_from_gda_or_auto(x):
 
 PjitSharding = Union[OpShardingSharding, _UnspecifiedValue, _AUTOAxisResource]
 PjitShardingMinusUnspecified = Union[OpShardingSharding, _AUTOAxisResource]
-MeshSharding = Union[MeshPspecSharding, _UnspecifiedValue, _AUTOAxisResource]
-MeshShardingMinusUnspecified = Union[MeshPspecSharding, _AUTOAxisResource]
+MeshSharding = Union[NamedSharding, _UnspecifiedValue, _AUTOAxisResource]
+MeshShardingMinusUnspecified = Union[NamedSharding, _AUTOAxisResource]
 
 
 def _check_all_or_none_unspecified(axis_resources, name):
@@ -635,7 +635,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   else:
     pjit_check_aval_sharding(
         [i if _is_from_gda(i) or _is_auto(i) else
-         MeshPspecSharding(i.mesh.local_mesh, i.spec)
+         NamedSharding(i.mesh.local_mesh, i.spec)
          for i in in_shardings_flat],
         local_in_avals, "pjit arguments", allow_uneven_sharding=False)
 
@@ -1037,21 +1037,21 @@ def _pjit_lower_cached(
 
   mesh = resource_env.physical_mesh
 
-  # Convert to `MeshPspecSharding` when `jax_array` is not enabled. This is
+  # Convert to `NamedSharding` when `jax_array` is not enabled. This is
   # because GDA/SDA/DA are dependent on mesh for generating outputs.
-  # MeshPspecSharding is required for host-local inputs too.
+  # NamedSharding is required for host-local inputs too.
   any_auto = pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings))
   if not config.jax_array or any_auto:
     in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
         Tuple[MeshShardingMinusUnspecified, ...], tuple(
-            MeshPspecSharding._from_parsed_pspec(
+            NamedSharding._from_parsed_pspec(
                 mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0]) # type: ignore
             if isinstance(i, OpShardingSharding) else i
             for i in in_shardings
     ))
     out_shardings: Tuple[MeshSharding, ...] = cast(  # type: ignore[no-redef]
         Tuple[MeshSharding, ...], tuple(
-            MeshPspecSharding._from_parsed_pspec(
+            NamedSharding._from_parsed_pspec(
                 mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0]) # type: ignore
             if isinstance(o, OpShardingSharding) else o
             for o in out_shardings
@@ -1171,7 +1171,7 @@ def _pjit_batcher_for_sharding(
     assert not mesh.empty
     parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
-    mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
+    mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
     return OpShardingSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
 
 
@@ -1430,13 +1430,13 @@ def with_sharding_constraint(x, axis_resources):
     sharding_flat = [_create_sharding_for_array(mesh, a)
                      for a in axis_resources_flat]
     unconstrained_dims = [
-        get_unconstrained_dims(s) if isinstance(s, MeshPspecSharding) else {}
+        get_unconstrained_dims(s) if isinstance(s, NamedSharding) else {}
         for s in sharding_flat
     ]
   else:
     sharding_flat = [pxla._create_mesh_pspec_sharding(mesh, a.user_spec, a)
                      for a in axis_resources_flat]
-    # Calculate unconstrained_dims from MeshPspecSharding because that information
+    # Calculate unconstrained_dims from NamedSharding because that information
     # is lost when converted to OpSharding. Bind unconstrained_dims to
     # with_sharding_constraint primitive.
     unconstrained_dims = [get_unconstrained_dims(s) for s in sharding_flat]
@@ -1467,12 +1467,12 @@ def _sharding_constraint_mhlo_lowering(ctx, x_node, *, sharding,
   aval, = ctx.avals_in
   axis_ctx = ctx.module_context.axis_context
   # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
-  # MeshPspecSharding. So convert the OpShardingSharding to MeshPspecSharding
+  # NamedSharding. So convert the OpShardingSharding to NamedSharding
   # and then convert it back with the added special axes.
   if isinstance(axis_ctx, mlir.SPMDAxisContext):
     mesh = resource_env.physical_mesh
     parsed_pspec = parse_flatten_op_sharding(sharding._op_sharding, mesh)[0]
-    mps = MeshPspecSharding._from_parsed_pspec(mesh, parsed_pspec)
+    mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
     sharding = OpShardingSharding(
         mps._device_assignment, mps._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
@@ -1548,7 +1548,7 @@ def to_op_sharding_sharding(s: XLACompatibleSharding, ndim: int) -> OpShardingSh
   return op_sharding_sharding
 
 
-def get_unconstrained_dims(sharding: MeshPspecSharding):
+def get_unconstrained_dims(sharding: NamedSharding):
   return {i for i, axes in enumerate(sharding._parsed_pspec)
           if axes is None}
 
@@ -1567,7 +1567,7 @@ def global_to_local(positional_semantics, avals, shardings, mesh):
     else:
       # This path is only taken by host-local values. GDA, Array and fully
       # replicated avals don't go through this code path. To convert global
-      # avals to host local avals, round trip it via MeshPspecSharding.
+      # avals to host local avals, round trip it via NamedSharding.
       parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
       out.append(mesh._global_to_local(get_array_mapping(parsed_pspec), aval))
   return out
@@ -1584,7 +1584,7 @@ def local_to_global(positional_semantics, avals, shardings, mesh):
     else:
       # This path is only taken by host-local values. GDA, Array and fully
       # replicated avals don't go through this code path. To convert host local
-      # avals to global avals, round trip it via MeshPspecSharding.
+      # avals to global avals, round trip it via NamedSharding.
       parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
       out.append(mesh._local_to_global(get_array_mapping(parsed_pspec), aval))
   return out
@@ -1619,7 +1619,7 @@ def _maybe_replace_from_gda_with_pspec(
 
   @lru_cache()
   def _gda_check_and_get_sharding(
-      gda_sharding: MeshPspecSharding, in_sharding: OpShardingSharding, ndim: int):
+      gda_sharding: NamedSharding, in_sharding: OpShardingSharding, ndim: int):
     if not _is_from_gda(in_sharding) and not pxla.are_op_shardings_equal(
         gda_sharding._to_xla_op_sharding(ndim),
         in_sharding._to_xla_op_sharding(ndim)):

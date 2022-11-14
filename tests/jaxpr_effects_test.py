@@ -275,7 +275,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       return x
     mesh = maps.Mesh(np.array(jax.devices()), ['x'])
     if config.jax_array:
-      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('x'))
+      spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('x'))
     else:
       spec = pjit.PartitionSpec('x')
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)

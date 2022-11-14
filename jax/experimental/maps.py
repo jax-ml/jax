@@ -41,7 +41,7 @@ from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax._src.array import ArrayImpl
 from jax.experimental.global_device_array import GlobalDeviceArray
-from jax._src.sharding import MeshPspecSharding
+from jax._src.sharding import NamedSharding
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
@@ -716,9 +716,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
       tiling_method = pxla.TileManual(manual_mesh_axes)
     else:
       tiling_method = pxla.TileVectorize()
-    in_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(i))
+    in_shardings = [NamedSharding(mesh, pxla.array_mapping_to_axis_resources(i))
                     for i in mesh_in_axes]
-    out_shardings = [MeshPspecSharding(mesh, pxla.array_mapping_to_axis_resources(o))
+    out_shardings = [NamedSharding(mesh, pxla.array_mapping_to_axis_resources(o))
                      for o in mesh_out_axes]
     return pxla.lower_mesh_computation(
         f, 'xmap', name, mesh,
@@ -1829,7 +1829,7 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
     if isinstance(arg, (GlobalDeviceArray, ArrayImpl)):
       arr_flavor = 'GDA' if isinstance(arg, GlobalDeviceArray) else 'Array'
-      if arr_flavor == 'Array' and not isinstance(arg.sharding, MeshPspecSharding):
+      if arr_flavor == 'Array' and not isinstance(arg.sharding, NamedSharding):
         continue
       mesh = arg.mesh if arr_flavor == 'GDA' else arg.sharding.mesh
       if mesh != resource_env.physical_mesh:
@@ -1884,7 +1884,7 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
     new_eqns.append(eqn.replace(
       outvars=tmp_outvars, params=dict(eqn.params, **new_jaxpr_params)))
     for outvar, tmpvar in zip(eqn.outvars, tmp_outvars):
-      mps = MeshPspecSharding._from_parsed_pspec(
+      mps = NamedSharding._from_parsed_pspec(
           resource_env.physical_mesh, ParsedPartitionSpec((), ()))
       unconstrained_dims = get_unconstrained_dims(mps)
       op_sharding_sharding = OpShardingSharding.get_replicated(

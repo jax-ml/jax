@@ -84,7 +84,7 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            unzip2)
 
 if TYPE_CHECKING:
-  from jax._src.sharding import MeshPspecSharding, XLACompatibleSharding
+  from jax._src.sharding import NamedSharding, XLACompatibleSharding
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
@@ -1856,13 +1856,13 @@ def _get_sharding_specs(
 
   if all(isinstance(s, sharding.PmapSharding) for s in shardings):
     return [s.sharding_spec for s in shardings]  # type: ignore
-  elif all(isinstance(s, sharding.MeshPspecSharding) for s in shardings):
+  elif all(isinstance(s, sharding.NamedSharding) for s in shardings):
     return [new_mesh_sharding_specs(s.mesh.shape, s.mesh.axis_names)(
               aval.ndim, _get_array_mapping(s.spec))
             for aval, s in safe_zip(avals, shardings)]
   else:
     raise ValueError('Getting sharding spec is only supported for '
-                     "PmapSharding and MeshPspecSharding, "
+                     "PmapSharding and NamedSharding, "
                      f"but got {shardings}.")
 
 def local_avals_to_results_handler(
@@ -1882,7 +1882,7 @@ def global_avals_to_results_handler(
     shardings: Sequence[XLACompatibleSharding],
     committed: bool,
     are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
-  from jax._src.sharding import MeshPspecSharding
+  from jax._src.sharding import NamedSharding
 
   if config.jax_parallel_functions_output_gda or config.jax_array:
     handlers = [
@@ -1893,10 +1893,10 @@ def global_avals_to_results_handler(
     return ResultsHandler(handlers, shardings, global_out_avals)
   else:
     # This path is taken when the outputs are SDAs.
-    assert all(isinstance(s, MeshPspecSharding) for s in shardings)
+    assert all(isinstance(s, NamedSharding) for s in shardings)
     local_out_avals = [s.mesh._global_to_local(_get_array_mapping(s.spec), aval)
                        for aval, s in safe_zip(global_out_avals, shardings)]
-    local_shardings = [MeshPspecSharding(s.mesh.local_mesh, s.spec) for s in shardings]  # type: ignore
+    local_shardings = [NamedSharding(s.mesh.local_mesh, s.spec) for s in shardings]  # type: ignore
     return local_avals_to_results_handler(local_out_avals, local_shardings)
 
 
@@ -2958,8 +2958,8 @@ def lower_mesh_computation(
     api_name: str,
     fun_name: str,
     mesh: Mesh,
-    in_shardings: Sequence[Union[MeshPspecSharding, _AUTOAxisResource]],
-    out_shardings: Sequence[Union[MeshPspecSharding, _AUTOAxisResource,
+    in_shardings: Sequence[Union[NamedSharding, _AUTOAxisResource]],
+    out_shardings: Sequence[Union[NamedSharding, _AUTOAxisResource,
                             _UnspecifiedValue]],
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
@@ -3191,7 +3191,7 @@ def _get_normalized_avals_and_shardings(
     global_in_avals: Sequence[ShapedArray],
     in_shardings: Sequence[XLACompatibleSharding], in_is_global: Sequence[bool]
 ) -> Tuple[Sequence[ShapedArray], Sequence[XLACompatibleSharding]]:
-  from jax._src.sharding import MeshPspecSharding
+  from jax._src.sharding import NamedSharding
 
   avals = []
   shardings = []
@@ -3202,9 +3202,9 @@ def _get_normalized_avals_and_shardings(
       aval = gaval
       sharding = i
     else:
-      assert isinstance(i, MeshPspecSharding)
+      assert isinstance(i, NamedSharding)
       aval = i.mesh._global_to_local(cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)
-      sharding = MeshPspecSharding(i.mesh.local_mesh, i.spec)
+      sharding = NamedSharding(i.mesh.local_mesh, i.spec)
     avals.append(aval)
     shardings.append(sharding)
 
@@ -3271,11 +3271,11 @@ def _get_op_sharding_shardings_from_executable(
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
   from jax.experimental import pjit
-  from jax._src.sharding import MeshPspecSharding
+  from jax._src.sharding import NamedSharding
 
   in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
-  return ([MeshPspecSharding(mesh, i) for i in in_pspec],
-          [MeshPspecSharding(mesh, o) for o in out_pspec])
+  return ([NamedSharding(mesh, i) for i in in_pspec],
+          [NamedSharding(mesh, o) for o in out_pspec])
 
 
 @dataclasses.dataclass
@@ -3637,8 +3637,8 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 
 @lru_cache()
 def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
-  from jax._src.sharding import MeshPspecSharding
-  return MeshPspecSharding(mesh, pspec, parsed_pspec)
+  from jax._src.sharding import NamedSharding
+  return NamedSharding(mesh, pspec, parsed_pspec)
 
 
 def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):

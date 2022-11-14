@@ -88,7 +88,7 @@ class GDATest(jtu.JaxTestCase):
     self.assertArraysEqual(gda.addressable_data(0),
                            global_input_data[expected_index[0]])
     self.assertEqual(gda.addressable_shards[1].index, expected_index[1])
-    self.assertIsInstance(gda.sharding, jax.sharding.MeshPspecSharding)
+    self.assertIsInstance(gda.sharding, jax.sharding.NamedSharding)
     self.assertArraysEqual(gda.addressable_data(1),
                            global_input_data[expected_index[1]])
     self.assertEqual(gda.addressable_data(0).shape, expected_shard_shape)

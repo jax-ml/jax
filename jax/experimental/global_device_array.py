@@ -483,7 +483,7 @@ class GlobalDeviceArray:
 
   @property
   def sharding(self):
-    return jax.sharding.MeshPspecSharding(self._global_mesh, self.mesh_axes)
+    return jax.sharding.NamedSharding(self._global_mesh, self.mesh_axes)
 
   @classmethod
   def from_callback(cls, global_shape: Shape, global_mesh: pxla.Mesh,

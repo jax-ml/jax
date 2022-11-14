@@ -788,8 +788,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       return x
     mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
-      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+      spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.NamedSharding(mesh, pjit.PartitionSpec())
     else:
       spec = pjit.PartitionSpec('dev')
       out_spec = pjit.PartitionSpec()
@@ -828,7 +828,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
     mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
+      spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('dev'))
     else:
       spec = pjit.PartitionSpec('dev')
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
@@ -857,8 +857,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       return out
     mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      in_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
-      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+      in_spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.NamedSharding(mesh, pjit.PartitionSpec())
     else:
       in_spec = pjit.PartitionSpec('dev')
       out_spec = pjit.PartitionSpec()
@@ -971,7 +971,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   def test_trivial_sharding(self):
     mesh = maps.Mesh(self._create_devices(1), ['x'])
     pspec = pjit.PartitionSpec('x')
-    sd = sharding.MeshPspecSharding(mesh, pspec)
+    sd = sharding.NamedSharding(mesh, pspec)
     shape = (5,)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
@@ -984,7 +984,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   def test_trivial_sharding_with_scale(self):
     mesh = maps.Mesh(self._create_devices(1), ['x'])
     pspec = pjit.PartitionSpec('x')
-    sd = sharding.MeshPspecSharding(mesh, pspec)
+    sd = sharding.NamedSharding(mesh, pspec)
     shape = (5,)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd, scale=8.)
@@ -997,7 +997,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   def test_full_sharding(self):
     mesh = maps.Mesh(self._create_devices((8, 4)), ['x', 'y'])
     pspec = pjit.PartitionSpec('x', 'y')
-    sd = sharding.MeshPspecSharding(mesh, pspec)
+    sd = sharding.NamedSharding(mesh, pspec)
     shape = (8, 8)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
@@ -1027,7 +1027,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     mesh = maps.Mesh(self._create_devices((8, 4)), ['x', 'y'])
 
     pspec = pjit.PartitionSpec('x', None)
-    sd = sharding.MeshPspecSharding(mesh, pspec)
+    sd = sharding.NamedSharding(mesh, pspec)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
@@ -1053,7 +1053,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
     mesh = maps.Mesh(self._create_devices((4, 2)), ['x', 'y'])
     pspec = pjit.PartitionSpec(None, 'y')
-    sd = sharding.MeshPspecSharding(mesh, pspec)
+    sd = sharding.NamedSharding(mesh, pspec)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
@@ -1076,7 +1076,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     mesh = maps.Mesh(self._create_devices((8, 4)), ['x', 'y'])
 
     pspec = pjit.PartitionSpec('x', None)
-    sd = sharding.MeshPspecSharding(mesh, pspec)
+    sd = sharding.NamedSharding(mesh, pspec)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
@@ -1163,8 +1163,8 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec('dev'))
-      out_spec = sharding.MeshPspecSharding(mesh, pjit.PartitionSpec())
+      spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('dev'))
+      out_spec = sharding.NamedSharding(mesh, pjit.PartitionSpec())
     else:
       spec = pjit.PartitionSpec('dev')
       out_spec = pjit.PartitionSpec()
