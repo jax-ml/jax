@@ -101,7 +101,7 @@ def _handle_array_process_allgather(inp, tiled):
                                               jax.local_device_count())
     global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
     pspec = P('processes')
-    s = jax.sharding.MeshPspecSharding(global_mesh, pspec)
+    s = jax.sharding.NamedSharding(global_mesh, pspec)
 
     host_np_arr = np.asarray(inp)
     if host_np_arr.ndim == 0 or not tiled:
@@ -277,7 +277,7 @@ def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
         arr.sharding, jax.sharding.PmapSharding):
       arr = np.array(arr)
 
-    local_sharding = jax.sharding.MeshPspecSharding(global_mesh.local_mesh, pspec)
+    local_sharding = jax.sharding.NamedSharding(global_mesh.local_mesh, pspec)
 
     # If the input is a concrete jax.Array and the input array sharding
     # matches the `local_sharding`, then there's no need to reshard and create
@@ -298,7 +298,7 @@ def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
         pxla._get_array_mapping(pspec),
         jax.ShapedArray(arr.shape, arrays[0].dtype))
     return array.ArrayImpl(
-        global_aval, jax.sharding.MeshPspecSharding(global_mesh, pspec),
+        global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
         arrays, committed=True)
 
   flattened_inps, in_tree = tree_flatten(local_inputs)
@@ -357,7 +357,7 @@ def global_array_to_host_local_array(global_inputs, global_mesh, pspecs):
     local_aval = global_mesh._global_to_local(
         pxla._get_array_mapping(pspec), arr.aval)
     return array.ArrayImpl(
-        local_aval, jax.sharding.MeshPspecSharding(global_mesh.local_mesh, pspec),
+        local_aval, jax.sharding.NamedSharding(global_mesh.local_mesh, pspec),
         arr._arrays, committed=True)
 
   flattened_inps, out_tree = tree_flatten(global_inputs)

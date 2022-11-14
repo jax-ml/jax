@@ -158,14 +158,14 @@ class custom_partitioning:
   The args to def_partition are as follows:
 
     propagate_user_sharding: Callable which takes the sharding of a user (in the dag)
-      and returns a suggestion for a new MeshPspecSharding. The default
+      and returns a suggestion for a new NamedSharding. The default
       implementation is just to return the suggested sharding.
     partition: Callable which takes the SPMD suggested partition shapes and
       partition specs and returns a per-shard lowering function and the final
       input and output sharding specs (the SPMD partitioner will repartition the
       inputs to match).
     infer_sharding_from_operands: Callable which computes an output
-      MeshPspecSharding from the MeshPspecSharding chosen for each argument.
+      NamedSharding from the NamedSharding chosen for each argument.
   """
 
   def __init__(self, fun):
@@ -227,7 +227,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       return OpShardingSharding(devices, op_sharding)
     pspec = pjit.parse_flatten_op_sharding(op_sharding,
                                            mesh)[0].get_partition_spec()
-    return pjit.MeshPspecSharding(mesh, pspec)
+    return pjit.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding, partition,
                                                 to_mesh_pspec_sharding,

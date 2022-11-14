@@ -27,7 +27,7 @@ from jax.config import config
 from jax.experimental import checkify
 from jax.experimental import pjit
 from jax.experimental import maps
-from jax._src.sharding import MeshPspecSharding
+from jax._src.sharding import NamedSharding
 from jax._src import array
 from jax._src.checkify import CheckEffect
 import jax.numpy as jnp
@@ -414,7 +414,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
 
     mesh = maps.Mesh(np.array(jax.devices()), ["dev"])
     if config.jax_array:
-      ps = MeshPspecSharding(mesh, pjit.PartitionSpec("dev"))
+      ps = NamedSharding(mesh, pjit.PartitionSpec("dev"))
       inp = np.arange(8)
       x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
     else:
