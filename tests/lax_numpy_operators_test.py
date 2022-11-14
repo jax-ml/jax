@@ -282,6 +282,7 @@ JAX_COMPOUND_OP_RECORDS = [
               all_shapes, jtu.rand_small_positive, []),
     op_record("gcd", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
     op_record("lcm", 2, int_dtypes_no_uint64, all_shapes, jtu.rand_default, []),
+    op_record("lcm", 2, [np.int8], all_shapes, jtu.rand_not_small, [])
 ]
 
 JAX_BITWISE_OP_RECORDS = [
