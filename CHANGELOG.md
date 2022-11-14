@@ -13,8 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
     jaxlib > 0.3.24.
   * New functions {func}`jax.lax.linalg.hessenberg`,
     {func}`jax.lax.linalg.tridiagonal`, and
-    {func}`jax.lax.linalg.householder_product` were added. Householder and
-    tridiagonal reductions are supported on CPU only.
+    {func}`jax.lax.linalg.householder_product` were added. Householder reduction
+    is currently CPU-only and tridiagonal reductions are supported on CPU and
+    GPU only.
+  * The gradients of `svd` and `jax.numpy.linalg.pinv` are now computed more
+    economically for non-square matrices.
 * Breaking Changes
   * Deleted the `jax_experimental_name_stack` config option.
   * Convert a string `axis_names` arguments to the
@@ -23,7 +26,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.3.25
 * Changes
-  * Added support for upper Hessenberg and tridiagonal reductions on CPU.
+  * Added support for tridiagonal reductions on CPU and GPU.
+  * Added support for upper Hessenberg reductions on CPU.
+* Bugs
+  * Fixed a bug that meant that frames in tracebacks captured by JAX were
+    incorrectly mapped to source lines under Python 3.10+
 
 ## jax 0.3.24 (Nov 4, 2022)
 * Changes
