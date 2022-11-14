@@ -57,3 +57,11 @@ jobs:
         env:
           JAX_PLATFORMS: tpu,cpu
         run: python -m pytest --tb=short tests examples
+      - name: Send chat on failure
+        if: failure()
+        run: |
+            curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
+            --header 'Content-Type: application/json' \
+            --data-raw "{
+            'text': '\"$GITHUB_WORKFLOW\" job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
+            }"
