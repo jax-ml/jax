@@ -43,3 +43,5 @@ def setup_tpu(tpu_driver_version='tpu_driver_20221103'):
   # The following is required to use TPU Driver as JAX's backend.
   config.FLAGS.jax_xla_backend = "tpu_driver"
   config.FLAGS.jax_backend_target = "grpc://" + os.environ['COLAB_TPU_ADDR']
+  # TODO(skyewm): Remove this after SPMD is supported for colab tpu.
+  config.update('jax_array', False)
