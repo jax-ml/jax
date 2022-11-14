@@ -1452,14 +1452,16 @@ class PileTest(jtu.JaxTestCase):
     # We may not want to support returning piles from vmapped functions (instead
     # preferring to have a separate API which allows piles). But for now it
     # makes for a convenient way to construct piles for the other tests!
-    p = jax.vmap(partial(jnp.arange, dtype='int32'))(jnp.array([3, 1, 4]))
+    p = jax.vmap(partial(jnp.arange, dtype='int32'), out_axes=batching.pile_axis
+                 )(jnp.array([3, 1, 4]))
     self.assertIsInstance(p, batching.Pile)
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[\[3 1 4\]\.Var[0-9]+\]')
     data = jnp.concatenate([jnp.arange(3), jnp.arange(1), jnp.arange(4)])
     self.assertAllClose(p.data, data, check_dtypes=False)
 
   def test_pile_map_eltwise(self):
-    p = jax.vmap(partial(jnp.arange, dtype='int32'))(jnp.array([3, 1, 4]))
+    p = jax.vmap(partial(jnp.arange, dtype='int32'), out_axes=batching.pile_axis
+                 )(jnp.array([3, 1, 4]))
     p = pile_map(lambda x: x ** 2)(p)
     self.assertIsInstance(p, batching.Pile)
     self.assertRegex(str(p.aval), r'Var[0-9]+:3 => i32\[\[3 1 4\]\.Var[0-9]+\]')
@@ -1467,23 +1469,26 @@ class PileTest(jtu.JaxTestCase):
     self.assertAllClose(p.data, data, check_dtypes=False)
 
   def test_pile_map_vector_dot(self):
-    p = jax.vmap(jnp.arange)(jnp.array([3, 1, 4]))
+    p = jax.vmap(jnp.arange, out_axes=batching.pile_axis)(jnp.array([3, 1, 4]))
     y = pile_map(jnp.dot)(p, p)
-    self.assertAllClose(y, jnp.array([5, 0, 14]))
+    self.assertIsInstance(y, batching.Pile)
+    self.assertAllClose(y.data, jnp.array([5, 0, 14]))
 
   def test_pile_map_matrix_dot(self):
     sizes = jnp.array([3, 1, 4])
-    p1 = jax.vmap(lambda n: jnp.ones((7, n)))(sizes)
-    p2 = jax.vmap(lambda n: jnp.ones((n, 7)))(sizes)
-    y = pile_map(jnp.dot)(p1, p2)
+    p1 = jax.vmap(lambda n: jnp.ones((7, n)), out_axes=batching.pile_axis
+                  )(sizes)
+    p2 = jax.vmap(lambda n: jnp.ones((n, 7)), out_axes=batching.pile_axis
+                  )(sizes)
+    y = jax.vmap(jnp.dot, in_axes=batching.pile_axis, out_axes=0,
+                 axis_size=3)(p1, p2)
     self.assertAllClose(y, np.tile(np.array([3, 1, 4])[:, None, None], (7, 7)),
                         check_dtypes=False)
 
-# TODO(mattjj): could just make this vmap, just need to adjust how we infer axis
-# sizes in api.py's _mapped_axis_size to handle piles. For another day...
 def pile_map(f):
   def mapped(*piles):
-    return jax.vmap(f, axis_size=piles[0].aval.length)(*piles)
+    return jax.vmap(f, in_axes=batching.pile_axis, out_axes=batching.pile_axis,
+                    axis_size=piles[0].aval.length)(*piles)
   return mapped
 
 if __name__ == '__main__':
