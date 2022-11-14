@@ -1039,9 +1039,14 @@ class TensorFlowTrace(core.Trace):
     # We don't use `str(name_stack)` because it uses parentheses for
     # transformations, which aren't allowed in `name_scope`.
     scope = '/'.join([s.name for s in current_name_stack.stack])  # type: ignore[union-attr]
+
+    if tf.get_current_name_scope():
+      scope = f"{tf.get_current_name_scope()}/{scope}"
+
     # We need to add a '/' to the name stack string to force `tf.name_scope`
     # to interpret it as an absolute scope, not a relative scope.
-    scope = scope + '/'
+    if not scope.endswith("/"):
+      scope = scope + "/"
 
     with tf.name_scope(_sanitize_scope_name(scope)):
       if _thread_local_state.include_xla_op_metadata:

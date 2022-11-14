@@ -1369,6 +1369,33 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
     self.assertAllClose(res_tf.numpy(), res_jax)
 
+  def test_outer_name_scope(self):
+    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
+
+    def assertAllOperationStartWith(g: tf.Graph, scope_name):
+      """Assert all operations name start with ```scope_name```."""
+      result = g.get_operations()
+      if not result:
+        self.fail("result is empty.")
+      for op in result:
+        logging.info("op.name = %s", op.name)
+        if not op.name.startswith(scope_name):
+          self.fail(f"{op.name} does not start with {scope_name}.")
+
+    def func_jax(x, y):
+      return jnp.sin(x) + jnp.cos(y)
+
+    outer_scope = "output_a"
+    g = tf.Graph()
+    with g.as_default() as g:
+      with tf.name_scope(outer_scope):
+        x = tf.Variable(
+            tf.zeros(shape=(1, 5), dtype=tf.dtypes.float32), name="x")
+        y = tf.compat.v1.placeholder(tf.dtypes.float32, (None, 5), "y")
+        func_tf = jax2tf.convert(func_jax, polymorphic_shapes="(b,...)")
+        _ = func_tf(x, y)
+    assertAllOperationStartWith(g, outer_scope)
 
 if __name__ == "__main__":
   # TODO: Remove once tensorflow is 2.10.0 everywhere.
