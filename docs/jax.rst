@@ -11,6 +11,7 @@ Subpackages
 
     jax.numpy
     jax.scipy
+    jax.sharding
     jax.config
     jax.debug
     jax.dlpack
