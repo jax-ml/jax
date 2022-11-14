@@ -1836,46 +1836,49 @@ def bcoo_reshape(mat, *, new_sizes, dimensions):
   Returns:
     out: reshaped array.
   """
-  if mat.n_dense:
-    # TODO(jakevdp): implement reshape of dense dimensions.
-    raise NotImplementedError("bcoo_reshape for matrices with dense dimensions.")
-
-  if mat.n_batch:
-    batch_size = np.prod(mat.shape[:mat.n_batch])
-    cuml_shape = np.cumprod(new_sizes)
-    if batch_size != 1 and batch_size not in cuml_shape:
-      raise ValueError("bcoo_reshape: new shape cannot mix batch and sparse dimensions; "
-                      f"got shape={mat.shape} new_shape={new_sizes} with n_batch={mat.n_batch}")
-    ind = cuml_shape.searchsorted(batch_size, side='right')
-  else:
-    ind = 0
-  batch_sizes, sparse_sizes = new_sizes[:ind], new_sizes[ind:]
-  batch_perm, sparse_perm, _ = _validate_permutation(mat.data, mat.indices, dimensions or tuple(range(mat.ndim)), mat.shape)
-
   if (mat.indices.shape[:mat.n_batch] != mat.data.shape[:mat.n_batch] != mat.shape[:mat.n_batch]):
     # TODO(jakevdp) implement this case via broadcast_in_dim
     raise NotImplementedError("reshape of arrays with broadacsted batch dimensions.")
 
-  # Reshape batch dimensions: this is accomplished via a standard reshape.
+  batch_shape, sparse_shape, dense_shape = split_list(mat.shape, [mat.n_batch, mat.n_sparse])
+  batch_perm, sparse_perm, dense_perm = _validate_permutation(
+    mat.data, mat.indices, dimensions or tuple(range(mat.ndim)), mat.shape)
+  batch_size = np.prod(batch_shape, dtype=int)
+  sparse_size = np.prod(sparse_shape, dtype=int)
+
+  cuml_shape = np.cumprod(new_sizes)
+  if batch_size != 1 and batch_size not in cuml_shape:
+    raise ValueError("bcoo_reshape: new shape cannot mix batch and sparse dimensions; "
+                     f"got shape={mat.shape} new_shape={new_sizes} with n_batch={mat.n_batch}")
+  if sparse_size != 1 and batch_size * sparse_size not in cuml_shape:
+    raise ValueError("bcoo_reshape: new shape cannot mix sparse and dense dimensions; "
+                     f"got shape={mat.shape} new_shape={new_sizes} with n_dense={mat.n_dense}")
+
+  i1 = cuml_shape.searchsorted(batch_size, side='right')
+  i2 = cuml_shape.searchsorted(batch_size * sparse_size, side='right')
+  new_batch_shape, new_sparse_shape, new_dense_shape = split_list(new_sizes, [i1, i2])
+
+  # Reshape batch & dense dimensions: this is accomplished via a standard reshape.
   data = lax.reshape(
-    mat.data, new_sizes=(*batch_sizes, *mat.data.shape[mat.n_batch:]),
-    dimensions=(*batch_perm, *range(mat.n_batch, mat.data.ndim)))
+    mat.data, new_sizes=(*new_batch_shape, mat.nse, *new_dense_shape),
+    dimensions=(*batch_perm, mat.n_batch, *(p + mat.n_batch + 1 for p in dense_perm)))
   indices = lax.reshape(
-    mat.indices, new_sizes=(*batch_sizes, *mat.indices.shape[mat.n_batch:]),
-    dimensions=(*batch_perm, *range(mat.n_batch, mat.indices.ndim)))
+    mat.indices, new_sizes=(*new_batch_shape, mat.nse, mat.n_sparse),
+    dimensions=(*batch_perm, mat.n_batch, mat.n_batch + 1))
 
   # Reshape the sparse dimensions: this is accomplished by re-indexing.
-  if not sparse_sizes:
-    indices = jnp.empty_like(indices, shape=(*indices.shape[:-1], 0))
-  elif sparse_perm:
+  if not new_sparse_shape:
+    indices = jnp.empty_like(indices, shape=(*new_batch_shape, mat.nse, 0))
+  elif sparse_shape:
     index_cols = tuple(indices[..., i] for i in sparse_perm)
     sparse_shape = tuple(mat.shape[mat.n_batch + i] for i in sparse_perm)
     flat_indices = jnp.ravel_multi_index(index_cols, dims=sparse_shape, mode='clip')
     with jax.numpy_rank_promotion('allow'):
-      oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch:], dtype=indices.dtype)).any(-1, keepdims=True)
-    new_index_cols = jnp.unravel_index(flat_indices, sparse_sizes)
+      oob_indices = (indices >= jnp.array(mat.shape[mat.n_batch: mat.n_batch + mat.n_sparse],
+                                          dtype=indices.dtype)).any(-1, keepdims=True)
+    new_index_cols = jnp.unravel_index(flat_indices, new_sparse_shape)
     indices = jnp.concatenate([col[..., None] for col in new_index_cols], axis=-1)
-    indices = jnp.where(oob_indices, jnp.array(sparse_sizes, dtype=indices.dtype), indices)
+    indices = jnp.where(oob_indices, jnp.array(new_sparse_shape, dtype=indices.dtype), indices)
 
   return BCOO((data, indices), shape=new_sizes)
 

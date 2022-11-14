@@ -61,6 +61,19 @@ MATMUL_TOL = {
 GPU_LOWERING_ENABLED = gpu_sparse and (gpu_sparse.cuda_is_supported or
                                        gpu_sparse.rocm_is_supported)
 
+COMPATIBLE_SHAPE_PAIRS = [
+  [(), ()],
+  [(), (1,)],
+  [(3,), (1, 3)],
+  [(3, 1), (3,)],
+  [(6,), (2, 3)],
+  [(3, 2), (6,)],
+  [(2, 3), (1, 6)],
+  [(2, 4), (4, 1, 2)],
+  [(3, 4, 5), (2, 6, 5)],
+  [(2,), (2,)]
+]
+
 class BcooDotGeneralProperties(NamedTuple):
   lhs_shape: Tuple[int, ...]
   rhs_shape: Tuple[int, ...]
@@ -2009,6 +2022,46 @@ class BCOOTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(M2, M2_bcoo.todense())
     self.assertArraysEqual(M2, M2_bcoo_jit.todense())
+
+  @jtu.sample_product(
+    [dict(batch_shapes=shapes, batch_perm=perm)
+     for shapes in COMPATIBLE_SHAPE_PAIRS
+     for perm in itertools.permutations(range(len(shapes[0])))],
+    [dict(sparse_shapes=shapes, sparse_perm=perm)
+     for shapes in COMPATIBLE_SHAPE_PAIRS
+     for perm in itertools.permutations(range(len(shapes[0])))],
+    [dict(dense_shapes=shapes, dense_perm=perm)
+     for shapes in [[(),()]]  # TODO(jakevdp) add support for dense shapes
+     for perm in itertools.permutations(range(len(shapes[0])))],
+    dtype=jtu.dtypes.numeric
+  )
+  def test_bcoo_reshape(self, batch_shapes, sparse_shapes, dense_shapes,
+                        batch_perm, sparse_perm, dense_perm, dtype):
+    # Sparse reshapes cannot mix between sparse, dense, and batch dimensions.
+    shape = (*batch_shapes[0], *sparse_shapes[0], *dense_shapes[0])
+    new_sizes = (*batch_shapes[1], *sparse_shapes[1], *dense_shapes[1])
+    n_batch = len(batch_shapes[0])
+    n_sparse = len(sparse_shapes[0])
+    n_dense = len(dense_shapes[0])
+    dimensions = (
+      *batch_perm,
+      *(dim + n_batch for dim in sparse_perm),
+      *(dim + n_batch + n_sparse for dim in dense_perm)
+    )
+
+    rng = rand_sparse(self.rng())
+    args_maker = lambda: [sparse.BCOO.fromdense(rng(shape, dtype), n_batch=n_batch, n_dense=n_dense)]
+
+    sparse_func = partial(sparse.bcoo_reshape, new_sizes=new_sizes, dimensions=dimensions)
+    dense_func = partial(lax.reshape, new_sizes=new_sizes, dimensions=dimensions)
+
+    M_sparse, = args_maker()
+    sparse_out = sparse_func(M_sparse)
+    sparse_out_jit = jax.jit(sparse_func)(M_sparse)
+    dense_out = dense_func(M_sparse.todense())
+
+    self.assertArraysEqual(sparse_out.todense(), dense_out)
+    self.assertArraysEqual(sparse_out_jit.todense(), dense_out)
 
   def test_bcoo_reshape_error(self):
     x = sparse.BCOO.fromdense(jnp.ones((2, 2, 3)), n_batch=1)

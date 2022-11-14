@@ -334,27 +334,14 @@ class SparsifyTest(jtu.JaxTestCase):
     sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
     self.assertArraysEqual(f(arrs), f(sparrs).todense())
 
-  @jtu.sample_product(
-    [dict(shape=shape, new_shape=new_shape, n_batch=n_batch, n_dense=n_dense)
-      for shape, new_shape, n_batch, n_dense in [
-        [(6,), (2, 3), 0, 0],
-        [(6,), (2, 3), 1, 0],
-        [(1, 4), (2, 2), 0, 0],
-        [(4, 1), (4,), 1, 0],
-        [(1, 4), (4,), 1, 0],
-        [(12, 2), (2, 3, 4), 0, 0],
-        [(1, 3, 2), (2, 3), 0, 0],
-        [(1, 6), (2, 3, 1), 0, 0],
-        [(2, 3, 4), (3, 8), 0, 0],
-        [(2, 3, 4), (1, 2, 12), 1, 0],
-        [(2, 3, 4), (6, 2, 2), 2, 0],
-      ]
-    ],
-  )
-  def testSparseReshapeMethod(self, shape, new_shape, n_batch, n_dense):
+  def testSparseReshapeMethod(self):
+    # Note: this is more fully tested in sparse_test.py:test_bcoo_reshape
+    shape = (2, 3, 4)
+    new_shape = (2, 6, 2)
+
     rng = jtu.rand_some_zero(self.rng())
     arr = rng(shape, 'int32')
-    arr_sparse = BCOO.fromdense(arr, n_batch=n_batch, n_dense=n_dense)
+    arr_sparse = BCOO.fromdense(arr, n_batch=1)
 
     arr2 = arr.reshape(new_shape)
     arr2_sparse = arr_sparse.reshape(new_shape)
@@ -362,36 +349,6 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(arr2, arr2_sparse.todense())
     self.assertArraysEqual(arr2, arr2_sparse_jit.todense())
-
-  @jtu.sample_product(
-    [dict(shape=shape, new_shape=new_shape, n_batch=n_batch, n_dense=n_dense,
-          dimensions=dimensions)
-      for shape, new_shape, n_batch, n_dense, dimensions in [
-        [(2, 3, 4), (24,), 0, 0, None],
-        [(2, 3, 4), (24,), 0, 0, (0, 1, 2)],
-        [(2, 3, 4), (24,), 0, 0, (0, 2, 1)],
-        [(2, 3, 4), (24,), 0, 0, (1, 0, 2)],
-        [(2, 3, 4), (24,), 0, 0, (1, 2, 0)],
-        [(2, 3, 4), (24,), 0, 0, (2, 0, 1)],
-        [(2, 3, 4), (24,), 0, 0, (2, 1, 0)],
-        [(4, 2, 3), (2, 2, 6), 1, 0, (0, 1, 2)],
-        [(4, 2, 3), (2, 2, 6), 1, 0, (0, 2, 1)],
-        [(2, 3, 4), (6, 4), 2, 0, (0, 1, 2)],
-        [(2, 3, 4), (6, 4), 2, 0, (1, 0, 2)],
-      ]
-    ],
-  )
-  def testSparseReshapeWithDimensions(self, shape, new_shape, n_batch, n_dense, dimensions):
-    rng = jtu.rand_some_zero(self.rng())
-    arr = rng(shape, 'int32')
-    arr_sparse = BCOO.fromdense(arr, n_batch=n_batch, n_dense=n_dense)
-
-    f = self.sparsify(lambda x: lax.reshape(x, new_shape, dimensions=dimensions))
-
-    arr2 = f(arr)
-    arr2_sparse = f(arr_sparse)
-
-    self.assertArraysEqual(arr2, arr2_sparse.todense())
 
   def testSparseWhileLoop(self):
     def cond_fun(params):
