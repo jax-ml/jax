@@ -33,7 +33,7 @@ from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import basearray
 from jax._src.sharding import (
-    MeshPspecSharding, PmapSharding, OpShardingSharding)
+    NamedSharding, PmapSharding, OpShardingSharding)
 
 from jax._src import dispatch
 from jax._src import dtypes
@@ -332,9 +332,9 @@ class KeyTyRules:
           mesh_mapping=sharding.sharding_spec.mesh_mapping)
       phys_sharding = PmapSharding(devices=sharding.devices,
                                    sharding_spec=phys_sharding_spec)
-    elif isinstance(sharding, MeshPspecSharding):
+    elif isinstance(sharding, NamedSharding):
       trailing_spec = [None] * len(key_shape)
-      phys_sharding = MeshPspecSharding(
+      phys_sharding = NamedSharding(
           sharding.mesh,
           pxla.PartitionSpec(*sharding.spec, *trailing_spec))
     else:
@@ -371,9 +371,9 @@ class KeyTyRules:
 
     if dispatch.is_single_device_sharding(out_sharding):
       phys_sharding = out_sharding
-    elif isinstance(out_sharding, MeshPspecSharding):
+    elif isinstance(out_sharding, NamedSharding):
       trailing_spec = [None] * len(key_shape)
-      phys_sharding = MeshPspecSharding(
+      phys_sharding = NamedSharding(
           out_sharding.mesh,
           pxla.PartitionSpec(*out_sharding.spec, *trailing_spec))
     else:

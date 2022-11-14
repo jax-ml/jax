@@ -1506,7 +1506,7 @@ class APITest(jtu.JaxTestCase):
   @jax_config.jax_array(True)
   def test_device_put_sharding(self):
     mesh = maps.Mesh(jax.devices(), ('x',))
-    s = sharding.MeshPspecSharding(mesh, P('x'))
+    s = sharding.NamedSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
 
     y = jax.device_put(x, s)
@@ -1532,9 +1532,9 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.MeshPspecSharding(mesh, P("x"))
-    s2 = sharding.MeshPspecSharding(mesh, P("y"))
-    s3 = sharding.MeshPspecSharding(mesh, P("x", "y"))
+    s1 = sharding.NamedSharding(mesh, P("x"))
+    s2 = sharding.NamedSharding(mesh, P("y"))
+    s3 = sharding.NamedSharding(mesh, P("x", "y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1555,8 +1555,8 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.MeshPspecSharding(mesh, P("x"))
-    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+    s1 = sharding.NamedSharding(mesh, P("x"))
+    s2 = sharding.NamedSharding(mesh, P("y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1577,8 +1577,8 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.MeshPspecSharding(mesh, P("x"))
-    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+    s1 = sharding.NamedSharding(mesh, P("x"))
+    s2 = sharding.NamedSharding(mesh, P("y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1599,8 +1599,8 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.MeshPspecSharding(mesh, P("x"))
-    s2 = sharding.MeshPspecSharding(mesh, P("y"))
+    s1 = sharding.NamedSharding(mesh, P("x"))
+    s2 = sharding.NamedSharding(mesh, P("y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10

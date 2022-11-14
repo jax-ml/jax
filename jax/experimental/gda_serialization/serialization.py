@@ -271,9 +271,9 @@ async def async_deserialize(in_sharding, tensorstore_spec,
   if config.jax_array:
     return await create_async_array_from_callback(tuple(shape), in_sharding, cb)
   else:
-    if not isinstance(in_sharding, sharding.MeshPspecSharding):
+    if not isinstance(in_sharding, sharding.NamedSharding):
       raise ValueError('Deserializing a GlobalDeviceArray is only possible with '
-                       'a `MeshPspecSharding` which consists of a `mesh` and '
+                       'a `NamedSharding` which consists of a `mesh` and '
                        f'`pspec`, but got {in_sharding}')
     return await create_async_gda_from_callback(
         tuple(shape), in_sharding.mesh, in_sharding.spec, cb)

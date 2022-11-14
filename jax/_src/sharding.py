@@ -162,8 +162,17 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-@pxla.use_cpp_class(xc.MeshPspecSharding if xc._version >= 95 else None)
-class MeshPspecSharding(XLACompatibleSharding):
+def _enable_cpp_named_sharding():
+  if xc._version >= 106:
+    return xc.NamedSharding
+  elif xc._version >= 95:
+    return xc.MeshPspecSharding  # type: ignore
+  else:
+    return None
+
+
+@pxla.use_cpp_class(_enable_cpp_named_sharding())
+class NamedSharding(XLACompatibleSharding):
 
   @pxla.use_cpp_method
   def __init__(
@@ -192,7 +201,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     if self._parsed_pspec is None:
       from jax.experimental import pjit
       self._parsed_pspec, _, _, _ = pjit._prepare_axis_resources(
-          self.spec, "MeshPspecSharding spec")
+          self.spec, "NamedSharding spec")
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
 
@@ -205,7 +214,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     return self._hash
 
   def __eq__(self, other):
-    if not isinstance(other, MeshPspecSharding):
+    if not isinstance(other, NamedSharding):
       return False
     if id(self) == id(other):
       return True
@@ -241,7 +250,7 @@ class MeshPspecSharding(XLACompatibleSharding):
     from jax.experimental.pjit import get_array_mapping
 
     array_mapping = get_array_mapping(self._parsed_pspec)
-    # TODO(yashkatariya): Move away from sharding spec in MeshPspecSharding
+    # TODO(yashkatariya): Move away from sharding spec in NamedSharding
     # since we don't really need sharding spec.
     sharding_spec = pxla.new_mesh_sharding_specs(
         self.mesh.shape, self.mesh.axis_names)(num_dimensions, array_mapping)
@@ -256,8 +265,8 @@ class MeshPspecSharding(XLACompatibleSharding):
     return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
-# New name of MeshPspecSharding to match with PositionalSharding below.
-NamedSharding = MeshPspecSharding
+# TODO(yashkatariya); Remove this after 3 months per the deprecation policy.
+MeshPspecSharding = NamedSharding
 
 
 @functools.lru_cache()

@@ -87,7 +87,7 @@ x = jnp.arange(8)
 
 # Let's say there are 8 devices in jax.devices()
 mesh = maps.Mesh(jax.devices().reshape(4, 2), ('x', 'y'))
-sharding = jax.sharding.MeshPspecSharding(mesh, P('x'))
+sharding = jax.sharding.NamedSharding(mesh, P('x'))
 
 sharded_x = jax.device_put(x, sharding)
 
@@ -200,7 +200,7 @@ shape of the mesh.
 
 ```
 ValueError: One of pjit arguments was given the sharding of
-MeshPspecSharding(mesh={'x': 2, 'y': 2, 'chips': 2}, partition_spec=PartitionSpec(('x', 'y', 'chips'),)),
+NamedSharding(mesh={'x': 2, 'y': 2, 'chips': 2}, partition_spec=PartitionSpec(('x', 'y', 'chips'),)),
 which implies that the global size of its dimension 0 should be divisible by 8,
 but it is equal to 4
 ```

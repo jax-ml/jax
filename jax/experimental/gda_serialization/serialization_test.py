@@ -22,7 +22,7 @@ from jax._src import util
 from jax._src import config as jax_config
 from jax.config import config
 from jax._src import array
-from jax._src.sharding import MeshPspecSharding, OpShardingSharding
+from jax._src.sharding import NamedSharding, OpShardingSharding
 from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.gda_serialization import serialization
@@ -71,9 +71,9 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([gda1, gda2, gda3], tspecs)
 
     m1, m2, m3 = serialization.run_deserialization(
-        [MeshPspecSharding(global_mesh, mesh_axes),
-         MeshPspecSharding(global_mesh, P('x')),
-         MeshPspecSharding(global_mesh1d, P(None))],
+        [NamedSharding(global_mesh, mesh_axes),
+         NamedSharding(global_mesh, P('x')),
+         NamedSharding(global_mesh1d, P(None))],
         tspecs)
 
     self.assertArraysEqual(np.asarray(m1.addressable_shards[0].data),
@@ -106,14 +106,14 @@ class CheckpointTest(jtu.JaxTestCase):
     # First Array
     global_input_data1 = np.arange(num).reshape(inp_shape)
     a1 = array.make_array_from_callback(
-        inp_shape, MeshPspecSharding(global_mesh, pspec),
+        inp_shape, NamedSharding(global_mesh, pspec),
         lambda idx: global_input_data1[idx])
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
 
     # Second Array
     global_input_data2 = np.arange(num, num + num).reshape(inp_shape)
     a2 = array.make_array_from_callback(
-        inp_shape, MeshPspecSharding(global_mesh, pspec),
+        inp_shape, NamedSharding(global_mesh, pspec),
         lambda idx: global_input_data2[idx])
     ckpt_dir2 = pathlib.Path(self.create_tempdir('second').full_path)
 
@@ -122,7 +122,7 @@ class CheckpointTest(jtu.JaxTestCase):
       return np.array([])
     global_mesh1d = jtu.create_global_mesh((8,), ('x',))
     a3 = array.make_array_from_callback(
-        (0,), MeshPspecSharding(global_mesh1d, P(None)), cb3)
+        (0,), NamedSharding(global_mesh1d, P(None)), cb3)
     ckpt_dir3 = pathlib.Path(self.create_tempdir('third').full_path)
 
     ckpt_paths = [str(ckpt_dir1), str(ckpt_dir2), str(ckpt_dir3)]
@@ -131,9 +131,9 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([a1, a2, a3], tspecs)
 
     m1, m2, m3 = serialization.run_deserialization(
-        [MeshPspecSharding(global_mesh, pspec),
-         MeshPspecSharding(global_mesh, P('x')),
-         MeshPspecSharding(global_mesh1d, P(None))],
+        [NamedSharding(global_mesh, pspec),
+         NamedSharding(global_mesh, P('x')),
+         NamedSharding(global_mesh1d, P(None))],
         tspecs)
 
     self.assertIsInstance(m1, array.ArrayImpl)
@@ -179,7 +179,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     serialization.run_serialization([gda1], tspecs)
 
-    ds = MeshPspecSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+    ds = NamedSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
 
     m1, = serialization.run_deserialization(
         [ds],
@@ -205,7 +205,7 @@ class CheckpointTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         'Deserializing a GlobalDeviceArray is only possible with '
-        'a `MeshPspecSharding`'):
+        'a `NamedSharding`'):
       new_ds = OpShardingSharding.get_replicated(list(global_mesh.devices.flat))
       serialization.run_deserialization([new_ds], tspecs, [(12, 2)], [np.float32])
 
@@ -220,7 +220,7 @@ class CheckpointTest(jtu.JaxTestCase):
     def cb1(index):
       return global_input_data1[index]
     arr = array.make_array_from_callback(
-        global_input_shape, MeshPspecSharding(global_mesh, P('x', 'y')), cb1)
+        global_input_shape, NamedSharding(global_mesh, P('x', 'y')), cb1)
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
 
     ckpt_paths = [str(ckpt_dir1)]
@@ -228,7 +228,7 @@ class CheckpointTest(jtu.JaxTestCase):
 
     serialization.run_serialization([arr], tspecs)
 
-    ds = MeshPspecSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+    ds = NamedSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
 
     m1, = serialization.run_deserialization([ds], tspecs, [(12, 2)],
                                             [np.float32])
@@ -268,7 +268,7 @@ class CheckpointTest(jtu.JaxTestCase):
     serialization.run_serialization([gda1], tspecs)
 
     m1, = serialization.run_deserialization(
-        [MeshPspecSharding(jtu.create_global_mesh((2,), ('x')), P(None))],
+        [NamedSharding(jtu.create_global_mesh((2,), ('x')), P(None))],
         tspecs,
         [()],
         [np.float32]
@@ -282,7 +282,7 @@ class CheckpointTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((2,), ('x'))
     global_input_shape = ()
     data = np.array(4)
-    s = MeshPspecSharding(global_mesh, P(None))
+    s = NamedSharding(global_mesh, P(None))
     gda1 = array.make_array_from_callback(
         global_input_shape, s, lambda idx: data[idx])
     ckpt_dir1 = pathlib.Path(self.create_tempdir('first').full_path)
@@ -291,7 +291,7 @@ class CheckpointTest(jtu.JaxTestCase):
     tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
 
     serialization.run_serialization([gda1], tspecs)
-    ds = MeshPspecSharding(jtu.create_global_mesh((2,), ('x')), P(None))
+    ds = NamedSharding(jtu.create_global_mesh((2,), ('x')), P(None))
 
     m1, = serialization.run_deserialization(
         [ds],
@@ -310,7 +310,7 @@ class CheckpointTest(jtu.JaxTestCase):
     data = np.arange(1024)
     tspec = ts.array(data).spec()
     m1, = serialization.run_deserialization(
-        [MeshPspecSharding(global_mesh, P(None))],
+        [NamedSharding(global_mesh, P(None))],
         [tspec]
     )
     for l in m1.addressable_shards:
@@ -322,7 +322,7 @@ class CheckpointTest(jtu.JaxTestCase):
     data = np.arange(1024)
     tspec = ts.array(data).spec()
     m1, = serialization.run_deserialization(
-        [MeshPspecSharding(global_mesh, P(None))],
+        [NamedSharding(global_mesh, P(None))],
         [tspec]
     )
     for l in m1.addressable_shards:

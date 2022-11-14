@@ -83,7 +83,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, global_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, mesh_axes))
+        input_shape, sharding.NamedSharding(global_mesh, mesh_axes))
     for s in arr.addressable_shards:
       self.assertLen(s.data._arrays, 1)
       self.assertArraysEqual(s.data._arrays[0], global_data[s.index])
@@ -122,7 +122,7 @@ class JaxArrayTest(jtu.JaxTestCase):
                           expected_replica_ids, expected_is_fully_replicated):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    s = sharding.MeshPspecSharding(global_mesh, mesh_axes)
+    s = sharding.NamedSharding(global_mesh, mesh_axes)
     arr, global_input_data = create_array(global_input_shape, s)
     self.assertEqual(arr.ndim, 2)
     self.assertEqual(arr.size, 16)
@@ -149,7 +149,7 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_addressable_data(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape = (8, 2)
-    s = sharding.MeshPspecSharding(global_mesh, P(None))
+    s = sharding.NamedSharding(global_mesh, P(None))
     arr, inp_data = create_array(shape, s)
     for i in range(len(arr)):
       self.assertArraysEqual(inp_data, arr.addressable_data(i))
@@ -158,7 +158,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, _ = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     arr.delete()
     with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
       arr._check_if_deleted()
@@ -176,7 +176,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, _ = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     arr.delete()
 
     with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
@@ -206,14 +206,14 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     self.assertArraysEqual(jax.device_get(arr), input_data)
 
   def test_repr(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, _ = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     self.assertStartsWith(repr(arr), "Array(")
 
   def test_jnp_array(self):
@@ -249,7 +249,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     arr_float32 = arr.astype(jnp.float32)
     self.assertEqual(arr_float32.dtype, np.float32)
     self.assertArraysEqual(arr_float32, input_data.astype(np.float32))
@@ -267,9 +267,9 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     a, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     b, _ = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x')))
     out = a + b
     expected = input_data + input_data
     self.assertArraysEqual(out, expected)
@@ -281,7 +281,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     a, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
     out = jnp.zeros_like(a)
     expected = jnp.zeros(input_data.shape, dtype=int)
     self.assertArraysEqual(out, expected)
@@ -299,7 +299,7 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_wrong_num_arrays(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    s = sharding.NamedSharding(mesh, P('x', 'y'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     di_map = s.devices_indices_map(shape)
     bufs = [jax.device_put(inp_data[di_map[d]], d)
@@ -322,7 +322,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     # sharding device ids = {0, 1}
-    s = sharding.MeshPspecSharding(mesh, P('x'))
+    s = sharding.NamedSharding(mesh, P('x'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     # _arrays device ids = {2, 3}
     bufs = [jax.device_put(inp_data, d) for d in jax.devices()[2:4]]
@@ -338,7 +338,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     # Sharding device ids = {0, 1}
-    s = sharding.MeshPspecSharding(mesh, P('x'))
+    s = sharding.NamedSharding(mesh, P('x'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     # _arrays device ids = {0, 0}
     bufs = [jax.device_put(inp_data, jax.devices()[0]) for _ in range(2)]
@@ -355,7 +355,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = maps.Mesh(np.array([jax.devices()[1], jax.devices()[2]]), ('x'))
     # sharding device ids = {1, 2}
-    s = sharding.MeshPspecSharding(mesh, P('x'))
+    s = sharding.NamedSharding(mesh, P('x'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     # _arrays device ids = {0, 1}
     bufs = [jax.device_put(inp_data, d) for d in jax.devices()[:2]]
@@ -378,7 +378,7 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_shard_shape_mismatch_with_buffer_shape(self, pspec, expected_shard_shape):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mps = sharding.MeshPspecSharding(mesh, pspec)
+    mps = sharding.NamedSharding(mesh, pspec)
     inp_data = np.arange(prod(shape)).reshape(shape)
 
     str_expected_shard_shape = str(expected_shard_shape).replace(
@@ -392,7 +392,7 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_mismatch_dtype(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
-    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    s = sharding.NamedSharding(mesh, P('x', 'y'))
     inp_data = np.arange(prod(shape), dtype=np.int32).reshape(shape)
     indices = s.devices_indices_map(shape)
     bufs = [jax.device_put(inp_data[indices[d]], d) for d in mesh.local_devices]
@@ -430,7 +430,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
 
     for i, j in zip(iter(arr), iter(input_data)):
       self.assertIsInstance(i, array.ArrayImpl)
@@ -440,7 +440,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P(None)))
+        input_shape, sharding.NamedSharding(global_mesh, P(None)))
 
     for i, j in zip(iter(arr), iter(input_data)):
       self.assertIsInstance(i, array.ArrayImpl)
@@ -455,7 +455,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
 
     # TODO(yashkatariya): `__getitem__` with a specific index takes the fast
     # path after b/245667823 is fixed.
@@ -471,7 +471,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P(None)))
+        input_shape, sharding.NamedSharding(global_mesh, P(None)))
 
     s = arr[2:4, 0:1]
     self.assertIsInstance(s, array.ArrayImpl)
@@ -499,7 +499,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     mesh = maps.Mesh(np.array(single_dev), ('x'))
     input_shape = (8, 2)
     arr, input_data = create_array(
-        input_shape, sharding.MeshPspecSharding(mesh, P('x')))
+        input_shape, sharding.NamedSharding(mesh, P('x')))
 
     for i, j in zip(arr, iter(input_data)):
       self.assertArraysEqual(i, j)
@@ -523,7 +523,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, _ = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
 
     c_arr = jnp.array(arr, copy=True)
     self.assertArraysEqual(arr, c_arr)
@@ -540,7 +540,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)
     arr, _ = create_array(
-        input_shape, sharding.MeshPspecSharding(global_mesh, P('x', 'y')))
+        input_shape, sharding.NamedSharding(global_mesh, P('x', 'y')))
 
     for a in arr.device_buffers:
       self.assertIsInstance(a, array.ArrayImpl)
@@ -550,7 +550,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_shape_dtype_struct_sharding_jit(self):
     mesh = jtu.create_global_mesh((8,), ('x'))
-    s = sharding.MeshPspecSharding(mesh, P('x'))
+    s = sharding.NamedSharding(mesh, P('x'))
 
     x_dummy = jax.ShapeDtypeStruct(
         shape=(16,),
@@ -577,7 +577,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   def test_shape_dtype_struct_sharding_pjit(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    s = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    s = sharding.NamedSharding(mesh, P('x', 'y'))
 
     def f(x):
       return x * 2.
@@ -608,7 +608,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     # Create a few arrays
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape = (8, 2)
-    mpsharding = sharding.MeshPspecSharding(global_mesh, P('x', 'y'))
+    mpsharding = sharding.NamedSharding(global_mesh, P('x', 'y'))
     arr1, data = create_array(shape, mpsharding)
     arr2, _ = create_array(shape, mpsharding, data)
     arr3, _ = create_array(shape, mpsharding, data)
@@ -636,7 +636,7 @@ class ShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     pspec = P('y', 'x')
     global_shape = (8, 4)
-    mp_sharding = sharding.MeshPspecSharding(mesh, pspec)
+    mp_sharding = sharding.NamedSharding(mesh, pspec)
     di_map = mp_sharding.devices_indices_map(global_shape)
     op_sharding = mp_sharding._to_xla_op_sharding(len(global_shape))
     device_assignment = mp_sharding._device_assignment
@@ -660,7 +660,7 @@ class ShardingTest(jtu.JaxTestCase):
   def test_op_sharding_indices(self, pspec):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mps = sharding.MeshPspecSharding(mesh, pspec)
+    mps = sharding.NamedSharding(mesh, pspec)
     ops = sharding.OpShardingSharding(
         list(mesh.devices.flat), mps._to_xla_op_sharding(len(shape)))
     self.assertDictEqual(
@@ -678,12 +678,12 @@ class ShardingTest(jtu.JaxTestCase):
   def test_shard_shape(self, pspec, expected_shard_shape):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mps = sharding.MeshPspecSharding(mesh, pspec)
+    mps = sharding.NamedSharding(mesh, pspec)
     self.assertEqual(mps.shard_shape(shape), expected_shard_shape)
 
   def test_uneven_shard_error(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mps = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    mps = sharding.NamedSharding(mesh, P('x', 'y'))
     with self.assertRaisesRegex(
         ValueError,
         r"Sharding.*implies that array axis 1 is partitioned 2 times, but the "
@@ -716,8 +716,8 @@ class ShardingTest(jtu.JaxTestCase):
   def test_is_compatible_error(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 1, 2), ('replica', 'data', 'mdl'))
-    mps = sharding.MeshPspecSharding(mesh, P(None, ('mdl',), None, None))
-    new_mps = sharding.MeshPspecSharding._from_parsed_pspec(
+    mps = sharding.NamedSharding(mesh, P(None, ('mdl',), None, None))
+    new_mps = sharding.NamedSharding._from_parsed_pspec(
         mps.mesh, mps._parsed_pspec)
 
     with self.assertRaisesRegex(
@@ -781,7 +781,7 @@ class ShardingTest(jtu.JaxTestCase):
     value_shape = (8, 4)
 
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    mps = sharding.MeshPspecSharding(mesh, P('x', 'y'))
+    mps = sharding.NamedSharding(mesh, P('x', 'y'))
 
     devices_sharding = sharding.PositionalSharding(mesh.devices)
 
@@ -832,7 +832,7 @@ class RngShardingTest(jtu.JaxTestCase):
       return bits + x
 
     mesh = jtu.create_global_mesh((num_devices,), ('x',))
-    s = sharding.MeshPspecSharding(mesh, P('x'))
+    s = sharding.NamedSharding(mesh, P('x'))
 
     n = num_devices ** 2
     global_x = jnp.arange(n).astype('uint32')
@@ -873,7 +873,7 @@ class RngShardingTest(jtu.JaxTestCase):
     global_shape = tuple(np.square(mesh_shape))
 
     mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
-    s = sharding.MeshPspecSharding(mesh, pspec)
+    s = sharding.NamedSharding(mesh, pspec)
 
     n = prod(global_shape)
     global_x = jnp.arange(n).astype('uint32').reshape(global_shape)
