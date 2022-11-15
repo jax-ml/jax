@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.3.25
+## jax 0.4.0
+
+## jaxlib 0.4.0
+
+## jax 0.3.25 (Nov 15, 2022)
 * Changes
   * {func}`jax.numpy.linalg.pinv` now supports the `hermitian` option.
   * {func}`jax.scipy.linalg.hessenberg` is now supported on CPU only. Requires
@@ -24,7 +28,7 @@ Remember to align the itemized text with the first line of an item within a list
     {class}`jax.experimental.maps.Mesh` constructor into a singleton tuple
     instead of unpacking the string into a sequence of character axis names.
 
-## jaxlib 0.3.25
+## jaxlib 0.3.25 (Nov 15, 2022)
 * Changes
   * Added support for tridiagonal reductions on CPU and GPU.
   * Added support for upper Hessenberg reductions on CPU.
