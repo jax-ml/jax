@@ -768,6 +768,9 @@ def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=Fa
     result = BCOO.fromdense(result)
   return result
 
+def _sparse_iter(arr):
+  return iter(arr[i] for i in range(arr.shape[0]))
+
 _swap_args = lambda f: lambda a, b: f(b, a)
 
 _bcoo_methods = {
@@ -785,6 +788,7 @@ _bcoo_methods = {
   "__sub__": sparsify(jnp.subtract),
   "__rsub__": sparsify(_swap_args(jnp.subtract)),
   "__getitem__": _sparse_rewriting_take,
+  "__iter__": _sparse_iter,
 }
 
 for method, impl in _bcoo_methods.items():
