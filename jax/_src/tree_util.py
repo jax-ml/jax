@@ -18,7 +18,7 @@ import functools
 from functools import partial
 import operator as op
 from typing import (Any, Callable, Dict, Hashable, Iterable, List, NamedTuple,
-                    Optional, Tuple, Type, TypeVar, overload)
+                    Optional, Sequence, Tuple, Type, TypeVar, overload)
 import textwrap
 import warnings
 
@@ -437,7 +437,7 @@ class FlattenedKeyPathEntry(KeyPathEntry):  # fallback
   def pprint(self) -> str:
     return f'[<flat index {self.key}>]'
 
-def _child_keys(pytree: Any) -> List[KeyPathEntry]:
+def _child_keys(pytree: Any) -> Sequence[KeyPathEntry]:
   assert not treedef_is_strict_leaf(tree_structure(pytree))
   handler = _keypath_registry.get(type(pytree))
   if handler:
@@ -449,9 +449,9 @@ def _child_keys(pytree: Any) -> List[KeyPathEntry]:
     num_children = len(treedef_children(tree_structure(pytree)))
     return [FlattenedKeyPathEntry(i) for i in range(num_children)]
 
-_keypath_registry: Dict[Type, Callable[[Any], List[KeyPathEntry]]] = {}
+_keypath_registry: Dict[Type, Callable[[Any], Sequence[KeyPathEntry]]] = {}
 
-def register_keypaths(ty: Type, handler: Callable[[Any], List[KeyPathEntry]]
+def register_keypaths(ty: Type, handler: Callable[[Any], Sequence[KeyPathEntry]]
                       ) -> None:
   _keypath_registry[ty] = handler
 
