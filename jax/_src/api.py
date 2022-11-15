@@ -3093,7 +3093,7 @@ class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "named_shape", "sharding"]
   def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = shape
-    self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
+    self.dtype = dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True)
     if sharding is not None:
       self.sharding = sharding
     self.named_shape = {} if named_shape is None else dict(named_shape)
