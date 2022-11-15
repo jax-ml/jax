@@ -63,42 +63,6 @@ def _real_type(dtype):
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def _potrf_mhlo(platform, gpu_solver, dtype, a, lower):
-  """Cholesky decomposition."""
-  a_type = ir.RankedTensorType(a.type)
-  dims = a_type.shape
-  m, n = dims[-2:]
-  assert m == n
-  batch_dims = tuple(dims[:-2])
-  num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
-
-  lwork, opaque = gpu_solver.build_potrf_descriptor(
-      np.dtype(dtype), lower, batch, n)
-
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  info_layout = tuple(range(num_bd - 1, -1, -1))
-  i32_type = ir.IntegerType.get_signless(32)
-  info_type = ir.RankedTensorType.get(batch_dims, i32_type)
-  work_layout = [0]
-  out = custom_call(
-      f"{platform}solver_potrf",
-      [
-        a.type,
-        info_type,
-        ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8)),
-      ],
-      [a],
-      backend_config=opaque,
-      operand_layouts=[layout],
-      result_layouts=[layout, info_layout, work_layout],
-      operand_output_aliases={0: 0})
-  return out[:2]
-
-cuda_potrf = partial(_potrf_mhlo, "cu", _cusolver)
-rocm_potrf = partial(_potrf_mhlo, "hip", _hipsolver)
-
-
 def _getrf_mhlo(platform, gpu_blas, gpu_solver, dtype, a):
   """LU decomposition."""
   a_type = ir.RankedTensorType(a.type)
