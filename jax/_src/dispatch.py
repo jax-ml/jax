@@ -36,6 +36,7 @@ import jax
 from jax import core
 from jax import linear_util as lu
 from jax.errors import UnexpectedTracerError
+from jax.monitoring import record_event_duration_secs
 import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching
 import jax.interpreters.mlir as mlir
@@ -56,6 +57,8 @@ import jax._src.util as util
 from jax._src.util import flatten, unflatten
 from jax._src import path
 
+JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
+BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 
 FLAGS = flags.FLAGS
 
@@ -370,7 +373,7 @@ def is_single_device_sharding(sharding) -> bool:
 
 
 @contextlib.contextmanager
-def log_elapsed_time(fmt: str):
+def log_elapsed_time(fmt: str, event: Optional[str] = None):
   if _on_exit:
     yield
   else:
@@ -379,6 +382,8 @@ def log_elapsed_time(fmt: str):
     yield
     elapsed_time = time.time() - start_time
     logger.log(log_priority, fmt.format(elapsed_time=elapsed_time))
+    if event is not None:
+      record_event_duration_secs(event, elapsed_time)
 
 
 def should_tuple_args(num_args: int, platform: str):
@@ -441,7 +446,8 @@ def lower_xla_callable(
     abstract_args = tuple(aval for aval, _ in fun.in_type)
 
   with log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                        "for jit in {elapsed_time} sec"):
+                        "for jit in {elapsed_time} sec",
+                        event=JAXPR_TRACE_EVENT):
     jaxpr, out_type, consts = pe.trace_to_jaxpr_final2(
         fun, pe.debug_info_final(fun, "jit"))
   out_avals, kept_outputs = util.unzip2(out_type)
@@ -1190,7 +1196,8 @@ class XlaCompiledComputation(stages.XlaExecutable):
         device_assignment=(sticky_device,) if sticky_device else None)
     options.parameter_is_tupled_arguments = tuple_args
     with log_elapsed_time(f"Finished XLA compilation of {name} "
-                          "in {elapsed_time} sec"):
+                          "in {elapsed_time} sec",
+                          event=BACKEND_COMPILE_EVENT):
       compiled = compile_or_get_cached(backend, xla_computation, options,
                                        host_callbacks)
     buffer_counts = get_buffer_counts(out_avals, ordered_effects,

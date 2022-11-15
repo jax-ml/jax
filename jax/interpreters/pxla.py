@@ -1296,7 +1296,8 @@ def stage_parallel_callable(
 
   with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                                   "for pmap in {elapsed_time} sec"):
+                                   "for pmap in {elapsed_time} sec",
+                                   event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
           fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
@@ -1634,7 +1635,8 @@ class PmapExecutable(stages.XlaExecutable):
           ordered_effects)
 
     with dispatch.log_elapsed_time(
-        f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec"):
+        f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec",
+         event=dispatch.BACKEND_COMPILE_EVENT):
       compiled = dispatch.compile_or_get_cached(
           pci.backend, xla_computation, compile_options, host_callbacks)
     handle_args = InputsHandler(
@@ -2759,7 +2761,8 @@ def lower_sharding_computation(
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
-                                 "in {elapsed_time} sec"):
+                                 "in {elapsed_time} sec",
+                                 event=dispatch.JAXPR_TRACE_EVENT):
     jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
         fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
   kept_outputs = [True] * len(global_out_avals)
@@ -3015,7 +3018,8 @@ def lower_mesh_computation(
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
-                                   "in {elapsed_time} sec"):
+                                   "in {elapsed_time} sec",
+                                   event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
   assert len(out_shardings) == len(out_jaxpr_avals)
   if spmd_lowering:
@@ -3404,7 +3408,8 @@ class UnloadedMeshExecutable:
           kept_var_idx, backend, device_assignment, committed, pmap_nreps)
     else:
       with dispatch.log_elapsed_time(f"Finished XLA compilation of {name} "
-                                     "in {elapsed_time} sec"):
+                                     "in {elapsed_time} sec",
+                                     event=dispatch.BACKEND_COMPILE_EVENT):
         xla_executable = dispatch.compile_or_get_cached(
             backend, computation, compile_options, host_callbacks)
 

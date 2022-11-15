@@ -504,6 +504,15 @@ jax_test(
     ],
 )
 
+py_test(
+    name = "monitoring_test",
+    srcs = ["monitoring_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 jax_test(
     name = "multibackend_test",
     srcs = ["multibackend_test.py"],

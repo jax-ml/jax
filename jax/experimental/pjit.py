@@ -658,7 +658,8 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   try:
     maps._positional_semantics.val = maps._PositionalSemantics.GLOBAL
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
-                                   "for pjit in {elapsed_time} sec"):
+                                   "for pjit in {elapsed_time} sec",
+                                    event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
   finally:
     maps._positional_semantics.val = prev_positional_val
