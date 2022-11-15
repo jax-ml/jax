@@ -758,7 +758,7 @@ def _update_jax_array_thread_local(val):
 
 jax_array = config.define_bool_state(
     name='jax_array',
-    default=False,
+    default=True,
     upgrade=True,
     update_global_hook = _update_jax_array_global,
     update_thread_local_hook = _update_jax_array_thread_local,
