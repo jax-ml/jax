@@ -1257,6 +1257,11 @@ class BatchingTest(jtu.JaxTestCase):
     expected = bulk_op(x, axis=axis)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testReduceScatterAutodiff(self):
+    f = vmap(partial(lax.psum_scatter, axis_name='i'), axis_name='i')
+    x = self.rng().randn(3, 3, 4)
+    jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
+
   def testNonJaxTypedOutput(self):
     with self.assertRaisesRegex(
       TypeError, "Output from batched function.*is not a valid JAX type"):

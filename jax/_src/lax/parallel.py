@@ -1192,16 +1192,11 @@ def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_
   return x_aval.update(shape=new_shape, named_shape=new_named_shape)
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
-  if tiled:
-    raise NotImplementedError("Please open a feature request!")
-  # TODO(cjfj): Use lax.reduce_scatter here
-  concat_axis = 0
-  return (lax_numpy.sum(all_to_all(
-      cts, axis_name=axis_name, split_axis=all_gather_dimension,
-      concat_axis=concat_axis, axis_index_groups=axis_index_groups),
-      axis=concat_axis),)
-  # TODO(sharadmv,apaszke): re-enable this when we can properly detect
-  # replication.
+  return (psum_scatter(cts, axis_name=axis_name,
+                       scatter_dimension=all_gather_dimension,
+                       axis_index_groups=axis_index_groups,
+                       tiled=tiled),)
+  # TODO(sharadmv,apaszke): re-enable this when we can properly detect replication.
   # return (lax.dynamic_index_in_dim(cts, idx, axis=all_gather_dimension, keepdims=False) * axis_size,)
 
 def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
@@ -1222,7 +1217,8 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
 def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in,
                                    all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
-  assert axis_index_groups is None, "axis_index_groups not supported in vmap"
+  if axis_index_groups is not None:
+    raise NotImplementedError("axis_index_groups not supported in vmap")
   assert axis_size == frame_size, "axis size doesn't match"
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
@@ -1349,13 +1345,62 @@ def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
   return x_aval.update(shape=new_shape, named_shape=new_named_shape)
 
 
+def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
+                                   axis_index_groups, axis_size, tiled):
+  return (all_gather(cts, axis_name=axis_name,
+                     axis_index_groups=axis_index_groups,
+                     axis=scatter_dimension, tiled=tiled),)
+
+
+def _reduce_scatter_batcher(vals_in, dims_in, *, scatter_dimension, axis_name,
+                            axis_index_groups, axis_size, tiled):
+  (x,), (d,) = vals_in, dims_in
+  if d <= scatter_dimension:
+    scatter_dimension += 1
+  elif not tiled:  # Tiled all-scatter doesn't change the rank
+    d += 1
+  result = reduce_scatter_p.bind(
+      x,
+      scatter_dimension=scatter_dimension,
+      axis_name=axis_name,
+      axis_index_groups=axis_index_groups,
+      axis_size=axis_size,
+      tiled=tiled)
+  return result, d
+
+def _reduce_scatter_collective(frame_size, frame_name, _, vals_in, dims_in,
+                               scatter_dimension, axis_name,
+                               axis_index_groups, axis_size, tiled):
+  if axis_index_groups is not None:
+    raise NotImplementedError("axis_index_groups not supported in vmap")
+  assert axis_size == frame_size, "axis size doesn't match"
+  if not isinstance(axis_name, tuple):
+    axis_name = (axis_name,)
+  if len(axis_name) > 1:
+    raise NotImplementedError("Please open a feature request!")
+  assert axis_name == (frame_name,), "batcher called with wrong axis name"
+  (x,), (d,) = vals_in, dims_in
+  if d is batching.not_mapped:
+    y, dy = x * axis_size, scatter_dimension
+  else:
+    y, dy = lax.reduce(x, 0., lax.add, (d,)), scatter_dimension
+  if tiled:
+    y = _splitaxis(dy, axis_size, y)
+  return y, dy
+
+
 reduce_scatter_p = core.AxisPrimitive("reduce_scatter")
 reduce_scatter_p.def_abstract_eval(_reduce_scatter_abstract_eval)
+ad.deflinear2(reduce_scatter_p, _reduce_scatter_transpose_rule)
+batching.primitive_batchers[reduce_scatter_p] = _reduce_scatter_batcher
+batching.axis_primitive_batchers[reduce_scatter_p] = _reduce_scatter_collective
 xla.register_collective_primitive(reduce_scatter_p)
 mlir.register_lowering(
     reduce_scatter_p,
     partial(_reduce_scatter_lowering, lax.add_p, psum))
 pxla.multi_host_supported_collectives.add(reduce_scatter_p)
+core.axis_substitution_rules[reduce_scatter_p] = \
+    partial(_subst_all_names_in_param, 'axis_name')
 
 
 def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None, tiled=False):
