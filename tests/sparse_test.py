@@ -1050,6 +1050,20 @@ class BCOOTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+     for shape in [(2,), (3, 4), (5, 6, 2)]
+     for n_batch in range(len(shape) + 1)
+     for n_dense in [0]  # TODO(jakevdp): add tests with n_dense
+    ],
+    dtype=jtu.dtypes.numeric,
+  )
+  def test_bcoo_iter(self, shape, dtype, n_batch, n_dense):
+    sprng = rand_sparse(self.rng())
+    M = sprng(shape, dtype)
+    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
+    self.assertAllClose(list(M), [row.todense() for row in Msp])
+
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
