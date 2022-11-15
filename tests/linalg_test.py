@@ -42,6 +42,7 @@ T = lambda x: np.swapaxes(x, -1, -2)
 
 float_types = jtu.dtypes.floating
 complex_types = jtu.dtypes.complex
+int_types = jtu.dtypes.all_integer
 
 
 class NumpyLinalgTest(jtu.JaxTestCase):
@@ -1571,6 +1572,63 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
     self.assertAllClose(root, expected, check_dtypes=False)
 
+  @jtu.sample_product(
+    cshape=[(), (4,), (8,), (3, 7), (0, 5, 1)],
+    cdtype=float_types + complex_types,
+    rshape=[(), (3,), (7,), (2, 1, 4), (19, 0)],
+    rdtype=float_types + complex_types + int_types)
+  def testToeplitzConstrcution(self, rshape, rdtype, cshape, cdtype):
+    if ((rdtype in [np.float64, np.complex128]
+         or cdtype in [np.float64, np.complex128])
+        and not config.x64_enabled):
+      self.skipTest("Only run float64 testcase when float64 is enabled.")
+
+    int_types_excl_i8 = set(int_types) - {np.int8}
+    if ((rdtype in int_types_excl_i8 or cdtype in int_types_excl_i8)
+        and jtu.device_under_test() == "gpu"):
+      self.skipTest("Integer (except int8) toeplitz is not supported on GPU yet.")
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(cshape, cdtype), rng(rshape, rdtype)]
+    with jtu.strict_promotion_if_dtypes_match([rdtype, cdtype]):
+      self._CheckAgainstNumpy(jtu.promote_like_jnp(osp.linalg.toeplitz),
+                              jsp.linalg.toeplitz, args_maker)
+      self._CompileAndCheck(jsp.linalg.toeplitz, args_maker)
+
+  @jtu.sample_product(
+    shape=[(), (3,), (1, 4), (1, 5, 9), (11, 0, 13)],
+    dtype=float_types + complex_types + int_types)
+  def testToeplitzSymmetricConstruction(self, shape, dtype):
+    if (dtype in [np.float64, np.complex128]
+        and not config.x64_enabled):
+      self.skipTest("Only run float64 testcase when float64 is enabled.")
+
+    int_types_excl_i8 = set(int_types) - {np.int8}
+    if (dtype in int_types_excl_i8
+        and jtu.device_under_test() == "gpu"):
+      self.skipTest("Integer (except int8) toeplitz is not supported on GPU yet.")
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CheckAgainstNumpy(jtu.promote_like_jnp(osp.linalg.toeplitz),
+                            jsp.linalg.toeplitz, args_maker)
+    self._CompileAndCheck(jsp.linalg.toeplitz, args_maker)
+
+  def testToeplitzConstructionWithKnownCases(self):
+    # Test with examples taken from SciPy doc for the corresponding function.
+    # https://docs.scipy.org/doc/scipy/reference/generated/scipy.linalg.toeplitz.html
+    ret = jsp.linalg.toeplitz(np.array([1.0, 2+3j, 4-1j]))
+    self.assertAllClose(ret, np.array([
+      [ 1.+0.j,  2.-3.j,  4.+1.j],
+      [ 2.+3.j,  1.+0.j,  2.-3.j],
+      [ 4.-1.j,  2.+3.j,  1.+0.j]]))
+    ret = jsp.linalg.toeplitz(np.array([1, 2, 3], dtype=np.float32),
+                              np.array([1, 4, 5, 6], dtype=np.float32))
+    self.assertAllClose(ret, np.array([
+      [1, 4, 5, 6],
+      [2, 1, 4, 5],
+      [3, 2, 1, 4]], dtype=np.float32))
+
 
 class LaxLinalgTest(jtu.JaxTestCase):
   """Tests for lax.linalg primitives."""
@@ -1697,6 +1755,7 @@ class LaxLinalgTest(jtu.JaxTestCase):
 
       Ts, Ss = vmap(lax.linalg.schur)(args)
       self.assertAllClose(reconstruct(Ss, Ts), args, atol=1e-4)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

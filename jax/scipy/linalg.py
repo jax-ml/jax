@@ -36,6 +36,7 @@ from jax._src.scipy.linalg import (
   solve as solve,
   solve_triangular as solve_triangular,
   svd as svd,
+  toeplitz as toeplitz,
   tril as tril,
   triu as triu,
 )
