@@ -680,6 +680,16 @@ jax2tf_default_experimental_native_lowering = config.define_bool_state(
     )
 )
 
+jax2tf_use_stablehlo = config.define_bool_state(
+    name='jax2tf_use_stablehlo',
+    default=bool_env('JAX2TF_USE_STABLEHLO', True),
+    help=(
+        'DO NOT USE, highly experimental. Use in conjunction with jax2tf '
+        'experimental_native_lowering, to use StableHLO instead of MHLO as '
+        'the serialization format.'
+    )
+)
+
 jax_platforms = config.define_string_state(
     name='jax_platforms',
     default=None,

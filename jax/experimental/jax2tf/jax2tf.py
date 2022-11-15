@@ -620,10 +620,16 @@ def _lower_native_and_run(fun_jax: Callable,
   else:
     fun_jax_lower = fun_jax.lower
   lowered = fun_jax_lower(*arg_specs_jax)._lowering
-  mhlo_module = lowered.mhlo()
+  if config.jax2tf_use_stablehlo:
+    mhlo_module = lowered.stablehlo()
+    xla_call_module_version = 2
+  else:
+    mhlo_module = lowered.mhlo()
+    xla_call_module_version = 1
   if logging.vlog_is_on(3):
     mhlo_module_text = mlir.module_to_string(mhlo_module)
-    logging.vlog(3, "XlaCallModule %s", mhlo_module_text)
+    logging.vlog(3, "XlaCallModule (version=%d)\n%s", xla_call_module_version,
+                 mhlo_module_text)
 
   mhlo_serialized_module = mlir.module_to_bytecode(mhlo_module)
   # Figure out the result types and shapes
@@ -657,6 +663,7 @@ def _lower_native_and_run(fun_jax: Callable,
       map(_shard_value, args_tf, args_avals, lowered.compile_args["in_shardings"]))
   res = tfxla.call_module(
       args_tf,
+      version=xla_call_module_version,
       module=mhlo_serialized_module,
       Tout=out_types,
       Sout=out_shapes,
