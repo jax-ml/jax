@@ -442,14 +442,6 @@ mlir.register_lowering(
     cholesky_p,
     partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
     platform='cpu')
-mlir.register_lowering(
-  cholesky_p,
-  partial(_cholesky_cpu_gpu_lowering, gpu_solver.cuda_potrf),
-  platform='cuda')
-mlir.register_lowering(
-  cholesky_p,
-  partial(_cholesky_cpu_gpu_lowering, gpu_solver.rocm_potrf),
-  platform='rocm')
 
 # Asymmetric eigendecomposition
 
