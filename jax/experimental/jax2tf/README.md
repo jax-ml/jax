@@ -963,8 +963,8 @@ of shape polymorphism.
 ### TensorFlow XLA ops
 
 For most JAX primitives there is a natural TensorFlow op that fits the needed semantics.
-There are a few (listed below) JAX primitives for which there is no
-single TensorFlow op with matching semantics.
+There are a few (listed in [no_xla_limitations.md](g3doc/no_xla_limitations.md)) JAX primitives
+for which there is no single TensorFlow op with matching semantics.
 This is not so surprising, because JAX primitives have been designed
 to be compiled to [HLO ops](https://www.tensorflow.org/xla/operation_semantics),
 while the corresponding TensorFlow ops are sometimes higher-level.
@@ -987,7 +987,7 @@ There are several drawbacks of using XLA TensorFlow ops:
 
 As an experimental feature we implemented alternative conversions to avoid the XLA TensorFlow ops.
 You can enable this with the `enable_xla=False` parameter to `jax2tf.convert`.
-For more details see  [no_xla_limitations.md](g3doc/no_xla_limitations.md).
+For more details see [no_xla_limitations.md](g3doc/no_xla_limitations.md).
 
 ### Different performance characteristics
 
