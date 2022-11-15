@@ -363,6 +363,18 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters([
+    ('Gather', lax.all_gather),
+    ('ReduceScatter', lax.psum_scatter)
+  ])
+  def testVmapOf(self, prim):
+    f = self.pmap(partial(prim, axis_name='i'), axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (4, device_count, device_count)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    self.assertAllClose(vmap(f)(x), jnp.stack([f(xs) for xs in x], axis=0))
+
   def testReduceScatter(self):
     f = self.pmap(lambda x: lax.psum_scatter(x, 'i'), axis_name='i')
 
@@ -923,13 +935,30 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  @parameterized.named_parameters(it.chain.from_iterable([
+      (name, prim, False, False),
+      (name + 'Tiled', prim, True, False),
+      (name + 'IndexGroups', prim, False, True),
+    ] for name, prim in
+    (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
+  ))
   @ignore_slow_all_to_all_warning()
-  def testGradOfGather(self):
+  def testGradOf(self, prim, tiled, use_axis_index_groups):
+    axis_index_groups = None
+    devices = jax.devices()
+
+    if use_axis_index_groups:
+      if len(devices) < 2:
+        raise SkipTest("Need at least two devices")
+      axis_index_groups = [(l.id, r.id)
+                           for l, r in np.asarray(devices).reshape(-1, 2)]
+
     @partial(self.pmap, axis_name='i')
     def f(x):
-      return lax.all_gather(x, axis_name='i')
+      return prim(x, axis_name='i', tiled=tiled,
+                  axis_index_groups=axis_index_groups)
 
-    shape = (jax.device_count(), 4)
+    shape = (len(devices), 2 if axis_index_groups else jax.device_count())
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
@@ -2281,18 +2310,30 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
                         vmap(vmap(f, axis_name='j'), axis_name='i')(x))
 
-  def testAllGatherWithVmap(self):
+  @parameterized.named_parameters([
+    ('AllGather', lax.all_gather),
+    ('ReduceScatter', lax.psum_scatter),
+  ])
+  def testWithVmap(self, prim):
     def f(map2):
-      @partial(jax.pmap, axis_name='i')
-      @partial(map2)
-      def f(x):
-        return jax.lax.all_gather(x, 'i')
-      return f
+      return jax.pmap(map2(partial(prim, axis_name='i')), axis_name='i')
 
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
-    x = jnp.ones((2, 2, 64, 64))
+    x = jnp.ones((2, 2, 2, 64))
     self.assertAllClose(f(jax.pmap)(x), f(jax.vmap)(x))
+
+  @parameterized.named_parameters(it.chain.from_iterable([
+    ('AllGather' + ('Tiled' if tiled else ''), lax.all_gather, tiled),
+    ('ReduceScatter' + ('Tiled' if tiled else ''), lax.psum_scatter, tiled),
+  ] for tiled in (False, True)))
+  def testVsVmap(self, prim, tiled):
+    if jax.device_count() < 4:
+      raise SkipTest("test requires at least four devices")
+    shape = (4, 4, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = partial(prim, axis_name='i', tiled=tiled)
+    self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
 
 
 class PmapWithDevicesTest(jtu.JaxTestCase):
