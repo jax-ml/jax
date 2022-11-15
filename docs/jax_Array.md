@@ -11,6 +11,10 @@ kernelspec:
   name: python3
 ---
 
++++ {"id": "PxHrg4Cjuapm"}
+
+# `jax.Array`
+
 +++ {"id": "pFtQjv4SzHRj"}
 
 **The features required by `jax.Array` are not supported by the Colab TPU runtime at this time.**
@@ -634,7 +638,7 @@ It's often a good practice to annotate the outputs of computations, for example 
 
 +++ {"id": "QUkXWG-baMUs"}
 
-## Examples: neural networks 
+## Examples: neural networks
 
 +++ {"id": "g7y0OJBSGoSW"}
 
