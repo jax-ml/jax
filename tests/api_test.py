@@ -1148,6 +1148,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
+  @unittest.skipIf(xla_extension_version < 99, "C++ jax.Array is not available")
   def test_hitting_cpp_path(self):
     if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
@@ -1197,6 +1198,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(count[0], 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
 
+  @unittest.skipIf(xla_extension_version < 99, "C++ jax.Array is not available")
   def test_cache_key_defaults(self):
     # https://github.com/google/jax/discussions/11875
     if not self.use_cpp_jit:
