@@ -155,6 +155,7 @@ jobs:
     - name: Test documentation
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
+        JAX_ARRAY: 1
       run: |
         pytest -n 1 --tb=short docs
         pytest -n 1 --tb=short --doctest-modules jax --ignore=jax/experimental/jax2tf --ignore=jax/_src/lib/mlir --ignore=jax/interpreters/mlir.py --ignore=jax/_src/iree.py --ignore=jax/experimental/gda_serialization --ignore=jax/collect_profile.py

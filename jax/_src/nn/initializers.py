@@ -55,8 +55,8 @@ def zeros(key: KeyArray,
 
   >>> import jax, jax.numpy as jnp
   >>> jax.nn.initializers.zeros(jax.random.PRNGKey(42), (2, 3), jnp.float32)
-  DeviceArray([[0., 0., 0.],
-               [0., 0., 0.]], dtype=float32)
+  Array([[0., 0., 0.],
+         [0., 0., 0.]], dtype=float32)
   """
   return jnp.zeros(shape, dtypes.canonicalize_dtype(dtype))
 
@@ -69,9 +69,9 @@ def ones(key: KeyArray,
 
   >>> import jax, jax.numpy as jnp
   >>> jax.nn.initializers.ones(jax.random.PRNGKey(42), (3, 2), jnp.float32)
-  DeviceArray([[1., 1.],
-               [1., 1.],
-               [1., 1.]], dtype=float32)
+  Array([[1., 1.],
+         [1., 1.],
+         [1., 1.]], dtype=float32)
   """
   return jnp.ones(shape, dtypes.canonicalize_dtype(dtype))
 
@@ -87,8 +87,8 @@ def constant(value: Array,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.constant(-7)
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)
-  DeviceArray([[-7., -7., -7.],
-               [-7., -7., -7.]], dtype=float32)
+  Array([[-7., -7., -7.],
+         [-7., -7., -7.]], dtype=float32)
   """
   def init(key: KeyArray,
            shape: core.Shape,
@@ -112,8 +112,8 @@ def uniform(scale: RealNumeric = 1e-2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.uniform(10.0)
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[7.298188 , 8.691938 , 8.7230015],
-               [2.0818567, 1.8662417, 5.5022564]], dtype=float32)
+  Array([[7.298188 , 8.691938 , 8.7230015],
+         [2.0818567, 1.8662417, 5.5022564]], dtype=float32)
   """
   def init(key: KeyArray,
            shape: core.Shape,
@@ -137,8 +137,8 @@ def normal(stddev: RealNumeric = 1e-2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.normal(5.0)
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 3.0613258 ,  5.6129413 ,  5.6866574 ],
-               [-4.063663  , -4.4520254 ,  0.63115686]], dtype=float32)
+  Array([[ 3.0613258 ,  5.6129413 ,  5.6866574 ],
+         [-4.063663  , -4.4520254 ,  0.63115686]], dtype=float32)
    """
   def init(key: KeyArray,
            shape: core.Shape,
@@ -319,8 +319,8 @@ def glorot_uniform(in_axis: Union[int, Sequence[int]] = -2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.glorot_uniform()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 0.50350785,  0.8088631 ,  0.81566876],
-               [-0.6393332 , -0.6865721 ,  0.11003882]], dtype=float32)
+  Array([[ 0.50350785,  0.8088631 ,  0.81566876],
+         [-0.6393332 , -0.6865721 ,  0.11003882]], dtype=float32)
 
   .. _Glorot uniform initializer: http://proceedings.mlr.press/v9/glorot10a.html
   """
@@ -357,8 +357,8 @@ def glorot_normal(in_axis: Union[int, Sequence[int]] = -2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.glorot_normal()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 0.41770416,  0.75262755,  0.7619329 ],
-               [-0.5516644 , -0.6028657 ,  0.08661086]], dtype=float32)
+  Array([[ 0.41770416,  0.75262755,  0.7619329 ],
+         [-0.5516644 , -0.6028657 ,  0.08661086]], dtype=float32)
 
   .. _Glorot normal initializer: http://proceedings.mlr.press/v9/glorot10a.html
   """
@@ -394,8 +394,8 @@ def lecun_uniform(in_axis: Union[int, Sequence[int]] = -2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.lecun_uniform()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 0.56293887,  0.90433645,  0.9119454 ],
-               [-0.71479625, -0.7676109 ,  0.12302713]], dtype=float32)
+  Array([[ 0.56293887,  0.90433645,  0.9119454 ],
+         [-0.71479625, -0.7676109 ,  0.12302713]], dtype=float32)
 
   .. _Lecun uniform initializer: https://arxiv.org/abs/1706.02515
   """
@@ -429,8 +429,8 @@ def lecun_normal(in_axis: Union[int, Sequence[int]] = -2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.lecun_normal()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 0.46700746,  0.8414632 ,  0.8518669 ],
-               [-0.61677957, -0.67402434,  0.09683388]], dtype=float32)
+  Array([[ 0.46700746,  0.8414632 ,  0.8518669 ],
+         [-0.61677957, -0.67402434,  0.09683388]], dtype=float32)
 
   .. _Lecun normal initializer: https://arxiv.org/abs/1706.02515
   """
@@ -465,8 +465,8 @@ def he_uniform(in_axis: Union[int, Sequence[int]] = -2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.kaiming_uniform()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 0.79611576,  1.2789248 ,  1.2896855 ],
-               [-1.0108745 , -1.0855657 ,  0.17398663]], dtype=float32)
+  Array([[ 0.79611576,  1.2789248 ,  1.2896855 ],
+         [-1.0108745 , -1.0855657 ,  0.17398663]], dtype=float32)
 
   .. _He uniform initializer: https://arxiv.org/abs/1502.01852
   """
@@ -503,8 +503,8 @@ def he_normal(in_axis: Union[int, Sequence[int]] = -2,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.kaiming_normal()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 0.6604483 ,  1.1900088 ,  1.2047218 ],
-               [-0.87225807, -0.95321447,  0.1369438 ]], dtype=float32)
+  Array([[ 0.6604483 ,  1.1900088 ,  1.2047218 ],
+         [-0.87225807, -0.95321447,  0.1369438 ]], dtype=float32)
 
   .. _He normal initializer: https://arxiv.org/abs/1502.01852
   """
@@ -536,8 +536,8 @@ def orthogonal(scale: RealNumeric = 1.0,
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.orthogonal()
   >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[ 3.9026976e-01,  7.2495741e-01, -5.6756169e-01],
-               [ 8.8047469e-01, -4.7409311e-01, -1.3157725e-04]],            dtype=float32)
+  Array([[ 3.9026976e-01,  7.2495741e-01, -5.6756169e-01],
+         [ 8.8047469e-01, -4.7409311e-01, -1.3157725e-04]],            dtype=float32)
   """
   def init(key: KeyArray,
            shape: core.Shape,
@@ -579,17 +579,17 @@ def delta_orthogonal(
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.delta_orthogonal()
   >>> initializer(jax.random.PRNGKey(42), (3, 3, 3), jnp.float32)  # doctest: +SKIP
-  DeviceArray([[[ 0.        ,  0.        ,  0.        ],
-                [ 0.        ,  0.        ,  0.        ],
-                [ 0.        ,  0.        ,  0.        ]],
+  Array([[[ 0.        ,  0.        ,  0.        ],
+          [ 0.        ,  0.        ,  0.        ],
+          [ 0.        ,  0.        ,  0.        ]],
   <BLANKLINE>
-               [[ 0.27858758, -0.7949833 , -0.53887904],
-                [ 0.9120717 ,  0.04322892,  0.40774566],
-                [-0.30085585, -0.6050892 ,  0.73712474]],
+         [[ 0.27858758, -0.7949833 , -0.53887904],
+          [ 0.9120717 ,  0.04322892,  0.40774566],
+          [-0.30085585, -0.6050892 ,  0.73712474]],
   <BLANKLINE>
-               [[ 0.        ,  0.        ,  0.        ],
-                [ 0.        ,  0.        ,  0.        ],
-                [ 0.        ,  0.        ,  0.        ]]], dtype=float32)
+         [[ 0.        ,  0.        ,  0.        ],
+          [ 0.        ,  0.        ,  0.        ],
+          [ 0.        ,  0.        ,  0.        ]]], dtype=float32)
 
 
   .. _delta orthogonal initializer: https://arxiv.org/abs/1806.05393

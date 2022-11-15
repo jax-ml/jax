@@ -408,15 +408,15 @@ def one_hot(x: Array, num_classes: int, *,
   ``num_classes`` with the element at ``index`` set to one::
 
     >>> jax.nn.one_hot(jnp.array([0, 1, 2]), 3)
-    DeviceArray([[1., 0., 0.],
-                  [0., 1., 0.],
-                  [0., 0., 1.]], dtype=float32)
+    Array([[1., 0., 0.],
+           [0., 1., 0.],
+           [0., 0., 1.]], dtype=float32)
 
   Indicies outside the range [0, num_classes) will be encoded as zeros::
 
     >>> jax.nn.one_hot(jnp.array([-1, 3]), 3)
-    DeviceArray([[0., 0., 0.],
-                 [0., 0., 0.]], dtype=float32)
+    Array([[0., 0., 0.],
+           [0., 0., 0.]], dtype=float32)
 
   Args:
     x: A tensor of indices.

@@ -277,12 +277,12 @@ def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
 
   >>> val = jnp.uint32(0xFFFFFFFF)
   >>> val.astype('int32')
-  DeviceArray(-1, dtype=int32)
+  Array(-1, dtype=int32)
 
   This function clips to the values representable in the new type:
 
   >>> _convert_and_clip_integer(val, 'int32')
-  DeviceArray(2147483647, dtype=int32)
+  Array(2147483647, dtype=int32)
   """
   val = val if isinstance(val, ndarray) else asarray(val)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -5158,21 +5158,21 @@ class _IndexUpdateHelper:
   --------
   >>> x = jnp.arange(5.0)
   >>> x
-  DeviceArray([0., 1., 2., 3., 4.], dtype=float32)
+  Array([0., 1., 2., 3., 4.], dtype=float32)
   >>> x.at[2].add(10)
-  DeviceArray([ 0.,  1., 12.,  3.,  4.], dtype=float32)
+  Array([ 0.,  1., 12.,  3.,  4.], dtype=float32)
   >>> x.at[10].add(10)  # out-of-bounds indices are ignored
-  DeviceArray([0., 1., 2., 3., 4.], dtype=float32)
+  Array([0., 1., 2., 3., 4.], dtype=float32)
   >>> x.at[20].add(10, mode='clip')
-  DeviceArray([ 0.,  1.,  2.,  3., 14.], dtype=float32)
+  Array([ 0.,  1.,  2.,  3., 14.], dtype=float32)
   >>> x.at[2].get()
-  DeviceArray(2., dtype=float32)
+  Array(2., dtype=float32)
   >>> x.at[20].get()  # out-of-bounds indices clipped
-  DeviceArray(4., dtype=float32)
+  Array(4., dtype=float32)
   >>> x.at[20].get(mode='fill')  # out-of-bounds indices filled with NaN
-  DeviceArray(nan, dtype=float32)
+  Array(nan, dtype=float32)
   >>> x.at[20].get(mode='fill', fill_value=-1)  # custom fill value
-  DeviceArray(-1., dtype=float32)
+  Array(-1., dtype=float32)
   """
   __slots__ = ("array",)
 

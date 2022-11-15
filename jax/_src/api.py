@@ -340,7 +340,7 @@ def jit(
     ...   return x
     >>>
     >>> g(jnp.arange(4), 3)
-    DeviceArray([   0,    1,  256, 6561], dtype=int32)
+    Array([   0,    1,  256, 6561], dtype=int32)
   """
   if abstracted_axes and not config.jax_dynamic_shapes:
     raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
@@ -1431,14 +1431,14 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   >>> import jax.numpy as jnp
   >>> f = lambda dct: {"c": jnp.power(dct["a"], dct["b"])}
   >>> print(jax.hessian(f)({"a": jnp.arange(2.) + 1., "b": jnp.arange(2.) + 2.}))
-  {'c': {'a': {'a': DeviceArray([[[ 2.,  0.], [ 0.,  0.]],
-                                 [[ 0.,  0.], [ 0., 12.]]], dtype=float32),
-               'b': DeviceArray([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
-                                 [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32)},
-         'b': {'a': DeviceArray([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
-                                 [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32),
-               'b': DeviceArray([[[0.      , 0.      ], [0.      , 0.      ]],
-                                [[0.      , 0.      ], [0.      , 3.843624]]], dtype=float32)}}}
+  {'c': {'a': {'a': Array([[[ 2.,  0.], [ 0.,  0.]],
+                           [[ 0.,  0.], [ 0., 12.]]], dtype=float32),
+               'b': Array([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
+                           [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32)},
+         'b': {'a': Array([[[ 1.      ,  0.      ], [ 0.      ,  0.      ]],
+                           [[ 0.      ,  0.      ], [ 0.      , 12.317766]]], dtype=float32),
+               'b': Array([[[0.      , 0.      ], [0.      , 0.      ]],
+                           [[0.      , 0.      ], [0.      , 3.843624]]], dtype=float32)}}}
 
   Thus each leaf in the tree structure of ``jax.hessian(fun)(x)`` corresponds to
   a leaf of ``fun(x)`` and a pair of leaves of ``x``. For each leaf in
@@ -1623,13 +1623,13 @@ def vmap(fun: F,
   (to keep it unmapped).
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=(0, None))(jnp.arange(2.), 4.))
-  (DeviceArray([4., 5.], dtype=float32), 8.0)
+  (Array([4., 5.], dtype=float32), 8.0)
 
   If the ``out_axes`` is specified for an unmapped result, the result is
   broadcast across the mapped axis:
 
   >>> print(vmap(lambda x, y: (x + y, y * 2.), in_axes=(0, None), out_axes=0)(jnp.arange(2.), 4.))
-  (DeviceArray([4., 5.], dtype=float32), DeviceArray([8., 8.], dtype=float32, weak_type=True))
+  (Array([4., 5.], dtype=float32), Array([8., 8.], dtype=float32, weak_type=True))
 
   If the ``out_axes`` is specified for a mapped result, the result is transposed
   accordingly.
@@ -2499,7 +2499,7 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   >>> def f(x): return 3. * jnp.sin(x) + jnp.cos(x / 2.)
   ...
   >>> jax.jvp(f, (2.,), (3.,))
-  (DeviceArray(3.26819, dtype=float32, weak_type=True), DeviceArray(-5.00753, dtype=float32, weak_type=True))
+  (Array(3.26819, dtype=float32, weak_type=True), Array(-5.00753, dtype=float32, weak_type=True))
   >>> y, f_jvp = jax.linearize(f, 2.)
   >>> print(y)
   3.2681944
@@ -2718,7 +2718,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   >>> scalar = types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32))
   >>> f_transpose = jax.linear_transpose(f, scalar, scalar)
   >>> f_transpose(1.0)
-  (DeviceArray(0.5, dtype=float32), DeviceArray(-0.5, dtype=float32))
+  (Array(0.5, dtype=float32), Array(-0.5, dtype=float32))
   """
   reduce_axes = _ensure_str_tuple(reduce_axes)
   primals_flat, in_tree = tree_flatten(primals)
@@ -3046,7 +3046,7 @@ def device_get(x: Any):
   If ``x`` is a pytree, then the individual buffers are copied in parallel.
 
   Args:
-    x: An array, scalar, DeviceArray or (nested) standard Python container thereof
+    x: An array, scalar, Array or (nested) standard Python container thereof
       representing the array to be transferred to host.
 
   Returns:
@@ -3054,7 +3054,7 @@ def device_get(x: Any):
     value of ``x``.
 
   Examples:
-    Passing a DeviceArray:
+    Passing a Array:
 
     >>> import jax
     >>> x = jax.numpy.array([1., 2., 3.])

@@ -65,11 +65,11 @@ roots will be padded with NaN values:
 
 # The default behavior matches numpy and strips leading zeros:
 >>> jnp.roots(coeffs)
-DeviceArray([-2.+0.j], dtype=complex64)
+Array([-2.+0.j], dtype=complex64)
 
 # With strip_zeros=False, extra roots are set to NaN:
 >>> jnp.roots(coeffs, strip_zeros=False)
-DeviceArray([-2. +0.j, nan+nanj], dtype=complex64)
+Array([-2. +0.j, nan+nanj], dtype=complex64)
 """,
 extra_params="""
 strip_zeros : bool, default=True

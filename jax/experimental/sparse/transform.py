@@ -34,16 +34,16 @@ For example:
 ...   return -(jnp.sin(mat) @ vec)
 ...
 >>> f(mat, vec)
-DeviceArray([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
-             -0.15574613], dtype=float32)
+Array([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
+       -0.15574613], dtype=float32)
 
 >>> mat_sparse = BCOO.fromdense(mat)
 >>> mat_sparse
 BCOO(float32[5, 5], nse=8)
 
 >>> sparsify(f)(mat_sparse, vec)
-DeviceArray([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
-             -0.15574613], dtype=float32)
+Array([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
+       -0.15574613], dtype=float32)
 """
 
 import functools
@@ -446,7 +446,7 @@ def sparsify(f, use_tracer=False):
     >>> v = jnp.array([3, 4, 2])
 
     >>> f(M, v)
-    DeviceArray([ 64,  82, 100, 118], dtype=int32)
+    Array([ 64,  82, 100, 118], dtype=int32)
   """
   if use_tracer:
     return _sparsify_with_tracer(f)

@@ -69,7 +69,7 @@ class ConcretizationTypeError(JAXTypeError):
         ...   return x.min(axis)
 
         >>> func(jnp.arange(4), 0)
-        DeviceArray(0, dtype=int32)
+        Array(0, dtype=int32)
 
   Traced value used in control flow
     Another case where this often arises is when a traced value is used in
@@ -94,7 +94,7 @@ class ConcretizationTypeError(JAXTypeError):
       ...   return jnp.where(x.sum() < y.sum(), x, y)
 
       >>> func(jnp.ones(4), jnp.zeros(4))
-      DeviceArray([0., 0., 0., 0.], dtype=float32)
+      Array([0., 0., 0., 0.], dtype=float32)
 
     For more complicated control flow including loops, see
     :ref:`lax-control-flow`.
@@ -140,7 +140,7 @@ class ConcretizationTypeError(JAXTypeError):
       ...   return jnp.where(x > 1, x, 0).sum()
 
       >>> func(jnp.arange(4))
-      DeviceArray(5, dtype=int32)
+      Array(5, dtype=int32)
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
@@ -209,7 +209,7 @@ class NonConcreteBooleanIndexError(JAXIndexError):
       ...   return jnp.where(x > 0, x, 0).sum()
 
       >>> sum_of_positive(jnp.arange(-5, 5))
-      DeviceArray(10, dtype=int32)
+      Array(10, dtype=int32)
 
     This pattern of replacing boolean masking with three-argument
     :func:`~jax.numpy.where` is a common solution to this sort of problem.
@@ -236,7 +236,7 @@ class NonConcreteBooleanIndexError(JAXIndexError):
       ...   return jnp.where(x < 0, 0, x)
 
       >>> manual_clip(jnp.arange(-2, 2))
-      DeviceArray([0, 0, 0, 1], dtype=int32)
+      Array([0, 0, 0, 1], dtype=int32)
   """
   def __init__(self, tracer: core.Tracer):
     super().__init__(
@@ -275,7 +275,7 @@ class TracerArrayConversionError(JAXTypeError):
       ...   return jnp.sin(x)
 
       >>> func(jnp.arange(4))
-      DeviceArray([0.        , 0.84147096, 0.9092974 , 0.14112   ], dtype=float32)
+      Array([0.        , 0.84147096, 0.9092974 , 0.14112   ], dtype=float32)
 
   Indexing a numpy array with a tracer
     If this error arises on a line that involves array indexing, it may be that
@@ -302,7 +302,7 @@ class TracerArrayConversionError(JAXTypeError):
       ...   return jnp.asarray(x)[i]
 
       >>> func(0)
-      DeviceArray(0, dtype=int32)
+      Array(0, dtype=int32)
 
     or by declaring the index as a static argument::
 
@@ -311,7 +311,7 @@ class TracerArrayConversionError(JAXTypeError):
       ...   return x[i]
 
       >>> func(0)
-      DeviceArray(0, dtype=int32)
+      Array(0, dtype=int32)
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
@@ -354,15 +354,15 @@ class TracerIntegerConversionError(JAXTypeError):
       ...   return np.split(x, 2, axis)
 
       >>> func(np.arange(10), 0)
-      [DeviceArray([0, 1, 2, 3, 4], dtype=int32),
-       DeviceArray([5, 6, 7, 8, 9], dtype=int32)]
+      [Array([0, 1, 2, 3, 4], dtype=int32),
+       Array([5, 6, 7, 8, 9], dtype=int32)]
 
     An alternative is to apply the transformation to a closure that encapsulates
     the arguments to be protected, either manually as below or by using
     :func:`functools.partial`::
 
       >>> jit(lambda arr: np.split(arr, 2, 0))(np.arange(4))
-      [DeviceArray([0, 1], dtype=int32), DeviceArray([2, 3], dtype=int32)]
+      [Array([0, 1], dtype=int32), Array([2, 3], dtype=int32)]
 
     **Note a new closure is created at every invocation, which defeats the
     compilation caching mechanism, which is why static_argnums is preferred.**
@@ -395,7 +395,7 @@ class TracerIntegerConversionError(JAXTypeError):
       ...   return jnp.array(L)[i]
 
       >>> func(0)
-      DeviceArray(1, dtype=int32)
+      Array(1, dtype=int32)
 
     or by declaring the index as a static argument::
 
@@ -404,7 +404,7 @@ class TracerIntegerConversionError(JAXTypeError):
       ...   return L[i]
 
       >>> func(0)
-      DeviceArray(1, dtype=int32, weak_type=True)
+      Array(1, dtype=int32, weak_type=True)
 
   To understand more subtleties having to do with tracers vs. regular values,
   and concrete vs. abstract values, you may want to read
@@ -502,7 +502,7 @@ class UnexpectedTracerError(JAXTypeError):
       >>> y = not_side_effecting(x)
       >>> outs.append(y)
       >>> outs[0] + 1  # all good! no longer a leaked value.
-      DeviceArray(3, dtype=int32, weak_type=True)
+      Array(3, dtype=int32, weak_type=True)
 
   Leak checker
     As discussed in point 2 and 3 above, JAX shows a reconstructed stack trace
