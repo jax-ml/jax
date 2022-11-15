@@ -1036,17 +1036,16 @@ class LaxRandomTest(jtu.JaxTestCase):
     shape=[(), (5,), (10, 5)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def testOrthogonal(self, n, shape, dtype):
     key = self.seed_prng(0)
     q = random.orthogonal(key, n, shape, dtype)
     self.assertEqual(q.shape, (*shape, n, n))
     self.assertEqual(q.dtype, dtype)
-    tol = 1e-2 if jtu.device_under_test() == "tpu" else None
     with jax.numpy_rank_promotion('allow'):
       self.assertAllClose(
         jnp.einsum('...ij,...jk->...ik', q, jnp.conj(q).swapaxes(-2, -1)),
-        jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n)),
-        atol=tol, rtol=tol,
+        jnp.broadcast_to(jnp.eye(n, dtype=dtype), (*shape, n, n))
       )
 
   @jtu.sample_product(

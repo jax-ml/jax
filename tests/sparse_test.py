@@ -206,7 +206,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(primals[2], f(M)[2])
     self.assertArraysEqual(M_out, M)
 
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @jtu.sample_product(
     [dict(shape=shape, bshape=bshape)
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
@@ -214,6 +213,7 @@ class cuSparseTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_csr_matmul_ad(self, shape, dtype, bshape):
     csr_matmul = sparse.csr_matvec if len(bshape) == 1 else sparse.csr_matmat
     tol = {np.float32: 2E-5, np.float64: 1E-12, np.complex64: 1E-5,
@@ -582,7 +582,6 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertArraysEqual(primals[2], f(M)[2])
     self.assertArraysEqual(M_out, M)
 
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @jtu.sample_product(
     [dict(shape=shape, bshape=bshape)
       for shape in [(5, 8), (8, 5), (5, 5), (8, 8)]
@@ -590,6 +589,7 @@ class cuSparseTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_coo_matmul_ad(self, shape, dtype, bshape):
     coo_matmul = sparse_coo._coo_matvec if len(bshape) == 1 else sparse_coo._coo_matmat
     tol = {np.float32: 1E-5, np.float64: 1E-12, np.complex64: 1E-5, np.complex128: 1E-12}
@@ -1056,6 +1056,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_transpose_ad(self, shape, dtype, n_batch, n_dense):
     n_sparse = len(shape) - n_batch - n_dense
     rng = self.rng()
@@ -1077,12 +1078,8 @@ class BCOOTest(jtu.JaxTestCase):
     jf_sparse = jax.jacfwd(f_sparse)(data)
     jr_sparse = jax.jacrev(f_sparse)(data)
 
-    tol = {}
-    if jtu.device_under_test() == "tpu":
-      tol = {np.float32: 5E-3}
-
     # TODO(jakevdp) also test against dense version?
-    self.assertAllClose(jf_sparse, jr_sparse, rtol=tol)
+    self.assertAllClose(jf_sparse, jr_sparse)
 
   def test_bcoo_transpose_indices_sorted(self):
     rng = self.rng()
@@ -1129,6 +1126,7 @@ class BCOOTest(jtu.JaxTestCase):
       dtypes=jtu.dtypes.floating + jtu.dtypes.complex,
     )
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general(self, props: BcooDotGeneralProperties):
     rng = jtu.rand_small(self.rng())
     rng_sparse = rand_sparse(self.rng())
@@ -1148,9 +1146,8 @@ class BCOOTest(jtu.JaxTestCase):
       return sparse_bcoo._bcoo_dot_general(data, indices, rhs, lhs_spinfo=BCOOInfo(lhs.shape),
                                            dimension_numbers=props.dimension_numbers)
 
-    tol = {'float32': 3E-2} if jtu.device_under_test() == 'tpu' else {}
-    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker, tol=tol)
-    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker, tol=tol)
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
+    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
@@ -1173,6 +1170,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_cusparse(
     self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting):
     rng = jtu.rand_small(self.rng())
@@ -1213,6 +1211,7 @@ class BCOOTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jtu.skip_on_devices("rocm")
+  @jax.default_matmul_precision("float32")
   def test_bcoo_batched_matmat_cusparse(
     self, n_batch, lhs_shape, rhs_shape, dtype, lhs_contracting,
     rhs_contracting):
@@ -1361,6 +1360,7 @@ class BCOOTest(jtu.JaxTestCase):
       dtypes=jtu.dtypes.floating + jtu.dtypes.complex,
     )
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_rdot_general(self, props: BcooDotGeneralProperties):
     rng = jtu.rand_small(self.rng())
     rng_sparse = rand_sparse(self.rng())
@@ -1385,9 +1385,8 @@ class BCOOTest(jtu.JaxTestCase):
                                             rhs_spinfo=BCOOInfo(rhs.shape),
                                             dimension_numbers=dimension_numbers)
 
-    tol = {'float32': 3E-2} if jtu.device_under_test() == 'tpu' else {}
-    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker, tol=tol)
-    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker, tol=tol)
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
+    self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker)
     # TODO(jakevdp): In rare cases, this fails python_should_be_executing check. Why?
     # self._CompileAndCheck(f_sparse, args_maker)
 
@@ -1405,6 +1404,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_partial_batch(self, lhs_shape, rhs_shape, dtype,
                                           dimension_numbers, n_batch, n_dense):
     rng = jtu.rand_small(self.rng())
@@ -1444,6 +1444,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_ad(self, lhs_shape, rhs_shape, dtype,
                                dimension_numbers, n_batch, n_dense):
     rng = jtu.rand_small(self.rng())
@@ -1468,13 +1469,9 @@ class BCOOTest(jtu.JaxTestCase):
     jf_sparse = jax.jacfwd(f_sparse)(Y)
     jr_sparse = jax.jacrev(f_sparse)(Y)
 
-    tol = {}
-    if jtu.device_under_test() == "tpu":
-      tol = {np.float32: 5E-3}
-
-    self.assertAllClose(jf_dense, jf_sparse, rtol=tol)
-    self.assertAllClose(jr_dense, jr_sparse, rtol=tol)
-    self.assertAllClose(jf_sparse, jr_sparse, rtol=tol)
+    self.assertAllClose(jf_dense, jf_sparse)
+    self.assertAllClose(jr_dense, jr_sparse)
+    self.assertAllClose(jf_sparse, jr_sparse)
 
     # gradient with respect to lhs
     def g_dense(X):
@@ -1489,19 +1486,15 @@ class BCOOTest(jtu.JaxTestCase):
     jf_sparse = jax.jacfwd(g_sparse)(data)
     jr_sparse = jax.jacrev(g_sparse)(data)
 
-    tol = {}
-    if jtu.device_under_test() == "tpu":
-      tol = {np.float32: 5E-3}
-
-    self.assertAllClose(jf_dense, jr_dense, rtol=tol)
-    self.assertAllClose(jf_sparse, jr_sparse, rtol=tol)
+    self.assertAllClose(jf_dense, jr_dense)
+    self.assertAllClose(jf_sparse, jr_sparse)
 
     # Extract the sparse jacobian from the dense & compare.
     def extract(X):
       return sparse.bcoo_extract(indices, X)
     for i in range(g_dense(X).ndim):
       extract = jax.vmap(extract)
-    self.assertAllClose(extract(jf_dense), jf_sparse, rtol=tol)
+    self.assertAllClose(extract(jf_dense), jf_sparse)
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
@@ -1519,6 +1512,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_sampled(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
     rng = jtu.rand_default(self.rng())
     sprng = rand_sparse(self.rng())
@@ -1538,11 +1532,7 @@ class BCOOTest(jtu.JaxTestCase):
       return sparse.bcoo_dot_general_sampled(
                 lhs, rhs, indices, dimension_numbers=dimension_numbers)
 
-    tol = {}
-    if jtu.device_under_test() == "tpu":
-      tol = {np.float32: 5E-3}
-
-    self._CheckAgainstNumpy(dense_fun, sparse_fun, args_maker, tol=tol)
+    self._CheckAgainstNumpy(dense_fun, sparse_fun, args_maker)
     # TODO: python_should_be_executing check occasionally fails... why?
     # self._CompileAndCheck(sparse_fun, args_maker)
 
@@ -1562,6 +1552,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_sampled_ad(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
     rng = jtu.rand_default(self.rng())
     sprng = rand_sparse(self.rng())
@@ -1586,15 +1577,10 @@ class BCOOTest(jtu.JaxTestCase):
     jr_dense = jax.jacrev(dense_fun)(lhs, rhs, indices)
     jr_sparse = jax.jacrev(sparse_fun)(lhs, rhs, indices)
 
-    tol = {}
-    if jtu.device_under_test() == "tpu":
-      tol = {np.float32: 5E-3}
+    self.assertAllClose(jf_sparse, jf_dense)
+    self.assertAllClose(jr_sparse, jr_dense)
+    self.assertAllClose(jf_sparse, jr_sparse)
 
-    self.assertAllClose(jf_sparse, jf_dense, atol=tol)
-    self.assertAllClose(jr_sparse, jr_dense, atol=tol)
-    self.assertAllClose(jf_sparse, jr_sparse, atol=tol)
-
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @jtu.sample_product(
     [dict(lhs_n_batch=lhs_n_batch, rhs_n_batch=rhs_n_batch, lhs_shape=lhs_shape,
           rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
@@ -1629,6 +1615,7 @@ class BCOOTest(jtu.JaxTestCase):
     swap=[True, False],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_spdot_general(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, swap, dimension_numbers):
     if swap:
       dimension_numbers = tuple(d[::-1] for d in dimension_numbers)
@@ -1714,22 +1701,18 @@ class BCOOTest(jtu.JaxTestCase):
       rhs = sparse.BCOO((rhs_data, rhs_sp.indices), shape=rhs_sp.shape)
       return (lhs @ rhs).sum()
 
-    tol = {}
-    if jtu.device_under_test() == "tpu":
-      tol = {np.float32: 5E-2}
-
     jf_dense_0 = jax.jacfwd(f_dense, argnums=0)(lhs_sp.data, rhs_sp.data)
     jf_sparse_0 = jax.jacfwd(f_sparse, argnums=0)(lhs_sp.data, rhs_sp.data)
-    self.assertAllClose(jf_dense_0, jf_sparse_0, rtol=tol)
+    self.assertAllClose(jf_dense_0, jf_sparse_0)
 
     jf_dense_1 = jax.jacfwd(f_dense, argnums=1)(lhs_sp.data, rhs_sp.data)
     jf_sparse_1 = jax.jacfwd(f_sparse, argnums=1)(lhs_sp.data, rhs_sp.data)
-    self.assertAllClose(jf_dense_1, jf_sparse_1, rtol=tol)
+    self.assertAllClose(jf_dense_1, jf_sparse_1)
 
     jf_dense_0, jf_dense_1 = jax.jacfwd(f_dense, argnums=(0, 1))(lhs_sp.data, rhs_sp.data)
     jf_sparse_0, jf_sparse_1 = jax.jacfwd(f_sparse, argnums=(0, 1))(lhs_sp.data, rhs_sp.data)
-    self.assertAllClose(jf_dense_0, jf_sparse_0, rtol=tol)
-    self.assertAllClose(jf_dense_1, jf_sparse_1, rtol=tol)
+    self.assertAllClose(jf_dense_0, jf_sparse_0)
+    self.assertAllClose(jf_dense_1, jf_sparse_1)
 
   def test_bcoo_spdot_general_ad_bug(self):
     # Regression test for https://github.com/google/jax/issues/10163
@@ -1763,7 +1746,6 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(sp_sp_jac, de_de_jac)
     self.assertAllClose(sp_de_jac, de_de_jac)
 
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @jtu.sample_product(
     [dict(lhs_n_batch=lhs_n_batch, rhs_n_batch=rhs_n_batch, lhs_shape=lhs_shape,
           rhs_shape=rhs_shape, in_axes=in_axes)
@@ -1779,6 +1761,7 @@ class BCOOTest(jtu.JaxTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_spmm_batched(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, in_axes):
     sprng = rand_sparse(self.rng())
     def args_maker():
@@ -2018,7 +2001,6 @@ class BCOOTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, "reshape of arrays with broadacsted batch dimensions."):
       y.reshape(2, 3, 2)
 
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [[(3,), (3,)],
@@ -2032,6 +2014,7 @@ class BCOOTest(jtu.JaxTestCase):
     lhs_dtype=all_dtypes,
     rhs_dtype=all_dtypes,
   )
+  @jax.default_matmul_precision("float32")
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     lhs = jnp.array(rng(lhs_shape, lhs_dtype))
@@ -2570,7 +2553,6 @@ class SparseObjectTest(jtu.JaxTestCase):
     Msparse = Obj.fromdense(M)
     self.assertArraysEqual(M.T, Msparse.T.todense())
 
-  @unittest.skipIf(jtu.device_under_test() == "tpu", "TPU has insufficient precision")
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(shape=shape, bshape=bshape)
@@ -2581,6 +2563,7 @@ class SparseObjectTest(jtu.JaxTestCase):
       dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     )
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO]))
+  @jax.default_matmul_precision("float32")
   def test_matmul(self, shape, dtype, Obj, bshape):
     rng = rand_sparse(self.rng(), post=jnp.array)
     rng_b = jtu.rand_default(self.rng())

@@ -496,13 +496,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
+  @jax.default_matmul_precision("float32")
   def testDot(self, name, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
-    tol = {np.float16: 1e-2, np.float32: 1e-5, np.float64: 1e-14,
+    tol = {np.float16: 1e-2, np.float32: 2e-5, np.float64: 1e-14,
            np.complex128: 1e-14}
-    if jtu.device_under_test() == "tpu":
-      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 2e-1
     def np_dot(x, y):
       x = x.astype(np.float32) if lhs_dtype == jnp.bfloat16 else x
       y = y.astype(np.float32) if rhs_dtype == jnp.bfloat16 else y
@@ -554,6 +553,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     lhs_dtype=number_dtypes,
     rhs_dtype=number_dtypes,
   )
+  @jax.default_matmul_precision("float32")
   def testTensordot(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype, axes):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -565,8 +565,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return np.tensordot(a, b, axes).astype(dtype)
     tol = {np.float16: 1e-1, np.float32: 1e-3, np.float64: 1e-12,
            np.complex64: 1e-3, np.complex128: 1e-12}
-    if jtu.device_under_test() == "tpu":
-      tol[np.float16] = tol[np.float32] = tol[np.complex64] = 2e-1
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
@@ -775,11 +773,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     w=[False, True],
     cov=[False, True, "unscaled"],
   )
+  @jax.default_matmul_precision("float32")
   def testPolyfit(self, shape, dtype, deg, rcond, full, w, cov):
     rng = jtu.rand_default(self.rng())
     tol_spec = {np.float32: 1e-3, np.float64: 1e-13, np.complex64: 1e-5}
-    if jtu.device_under_test() == "tpu":
-      tol_spec[np.float32] = tol_spec[np.complex64] = 2e-1
     tol = jtu.tolerance(dtype, tol_spec)
     _w = lambda a: abs(a) if w else None
     args_maker = lambda: [rng(shape, dtype), rng(shape, dtype), rng(shape, dtype)]
@@ -4266,6 +4263,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=number_dtypes,
     rowvar=[True, False],
   )
+  @jax.default_matmul_precision("float32")
   def testCorrCoef(self, shape, dtype, rowvar):
     rng = jtu.rand_default(self.rng())
     def args_maker():
@@ -4278,11 +4276,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     np_fun = jtu.ignore_warning(
       category=RuntimeWarning, message="invalid value encountered.*")(np_fun)
     jnp_fun = partial(jnp.corrcoef, rowvar=rowvar)
-    tol = 1e-2 if jtu.device_under_test() == "tpu" else None
-    self._CheckAgainstNumpy(
-        np_fun, jnp_fun, args_maker, check_dtypes=False,
-        tol=tol)
-    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(dtype=dtype, end_dtype=end_dtype, begin_dtype=begin_dtype,
