@@ -386,9 +386,9 @@ def axis_index(axis_name):
   ...   return lax.axis_index('i')
   ...
   >>> f(np.zeros(4))
-  ShardedDeviceArray([0, 1, 2, 3], dtype=int32)
+  Array([0, 1, 2, 3], dtype=int32)
   >>> f(np.zeros(8))
-  ShardedDeviceArray([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
+  Array([0, 1, 2, 3, 4, 5, 6, 7], dtype=int32)
   >>> @partial(jax.pmap, axis_name='i')
   ... @partial(jax.pmap, axis_name='j')
   ... def f(_):

@@ -2331,17 +2331,17 @@ class BCOO(JAXSparse):
     Examine the internal representation:
 
     >>> M_sp.data
-    DeviceArray([2., 1., 4.], dtype=float32)
+    Array([2., 1., 4.], dtype=float32)
     >>> M_sp.indices
-    DeviceArray([[0, 1],
-                 [1, 0],
-                 [1, 2]], dtype=int32)
+    Array([[0, 1],
+           [1, 0],
+           [1, 2]], dtype=int32)
 
     Create a dense array from a sparse array:
 
     >>> M_sp.todense()
-    DeviceArray([[0., 2., 0.],
-                 [1., 0., 4.]], dtype=float32)
+    Array([[0., 2., 0.],
+           [1., 0., 4.]], dtype=float32)
 
     Create a sparse array from COO data & indices:
 
@@ -2353,9 +2353,9 @@ class BCOO(JAXSparse):
     >>> mat
     BCOO(float32[3, 3], nse=3)
     >>> mat.todense()
-    DeviceArray([[1., 0., 0.],
-                 [0., 3., 0.],
-                 [0., 0., 5.]], dtype=float32)
+    Array([[1., 0., 0.],
+           [0., 3., 0.],
+           [0., 0., 5.]], dtype=float32)
   """
   # Note: additional BCOO methods are defined in transform.py
 

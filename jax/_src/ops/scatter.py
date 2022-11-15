@@ -229,13 +229,13 @@ def segment_sum(data: Array,
     >>> data = jnp.arange(5)
     >>> segment_ids = jnp.array([0, 0, 1, 1, 2])
     >>> segment_sum(data, segment_ids)
-    DeviceArray([1, 5, 4], dtype=int32)
+    Array([1, 5, 4], dtype=int32)
 
     Using JIT requires static `num_segments`:
 
     >>> from jax import jit
     >>> jit(segment_sum, static_argnums=2)(data, segment_ids, 3)
-    DeviceArray([1, 5, 4], dtype=int32)
+    Array([1, 5, 4], dtype=int32)
   """
   return _segment_update(
       "segment_sum", data, segment_ids, lax.scatter_add, num_segments,
@@ -285,13 +285,13 @@ def segment_prod(data: Array,
     >>> data = jnp.arange(6)
     >>> segment_ids = jnp.array([0, 0, 1, 1, 2, 2])
     >>> segment_prod(data, segment_ids)
-    DeviceArray([ 0,  6, 20], dtype=int32)
+    Array([ 0,  6, 20], dtype=int32)
 
     Using JIT requires static `num_segments`:
 
     >>> from jax import jit
     >>> jit(segment_prod, static_argnums=2)(data, segment_ids, 3)
-    DeviceArray([ 0,  6, 20], dtype=int32)
+    Array([ 0,  6, 20], dtype=int32)
   """
   return _segment_update(
       "segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
@@ -340,13 +340,13 @@ def segment_max(data: Array,
     >>> data = jnp.arange(6)
     >>> segment_ids = jnp.array([0, 0, 1, 1, 2, 2])
     >>> segment_max(data, segment_ids)
-    DeviceArray([1, 3, 5], dtype=int32)
+    Array([1, 3, 5], dtype=int32)
 
     Using JIT requires static `num_segments`:
 
     >>> from jax import jit
     >>> jit(segment_max, static_argnums=2)(data, segment_ids, 3)
-    DeviceArray([1, 3, 5], dtype=int32)
+    Array([1, 3, 5], dtype=int32)
   """
   return _segment_update(
       "segment_max", data, segment_ids, lax.scatter_max, num_segments,
@@ -395,13 +395,13 @@ def segment_min(data: Array,
     >>> data = jnp.arange(6)
     >>> segment_ids = jnp.array([0, 0, 1, 1, 2, 2])
     >>> segment_min(data, segment_ids)
-    DeviceArray([0, 2, 4], dtype=int32)
+    Array([0, 2, 4], dtype=int32)
 
     Using JIT requires static `num_segments`:
 
     >>> from jax import jit
     >>> jit(segment_min, static_argnums=2)(data, segment_ids, 3)
-    DeviceArray([0, 2, 4], dtype=int32)
+    Array([0, 2, 4], dtype=int32)
   """
   return _segment_update(
       "segment_min", data, segment_ids, lax.scatter_min, num_segments,

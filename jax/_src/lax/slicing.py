@@ -84,21 +84,21 @@ def dynamic_slice(operand: Array, start_indices: Union[Array, Sequence[ArrayLike
 
     >>> x = jnp.arange(12).reshape(3, 4)
     >>> x
-    DeviceArray([[ 0,  1,  2,  3],
-                 [ 4,  5,  6,  7],
-                 [ 8,  9, 10, 11]], dtype=int32)
+    Array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=int32)
 
     >>> dynamic_slice(x, (1, 1), (2, 3))
-    DeviceArray([[ 5,  6,  7],
-                 [ 9, 10, 11]], dtype=int32)
+    Array([[ 5,  6,  7],
+           [ 9, 10, 11]], dtype=int32)
 
     Note the potentially surprising behavior for the case where the requested slice
     overruns the bounds of the array; in this case the start index is adjusted to
     return a slice of the requested size:
 
     >>> dynamic_slice(x, (1, 1), (2, 4))
-    DeviceArray([[ 4,  5,  6,  7],
-                 [ 8,  9, 10, 11]], dtype=int32)
+    Array([[ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=int32)
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   if jax.config.jax_dynamic_shapes:
@@ -129,25 +129,25 @@ def dynamic_update_slice(operand: Array, update: ArrayLike,
     >>> x = jnp.zeros(6)
     >>> y = jnp.ones(3)
     >>> dynamic_update_slice(x, y, (2,))
-    DeviceArray([0., 0., 1., 1., 1., 0.], dtype=float32)
+    Array([0., 0., 1., 1., 1., 0.], dtype=float32)
 
     If the update slice is too large to fit in the array, the start
     index will be adjusted to make it fit
 
     >>> dynamic_update_slice(x, y, (3,))
-    DeviceArray([0., 0., 0., 1., 1., 1.], dtype=float32)
+    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
     >>> dynamic_update_slice(x, y, (5,))
-    DeviceArray([0., 0., 0., 1., 1., 1.], dtype=float32)
+    Array([0., 0., 0., 1., 1., 1.], dtype=float32)
 
     Here is an example of a two-dimensional slice update:
 
     >>> x = jnp.zeros((4, 4))
     >>> y = jnp.ones((2, 2))
     >>> dynamic_update_slice(x, y, (1, 2))
-    DeviceArray([[0., 0., 0., 0.],
-                 [0., 0., 1., 1.],
-                 [0., 0., 1., 1.],
-                 [0., 0., 0., 0.]], dtype=float32)
+    Array([[0., 0., 0., 0.],
+           [0., 0., 1., 1.],
+           [0., 0., 1., 1.],
+           [0., 0., 0., 0.]], dtype=float32)
   """
   start_indices = _dynamic_slice_indices(operand, start_indices)
   return dynamic_update_slice_p.bind(operand, update, *start_indices)
@@ -1563,7 +1563,7 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
 
   upper_bounds: core.Shape = tuple(operand.shape[i] - slice_sizes[i]
                                    for i in dnums.scatter_dims_to_operand_dims)
-  # Stack upper_bounds into a DeviceArray[n]
+  # Stack upper_bounds into a Array[n]
   upper_bound = lax.shape_as_value(upper_bounds)
   upper_bound = lax.min(upper_bound, np.iinfo(indices.dtype).max)
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,

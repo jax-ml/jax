@@ -181,7 +181,7 @@ equivalent to that of Python scalars, such as the integer scalar ``2`` in the fo
 
    >>> x = jnp.arange(5, dtype='int8')
    >>> 2 * x
-   DeviceArray([0, 2, 4, 6, 8], dtype=int8)
+   Array([0, 2, 4, 6, 8], dtype=int8)
 
 JAX's weak type framework is designed to prevent unwanted type promotion within
 binary operations between JAX values and values with no explicitly user-specified type,
@@ -191,7 +191,7 @@ the expression above would lead to an implicit type promotion:
 .. code-block:: python
 
    >>> jnp.int32(2) * x
-   DeviceArray([0, 2, 4, 6, 8], dtype=int32)
+   Array([0, 2, 4, 6, 8], dtype=int32)
 
 When used in JAX, Python scalars are sometimes promoted to :class:`~jax.numpy.DeviceArray`
 objects, for example during JIT compilation. To maintain the desired promotion
@@ -201,7 +201,7 @@ that can be seen in an array's string representation:
 .. code-block:: python
 
    >>> jnp.asarray(2)
-   DeviceArray(2, dtype=int32, weak_type=True)
+   Array(2, dtype=int32, weak_type=True)
 
 If the ``dtype`` is specified explicitly, it will instead result in a standard
 strongly-typed array value:
@@ -209,4 +209,4 @@ strongly-typed array value:
 .. code-block:: python
 
    >>> jnp.asarray(2, dtype='int32')
-   DeviceArray(2, dtype=int32)
+   Array(2, dtype=int32)

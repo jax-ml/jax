@@ -45,21 +45,21 @@ Here is an example of creating a sparse array from a dense array:
 Convert back to a dense array with the ``todense()`` method:
 
     >>> M_sp.todense()
-    DeviceArray([[0., 1., 0., 2.],
-                 [3., 0., 0., 0.],
-                 [0., 0., 4., 0.]], dtype=float32)
+    Array([[0., 1., 0., 2.],
+           [3., 0., 0., 0.],
+           [0., 0., 4., 0.]], dtype=float32)
 
 The BCOO format is a somewhat modified version of the standard COO format, and the dense
 representation can be seen in the ``data`` and ``indices`` attributes:
 
     >>> M_sp.data  # Explicitly stored data
-    DeviceArray([1., 2., 3., 4.], dtype=float32)
+    Array([1., 2., 3., 4.], dtype=float32)
 
     >>> M_sp.indices # Indices of the stored data
-    DeviceArray([[0, 1],
-                 [0, 3],
-                 [1, 0],
-                 [2, 2]], dtype=int32)
+    Array([[0, 1],
+           [0, 3],
+           [1, 0],
+           [2, 2]], dtype=int32)
 
 BCOO objects have familiar array-like attributes, as well as sparse-specific attributes:
 
@@ -82,10 +82,10 @@ product:
     >>> y = jnp.array([3., 6., 5.])
 
     >>> M_sp.T @ y
-    DeviceArray([18.,  3., 20.,  6.], dtype=float32)
+    Array([18.,  3., 20.,  6.], dtype=float32)
 
     >>> M.T @ y  # Compare to dense version
-    DeviceArray([18.,  3., 20.,  6.], dtype=float32)
+    Array([18.,  3., 20.,  6.], dtype=float32)
 
 BCOO objects are designed to be compatible with JAX transforms, including :func:`jax.jit`,
 :func:`jax.vmap`, :func:`jax.grad`, and others. For example:
@@ -96,7 +96,7 @@ BCOO objects are designed to be compatible with JAX transforms, including :func:
     ...   return (M_sp.T @ y).sum()
     ...
     >>> jit(grad(f))(y)
-    DeviceArray([3., 3., 4.], dtype=float32)
+    Array([3., 3., 4.], dtype=float32)
 
 Note, however, that under normal circumstances :mod:`jax.numpy` and :mod:`jax.lax` functions
 do not know how to handle sparse matrices, so attempting to compute things like
@@ -114,7 +114,7 @@ Consider this function, which computes a more complicated result from a matrix a
     ...   return 2 * jnp.dot(jnp.log1p(M.T), v) + 1
     ...
     >>> f(M, y)
-    DeviceArray([17.635532,  5.158883, 17.09438 ,  7.591674], dtype=float32)
+    Array([17.635532,  5.158883, 17.09438 ,  7.591674], dtype=float32)
 
 Were we to pass a sparse matrix to this directly, it would result in an error, because ``jnp``
 functions do not recognize sparse inputs. However, with :func:`sparsify`, we get a version of
@@ -123,7 +123,7 @@ this function that does accept sparse matrices:
     >>> f_sp = sparse.sparsify(f)
 
     >>> f_sp(M_sp, y)
-    DeviceArray([17.635532,  5.158883, 17.09438 ,  7.591674], dtype=float32)
+    Array([17.635532,  5.158883, 17.09438 ,  7.591674], dtype=float32)
 
 Currently support for :func:`sparsify` is limited to a couple dozen primitives, including:
 

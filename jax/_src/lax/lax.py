@@ -244,9 +244,9 @@ def nextafter(x1: ArrayLike, x2: ArrayLike) -> Array:
   values which appear as zero in any operations. Consider this example::
 
     >>> jnp.nextafter(0, 1)  # denormal numbers are representable
-    DeviceArray(1.e-45, dtype=float32, weak_type=True)
+    Array(1.e-45, dtype=float32, weak_type=True)
     >>> jnp.nextafter(0, 1) * 1  # but are flushed to zero
-    DeviceArray(0., dtype=float32, weak_type=True)
+    Array(0., dtype=float32, weak_type=True)
 
   For the smallest usable (i.e. normal) float, use ``tiny`` of ``jnp.finfo``.
   """
@@ -853,18 +853,18 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     >>> x = jnp.arange(6)
     >>> y = reshape(x, (2, 3))
     >>> y
-    DeviceArray([[0, 1, 2],
+    Array([[0, 1, 2],
                  [3, 4, 5]], dtype=int32)
 
     Reshaping back to one dimension:
 
     >>> reshape(y, (6,))
-    DeviceArray([0, 1, 2, 3, 4, 5], dtype=int32)
+    Array([0, 1, 2, 3, 4, 5], dtype=int32)
 
     Reshaping to one dimension with permutation of dimensions:
 
     >>> reshape(y, (6,), (1, 0))
-    DeviceArray([0, 3, 1, 4, 2, 5], dtype=int32)
+    Array([0, 3, 1, 4, 2, 5], dtype=int32)
   """
   new_sizes = canonicalize_shape(new_sizes)  # TODO
   new_sizes = tuple(new_sizes)
@@ -1266,13 +1266,13 @@ def stop_gradient(x: T) -> T:
   For example:
 
   >>> jax.grad(lambda x: x**2)(3.)
-  DeviceArray(6., dtype=float32, weak_type=True)
+  Array(6., dtype=float32, weak_type=True)
   >>> jax.grad(lambda x: jax.lax.stop_gradient(x)**2)(3.)
-  DeviceArray(0., dtype=float32, weak_type=True)
+  Array(0., dtype=float32, weak_type=True)
   >>> jax.grad(jax.grad(lambda x: x**2))(3.)
-  DeviceArray(2., dtype=float32, weak_type=True)
+  Array(2., dtype=float32, weak_type=True)
   >>> jax.grad(jax.grad(lambda x: jax.lax.stop_gradient(x)**2))(3.)
-  DeviceArray(0., dtype=float32, weak_type=True)
+  Array(0., dtype=float32, weak_type=True)
   """
   def stop(x):
     # only bind primitive on inexact dtypes, to avoid some staging

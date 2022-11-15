@@ -415,8 +415,8 @@ def xmap(fun: Callable,
   >>> xmap(jnp.vdot,
   ...      in_axes=({0: 'left'}, {1: 'right'}),
   ...      out_axes=['left', 'right', ...])(x, x.T)
-  DeviceArray([[ 30,  80],
-               [ 80, 255]], dtype=int32)
+  Array([[ 30,  80],
+         [ 80, 255]], dtype=int32)
 
   Note that the contraction in the program is performed over the positional axes,
   while named axes are just a convenient way to achieve batching. While this

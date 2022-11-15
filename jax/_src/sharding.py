@@ -201,7 +201,7 @@ def _enable_cpp_named_sharding():
 
 @pxla.use_cpp_class(_enable_cpp_named_sharding())
 class NamedSharding(XLACompatibleSharding):
-  """NamedSharding is a way to express ``Sharding``s using named axes.
+  r"""NamedSharding is a way to express ``Sharding``\s using named axes.
 
   ``Mesh`` and ``PartitionSpec`` can be used to express a ``Sharding`` with a name.
 
