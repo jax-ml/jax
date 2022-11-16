@@ -53,6 +53,11 @@ PS = jax2tf.PolyShape
 
 
 class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
+  def setUp(self):
+    super().setUp()
+    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
+
 
   def test_parse_poly_spec(self):
     self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
@@ -333,6 +338,11 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
 
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
+
+  def setUp(self):
+    super().setUp()
+    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
   def test_simple_unary(self):
     """Test shape polymorphism for a simple case, unary function."""
@@ -1017,6 +1027,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
 class DimAsValueTest(tf_test_util.JaxToTfTestCase):
   """Dimension polynomials used as values in the JAX computation."""
+  def setUp(self):
+    super().setUp()
+    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
   def test_dynamic_shapes(self):
     # Test dim_as_value with dynamic shapes.
@@ -1904,6 +1918,11 @@ def _flatten_harnesses(harnesses):
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
+
+  def setUp(self):
+    super().setUp()
+    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
   # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
 
