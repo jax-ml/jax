@@ -8,18 +8,16 @@ on:
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
-  pull_request:  # Automatically trigger on pull requests affecting this file
+  pull_request: # Automatically trigger on pull requests affecting this file
     branches:
       - main
     paths:
       - '**workflows/nightly-ci-multiprocess-gpu.yml'
-
 jobs:
   jaxlib-nightly:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v3
-
+      - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
       - name: Launch slurm job and hook output to this shell
         run: |
           export JOBSCRIPTSDIR=${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts
@@ -39,26 +37,22 @@ jobs:
           export SLURM_EXITCODE=$(job_exit_code "${SLURM_JOBID}" || echo $?); echo "SLURM_EXITCODE='${SLURM_EXITCODE}'"
           if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
           if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
-
       - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           junit_files: "outputs/*.xml"
-
       - name: Upload run results from all nodes
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@83fd05a356d7e2593de66fc9913b3002723633cb # ratchet:actions/upload-artifact@v3
         if: always()
         with:
           name: output-from-nodes
           path: "outputs/*.txt"
-
   jaxlib-release:
     runs-on: self-hosted
     needs: jaxlib-nightly
     steps:
-      - uses: actions/checkout@v3
-
+      - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
       - name: Launch slurm job and hook output to this shell
         run: |
           export JOBSCRIPTSDIR=${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts
@@ -78,20 +72,17 @@ jobs:
           export SLURM_EXITCODE=$(job_exit_code "${SLURM_JOBID}" || echo $?); echo "SLURM_EXITCODE='${SLURM_EXITCODE}'"
           if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
           if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
-
       - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           junit_files: "outputs/*.xml"
-
       - name: Upload run results from all nodes
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@83fd05a356d7e2593de66fc9913b3002723633cb # ratchet:actions/upload-artifact@v3
         if: always()
         with:
           name: output-from-nodes
           path: "outputs/*.txt"
-
   report:
     name: report
     needs: [jaxlib-nightly, jaxlib-release]
@@ -103,11 +94,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
+      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
         with:
           python-version: "3.x"
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@9782bd6a9848b53b110e712e20e42d89988822b7 # ratchet:actions/download-artifact@v3
         with:
           path: /tmp/workspace/logs
       - name: Parse log output
@@ -115,7 +106,7 @@ jobs:
           ls /tmp/workspace/logs/output-from-nodes/
           python .github/workflows/cat_slurm_logs.py /tmp/workspace/logs/output-from-nodes/*.txt --outfile=parsed-logs.txt
       - name: Report failures
-        uses: actions/github-script@v6
+        uses: actions/github-script@d556feaca394842dc55e4734bf3bb9f685482fa0 # ratchet:actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
