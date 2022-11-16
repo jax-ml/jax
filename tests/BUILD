@@ -735,6 +735,7 @@ jax_test(
     ],  # Test times out under asan/tsan.
     deps = [
         "//jax:experimental_sparse",
+        "//jax:sparse_test_util",
     ] + py_deps("scipy"),
 )
 
