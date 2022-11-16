@@ -12,6 +12,7 @@ jobs:
     runs-on: [self-hosted, tpu, v4-8]
     defaults:
       run:
+        # Make sure we pick up ~/bin on $PATH to find bazel
         shell: bash -l {0}
     strategy:
       fail-fast: false # don't cancel all jobs on failure
