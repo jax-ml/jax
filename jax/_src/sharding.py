@@ -265,7 +265,7 @@ class NamedSharding(XLACompatibleSharding):
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
 
   def __repr__(self):
-    return f'NamedSharding(mesh={dict(self.mesh.shape)}, partition_spec={self.spec})'
+    return f'NamedSharding(mesh={dict(self.mesh.shape)}, spec={self.spec})'
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
