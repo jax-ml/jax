@@ -51,9 +51,7 @@ jobs:
           python3 -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
       - name: Run tests
-        env:
-          JAX_PLATFORMS: tpu,cpu
-        run: python -m pytest --tb=short tests examples
+        run: ./.github/workflows/run_tpu_tests.sh
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ failure() && github.ref_name == 'main' }}

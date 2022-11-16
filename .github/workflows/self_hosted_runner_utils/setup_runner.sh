@@ -67,6 +67,13 @@ cd ~/
 
 git clone ${jax_repo_url}
 
+# Install bazel
+mkdir -p bin
+curl -L -o bin/bazel \
+  https://github.com/bazelbuild/bazel/releases/download/5.1.1/bazel-5.1.1-linux-x86_64
+chmod u+x bin/bazel
+
+# Setup Github Actions Runner app.
 # Based on https://github.com/google/jax/settings/actions/runners/new
 # (will be 404 for github users with insufficient repo permissions)
 mkdir actions-runner && cd actions-runner
