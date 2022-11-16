@@ -55,7 +55,8 @@ jobs:
           JAX_PLATFORMS: tpu,cpu
         run: python -m pytest --tb=short tests examples
       - name: Send chat on failure
-        if: failure()
+        # Don't notify when testing the workflow from a branch.
+        if: ${{ failure() && github.ref_name == 'main' }}
         run: |
           curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
           --header 'Content-Type: application/json' \
