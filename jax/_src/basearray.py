@@ -51,3 +51,6 @@ class Array(abc.ABC):
   @property
   def at(self):
     raise NotImplementedError("property must be defined in subclasses")
+
+
+Array.__module__ = "jax"
