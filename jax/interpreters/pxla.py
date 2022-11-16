@@ -2828,10 +2828,10 @@ def lower_sharding_computation(
           "process (i.e. `Array`s with data sharded across multiple devices and "
           "processes.) is dangerous. It’s very important that all processes run "
           "the same cross-process computations in the same order otherwise it "
-          "can lead to hangs.\n"
+          "can lead to hangs. "
           "If you’re not already familiar with JAX’s multi-process "
           "programming model, please read "
-          "https://jax.readthedocs.io/en/latest/multi_process.html\n"
+          "https://jax.readthedocs.io/en/latest/multi_process.html. "
           "To fix this error, run your `jitted` computation inside "
           "`with jax.spmd_mode('allow_all'):` context manager.")
 
