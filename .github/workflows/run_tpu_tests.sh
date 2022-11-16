@@ -4,10 +4,12 @@
 
 set -eux
 
+echo $PATH
+
 num_tpus=$(python3 -c 'import jax; print(jax.device_count())')
 
 bazel test \
-  --repo_env=PYTHON_BIN_PATH="$(which "$PYTHON")" \
+  --repo_env=PYTHON_BIN_PATH=python3 \
   --//jax:build_jaxlib=false \
   --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
   --test_output=errors \
