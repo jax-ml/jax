@@ -621,6 +621,7 @@ jax_test(
     srcs = ["random_test.py"],
     backend_tags = {
         "cpu": ["notsan"],  # Times out
+        "tpu": ["optonly"],
     },
     shard_count = {
         "cpu": 30,
@@ -641,6 +642,7 @@ jax_test(
             "noasan",
             "notsan",
         ],  # Times out under asan/tsan.
+        "tpu": ["optonly"],
     },
     main = "random_test.py",
     shard_count = {
