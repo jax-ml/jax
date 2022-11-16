@@ -33,6 +33,7 @@ from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse.bcoo import BCOOInfo
 from jax.experimental.sparse.util import _csr_to_coo
+from jax.experimental.sparse import test_util as sptu
 from jax import lax
 from jax._src.lib import gpu_sparse
 from jax._src.lib import xla_bridge
@@ -144,7 +145,7 @@ def _is_required_cuda_version_satisfied(cuda_version):
     return int(version.split()[-1]) >= cuda_version
 
 
-class cuSparseTest(jtu.JaxTestCase):
+class cuSparseTest(sptu.SparseTestCase):
   def gpu_dense_conversion_warning_context(self, dtype):
     if jtu.device_under_test() == "gpu" and np.issubdtype(dtype, np.integer):
       return self.assertWarns(sparse.CuSparseEfficiencyWarning)
@@ -651,7 +652,7 @@ class cuSparseTest(jtu.JaxTestCase):
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
 
-class BCOOTest(jtu.JaxTestCase):
+class BCOOTest(sptu.SparseTestCase):
 
   def test_vmappable(self):
     """Test does not depend on batching rules of BCOO primitives."""
@@ -922,144 +923,56 @@ class BCOOTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
     ],
-    dtype=jtu.dtypes.floating,
+    dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_transpose(self, shape, dtype, n_batch, n_dense):
     n_sparse = len(shape) - n_batch - n_dense
     rng = self.rng()
-    sprng = rand_sparse(rng)
-    M = sprng(shape, dtype)
-    M_bcoo = sparse.BCOO.fromdense(M)
+    sprng = sptu.rand_bcoo(rng, n_batch=n_batch, n_dense=n_dense)
 
     permutation = np.concatenate([
       rng.permutation(range(n_batch)),
       rng.permutation(range(n_batch, n_batch + n_sparse)),
       rng.permutation(range(n_batch + n_sparse, len(shape)))]).astype(int)
 
-    M_T = M.transpose(permutation)
-    M_T_bcoo = sparse.bcoo_transpose(M_bcoo, permutation=permutation)
-    M_T_bcoo_jit = jit(partial(sparse.bcoo_transpose, permutation=permutation))(M_bcoo)
-    self.assertArraysEqual(M_T, M_T_bcoo.todense())
-    self.assertArraysEqual(M_T, M_T_bcoo_jit.todense())
+    args_maker = lambda: [sprng(shape, dtype)]
+    dense_func = partial(lax.transpose, permutation=permutation)
+    sparse_func = partial(sparse.bcoo_transpose, permutation=permutation)
 
-    # test batched
-    def trans(M):
-      return M.transpose([p - n_batch for p in permutation[n_batch:]])
-    for _ in range(n_batch):
-      trans = jax.vmap(trans)
-    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
-    self.assertArraysEqual(trans(M), trans(Msp).todense())
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
+      for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(1, len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
-    ],
-    dtype=jtu.dtypes.floating,
-  )
-  def test_bcoo_slice(self, shape, dtype, n_batch, n_dense):
-    rng = self.rng()
-    sprng = rand_sparse(rng)
-    M = sprng(shape, dtype)
-    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
-
-    rng = self.rng()
-    slices = rng.randint(0, np.array(M.shape) + 1, (2, M.ndim)).T
-    slices.sort(1)
-    start_indices, limit_indices = unzip2(slices)
-    strides = list(rng.randint(1, 4, M.ndim))
-    kwds = dict(start_indices=start_indices, limit_indices=limit_indices, strides=strides)
-
-    dense_result = lax.slice(M, **kwds)
-    sparse_result = sparse.bcoo_slice(Msp, **kwds)
-    sparse_result_jit = jax.jit(partial(sparse.bcoo_slice, **kwds))(Msp)
-
-    # Array layout is the same
-    self.assertEqual(sparse_result.n_batch, Msp.n_batch)
-    self.assertEqual(sparse_result.n_sparse, Msp.n_sparse)
-    self.assertEqual(sparse_result.n_dense, Msp.n_dense)
-
-    # Unnecessary padding eliminated
-    max_nse = np.prod(sparse_result.shape[Msp.n_batch: Msp.n_batch + Msp.n_sparse])
-    self.assertLessEqual(sparse_result.nse, max_nse)
-    self.assertLessEqual(sparse_result_jit.nse, max_nse)
-
-    # Result matches dense computation
-    self.assertArraysEqual(dense_result, sparse_result.todense())
-    self.assertArraysEqual(dense_result, sparse_result_jit.todense())
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
-    dtype=jtu.dtypes.floating,
-  )
-  def test_bcoo_dynamic_slice(self, shape, dtype, n_batch, n_dense):
-    rng = self.rng()
-    sprng = rand_sparse(rng)
-    M = sprng(shape, dtype)
-    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
-
-    rng = self.rng()
-    # Note: test out-of-range start indices
-    start_indices = rng.randint(-max(M.shape), max(M.shape), M.ndim)
-    slice_sizes = rng.randint(0, M.shape, M.ndim)
-    kwds = dict(start_indices=start_indices, slice_sizes=slice_sizes)
-
-    dense_result = lax.dynamic_slice(M, **kwds)
-    sparse_result = sparse.bcoo_dynamic_slice(Msp, **kwds)
-    sparse_result_jit = partial(sparse.bcoo_dynamic_slice, slice_sizes=slice_sizes)(Msp, start_indices)
-
-    # Array layout is the same
-    self.assertEqual(sparse_result.n_batch, Msp.n_batch)
-    self.assertEqual(sparse_result.n_sparse, Msp.n_sparse)
-    self.assertEqual(sparse_result.n_dense, Msp.n_dense)
-
-    # Unnecessary padding eliminated
-    max_nse = np.prod(sparse_result.shape[Msp.n_batch: Msp.n_batch + Msp.n_sparse])
-    self.assertLessEqual(sparse_result.nse, max_nse)
-    self.assertLessEqual(sparse_result_jit.nse, max_nse)
-
-    # Result matches dense computation
-    self.assertArraysEqual(dense_result, sparse_result.todense())
-    self.assertArraysEqual(dense_result, sparse_result_jit.todense())
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, idx=idx)
-      for shape, idx in [
-        [(5,), np.index_exp[:]],
-        [(5,), np.index_exp[4]],
-        [(5,), np.index_exp[::2]],
-        [(5,), np.index_exp[1::2]],
-        [(5,), 1],
-        [(3, 4), np.index_exp[1]],
-        [(3, 4), np.index_exp[1, 2]],
-        [(3, 4), np.index_exp[np.array([1, 2])]],
-        [(3, 4), np.index_exp[np.array([[1], [2]]), 0]],
-        [(3, 4), np.index_exp[np.array([[1], [2]]), 1:]],
-        [(3, 4), np.index_exp[np.array([True, False, True])]],
-        [(3, 4), np.index_exp[:2, np.array([True, False, True, False])]],
-        [(3, 4), np.index_exp[None, 0, np.array([[2]])]],
-        [(3, 4, 5), np.index_exp[2]],
-        [(3, 4, 5), np.index_exp[:, 2]]
-      ]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in [0]  # TODO(jakevdp): add tests with n_dense
     ],
     dtype=jtu.dtypes.numeric,
   )
-  def test_bcoo_getitem(self, shape, dtype, n_batch, n_dense, idx):
-    sprng = rand_sparse(self.rng())
-    M = sprng(shape, dtype)
-    Msp = sparse.BCOO.fromdense(M, n_batch=n_batch, n_dense=n_dense)
-    self.assertArraysEqual(M[idx], Msp[idx].todense())
+  def test_bcoo_transpose_batched(self, shape, dtype, n_batch, n_dense):
+    n_sparse = len(shape) - n_batch - n_dense
+    rng = self.rng()
+    sprng = sptu.rand_bcoo(rng, n_batch=n_batch, n_dense=n_dense)
+
+    permutation = np.concatenate([
+      rng.permutation(range(n_sparse)),
+      rng.permutation(range(n_sparse, n_sparse + n_dense))]).astype(int)
+
+    args_maker = lambda: [sprng(shape, dtype)]
+    dense_func = partial(lax.transpose, permutation=permutation)
+    sparse_func = partial(sparse.bcoo_transpose, permutation=permutation)
+
+    for _ in range(n_batch):
+      dense_func = vmap(dense_func)
+      sparse_func = vmap(sparse_func)
+
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
@@ -1811,6 +1724,112 @@ class BCOOTest(jtu.JaxTestCase):
     self.assertAllClose(result_dense, result_sparse_jit.todense())
 
   @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+      for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+    ],
+    dtype=jtu.dtypes.numeric,
+  )
+  def test_bcoo_slice(self, shape, dtype, n_batch, n_dense):
+    rng = self.rng()
+    sprng = sptu.rand_bcoo(rng, n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [sprng(shape, dtype)]
+
+    slices = rng.randint(0, np.array(shape) + 1, (2, len(shape))).T
+    slices.sort(1)
+    start_indices, limit_indices = unzip2(slices)
+    strides = list(rng.randint(1, 4, len(shape)))
+    kwds = dict(start_indices=start_indices, limit_indices=limit_indices, strides=strides)
+
+    dense_func = partial(lax.slice, **kwds)
+    sparse_func = partial(sparse.bcoo_slice, **kwds)
+
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
+
+    mat, = args_maker()
+    out = sparse_func(mat)
+
+    # Array layout is the same
+    self.assertEqual(mat.n_batch, out.n_batch)
+    self.assertEqual(mat.n_sparse, out.n_sparse)
+    self.assertEqual(mat.n_dense, out.n_dense)
+
+    # Unnecessary padding eliminated
+    max_nse = np.prod(out.shape[out.n_batch: out.n_batch + out.n_sparse])
+    self.assertLessEqual(out.nse, max_nse)
+
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+      for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+    ],
+    dtype=jtu.dtypes.numeric,
+  )
+  def test_bcoo_dynamic_slice(self, shape, dtype, n_batch, n_dense):
+    rng = self.rng()
+    sprng = sptu.rand_bcoo(rng, n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [sprng(shape, dtype)]
+
+    rng = self.rng()
+    # Note: test out-of-range start indices
+    start_indices = rng.randint(-max(shape, default=0), max(shape, default=0), len(shape))
+    slice_sizes = rng.randint(0, shape, len(shape))
+    kwds = dict(start_indices=start_indices, slice_sizes=slice_sizes)
+    dense_func = partial(lax.dynamic_slice, **kwds)
+    sparse_func = partial(sparse.bcoo_dynamic_slice, **kwds)
+
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
+
+    mat, = args_maker()
+    out = sparse_func(mat)
+
+    # Array layout is the same
+    self.assertEqual(mat.n_batch, out.n_batch)
+    self.assertEqual(mat.n_sparse, out.n_sparse)
+    self.assertEqual(mat.n_dense, out.n_dense)
+
+    # Unnecessary padding eliminated
+    max_nse = np.prod(out.shape[out.n_batch: out.n_batch + out.n_sparse])
+    self.assertLessEqual(out.nse, max_nse)
+
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, idx=idx)
+      for shape, idx in [
+        [(5,), np.index_exp[:]],
+        [(5,), np.index_exp[4]],
+        [(5,), np.index_exp[::2]],
+        [(5,), np.index_exp[1::2]],
+        [(5,), 1],
+        [(3, 4), np.index_exp[1]],
+        [(3, 4), np.index_exp[1, 2]],
+        [(3, 4), np.index_exp[np.array([1, 2])]],
+        [(3, 4), np.index_exp[np.array([[1], [2]]), 0]],
+        [(3, 4), np.index_exp[np.array([[1], [2]]), 1:]],
+        [(3, 4), np.index_exp[np.array([True, False, True])]],
+        [(3, 4), np.index_exp[:2, np.array([True, False, True, False])]],
+        [(3, 4), np.index_exp[None, 0, np.array([[2]])]],
+        [(3, 4, 5), np.index_exp[2]],
+        [(3, 4, 5), np.index_exp[:, 2]]
+      ]
+      for n_batch in range(len(shape) + 1)
+      for n_dense in [0]  # TODO(jakevdp): add tests with n_dense
+    ],
+    dtype=jtu.dtypes.numeric,
+  )
+  def test_bcoo_getitem(self, shape, dtype, n_batch, n_dense, idx):
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [sprng(shape, dtype)]
+
+    fun = lambda x: x[idx]
+
+    self._CheckAgainstDense(fun, fun, args_maker)
+    self._CompileAndCheckSparse(fun, args_maker)
+
+  @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, nse=nse)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) + 1)
@@ -1947,7 +1966,6 @@ class BCOOTest(jtu.JaxTestCase):
     assert mat_sorted_jit.data.shape == data_shape_out
     self.assertArraysEqual(mat.todense(), mat_sorted_jit.todense())
 
-
   def test_bcoo_sum_duplicates_inferred_nse(self):
     x = sparse.BCOO.fromdense(jnp.diag(jnp.arange(4)))
     self.assertEqual(x.nse, 3)
@@ -2005,20 +2023,30 @@ class BCOOTest(jtu.JaxTestCase):
     tol = {np.float32: 1E-6, np.float64: 1E-14}
     self.assertAllClose(result_dense, result_sparse, atol=tol, rtol=tol)
 
-  def test_bcoo_squeeze(self):
+  @jtu.sample_product(
+    [dict(shape=shape, dimensions=dimensions, n_batch=n_batch, n_dense=n_dense)
+      for shape, dimensions in [
+          [(1,), (0,)],
+          [(1,), (-1,)],
+          [(2, 1, 4), (1,)],
+          [(2, 1, 3, 1), (1,)],
+          [(2, 1, 3, 1), (1, 3)],
+          [(2, 1, 3, 1), (3,)],
+      ]
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) - n_batch + 1)
+    ],
+    dtype=jtu.dtypes.numeric,
+  )
+  def test_bcoo_squeeze(self, shape, dtype, dimensions, n_batch, n_dense):
     # more comprehensive tests in sparsify_test:testSparseSqueeze
-    rng = rand_sparse(self.rng())
-    shape = (1, 2, 1, 3, 4)
-    dimensions = (0, 2)
-    M = rng(shape, 'float32')
-    M_bcoo = sparse.BCOO.fromdense(M)
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [sprng(shape, dtype)]
+    dense_func = partial(lax.squeeze, dimensions=dimensions)
+    sparse_func = partial(sparse.bcoo_squeeze, dimensions=dimensions)
 
-    M2 = lax.squeeze(M, dimensions=dimensions)
-    M2_bcoo = sparse.bcoo_squeeze(M_bcoo, dimensions=dimensions)
-    M2_bcoo_jit = jax.jit(partial(sparse.bcoo_squeeze, dimensions=dimensions))(M_bcoo)
-
-    self.assertArraysEqual(M2, M2_bcoo.todense())
-    self.assertArraysEqual(M2, M2_bcoo_jit.todense())
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
 
   @jtu.sample_product(
     [dict(batch_shapes=shapes, batch_perm=perm)
@@ -2046,19 +2074,14 @@ class BCOOTest(jtu.JaxTestCase):
       *(dim + n_batch + n_sparse for dim in dense_perm)
     )
 
-    rng = rand_sparse(self.rng())
-    args_maker = lambda: [sparse.BCOO.fromdense(rng(shape, dtype), n_batch=n_batch, n_dense=n_dense)]
+    rng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [rng(shape, dtype)]
 
     sparse_func = partial(sparse.bcoo_reshape, new_sizes=new_sizes, dimensions=dimensions)
     dense_func = partial(lax.reshape, new_sizes=new_sizes, dimensions=dimensions)
 
-    M_sparse, = args_maker()
-    sparse_out = sparse_func(M_sparse)
-    sparse_out_jit = jax.jit(sparse_func)(M_sparse)
-    dense_out = dense_func(M_sparse.todense())
-
-    self.assertArraysEqual(sparse_out.todense(), dense_out)
-    self.assertArraysEqual(sparse_out_jit.todense(), dense_out)
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
 
   def test_bcoo_reshape_error(self):
     x = sparse.BCOO.fromdense(jnp.ones((2, 2, 3)), n_batch=1)
@@ -2208,15 +2231,13 @@ class BCOOTest(jtu.JaxTestCase):
     dtype=all_dtypes,
   )
   def test_bcoo_concatenate(self, shape, dtype, n_batch, n_dense, dimension):
-    rng = rand_sparse(self.rng())
-    operands_dense = [rng(shape, dtype) for i in range(3)]
-    operands_sparse = [sparse.BCOO.fromdense(op, n_batch=n_batch, n_dense=n_dense)
-                       for op in operands_dense]
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [[sprng(shape, dtype) for i in range(3)]]
+    dense_func = partial(lax.concatenate, dimension=dimension)
+    sparse_func = partial(sparse.bcoo_concatenate, dimension=dimension)
 
-    mat_dense = lax.concatenate(operands_dense, dimension=dimension)
-    mat_sparse = sparse.bcoo_concatenate(operands_sparse, dimension=dimension)
-
-    self.assertArraysEqual(mat_sparse.todense(), mat_dense)
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    self._CompileAndCheckSparse(sparse_func, args_maker)
 
   def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
     # This test checks that BCOO shape metadata interacts correctly with vmap.
@@ -2307,7 +2328,7 @@ class BCOOTest(jtu.JaxTestCase):
 
 
 # TODO(tianjianlu): Unify the testing for BCOOTest and BCSRTest.
-class BCSRTest(jtu.JaxTestCase):
+class BCSRTest(sptu.SparseTestCase):
   def test_vmappable(self):
     """Test does not depend on batching rules of BCSR primitives."""
     M = jnp.arange(36).reshape((4, 3, 3))
@@ -2430,7 +2451,7 @@ class BCSRTest(jtu.JaxTestCase):
     self._CompileAndCheck(sparse.bcsr_extract, args_maker_bcsr_extract)
 
 
-class SparseGradTest(jtu.JaxTestCase):
+class SparseGradTest(sptu.SparseTestCase):
   def test_sparse_grad(self):
     rng_sparse = rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
@@ -2452,7 +2473,7 @@ class SparseGradTest(jtu.JaxTestCase):
     self.assertArraysEqual(grad_sparse.todense(), grad_sparse_from_dense)
 
 
-class SparseObjectTest(jtu.JaxTestCase):
+class SparseObjectTest(sptu.SparseTestCase):
   @parameterized.named_parameters(
     {"testcase_name": f"_{cls.__name__}", "cls": cls}
     for cls in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO, sparse.BCSR])
@@ -2714,7 +2735,7 @@ class SparseObjectTest(jtu.JaxTestCase):
     self._CompileAndCheck(bcsr_to_bcoo, args_maker_bcsr_to_bcoo)
 
 
-class SparseRandomTest(jtu.JaxTestCase):
+class SparseRandomTest(sptu.SparseTestCase):
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
@@ -2745,7 +2766,7 @@ class SparseRandomTest(jtu.JaxTestCase):
     self.assertAlmostEqual(int(num_nonzero), approx_expected_num_nonzero, delta=2)
 
 
-class SparseSolverTest(jtu.JaxTestCase):
+class SparseSolverTest(sptu.SparseTestCase):
   @jtu.sample_product(
     size=[20, 50, 100],
     reorder=[0, 1, 2, 3],
@@ -2775,7 +2796,7 @@ class SparseSolverTest(jtu.JaxTestCase):
     self._CompileAndCheck(sparse_solve, args_maker)
 
 
-class SparseUtilTest(jtu.JaxTestCase):
+class SparseUtilTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, expected_nse=expected_nse)

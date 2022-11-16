@@ -229,6 +229,10 @@ from jax.experimental.sparse.bcsr import (
     BCSR as BCSR,
 )
 
+from jax.experimental.sparse._base import (
+    JAXSparse as JAXSparse
+)
+
 from jax.experimental.sparse.api import (
     empty as empty,
     eye as eye,

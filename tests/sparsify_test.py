@@ -278,26 +278,13 @@ class SparsifyTest(jtu.JaxTestCase):
         res_sparse = res_sparse.todense()
       self.assertArraysAllClose(res_dense, res_sparse)
 
-  @jtu.sample_product(
-    [dict(shape=shape, dimensions=dimensions, n_batch=n_batch, n_dense=n_dense)
-      for shape, dimensions in [
-          [(1,), (0,)],
-          [(1,), (-1,)],
-          [(2, 1, 4), (1,)],
-          [(2, 1, 3, 1), (1,)],
-          [(2, 1, 3, 1), (1, 3)],
-          [(2, 1, 3, 1), (3,)],
-      ]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) - n_batch + 1)
-    ],
-  )
-  def testSparseSqueeze(self, shape, dimensions, n_batch, n_dense):
+  def testSparseSqueeze(self):
+    # Note: more comprehensive tests in sparse_test.py:test_bcoo_squeeze
     rng = jtu.rand_default(self.rng())
 
-    M_dense = rng(shape, np.float32)
-    M_sparse = BCOO.fromdense(M_dense, n_batch=n_batch, n_dense=n_dense)
-    func = self.sparsify(partial(lax.squeeze, dimensions=dimensions))
+    M_dense = rng((2, 3, 1, 4), np.float32)
+    M_sparse = BCOO.fromdense(M_dense)
+    func = self.sparsify(partial(lax.squeeze, dimensions=(2,)))
 
     result_dense = func(M_dense)
     result_sparse = func(M_sparse).todense()

@@ -147,11 +147,28 @@ pytype_library(
 
 pytype_library(
     name = "experimental_sparse",
-    srcs = glob([
-        "experimental/sparse/*.py",
-    ]),
+    srcs = glob(
+        [
+            "experimental/sparse/*.py",
+        ],
+        exclude = ["experimental/sparse/test_util.py"],
+    ),
     visibility = ["//visibility:public"],
     deps = [":jax"],
+)
+
+pytype_library(
+    name = "sparse_test_util",
+    testonly = 1,
+    srcs = [
+        "experimental/sparse/test_util.py",
+    ],
+    visibility = [":internal"],
+    deps = [
+        ":experimental_sparse",
+        ":jax",
+        ":test_util",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(
