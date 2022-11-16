@@ -54,6 +54,13 @@ jobs:
           python3 -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
           python3 -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
+      # Make sure we can run a simple computation before launching the full test
+      # suite. This is to prevent running all tests when every test will fail,
+      # which is slow and creates a huge amount of log output. This occasionally
+      # happens if e.g. the libtpu-nightly job is broken and we're running
+      # incompatible jaxlib and libtpu binaries.
+      - name: Smoke test
+        run: python3 -c "import jax; print(jax.numpy.add(1, 1))"
       - name: Run tests
         run: ./.github/workflows/run_tpu_tests.sh
       - name: Send chat on failure
