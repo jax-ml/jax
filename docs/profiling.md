@@ -56,7 +56,7 @@ $ python -m jax.collect_profile <port> <duration_in_ms>
 ```
 
 By default, the resulting trace information is dumped into a temporary directory
-but this can be overridden by passing in `--log_dir=<directory of choice>`. 
+but this can be overridden by passing in `--log_dir=<directory of choice>`.
 Also, by default, the program will prompt you to open a link to
 `ui.perfetto.dev`. When you open the link, the Perfetto UI will load the trace
 file and open a visualizer. This feature is disabled by passing in
@@ -80,19 +80,15 @@ The TensorBoard profiler is only available with the version of TensorBoard
 bundled with TensorFlow.
 
 ```shell
-pip install tensorflow tbp-nightly
+pip install tensorflow tensorboard-plugin-profile
 ```
 
 If you already have TensorFlow installed, you only need to install the
-`tbp-nightly` pip package. Be careful to only install one version of TensorFlow
-or TensorBoard, otherwise you may encounter the "duplicate plugins" error
-described {ref}`below <multiple_installs>`.
-
-(We recommend `tbp-nightly` because `tensorboard-plugin-profile==2.4.0` is
-incompatible with TensorBoard's experimental fast data loading logic. This
-should be resolved with `tensorboard-plugin-profile==2.5.0` when it's
-released. These instructions were tested with `tensorflow==2.4.1` and
-`tbp-nightly==2.5.0a20210428`.)
+`tensorboard-plugin-profile` pip package. Be careful to only install one version
+of TensorFlow or TensorBoard, otherwise you may encounter the "duplicate
+plugins" error described {ref}`below <multiple_installs>`. See
+<https://www.tensorflow.org/guide/profiler> for more information on installing
+TensorBoard.
 
 ### Programmatic capture
 
