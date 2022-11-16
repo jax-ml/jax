@@ -66,7 +66,7 @@ def from_dlpack(dlpack):
     gpu_backend = None
 
   # Try ROCm if CUDA backend not found
-  if gpu_backend is None: 
+  if gpu_backend is None:
     try:
       gpu_backend = xla_bridge.get_backend("rocm")
     except RuntimeError:
