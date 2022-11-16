@@ -208,17 +208,30 @@ class XlaExecutable(Executable):
     xla_ext_exe = self.xla_extension_executable()
     err_msg = ("cost analysis unsupported on current XLA backend: "
                f"{type(xla_ext_exe)}")
-    if not hasattr(xla_ext_exe, "client"):
+    # TODO(b/259255524): Unify/merge the two cost_analysis calls below.
+    if hasattr(xla_ext_exe, "client"):
+      try:
+        return [
+            xla_extension.hlo_module_cost_analysis(xla_ext_exe.client, m)
+            for m in xla_ext_exe.hlo_modules()
+        ]
+      except xla_extension.XlaRuntimeError as e:
+        msg, *_ = e.args
+        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
+          raise NotImplementedError(err_msg) from e
+        else:
+          raise
+    elif hasattr(xla_ext_exe, "cost_analysis"):
+      try:
+        return xla_ext_exe.cost_analysis()
+      except xla_extension.XlaRuntimeError as e:
+        msg, *_ = e.args
+        if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
+          raise NotImplementedError(err_msg) from e
+        else:
+          raise
+    else:
       raise NotImplementedError(err_msg)
-    try:
-      return [xla_extension.hlo_module_cost_analysis(xla_ext_exe.client, m)
-              for m in xla_ext_exe.hlo_modules()]
-    except xla_extension.XlaRuntimeError as e:
-      msg, *_ = e.args
-      if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-        raise NotImplementedError(err_msg) from e
-      else:
-        raise
 
   def memory_analysis(self) -> Any:
     xla_ext_exe = self.xla_extension_executable()
