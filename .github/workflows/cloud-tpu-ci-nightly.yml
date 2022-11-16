@@ -14,7 +14,7 @@ jobs:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
         python-version: ["3.10"] # TODO(jakevdp): update to 3.11 when available.
-        jaxlib-version: [latest, nightly]
+        jaxlib-version: ["latest-release", "nightly"]
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
@@ -30,7 +30,7 @@ jobs:
       - name: Install JAX
         run: |
           pip uninstall -y jax jaxlib libtpu-nightly
-          if [ "${{ matrix.jaxlib-version }}" == "latest" ]; then
+          if [ "${{ matrix.jaxlib-version }}" == "latest-release" ]; then
             pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
@@ -58,8 +58,8 @@ jobs:
         # Don't notify when testing the workflow from a branch.
         if: ${{ failure() && github.ref_name == 'main' }}
         run: |
-          curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
-          --header 'Content-Type: application/json' \
-          --data-raw "{
-          'text': '\"$GITHUB_WORKFLOW\" job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
-          }"
+            curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
+            --header 'Content-Type: application/json' \
+            --data-raw "{
+            'text': '\"$GITHUB_WORKFLOW\", jaxlib/libtpu version \"${{ matrix.jaxlib-version }}\" job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
+            }"
