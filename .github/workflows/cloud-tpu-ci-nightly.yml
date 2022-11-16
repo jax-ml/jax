@@ -10,6 +10,9 @@ permissions:
 jobs:
   cloud-tpu-test:
     runs-on: [self-hosted, tpu, v4-8]
+    defaults:
+      run:
+        shell: bash -l {0}
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
