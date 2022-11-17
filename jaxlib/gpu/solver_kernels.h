@@ -53,17 +53,6 @@ enum class SolverType {
   C128,
 };
 
-// potrf: Cholesky decomposition
-
-struct PotrfDescriptor {
-  SolverType type;
-  gpusolverFillMode_t uplo;
-  std::int64_t batch, n;
-  int lwork;
-};
-
-void Potrf(gpuStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len, XlaCustomCallStatus* status);
 // getrf: LU decomposition
 
 struct GetrfDescriptor {

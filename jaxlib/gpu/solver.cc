@@ -51,97 +51,6 @@ SolverType DtypeToSolverType(const py::dtype& np_type) {
   return it->second;
 }
 
-// potrf: Cholesky decomposition
-
-// Returns the workspace size and a descriptor for a potrf operation.
-std::pair<int, py::bytes> BuildPotrfDescriptor(const py::dtype& dtype,
-                                               bool lower, int b, int n) {
-  SolverType type = DtypeToSolverType(dtype);
-  auto h = SolverHandlePool::Borrow();
-  JAX_THROW_IF_ERROR(h.status());
-  auto& handle = *h;
-  int lwork;
-  std::int64_t workspace_size;
-  gpusolverFillMode_t uplo =
-      lower ? GPUSOLVER_FILL_MODE_LOWER : GPUSOLVER_FILL_MODE_UPPER;
-  if (b == 1) {
-    switch (type) {
-      case SolverType::F32:
-        JAX_THROW_IF_ERROR(
-            JAX_AS_STATUS(gpusolverDnSpotrf_bufferSize(handle.get(), uplo, n,
-                                                       /*A=*/nullptr,
-                                                       /*lda=*/n, &lwork)));
-        workspace_size = lwork * sizeof(float);
-        break;
-      case SolverType::F64:
-        JAX_THROW_IF_ERROR(
-            JAX_AS_STATUS(gpusolverDnDpotrf_bufferSize(handle.get(), uplo, n,
-                                                       /*A=*/nullptr,
-                                                       /*lda=*/n, &lwork)));
-        workspace_size = lwork * sizeof(double);
-        break;
-      case SolverType::C64:
-        JAX_THROW_IF_ERROR(
-            JAX_AS_STATUS(gpusolverDnCpotrf_bufferSize(handle.get(), uplo, n,
-                                                       /*A=*/nullptr,
-                                                       /*lda=*/n, &lwork)));
-        workspace_size = lwork * sizeof(gpuComplex);
-        break;
-      case SolverType::C128:
-        JAX_THROW_IF_ERROR(
-            JAX_AS_STATUS(gpusolverDnZpotrf_bufferSize(handle.get(), uplo, n,
-                                                       /*A=*/nullptr,
-                                                       /*lda=*/n, &lwork)));
-        workspace_size = lwork * sizeof(gpuDoubleComplex);
-        break;
-    }
-  } else {
-#ifdef JAX_GPU_CUDA
-    // We use the workspace buffer for our own scratch space.
-    workspace_size = sizeof(void*) * b;
-#else
-    // TODO(rocm): when cuda and hip had same API for batched potrf, remove this
-    // batched potrf has different API compared to CUDA. In hip we still need to
-    // create the workspace and additional space to copy the batch array
-    // pointers
-    switch (type) {
-      case SolverType::F32:
-        JAX_THROW_IF_ERROR(JAX_AS_STATUS(
-            hipsolverSpotrfBatched_bufferSize(handle.get(), uplo, n,
-                                              /*A=*/nullptr,
-                                              /*lda=*/n, &lwork, b)));
-        workspace_size = (lwork * sizeof(float)) + (b * sizeof(float*));
-        break;
-      case SolverType::F64:
-        JAX_THROW_IF_ERROR(JAX_AS_STATUS(
-            hipsolverDpotrfBatched_bufferSize(handle.get(), uplo, n,
-                                              /*A=*/nullptr,
-                                              /*lda=*/n, &lwork, b)));
-        workspace_size = (lwork * sizeof(double)) + (b * sizeof(double*));
-        break;
-      case SolverType::C64:
-        JAX_THROW_IF_ERROR(JAX_AS_STATUS(
-            hipsolverCpotrfBatched_bufferSize(handle.get(), uplo, n,
-                                              /*A=*/nullptr,
-                                              /*lda=*/n, &lwork, b)));
-        workspace_size =
-            (lwork * sizeof(hipComplex)) + (b * sizeof(hipComplex*));
-        break;
-      case SolverType::C128:
-        JAX_THROW_IF_ERROR(JAX_AS_STATUS(
-            hipsolverZpotrfBatched_bufferSize(handle.get(), uplo, n,
-                                              /*A=*/nullptr,
-                                              /*lda=*/n, &lwork, b)));
-        workspace_size = (lwork * sizeof(hipDoubleComplex)) +
-                         (b * sizeof(hipDoubleComplex*));
-        break;
-    }
-#endif  // JAX_GPU_CUDA
-  }
-  return {workspace_size,
-          PackDescriptor(PotrfDescriptor{type, uplo, b, n, lwork})};
-}
-
 // getrf: LU decomposition
 
 // Returns the workspace size and a descriptor for a getrf operation.
@@ -550,7 +459,6 @@ std::pair<int, py::bytes> BuildSytrdDescriptor(const py::dtype& dtype,
 
 py::dict Registrations() {
   py::dict dict;
-  dict[JAX_GPU_PREFIX "solver_potrf"] = EncapsulateFunction(Potrf);
   dict[JAX_GPU_PREFIX "solver_getrf"] = EncapsulateFunction(Getrf);
   dict[JAX_GPU_PREFIX "solver_geqrf"] = EncapsulateFunction(Geqrf);
   dict[JAX_GPU_PREFIX "solver_orgqr"] = EncapsulateFunction(Orgqr);
@@ -568,7 +476,6 @@ py::dict Registrations() {
 
 PYBIND11_MODULE(_solver, m) {
   m.def("registrations", &Registrations);
-  m.def("build_potrf_descriptor", &BuildPotrfDescriptor);
   m.def("build_getrf_descriptor", &BuildGetrfDescriptor);
   m.def("build_geqrf_descriptor", &BuildGeqrfDescriptor);
   m.def("build_orgqr_descriptor", &BuildOrgqrDescriptor);

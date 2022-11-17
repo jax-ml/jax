@@ -101,26 +101,6 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnSetStream cusolverDnSetStream
 #define gpusolverDnCreateSyevjInfo cusolverDnCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo cusolverDnDestroySyevjInfo
-#define gpusolverDnSpotrf cusolverDnSpotrf
-#define gpusolverDnDpotrf cusolverDnDpotrf
-#define gpusolverDnCpotrf cusolverDnCpotrf
-#define gpusolverDnZpotrf cusolverDnZpotrf
-#define gpusolverDnSpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  cusolverDnSpotrfBatched(h, uplo, n, ptrs, lda, info, batch)
-#define gpusolverDnDpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  cusolverDnDpotrfBatched(h, uplo, n, ptrs, lda, info, batch)
-#define gpusolverDnCpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  cusolverDnCpotrfBatched(h, uplo, n, ptrs, lda, info, batch)
-#define gpusolverDnZpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  cusolverDnZpotrfBatched(h, uplo, n, ptrs, lda, info, batch)
-#define gpusolverDnSpotrf_bufferSize cusolverDnSpotrf_bufferSize
-#define gpusolverDnDpotrf_bufferSize cusolverDnDpotrf_bufferSize
-#define gpusolverDnCpotrf_bufferSize cusolverDnCpotrf_bufferSize
-#define gpusolverDnZpotrf_bufferSize cusolverDnZpotrf_bufferSize
 #define gpusolverDnSgeqrf cusolverDnSgeqrf
 #define gpusolverDnDgeqrf cusolverDnDgeqrf
 #define gpusolverDnCgeqrf cusolverDnCgeqrf
@@ -321,26 +301,6 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpusolverDnSetStream hipsolverSetStream
 #define gpusolverDnCreateSyevjInfo hipsolverCreateSyevjInfo
 #define gpusolverDnDestroySyevjInfo hipsolverDestroySyevjInfo
-#define gpusolverDnSpotrf hipsolverSpotrf
-#define gpusolverDnDpotrf hipsolverDpotrf
-#define gpusolverDnCpotrf hipsolverCpotrf
-#define gpusolverDnZpotrf hipsolverZpotrf
-#define gpusolverDnSpotrf_bufferSize hipsolverSpotrf_bufferSize
-#define gpusolverDnDpotrf_bufferSize hipsolverDpotrf_bufferSize
-#define gpusolverDnCpotrf_bufferSize hipsolverCpotrf_bufferSize
-#define gpusolverDnZpotrf_bufferSize hipsolverZpotrf_bufferSize
-#define gpusolverDnSpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  hipsolverSpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, batch)
-#define gpusolverDnDpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  hipsolverDpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, batch)
-#define gpusolverDnCpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  hipsolverCpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, batch)
-#define gpusolverDnZpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, \
-                                 batch)                                    \
-  hipsolverZpotrfBatched(h, uplo, n, ptrs, lda, work, lwork, info, batch)
 #define gpusolverDnSgeqrf hipsolverSgeqrf
 #define gpusolverDnDgeqrf hipsolverDgeqrf
 #define gpusolverDnCgeqrf hipsolverCgeqrf
