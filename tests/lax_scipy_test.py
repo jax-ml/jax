@@ -303,6 +303,18 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     q = np.array([1., 40., 30.], dtype=np.float32)
     self.assertAllClose(np.array([1., 0., 0.], dtype=np.float32), lsp_special.zeta(x, q))
 
+  def testIssue13267(self):
+    """Tests betaln(x, 1) across wide range of x."""
+    xs = jnp.geomspace(1, 1e30, 1000)
+    primals_out, tangents_out = jax.jvp(lsp_special.betaln, primals=[xs, 1.0], tangents=[jnp.ones_like(xs), 0.0])
+    # Check that betaln(x, 1) = -log(x).
+    # Betaln is still not perfect for small values, hence the atol (but it's close)
+    atol = jtu.if_device_under_test("tpu", 1e-3, 1e-5)
+    self.assertAllClose(primals_out, -jnp.log(xs), atol=atol)
+    # Check that d/dx betaln(x, 1) = d/dx -log(x) = -1/x.
+    self.assertAllClose(tangents_out, -1 / xs, atol=atol)
+
+
   def testXlogyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
