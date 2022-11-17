@@ -17,8 +17,6 @@ from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
                     FrozenSet)
 import types
 
-import numpy as np
-
 import jax
 from jax import core
 from jax import linear_util as lu
@@ -598,12 +596,7 @@ def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   assert not jaxpr.constvars
 
   if differentiated and prevent_cse:
-    if jax.config.jax_remat_opt_barrier:
-      translation_rule = _remat_translation_using_opt_barrier
-    elif is_gpu_platform:
-      translation_rule = _remat_translation_using_while
-    else:
-      translation_rule = _remat_translation_using_cond
+    translation_rule = _remat_translation_using_opt_barrier
   else:
     translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
 
@@ -621,43 +614,6 @@ def _dummy_like(aval: core.AbstractValue) -> Any:
     return jax.lax.broadcast(jax.lax.empty(aval.dtype), aval.shape)  # type: ignore
   else:
     raise ValueError(aval)
-
-def _remat_translation_using_while(*args, jaxpr: core.Jaxpr):
-  # Implements:
-  #  for(counter=0, result=0; counter < rng(1, 2); counter ++) {
-  #     result = eval_jaxpr(*args)
-  #  }
-  # The loop carry is a tuple: (counter, result, args)
-  avals_out = tuple(v.aval for v in jaxpr.outvars)
-  carry_init = (np.int32(0), tuple(map(_dummy_like, avals_out)), args)
-  def cond(carry):
-    counter, _, _ = carry
-    unif = jax.lax.rng_uniform(np.int32(1), np.int32(2), shape=())
-    return counter < unif
-
-  def body(carry):
-    counter, _, args = carry
-    results = core.eval_jaxpr(jaxpr, (), *args)
-    return (counter + 1, tuple(results), args)
-
-  carry_res = jax.lax.while_loop(cond, body, carry_init)
-  return carry_res[1]
-
-def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
-  # Implements:
-  #  if(rng(0, 1) < 2)
-  #    return eval_jaxpr(*args)
-  #  else:
-  #    return 0
-  avals_out = tuple(v.aval for v in jaxpr.outvars)
-
-  def remat_comp(*args):
-    return tuple(core.eval_jaxpr(jaxpr, (), *args))
-  def dummy_comp(*args):
-    return tuple(map(_dummy_like, avals_out))
-
-  unif = jax.lax.rng_uniform(np.float32(0), np.float32(1), shape=())
-  return jax.lax.cond(unif < np.float32(2), remat_comp, dummy_comp, *args)
 
 mlir.register_lowering(
     remat_p, mlir.lower_fun(remat_lowering, multiple_results=True))

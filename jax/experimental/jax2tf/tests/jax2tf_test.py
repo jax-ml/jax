@@ -769,11 +769,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     arg = np.array(3.)
     f_tf = jax2tf.convert(jax.grad(remat_f))
     f_tf_hlo = self.TfToHlo(f_tf, arg)
-    if jax.config.jax_remat_opt_barrier:
-      self.assertRegex(f_tf_hlo, r"opt-barrier")
-    else:
-      self.assertRegex(f_tf_hlo,
-                       r'transpose/jax2tf_f_/jvp/checkpoint/cond/branch_1_fun/Sin')
+    self.assertRegex(f_tf_hlo, r"opt-barrier")
 
   def test_remat_free_var(self):
     def f(x):
@@ -1398,7 +1394,4 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     assertAllOperationStartWith(g, outer_scope)
 
 if __name__ == "__main__":
-  # TODO: Remove once tensorflow is 2.10.0 everywhere.
-  if not hasattr(tfxla, "optimization_barrier"):
-    jax.config.update("jax_remat_opt_barrier", False)
   absltest.main(testLoader=jtu.JaxTestLoader())
