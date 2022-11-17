@@ -15,6 +15,7 @@
 from collections import Counter
 import dataclasses
 import functools
+import warnings
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
@@ -263,6 +264,12 @@ class GlobalDeviceArray:
                device_buffers: Union[xb.ShardedBuffer, Sequence[DeviceArray]],
                _gda_fast_path_args: Optional[_GdaFastPathArgs] = None,
                _enable_checks: bool = True):
+    warnings.warn(
+        'GlobalDeviceArray has been deprecated. '
+        'Please use `jax.Array`. See '
+        'https://jax.readthedocs.io/en/latest/jax_array_migration.html on how '
+        'to migrate to `jax.Array`.', DeprecationWarning)
+
     self._global_shape = global_shape
     self._global_mesh = global_mesh
     self._mesh_axes = mesh_axes

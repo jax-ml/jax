@@ -1814,7 +1814,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
       self.assertGreaterEqual(len(w), 1)
       self.assertIn("The jitted function foo includes a pmap",
-                    str(w[-1].message))
+                    str(w[0].message))
 
   def testPsumZeroCotangents(self):
     # https://github.com/google/jax/issues/3651

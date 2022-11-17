@@ -41,6 +41,7 @@ import operator as op
 import sys
 import threading
 import types
+import warnings
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast,
                     TYPE_CHECKING)
@@ -664,6 +665,12 @@ def make_sharded_device_array(
       be returned, for JAX extensions not implementing the C++ API.
     indices: For caching purposes, will be computed if `None`.
   """
+  warnings.warn(
+        'ShardedDeviceArray has been deprecated. '
+        'Please use `jax.Array`. See '
+        'https://jax.readthedocs.io/en/latest/jax_array_migration.html on how '
+        'to migrate to `jax.Array`.', DeprecationWarning)
+
   if sharding_spec is None:
     sharding_spec = _create_pmap_sharding_spec(aval)
 
