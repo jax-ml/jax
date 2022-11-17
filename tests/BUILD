@@ -322,6 +322,7 @@ jax_test(
     name = "lax_numpy_test",
     srcs = ["lax_numpy_test.py"],
     backend_tags = {
+        "cpu": ["noasan"],  # Test times out.
         "tpu": ["noasan"],  # Test times out.
     },
     pjrt_c_api_bypass = True,
@@ -486,6 +487,7 @@ jax_test(
         "tpu": [
             "cpu:8",
             "noasan",  # Times out.
+            "nomsan",  # Times out.
             "nodebug",  # Times out.
             "notsan",  # Times out.
         ],
@@ -555,6 +557,7 @@ jax_test(
     backend_tags = {
         "tpu": [
             "noasan",  # Times out.
+            "nmasan",  # Times out.
             "nodebug",  # Times out.
             "notsan",  # Times out.
         ],
@@ -639,10 +642,13 @@ jax_test(
     args = ["--jax_enable_custom_prng=true"],
     backend_tags = {
         "cpu": [
-            "noasan",
+            "noasan",  # Times out under asan/tsan.
             "notsan",
-        ],  # Times out under asan/tsan.
-        "tpu": ["optonly"],
+        ],
+        "tpu": [
+            "noasan",  # Times out under asan/tsan.
+            "optonly",
+        ],
     },
     main = "random_test.py",
     shard_count = {
