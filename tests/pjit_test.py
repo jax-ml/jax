@@ -1914,10 +1914,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
       with global_mesh:
         f = pjit(lambda x: x,
                  in_axis_resources=NamedSharding(global_mesh, P('x')))
-        with self.assertRaisesRegex(
-            ValueError,
-            ('Sharding passed to pjit does not match the sharding on the '
-             'respective arg')):
+        err_msg = re.compile(
+            "Sharding passed to pjit does not match the sharding on the "
+            r"respective arg.*arg shape.*\(8, 2\)", re.M | re.S)
+        with self.assertRaisesRegex(ValueError, err_msg):
           f(input_array)
 
   def test_in_axis_resources_same_as_array_sharding(self):
