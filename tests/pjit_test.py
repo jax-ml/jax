@@ -450,7 +450,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     @partial(pjit, in_axis_resources=None, out_axis_resources=None)
     def f(x):
       x = with_sharding_constraint(x, [P('x', 'y'), P('y', 'x')])
-      x = x.copy()
       x[0]["a"] *= 2
       return x
 
@@ -482,7 +481,6 @@ class PJitTest(jtu.BufferDonationTestCase):
           NamedSharding(mesh, P('x', 'y')),
           NamedSharding(mesh, P('y', 'x'))
       ])
-      x = x.copy()
       x[0]["a"] *= 2
       return x
 
@@ -511,7 +509,6 @@ class PJitTest(jtu.BufferDonationTestCase):
       x = with_sharding_constraint(
           x, [P(P.UNCONSTRAINED, 'y', None),
               P('x', P.UNCONSTRAINED, None)])
-      x = x.copy()
       x[0]['a'] *= 2
       return x
 
@@ -537,7 +534,6 @@ class PJitTest(jtu.BufferDonationTestCase):
       x = jax.vmap(lambda x: with_sharding_constraint(
           x, [P(P.UNCONSTRAINED, 'y'),
               P('x', P.UNCONSTRAINED)]))(x)
-      x = x.copy()
       x[0]['a'] *= 2
       return x
 
