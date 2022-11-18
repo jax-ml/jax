@@ -458,22 +458,28 @@ class Compiled(Stage):
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @staticmethod
-  def call(_params, *args, **kwargs):
+  def call(*args, **kwargs):
+    # This is because `__call__` passes in `self._params` as the first argument.
+    # Instead of making the call signature `call(params, *args, **kwargs)`
+    # extract it from args because `params` can be passed as a kwarg by users
+    # which might confict here.
+    params = args[0]
+    args = args[1:]
     if jax.config.jax_dynamic_shapes:
       raise NotImplementedError
-    if _params.no_kwargs and kwargs:
+    if params.no_kwargs and kwargs:
       kws = ', '.join(kwargs.keys())
       raise NotImplementedError(
           "function was compiled by a transformation that does not support "
           f"keyword arguments, but called with keyword arguments: {kws}")
     args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
-    if in_tree != _params.in_tree:
+    if in_tree != params.in_tree:
       # TODO(frostig): provide more info about the source function
       # and transformation
       raise TypeError(
-          f"function compiled for {_params.in_tree}, called with {in_tree}")
+          f"function compiled for {params.in_tree}, called with {in_tree}")
     try:
-      out_flat = _params.executable.call(*args_flat)
+      out_flat = params.executable.call(*args_flat)
     except TypeError as e:
       # We can't transform ahead-of-time compiled calls, since we've
       # lowered and compiled for a fixed function signature, and JAX
@@ -491,7 +497,7 @@ class Compiled(Stage):
               f"Tracer type {type(arg)}.") from e
       else:
         raise
-    outs = tree_util.tree_unflatten(_params.out_tree, out_flat)
+    outs = tree_util.tree_unflatten(params.out_tree, out_flat)
     return outs, out_flat
 
   def __call__(self, *args, **kwargs):
