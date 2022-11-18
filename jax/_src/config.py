@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 import threading
+import warnings
 from typing import Any, List, Callable, Hashable, NamedTuple, Iterator, Optional
 
 from jax._src import lib
@@ -751,9 +752,21 @@ parallel_functions_output_gda = config.define_bool_state(
     help='If True, pjit will output GDAs.')
 
 def _update_jax_array_global(val):
+  if not val:
+    warnings.warn(
+        'DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been '
+        'deprecated. Please use `jax.Array`. See '
+        'https://jax.readthedocs.io/en/latest/jax_array_migration.html on how '
+        'to migrate to `jax.Array`.', DeprecationWarning)
   lib.jax_jit.global_state().jax_array = val
 
 def _update_jax_array_thread_local(val):
+  if not val:
+    warnings.warn(
+        'DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been '
+        'deprecated. Please use `jax.Array`. See '
+        'https://jax.readthedocs.io/en/latest/jax_array_migration.html on how '
+        'to migrate to `jax.Array`.', DeprecationWarning)
   lib.jax_jit.thread_local_state().jax_array = val
 
 jax_array = config.define_bool_state(
