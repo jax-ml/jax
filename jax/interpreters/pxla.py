@@ -73,7 +73,6 @@ from jax._src import profiler
 from jax._src import stages
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
-from jax._src.config import flags
 from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -3470,15 +3469,6 @@ class UnloadedMeshExecutable:
           auto_spmd_lowering=auto_spmd_lowering)
 
 
-class _MeshExecutableFastpathData(NamedTuple):
-  xla_executable: xla.XlaLoadedExecutable
-  out_pytree_def: Any
-  in_shardings: Sequence[Any]
-  out_shardings: Sequence[Any]
-  out_avals: Sequence[Any]
-  out_committed: Sequence[bool]
-
-
 class MeshExecutable(stages.XlaExecutable):
   __slots__ = [
       "xla_executable", "unsafe_call", "in_avals", "_in_shardings",
@@ -3549,45 +3539,6 @@ class MeshExecutable(stages.XlaExecutable):
 
   def output_shardings(self):
     return self._out_shardings
-
-  def create_cpp_call(self, no_kwargs, in_tree, out_tree):
-    if not (isinstance(self.unsafe_call, ExecuteReplicated) and
-            not self.unsafe_call.has_unordered_effects and
-            not self.unsafe_call.has_host_callbacks):
-      return None
-
-    if not flags.FLAGS.experimental_cpp_pjit or xc._version < 96:
-      return None
-
-    def aot_cache_miss(*args, **kwargs):
-      params = stages.CompiledCallParams(self, no_kwargs, in_tree, out_tree)
-      outs, out_flat = stages.Compiled.call(params, *args, **kwargs)
-
-      use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat))
-
-      if use_fastpath:
-        out_avals = [o.aval for o in out_flat]
-        out_committed = [o._committed for o in out_flat]
-        fastpath_data = _MeshExecutableFastpathData(self.xla_executable,
-                                                    out_tree,
-                                                    self._in_shardings,
-                                                    self._out_shardings,
-                                                    out_avals, out_committed)
-      else:
-        fastpath_data = None
-
-      return outs, fastpath_data
-
-    if xc._version < 108:
-
-      def dummy():
-        pass
-
-      dummy.__name__ = self.unsafe_call.name
-      return xc._xla.pjit(dummy, aot_cache_miss, []) # type: ignore
-    else:
-      return xc._xla.pjit( # type: ignore
-          self.unsafe_call.name, aot_cache_miss, [])
 
 
 def _out_shardings_for_trivial(
