@@ -40,7 +40,7 @@ disable `jax.Array` and see if the issues go away.
 
 ### How can I disable jax.Array for now?
 
-Through March 15, 2023 it will be possible to disable jax.Array by:
+Through **March 15, 2023** it will be possible to disable jax.Array by:
 
 *   setting the shell environment variable `JAX_ARRAY` to something falsey
     (e.g., `0`);
