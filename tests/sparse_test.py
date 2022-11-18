@@ -2077,6 +2077,14 @@ class BCOOTest(sptu.SparseTestCase):
   )
   @jax.default_matmul_precision("float32")
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    # TODO(b/259538729): Disable gpu test when type promotion is required.
+    # BCOO type promotion calls `convert_element_type`, which further calls
+    # `sum_duplicates` and creates padding with out-of-bound indices.
+    # `bcoo_dot_general` cusparse lowering is not able to handle out-of-bound
+    # indices right now.
+    if jtu.device_under_test() == "gpu" and lhs_dtype != rhs_dtype:
+      raise self.skipTest("Disable gpu test when type promotion is required")
+
     # Note: currently, batch dimensions in matmul must correspond to batch
     # dimensions in the sparse representation.
     n_batch_lhs = max(0, len(lhs_shape) - 2)
