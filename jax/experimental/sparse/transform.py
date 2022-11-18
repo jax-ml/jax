@@ -70,6 +70,13 @@ from jax.experimental.sparse import BCOO
 
 sparse_rules : Dict[core.Primitive, Callable] = {}
 
+_zero_preserving_linear_unary_primitives = [
+  lax.copy_p,
+  lax.imag_p,
+  lax.neg_p,
+  lax.real_p,
+]
+
 _zero_preserving_unary_primitives = [
   lax.abs_p,
   lax.asin_p,
@@ -77,19 +84,15 @@ _zero_preserving_unary_primitives = [
   lax.atan_p,
   lax.atanh_p,
   lax.bessel_i1e_p,
-  lax.copy_p,
   lax.expm1_p,
   lax.log1p_p,
-  lax.neg_p,
-  lax.real_p,
-  lax.imag_p,
   lax.sign_p,
   lax.sin_p,
   lax.sinh_p,
   lax.sqrt_p,
   lax.tan_p,
   lax.tanh_p,
-  lax.convert_element_type_p
+  lax.convert_element_type_p,
 ]
 
 _densifying_primitives : List[core.Primitive] = [
@@ -462,15 +465,17 @@ def _ensure_unique_indices(spenv, spvalue):
   if spvalue.is_dense() or spvalue.unique_indices:
     return spvalue
   arr = spvalues_to_arrays(spenv, spvalue)
-  arr = arr.sum_duplicates(nse=arr.nse)
+  arr = arr.sum_duplicates(nse=arr.nse, remove_zeros=False)
   return arrays_to_spvalues(spenv, arr)
 
-def _zero_preserving_unary_op(prim):
+def _zero_preserving_unary_op(prim, linear):
   def func(spenv, *spvalues, **kwargs):
     assert len(spvalues) == 1
-    # Since unary operations don't commute with addition, we need to ensure
-    # that indices are unique before applying the operator elementwise.
-    spvalue = _ensure_unique_indices(spenv, spvalues[0])
+    spvalue = spvalues[0]
+    if not linear:
+      # For non-linear unary operations, we need to ensure that
+      # indices are unique before applying the operator elementwise.
+      spvalue = _ensure_unique_indices(spenv, spvalue)
     buf = spenv.data(spvalue)
     buf_out = prim.bind(buf, **kwargs)
     if spvalues[0].is_sparse():
@@ -484,7 +489,9 @@ def _zero_preserving_unary_op(prim):
   return func
 
 for _prim in _zero_preserving_unary_primitives:
-  sparse_rules[_prim] = _zero_preserving_unary_op(_prim)
+  sparse_rules[_prim] = _zero_preserving_unary_op(_prim, linear=False)
+for _prim in _zero_preserving_linear_unary_primitives:
+  sparse_rules[_prim] = _zero_preserving_unary_op(_prim, linear=True)
 
 def _standard_sparse_rule(prim, sparse_op):
   def _sparse_rule(spenv, *spvalues, **kwds):
