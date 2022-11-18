@@ -33,7 +33,7 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 from typing_extensions import Protocol
 
 import jax
@@ -138,6 +138,10 @@ class Executable(Protocol):
     compiler.
     """
     raise NotImplementedError
+
+  def create_cpp_call(self, no_kwargs, in_tree, out_tree) -> Any:
+    """Optionally constructs a fast c++ dispatcher."""
+    return None
 
 
 class Lowering(Protocol):
@@ -355,19 +359,16 @@ class Compiled(Stage):
   _executable: Executable
   _no_kwargs: bool
 
-  def __init__(self, executable, args_info, out_tree, no_kwargs=False, create_cpp_call=None):
+  def __init__(self, executable, args_info, out_tree, no_kwargs=False):
     self._executable = executable
     self._no_kwargs = no_kwargs
     self.args_info = args_info
     self.out_tree = out_tree
     self._params = CompiledCallParams(self._executable, self._no_kwargs,
                                       self.in_tree, self.out_tree)
-    # TODO(chky): Remove this conditional statement once we implement the fast
-    # path in C++ for all AOT paths.
-    if create_cpp_call is not None:
-      self._cpp_call = create_cpp_call(self._params)
-    else:
-      self._cpp_call = None
+    self._cpp_call = self._executable.create_cpp_call(self._no_kwargs,
+                                                      self.in_tree,
+                                                      self.out_tree)
 
   def compiler_ir(self):
     """Post-compilation IR.
@@ -457,9 +458,7 @@ class Compiled(Stage):
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @staticmethod
-  def call(*args, **kwargs):
-    params = args[0]
-    args = args[1:]
+  def call(params, *args, **kwargs):
     if jax.config.jax_dynamic_shapes:
       raise NotImplementedError
     if params.no_kwargs and kwargs:
@@ -518,18 +517,17 @@ class Lowered(Stage):
   out_tree: tree_util.PyTreeDef
   _lowering: XlaLowering
   _no_kwargs: bool
-  _create_cpp_call: Optional[Callable]
 
-  def __init__(self,
-               lowering: XlaLowering,
-               args_info,       # PyTreee of ArgInfo
-               out_tree: tree_util.PyTreeDef,
-               no_kwargs: bool = False, create_cpp_call: Optional[Callable] = None):
+  def __init__(
+      self,
+      lowering: XlaLowering,
+      args_info,  # PyTreee of ArgInfo
+      out_tree: tree_util.PyTreeDef,
+      no_kwargs: bool = False):
     self._lowering = lowering
     self._no_kwargs = no_kwargs
     self.args_info = args_info
     self.out_tree = out_tree
-    self._create_cpp_call = create_cpp_call
 
   @classmethod
   def from_flat_info(cls,
@@ -538,7 +536,7 @@ class Lowered(Stage):
                      in_avals,
                      donate_argnums: Tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
-                     no_kwargs: bool = False, create_cpp_call: Optional[Callable] = None):
+                     no_kwargs: bool = False):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
 
     Args:
@@ -548,8 +546,11 @@ class Lowered(Stage):
         ``Compiled`` returned from this object will not support keyword
         arguments (an error will be raised if some are provided).
     """
-    return cls(lowering, make_args_info(in_tree, in_avals, donate_argnums),
-               out_tree, no_kwargs=no_kwargs, create_cpp_call=create_cpp_call)
+    return cls(
+        lowering,
+        make_args_info(in_tree, in_avals, donate_argnums),
+        out_tree,
+        no_kwargs=no_kwargs)
 
   def compile(self) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
@@ -562,8 +563,11 @@ class Lowered(Stage):
     else:
       kw = {}
 
-    return Compiled(self._lowering.compile(**kw), self.args_info, self.out_tree,
-                    no_kwargs=self._no_kwargs, create_cpp_call=self._create_cpp_call)
+    return Compiled(
+        self._lowering.compile(**kw),
+        self.args_info,
+        self.out_tree,
+        no_kwargs=self._no_kwargs)
 
   def as_text(self, dialect: Optional[str] = None) -> str:
     """A human-readable text representation of this lowering.

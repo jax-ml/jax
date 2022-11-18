@@ -64,11 +64,7 @@ def load_compiled(serialized,
   loaded_compiled_obj = unloaded_compilation.load()
 
   return jax.stages.Compiled(
-      loaded_compiled_obj,
-      args_info,
-      out_tree,
-      no_kwargs=no_kwargs,
-      create_cpp_call=None)
+      loaded_compiled_obj, args_info, out_tree, no_kwargs=no_kwargs)
 
 
 class _JaxPjrtPickler(pickle.Pickler):

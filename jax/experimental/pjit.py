@@ -120,14 +120,6 @@ def _python_pjit(fun: Callable, infer_params):
 
   return wrapped
 
-class _PjitFastpathData(NamedTuple):
-  xla_executable: xla.XlaLoadedExecutable
-  out_pytree_def: Any
-  in_shardings: Sequence[Any]
-  out_shardings: Sequence[Any]
-  out_avals: Sequence[Any]
-  out_committed: Sequence[bool]
-
 class _MostRecentPjitCallExecutable(threading.local):
   def __init__(self):
     self.value = None
@@ -156,57 +148,23 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
     if use_fastpath:
       out_avals = [o.aval for o in out_flat]
       out_committed = [o._committed for o in out_flat]
-      fastpath_data = _PjitFastpathData(executable.xla_executable,
-                                        out_tree,
-                                        executable._in_shardings,
-                                        executable._out_shardings, out_avals,
-                                        out_committed)
+      fastpath_data = pxla._MeshExecutableFastpathData(
+          executable.xla_executable, out_tree, executable._in_shardings,
+          executable._out_shardings, out_avals, out_committed)
     else:
       fastpath_data = None
 
 
     return outs, fastpath_data
 
-  cpp_pjit_f = xc._xla.pjit(fun, cache_miss, static_argnums)
+  if xc._version < 108:
+    cpp_pjit_f = xc._xla.pjit(fun, cache_miss, static_argnums)  # type: ignore
+  else:
+    cpp_pjit_f = xc._xla.pjit(  # type: ignore
+        getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
+        cache_miss, static_argnums)
 
   return wraps(fun)(cpp_pjit_f)
-
-class _CppPjitAotCall:
-  def __init__(self, fun: Callable):
-    self._fun = fun
-
-  def __call__(self, params: CompiledCallParams):
-
-    def aot_cache_miss(*args, **kwargs):
-      # The first invocation for a signature will use the python path. If it is
-      # a correct signature, the later invocations will use the C++ path.
-      # Otherwise, if the signature is wrong, it will be caught by the python
-      # path during the first invocation.
-      outs, out_flat = stages.Compiled.call(params, *args, **kwargs)
-
-      executable = params.executable
-
-      use_fastpath = (
-          isinstance(executable, pxla.MeshExecutable) and
-          isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
-          not executable.unsafe_call.has_unordered_effects and
-          not executable.unsafe_call.has_host_callbacks and
-          all(isinstance(x, xc.ArrayImpl) for x in out_flat))
-
-      if use_fastpath:
-        out_avals = [o.aval for o in out_flat]
-        out_committed = [o._committed for o in out_flat]
-        fastpath_data = _PjitFastpathData(executable.xla_executable, params.out_tree,
-                                          executable._in_shardings,
-                                          executable._out_shardings,
-                                          out_avals, out_committed)
-      else:
-        fastpath_data = None
-
-      return outs, fastpath_data
-
-    self._cpp_aot_pjit_f = xc._xla.pjit(self._fun, aot_cache_miss, [])
-    return self._cpp_aot_pjit_f
 
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
@@ -473,18 +431,15 @@ def pjit(fun: Callable,
         params['resource_env'], params['donated_invars'], params['name'],
         in_is_global, always_lower=True)
 
-    if FLAGS.experimental_cpp_pjit and xc._version >= 96:
-      # This is only used for execution of the compiled object. It is not used
-      # for lowering.
-      create_cpp_call = _CppPjitAotCall(fun)
-    else:
-      create_cpp_call = None
-
     args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
     return stages.Lowered.from_flat_info(
-        lowering, args_kwargs_in_tree, local_in_avals, donate_argnums, out_tree,
-        no_kwargs=True, create_cpp_call=create_cpp_call)
+        lowering,
+        args_kwargs_in_tree,
+        local_in_avals,
+        donate_argnums,
+        out_tree,
+        no_kwargs=True)
 
   wrapped.lower = lower
   return wrapped
