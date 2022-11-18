@@ -500,6 +500,7 @@ class SparsifyTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{op.__name__}", "op": op, "dtype": dtype, "kwds": kwds}
       for op, dtype, kwds in [
+        (jnp.copy, jnp.float32, {}),
         (lax.abs, jnp.float32, {}),
         (lax.asin, jnp.float32, {}),
         (lax.asinh, jnp.float32, {}),
@@ -530,10 +531,14 @@ class SparsifyTest(jtu.JaxTestCase):
     indices = rng_idx((nse, len(shape)), jnp.int32)
     mat = BCOO((data, indices), shape=shape)
 
-    sparse_result = self.sparsify(partial(op, **kwds))(mat).todense()
+    sparse_result = self.sparsify(partial(op, **kwds))(mat)
     dense_result = op(mat.todense(), **kwds)
 
-    self.assertArraysAllClose(sparse_result, dense_result)
+    self.assertArraysAllClose(sparse_result.todense(), dense_result)
+
+    # Ops that commute with addition should not deduplicate indices.
+    if op in [jnp.copy, lax.neg, lax.real, lax.imag]:
+      self.assertArraysAllClose(sparse_result.indices, indices)
 
 
 class SparsifyTracerTest(SparsifyTest):
