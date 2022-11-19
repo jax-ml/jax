@@ -35,3 +35,10 @@ def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1)
 @_wraps(osp_stats.gamma.pdf, update_doc=False)
 def pdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, a, loc, scale))
+
+# Add c from scipy.stats.gamma
+@_wraps(osp_stats.gamma.cdf, update_doc=False)
+def cdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, a, loc, scale = _promote_args_inexact("gamma.cdf", x, a, loc, scale)
+  y = lax.div(lax.sub(x, loc), scale)
+  return lax.igamma(a, y)

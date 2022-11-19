@@ -34,3 +34,17 @@ def logpdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1)
 @_wraps(osp_stats.pareto.pdf, update_doc=False)
 def pdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, b, loc, scale))
+
+@_wraps(osp_stats.pareto.cdf, update_doc=False)
+def cdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, b, loc, scale = _promote_args_inexact("pareto.cdf", x, b, loc, scale)
+  one = _lax_const(x, 1)
+  zero = _lax_const(x, 0)
+  scaled_x = lax.div(lax.sub(x, loc), scale)
+  return where(lax.lt(x, lax.add(loc, scale)), zero, lax.sub(one, lax.pow(lax.div(one, scaled_x), b)))
+
+@_wraps(osp_stats.pareto.ppf, update_doc=False)
+def ppf(q: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  q, b, loc, scale = _promote_args_inexact("pareto.ppf", q, b, loc, scale)
+  one = _lax_const(q, 1)
+  return lax.add(loc, lax.div(scale, lax.pow(lax.sub(one, q), lax.div(one, b))))

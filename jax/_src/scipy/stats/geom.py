@@ -34,4 +34,19 @@ def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
 
 @_wraps(osp_stats.geom.pmf, update_doc=False)
 def pmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
-  return jnp.exp(logpmf(k, p, loc))
+    return jnp.exp(logpmf(k, p, loc))
+
+@_wraps(osp_stats.geom.cdf, update_doc=False)
+def cdf(x: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
+    if isinstance(x, int):
+        x = float(x)
+    k = lax.floor(x)
+    return lax.neg(lax.expm1(lax.mul(lax.log1p(lax.neg(p)),k)))
+
+@_wraps(osp_stats.geom.ppf, update_doc=False)
+def ppf(q: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
+    vals = lax.ceil(lax.log1p(lax.neg(q)) / lax.log1p(lax.neg(p)))
+    one = _lax_const(vals, 1)
+    zero = _lax_const(vals, 0)
+    temp = cdf(lax.sub(vals,one), p)
+    return jnp.where(lax.bitwise_and(lax.ge(temp, q), lax.gt(vals, zero)), lax.sub(vals, one), vals)

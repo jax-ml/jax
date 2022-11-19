@@ -17,6 +17,7 @@ import scipy.stats as osp_stats
 
 from jax import lax
 from jax._src.numpy.util import _wraps
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
 from jax._src.typing import Array, ArrayLike
 
@@ -32,3 +33,21 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 @_wraps(osp_stats.uniform.pdf, update_doc=False)
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, loc, scale))
+
+@_wraps(osp_stats.uniform.cdf, update_doc=False)
+def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, loc, scale = _promote_args_inexact("uniform.cdf", x, loc, scale)
+  zero = _lax_const(x, 0)
+  one = _lax_const(x, 1)
+  if lax.gt(x, lax.add(loc, scale)):
+    return one
+  elif lax.lt(x, loc):
+    return zero
+  else:
+    return lax.div(lax.sub(x, loc), scale)
+
+@_wraps(osp_stats.uniform.ppf, update_doc=False)
+def ppf(q: ArrayLike, loc : ArrayLike = 0, scale : ArrayLike = 1) -> Array:
+  q, loc, scale = _promote_args_inexact("uniform.ppf", q, loc, scale)
+  zero = _lax_const(q, 0)
+  return where(logical_or(lax.gt(q, lax.add(loc, scale)),lax.lt(q, loc)),zero, lax.add(lax.mul(q, scale), loc))

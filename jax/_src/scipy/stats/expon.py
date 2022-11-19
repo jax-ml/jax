@@ -16,6 +16,7 @@ import scipy.stats as osp_stats
 
 from jax import lax
 from jax._src.numpy.util import _wraps
+from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
 from jax._src.typing import Array, ArrayLike
 
@@ -31,3 +32,17 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 @_wraps(osp_stats.expon.pdf, update_doc=False)
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, loc, scale))
+
+@_wraps(osp_stats.expon.cdf, update_doc=False)
+def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, loc, scale = _promote_args_inexact("expon.cdf", x, loc, scale)
+  linear_term = lax.div(lax.sub(x, loc), scale)
+  zero = _lax_const(x, 0)
+  return where(lax.lt(x, loc), zero, lax.neg(lax.expm1(lax.neg(linear_term))))
+
+@_wraps(osp_stats.expon.ppf, update_doc=False)
+def ppf(q: ArrayLike, loc : ArrayLike = 0, scale : ArrayLike = 1) -> Array:
+  q, loc, scale = _promote_args_inexact("expon.ppf", q, loc, scale)
+  linear_term = lax.div(lax.sub(q, loc), scale)
+  zero = _lax_const(q, 0)
+  return where(lax.lt(q, loc), zero, lax.neg(lax.log1p(lax.neg(linear_term))))

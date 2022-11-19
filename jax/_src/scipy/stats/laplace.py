@@ -41,6 +41,12 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   one = _lax_const(x, 1)
   zero = _lax_const(x, 0)
   diff = lax.div(lax.sub(x, loc), scale)
-  return lax.select(lax.le(diff, zero),
-                    lax.mul(half, lax.exp(diff)),
-                    lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+  return lax.select(lax.le(diff, zero),lax.mul(half, lax.exp(diff)),lax.sub(one, lax.mul(half, lax.exp(lax.neg(diff)))))
+
+@_wraps(osp_stats.laplace.ppf, update_doc=False)
+def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  q, loc, scale = _promote_args_inexact("laplace.ppf", q, loc, scale)
+  half = _lax_const(q, 0.5)
+  two = _lax_const(q, 2)
+  one = _lax_const(q, 1)
+  return lax.select(lax.lt(q, half),lax.add(loc, lax.mul(scale, lax.log(lax.div(lax.mul(q, two), one)))),lax.sub(loc, lax.mul(scale, lax.log(lax.div(lax.mul(lax.sub(one, q), two), one)))))

@@ -40,3 +40,12 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
 @_wraps(osp_stats.chi2.pdf, update_doc=False)
 def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     return lax.exp(logpdf(x, df, loc, scale))
+
+@_wraps(osp_stats.chi2.cdf, update_doc=False)
+def cdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+    x, df, loc, scale = _promote_args_inexact("chi2.cdf", x, df, loc, scale)
+    y = lax.div(lax.sub(x, loc), scale)
+    two = _lax_const(x, 2)
+    # cdf_val = lax.div(lax.igamma(lax.div(df,two), lax.div(y,two)), lax.exp(lax.lgamma(lax.div(df,two))))
+    cdf_val = lax.igamma(lax.div(df, two), lax.div(y, two))
+    return where(lax.lt(x, loc), -inf, cdf_val)
