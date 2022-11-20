@@ -283,7 +283,7 @@ JAX arrays are not hashable::
     ---------------------------------------------------------------------------
     ValueError                                Traceback (most recent call last)
       File "<stdin>", line 1, in <module
-    ValueError: Non-hashable static arguments are not supported. An error occured during a call to 'calc' while trying to hash an object of type <class '__main__.CustomClass'>
+    ValueError: Non-hashable static arguments are not supported. An error occurred during a call to 'calc' while trying to hash an object of type <class '__main__.CustomClass'>
   
 Additionally, this also has the downside that ``calc`` will be re-compiled any time the values
 within ``myfunc`` change, which could be costly depending on your program.
