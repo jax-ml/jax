@@ -186,14 +186,14 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
   def sort_key(device):
     x, y, z = device.coords
     core = device.core_on_chip
-    if device_kind == _TPU_V4:
-      if core != 0:
-        raise ValueError(
-            'Creating meshes for TPU v4 requires one device per chip')
-      return (x, y, z)
-    elif device_kind in (_TPU_V2, _TPU_V3):
+    if device_kind in (_TPU_V2, _TPU_V3):
       assert z == 0
       return (x, y, core)
+    else:
+      if core != 0:
+        raise ValueError(
+            'Creating meshes for TPU >v3 requires one device per chip')
+      return (x, y, z)
   sorted_devices = sorted(jax_devices, key=sort_key)
   x, y, *_ = _bounds_from_last_device(sorted_devices[-1])
   return np.array(sorted_devices).reshape((x, y, -1))
