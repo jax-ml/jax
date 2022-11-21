@@ -245,7 +245,6 @@ build:rbe_linux_cuda11.8_nvcc_base --extra_execution_platforms="@ubuntu20.04-gcc
 build:rbe_linux_cuda11.8_nvcc_base --host_platform="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
 build:rbe_linux_cuda11.8_nvcc_base --platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
 build:rbe_linux_cuda11.8_nvcc_base --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda"
-build:rbe_linux_cuda11.8_nvcc_base --repo_env=TF_TENSORRT_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_tensorrt"
 build:rbe_linux_cuda11.8_nvcc_base --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_nccl"
 build:rbe_linux_cuda11.8_nvcc_py3.7 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.7"
 build:rbe_linux_cuda11.8_nvcc_py3.7 --python_path="/usr/local/bin/python3.7"
