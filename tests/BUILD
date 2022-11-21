@@ -557,7 +557,7 @@ jax_test(
     backend_tags = {
         "tpu": [
             "noasan",  # Times out.
-            "nmasan",  # Times out.
+            "nomsan",  # Times out.
             "nodebug",  # Times out.
             "notsan",  # Times out.
         ],
