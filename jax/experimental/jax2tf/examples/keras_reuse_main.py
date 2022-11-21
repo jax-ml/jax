@@ -47,8 +47,7 @@ def main(_):
   with strategy.scope():
     images = tf.keras.layers.Input(
         mnist_lib.input_shape, batch_size=mnist_lib.train_batch_size)
-    # We do not yet train the SavedModel, due to b/123499169.
-    keras_feature_extractor = hub.KerasLayer(feature_model_dir, trainable=False)
+    keras_feature_extractor = hub.KerasLayer(feature_model_dir, trainable=True)
     features = keras_feature_extractor(images)
     predictor = tf.keras.layers.Dense(10, activation="softmax")
     predictions = predictor(features)

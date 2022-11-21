@@ -123,6 +123,7 @@ def train_and_save():
         predict_fn,
         predict_params,
         model_dir,
+        with_gradient=True,
         input_signatures=input_signatures,
         polymorphic_shapes=polymorphic_shapes,
         compile_model=FLAGS.compile_model)
