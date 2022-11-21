@@ -31,6 +31,7 @@ from jax._src import array
 from jax._src import sharding
 from jax.experimental import pjit as pjit_lib
 from jax.experimental import maps
+from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 
@@ -815,6 +816,19 @@ def pjit_aot_4000_device(state):
       num_args=state.range(0),
       cpp_jit=state.range(1),
       use_aot=True)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def host_local_array_to_global_array(state):
+  global_mesh = create_mesh((4, 2), ('x', 'y'), state)
+  input_shape = (8, 2)
+  input_data = np.arange(np.prod(input_shape)).reshape(input_shape)
+  in_pspec = pxla.PartitionSpec('x', 'y')
+
+  while state:
+    multihost_utils.host_local_array_to_global_array(
+        (input_data, input_data), global_mesh, (in_pspec, in_pspec))
 
 
 if __name__ == "__main__":

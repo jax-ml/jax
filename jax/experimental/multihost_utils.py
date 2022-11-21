@@ -14,15 +14,17 @@
 """Utilities for synchronizing and communication across multiple hosts."""
 
 import functools
+import itertools as it
 from typing import Optional
 import zlib
 
 import jax
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
+from jax._src import dispatch
 from jax._src import array
 from jax._src import sharding
 from jax.tree_util import PyTreeDef
-from jax.interpreters import pxla
+from jax.interpreters import pxla, xla
 from jax.experimental import maps
 from jax.experimental import pjit as pjit_lib
 from jax.experimental.pjit import pjit, FROM_GDA
@@ -228,6 +230,27 @@ def reached_preemption_sync_point(step_id: int) -> bool:
   return sync_manager.reached_sync_point(step_id)
 
 
+@functools.lru_cache()
+def _flatten_pspecs(name, in_tree, pspecs_thunk):
+  return pjit_lib.flatten_axis_resources(
+      name, in_tree, pspecs_thunk(), tupled_args=True)
+
+@functools.lru_cache()
+def _local_to_global_aval(local_aval, mesh, pspec):
+  return mesh._local_to_global(pxla._get_array_mapping(pspec), local_aval)
+
+@functools.lru_cache()
+def _global_to_local_aval(global_aval, mesh, pspec):
+  return mesh._global_to_local(
+      pxla._get_array_mapping(pspec), global_aval)
+
+def _device_put(x, device):
+  try:
+    return dispatch.device_put_handlers[type(x)](x, device)
+  except KeyError as err:
+    raise TypeError(f"No device_put handler for type: {type(x)}") from err
+
+
 def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
   """Converts a host local value to a globally sharded `jax.Array`.
 
@@ -289,21 +312,22 @@ def host_local_array_to_global_array(local_inputs, global_mesh, pspecs):
             local_sharding._to_xla_op_sharding(arr.ndim))):
       arrays = arr._arrays
     else:
-      arrays = [
-          jax.device_put(arr[index], d)
+      arr = xla.canonicalize_dtype(arr)
+      arrays = list(it.chain.from_iterable(
+          _device_put(arr[index], d)
           for d, index in local_sharding.devices_indices_map(arr.shape).items()
-      ]
+      ))
 
-    global_aval = global_mesh._local_to_global(
-        pxla._get_array_mapping(pspec),
-        jax.ShapedArray(arr.shape, arrays[0].dtype))
+    global_aval = _local_to_global_aval(
+        jax.ShapedArray(arr.shape, arrays[0].dtype), global_mesh, pspec)
+
     return array.ArrayImpl(
         global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
-        arrays, committed=True)
+        arrays, committed=True, _skip_checks=True)
 
   flattened_inps, in_tree = tree_flatten(local_inputs)
-  in_pspecs = pjit_lib.flatten_axis_resources(
-      'input pspecs', in_tree, pspecs, tupled_args=True)
+  in_pspecs = _flatten_pspecs('input pspecs', in_tree,
+                              pjit_lib.hashable_pytree(pspecs))
   out = tree_map(_convert, tuple(flattened_inps), in_pspecs)
   return tree_unflatten(in_tree, out)
 
@@ -354,14 +378,13 @@ def global_array_to_host_local_array(global_inputs, global_mesh, pspecs):
     # If the Array is already fully addressable i.e. host local, return it.
     if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:
       return arr
-    local_aval = global_mesh._global_to_local(
-        pxla._get_array_mapping(pspec), arr.aval)
+    local_aval = _global_to_local_aval(arr.aval, global_mesh, pspec)
     return array.ArrayImpl(
         local_aval, jax.sharding.NamedSharding(global_mesh.local_mesh, pspec),
         arr._arrays, committed=True)
 
   flattened_inps, out_tree = tree_flatten(global_inputs)
-  out_pspecs = pjit_lib.flatten_axis_resources(
-      'output pspecs', out_tree, pspecs, tupled_args=True)
+  out_pspecs = _flatten_pspecs('output pspecs', out_tree,
+                               pjit_lib.hashable_pytree(pspecs))
   out = tree_map(_convert, tuple(flattened_inps), out_pspecs)
   return tree_unflatten(out_tree, out)
