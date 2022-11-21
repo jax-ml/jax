@@ -109,6 +109,7 @@ jobs:
         JAX_NUM_GENERATED_CASES: ${{ matrix.num_generated_cases }}
         JAX_ENABLE_X64: ${{ matrix.enable-x64 }}
         JAX_ENABLE_CUSTOM_PRNG: ${{ matrix.prng-upgrade }}
+        JAX_THREEFRY_PARTITIONABLE: ${{ matrix.prng-upgrade }}
         JAX_ENABLE_CHECKS: true
         JAX_SKIP_SLOW_TESTS: true
       run: |
@@ -116,6 +117,7 @@ jobs:
         echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
         echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
         echo "JAX_ENABLE_CUSTOM_PRNG=$JAX_ENABLE_CUSTOM_PRNG"
+        echo "JAX_THREEFRY_PARTITIONABLE=$JAX_THREEFRY_PARTITIONABLE"
         echo "JAX_ENABLE_CHECKS=$JAX_ENABLE_CHECKS"
         pytest -n auto --tb=short tests examples
 
