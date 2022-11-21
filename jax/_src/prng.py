@@ -1062,12 +1062,22 @@ def threefry_2x32(keypair, count):
 
 
 def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
-  return _threefry_split(key, int(num))  # type: ignore
+  if config.jax_threefry_partitionable:
+    return _threefry_split_foldlike(key, int(num))  # type: ignore
+  else:
+    return _threefry_split_original(key, int(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,), inline=True)
-def _threefry_split(key, num) -> jnp.ndarray:
+def _threefry_split_original(key, num) -> jnp.ndarray:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
+
+@partial(jit, static_argnums=(1,), inline=True)
+def _threefry_split_foldlike(key, num) -> jnp.ndarray:
+  k1, k2 = key
+  counts1, counts2 = iota_32x2_shape((num,))
+  bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
+  return jnp.stack([bits1, bits2], axis=1)
 
 
 def threefry_fold_in(key: jnp.ndarray, data: jnp.ndarray) -> jnp.ndarray:
@@ -1177,7 +1187,12 @@ def _rbg_seed(seed: jnp.ndarray) -> jnp.ndarray:
   return jnp.concatenate([halfkey, halfkey])
 
 def _rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
-  return vmap(_threefry_split, (0, None), 1)(key.reshape(2, 2), num).reshape(num, 4)
+  if config.jax_threefry_partitionable:
+    _threefry_split = _threefry_split_foldlike
+  else:
+    _threefry_split = _threefry_split_original
+  return vmap(
+      _threefry_split, (0, None), 1)(key.reshape(2, 2), num).reshape(num, 4)
 
 def _rbg_fold_in(key: jnp.ndarray, data: jnp.ndarray) -> jnp.ndarray:
   assert not data.shape
