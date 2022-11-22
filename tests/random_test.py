@@ -889,7 +889,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     # Check that results contain 1 in one of the dimensions:
     # this is highly likely to be true when alpha is small.
     self.assertAllClose(samples.max(1), jnp.ones(samples.shape[0]),
-                        check_dtypes=False, rtol=1E-5)
+                        check_dtypes=False, rtol=1E-4)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testExponential(self, dtype):
