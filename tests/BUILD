@@ -726,7 +726,10 @@ jax_test(
     srcs = ["sparse_test.py"],
     args = ["--jax_bcoo_cusparse_lowering=true"],
     backend_tags = {
-        "cpu": ["notsan"],  # Times out
+        "cpu": [
+            "nomsan",  # Times out
+            "notsan",  # Times out
+        ],
         "tpu": ["optonly"],
     },
     shard_count = {
