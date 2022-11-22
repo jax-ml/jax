@@ -35,3 +35,4 @@ from jax.scipy.stats import gennorm as gennorm
 from jax.scipy.stats import truncnorm as truncnorm
 from jax._src.scipy.stats.kde import gaussian_kde as gaussian_kde
 from jax._src.scipy.stats._core import mode as mode
+from jax.scipy.stats import vonmises as vonmises

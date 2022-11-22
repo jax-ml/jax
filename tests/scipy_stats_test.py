@@ -49,6 +49,38 @@ def genNamedParametersNArgs(n):
 class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.stats implementations"""
 
+  @genNamedParametersNArgs(2)
+  def testVonMisesPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.vonmises.pdf
+    lax_fun = lsp_stats.vonmises.pdf
+
+    def args_maker():
+      x, kappa = map(rng, shapes, dtypes)
+      kappa = np.where(kappa < 0, kappa * -1, kappa).astype(kappa.dtype)
+      return [x, kappa]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(2)
+  def testVonMisesLogPdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.vonmises.pdf
+    lax_fun = lsp_stats.vonmises.pdf
+
+    def args_maker():
+      x, kappa = map(rng, shapes, dtypes)
+      kappa = np.where(kappa < 0, kappa * -1, kappa).astype(kappa.dtype)
+      return [x, kappa]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=1e-3)
+      self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(3)
   def testPoissonLogPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())
