@@ -371,19 +371,27 @@ class PrngTest(jtu.JaxTestCase):
   def test_threefry_split_fold_in_symmetry(self):
     with jax.default_prng_impl('threefry2x32'):
       key = random.PRNGKey(72)
-      folds = jnp.array([random.fold_in(key, i) for i in range(8)])
-      splits = random.split(key, 8)
-      self.assertArraysEqual(folds, splits)
+      f1, f2, f3 = [random.fold_in(key, i) for i in range(3)]
+      s1, s2, s3 = random.split(key, 3)
+      f1, f2, f3 = map(_prng_key_as_array, [f1, f2, f3])
+      s1, s2, s3 = map(_prng_key_as_array, [s1, s2, s3])
+      self.assertArraysEqual(f1, s1)
+      self.assertArraysEqual(f2, s2)
+      self.assertArraysEqual(f3, s3)
 
   @skipIf(not config.jax_threefry_partitionable, 'enable after upgrade')
   def test_threefry_split_vmapped_fold_in_symmetry(self):
     # See https://github.com/google/jax/issues/7708
     with jax.default_prng_impl('threefry2x32'):
       key = random.PRNGKey(72)
-      folds = vmap(lambda k, _: random.fold_in(k, lax.axis_index('batch')),
-                   in_axes=(None, 0), axis_name='batch')(key, jnp.ones(8))
-      splits = random.split(key, 8)
-      self.assertArraysEqual(folds, splits)
+      f1, f2, f3 = vmap(lambda k, _: random.fold_in(k, lax.axis_index('batch')),
+                        in_axes=(None, 0), axis_name='batch')(key, jnp.ones(3))
+      s1, s2, s3 = random.split(key, 3)
+      f1, f2, f3 = map(_prng_key_as_array, [f1, f2, f3])
+      s1, s2, s3 = map(_prng_key_as_array, [s1, s2, s3])
+      self.assertArraysEqual(f1, s1)
+      self.assertArraysEqual(f2, s2)
+      self.assertArraysEqual(f3, s3)
 
   @jtu.sample_product([
       {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
