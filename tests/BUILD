@@ -548,7 +548,7 @@ jax_test(
     srcs = ["pickle_test.py"],
     deps = [
         "//jax:experimental",
-    ] + py_deps("cloudpickle"),
+    ] + py_deps("cloudpickle") + py_deps("numpy"),
 )
 
 jax_test(

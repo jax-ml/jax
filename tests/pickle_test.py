@@ -35,6 +35,8 @@ from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 
+import numpy as np
+
 config.parse_flags_with_absl()
 
 
@@ -46,6 +48,15 @@ def _get_device_by_id(device_id: int) -> xc.Device:
 
 
 xc.Device.__reduce__ = lambda d: (_get_device_by_id, (d.id,))
+
+
+if cloudpickle is not None:
+  def _reduce_mesh(mesh):
+    # Avoid including mesh._hash in the serialized bytes for Mesh. Without this
+    # the Mesh would be different among the workers.
+    return jax.pxla.Mesh, (mesh.devices, mesh.axis_names)
+
+  cloudpickle.CloudPickler.dispatch_table[jax.pxla.Mesh] = _reduce_mesh
 
 
 class CloudpickleTest(jtu.JaxTestCase):
@@ -187,6 +198,16 @@ class PickleTest(jtu.JaxTestCase):
     op_sharding.type = xla.xc.OpSharding.Type.REPLICATED
     s = sharding.OpShardingSharding(jax.devices(), op_sharding)
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
+  @unittest.skipIf(xla_extension_version < 104,
+                   'NamedSharding pickling requires newer jaxlib.')
+  @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
+  def test_pickle_named_sharding(self):
+    s = jax.sharding.NamedSharding(
+        mesh=pxla.Mesh(np.array(jax.devices()), 'd'),
+        spec=pxla.PartitionSpec('d'))
+    self.assertEqual(s, pickle.loads(pickle.dumps(s)))
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
