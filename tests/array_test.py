@@ -856,11 +856,6 @@ class RngShardingTest(jtu.JaxTestCase):
     y_ref1 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref1)
 
-    # check against single-device previous implementation reference
-    jax.config.update('jax_threefry_partitionable', False)
-    y_ref2 = f(jax.device_put(x, jax.devices()[0]))
-    self.assertArraysEqual(y, y_ref2)
-
   @parameterized.named_parameters(
       {"testcase_name": f"_{mesh_shape}_{pspec}",
        "mesh_shape": mesh_shape, "pspec": pspec}
@@ -897,11 +892,6 @@ class RngShardingTest(jtu.JaxTestCase):
     y = f(x)
     y_ref1 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref1)
-
-    # check against single-device previous implementation reference
-    jax.config.update('jax_threefry_partitionable', False)
-    y_ref2 = f(jax.device_put(x, jax.devices()[0]))
-    self.assertArraysEqual(y, y_ref2)
 
   @unittest.skipIf(xla_extension_version < 106,
                    'Pjit pickling requires newer jaxlib.')

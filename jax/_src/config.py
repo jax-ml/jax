@@ -471,7 +471,7 @@ class Config:
     return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
             self.jax_numpy_dtype_promotion, self.jax_default_device,
-            self.jax_array)
+            self.jax_array, self.jax_threefry_partitionable)
 
 class NoDefault: pass
 no_default = NoDefault()
@@ -560,6 +560,7 @@ class _GlobalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
+  threefry_partitionable: bool = False
 
 
 def _update_global_jit_state(**kw):
@@ -828,7 +829,11 @@ threefry_partitionable = config.define_bool_state(
           'standard jax.random pseudo-random number generation may result '
           'in extraneous communication and/or redundant distributed '
           'computation. With this flag, the communication overheads disappear '
-          'in some cases.'))
+          'in some cases.'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        threefry_partitionable=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        threefry_partitionable=val))
 
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
