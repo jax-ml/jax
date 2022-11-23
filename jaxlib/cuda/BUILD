@@ -31,7 +31,6 @@ cc_library(
     ],
     defines = ["JAX_GPU_CUDA=1"],
     deps = [
-        "//third_party/gpus/cudnn:cudnn_header",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -102,43 +101,6 @@ pybind_extension(
         ":cuda_vendor",
         "//jaxlib:kernel_pybind11_helpers",
         "@org_tensorflow//tensorflow/compiler/xla/stream_executor/cuda:cublas_lib",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/strings:str_format",
-        "@pybind11",
-    ],
-)
-
-cc_library(
-    name = "cudnn_rnn_kernels",
-    srcs = ["//jaxlib/gpu:rnn_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:rnn_kernels.h"],
-    deps = [
-        ":cuda_gpu_kernel_helpers",
-        ":cuda_vendor",
-        "//jaxlib:handle_pool",
-        "//jaxlib:kernel_helpers",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
-        "@org_tensorflow//tensorflow/compiler/xla/stream_executor/cuda:cudart_stub",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
-)
-
-pybind_extension(
-    name = "_rnn",
-    srcs = ["//jaxlib/gpu:rnn.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    features = ["-use_header_modules"],
-    module_name = "_rnn",
-    deps = [
-        ":cuda_vendor",
-        ":cudnn_rnn_kernels",
-        "//jaxlib:kernel_pybind11_helpers",
-        "//third_party/pybind11_abseil:status_casters",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@pybind11",
@@ -359,7 +321,6 @@ py_library(
         ":_blas",
         ":_linalg",
         ":_prng",
-        ":_rnn",
         ":_solver",
         ":_sparse",
     ],

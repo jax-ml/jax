@@ -31,7 +31,6 @@ py_library(
         "ducc_fft.py",
         "gpu_linalg.py",
         "gpu_prng.py",
-        "gpu_rnn.py",
         "gpu_solver.py",
         "gpu_sparse.py",
         "init.py",
