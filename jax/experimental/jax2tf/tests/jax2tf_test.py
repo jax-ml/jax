@@ -1222,10 +1222,9 @@ def get_serialized_computation(
                    out_axis_resources=out_axis_resources).lower(*args)
   else:
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
-  mhlo_module = lowered.compiler_ir(dialect='mhlo')
-  mhlo_module_text = mlir.module_to_string(mhlo_module)
-  logging.info(f'Serialized ir.Module = {mhlo_module_text}')
-  return mhlo_module_text
+  stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
+  logging.info(f'Serialized ir.Module = {stablehlo_module_text}')
+  return stablehlo_module_text
 
 
 class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
@@ -1239,6 +1238,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
 
     jax_res = f_jax(x)
     res = tfxla.call_module([x],
+                            version=2,
                             module=get_serialized_computation(f_jax, x),
                             Tout=[jax_res.dtype],
                             Sout=[jax_res.shape])
@@ -1256,6 +1256,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
 
     jax_res = f_jax(count, x)
     res = tfxla.call_module([count, x],
+                            version=2,
                             module=get_serialized_computation(f_jax, count, x),
                             Tout=[jax_res.dtype],
                             Sout=[jax_res.shape])
@@ -1274,6 +1275,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
 
     def f_tf(x1_tf, x2_tf):
       return tfxla.call_module([x1_tf, x2_tf],
+                               version=2,
                                module=get_serialized_computation(f_jax, x1, x2),
                                Tout=[jax_res[0].dtype, jax_res[1].dtype],
                                Sout=[jax_res[0].shape, jax_res[1].shape])
@@ -1294,6 +1296,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
 
     def f_tf(x1_tf):
       return tfxla.call_module([x1_tf],
+                               version=2,
                                module=get_serialized_computation(
                                    f_jax, x1,
                                    abstracted_axes=({
@@ -1359,6 +1362,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
                                         out_axis_resources=out_axis_resources)
     def f_tf(x_tf, y_tf):
       return tfxla.call_module([x_tf, y_tf],
+                               version=2,
                                module=module,
                                Tout=[x.dtype],
                                Sout=[x.shape])
