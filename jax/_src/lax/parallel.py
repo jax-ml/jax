@@ -943,10 +943,13 @@ def _all_to_all_lowering(ctx, x, *,
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
-    return mhlo.AllToAllOp(x, mlir.i64_attr(split_axis),
-                            mlir.i64_attr(concat_axis),
-                            mlir.i64_attr(split_count),
-                            _replica_groups_mhlo(replica_groups)).results
+    operand = [x] if mlir_api_version >= 38 else x
+    return mhlo.AllToAllOp(
+        operand,
+        split_dimension=mlir.i64_attr(split_axis),
+        concat_dimension=mlir.i64_attr(concat_axis),
+        split_count=mlir.i64_attr(split_count),
+        replica_groups=_replica_groups_mhlo(replica_groups)).results
   else:
     warnings.warn(
         "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "
