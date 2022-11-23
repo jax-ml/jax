@@ -151,7 +151,7 @@ input_data
 +++ {"id": "IzM6BGB2KhOK"}
 
 ### in_axis_resources & out_axis_resources
-Pytree of structure matching that of arguments to fun, with all actual arguments replaced by resource assignment specifications. It is also valid to specify a pytree prefix (e.g. one value in place of a whole subtree), in which case the leaves get broadcast to all values in that subtree.
+Pytree of structure matching that of arguments to `fun`, with all actual arguments replaced by resource assignment specifications. It is also valid to specify a pytree prefix (e.g. one value in place of a whole subtree), in which case the leaves get broadcast to all values in that subtree.
 
 The valid resource assignment specifications are:
 - `None`, in which case the value will be replicated on all devices 
