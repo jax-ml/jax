@@ -44,7 +44,7 @@ jobs:
             pip install libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
-          elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
+          elif [ "${{ matrix.jaxlib-version }}" == "build-from-head" ]; then
             git clone https://github.com/tensorflow/tensorflow "${RUNNER_TEMP}/tensorflow"
             python3 build/build.py --enable_tpu \
               --bazel_options="--override_repository=org_tensorflow=${RUNNER_TEMP}/tensorflow"
