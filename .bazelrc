@@ -157,22 +157,22 @@ build:rbe_linux --host_linkopt=-lm
 # Use the GPU toolchain until the CPU one is ready.
 # https://github.com/bazelbuild/bazel/issues/13623
 build:rbe_cpu_linux_base --config=rbe_linux
-build:rbe_cpu_linux_base --host_crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_cuda//crosstool:toolchain"
-build:rbe_cpu_linux_base --crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_cuda//crosstool:toolchain"
-build:rbe_cpu_linux_base --extra_toolchains="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_cuda//crosstool:toolchain-linux-x86_64"
-build:rbe_cpu_linux_base --extra_execution_platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_platform//:platform"
-build:rbe_cpu_linux_base --host_platform="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_platform//:platform"
-build:rbe_cpu_linux_base --platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_platform//:platform"
+build:rbe_cpu_linux_base --host_crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base --crosstool_top="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain"
+build:rbe_cpu_linux_base --extra_toolchains="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain-linux-x86_64"
+build:rbe_cpu_linux_base --extra_execution_platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
+build:rbe_cpu_linux_base --host_platform="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
+build:rbe_cpu_linux_base --platforms="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
 
-build:rbe_cpu_linux_py37 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.7"
+build:rbe_cpu_linux_py37 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.7"
 build:rbe_cpu_linux_py37 --python_path="/usr/local/bin/python3.7"
-build:rbe_cpu_linux_py38 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.8"
+build:rbe_cpu_linux_py38 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.8"
 build:rbe_cpu_linux_py38 --python_path="/usr/local/bin/python3.8"
-build:rbe_cpu_linux_py39 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.9"
+build:rbe_cpu_linux_py39 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.9"
 build:rbe_cpu_linux_py39 --python_path="/usr/local/bin/python3.9"
-build:rbe_cpu_linux_py310 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.10"
+build:rbe_cpu_linux_py310 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.10"
 build:rbe_cpu_linux_py310 --python_path="/usr/local/bin/python3.10"
-build:rbe_cpu_linux_py311 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.4-cudnn8.2-tensorrt7.2_config_python3.11"
+build:rbe_cpu_linux_py311 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-gcc9_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.11"
 build:rbe_cpu_linux_py311 --python_path="/usr/local/bin/python3.11"
 
 build:rbe_linux_cuda_base --config=rbe_linux
