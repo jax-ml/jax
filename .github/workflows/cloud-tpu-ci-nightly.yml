@@ -46,9 +46,9 @@ jobs:
             exit 1
           fi
 
-          python3 -c 'import jax; print("jax version:", jax.__version__)'
-          python3 -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
-          python3 -c 'import jax; print("libtpu version:",
+          python -c 'import jax; print("jax version:", jax.__version__)'
+          python -c 'import jaxlib; print("jaxlib version:", jaxlib.__version__)'
+          python -c 'import jax; print("libtpu version:",
             jax.lib.xla_bridge.get_backend().platform_version)'
       - name: Run tests
         env:
@@ -56,9 +56,9 @@ jobs:
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python -m pytest -n=4 --tb=short \
-            -m "not multiaccelerator" tests examples
+            --maxfail=20 -m "not multiaccelerator" tests examples
           # Run multi-accelerator across all chips
-          python -m pytest -m "multiaccelerator" --tb=short tests
+          python -m pytest -m "multiaccelerator" --tb=short --maxfail=20 tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ failure() && github.ref_name == 'main' }}
