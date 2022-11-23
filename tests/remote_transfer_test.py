@@ -14,6 +14,7 @@
 """Tests for cross host device transfer."""
 
 from absl.testing import absltest
+import contextlib
 import unittest
 import numpy as np
 
@@ -23,6 +24,10 @@ from jax._src import test_util as jtu
 from jax.config import config
 
 config.parse_flags_with_absl()
+
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
 
 
 class RemoteTransferTest(jtu.JaxTestCase):

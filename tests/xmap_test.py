@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import functools
 import itertools as it
 import os
@@ -54,6 +55,11 @@ from jax.ad_checkpoint import checkpoint
 
 from jax.config import config
 config.parse_flags_with_absl()
+
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
+
 
 # TODO(mattjj): de-duplicate setUpModule and tearDownModule with pmap_test.py
 # Run all tests with 8 CPU devices.

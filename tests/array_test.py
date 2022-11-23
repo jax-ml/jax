@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for GlobalDeviceArray."""
 
+import contextlib
 import os
 import unittest
 from absl.testing import absltest
@@ -42,6 +43,11 @@ config.parse_flags_with_absl()
 
 
 prev_xla_flags = None
+
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
+
 
 # Run all tests with 8 CPU devices.
 def setUpModule():

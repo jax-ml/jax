@@ -53,7 +53,12 @@ jobs:
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
-        run: python -m pytest --tb=short tests examples
+        run: |
+          # Run single-accelerator tests in parallel
+          JAX_ENABLE_TPU_XDIST=true python -m pytest -n=4 --tb=short \
+            -m "not multiaccelerator" tests examples
+          # Run multi-accelerator across all chips
+          python -m pytest -m "multiaccelerator" --tb=short tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ failure() && github.ref_name == 'main' }}

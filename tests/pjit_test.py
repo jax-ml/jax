@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import os
 import re
 from functools import partial, lru_cache
@@ -56,6 +57,11 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
+
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
+
 
 def setUpModule():
   global prev_xla_flags

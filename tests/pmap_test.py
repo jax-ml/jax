@@ -14,6 +14,7 @@
 
 
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from functools import partial
 import itertools as it
 import gc
@@ -54,6 +55,11 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
+
+
+with contextlib.suppress(ImportError):
+  import pytest
+  pytestmark = pytest.mark.multiaccelerator
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
