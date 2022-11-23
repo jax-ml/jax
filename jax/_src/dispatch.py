@@ -1113,13 +1113,13 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
   min_compile_time = config.jax_persistent_cache_min_compile_time_secs
   if min_compile_time:
     if compile_time_secs < min_compile_time:
-      logging.info(
+      logger.info(
           "Not writing persistent cache entry for '%s' because it took < %.2f "
           "seconds to compile (%.2fs)", module_name, min_compile_time,
           compile_time_secs)
       return
     else:
-      logging.info(
+      logger.info(
           "'%s' took at least %.2f seconds to compile (%.2fs), writing "
           "persistent cache entry", module_name, min_compile_time,
           compile_time_secs)
