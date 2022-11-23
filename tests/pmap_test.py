@@ -1690,7 +1690,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     vals = list(range(500))
     ndevices = jax.device_count()
-    self.assertAllClose(f(jnp.array([vals] * ndevices)),
+    self.assertAllClose(f([np.array([i] * ndevices) for i in range(500)]),
                         jnp.array([sum(vals)] * ndevices))
 
   def testPostProcessMap2(self):
