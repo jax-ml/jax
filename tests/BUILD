@@ -124,6 +124,7 @@ jax_test(
     },
     shard_count = {
         "tpu": 20,
+        "cpu": 20,
     },
 )
 
