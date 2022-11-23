@@ -14,7 +14,10 @@ jobs:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
         python-version: ["3.10"] # TODO(jakevdp): update to 3.11 when available.
-        jaxlib-version: ["latest-release", "nightly"]
+        jaxlib-version: ["latest-release", "nightly", "build-from-head"]
+      exclude:
+        - jaxlib-version: "latest-release"
+        - jaxlib-version: "nightly"
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
@@ -38,6 +41,14 @@ jobs:
             pip install .
             pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+            pip install libtpu-nightly \
+              -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+          elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
+            git clone https://github.com/tensorflow/tensorflow "${RUNNER_TEMP}/tensorflow"
+            python3 build/build.py --enable_tpu \
+              --bazel_options="--override_repository=org_tensorflow=${RUNNER_TEMP}/tensorflow"
+            pip install "${RUNNER_TEMP}/tensorflow/dist/jaxlib*.whl"
             pip install libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
