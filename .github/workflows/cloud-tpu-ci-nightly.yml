@@ -45,9 +45,11 @@ jobs:
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
           elif [ "${{ matrix.jaxlib-version }}" == "build-from-head" ]; then
-            git clone https://github.com/tensorflow/tensorflow "${RUNNER_TEMP}/tensorflow"
+            TF_DIR="${RUNNER_TEMP}/tensorflow"
+            git clone -q https://github.com/tensorflow/tensorflow "${TF_DIR}"
+            echo "tensorflow git commit: $(git --git-dir=${TF_DIR}/.git rev-parse HEAD)"
             python3 build/build.py --enable_tpu \
-              --bazel_options="--override_repository=org_tensorflow=${RUNNER_TEMP}/tensorflow"
+              --bazel_options="--override_repository=org_tensorflow=${TF_DIR}"
             pip install dist/jaxlib*.whl
             pip install libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
