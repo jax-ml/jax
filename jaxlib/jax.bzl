@@ -19,6 +19,7 @@ load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
+load("@org_tensorflow//tensorflow/core/platform:build_config_root.bzl", _tf_exec_properties = "tf_exec_properties")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -32,6 +33,7 @@ if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
 if_windows = _if_windows
 flatbuffer_cc_library = _flatbuffer_cc_library
+tf_exec_properties = _tf_exec_properties
 
 jax_internal_packages = []
 jax_test_util_visibility = []
@@ -176,6 +178,7 @@ def jax_test(
             shard_count = test_shards,
             tags = test_tags,
             main = main,
+            exec_properties = tf_exec_properties({"tags": test_tags}),
         )
 
 def jax_generate_backend_suites(backends = []):
