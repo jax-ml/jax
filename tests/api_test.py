@@ -8805,6 +8805,28 @@ class CustomVmapTest(jtu.JaxTestCase):
     ys = api.vmap(f)(xs)
     self.assertAllClose(ys, jnp.cos(xs))
 
+  def test_closure(self):
+    z = jnp.array([2., 1., 3.])
+
+    @api.custom_vmap
+    def f(x): return z + jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, *args):
+      self.assertEqual(len(in_batched), 1)
+      self.assertEqual(len(args), 1)
+      xs, = args
+      xs_batched, = in_batched
+      self.assertEqual(xs_batched, True)
+      self.assertEqual(axis_size, xs.shape[0])
+      return z + jnp.cos(xs), xs_batched
+
+    x, xs = jnp.array(1.), jnp.arange(3)
+    y = f(x)
+    self.assertAllClose(y, z + jnp.sin(x))
+    ys = api.vmap(f)(xs)
+    self.assertAllClose(ys, z + jnp.cos(xs))
+
   def test_rule_multi_output(self):
     @api.custom_vmap
     def f(x): return jnp.sin(x), jnp.cos(x)
@@ -8961,6 +8983,36 @@ class CustomVmapTest(jtu.JaxTestCase):
     ys, tys = api.jvp(api.vmap(f), [xs], [txs])
     self.assertAllClose(ys, jnp.cos(xs))
     self.assertAllClose(tys, -jnp.sin(xs) * txs)
+
+  def test_jvp_closure(self):
+    z = jnp.array([2., 1., 3.])
+    def bcast(x): return z + x - z
+
+    @api.custom_vmap
+    def f(x): return z + jnp.sin(x)
+
+    @f.def_vmap
+    def rule(axis_size, in_batched, xs):
+      self.assertEqual(axis_size, 3)
+      self.assertEqual(in_batched, [True])
+      return z + jnp.cos(xs), in_batched[0]
+
+    f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
+
+    x, tx = jnp.array(1.), jnp.array(2.)
+    xs, txs = jnp.arange(3.), jnp.arange(3.) * 2.
+
+    y, ty = f_jvp(x, tx)
+    self.assertAllClose(y, z + jnp.sin(x))
+    self.assertAllClose(ty, bcast(jnp.cos(x)) * tx)
+
+    ys, tys = api.vmap(f_jvp)(xs, txs)
+    self.assertAllClose(ys, z + jnp.cos(xs))
+    self.assertAllClose(tys, bcast(-jnp.sin(xs)) * txs)
+
+    ys, tys = api.jvp(api.vmap(f), [xs], [txs])
+    self.assertAllClose(ys, z + jnp.cos(xs))
+    self.assertAllClose(tys, bcast(-jnp.sin(xs)) * txs)
 
   def test_jvp_nary(self):
     @api.custom_vmap

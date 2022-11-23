@@ -19,6 +19,7 @@ from typing import Callable, Optional
 import jax
 from jax import core
 from jax import linear_util as lu
+from jax import tree_util
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters.batching import not_mapped
@@ -66,11 +67,11 @@ class custom_vmap:
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, False, "custom_vmap")
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
-    assert not len(consts)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    in_tree = treedef_tuple((tree_structure(consts), in_tree))
     out_flat = custom_vmap_p.bind(*consts, *args_flat,
                                   call=closed_call,
-                                  rule=self.vmap_rule,
+                                  rule=ClosedRule(self.vmap_rule),
                                   in_tree=in_tree,
                                   out_tree=out_tree())
     return tree_unflatten(out_tree(), out_flat)
@@ -78,6 +79,21 @@ class custom_vmap:
 
 ### utils
 
+# Define a class, instead of making a function closing over `rule`, so
+# that we can override __str__
+class ClosedRule:
+  def __init__(self, rule):
+    functools.update_wrapper(self, rule)
+    self.rule = rule
+
+  def __call__(self, axis_size, all_in_batched, *all_args):
+    _, args = all_args
+    consts_batched, in_batched = all_in_batched
+    assert not any(tree_util.tree_leaves(consts_batched)), consts_batched
+    return call_rule(self.rule, axis_size, in_batched, args)
+
+  def __str__(self):
+    return str(self.rule)
 
 def ensure_list(xs):
   return xs if type(xs) is list else list(xs)
