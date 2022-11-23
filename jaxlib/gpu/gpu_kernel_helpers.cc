@@ -89,6 +89,10 @@ std::string ErrorString(gpublasStatus_t status) {
   }
 }
 
+std::string ErrorString(gpudnnStatus_t status) {
+  return cudnnGetErrorString(status);
+}
+
 #else
 
 std::string ErrorString(hipsparseStatus_t status) {
@@ -215,6 +219,13 @@ absl::Status AsStatus(gpusparseStatus_t status, const char* file,
 absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr) {
   if (status != GPUBLAS_STATUS_SUCCESS)
+    return absl::InternalError(ErrorString(status, file, line, expr));
+  return absl::OkStatus();
+}
+
+absl::Status AsStatus(gpudnnStatus_t status, const char* file,
+                      std::int64_t line, const char* expr) {
+  if (status != GPUDNN_STATUS_SUCCESS)
     return absl::InternalError(ErrorString(status, file, line, expr));
   return absl::OkStatus();
 }

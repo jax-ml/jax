@@ -1001,6 +1001,18 @@ jax_test(
     srcs = ["clear_backends_test.py"],
 )
 
+jax_test(
+    name = "experimental_rnn_test",
+    srcs = ["experimental_rnn_test.py"],
+    disable_backends = [
+        "tpu",
+        "cpu",
+    ],
+    deps = [
+        "//jax:rnn",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",

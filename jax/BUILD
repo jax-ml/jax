@@ -248,3 +248,10 @@ pytype_library(
         ":jax",
     ],
 )
+
+pytype_library(
+    name = "rnn",
+    srcs = ["experimental/rnn.py"],
+    visibility = ["//visibility:public"],
+    deps = [":jax"],
+)

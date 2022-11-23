@@ -49,6 +49,8 @@ absl::Status AsStatus(gpusparseStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
 absl::Status AsStatus(gpublasStatus_t status, const char* file,
                       std::int64_t line, const char* expr);
+absl::Status AsStatus(gpudnnStatus_t status, const char* file,
+                      std::int64_t line, const char* expr);
 
 // Builds an array of pointers to each array in a batch, in device memory.
 // Caution: the return value must be kept alive (e.g., via a stream
