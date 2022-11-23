@@ -1489,6 +1489,9 @@ class PmapComputation(stages.XlaLowering):
     self._hlo = hlo
     self.compile_args = compile_args
 
+  def _compile_unloaded(self) -> Union[UnloadedPmapExecutable, PmapExecutable]:
+    return UnloadedPmapExecutable.from_hlo(self._hlo, **self.compile_args)
+
   # -- stages.XlaLowering overrides
 
   def hlo(self) -> xc.XlaComputation:
@@ -1510,18 +1513,25 @@ class PmapComputation(stages.XlaLowering):
   @profiler.annotate_function
   def compile(self) -> PmapExecutable:
     if self._executable is None:
-      self._executable = PmapExecutable.from_hlo(self._hlo, **self.compile_args)
+      executable = self._compile_unloaded()
+      if isinstance(executable, UnloadedPmapExecutable):
+        executable = executable.load()
+      self._executable = executable
     return self._executable
 
 
-class PmapExecutable(stages.XlaExecutable):
-  __slots__ = ['xla_executable', 'unsafe_call', 'fingerprint', 'in_avals']
-
-  def __init__(self, xla_executable, unsafe_call, fingerprint, in_avals):
-    self.xla_executable = xla_executable
-    self.unsafe_call = unsafe_call
-    self.fingerprint = fingerprint
-    self.in_avals = in_avals
+@dataclasses.dataclass
+class UnloadedPmapExecutable:
+  compiled: Any
+  backend: xb.XlaBackend
+  local_input_avals: Sequence[jax.core.AbstractValue]
+  input_shardings: Sequence[XLACompatibleSharding]
+  local_output_avals: Sequence[ShapedArray]
+  output_shardings: Sequence[XLACompatibleSharding]
+  unordered_effects: List[core.Effect]
+  ordered_effects: List[core.Effect]
+  keepalive: Sequence[Any]
+  host_callbacks: Sequence[Any]
 
   @staticmethod
   def from_hlo(xla_computation,
@@ -1604,9 +1614,6 @@ class PmapExecutable(stages.XlaExecutable):
                             parts.local_num_partitions, arg_parts, aval, in_axis)
         for aval, arg_parts, in_axis in safe_zip(
             shards.sharded_avals, local_arg_parts_, pci.in_axes)]
-    input_indices = [spec_to_indices(aval.shape, spec)  # pytype: disable=attribute-error
-                    if spec is not None else None
-                    for aval, spec in safe_zip(pci.avals, input_sharding_specs)]
     in_shardings = _get_pmap_sharding(local_device_assignment, input_sharding_specs)
     nouts = len(shards.out_sharded_avals)
 
@@ -1627,9 +1634,15 @@ class PmapExecutable(stages.XlaExecutable):
         for out_parts, aval, out_axis in safe_zip(
             local_out_parts, local_out_avals, pci.out_axes)]
     out_shardings = _get_pmap_sharding(local_device_assignment, out_specs)
-    handle_outs = local_avals_to_results_handler(local_unmapped_avals, out_shardings)
 
     if hasattr(pci.backend, "compile_replicated"):
+      input_indices = [
+          spec_to_indices(aval.shape, spec)  # pytype: disable=attribute-error
+          if spec is not None else None
+          for aval, spec in safe_zip(pci.avals, input_sharding_specs)
+      ]
+      handle_outs = local_avals_to_results_handler(local_unmapped_avals,
+                                                   out_shardings)
       return _compile_replicated_pmap_executable_from_hlo(
           xla_computation, pci, input_indices, in_shardings, handle_outs,
           compile_options, host_callbacks, bool(unordered_effects),
@@ -1640,16 +1653,51 @@ class PmapExecutable(stages.XlaExecutable):
          event=dispatch.BACKEND_COMPILE_EVENT):
       compiled = dispatch.compile_or_get_cached(
           pci.backend, xla_computation, compile_options, host_callbacks)
-    handle_args = InputsHandler(
-        compiled.local_devices(), in_shardings, input_indices, InputsHandlerMode.pmap)
-    execute_fun = ExecuteReplicated(compiled, "parallel computation",
-                                    pci.backend, handle_args, handle_outs,
-                                    unordered_effects, ordered_effects,
-                                    keepalive, bool(host_callbacks),
-                                    set(range(len(input_indices))))
-    fingerprint = getattr(compiled, "fingerprint", None)
 
-    return PmapExecutable(compiled, execute_fun, fingerprint, pci.avals)
+    return UnloadedPmapExecutable(
+        compiled=compiled,
+        backend=pci.backend,
+        local_input_avals=pci.avals,
+        input_shardings=in_shardings,
+        local_output_avals=local_unmapped_avals,
+        output_shardings=out_shardings,
+        unordered_effects=unordered_effects,
+        ordered_effects=ordered_effects,
+        keepalive=keepalive,
+        host_callbacks=host_callbacks,
+    )
+
+  def load(self) -> PmapExecutable:
+    input_indices = [
+        spec_to_indices(aval.shape, spec.sharding_spec)  # pytype: disable=attribute-error
+        if spec.sharding_spec is not None else None
+        for aval, spec in safe_zip(self.local_input_avals, self.input_shardings)
+    ]
+    handle_outs = local_avals_to_results_handler(self.local_output_avals,
+                                                 self.output_shardings)
+    handle_args = InputsHandler(self.compiled.local_devices(),
+                                self.input_shardings, input_indices,
+                                InputsHandlerMode.pmap)
+    execute_fun = ExecuteReplicated(self.compiled, "parallel computation",
+                                    self.backend, handle_args, handle_outs,
+                                    self.unordered_effects,
+                                    self.ordered_effects, self.keepalive,
+                                    bool(self.host_callbacks),
+                                    set(range(len(input_indices))))
+    fingerprint = getattr(self.compiled, "fingerprint", None)
+
+    return PmapExecutable(self.compiled, execute_fun, fingerprint,
+                          self.local_input_avals)
+
+
+class PmapExecutable(stages.XlaExecutable):
+  __slots__ = ["xla_executable", "unsafe_call", "fingerprint", "in_avals"]
+
+  def __init__(self, xla_executable, unsafe_call, fingerprint, in_avals):
+    self.xla_executable = xla_executable
+    self.unsafe_call = unsafe_call
+    self.fingerprint = fingerprint
+    self.in_avals = in_avals
 
   # -- stages.XlaExecutable overrides
 

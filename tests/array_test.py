@@ -932,6 +932,9 @@ class RngShardingTest(jtu.JaxTestCase):
 
     verify_serialization(lowered)
     verify_serialization(jax.jit(lambda x: x * x).lower(np.arange(100)))
+    verify_serialization(
+        jax.pmap(lambda x: x * x).lower(
+            np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
