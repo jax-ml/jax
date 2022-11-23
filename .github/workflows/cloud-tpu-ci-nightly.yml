@@ -48,7 +48,7 @@ jobs:
             git clone https://github.com/tensorflow/tensorflow "${RUNNER_TEMP}/tensorflow"
             python3 build/build.py --enable_tpu \
               --bazel_options="--override_repository=org_tensorflow=${RUNNER_TEMP}/tensorflow"
-            pip install "${RUNNER_TEMP}/tensorflow/dist/jaxlib*.whl"
+            pip install dist/jaxlib*.whl"
             pip install libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
