@@ -906,7 +906,7 @@ def f_fwd(x, y):
 
 def f_bwd(res, g):
   cos_x, sin_x, y = res
-  return (cos_x * g * y, -sin_x * g)
+  return (cos_x * g * y, sin_x * g)
 
 f.defvjp(f_fwd, f_bwd)
 ```
