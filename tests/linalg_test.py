@@ -334,6 +334,25 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           1e-3 * np.linalg.norm(a))
 
   @jtu.sample_product(
+    n=[0, 4, 5, 50, 512],
+    dtype=float_types + complex_types,
+    lower=[True, False],
+  )
+  def testEighIdentity(self, n, dtype, lower):
+    tol = 1e-3
+    uplo = "L" if lower else "U"
+
+    a = jnp.eye(n, dtype=dtype)
+    w, v = jnp.linalg.eigh(a, UPLO=uplo, symmetrize_input=False)
+    w = w.astype(v.dtype)
+    self.assertLessEqual(
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
+    with jax.numpy_rank_promotion('allow'):
+      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
+                           tol * np.linalg.norm(a))
+
+
+  @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
     dtype=float_types + complex_types,
   )
@@ -427,7 +446,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     ws, vs = vmap(jsp.linalg.eigh)(args)
     ws = ws.astype(vs.dtype)
     norm = np.max(np.linalg.norm(np.matmul(args, vs) - ws[..., None, :] * vs))
-    self.assertTrue(norm < 3e-2)
+    self.assertLess(norm, 3e-2)
 
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],

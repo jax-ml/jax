@@ -12,7 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License
 
-"""Serial algorithm for eigh."""
+"""Symmetric (Hermitian) eigendecomposition using QDWH
+
+References:
+Nakatsukasa, Yuji, and Nicholas J. Higham.
+"Stable and efficient spectral divide and conquer algorithms for the symmetric
+eigenvalue decomposition and the SVD." SIAM Journal on Scientific Computing 35,
+no. 3 (2013): A1325-A1349.
+https://epubs.siam.org/doi/abs/10.1137/120876605
+
+This implementation is primarily used on TPU, but it can in principle work on
+CPU and GPU also.
+"""
 
 from __future__ import annotations
 
@@ -332,7 +343,7 @@ def _eigh_work(H, n, termination_size=256):
     eig_vecs = jnp.dot(V, eig_vecs)
 
     eig_vals = eig_vals.astype(eig_vecs.dtype)
-    blocks = _update_slice(blocks, eig_vals[:, None], (offset, 0), (b, b))
+    blocks = _update_slice(blocks, eig_vals[:, None], (offset, 0), (b, 1))
     eigenvectors = _update_slice(eigenvectors, eig_vecs, (0, offset), (n, b))
     return agenda, blocks, eigenvectors
 
@@ -340,20 +351,41 @@ def _eigh_work(H, n, termination_size=256):
     # The recursive case of the algorithm, specialized to a static block size
     # of B.
     H = _slice(blocks, (offset, 0), (b, b), (B, B))
-    V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
 
-    split_point = jnp.nanmedian(_mask(jnp.diag(jnp.real(H)), (b,), jnp.nan))  # TODO: Improve this?
-    H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(H, b, split_point, V0=V)
+    def nearly_diagonal_case(agenda, blocks, eigenvectors):
+      blocks = _update_slice(blocks, jnp.diag(H)[:, None], (offset, 0), (b, 1))
+      return agenda, blocks, eigenvectors
 
-    blocks = _update_slice(blocks, H_minus, (offset, 0), (rank, rank))
-    blocks = _update_slice(blocks, H_plus, (offset + rank, 0), (b - rank, b - rank))
-    eigenvectors = _update_slice(eigenvectors, V_minus, (0, offset), (n, rank))
-    eigenvectors = _update_slice(eigenvectors, V_plus, (0, offset + rank),
-                                 (n, b - rank))
+    def default_case(agenda, blocks, eigenvectors):
+      V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
+      # TODO: Improve this?
+      split_point = jnp.nanmedian(_mask(jnp.diag(jnp.real(H)), (b,), jnp.nan))
+      H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(
+          H, b, split_point, V0=V)
 
-    agenda = agenda.push(_Subproblem(offset + rank, (b - rank)))
-    agenda = agenda.push(_Subproblem(offset, rank))
-    return agenda, blocks, eigenvectors
+      blocks = _update_slice(blocks, H_minus, (offset, 0), (rank, rank))
+      blocks = _update_slice(blocks, H_plus, (offset + rank, 0),
+                             (b - rank, b - rank))
+      eigenvectors = _update_slice(eigenvectors, V_minus, (0, offset),
+                                   (n, rank))
+      eigenvectors = _update_slice(eigenvectors, V_plus, (0, offset + rank),
+                                  (n, b - rank))
+
+      agenda = agenda.push(_Subproblem(offset + rank, (b - rank)))
+      agenda = agenda.push(_Subproblem(offset, rank))
+      return agenda, blocks, eigenvectors
+
+    # If the matrix is nearly diagonal, terminate the execution. This is
+    # necessary to handle matrices with clusters of eigenvalues. See Nakatsukasa
+    # and Higham section 5.2.
+    norm = jnp_linalg.norm(H)
+    tol = jnp.asarray(10 * jnp.finfo(H.dtype).eps / 2, dtype=norm.dtype)
+    off_diag_norm = jnp_linalg.norm(
+        H - jnp.diag(jnp.diag(jnp.real(H)).astype(H.dtype)))
+    # We also handle nearly-all-zero matrices matrices here.
+    nearly_diagonal = (norm < tol) | (off_diag_norm / norm < tol)
+    return lax.cond(nearly_diagonal, nearly_diagonal_case, default_case,
+                    agenda, blocks, eigenvectors)
 
   def loop_cond(state):
     agenda, _, _ = state
