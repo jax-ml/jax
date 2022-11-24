@@ -176,6 +176,27 @@ def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
   return types[0]
 
 
+def _dynamic_array_shape_vars(aval: core.ShapedArray) -> Sequence[core.Var]:
+  return [d for d in aval.shape if type(d) is core.Var]
+
+shape_vars_handlers: Dict[Type[core.AbstractValue],
+                          Callable[[Any], Sequence[core.Var]]] = {}
+
+shape_vars_handlers[core.ShapedArray] = lambda _: []
+shape_vars_handlers[core.ConcreteArray] = lambda _: []
+shape_vars_handlers[core.AbstractToken] = lambda _: []
+shape_vars_handlers[core.DShapedArray] = _dynamic_array_shape_vars
+
+
+def aval_to_shape_vars(aval: core.AbstractValue) -> Sequence[core.Var]:
+  """Converts a JAX aval to a set of variables used as shape"""
+  try:
+    return shape_vars_handlers[type(aval)](aval)
+  except KeyError as err:
+    raise TypeError(
+        f"No shape_vars_handlers for aval type: {type(aval)}") from err
+
+
 # Constants
 
 class ConstantHandler(Protocol):
@@ -843,8 +864,20 @@ def lower_jaxpr_to_fun(
         [[sharding] * len(types)
          for sharding, types in zip(result_shardings, output_types)])
 
+  shape_vars = set()  # vars referenced as shapes
+  input_dynamic_axes = []  # for building `mhlo.dynamic_axes` attribute
+  output_dynamic_axes = []  # for building `mhlo.dynamic_axes` attribute
+
+  for vs in (aval_to_shape_vars(in_aval) for in_aval in jaxpr.in_avals):
+    input_dynamic_axes.append([jaxpr.jaxpr.invars.index(v) for v in vs])
+    shape_vars = shape_vars.union(vs)
+
+  for vs in (aval_to_shape_vars(out_aval) for out_aval in jaxpr.out_avals):
+    output_dynamic_axes.append([jaxpr.jaxpr.invars.index(v) for v in vs])
+    shape_vars = shape_vars.union(vs)
+
   if (replicated_args is not None or ir_arg_shardings is not None
-      or input_output_aliases is not None):
+      or input_output_aliases is not None or len(shape_vars) > 0):
     arg_attrs: List[Dict[str, ir.Attribute]] = [
         {} for _ in range(len(flat_input_types))]
 
@@ -875,16 +908,34 @@ def lower_jaxpr_to_fun(
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
 
+    if len(shape_vars) > 0:
+      for attrs, invar in zip(arg_attrs, jaxpr.jaxpr.invars):
+        if invar in shape_vars:
+          attrs["mhlo.dimension_size"] = ir.UnitAttr.get()
+      for attrs, dynamic_axes in zip(arg_attrs, input_dynamic_axes):
+        if len(dynamic_axes) > 0:
+          attrs["mhlo.dynamic_axes"] = mhlo.DynamicAxesAttr.get(dynamic_axes)
+
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
 
-  if use_sharding_annotations and ir_result_shardings is not None:
-    func_op.result_attrs = ir.ArrayAttr.get([
-        ir.DictAttr.get(
-            {} if sharding is None else
-            {"mhlo.sharding": ir.StringAttr.get(sharding.SerializeToString())}
-        ) for sharding in ir_result_shardings
-    ])
+  if ir_result_shardings is not None or len(shape_vars) > 0:
+    result_attrs: List[Dict[str, ir.Attribute]] = [
+        {} for _ in range(len(flat_output_types))]
+
+    if use_sharding_annotations and ir_result_shardings is not None:
+      for attrs, sharding in zip(result_attrs, ir_result_shardings):
+        if sharding is not None:
+          attrs["mhlo.sharding"] = ir.StringAttr.get(
+              sharding.SerializeToString())
+
+    if len(shape_vars) > 0:
+      for attrs, dynamic_axes in zip(result_attrs, output_dynamic_axes):
+        if len(dynamic_axes) > 0:
+          attrs["mhlo.dynamic_axes"] = mhlo.DynamicAxesAttr.get(dynamic_axes)
+
+    func_op.result_attrs = ir.ArrayAttr.get(
+        [ir.DictAttr.get(attrs) for attrs in result_attrs])
 
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):

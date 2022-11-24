@@ -1277,7 +1277,9 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
     f_lowered = f.lower(np.arange(3, dtype='int32'))
     mhlo = f_lowered.compiler_ir('mhlo')
-    self.assertIn('tensor<?xi32>', str(mhlo))
+    self.assertIn('{mhlo.dimension_size}', str(mhlo))
+    self.assertIn('tensor<?xi32> {mhlo.dynamic_axes = #mhlo.dynamic_axes<[0]>}',
+                  str(mhlo))
 
   def test_lower_abstracted_axes_shapedtypestruct(self):
     @partial(jax.jit, abstracted_axes=('n',))
@@ -1286,7 +1288,9 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
     f_lowered = f.lower(jax.ShapeDtypeStruct((3,), np.int32))
     mhlo = f_lowered.compiler_ir('mhlo')
-    self.assertIn('tensor<?xi32>', str(mhlo))
+    self.assertIn('{mhlo.dimension_size}', str(mhlo))
+    self.assertIn('tensor<?xi32> {mhlo.dynamic_axes = #mhlo.dynamic_axes<[0]>}',
+                  str(mhlo))
 
   def test_vmap_abstracted_axis(self):
     def foo(x, y):

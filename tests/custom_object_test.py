@@ -141,6 +141,7 @@ def sparse_array_mlir_type_handler(a):
   )
 
 mlir.ir_type_handlers[AbstractSparseArray] = sparse_array_mlir_type_handler
+mlir.shape_vars_handlers[AbstractSparseArray] = lambda _: []
 
 sp_indices_p = core.Primitive('sp_indices')
 
