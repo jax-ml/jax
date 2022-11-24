@@ -1208,6 +1208,179 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         include_xla_op_metadata=False
     )
 
+  # TODO(necula): figure out this failure
+  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
+  def test_global_device_array(self):
+
+    def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
+      if global_data is None:
+        global_data = np.arange(np.prod(global_shape)).reshape(global_shape)
+      return GlobalDeviceArray.from_callback(
+          global_shape, global_mesh, mesh_axes,
+          lambda idx: global_data[idx]), global_data
+
+    global_mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh_axes = P(("x", "y"))
+    params, _ = create_gda((8, 2), global_mesh, mesh_axes)
+    input_data = np.arange(16).reshape(2, 8)
+
+    # Test 1: use GDA as constants
+    def jax_func(input_data):
+      handle = pjit(
+          jnp.matmul,
+          in_axis_resources=(P("y", "x"), FROM_GDA),
+          out_axis_resources=None)
+      return handle(input_data, params)
+
+    with global_mesh:
+      tf_func = tf.function(
+          jax2tf.convert(jax_func, enable_xla=True),
+          jit_compile=True,
+      )
+      jax_out = jax_func(input_data=input_data)
+      tf_out = tf_func(input_data=input_data)
+      # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
+      np.array_equal(jax_out._value, np.array(tf_out))
+
+  @jtu.with_mesh([("x", 2)])
+  def test_pjit_basic1D(self):
+
+    def func_jax(x, y):
+      return x + y
+
+    shape = (8, 10)
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    in_axis_resources = (P("x"), P("x"))
+    out_axis_resources = None
+    res_jax = pjit(
+        func_jax,
+        in_axis_resources=in_axis_resources,
+        out_axis_resources=out_axis_resources)(x, x)
+    module = get_serialized_computation(
+        func_jax,
+        x,
+        x,
+        use_pjit=True,
+        in_axis_resources=in_axis_resources,
+        out_axis_resources=out_axis_resources)
+
+    def f_tf(x_tf, y_tf):
+      return tfxla.call_module([x_tf, y_tf],
+                               version=2,
+                               module=module,
+                               Tout=[x.dtype],
+                               Sout=[x.shape])
+
+    res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
+    self.assertAllClose(res_tf.numpy(), res_jax)
+
+  def assertAllOperationStartWith(self, g: tf.Graph, scope_name: str):
+    """Assert all operations name start with ```scope_name```.
+
+    Also the scope_name only occur one time.
+    """
+    result = g.get_operations()
+    if not result:
+      self.fail("result is empty.")
+    for op in result:
+      logging.info("tf op.name = %s", op.name)
+      if not op.name.startswith(scope_name):
+        self.fail(f"{op.name} does not start with {scope_name}.")
+
+  def test_name_scope_polymorphic(self):
+    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
+
+    def func_jax(x, y):
+      return jnp.sin(x) + jnp.cos(y)
+
+    func_tf = jax2tf.convert(
+        func_jax, polymorphic_shapes="(b,...)", with_gradient=True)
+
+    outer_scope = "output_a"
+
+    g = tf.Graph()
+    with g.as_default() as g:
+      with tf.name_scope(outer_scope):
+        x = tf.Variable(
+            tf.zeros(shape=(1, 5), dtype=tf.dtypes.float32), name="x")
+        y = tf.compat.v1.placeholder(tf.dtypes.float32, (None, 5), "y")
+        _ = func_tf(x, y)
+    self.assertAllOperationStartWith(g, outer_scope)
+
+    # wrap tf.function
+    g2 = tf.Graph()
+    with g2.as_default() as g:
+      with tf.name_scope(outer_scope):
+        x = tf.Variable(
+            tf.zeros(shape=(1, 5), dtype=tf.dtypes.float32), name="x")
+        y = tf.compat.v1.placeholder(tf.dtypes.float32, (None, 5), "y")
+        _ = tf.function(func_tf, jit_compile=True, autograph=False)(x, y)
+    self.assertAllOperationStartWith(g2, outer_scope)
+
+  def test_name_scope_cond(self):
+
+    def f(x):
+
+      def f_pos(x):
+        with jax.named_scope("jax_f_pos"):
+          return lax.cond(x < 1., jnp.cos, jnp.sin, x)
+
+      with jax.named_scope("jax_f_outer"):
+        return lax.cond(x > 0., f_pos, lambda x: x, x)
+
+    @tf.function(jit_compile=True, autograph=False)
+    def outer_forward():
+      with tf.name_scope("tf_outer_forward"):
+        x = 0.5
+        f_tf = jax2tf.convert(f)
+        _ = f_tf(x)
+
+    g = outer_forward.get_concrete_function().graph
+    self.assertAllOperationStartWith(g, "tf_outer_forward")
+    for func in g._functions.values():
+      self.assertAllOperationStartWith(
+          func.graph, "tf_outer_forward/jax2tf_f_/jax_f_outer")
+
+    x = tf.Variable(0.5, name="tf_outer_back/x")
+
+    @tf.function(jit_compile=True, autograph=False)
+    def outer_back():
+      with tf.name_scope("tf_outer_back"):
+        f_tf = jax2tf.convert(f)
+        with tf.GradientTape() as tape:
+          res_tf = f_tf(x)
+          _ = tape.gradient(res_tf, x)
+
+    g = outer_back.get_concrete_function().graph
+    self.assertAllOperationStartWith(g, "tf_outer_back")
+    for func in g._functions.values():
+      self.assertAllOperationStartWith(func.graph, "tf_outer_back")
+
+  def test_name_scope_while_loop(self):
+
+    def f(x):
+      with tf.name_scope("outer_scope"):
+
+        def condition(x):
+          return jnp.sum(x, keepdims=False) < 100
+
+        def body(x):
+          return jnp.add(x, 2.0)
+
+        result = jax.lax.while_loop(condition, body, x)
+        return result
+
+    tf_f = tf.function(jax2tf.convert(f), jit_compile=True, autograph=False)
+    g = tf_f.get_concrete_function(tf.zeros((1, 3))).graph
+
+    for func in g._functions.values():
+      for op in func.graph.get_operations():
+        if op.name.count(f"outer_scope/jax2tf_{f.__name__}_/while") > 1:
+          self.fail(
+              "tf graph has repeated name issue on when converting lax.while to tf.while."
+              f"See op.name = : {op.name}")
+
 def get_serialized_computation(
     f_jax: Callable,
     *args,
@@ -1310,92 +1483,6 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         tf.nest.map_structure(lambda t: t.numpy(), res), jax_res)
 
-  # TODO(necula): figure out this failure
-  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
-  def test_global_device_array(self):
-
-    def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
-      if global_data is None:
-        global_data = np.arange(np.prod(global_shape)).reshape(global_shape)
-      return GlobalDeviceArray.from_callback(
-          global_shape, global_mesh, mesh_axes,
-          lambda idx: global_data[idx]), global_data
-
-    global_mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    mesh_axes = P(("x", "y"))
-    params, _ = create_gda((8, 2), global_mesh, mesh_axes)
-    input_data = np.arange(16).reshape(2, 8)
-
-    # Test 1: use GDA as constants
-    def jax_func(input_data):
-      handle = pjit(
-          jnp.matmul,
-          in_axis_resources=(P("y", "x"), FROM_GDA),
-          out_axis_resources=None)
-      return handle(input_data, params)
-
-    with global_mesh:
-      tf_func = tf.function(
-          jax2tf.convert(jax_func, enable_xla=True),
-          jit_compile=True,
-      )
-      jax_out = jax_func(input_data=input_data)
-      tf_out = tf_func(input_data=input_data)
-      # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
-      np.array_equal(jax_out._value, np.array(tf_out))
-
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit_basic1D(self):
-    def func_jax(x, y):
-      return x + y
-
-    shape = (8, 10)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    in_axis_resources = (P("x"), P("x"))
-    out_axis_resources = None
-    res_jax = pjit(func_jax,
-                   in_axis_resources=in_axis_resources,
-                   out_axis_resources=out_axis_resources)(x, x)
-    module = get_serialized_computation(func_jax, x, x,
-                                        use_pjit=True,
-                                        in_axis_resources=in_axis_resources,
-                                        out_axis_resources=out_axis_resources)
-    def f_tf(x_tf, y_tf):
-      return tfxla.call_module([x_tf, y_tf],
-                               version=2,
-                               module=module,
-                               Tout=[x.dtype],
-                               Sout=[x.shape])
-    res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
-    self.assertAllClose(res_tf.numpy(), res_jax)
-
-  def test_outer_name_scope(self):
-    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
-      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
-
-    def assertAllOperationStartWith(g: tf.Graph, scope_name):
-      """Assert all operations name start with ```scope_name```."""
-      result = g.get_operations()
-      if not result:
-        self.fail("result is empty.")
-      for op in result:
-        logging.info("op.name = %s", op.name)
-        if not op.name.startswith(scope_name):
-          self.fail(f"{op.name} does not start with {scope_name}.")
-
-    def func_jax(x, y):
-      return jnp.sin(x) + jnp.cos(y)
-
-    outer_scope = "output_a"
-    g = tf.Graph()
-    with g.as_default() as g:
-      with tf.name_scope(outer_scope):
-        x = tf.Variable(
-            tf.zeros(shape=(1, 5), dtype=tf.dtypes.float32), name="x")
-        y = tf.compat.v1.placeholder(tf.dtypes.float32, (None, 5), "y")
-        func_tf = jax2tf.convert(func_jax, polymorphic_shapes="(b,...)")
-        _ = func_tf(x, y)
-    assertAllOperationStartWith(g, outer_scope)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
