@@ -1103,12 +1103,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(f.as_text(), (str, type(None)))
     self.assertIsInstance(g.as_text(), (str, type(None)))
 
+  @jtu.skip_on_xla_cpu_mlir
   def test_jit_lower_compile_cost_analysis(self):
     f = self.jit(lambda x: x).lower(1.).compile()
     g = self.jit(lambda x: x + 4).lower(1.).compile()
     f.cost_analysis()  # doesn't raise
     g.cost_analysis()  # doesn't raise
 
+  @jtu.skip_on_xla_cpu_mlir
   def test_jit_lower_compile_memory_analysis(self):
     f = self.jit(lambda x: x).lower(1.).compile()
     g = self.jit(lambda x: x + 4).lower(1.).compile()
