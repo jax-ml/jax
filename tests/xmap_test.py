@@ -767,12 +767,14 @@ class XMapTest(XMapTestCase):
     f = f.lower(x).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
 
+  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     f = f.lower(x).compile()
     f.cost_analysis()  # doesn't raise
 
+  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileMemoryAnalysis(self):
     f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))

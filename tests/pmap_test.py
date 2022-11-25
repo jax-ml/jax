@@ -302,6 +302,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = f.lower(x).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
 
+  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
@@ -309,6 +310,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = f.lower(x).compile()
     f.cost_analysis()  # doesn't raise
 
+  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileMemoryAnalysis(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
