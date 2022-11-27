@@ -526,7 +526,7 @@ To install on a machine with an NVidia GPU, run
 conda install jax cuda-nvcc -c conda-forge -c nvidia
 ```
 
-Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
+*Note the `cudatoolkit` distributed by `conda-forge` is missing `ptxas`, which
 JAX requires. You must therefore either install the `cuda-nvcc` package from
 the `nvidia` channel, or install CUDA on your machine separately so that `ptxas`
 is in your path. The channel order above is important (`conda-forge` before
