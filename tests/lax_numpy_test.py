@@ -2289,7 +2289,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     vshape=[(), (5,), (5, 5)],
     side=['left', 'right'],
     dtype=number_dtypes,
-    method=['sort', 'scan'],
+    method=['sort', 'scan', 'brute'],
   )
   def testSearchsorted(self, ashape, vshape, side, dtype, method):
     rng = jtu.rand_default(self.rng())
@@ -2320,7 +2320,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype=inexact_dtypes,
     side=['left', 'right'],
-    method=['sort', 'scan'],
+    method=['sort', 'scan', 'brute'],
   )
   def testSearchsortedNans(self, dtype, side, method):
     if np.issubdtype(dtype, np.complexfloating):

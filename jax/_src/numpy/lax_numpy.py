@@ -4680,13 +4680,23 @@ def _searchsorted_via_sort(sorted_arr: Array, query: Array, side: str, dtype: ty
   return lax.reshape(lax.sub(index, _rank(query_flat)), np.shape(query)).astype(dtype)
 
 
+def _searchsorted_brute(sorted_arr: Array, query: Array, side: str, dtype: type) -> Array:
+  query_flat = query.ravel()
+  op = _sort_le_comparator if side == 'left' else _sort_lt_comparator
+  mask = op(query_flat[:, None], sorted_arr[None, :])
+  mask = hstack([mask, ones((mask.shape[0], 1), dtype=mask.dtype)])
+  _, idx = lax.top_k(mask, k=1)
+  return lax.reshape(idx, query.shape).astype(dtype)
+
+
 @_wraps(np.searchsorted, skip_params=['sorter'],
   extra_params=_dedent("""
     method : str
-        One of 'scan' (default) or 'sort'. Controls the method used by the implementation; 'scan'
-        tends to be more performant on CPU (particularly when ``a`` is very large), while
-        'sort' is often more performant on accelerator backends like GPU and TPU (particularly
-        when ``v`` is very large)."""))
+        One of 'scan' (default), 'sort', or 'brute'. Controls the method used by the
+        implementation; 'scan' tends to be more performant on CPU (particularly when
+        ``a`` is very large), while 'sort' is often more performant on accelerator
+        backends like GPU and TPU (particularly when ``v`` is very large). 'brute'
+        is fast for smaller `a` and `v`, but is much more memory-intensive."""))
 @partial(jit, static_argnames=('side', 'sorter', 'method'))
 def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
                  sorter: None = None, *, method: str = 'scan') -> Array:
@@ -4694,9 +4704,9 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   if side not in ['left', 'right']:
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
                      "Expected one of ['left', 'right'].")
-  if method not in ['scan', 'sort']:
+  if method not in ['scan', 'sort', 'brute']:
     raise ValueError(f"{method!r} is an invalid value for keyword 'method'. "
-                     "Expected one of ['sort', 'scan'].")
+                     "Expected one of ['sort', 'scan', 'brute'].")
   if sorter is not None:
     raise NotImplementedError("sorter is not implemented")
   if ndim(a) != 1:
@@ -4705,7 +4715,9 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
   if len(a) == 0:
     return zeros_like(v, dtype=dtype)
-  impl = _searchsorted_via_scan if method == 'scan' else _searchsorted_via_sort
+  impl = (_searchsorted_via_scan if method == 'scan' else
+          _searchsorted_via_sort if method == 'sort' else
+          _searchsorted_brute)
   return impl(asarray(a), asarray(v), side, dtype)
 
 @_wraps(np.digitize)
