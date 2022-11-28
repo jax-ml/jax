@@ -23,7 +23,7 @@ permissions:
 jobs:
   lint_and_typecheck:
     runs-on: ubuntu-20.04-16core
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Cancel previous
         uses: styfle/cancel-workflow-action@0.11.0
