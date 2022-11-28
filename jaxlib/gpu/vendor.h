@@ -28,6 +28,7 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/cusolverDn.h"
 #include "third_party/gpus/cuda/include/cusparse.h"
+#include "third_party/gpus/cudnn/cudnn.h"
 
 // Some sparse functionality is only available in CUSPARSE 11.3 or newer.
 #define JAX_GPU_HAVE_SPARSE (CUSPARSE_VERSION >= 11300)
@@ -64,6 +65,8 @@ typedef cublasHandle_t gpublasHandle_t;
 typedef cudaDataType gpuDataType;
 typedef cudaStream_t gpuStream_t;
 typedef cudaError_t gpuError_t;
+typedef cudnnHandle_t gpudnnHandle_t;
+typedef cudnnStatus_t gpudnnStatus_t;
 typedef cusolverDnHandle_t gpusolverDnHandle_t;
 typedef cusolverStatus_t gpusolverStatus_t;
 typedef cusolverEigMode_t gpusolverEigMode_t;
@@ -96,6 +99,11 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpublasZgetrfBatched cublasZgetrfBatched
 
 #define GPUBLAS_STATUS_SUCCESS CUBLAS_STATUS_SUCCESS
+
+#define gpudnnCreate cudnnCreate
+#define gpudnnSetStream cudnnSetStream
+
+#define GPUDNN_STATUS_SUCCESS CUDNN_STATUS_SUCCESS
 
 #define gpusolverDnCreate cusolverDnCreate
 #define gpusolverDnSetStream cusolverDnSetStream
@@ -233,9 +241,11 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 
 #define gpuGetLastError cudaGetLastError
 #define gpuGetErrorString cudaGetErrorString
+#define gpuMemcpy cudaMemcpy
 #define gpuMemcpyAsync cudaMemcpyAsync
 #define gpuMemcpyDeviceToDevice cudaMemcpyDeviceToDevice
 #define gpuMemcpyHostToDevice cudaMemcpyHostToDevice
+#define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuSuccess cudaSuccess
 
@@ -424,6 +434,7 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyAsync hipMemcpyAsync
 #define gpuMemcpyDeviceToDevice hipMemcpyDeviceToDevice
 #define gpuMemcpyHostToDevice hipMemcpyHostToDevice
+#define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuSuccess hipSuccess
 
