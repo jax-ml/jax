@@ -31,8 +31,8 @@ cc_library(
     ],
     defines = ["JAX_GPU_CUDA=1"],
     deps = [
-        "//third_party/gpus/cudnn:cudnn_header",
         "@local_config_cuda//cuda:cuda_headers",
+        "@local_config_cuda//cuda:cudnn_header",
     ],
 )
 
