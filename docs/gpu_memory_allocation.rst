@@ -16,7 +16,7 @@ override the default behavior:
 
 ``XLA_PYTHON_CLIENT_MEM_FRACTION=.XX``
   If preallocation is enabled, this makes JAX preallocate XX% of
-  currently-available GPU memory, instead of the default 90%. Lowering the
+  the total GPU memory, instead of the default 90% of currently-available memory. Lowering the
   amount preallocated can fix OOMs that occur when the JAX program starts.
 
 ``XLA_PYTHON_CLIENT_ALLOCATOR=platform``
