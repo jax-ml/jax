@@ -110,7 +110,6 @@ class COO(JAXSparse):
       # if k is out of range, return an empty matrix.
       return cls._empty((N, M), dtype=dtype, index_dtype=index_dtype)
 
-    k = jnp.asarray(k)
     data = jnp.ones(diag_size, dtype=dtype)
     idx = jnp.arange(diag_size, dtype=index_dtype)
     zero = _const(idx, 0)

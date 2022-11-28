@@ -2468,7 +2468,7 @@ class BCOO(JAXSparse):
       return cls.fromdense(jnp.eye(N, M, k, dtype=dtype),
                            n_batch=n_batch, n_dense=n_dense,
                            index_dtype=index_dtype)
-    k = jnp.asarray(k)
+
     if n_batch == 0:
       data = jnp.ones(diag_size, dtype=dtype)
       idx = jnp.arange(diag_size, dtype=index_dtype)
