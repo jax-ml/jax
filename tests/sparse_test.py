@@ -2493,13 +2493,19 @@ class SparseObjectTest(sptu.SparseTestCase):
     for k in [-2, 0, 1])
   def test_eye(self, cls, N, M, k):
     sparse_format = cls.__name__.lower()
-    mat = sparse.eye(N, M, k, sparse_format=sparse_format)
+    func = partial(sparse.eye, N, M, k, sparse_format=sparse_format)
     expected = jnp.eye(N, M, k)
     expected_nse = jnp.count_nonzero(expected)
 
+    mat = func()
     self.assertIsInstance(mat, cls)
     self.assertArraysEqual(mat.todense(), expected)
     self.assertEqual(mat.nse, expected_nse)
+
+    mat_jit = jit(func)()
+    self.assertIsInstance(mat_jit, cls)
+    self.assertArraysEqual(mat_jit.todense(), expected)
+    self.assertEqual(mat_jit.nse, expected_nse)
 
   @parameterized.named_parameters(
     {"testcase_name": f"{nse}_BCOO{shape}", "shape": shape, "nse": nse}
