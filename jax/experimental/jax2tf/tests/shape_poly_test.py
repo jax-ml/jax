@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
+import unittest
 
 from absl.testing import absltest, parameterized
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -53,11 +54,6 @@ PS = jax2tf.PolyShape
 
 
 class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
-  def setUp(self):
-    super().setUp()
-    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
-      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
-
 
   def test_parse_poly_spec(self):
     self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
@@ -339,10 +335,6 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
 class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
-  def setUp(self):
-    super().setUp()
-    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
-      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
   def test_simple_unary(self):
     """Test shape polymorphism for a simple case, unary function."""
@@ -397,6 +389,20 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None, None]), tf.TensorSpec([None, None])],
         polymorphic_shapes=PS("h", "h"),
         expected_output_signature=tf.TensorSpec([None, None]))
+
+  def test_arange(self):
+    def f_jax(x):
+      return x + jnp.arange(x.shape[0], dtype=np.float32)
+    x = np.ones((3,), dtype=np.float32)
+    self.assertAllClose(jax2tf.convert(f_jax, polymorphic_shapes="b")(x),
+                        f_jax(x))
+
+  def test_argmax(self):
+    def f_jax(x):  # x: f32[b, 4, 5]
+      return lax.argmax(x, axis=1, index_dtype=np.int32)
+    x = np.arange(3 * 4 * 5, dtype=np.float32).reshape((3, 4, 5))
+    self.assertAllClose(jax2tf.convert(f_jax, polymorphic_shapes="(b, _, _)")(x),
+                        f_jax(x))
 
   def test_static_shape_result(self):
     """The result has static shape."""
@@ -707,14 +713,15 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         expected_output_signature=tf.TensorSpec([4]))
 
   def test_with_nested_jit(self):
-    @jax.jit
-    def f_jax(x):
-      return jnp.sin(x)
-
+    x = np.ones((3, 4), dtype=np.float32)
+    # We implement the following computation
+    _ = x + (np.sin(x) + np.broadcast_to(np.arange(x.shape[1]), x.shape))
+    def f_jax(x):  # x: f32[w, h]
+      return jnp.sin(x) + jnp.arange(x.shape[1], dtype=x.dtype)
     self.CheckShapePolymorphism(
-        f_jax,
-        input_signature=[tf.TensorSpec([1, None])],
-        polymorphic_shapes=["1, b"])
+        lambda x: x + jax.jit(f_jax)(x),
+        input_signature=[tf.TensorSpec([None, None])],
+        polymorphic_shapes=["w, h"])
 
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
@@ -843,6 +850,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(
         res_jax,
         jax2tf.convert(f, polymorphic_shapes=["(b, h)", "h"])(x, y))
+
+  def test_while(self):
+    def f(x):
+      # x: f32[B], iter: i32
+      return lax.while_loop(lambda x_iter: x_iter[1] < 5,
+                            lambda x_iter: (x_iter[0] + jnp.arange(x_iter[0].shape[0], dtype=np.float32), x_iter[1] + 1),
+                            (x, 0))
+
+    x = np.ones((3,), dtype=np.float32)
+    res_tf = jax2tf.convert(f, polymorphic_shapes=["(b,)"])(x)
+    self.assertAllClose(f(x), res_tf)
 
   @jtu.sample_product(with_function=[False, True])
   def test_grad_int(self, with_function=True):
@@ -1926,11 +1944,6 @@ def _flatten_harnesses(harnesses):
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
 
-  def setUp(self):
-    super().setUp()
-    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
-      self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
-
   # This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES.
 
   # For each primitive "xxx" the test will be called "test_prim_xxx_...".
@@ -1942,6 +1955,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       #one_containing="roll_axis=None",
   )
   def test_prim(self, harness: Harness):
+    if config.jax2tf_default_experimental_native_lowering and not harness.params.get("enable_xla", True):
+      raise unittest.SkipTest("disabled for experimental_native_lowering and enable_xla=False")
     _test_one_harness(self, harness)
 
   def test_vmap_while(self):
@@ -2094,11 +2109,11 @@ class ShapePolyVmapPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
   # For each primitive "xxx" the test will be called "test_vmap_prim_xxx_...".
   # If you want to run this test for only one harness that includes "foo"
-  # in the name (after test_prim), add parameter `one_containing="foo"`
+  # in the name (after test_vmap_prim), add parameter `one_containing="foo"`
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_VMAP_TEST_HARNESSES),
-      #one_containing="eig_shape=float32[0,0]_computelefteigenvectors=False_computerighteigenvectors=False_poly_axes=[0]"
+      #one_containing="gather_from_slicing_name=[0,1]_enable_xla=True_poly_axes=[0]"
   )
   def test_vmap_prim(self, harness: Harness):
     return _test_one_harness(self, harness)

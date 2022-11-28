@@ -428,14 +428,16 @@ def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
   batch_dims = operand_aval.shape[:-2]
   result, info = potrf_impl(operand_aval.dtype, operand, lower=True)
   ok = mlir.compare_mhlo(
-      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
+  select_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
   return [_broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      result, _nan_like_mhlo(out_aval))]
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok,
+                            select_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_aval,
+      result, out_aval, _nan_like_mhlo(ctx, out_aval), out_aval)]
 
 mlir.register_lowering(
     cholesky_p,
@@ -490,34 +492,37 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
                                      jobvr=compute_right_eigenvectors)
 
   ok = mlir.compare_mhlo(
-      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
+  select_w_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
   w = _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1,),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      w, _nan_like_mhlo(out_aval))
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_w_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_w_aval,
+      w, out_aval, _nan_like_mhlo(ctx, out_aval), out_aval)
   output = [w]
 
   if compute_left_eigenvectors:
     aval = ctx.avals_out[len(output)]
+    select_vl_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
     vl = _broadcasting_select_mhlo(
-        mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-        vl, _nan_like_mhlo(aval))
+        ctx,
+        mlir.broadcast_in_dim(ctx, ok, select_vl_aval,
+                              broadcast_dimensions=range(len(batch_dims))),
+        select_vl_aval,
+        vl, aval, _nan_like_mhlo(ctx, aval), aval)
     output.append(vl)
 
   if compute_right_eigenvectors:
     aval = ctx.avals_out[len(output)]
+    select_vr_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
     vr = _broadcasting_select_mhlo(
-        mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-        vr, _nan_like_mhlo(aval))
+        ctx,
+        mlir.broadcast_in_dim(ctx, ok, select_vr_aval,
+                              broadcast_dimensions=range(len(batch_dims))),
+        select_vr_aval,
+        vr, aval, _nan_like_mhlo(ctx, aval), aval)
     output.append(vr)
 
   return output
@@ -632,20 +637,22 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
   v_aval, w_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
-  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
   v = _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      v, _nan_like_mhlo(v_aval))
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_v_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_v_aval,
+      v, v_aval, _nan_like_mhlo(ctx, v_aval), v_aval)
+  select_w_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
   w = _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1,),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      w, _nan_like_mhlo(w_aval))
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_w_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_w_aval,
+      w, w_aval, _nan_like_mhlo(ctx, w_aval), w_aval)
   return [v, w]
 
 def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
@@ -1170,16 +1177,17 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
   m = operand_aval.shape[-2]
   lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = mhlo.SubtractOp(pivot, mlir.full_like_aval(1, pivot_aval)).result
+  pivot = mhlo.SubtractOp(pivot, mlir.full_like_aval(ctx, 1, pivot_aval)).result
   ok = mlir.compare_mhlo(
-      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "GE", "SIGNED")
+  select_lu_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
   lu = _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      lu, _nan_like_mhlo(out_aval))
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_lu_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_lu_aval,
+      lu, out_aval, _nan_like_mhlo(ctx, out_aval), out_aval)
   sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval], avals_out=[perm_aval])
   perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
                            multiple_results=False)
@@ -1312,25 +1320,23 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
   batch = prod(batch_dims)
 
   if batch == 0 or m == 0 or n == 0:
-    return mlir.full_like_aval(0, a_aval), mlir.full_like_aval(0, taus_aval)
+    return mlir.full_like_aval(ctx, 0, a_aval), mlir.full_like_aval(ctx, 0, taus_aval)
 
   if (batched_geqrf_impl is not None and batch > 1 and m // batch <= 128 and
       n // batch <= 128):
     a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
   else:
     a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
-    zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+    zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
     ok = mlir.compare_mhlo(info_geqrf, zeros, "EQ", "SIGNED")
-    ok_a = mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get((*batch_dims, 1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result
-    a_out = _broadcasting_select_mhlo(ok_a, a_out, _nan_like_mhlo(a_aval))
-    ok_taus = mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get((*batch_dims, 1,),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result
-    taus = _broadcasting_select_mhlo(ok_taus, taus, _nan_like_mhlo(taus_aval))
+    select_ok_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
+    ok_a = mlir.broadcast_in_dim(ctx, ok, select_ok_a_aval,
+                                 broadcast_dimensions=range(len(batch_dims)))
+    a_out = _broadcasting_select_mhlo(ctx, ok_a, select_ok_a_aval, a_out, a_aval, _nan_like_mhlo(ctx, a_aval), a_aval)
+    select_ok_taus_aval = ShapedArray(batch_dims + [1], np.dtype(np.bool_))
+    ok_taus = mlir.broadcast_in_dim(ctx, ok, select_ok_taus_aval,
+                                    broadcast_dimensions=range(len(batch_dims)))
+    taus = _broadcasting_select_mhlo(ctx, ok_taus, select_ok_taus_aval, taus, taus_aval, _nan_like_mhlo(ctx, taus_aval), taus_aval)
   return a_out, taus
 
 geqrf_p = Primitive('geqrf')
@@ -1402,16 +1408,15 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
   *batch_dims, m, n = a_aval.shape
 
   if m == 0 or n == 0:
-    return [mlir.full_like_aval(0, a_aval)]
+    return [mlir.full_like_aval(ctx, 0, a_aval)]
 
   a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
-  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_mhlo(info_orgqr, zeros, "EQ", "SIGNED")
-  ok = mhlo.BroadcastInDimOp(
-        ir.RankedTensorType.get((*batch_dims, 1, 1),
-                                ir.IntegerType.get_signless(1)),
-        ok, mlir.dense_int_elements(range(len(batch_dims)))).result
-  a = _broadcasting_select_mhlo(ok, a, _nan_like_mhlo(a_aval))
+  select_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
+  ok = mlir.broadcast_in_dim(ctx, ok, select_a_aval,
+                             broadcast_dimensions=range(len(batch_dims)))
+  a = _broadcasting_select_mhlo(ctx, ok, select_a_aval, a, a_aval, _nan_like_mhlo(ctx, a_aval), a_aval)
   return [a]
 
 
@@ -1621,30 +1626,33 @@ def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
   s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
-  zeros = mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32)))
+  zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
   ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  select_s_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
   s = _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1,),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      s, _nan_like_mhlo(s_aval))
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_s_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_s_aval,
+      s, s_aval, _nan_like_mhlo(ctx, s_aval), s_aval)
   result = [s]
 
   if compute_uv:
     u_aval, vt_aval = ctx.avals_out[1:]
+    select_u_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
     u = _broadcasting_select_mhlo(
-        mhlo.BroadcastInDimOp(
-            ir.RankedTensorType.get(batch_dims + (1, 1),
-                                    ir.IntegerType.get_signless(1)),
-            ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-        u, _nan_like_mhlo(u_aval))
+        ctx,
+        mlir.broadcast_in_dim(ctx, ok, select_u_aval,
+                              broadcast_dimensions=range(len(batch_dims))),
+        select_u_aval,
+        u, u_aval, _nan_like_mhlo(ctx, u_aval), u_aval)
+    select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
     vt = _broadcasting_select_mhlo(
-        mhlo.BroadcastInDimOp(
-            ir.RankedTensorType.get(batch_dims + (1, 1),
-                                    ir.IntegerType.get_signless(1)),
-            ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-        vt, _nan_like_mhlo(vt_aval))
+        ctx,
+        mlir.broadcast_in_dim(ctx, ok, select_v_aval,
+                              broadcast_dimensions=range(len(batch_dims))),
+        select_v_aval,
+        vt, vt_aval, _nan_like_mhlo(ctx, vt_aval), vt_aval)
     result += [u, vt]
 
   return result
@@ -1862,25 +1870,25 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   T, vs, *_, info = gees_result
 
   ok = mlir.compare_mhlo(
-      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
 
+  select_T_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
   T = _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok,
-          mlir.dense_int_elements(range(len(batch_dims)))).result,
-      T, _nan_like_mhlo(ctx.avals_out[0]))
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_T_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_T_aval,
+      T, ctx.avals_out[0],_nan_like_mhlo(ctx, ctx.avals_out[0]), ctx.avals_out[0])
   output = [T]
   if compute_schur_vectors:
+    select_vs_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
     vs = _broadcasting_select_mhlo(
-        mhlo.BroadcastInDimOp(
-            ir.RankedTensorType.get(batch_dims + (1, 1),
-                                    ir.IntegerType.get_signless(1)),
-            ok,
-            mlir.dense_int_elements(range(len(batch_dims)))).result,
-        vs, _nan_like_mhlo(ctx.avals_out[1]))
+        ctx,
+        mlir.broadcast_in_dim(ctx, ok, select_vs_aval,
+                              broadcast_dimensions=range(len(batch_dims))),
+        select_vs_aval,
+        vs, ctx.avals_out[1], _nan_like_mhlo(ctx, ctx.avals_out[1]), ctx.avals_out[1])
 
     output.append(vs)
 
@@ -1969,21 +1977,23 @@ def _hessenberg_cpu_mhlo(ctx, a):
   batch_dims = a_aval.shape[:-2]
   a, taus, info = lapack.gehrd_mhlo(a_aval.dtype, a)
   ok = mlir.compare_mhlo(
-      info, mlir.full_like_aval(0, ShapedArray(batch_dims, np.dtype(np.int32))),
+      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
+  select_a_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
+  select_taus_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
   return [
     _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1, 1),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      a, _nan_like_mhlo(ctx.avals_out[0])),
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_a_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_a_aval,
+      a, ctx.avals_out[0], _nan_like_mhlo(ctx, ctx.avals_out[0]), ctx.avals_out[0]),
     _broadcasting_select_mhlo(
-      mhlo.BroadcastInDimOp(
-          ir.RankedTensorType.get(batch_dims + (1,),
-                                  ir.IntegerType.get_signless(1)),
-          ok, mlir.dense_int_elements(range(len(batch_dims)))).result,
-      taus, _nan_like_mhlo(ctx.avals_out[1])),
+      ctx,
+      mlir.broadcast_in_dim(ctx, ok, select_taus_aval,
+                            broadcast_dimensions=range(len(batch_dims))),
+      select_taus_aval,
+      taus, ctx.avals_out[1], _nan_like_mhlo(ctx, ctx.avals_out[1]), ctx.avals_out[1]),
     ]
 
 mlir.register_lowering(hessenberg_p, _hessenberg_cpu_mhlo, platform='cpu')
@@ -2076,34 +2086,19 @@ if jaxlib_version >= (0, 3, 25):
       tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, gpu_solver.rocm_sytrd),
       platform='rocm')
 
-
-
 # Utilities
 
-def _nan_like_mhlo(aval):
+def _nan_like_mhlo(ctx: mlir.LoweringRuleContext, aval) -> ir.Value:
   if jnp.issubdtype(aval.dtype, np.complexfloating):
-    return mlir.full_like_aval(np.nan + np.nan * 1j, aval)
+    return mlir.full_like_aval(ctx, np.nan + np.nan * 1j, aval)
   else:
-    return mlir.full_like_aval(np.nan, aval)
+    return mlir.full_like_aval(ctx, np.nan, aval)
 
-def _broadcasting_select_mhlo(which, x, y):
+def _broadcasting_select_mhlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir.Value:
   """Wrapper around XLA `Select` that broadcasts its arguments."""
-  which_type, x_type, y_type = (
-    ir.RankedTensorType(v.type) for v in (which, x, y))
-  out_shape = list(lax_internal.broadcast_shapes(
-      tuple(which_type.shape), tuple(x_type.shape), tuple(y_type.shape)))
-  bcast_dims = lambda shape: mlir.dense_int_elements(
-      range(len(out_shape) - len(shape), len(out_shape)))
-  if which_type.shape != out_shape:
-    which = mhlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(out_shape, which_type.element_type), which,
-        bcast_dims(which_type.shape))
-  if x_type.shape != out_shape:
-    x = mhlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(out_shape, x_type.element_type), x,
-        bcast_dims(x_type.shape))
-  if y_type.shape != out_shape:
-    y = mhlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(out_shape, y_type.element_type), y,
-        bcast_dims(y_type.shape))
+  out_shapes = list(lax_internal.broadcast_shapes(
+      tuple(which_aval.shape), tuple(x_aval.shape), tuple(y_aval.shape)))
+  which, x, y = mlir.multi_broadcast_in_dim(ctx, (which, x, y),
+                                            (which_aval, x_aval, y_aval),
+                                            out_shapes)
   return mhlo.SelectOp(which, x, y).result

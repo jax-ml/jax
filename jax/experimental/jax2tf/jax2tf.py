@@ -595,15 +595,21 @@ def _lower_native_and_run(fun_jax: Callable,
   Special care must be taken in presence of shape polymorphism.
   """
   # Look for shape polymorphism
-  # For each arg, map axis idx to dimension variable name
-  abstracted_axes: Sequence[Dict[int, str]] = []
+
   # For each dimension variable, encode how to compute its value from the
   # shape of the explicit arguments. E.g., "2.1" denotes args_tf[2].shape[1].
-  # Note: We assume that lowering will introduce dim args in the order in which
-  # dim variables are first seen when scanning the explicit arguments
-  # in order and then scanning their shapes for dim variables.
-  dim_args_spec: List[str] = []
-  dim_vars_seen: Set[str] = set()
+  # The order of the dimension variables must match the order of the first N
+  # arguments of the lowered function.
+
+  # We now have two implementations for the native lowering. If --jax_dynamic_shapes
+  # then we use JAX's in-progress support for native dynamic shapes. In that
+  # case we assume that the dimension variables are listed in the order in which
+  # they are encountered by scanning the arguments and their shapes in order.
+  # If we don't use --jax_dynamic_shapes then the dimension variables are passed
+  # in the alphabetical order of their names.
+  abstracted_axes: Sequence[Dict[int, str]] = []
+  dim_args_spec_dict: Dict[str, str] = {}  # map dim var name to dim_args_spec
+  dim_vars_seen: List[str] = []  # the dim var names in order
   for arg_idx, aval in enumerate(args_avals):
     one_abstract_axes = {}
     for axis_idx, d in enumerate(aval.shape):
@@ -612,18 +618,23 @@ def _lower_native_and_run(fun_jax: Callable,
         if d_var is None:
           raise ValueError(f"Only simple dimension variables supported: {aval.shape}")
         if not d_var in dim_vars_seen:
-          dim_args_spec.append(f"{arg_idx}.{axis_idx}")
-          dim_vars_seen.add(d_var)
+          dim_args_spec_dict[d_var] = f"{arg_idx}.{axis_idx}"
+          dim_vars_seen.append(d_var)
         one_abstract_axes[axis_idx] = d_var
     abstracted_axes.append(one_abstract_axes)
 
   if any(abstracted_axes):
-    if not config.jax_dynamic_shapes:
-      raise ValueError(
-          "Found shape polymorphism but --jax_dynamic_shapes is not set")
-    abstracted_axes = tuple(abstracted_axes)
+    if config.jax_dynamic_shapes:
+      abstracted_axes = tuple(abstracted_axes)
+      # In the order we have seen them
+      dim_args_spec = [dim_args_spec_dict[d_var] for d_var in dim_vars_seen]
+    else:
+      abstracted_axes = None  # type: ignore
+      # In sorted order by name
+      dim_args_spec = [dim_args_spec_dict[d_var] for d_var in sorted(dim_vars_seen)]
   else:
     abstracted_axes = None  # type: ignore
+    dim_args_spec = []
 
   arg_specs_jax = [
     jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)

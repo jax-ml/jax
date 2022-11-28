@@ -778,7 +778,7 @@ def _bcoo_dot_general_cuda_lowering(
       # Converts lhs to a row vector.
       col = _collapse_mhlo(lhs_indices, start=0, end=1)
       row = mlir.full_like_aval(
-          0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
+          ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
                               np.dtype(np.int32)))
       lhs_shape = (1, lhs_spinfo.shape[0])
       dot_product = bcoo_dot_general_fn(

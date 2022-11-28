@@ -1393,7 +1393,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(),
-                                     const_nodes, *tiled_ins)
+                                     const_nodes, *tiled_ins,
+                                     dim_var_values=ctx.dim_var_values)
 
   outs = [
       mlir.lower_fun(
@@ -1459,7 +1460,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
-      mlir.TokenSet(), const_nodes, *sharded_global_in_nodes)
+      mlir.TokenSet(), const_nodes, *sharded_global_in_nodes,
+      dim_var_values=ctx.dim_var_values)
 
   sharded_global_out_nodes = [
     mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())
@@ -1510,7 +1512,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
-      mlir.TokenSet(), const_nodes, *([n] for n in global_in_nodes))
+      mlir.TokenSet(), const_nodes, *([n] for n in global_in_nodes),
+      dim_var_values=ctx.dim_var_values)
 
   return global_out_nodes
 
