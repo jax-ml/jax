@@ -21,6 +21,13 @@ Remember to align the itemized text with the first line of an item within a list
 
 
 ## jaxlib 0.4.0
+* Changes
+  * The behavior of `XLA_PYTHON_CLIENT_MEM_FRACTION=.XX` has been changed to allocate XX% of
+    the total GPU memory instead of the previous behavior of using currently available GPU memory
+    to calculate preallocation. Please refer to
+    [GPU memory allocation](https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html) for
+    more details.
+
 
 ## jax 0.3.25 (Nov 15, 2022)
 * Changes
