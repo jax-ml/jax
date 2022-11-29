@@ -198,9 +198,11 @@ custom_callback_rules: Dict[Any, Any] = {}
 
 def _scan_callback_rule(trace, *tracers, reverse, length, num_consts, num_carry,
                         jaxpr, linear, unroll):
-  const_tracers, carry_tracers, xs_tracers = split_list(tracers, [num_consts, num_carry])
+  start_stop_done_tracers, const_tracers, carry_tracers, xs_tracers = \
+        split_list(tracers, [3, num_consts, num_carry])
   carry_avals, xs_avals = tree_map(lambda x: x.aval, (carry_tracers, xs_tracers))
-  const_vals, carry_vals, xs_vals = tree_map(lambda x: x.val, (const_tracers, carry_tracers, xs_tracers))
+  start_stop_done_vals, const_vals, carry_vals, xs_vals = \
+        tree_map(lambda x: x.val, (start_stop_done_tracers, const_tracers, carry_tracers, xs_tracers))
 
   x_tracers = [t[0] for t in xs_tracers]
   x_avals = [t.aval for t in x_tracers]
@@ -209,14 +211,14 @@ def _scan_callback_rule(trace, *tracers, reverse, length, num_consts, num_carry,
 
   def new_body(*vals):
     out = body_fun(*vals)
-    out_carry, y = split_list(out, [num_carry])
-    return out_carry, y
+    done, out_carry, y = split_list(out, [1, num_carry])
+    return done, out_carry, y
   new_body = callback_transform(new_body, trace.callback,
                                 strip_calls=trace.strip_calls)  # type: ignore
   in_tree = tree_structure(carry_avals + xs_avals)
   new_jaxpr, new_consts, _ = lcf._initial_style_jaxpr(
       new_body, in_tree, tuple(carry_avals + x_avals))
-  vals = tuple(it.chain(new_consts, carry_vals, xs_vals))
+  vals = tuple(it.chain(start_stop_done_vals, new_consts, carry_vals, xs_vals))
   out_vals = lax.scan_p.bind(*vals, reverse=reverse, length=length,
                              num_consts=len(new_consts), num_carry=num_carry,
                              jaxpr=new_jaxpr, linear=linear, unroll=unroll)

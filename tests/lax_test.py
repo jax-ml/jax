@@ -2605,6 +2605,18 @@ class LaxTest(jtu.JaxTestCase):
     np.testing.assert_equal(
         np.array(lax.dynamic_slice(x, np.uint8([128]), (1,))), [128])
 
+  def testEmptyEqualsZero(self):
+    # scan(..., early_exit=<nontrivial>) pads out unused extensive outputs
+    # using empty. (Or rather, the buffer is initialised using empty.)
+    # Right now that value is zero. If that value ever changes to e.g.
+    # "undefined" then we should update the scan implementation.
+    dtypes = (np.bool_, np.int32, np.float32, np.complex64)
+    if config.x64_enabled:
+        dtypes = dtypes + (np.int64, np.float64, np.complex128)
+    for dtype in dtypes:
+        empty = jax.jit(lambda: lax_internal.empty(dtype))()
+        self.assertEqual(empty, np.array(0, dtype=dtype))
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
@@ -3132,17 +3144,17 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     f = lambda ks: jax.lax.scan(lambda _, k: (None, bake(k)), None, ks)
     jaxpr = jax.make_jaxpr(f)(ks).jaxpr
     # { lambda ; a:foo[3,4]. let
-    #     b:foo[3,4] = scan[
-    #       jaxpr={ lambda ; c:foo[4]. let d:foo[4] = bake c in (d,) }
-    #     ] a
+    #     _:i32[] _:i32[] _:bool[] b:foo[3,4] = scan[
+    #       jaxpr={ lambda ; c:foo[4]. let d:foo[4] = bake c in (False, d) }
+    #     ] 0 3 False a
     #   in (b,) }
     self.assertLen(jaxpr.invars, 1)
     a, = jaxpr.invars
     self.assertEqual(a.aval, core.ShapedArray((3, 4), FooTy()))
     self.assertLen(jaxpr.eqns, 1)
     e, = jaxpr.eqns
-    self.assertLen(e.outvars, 1)
-    b, = e.outvars
+    self.assertLen(e.outvars, 4)
+    *_, b = e.outvars
     self.assertEqual(b.aval, core.ShapedArray((3, 4), FooTy()))
 
   def test_scan_lowering(self):

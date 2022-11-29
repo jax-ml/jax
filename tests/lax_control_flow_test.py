@@ -107,8 +107,8 @@ SCAN_IMPLS_WITH_FOR = [
     (scan_with_remat_for, 'for_loop_remat'),
 ]
 
-def while_loop_new_checkpoint(cond_fun, body_fun, init_val):
-  return new_checkpoint(partial(lax.while_loop, cond_fun, body_fun))(init_val)
+def while_loop_new_checkpoint(cond_fun, body_fun, init_val, max_steps=None):
+  return new_checkpoint(partial(lax.while_loop, cond_fun, body_fun, max_steps=max_steps))(init_val)
 
 WHILE_LOOP_IMPLS = [
     (lax.while_loop, 'while_loop'),
@@ -122,14 +122,22 @@ def while_loop_reference(cond, body, carry):
   return carry
 
 
-def scan_reference(f, init, xs):
+def scan_reference(f, init, xs, early_exit=None):
   carry = init
-  ys = []
+  ys =  []
   for x in xs:
-    (carry, y) = f(carry, x)
-    ys.append(lax.reshape(y, (1,) + np.shape(y)))
-  ys = lax.concatenate(ys, 0)
-  return carry, ys
+    carry2, y = f(carry, x)
+    if early_exit is None:
+      carry = carry2
+    else:
+      pred = early_exit(carry)
+      keep_carry = partial(jnp.where, pred)
+      keep_y = lambda x: jnp.where(pred, jnp.zeros_like(x), x)
+      carry = jax.tree_util.tree_map(keep_carry, carry, carry2)
+      y = jax.tree_util.tree_map(keep_y, y)
+    ys.append(y)
+  stack = lambda *x: jnp.stack(x)
+  return carry, jax.tree_util.tree_map(stack, *ys)
 
 
 ignore_jit_of_pmap_warning = partial(
@@ -1770,7 +1778,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     a = jnp.arange(5)
     # Body output not a tuple
     with self.assertRaisesRegex(TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
+        re.escape("scan body output must be a pair, got 0.0")):
       lax.scan(lambda c, x: np.float32(0.), 0, a)
     with  self.assertRaisesRegex(TypeError,
         re.escape("scan carry output and input must have same type structure, "
@@ -2247,6 +2255,119 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertLess(
         len(str(jax.xla_computation(scan)(c, xs).as_hlo_text())),
         len(str(jax.xla_computation(scan_unrolled)(c, xs).as_hlo_text())))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{scan_name}",
+       "scan": scan_impl}
+      for scan_impl, scan_name in SCAN_IMPLS + [(scan_reference, "reference")])
+  def test_scan_early_exit_basic(self, scan):
+    def f(carry, x):
+      a, b = x
+      carry = jax.nn.relu(a * carry + b)
+      return carry, carry
+
+    def early_exit(carry):
+      return carry == 0
+
+    init = np.array(0.5, dtype=np.float32)
+    a_s = np.array([1., -1., -2., 0.], dtype=np.float32)
+    b_s = np.array([0.5, 2., 0., 10.], dtype=np.float32)
+    xs = np.stack([a_s, b_s], axis=1)
+    final1, ys1 = scan(f, init, xs, early_exit=early_exit)
+    with jax.disable_jit():
+      final2, ys2 = scan(f, init, xs, early_exit=early_exit)
+    final3, ys3 = jax.jit(partial(scan, f, early_exit=early_exit))(init, xs)
+    for final, ys in zip([final1, final2, final3], [ys1, ys2, ys3]):
+      self.assertAllClose(final, np.array(0., dtype=np.float32))
+      self.assertAllClose(ys, np.array([1., 1., 0., 0.], dtype=np.float32))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{scan_name}",
+       "scan": scan_impl}
+      for scan_impl, scan_name in SCAN_IMPLS + [(scan_reference, "reference")])
+  def test_scan_early_exit_complicated(self, scan):
+    def f(carry, x):
+      unused_in, fwd, bool_, int_, float_ = carry
+      int2 = int_.astype(float_.dtype)
+      float_ = jax.nn.relu(x * float_ + int2)
+      carry = [np.array(5, dtype=np.int32), fwd, float_ <= int2, int_ + 1, float_]
+      return carry, carry[2:]
+
+    def early_exit(carry):
+      unused_in, fwd, bool_, int_, float_ = carry
+      return int_ > 3
+
+    init = (
+        np.array([5, 5], dtype=np.int32),
+        np.array([5, 5], dtype=np.int32),
+        np.array([True, False]),
+        np.array([-3, 2], dtype=np.int32),
+        np.array([2., -1.], dtype=np.float32)
+    )
+    xs1 = np.array([1., -1., -2., 0.], dtype=np.float32)
+    xs2 = np.array([0.5, 2., 0., 10.], dtype=np.float32)
+    xs = np.stack([xs1, xs2])
+
+    def to_grad(float_xs, rest):
+      float_, xs = float_xs
+      init = rest + [float_]
+      final, ys = scan(f, init, xs, early_exit=early_exit)
+      return final[-1], ys
+
+    @jax.jit
+    @jax.vmap
+    def run(init, xs):
+      *rest, float_ = init
+      g = jax.grad(to_grad, has_aux=True)
+      (grad_float, grad_xs), ys = g((float_, xs), rest)
+      return grad_float, grad_xs, ys
+
+    grad_float, grad_xs, ys = run(init, xs)
+    true_ys1 = (
+        np.array([False, False, False, True]),
+        np.array([-2, -1, 0, 1], dtype=np.int32),
+        np.array([0., 0., 0., 0.], dtype=np.float32),
+    )
+    true_ys2 = (
+        np.array([True, False, False, False]),
+        np.array([3, 4, 0, 0], dtype=np.int32),
+        np.array([1.5, 6., 0., 0.], dtype=np.float32),
+    )
+    true_grad_float = np.array([0., 1.0], dtype=np.float32)
+    true_grad_xs1 = np.array([0., 0., 0., 0.], dtype=np.float32)
+    true_grad_xs2 = np.array([-2., 1.5, 0., 0.], dtype=np.float32)
+    true_grad_xs = np.stack([true_grad_xs1, true_grad_xs2])
+    for ys_i, true_ys1_i, true_ys2_i in zip(ys, true_ys1, true_ys2):
+      self.assertAllClose(ys_i, np.stack([true_ys1_i, true_ys2_i]))
+    self.assertAllClose(grad_float, true_grad_float)
+    self.assertAllClose(grad_xs, true_grad_xs)
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{while_name}",
+       "while_loop": while_impl}
+      for while_impl, while_name in WHILE_LOOP_IMPLS)
+  def test_bounded_while_loop(self, while_loop):
+    def cond_fun(val):
+      step, _ = val
+      return step < 2
+
+    def body_fun(val):
+      step, x = val
+      return step + 1, x * 2
+
+    @jax.jit
+    @jax.vmap
+    @jax.grad
+    def run(x, step):
+      init_val = (step, x)
+      _, final_x = while_loop(cond_fun, body_fun, init_val, max_steps=10)
+      return final_x
+
+    x = np.array([3., 5.], dtype=np.float32)
+    step = np.array([0, 1], dtype=np.int32)
+    grad_x = run(x, step)
+    true_grad_x = np.array([4., 2.], dtype=np.float32)
+    self.assertAllClose(grad_x, true_grad_x)
 
   def test_disable_jit_cond_with_vmap(self):
     # https://github.com/google/jax/issues/3093

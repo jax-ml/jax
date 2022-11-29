@@ -371,7 +371,7 @@ class CoreTest(jtu.JaxTestCase):
     aval = core.ShapedArray((), jnp.dtype('int32'))
     pval = pe.PartialVal.unknown(aval)
     jaxpr, _, _ = pe.trace_to_jaxpr_nounits(lu.wrap_init(f), [pval], False)
-    dropvar, b = jaxpr.eqns[0].outvars
+    _, _, _, dropvar, b = jaxpr.eqns[0].outvars
     self.assertEqual(dropvar.aval, aval)
 
   def test_input_residual_forwarding(self):

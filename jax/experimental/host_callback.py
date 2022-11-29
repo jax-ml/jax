@@ -1565,8 +1565,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
          "unroll"])
     # We add the tokens right at the end of carry
     nr_const_and_carry = num_consts + num_carry
-    new_invars = eqn.invars[0:nr_const_and_carry] + [
-        input_token_var, input_itoken_var] + eqn.invars[nr_const_and_carry:]
+    new_invars = eqn.invars[0:3 + nr_const_and_carry] + [
+        input_token_var, input_itoken_var] + eqn.invars[3 + nr_const_and_carry:]
     new_jaxpr = _rewrite_closed_jaxpr(carry_jaxpr, True, True)
     # The rewrite has put the token at end, it has to be at end of carry
     new_jaxpr_invars = new_jaxpr.jaxpr.invars
@@ -1577,20 +1577,20 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
 
     new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
     new_jaxpr_outvars = (
-        new_jaxpr_outvars[0:num_carry] + new_jaxpr_outvars[-2:] +
-        new_jaxpr_outvars[num_carry:-2])
+        new_jaxpr_outvars[0:num_carry + 1] + new_jaxpr_outvars[-2:] +
+        new_jaxpr_outvars[num_carry + 1:-2])
     new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
     eqns.append(
         eqn.replace(
             invars=new_invars,
             # Output token is at the end of carry result
-            outvars=(eqn.outvars[0:num_carry] + [output_token_var, output_itoken_var] +
-                     eqn.outvars[num_carry:]),
+            outvars=(eqn.outvars[0:3 + num_carry] + [output_token_var, output_itoken_var] +
+                     eqn.outvars[3 + num_carry:]),
             params=dict(
                 eqn.params,
                 jaxpr=new_jaxpr,
                 num_carry=num_carry + 2,
-                linear=linear[0:nr_const_and_carry] + (False, False) + linear[nr_const_and_carry:])))
+                linear=linear[0:3 + nr_const_and_carry] + (False, False) + linear[3 + nr_const_and_carry:])))
   elif eqn.primitive is xla.xla_call_p:
     call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
     eqns.append(
