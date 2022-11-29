@@ -32,7 +32,8 @@ from jax import core
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
-from jax._src.abstract_arrays import (make_shaped_array, array_types)
+from jax._src.abstract_arrays import (make_shaped_array, array_types,
+                                      numpy_scalar_types)
 from jax.core import (ConcreteArray, ShapedArray, str_eqn_compact)
 import jax._src.pretty_printer as pp
 from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
@@ -247,8 +248,12 @@ def canonicalize_dtype(x):
     return canonicalize_dtype(x.__jax_array__())
   raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
+
 def _canonicalize_ndarray_dtype(x):
-  return np.asarray(x, dtypes.canonicalize_dtype(dtypes.result_type(x)))
+  return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
+
+def _canonicalize_numpy_scalar_dtype(x):
+  return np.asarray(x, dtypes.canonicalize_dtype(np.dtype(x)))
 
 def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
@@ -258,7 +263,8 @@ canonicalize_dtype_handlers: Dict[Any, Callable] = {}
 for t in device_array.device_array_types:
   canonicalize_dtype_handlers[t] = identity
 canonicalize_dtype_handlers.update(
-    (t, _canonicalize_ndarray_dtype) for t in array_types)
+    (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
+canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
 canonicalize_dtype_handlers.update(
     (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
 canonicalize_dtype_handlers[core.Token] = identity

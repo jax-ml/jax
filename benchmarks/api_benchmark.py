@@ -830,6 +830,11 @@ def host_local_array_to_global_array(state):
     multihost_utils.host_local_array_to_global_array(
         (input_data, input_data), global_mesh, (in_pspec, in_pspec))
 
+@google_benchmark.register
+def device_put(state):
+  x = np.array(1, np.int32)
+  while state:
+    _ = jax.device_put(x).block_until_ready()
 
 if __name__ == "__main__":
   google_benchmark.main()

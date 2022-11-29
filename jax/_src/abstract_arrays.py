@@ -42,12 +42,15 @@ def zeros_like_array(x):
   aval = ShapedArray(np.shape(x), dtype, weak_type=weak_type)
   return ad_util.zeros_like_aval(aval)
 
-array_types = {np.ndarray, np.bool_,
-               np.int8, np.int16, np.int32, np.int64,
-               np.uint8, np.uint16, np.uint32, np.uint64,
-               dtypes.bfloat16, np.float16, np.float32, np.float64,
-               np.complex64, np.complex128,
-               np.longlong, np.intc}
+numpy_scalar_types = {
+    np.int8, np.int16, np.int32, np.int64,
+    np.uint8, np.uint16, np.uint32, np.uint64,
+    dtypes.bfloat16, np.float16, np.float32, np.float64,
+    np.complex64, np.complex128,
+    np.bool_, np.longlong, np.intc,
+}
+
+array_types = {np.ndarray} | numpy_scalar_types
 
 def canonical_concrete_aval(val, weak_type=None):
   return ConcreteArray(dtypes.canonicalize_dtype(np.result_type(val)), val,
