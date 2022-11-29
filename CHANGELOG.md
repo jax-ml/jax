@@ -8,6 +8,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.0
 * Changes
+  * Support for Python 3.7 has been dropped, in accordance with JAX's
+    {ref}`version-support-policy`.
   * We introduce `jax.Array` which is a unified array type that subsumes
     `DeviceArray`, `ShardedDeviceArray`, and `GlobalDeviceArray` types in JAX.
     The `jax.Array` type helps make parallelism a core feature of JAX,
@@ -22,6 +24,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.0
 * Changes
+  * Support for Python 3.7 has been dropped, in accordance with JAX's
+    {ref}`version-support-policy`.
   * The behavior of `XLA_PYTHON_CLIENT_MEM_FRACTION=.XX` has been changed to allocate XX% of
     the total GPU memory instead of the previous behavior of using currently available GPU memory
     to calculate preallocation. Please refer to
