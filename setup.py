@@ -62,7 +62,7 @@ setup(
     author_email='jax-dev@google.com',
     packages=find_packages(exclude=["examples"]),
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
-    python_requires='>=3.7',
+    python_requires='>=3.8',
     install_requires=[
         'numpy>=1.20',
         'opt_einsum',
@@ -104,7 +104,6 @@ setup(
     url='https://github.com/google/jax',
     license='Apache-2.0',
     classifiers=[
-        "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",

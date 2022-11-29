@@ -1,3 +1,4 @@
+(version-support-policy)=
 # Python and NumPy version support policy
 
 
