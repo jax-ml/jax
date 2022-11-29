@@ -606,15 +606,6 @@ def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
   args = _optimization_barrier(args)
   return core.eval_jaxpr(jaxpr, (), *args)
 
-# TODO(mattjj): add core utility for 'create dummy value for this type'?
-def _dummy_like(aval: core.AbstractValue) -> Any:
-  if aval is core.abstract_token:
-    return jax.lax.create_token()
-  elif isinstance(aval, (core.ShapedArray, core.DShapedArray)):
-    return jax.lax.broadcast(jax.lax.empty(aval.dtype), aval.shape)  # type: ignore
-  else:
-    raise ValueError(aval)
-
 mlir.register_lowering(
     remat_p, mlir.lower_fun(remat_lowering, multiple_results=True))
 mlir.register_lowering(
