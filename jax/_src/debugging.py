@@ -372,7 +372,12 @@ def inspect_sharding_partition(shapes, arg_shardings, result_shape,
       name="tmp_xla_computation", platform=module_context.platform,
       backend_or_name=module_context.backend_or_name,
       axis_context=module_context.axis_context)
-  return trivial_comp, arg_shardings, arg_shardings[0]
+  # The trivial computation built here has a dummy tuple as the result,
+  # so use sharding compatible with it for the result sharding.
+  empty_tuple_sharding = xc.OpSharding()
+  empty_tuple_sharding.type = xc.OpSharding.Type.TUPLE
+  result_sharding = xc.HloSharding.from_proto(empty_tuple_sharding)
+  return trivial_comp, arg_shardings, result_sharding
 
 def inspect_sharding_infer_sharding_from_operands(arg_shapes, arg_shardings,
                                                   shape, backend_string):
