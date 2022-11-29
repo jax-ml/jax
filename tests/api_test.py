@@ -2442,7 +2442,7 @@ class APITest(jtu.JaxTestCase):
     # Regression test for tangent and cotangent mismatch in convert_element_type
     # transpose rule wrt a ConstVar
     f = lax.full_like
-    out, vjp = api.vjp(f, np.zeros((2, 2)), 1)
+    out, vjp = api.vjp(f, jnp.zeros((2, 2)), 1)
     self.assertAllClose(out, jnp.ones((2, 2)))
     tangent_x, tangent_y = vjp(out)
     self.assertAllClose(tangent_x, jnp.zeros((2, 2)))
@@ -3763,7 +3763,7 @@ class APITest(jtu.JaxTestCase):
 
     ans = f(jnp.arange(1))  # doesn't crash
     expected = jnp.arange(1) + 1
-    self.assertAllClose(ans, expected)
+    self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters([
       {"testcase_name": f"{dtype.__name__}", "dtype": dtype}
@@ -3971,7 +3971,7 @@ class APITest(jtu.JaxTestCase):
       return 1. / (1. + jnp.exp(-x))
 
     x = jnp.ones((1, 50))
-    A = jnp.array(npr.randn(50, 50))
+    A = jnp.array(npr.randn(50, 50), dtype=x.dtype)
 
     @jax.jit
     def loss(A, x):
@@ -5289,11 +5289,11 @@ class RematTest(jtu.JaxTestCase):
   def test_const_in_jvp_scan(self, remat):
     @api.custom_jvp
     def f(x):
-      return x * np.arange(3.)
+      return x * jnp.arange(3.)
     @f.defjvp
     def f_jvp(primals, tangents):
       (x,), (xdot,) = primals, tangents
-      return f(x), xdot * np.arange(3.)
+      return f(x), xdot * jnp.arange(3.)
 
     @remat
     def g(x):
@@ -5492,11 +5492,11 @@ class RematTest(jtu.JaxTestCase):
   def test_const_in_jvp_cond(self, remat):
     @api.custom_jvp
     def f(x):
-      return x * np.arange(3.)
+      return x * jnp.arange(3.)
     @f.defjvp
     def f_jvp(primals, tangents):
       (x,), (xdot,) = primals, tangents
-      return f(x), xdot * np.arange(3.)
+      return f(x), xdot * jnp.arange(3.)
 
     @remat
     def g(x):
@@ -6654,7 +6654,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       return [expit(c[0])] + [c[i-1] + c[i] for i in range(1, len(c))], None
 
     def foo(x):
-      c, _ = lax.scan(scanned_fun, [x, 0., 0., 0., 0.], None, length=10)
+      zero = jnp.zeros_like(x)
+      c, _ = lax.scan(scanned_fun, [x, zero, zero, zero, zero], None, length=10)
       return c[-1]
 
     # just make sure these don't crash
@@ -6699,7 +6700,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       return [relu(c[0])] + [c[i-1] + c[i] for i in range(1, len(c))], None
 
     def f(x):
-      c, _ = lax.scan(scanned_fun, [x, 0., 0., 0., 0.], None, length=10)
+      zero = jnp.zeros_like(x)
+      c, _ = lax.scan(scanned_fun, [x, zero, zero, zero, zero], None, length=10)
       return c[-1]
 
     # don't crash
@@ -6976,7 +6978,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   def test_initial_style_vmap_2(self):
     # This is like test_initial_style_vmap except the primal function closes
     # over an array constant.
-    y = jnp.array([1., 2., 3.])
+    y = jnp.arange(1., 4.)
 
     @api.custom_jvp
     def f(x):
@@ -7797,7 +7799,7 @@ class CustomVJPTest(jtu.JaxTestCase):
   def test_initial_style_vmap_3(self):
     # This is like test_initial_style_vmap except the primal function closes
     # over an array constant.
-    y = jnp.array([1., 2., 3.])
+    y = jnp.arange(1., 4.)
 
     @api.custom_vjp
     def f(x):
@@ -8092,14 +8094,14 @@ class CustomVJPTest(jtu.JaxTestCase):
   def test_custom_gradient_3(self):
     @api.custom_gradient
     def f(x):
-      vjp = lambda g: (jnp.cos(x) * jnp.array([3., 4., 5.]),)
+      vjp = lambda g: (jnp.cos(x) * jnp.arange(3., 6.),)
       return jnp.sum(jnp.sin(x)), vjp
 
     self.assertAllClose(f(jnp.arange(3)), jnp.sum(jnp.sin(jnp.arange(3.))),
                         check_dtypes=False)
     self.assertAllClose(
         api.grad(f)(jnp.arange(3.)),
-        api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.array([3., 4., 5.]),
+        api.grad(lambda x: jnp.sum(jnp.sin(x)))(jnp.arange(3.)) * jnp.arange(3., 6.),
         check_dtypes=False)
 
   def test_custom_gradient_can_return_singleton_value_in_vjp(self):
@@ -8226,7 +8228,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     key1, key2 = jax.random.split(key, 2)
     x_batch = jax.random.normal(key1, (3, 2))
     covector_batch = jax.random.normal(key2, (3, 2))
-    coeff = jnp.array(1.)
+    coeff = jnp.array(1., dtype=x_batch.dtype)
 
     batched_scan_over_mul = jax.vmap(scan_over_mul, in_axes=(0, None), out_axes=0)
     res, vjp_fun = jax.vjp(batched_scan_over_mul, x_batch, coeff)
@@ -8807,6 +8809,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     ys = api.vmap(f)(xs)
     self.assertAllClose(ys, jnp.cos(xs))
 
+  @jax.numpy_dtype_promotion('standard')
   def test_closure(self):
     z = jnp.array([2., 1., 3.])
 
@@ -8986,6 +8989,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(ys, jnp.cos(xs))
     self.assertAllClose(tys, -jnp.sin(xs) * txs)
 
+  @jax.numpy_dtype_promotion('standard')
   def test_jvp_closure(self):
     z = jnp.array([2., 1., 3.])
     def bcast(x): return z + x - z
@@ -9051,7 +9055,8 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
 
-    x, txs = jnp.array(1.), 2. + jnp.arange(3.)
+    txs = 2. + jnp.arange(3.)
+    x = jnp.array(1, dtype=txs.dtype)
     y, tys = api.vmap(f_jvp, in_axes=(None, 0), out_axes=(None, 0))(x, txs)
     self.assertAllClose(y, jnp.cos(x))
     self.assertAllClose(tys, -jnp.sin(x) * txs)
@@ -9084,7 +9089,8 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
 
-    xs, tx = jnp.arange(3.), jnp.array(4.)
+    xs = jnp.arange(3.)
+    tx = jnp.array(4, dtype=xs.dtype)
     ys, tys = api.vmap(f_jvp, in_axes=(0, None))(xs, tx)
     self.assertAllClose(ys, jnp.cos(xs))
     self.assertAllClose(tys, -jnp.sin(xs) * tx)
@@ -9114,7 +9120,8 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     f_lin_jvp = lambda x, tx: api.jvp(f_linear, [x], [tx])
     f_non_jvp = lambda x, tx: api.jvp(f_nonlinear, [x], [tx])
-    xs, tx = jnp.arange(3.), jnp.array(4.)
+    xs = jnp.arange(3.)
+    tx = jnp.array(4., dtype=xs.dtype)
 
     # doesn't err
     _ = api.vmap(f_lin_jvp, in_axes=(0, None), out_axes=(0, None))(xs, tx)
@@ -9150,7 +9157,8 @@ class CustomVmapTest(jtu.JaxTestCase):
       return cos_with_invalid_dataflow_jvp(xs), in_batched[0]
 
     f_jvp = lambda x, tx: api.jvp(f, [x], [tx])
-    x, txs = jnp.array(1.), 2. + jnp.arange(3.)
+    txs = 2. + jnp.arange(3.)
+    x = jnp.array(1, dtype=txs.dtype)
 
     # doesn't err
     ys, tys = api.vmap(f_jvp, in_axes=(None, 0))(x, txs)
@@ -9399,7 +9407,7 @@ class NamedCallTest(jtu.JaxTestCase):
 
     f = jit(funcdict[func])
 
-    int_dtype = dtypes.canonicalize_dtype(jnp.int_)
+    int_dtype = dtypes.canonicalize_dtype(jnp.int64)
     int_max = np.iinfo(int_dtype).max
     int_min = np.iinfo(int_dtype).min
 
