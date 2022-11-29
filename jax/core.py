@@ -934,12 +934,10 @@ def _why_alive(ignore_ids: Set[int], x: Any) -> str:
     # in _why_alive_container_info. See example:
     #  https://github.com/google/jax/pull/13022#discussion_r1008456599
     # To prevent this collapsing behavior, just comment out this code block.
-    # TODO(mattjj): after Python 3.7 is unsupported, replace with types.CellType
-    cell_type = type((lambda x: lambda: x)(10.28).__closure__[0]) # type: ignore
     if (isinstance(parent, dict) and
         getattr(parents(parent)[0], '__dict__', None) is parents(child)[0]):
       parent = parents(parent)[0]
-    elif type(parent) is cell_type:
+    elif type(parent) is types.CellType:
       parent = parents(parents(parent)[0])[0]
 
     line = f'<{type(child).__name__} {id(child)}> is referred to by '
