@@ -907,6 +907,43 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     x = jnp.arange(16, dtype=jnp.float32).reshape(4, 4)
     self.assertAllClose(h(x), (x * x).sum(0))
 
+  @parameterized.named_parameters(
+  {'testcase_name': name, 'mesh': mesh}
+  for name, mesh in (
+          ('1d', (('x', 2),)),
+  ))
+  @jtu.with_mesh_from_kwargs
+  def testAllGather(self, mesh):
+    # try hard_xmap variant, mapping across leading axes
+    x = jnp.arange(8).reshape(2, 4)
+    if not config.jax_array:
+      self.skipTest('Do not test on the cpu+no array test')
+    f = xmap(lambda x: lax.all_gather(x, 'i', axis=0, tiled=True),
+             in_axes=['i', None], out_axes=[None],
+             axis_resources={'i': 'x'})
+    h = pjit(f, in_axis_resources=P('x', None),
+             out_axis_resources=P(None))(x)
+    assert (h.device_buffers[0] == x.reshape(8)).all()
+
+  @parameterized.named_parameters(
+  {'testcase_name': name, 'mesh': mesh}
+  for name, mesh in (
+          ('1d', (('x', 2),)),
+  ))
+  @jtu.with_mesh_from_kwargs
+  def testReduceScatter(self, mesh):
+    # try hard_xmap variant, mapping across leading axes
+    x = jnp.arange(8).reshape(2, 4)
+    if not config.jax_array:
+      self.skipTest('Do not test on the cpu+no array test')
+    f = xmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=0, tiled=True),
+             in_axes=[None, None], out_axes=['i', None, None], axis_sizes={'i': 2},
+             axis_resources={'i': 'x'})
+    h = pjit(lambda x: f(x).reshape((2,4)), in_axis_resources=P(None, None),
+             out_axis_resources=P('x', None))(x)
+
+    assert (h.device_buffers[0].reshape(4) == x[0, :]*2).all()
+
   @jtu.with_mesh([('x', 2)])
   def testBareXmapCollective(self):
     x = jnp.arange(20, dtype=jnp.float32).reshape(4, 5)
@@ -1957,15 +1994,15 @@ class XMapErrorTest(jtu.JaxTestCase):
       xmap(lambda x, y: x, p, p)(x, x)  # Error, but make sure we hint at tupling
     # TODO(apaszke): Disable implicit list casts and enable this
     # error = re.escape(
-        # r"xmap in_axes specification must be a tree prefix of the "
-        # r"corresponding value, got specification (['x'], ['x'], ['x']) for value "
-        # r"tree PyTreeDef(([*, *, *],)). Note that xmap in_axes that "
-        # r"are non-trivial pytrees should always be wrapped in a tuple representing "
-        # r"the argument list. In particular, you're passing in a single argument "
-        # r"which means that xmap in_axes might need to be wrapped in a "
-        # r"singleton tuple.")
+    # r"xmap in_axes specification must be a tree prefix of the "
+    # r"corresponding value, got specification (['x'], ['x'], ['x']) for value "
+    # r"tree PyTreeDef(([*, *, *],)). Note that xmap in_axes that "
+    # r"are non-trivial pytrees should always be wrapped in a tuple representing "
+    # r"the argument list. In particular, you're passing in a single argument "
+    # r"which means that xmap in_axes might need to be wrapped in a "
+    # r"singleton tuple.")
     # with self.assertRaisesRegex(ValueError, error):
-      # xmap(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
+    # xmap(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
     error = re.escape(
         r"xmap out_axes specification must be a tree prefix of the "
         r"corresponding value, got specification ([['x'], ['x'], ['x']], ['x']) for "

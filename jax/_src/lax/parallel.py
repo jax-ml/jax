@@ -1157,6 +1157,9 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   # TODO(jekbradbury): enable for all_gather_dimension > 0
   x_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
+  axis_context = ctx.module_context.axis_context
+  is_spmd = isinstance(axis_context,
+                       (mlir.SPMDAxisContext, mlir.ShardingContext))
   if (ctx.module_context.platform == 'tpu' or
       ctx.module_context.platform in ('cuda', 'rocm')
       and all_gather_dimension == 0):
@@ -1169,11 +1172,22 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
           mlir.dense_int_elements(broadcast_dimensions))
     replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                      axis_index_groups)
+    if is_spmd:
+      # We want to emit the all-gather with global device IDs and a unique
+      # channel ID, as otherwise it interprets the devices as replicas instead
+      # of partitions - and XLA is configured with only a single replica.
+      channel = ctx.module_context.new_channel()
+      other_args = dict(
+          channel_handle=mhlo.ChannelHandle.get(
+              channel, mlir.DEVICE_TO_DEVICE_TYPE),
+          use_global_device_ids=ir.BoolAttr.get(True))
+    else:
+      other_args = {}
     return mhlo.AllGatherOp(
         mlir.aval_to_ir_type(out_aval),
         x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
         replica_groups=_replica_groups_mhlo(replica_groups),
-        channel_handle=None).results
+        **other_args).results
   else:
     lowering = mlir.lower_fun(_all_gather_via_psum, multiple_results=False)
     return lowering(
@@ -1288,12 +1302,26 @@ def _reduce_scatter_lowering(prim, reducer, ctx, x,
                                      axis_index_groups)
     scatter_out_shape = list(x_aval.shape)
     scatter_out_shape[scatter_dimension] //= axis_size
+    axis_context = ctx.module_context.axis_context
+    is_spmd = isinstance(axis_context,
+                        (mlir.SPMDAxisContext, mlir.ShardingContext))
+    if is_spmd:
+      # We want to emit the all-gather with global device IDs and a unique
+      # channel ID, as otherwise it interprets the devices as replicas instead
+      # of partitions - and XLA is configured with only a single replica.
+      channel = ctx.module_context.new_channel()
+      other_args = dict(
+          channel_handle=mhlo.ChannelHandle.get(
+              channel, mlir.DEVICE_TO_DEVICE_TYPE),
+          use_global_device_ids=ir.BoolAttr.get(True))
+    else:
+      other_args = {}
     op = mhlo.ReduceScatterOp(
         mlir.aval_to_ir_type(x_aval.update(shape=scatter_out_shape)),
         x,
         scatter_dimension=mlir.i64_attr(scatter_dimension),
         replica_groups=_replica_groups_mhlo(replica_groups),
-        channel_handle=None)
+        **other_args)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer_block):
