@@ -177,7 +177,10 @@ def jax_test(
             deps = [
                 "//jax",
                 "//jax:test_util",
-            ] + deps,
+            ] + deps + select({
+                "//jax:enable_jaxlib_build": ["//jaxlib/cuda:gpu_only_test_deps"],
+                "//conditions:default": [],
+            }),
             shard_count = test_shards,
             tags = test_tags,
             main = main,
