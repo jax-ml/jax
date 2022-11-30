@@ -246,6 +246,10 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     # Raise index in case of effects to allow data-dependence-based discharging
     # of those effects (even if they don't have an explicit data dependence).
     index = core.raise_as_much_as_possible(index)
+  false_jaxpr = false_jaxpr.replace(
+      jaxpr=false_jaxpr.jaxpr.replace(effects=joined_effects))
+  true_jaxpr = true_jaxpr.replace(
+      jaxpr=true_jaxpr.jaxpr.replace(effects=joined_effects))
 
   linear = [False] * len(consts) + linear_ops
   out = cond_p.bind(

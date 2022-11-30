@@ -14,7 +14,7 @@ API
    check
    check_error
    Error
-   ErrorCategory
+   JaxRuntimeError
    user_checks
    nan_checks
    index_checks
