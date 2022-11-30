@@ -21,16 +21,14 @@ from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax import core
 from jax._src import abstract_arrays
-from jax._src import ad_util
 from jax._src import api_util
 from jax._src import basearray
 from jax._src import dispatch
 from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
 from jax._src.config import config
 from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.api import device_put
+from jax._src import api
 from jax._src.typing import ArrayLike
 from jax.interpreters import pxla, xla, mlir
 from jax._src.sharding import (
@@ -90,13 +88,13 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   """Method to reconstruct a device array from a serialized state."""
   np_value = fun(*args)
   np_value.__setstate__(arr_state)
-  jnp_value = device_put(np_value)
+  jnp_value = api.device_put(np_value)
   jnp_value.aval = jnp_value.aval.update(**aval_state)
   return jnp_value
 
 
 def _single_device_array_from_buf(buf, committed):
-  db = pxla._set_aval(buf)
+  db = dispatch._set_aval(buf)
   return ArrayImpl(db.aval, SingleDeviceSharding(db.device()), [db],
                    committed=committed, _skip_checks=True)
 
@@ -284,7 +282,7 @@ class ArrayImpl(basearray.Array):
       # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
       # the fast path (see PmapSharding branch above) after after uneven
       # partitioning support is added
-      return device_put(self._value[idx])
+      return api.device_put(self._value[idx])
 
   def __iter__(self):
     if self.ndim == 0:
@@ -298,7 +296,7 @@ class ArrayImpl(basearray.Array):
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
         # here after uneven partitioning support is added.
-        return (device_put(self._value[i]) for i in range(self.shape[0]))
+        return (api.device_put(self._value[i]) for i in range(self.shape[0]))
 
   def item(self):
     if dtypes.issubdtype(self.dtype, np.complexfloating):
@@ -551,7 +549,7 @@ def make_array_from_callback(
   # `XLACompatibleSharding` and this function is supposed to work for every
   # `Sharding`.
   arrays = [
-      device_put(data_callback(device_to_index_map[device]), device)
+      api.device_put(data_callback(device_to_index_map[device]), device)
       for device in sharding.addressable_devices
   ]
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
@@ -605,8 +603,6 @@ core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
 xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 api_util._shaped_abstractify_handlers[ArrayImpl] = op.attrgetter('aval')
-ad_util.jaxval_adders[ArrayImpl] = lax_internal.add
-ad_util.jaxval_zeros_likers[ArrayImpl] = lax_internal.zeros_like_array
 if xc._version >= 96:
   # TODO(jakevdp) replace this with true inheritance at the C++ level.
   basearray.Array.register(ArrayImpl)
@@ -616,17 +612,6 @@ def _array_mlir_constant_handler(val, canonicalize_types=True):
   return mlir.ir_constants(val._value,
                            canonicalize_types=canonicalize_types)
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
-
-
-def _device_put_array(x, device: Optional[Device]):
-  if dispatch.is_single_device_sharding(x.sharding):
-    x = dispatch._copy_device_array_to_device(pxla._set_aval(x._arrays[0]), device)
-    return (x,)
-  else:
-    # Round trip via host if x is sharded. SDA also does a round trip via host.
-    return dispatch._device_put_array(x._value, device)
-
-dispatch.device_put_handlers[ArrayImpl] = _device_put_array
 
 
 def _array_pmap_shard_arg(x, devices, indices, mode):

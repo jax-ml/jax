@@ -29,6 +29,7 @@ from jax import core
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
+from jax._src import array
 from jax._src import device_array
 from jax._src import dispatch
 from jax import linear_util as lu
@@ -86,7 +87,6 @@ zip, unsafe_zip = safe_zip, zip
 # TODO(jakevdp): replace this with an isinstance() check when JEP 12049 is complete.
 def _is_array_or_tracer(operand: Any) -> bool:
   if config.jax_array:
-    from jax._src import array  # pylint: disable=g-import-not-at-top
     return isinstance(operand, (core.Tracer, array.ArrayImpl))
   else:
     return isinstance(operand, (core.Tracer, device_array.DeviceArray))
@@ -1339,8 +1339,6 @@ def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = 
     An ndarray with the same shape as `x` with its entries set equal to
     `fill_value`, similar to the output of np.full.
   """
-  from jax._src import array
-
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = dtype or _dtype(x)
@@ -1486,7 +1484,7 @@ def zeros_like_array(x: ArrayLike) -> Array:
 
 for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types,
-    device_array.device_array_types,
+    device_array.device_array_types, [array.ArrayImpl],
     [pxla.ShardedDeviceArray, pxla._ShardedDeviceArray,
      pxla.pmap_lib.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
@@ -1494,6 +1492,7 @@ ad_util.jaxval_zeros_likers[device_array._DeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[device_array.Buffer] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.pmap_lib.ShardedDeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[array.ArrayImpl] = zeros_like_array
 
 
 ### primitives

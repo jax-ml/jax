@@ -41,7 +41,9 @@ import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching
 import jax.interpreters.mlir as mlir
 import jax.interpreters.xla as xla
+from jax.interpreters import pxla
 import jax.interpreters.partial_eval as pe
+from jax._src import array
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import profiler
@@ -773,9 +775,8 @@ class SimpleResultHandler:
 
 def maybe_create_array_from_da(buf, aval, device):
   if config.jax_array:
-    from jax._src.array import ArrayImpl
-    return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
-                     committed=(device is not None), _skip_checks=True)
+    return array.ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
+                           committed=(device is not None), _skip_checks=True)
   else:
     return device_array.make_device_array(aval, device, buf)
 
@@ -1254,6 +1255,12 @@ def check_arg_avals_for_call(ref_avals, arg_avals):
         f"called with:\n {arg_aval}")
 
 
+def _set_aval(val):
+  if val.aval is None:
+    val.aval = core.ShapedArray(val.shape, val.dtype)
+  return val
+
+
 def device_put(x, device: Optional[Device] = None) -> Tuple[Any, ...]:
   x = xla.canonicalize_dtype(x)
   try:
@@ -1292,6 +1299,19 @@ def _device_put_device_array(x: Union[device_array.DeviceArrayProtocol, device_a
   return (x.device_buffer,)
 for t in device_array.device_array_types:
   device_put_handlers[t] = _device_put_device_array
+
+def _device_put_jax_array(x, device: Optional[Device]):
+  if is_single_device_sharding(x.sharding):
+    x = _copy_device_array_to_device(_set_aval(x._arrays[0]), device)
+    return (x,)
+  else:
+    # Round trip via host if x is sharded. SDA also does a round trip via host.
+    return _device_put_array(x._value, device)
+device_put_handlers[array.ArrayImpl] = _device_put_jax_array
+
+device_put_handlers[pxla._ShardedDeviceArray] = _device_put_array
+device_put_handlers[pxla.pmap_lib.ShardedDeviceArray] = _device_put_array
+
 device_put_handlers[core.DArray] = lambda x, d: device_put(x._data, d)
 
 def _copy_device_array_to_device(
@@ -1321,8 +1341,6 @@ def _copy_device_array_to_device(
 
 def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Array:
   """Copies `Array`s with SingleDeviceSharding to a different device."""
-  from jax._src import array
-
   if device is None:
     # no copying to be done because there's no target specified
     return x
@@ -1350,7 +1368,6 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
 
 def _device_put_impl(
     x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
-  from jax._src import array
   from jax.interpreters import pxla
 
   try:

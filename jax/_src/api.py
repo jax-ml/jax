@@ -47,6 +47,7 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
 from jax._src import callback as jcb
 from jax._src import device_array
 from jax._src import dispatch
+from jax._src import array
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -2962,7 +2963,6 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     buffers = [buf for x, d in zip(xs, devices)
                for buf in dispatch.device_put(x, d)]
     if config.jax_array:
-      from jax._src import array
       sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
       return array.ArrayImpl(
           stacked_aval,
@@ -3017,7 +3017,6 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     if config.jax_array:
-      from jax._src import array
       sharding_spec = pxla._create_pmap_sharding_spec(aval)
       return array.ArrayImpl(
           aval, PmapSharding(np.array(devices), sharding_spec),

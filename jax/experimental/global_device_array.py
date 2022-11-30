@@ -20,6 +20,7 @@ from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Di
 
 import jax
 from jax import core
+from jax._src import dispatch
 from jax._src import api_util
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -381,7 +382,7 @@ class GlobalDeviceArray:
 
     out = []
     for db in self._device_buffers:
-      db = pxla._set_aval(db)
+      db = dispatch._set_aval(db)
       device = db.device()
       index, rid = global_indices_rid[device]
       out.append(Shard(device, index, rid, db))
@@ -445,7 +446,7 @@ class GlobalDeviceArray:
 
   def local_data(self, index) -> DeviceArray:
     self._check_if_deleted()
-    return pxla._set_aval(self._device_buffers[index])
+    return dispatch._set_aval(self._device_buffers[index])
 
   def addressable_data(self, index) -> DeviceArray:
     self._check_if_deleted()

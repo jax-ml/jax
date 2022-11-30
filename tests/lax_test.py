@@ -2981,7 +2981,7 @@ def device_put_foo_array(x: FooArray, device):
 def shard_foo_array_handler(x, devices, indices, mode):
   device, = devices
   if isinstance(x.data, array.ArrayImpl):
-    return array._device_put_array(x.data, device)
+    return dispatch._device_put_jax_array(x.data, device)
   return dispatch._device_put_array(x.data, device)
 
 def foo_array_constant_handler(x, c):

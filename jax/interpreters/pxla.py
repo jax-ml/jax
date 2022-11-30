@@ -852,11 +852,13 @@ def _sda_sharding(self):
       'SDAs to global `jax.Array` and then pass them to pjit/xmap with '
       '`jax_array` enabled.')
 
+# TODO(yashkatariya): Remove this when SDA is deleted. The local import of Array
+# will also go away.
 def _sda_addressable_shards(self):
   from jax._src import array
   out = []
   for db in self.device_buffers:
-    db = _set_aval(db)
+    db = dispatch._set_aval(db)
     out.append(array.Shard(db.device(), self.sharding, self.shape, db))
   return out
 
@@ -890,7 +892,8 @@ def _hashable_index(idx):
   return tree_map(lambda x: (x.start, x.stop) if type(x) == slice else x, idx)
 
 # The fast path is handled directly in shard_args().
-# TODO(skye): is there a simpler way to rewrite this using sharding_spec?
+# TODO(yashkatariya): Move this to array.py when SDA is deleted. The local
+# import of Array should go away at that time.
 def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
   from jax._src.array import ArrayImpl
 
@@ -933,7 +936,6 @@ def _register_handlers_for_sharded_device_array(sda):
                                  _sharded_device_array_mlir_constant_handler)
 
   core.pytype_aval_mappings[sda] = abstract_arrays.canonical_concrete_aval
-  dispatch.device_put_handlers[sda] = dispatch._device_put_array
   xla.pytype_aval_mappings[sda] = op.attrgetter("aval")
   xla.canonicalize_dtype_handlers[sda] = identity
   api_util._shaped_abstractify_handlers[sda] = op.attrgetter("aval")
@@ -3940,8 +3942,3 @@ def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False
     return list(it.chain.from_iterable(dispatch.device_put(x, device) for device in devices))
   else:
     return list(it.chain.from_iterable(dispatch.device_put(val, device) for val, device in safe_zip(x, devices)))
-
-def _set_aval(val):
-  if val.aval is None:
-    val.aval = core.ShapedArray(val.shape, val.dtype)
-  return val

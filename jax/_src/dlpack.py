@@ -16,6 +16,7 @@ from jax import core
 from jax import numpy as jnp
 from jax._src import device_array
 from jax._src import dispatch
+from jax._src import array
 from jax._src.lib import xla_client
 from jax._src.lib import xla_bridge
 
@@ -39,7 +40,6 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
       undefined behavior if the DLPack consumer writes to a buffer that JAX
       owns.
   """
-  from jax._src import array
   if not isinstance(x, (device_array.DeviceArray, array.ArrayImpl)):
     raise TypeError("Argument to to_dlpack must be a DeviceArray or Array, got {}"
                     .format(type(x)))
