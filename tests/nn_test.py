@@ -145,34 +145,34 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testOneHot(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3)
     expected = jnp.array([[1., 0., 0.],
-                         [0., 1., 0.],
-                         [0., 0., 1.]])
-    self.assertAllClose(actual, expected)
+                          [0., 1., 0.],
+                          [0., 0., 1.]])
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
     actual = nn.one_hot(jnp.array([1, 2, 0]), 3)
     expected = jnp.array([[0., 1., 0.],
-                         [0., 0., 1.],
-                         [1., 0., 0.]])
-    self.assertAllClose(actual, expected)
+                          [0., 0., 1.],
+                          [1., 0., 0.]])
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testOneHotOutOfBound(self):
     actual = nn.one_hot(jnp.array([-1, 3]), 3)
     expected = jnp.array([[0., 0., 0.],
-                         [0., 0., 0.]])
-    self.assertAllClose(actual, expected)
+                          [0., 0., 0.]])
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testOneHotNonArrayInput(self):
     actual = nn.one_hot([0, 1, 2], 3)
     expected = jnp.array([[1., 0., 0.],
-                         [0., 1., 0.],
-                         [0., 0., 1.]])
-    self.assertAllClose(actual, expected)
+                          [0., 1., 0.],
+                          [0., 0., 1.]])
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testOneHotCustomDtype(self):
     actual = nn.one_hot(jnp.array([0, 1, 2]), 3, dtype=jnp.bool_)
     expected = jnp.array([[True, False, False],
-                         [False, True, False],
-                         [False, False, True]])
+                          [False, True, False],
+                          [False, False, True]])
     self.assertAllClose(actual, expected)
 
   def testOneHotConcretizationError(self):
@@ -183,14 +183,14 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   def testOneHotAxis(self):
     expected = jnp.array([[0., 1., 0.],
-                         [0., 0., 1.],
-                         [1., 0., 0.]]).T
+                          [0., 0., 1.],
+                          [1., 0., 0.]]).T
 
     actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=0)
-    self.assertAllClose(actual, expected)
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
     actual = nn.one_hot(jnp.array([1, 2, 0]), 3, axis=-2)
-    self.assertAllClose(actual, expected)
+    self.assertAllClose(actual, expected, check_dtypes=False)
 
   def testTanhExists(self):
     nn.tanh  # doesn't crash

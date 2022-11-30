@@ -71,7 +71,8 @@ class QdwhTest(jtu.JaxTestCase):
     u, s, v = jnp.linalg.svd(a, full_matrices=False)
     cond = 10**log_cond
     s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
-    a = (u * s) @ v
+    with jax.numpy_dtype_promotion('standard'):
+      a = (u * s) @ v
     is_hermitian = _check_symmetry(a)
     max_iterations = 2
 

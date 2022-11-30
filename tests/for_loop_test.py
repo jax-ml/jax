@@ -315,7 +315,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
       _, b, c = for_impl(5, body, (a, b, c))
       return b, c
     a = jnp.arange(5.) + 1.
-    b = 1.
+    b = jnp.ones_like(a[0])
     _, f_lin = jax.linearize(f, a, b)
     expected_tangents = f_lin(a, b)
     _, actual_tangents = jax.jvp(f, (a, b), (a, b))
@@ -338,7 +338,7 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
       _, b, c, _ = for_impl(5, body2, (a, b, c, 0))
       return b, c
     a = jnp.arange(5.) + 1.
-    b = 1.
+    b = jnp.ones_like(a[0])
     _, g_lin = jax.linearize(f, a, b)
     expected_tangents = g_lin(a, b)
     _, actual_tangents = jax.jvp(g, (a, b), (a, b))

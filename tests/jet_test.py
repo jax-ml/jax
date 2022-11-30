@@ -118,12 +118,12 @@ class JetTest(jtu.JaxTestCase):
 
     rng = self.rng()
 
-    x = rng.randn(*input_shape)
+    x = rng.randn(*input_shape).astype(W.dtype)
     primals = (W, b, x)
 
-    series_in1 = [rng.randn(*W.shape) for _ in range(order)]
-    series_in2 = [rng.randn(*b.shape) for _ in range(order)]
-    series_in3 = [rng.randn(*x.shape) for _ in range(order)]
+    series_in1 = [rng.randn(*W.shape).astype(W.dtype) for _ in range(order)]
+    series_in2 = [rng.randn(*b.shape).astype(W.dtype) for _ in range(order)]
+    series_in3 = [rng.randn(*x.shape).astype(W.dtype) for _ in range(order)]
 
     series_in = (series_in1, series_in2, series_in3)
 
@@ -313,7 +313,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_dynamic_slice(self): self.unary_check(partial(lax.dynamic_slice, start_indices=(1,2), slice_sizes=(1,1)))
   @jtu.skip_on_devices("tpu")
-  def test_dynamic_update_slice(self): self.unary_check(partial(lax.dynamic_update_slice, start_indices=(1,2), update=jnp.arange(6.0).reshape(2, 3)))
+  def test_dynamic_update_slice(self): self.unary_check(partial(lax.dynamic_update_slice, start_indices=(1,2), update=np.arange(6.0).reshape(2, 3)))
 
 
   @jtu.skip_on_devices("tpu")
@@ -385,7 +385,7 @@ class JetTest(jtu.JaxTestCase):
 
   def test_inst_zero(self):
     def f(x):
-      return 2.
+      return jnp.full_like(x, 2.)
     def g(x):
       return 2. + 0 * x
     x = jnp.ones(1)
@@ -395,8 +395,8 @@ class JetTest(jtu.JaxTestCase):
 
     g_out_primals, g_out_series = jet(g, (x, ), ([jnp.ones_like(x) for _ in range(order)], ))
 
-    assert g_out_primals == f_out_primals
-    assert g_out_series == f_out_series
+    self.assertArraysEqual(g_out_primals, f_out_primals)
+    self.assertArraysEqual(g_out_series, f_out_series)
 
   def test_add_any(self):
     # https://github.com/google/jax/issues/5217
