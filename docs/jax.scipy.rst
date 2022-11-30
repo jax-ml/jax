@@ -107,6 +107,7 @@ jax.scipy.special
   :toctree: _autosummary
 
    betainc
+   betaln
    digamma
    entr
    erf

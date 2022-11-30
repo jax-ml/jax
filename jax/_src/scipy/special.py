@@ -29,6 +29,7 @@ from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.lax_numpy import moveaxis, _promote_args_inexact, _promote_dtypes_inexact
 from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
+from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
 
 
@@ -38,10 +39,11 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
-@_wraps(osp_special.betaln, module='scipy.special')
-def betaln(x: ArrayLike, y: ArrayLike) -> Array:
-  x, y = _promote_args_inexact("betaln", x, y)
-  return lax.lgamma(x) + lax.lgamma(y) - lax.lgamma(x + y)
+betaln = _wraps(
+    osp_special.betaln,
+    module='scipy.special',
+    update_doc=False
+)(_betaln_impl)
 
 
 @_wraps(osp_special.betainc, module='scipy.special')
