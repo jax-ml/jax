@@ -357,7 +357,6 @@ class BatchTrace(Trace):
     src = source_info_util.current()
     if primitive.multiple_results:
       return [BatchTracer(self, x, d, src) for x, d in zip(val_out, dim_out)]
-      return map(partial(BatchTracer, self), val_out, dim_out)
     else:
       return BatchTracer(self, val_out, dim_out, src)
 
