@@ -122,10 +122,10 @@ class DtypesTest(jtu.JaxTestCase):
       (jnp.array(1., dtype=jnp.float32), jnp.array(0., dtype=jnp.float32), jnp.float32),
       (jnp.array(1., dtype=jnp.float32), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array(1., dtype=jnp.float64), jnp.array(0., dtype=jnp.float64), jnp.float64),
-      (jnp.array([1.]), 0., jnp.float_),
-      (jnp.array([1.]), jnp.array(0.), jnp.float_),
-      (jnp.array([1.]), jnp.array(0., dtype=jnp.float16), jnp.float_),
-      (jnp.array([1.]), jnp.array(0., dtype=jnp.float32), jnp.float_),
+      (jnp.array([1.]), 0., jnp.float64),
+      (jnp.array([1.]), jnp.array(0.), jnp.float64),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float16), jnp.float64),
+      (jnp.array([1.]), jnp.array(0., dtype=jnp.float32), jnp.float64),
       (jnp.array([1.]), jnp.array(0., dtype=jnp.float64), jnp.float64),
       (jnp.array([1.], dtype=jnp.float32), jnp.array(0., dtype=jnp.float16), jnp.float32),
       (jnp.array([1.], dtype=jnp.float16), jnp.array(0., dtype=jnp.float32), jnp.float32),
@@ -493,11 +493,11 @@ class TestPromotionTables(jtu.JaxTestCase):
     if promotion == 'standard' or not weak_type or dtype == dtypes.bool_:
       expected_dtype = dtype
     elif dtypes.issubdtype(dtype, np.complexfloating):
-      expected_dtype = dtypes.complex_
+      expected_dtype = np.complex128
     elif dtypes.issubdtype(dtype, np.floating):
-      expected_dtype = dtypes.float_
+      expected_dtype = np.float64
     else:
-      expected_dtype = dtypes.int_
+      expected_dtype = np.int64
 
     # No boolean weak types.
     expected_weak_type = weak_type and dtype != bool
