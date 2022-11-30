@@ -91,7 +91,7 @@ jax.distributed.initialize()
 ```
 
 On TPU at present calling {func}`jax.distributed.initialize` is optional, but
-recommanded since it enables additional checkpointing and health checking features.
+recommended since it enables additional checkpointing and health checking features.
 
 ### Local vs. global devices
 
