@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import operator as op
 import numpy as np
+import functools
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax import core
@@ -27,7 +28,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.config import config
-from jax._src.util import prod, safe_zip
+from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.api import device_put
 from jax._src.typing import ArrayLike
@@ -100,7 +101,7 @@ def _single_device_array_from_buf(buf, committed):
                    committed=committed, _skip_checks=True)
 
 
-@pxla.use_cpp_class(xc.ArrayImpl if xc._version >= 99 else None)
+@use_cpp_class(xc.ArrayImpl if xc._version >= 99 else None)
 class ArrayImpl(basearray.Array):
   # TODO(yashkatariya): Add __slots__ here.
 
@@ -111,7 +112,7 @@ class ArrayImpl(basearray.Array):
   _skip_checks: bool
   _npy_value: Optional[np.ndarray]
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Union[Sequence[DeviceArray], Sequence[ArrayImpl]],
                committed: bool, _skip_checks: bool = False):
@@ -334,7 +335,7 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}{self.shape}, {dtype_str}"
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def is_fully_addressable(self) -> bool:
     return self.sharding.is_fully_addressable
 
@@ -396,7 +397,7 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
     return _single_device_array_from_buf(self._arrays[index], self._committed)
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
     out = []
@@ -437,7 +438,7 @@ class ArrayImpl(basearray.Array):
     self._arrays = None
     self._npy_value = None
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def is_deleted(self):
     if self._arrays is None:
       return True
@@ -450,7 +451,7 @@ class ArrayImpl(basearray.Array):
     if self.is_deleted():
       raise RuntimeError("Array has been deleted.")
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def block_until_ready(self):
     self._check_if_deleted()
     for db in self._arrays:

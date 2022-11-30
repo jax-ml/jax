@@ -50,6 +50,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src.sharding import PmapSharding
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
@@ -687,7 +688,6 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   # all the other arguments stored as attributes.
 
   def arg_spec(x):
-    from jax._src.sharding import PmapSharding
     from jax.experimental import pjit
     # like xla.arg_spec but duck-types on x.shape and x.dtype
     aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
@@ -2962,11 +2962,11 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     buffers = [buf for x, d in zip(xs, devices)
                for buf in dispatch.device_put(x, d)]
     if config.jax_array:
-      from jax._src import array, sharding
+      from jax._src import array
       sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
       return array.ArrayImpl(
           stacked_aval,
-          sharding.PmapSharding(np.array(devices), sharding_spec),
+          PmapSharding(np.array(devices), sharding_spec),
           buffers, committed=True, _skip_checks=True)
     else:
       return pxla.make_sharded_device_array(stacked_aval, None, buffers)
@@ -3017,10 +3017,10 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     buf, = dispatch.device_put(x, devices[0])
     rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
     if config.jax_array:
-      from jax._src import array, sharding
+      from jax._src import array
       sharding_spec = pxla._create_pmap_sharding_spec(aval)
       return array.ArrayImpl(
-          aval, sharding.PmapSharding(np.array(devices), sharding_spec),
+          aval, PmapSharding(np.array(devices), sharding_spec),
           [buf, *rest_bufs], committed=True, _skip_checks=True)
     else:
       return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])

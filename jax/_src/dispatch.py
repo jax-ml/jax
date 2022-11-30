@@ -47,6 +47,8 @@ from jax._src import dtypes
 from jax._src import profiler
 from jax._src import stages
 from jax._src import traceback_util
+from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
+                               OpShardingSharding, Sharding)
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
@@ -95,7 +97,6 @@ _on_exit = False
 ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
-  from jax._src.sharding import PmapSharding
   from jax.experimental import pjit
 
   aval = xla.abstractify(x)
@@ -307,9 +308,6 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
   """
   # TODO(yashkatariya): Remove this entire function when backend and device are
   # removed as arguments on jit.
-
-  from jax._src import sharding
-
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
                      "got device={} and backend={}".format(device, backend))
@@ -323,7 +321,7 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
   assert len(da) == 1
   # in_shardings will be marked as replicated regardless of whatever the input
   # had. Given that only a single device is allowed above, this is correct.
-  in_shardings = [sharding.OpShardingSharding.get_replicated(da)] * num_ins
+  in_shardings = [OpShardingSharding.get_replicated(da)] * num_ins
   return da, in_shardings
 
 
@@ -366,7 +364,6 @@ xla_callable = lu.cache(_xla_callable_uncached)
 
 
 def is_single_device_sharding(sharding) -> bool:
-  from jax._src.sharding import PmapSharding
   # Special case PmapSharding here because PmapSharding maps away an axis
   # and needs to be handled separately.test_pjit_single_device_sharding_add
   return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
@@ -777,7 +774,6 @@ class SimpleResultHandler:
 def maybe_create_array_from_da(buf, aval, device):
   if config.jax_array:
     from jax._src.array import ArrayImpl
-    from jax._src.sharding import SingleDeviceSharding
     return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
                      committed=(device is not None), _skip_checks=True)
   else:
@@ -1325,7 +1321,7 @@ def _copy_device_array_to_device(
 
 def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Array:
   """Copies `Array`s with SingleDeviceSharding to a different device."""
-  from jax._src import array, sharding
+  from jax._src import array
 
   if device is None:
     # no copying to be done because there's no target specified
@@ -1348,13 +1344,13 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
     backend = xb.get_device_backend(device)
     moved_buf = backend.buffer_from_pyval(np.asarray(buf), device)
   return array.ArrayImpl(
-      x.aval, sharding.SingleDeviceSharding(moved_buf.device()), [moved_buf],
+      x.aval, SingleDeviceSharding(moved_buf.device()), [moved_buf],
       committed=(device is not None))
 
 
 def _device_put_impl(
     x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
-  from jax._src import array, sharding
+  from jax._src import array
   from jax.interpreters import pxla
 
   try:
@@ -1363,7 +1359,7 @@ def _device_put_impl(
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
-  if isinstance(device, sharding.Sharding):
+  if isinstance(device, Sharding):
     if not jax.config.jax_array:
       raise RuntimeError(
           "Please enable `jax_array` to use device_put with a `Sharding`. "
@@ -1374,7 +1370,7 @@ def _device_put_impl(
     if not s.is_fully_addressable:  # type: ignore
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
-          f"represents addressable devices, but got {sharding}")
+          f"represents addressable devices, but got {s}")
     if getattr(x, 'sharding', None) == s:
       return x
     # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?

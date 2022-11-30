@@ -35,6 +35,7 @@ from jax import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
 from jax._src import source_info_util
+from jax._src.sharding import PmapSharding
 from jax._src.config import config
 from jax.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                       raise_to_shaped, abstract_token, canonicalize_shape)
@@ -1339,7 +1340,6 @@ def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = 
     `fill_value`, similar to the output of np.full.
   """
   from jax._src import array
-  from jax._src.sharding import PmapSharding
 
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)
   weak_type = dtype is None and dtypes.is_weakly_typed(x)

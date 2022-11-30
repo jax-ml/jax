@@ -18,14 +18,17 @@ import functools
 from collections import Counter
 import operator as op
 from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
-                    FrozenSet, Union, cast)
+                    FrozenSet, Union, cast, TYPE_CHECKING)
 
 import jax
-from jax._src.util import safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax.interpreters import pxla, mlir
+from jax.interpreters import mlir
 
 import numpy as np
+
+if TYPE_CHECKING:
+  from jax.interpreters import pxla
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -33,7 +36,7 @@ Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
 
-@pxla.use_cpp_class(xc.Sharding if xc._version >= 94 else None)
+@use_cpp_class(xc.Sharding if xc._version >= 94 else None)
 class Sharding(metaclass=abc.ABCMeta):
   """Abstract ``Sharding`` interface which describes how a ``jax.Array`` is laid out
   across devices.
@@ -72,13 +75,13 @@ class Sharding(metaclass=abc.ABCMeta):
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def addressable_devices(self) -> Set[Device]:
     """A set of devices that are addressable by the current process."""
     return {d for d in self.device_set
             if d.process_index == d.client.process_index()}
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def is_fully_addressable(self) -> bool:
     """True if the current process can address all of the devices in device_set.
     """
@@ -99,7 +102,7 @@ class Sharding(metaclass=abc.ABCMeta):
 
 # Shardings that inherit from XLACompatibleSharding should implement the
 # `_device_assignment` property and `_to_xla_op_sharding` method.
-@pxla.use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
+@use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
 class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
   """A `Sharding` that describes shardings expressible to XLA.
 
@@ -127,13 +130,16 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
                                               op_sharding)
     return op_sharding_sharding.devices_indices_map(global_shape)
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
     return [d for d in self._device_assignment
             if d.process_index == d.client.process_index()]
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
+    # TODO(https://github.com/google/jax/issues/12016): Remove the local import
+    from jax.interpreters import pxla
+
     op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
     if pxla.is_op_sharding_replicated(op_sharding):
       return global_shape
@@ -199,7 +205,7 @@ def _enable_cpp_named_sharding():
     return None
 
 
-@pxla.use_cpp_class(_enable_cpp_named_sharding())
+@use_cpp_class(_enable_cpp_named_sharding())
 class NamedSharding(XLACompatibleSharding):
   r"""NamedSharding is a way to express ``Sharding``\s using named axes.
 
@@ -233,7 +239,7 @@ class NamedSharding(XLACompatibleSharding):
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
   """
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def __init__(
       self, mesh: pxla.Mesh, spec: pxla.PartitionSpec, _parsed_pspec = None):
 
@@ -288,11 +294,11 @@ class NamedSharding(XLACompatibleSharding):
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
     return cls(mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def device_set(self) -> Set[Device]:
     return set(self.mesh.devices.flat)
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
 
@@ -303,6 +309,7 @@ class NamedSharding(XLACompatibleSharding):
       axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
   ) -> xc.OpSharding:
     from jax.experimental.pjit import get_array_mapping
+    from jax.interpreters import pxla
 
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -331,7 +338,7 @@ def _get_replicated_op_sharding():
   return proto
 
 
-@pxla.use_cpp_class(xc.SingleDeviceSharding if xc._version >= 95 else None)
+@use_cpp_class(xc.SingleDeviceSharding if xc._version >= 95 else None)
 class SingleDeviceSharding(XLACompatibleSharding):
   """A subclass of ``XLACompatibleSharding`` that places its data on a single device.
 
@@ -344,7 +351,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     ...     jax.devices()[0])
   """
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def __init__(self, device: Device):
     self._device = device
 
@@ -379,10 +386,10 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return _get_replicated_op_sharding()
 
 
-@pxla.use_cpp_class(xc.PmapSharding if xc._version >= 94 else None)
+@use_cpp_class(xc.PmapSharding if xc._version >= 94 else None)
 class PmapSharding(XLACompatibleSharding):
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def __init__(self, devices: np.ndarray, sharding_spec: pxla.ShardingSpec):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
@@ -425,6 +432,8 @@ class PmapSharding(XLACompatibleSharding):
       shape: The shape of the input array.
       sharded_dim: Dimension the input array is sharded on. Defaults to 0.
     """
+    from jax.interpreters import pxla
+
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
     aval = jax.ShapedArray(shape, np.int32)
@@ -442,16 +451,17 @@ class PmapSharding(XLACompatibleSharding):
     pmap_devices = jax.local_devices()[:num_ways_sharded]
     return cls(pmap_devices, sharding_spec)
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def device_set(self) -> Set[Device]:
     return set(self.devices.flat)
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
+    from jax.interpreters import pxla
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.devices.flat)
 
@@ -460,6 +470,8 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
+    from jax.interpreters import pxla
+
     sharded_dim = None
     for i, s in enumerate(self.sharding_spec.sharding):
       if isinstance(s, pxla.Unstacked):
@@ -529,7 +541,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   # Sharding interface
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def device_set(self) -> set[xc.Device]:
     return set(self._devices)
 
@@ -588,10 +600,10 @@ class DeviceIdSet:
             self._ids == other._ids)
 
 
-@pxla.use_cpp_class(xc.OpShardingSharding if xc._version >= 95 else None)
+@use_cpp_class(xc.OpShardingSharding if xc._version >= 95 else None)
 class OpShardingSharding(XLACompatibleSharding):
 
-  @pxla.use_cpp_method
+  @use_cpp_method
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
     self._devices = tuple(devices)
     self._op_sharding = op_sharding
@@ -599,11 +611,13 @@ class OpShardingSharding(XLACompatibleSharding):
   def __reduce__(self):
     return type(self), (self._devices, self._op_sharding)
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def _op_sharding_hash(self):
     return hash(xc.HloSharding.from_proto(self._op_sharding))
 
   def __eq__(self, other):
+    from jax.interpreters import pxla
+
     if not isinstance(other, OpShardingSharding):
       return False
     if id(self) == id(other):
@@ -620,6 +634,8 @@ class OpShardingSharding(XLACompatibleSharding):
     return f'OpShardingSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
+    from jax.interpreters import pxla
+
     num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
@@ -627,12 +643,14 @@ class OpShardingSharding(XLACompatibleSharding):
           f"{len(num_ways_dim_sharded)}, but was applied to a value of rank "
           f"{len(aval_shape)}")
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def device_set(self) -> Set[Device]:
     return set(self._devices)
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
+    from jax.interpreters import pxla
+
     indices = pxla.op_sharding_to_indices(self._op_sharding, global_shape,
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))

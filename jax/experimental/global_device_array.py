@@ -387,12 +387,12 @@ class GlobalDeviceArray:
       out.append(Shard(device, index, rid, db))
     return out
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def local_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
     return self._create_local_shards()
 
-  @pxla.maybe_cached_property
+  @functools.cached_property
   def addressable_shards(self) -> Sequence[Shard]:
     self._check_if_deleted()
     return self.local_shards

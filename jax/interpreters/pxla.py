@@ -34,15 +34,14 @@ import enum
 from contextlib import contextmanager, ContextDecorator
 from collections import defaultdict, OrderedDict, namedtuple
 import dataclasses
-from functools import partial, lru_cache
+from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import operator as op
 import sys
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
-                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast,
-                    TYPE_CHECKING)
+                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
 
 
 import numpy as np
@@ -69,6 +68,9 @@ from jax._src import util
 from jax._src import dispatch
 from jax._src import profiler
 from jax._src import stages
+from jax._src.sharding import (PmapSharding, NamedSharding, OpShardingSharding,
+                               SingleDeviceSharding, XLACompatibleSharding,
+                               _get_replicated_op_sharding)
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.config import flags
@@ -83,17 +85,10 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            tuple_insert, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction)
 
-if TYPE_CHECKING:
-  from jax._src.sharding import NamedSharding, XLACompatibleSharding
-
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):
   pass
 
-if sys.version_info >= (3, 8):
-  from functools import cached_property as maybe_cached_property
-else:
-  maybe_cached_property = property
 
 if sys.version_info >= (3, 9):
   OrderedDictType = OrderedDict
@@ -849,7 +844,7 @@ def _sda_sharding(self):
   has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding_spec.sharding)
   if has_unstacked:
     devices = np.array([d.device() for d in self.device_buffers])
-    return jax.sharding.PmapSharding(devices, self.sharding_spec)
+    return PmapSharding(devices, self.sharding_spec)
   raise NotImplementedError(
       'SDAs that are the output of pjit/xmap do not have the sharding attribute '
       'implemented. If you are trying to pass the SDA to pjit/xmap, please '
@@ -1261,7 +1256,7 @@ class ParallelCallableInfo:
   out_axes_thunk: Callable[[], Sequence[Optional[int]]]
   avals: Sequence[core.AbstractValue]
 
-  @maybe_cached_property
+  @cached_property
   def local_devices(self):
     if self.devices:
       out = [d for d in self.devices
@@ -1271,7 +1266,7 @@ class ParallelCallableInfo:
       out = None  # type: ignore
     return out
 
-  @maybe_cached_property
+  @cached_property
   def out_axes(self):
     return self.out_axes_thunk()
 
@@ -1732,8 +1727,6 @@ class PmapExecutable(stages.XlaExecutable):
 
 
 def _get_pmap_sharding(devices, specs):
-  from jax._src.sharding import PmapSharding
-
   return [PmapSharding(devices, spec) for spec in specs]
 
 
@@ -1922,11 +1915,9 @@ class ResultsHandler:
 def _get_sharding_specs(
     shardings: Sequence[XLACompatibleSharding], avals: Sequence[ShapedArray]
 ) -> Sequence[ShardingSpec]:
-  from jax._src import sharding
-
-  if all(isinstance(s, sharding.PmapSharding) for s in shardings):
+  if all(isinstance(s, PmapSharding) for s in shardings):
     return [s.sharding_spec for s in shardings]  # type: ignore
-  elif all(isinstance(s, sharding.NamedSharding) for s in shardings):
+  elif all(isinstance(s, NamedSharding) for s in shardings):
     return [new_mesh_sharding_specs(s.mesh.shape, s.mesh.axis_names)(
               aval.ndim, _get_array_mapping(s.spec))
             for aval, s in safe_zip(avals, shardings)]
@@ -1952,8 +1943,6 @@ def global_avals_to_results_handler(
     shardings: Sequence[XLACompatibleSharding],
     committed: bool,
     are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
-  from jax._src.sharding import NamedSharding
-
   if config.jax_parallel_functions_output_gda or config.jax_array:
     handlers = [
         global_aval_to_result_handler(global_aval, s, committed, x)
@@ -1966,7 +1955,8 @@ def global_avals_to_results_handler(
     assert all(isinstance(s, NamedSharding) for s in shardings)
     local_out_avals = [s.mesh._global_to_local(_get_array_mapping(s.spec), aval)
                        for aval, s in safe_zip(global_out_avals, shardings)]
-    local_shardings = [NamedSharding(s.mesh.local_mesh, s.spec) for s in shardings]  # type: ignore
+    local_shardings = [NamedSharding(s.mesh.local_mesh, s.spec)  # type: ignore
+                       for s in shardings]
     return local_avals_to_results_handler(local_out_avals, local_shardings)
 
 
@@ -2443,7 +2433,7 @@ class Mesh(ContextDecorator):
   def is_multi_process(self):
     return self.devices.size != len(self.local_devices)
 
-  @maybe_cached_property
+  @cached_property
   def local_mesh(self):
     return self._local_mesh(xb.process_index())
 
@@ -2484,7 +2474,7 @@ class Mesh(ContextDecorator):
       return "Mesh([], ())"
     return f"Mesh({self.device_ids!r}, {self.axis_names!r})"
 
-  @maybe_cached_property
+  @cached_property
   def local_devices(self):
     return [d for d in self.devices.flat
             if d.process_index == d.client.process_index()]
@@ -2823,8 +2813,6 @@ def lower_sharding_computation(
   lower_sharding_computation calculates the number of out_avals so it can apply
   the singleton _UNSPECIFIED to all out_avals.
   """
-  from jax._src.sharding import OpShardingSharding
-
   # 1. Trace to jaxpr and preprocess/verify it
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
@@ -3263,8 +3251,6 @@ def _get_normalized_avals_and_shardings(
     global_in_avals: Sequence[ShapedArray],
     in_shardings: Sequence[XLACompatibleSharding], in_is_global: Sequence[bool]
 ) -> Tuple[Sequence[ShapedArray], Sequence[XLACompatibleSharding]]:
-  from jax._src.sharding import NamedSharding
-
   avals = []
   shardings = []
 
@@ -3272,13 +3258,13 @@ def _get_normalized_avals_and_shardings(
                                       in_is_global):
     if is_global:
       aval = gaval
-      sharding = i
+      in_sharding = i
     else:
       assert isinstance(i, NamedSharding)
       aval = i.mesh._global_to_local(cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)
-      sharding = NamedSharding(i.mesh.local_mesh, i.spec)
+      in_sharding = NamedSharding(i.mesh.local_mesh, i.spec)
     avals.append(aval)
-    shardings.append(sharding)
+    shardings.append(in_sharding)
 
   return avals, shardings
 
@@ -3314,7 +3300,6 @@ def _get_input_indices(
 def _get_op_sharding_shardings_from_executable(
     xla_executable, device_assignment, num_in_avals, num_out_avals):
   from jax.experimental import pjit
-  from jax._src.sharding import OpShardingSharding, SingleDeviceSharding
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`. In that case,
@@ -3343,7 +3328,6 @@ def _get_op_sharding_shardings_from_executable(
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
   from jax.experimental import pjit
-  from jax._src.sharding import NamedSharding
 
   in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
   return ([NamedSharding(mesh, i) for i in in_pspec],
@@ -3661,10 +3645,10 @@ def _out_shardings_for_trivial(
   #   * otherwise, the output is a literal or numpy.ndarray constant, so give it
   #     a replicated sharding
   from jax._src import array
-  from jax._src import sharding
-  rep = sharding.OpShardingSharding(
-      device_assignment, sharding._get_replicated_op_sharding())
-  shardings: Dict[core.Var, sharding.XLACompatibleSharding] = {}
+
+  rep = OpShardingSharding(
+      device_assignment, _get_replicated_op_sharding())
+  shardings: Dict[core.Var, XLACompatibleSharding] = {}
   for constvar, constval in zip(jaxpr.constvars, consts):
     if isinstance(constval, array.ArrayImpl):
       shardings[constvar] = constval.sharding
@@ -3758,7 +3742,6 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 
 @lru_cache()
 def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
-  from jax._src.sharding import NamedSharding
   return NamedSharding(mesh, pspec, parsed_pspec)
 
 
@@ -3962,37 +3945,3 @@ def _set_aval(val):
   if val.aval is None:
     val.aval = core.ShapedArray(val.shape, val.dtype)
   return val
-
-def _original_func(f):
-  if isinstance(f, property):
-    return cast(property, f).fget
-  elif isinstance(f, maybe_cached_property):
-    return f.func
-  return f
-
-
-def use_cpp_class(cpp_cls):
-  """A helper decorator to replace a python class with its C++ version"""
-
-  def wrapper(cls):
-    if TYPE_CHECKING or cpp_cls is None:
-      return cls
-
-    exclude_methods = {'__module__', '__dict__', '__doc__'}
-
-    for attr_name, attr in cls.__dict__.items():
-      if attr_name not in exclude_methods and not hasattr(
-          _original_func(attr), "_use_cpp"):
-        setattr(cpp_cls, attr_name, attr)
-
-    cpp_cls.__doc__ = cls.__doc__
-
-    return cpp_cls
-
-  return wrapper
-
-def use_cpp_method(f):
-  """A helper decorator to exclude methods from the set that are forwarded to C++ class"""
-  original_func = _original_func(f)
-  original_func._use_cpp = True
-  return f

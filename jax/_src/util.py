@@ -14,13 +14,14 @@
 
 from collections import namedtuple
 import functools
-from functools import partial
+from functools import partial, cached_property
 import itertools as it
 import logging
 import operator
 import types
 from typing import (Any, Callable, Generic, Iterable, Iterator, List,
-                    Optional, Sequence, Set, Tuple, TypeVar, overload)
+                    Optional, Sequence, Set, Tuple, TypeVar, overload,
+                    TYPE_CHECKING, cast)
 
 import numpy as np
 
@@ -510,3 +511,38 @@ class HashableWrapper:
     if not isinstance(other, HashableWrapper):
       return False
     return self.x == other.x if self.hash is not None else self.x is other.x
+
+
+def _original_func(f):
+  if isinstance(f, property):
+    return cast(property, f).fget
+  elif isinstance(f, cached_property):
+    return f.func
+  return f
+
+
+def use_cpp_class(cpp_cls):
+  """A helper decorator to replace a python class with its C++ version"""
+
+  def wrapper(cls):
+    if TYPE_CHECKING or cpp_cls is None:
+      return cls
+
+    exclude_methods = {'__module__', '__dict__', '__doc__'}
+
+    for attr_name, attr in cls.__dict__.items():
+      if attr_name not in exclude_methods and not hasattr(
+          _original_func(attr), "_use_cpp"):
+        setattr(cpp_cls, attr_name, attr)
+
+    cpp_cls.__doc__ = cls.__doc__
+
+    return cpp_cls
+
+  return wrapper
+
+def use_cpp_method(f):
+  """A helper decorator to exclude methods from the set that are forwarded to C++ class"""
+  original_func = _original_func(f)
+  original_func._use_cpp = True
+  return f
