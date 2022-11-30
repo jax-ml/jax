@@ -241,7 +241,8 @@ def variance_scaling(
   * a uniform interval, if `dtype` is real, or
   * a uniform disk, if `dtype` is complex,
 
-  with a mean of zero and a standard deviation of ``stddev``.
+  with a mean of zero and a standard deviation of :math:`\sqrt{\frac{scale}{n}}`
+  where `n` is defined above.
 
   Args:
     scale: scaling factor (positive float).
