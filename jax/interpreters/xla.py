@@ -32,8 +32,7 @@ from jax import core
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
-from jax._src.abstract_arrays import (make_shaped_array, array_types,
-                                      numpy_scalar_types)
+from jax._src.abstract_arrays import numpy_scalar_types
 from jax.core import (ConcreteArray, ShapedArray, str_eqn_compact)
 import jax._src.pretty_printer as pp
 from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
@@ -287,12 +286,25 @@ def _make_abstract_python_scalar(typ, val):
   return ShapedArray((), dtypes._scalar_type_to_dtype(typ, val),
                      weak_type=typ is not bool)
 
+def _make_shaped_array_for_numpy_scalar(x: np.generic) -> ShapedArray:
+  dtype = np.dtype(x)
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(np.shape(x), dtypes.canonicalize_dtype(dtype))
+
+def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
+  dtype = x.dtype
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(x.shape, dtypes.canonicalize_dtype(dtype))
+
+
 pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
 for t in device_array.device_array_types:
   pytype_aval_mappings[t] = operator.attrgetter('aval')
 pytype_aval_mappings[core.DArray] = operator.attrgetter('_aval')
 pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
-pytype_aval_mappings.update((t, make_shaped_array) for t in array_types)
+pytype_aval_mappings.update((t, _make_shaped_array_for_numpy_scalar)
+                            for t in numpy_scalar_types)
+pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
 

@@ -444,6 +444,11 @@ def is_python_scalar(x: Any) -> bool:
   except AttributeError:
     return type(x) in python_scalar_dtypes
 
+def check_valid_dtype(dtype: DType) -> None:
+  if dtype not in _jax_dtype_set:
+    raise TypeError(f"Dtype {dtype} is not a valid JAX array "
+                    "type. Only arrays of numeric types are supported by JAX.")
+
 def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
   if x is None:

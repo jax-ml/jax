@@ -31,11 +31,6 @@ abstract_token = core.abstract_token
 canonicalize_shape = core.canonicalize_shape
 raise_to_shaped = core.raise_to_shaped
 
-
-def make_shaped_array(x):
-  dtype = dtypes.canonicalize_dtype(dtypes.result_type(x))
-  return ShapedArray(np.shape(x), dtype)
-
 def zeros_like_array(x):
   dtype, weak_type = dtypes._lattice_result_type(x)
   dtype = dtypes.canonicalize_dtype(dtype)
