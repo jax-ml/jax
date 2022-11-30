@@ -13,10 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "pybind11/pybind11.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/lu_pivot_kernels.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/pybind11.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

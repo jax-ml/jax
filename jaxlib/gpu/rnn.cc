@@ -13,11 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "pybind11/pybind11.h"
+#include "pybind11/stl.h"
 #include "jaxlib/gpu/rnn_kernels.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
 #include "pybind11_abseil/status_casters.h"
 
 namespace jax {

@@ -15,9 +15,9 @@ limitations under the License.
 
 #include <complex>
 
+#include "pybind11/pybind11.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/pybind11.h"
 
 namespace jax {
 namespace {

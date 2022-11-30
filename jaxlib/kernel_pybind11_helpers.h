@@ -16,9 +16,9 @@ limitations under the License.
 #ifndef JAXLIB_KERNEL_PYBIND11_HELPERS_H_
 #define JAXLIB_KERNEL_PYBIND11_HELPERS_H_
 
+#include "pybind11/pybind11.h"
 #include "absl/base/casts.h"
 #include "jaxlib/kernel_helpers.h"
-#include "include/pybind11/pybind11.h"
 
 namespace jax {
 

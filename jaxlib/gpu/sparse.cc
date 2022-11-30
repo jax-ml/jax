@@ -19,6 +19,9 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "pybind11/numpy.h"
+#include "pybind11/pybind11.h"
+#include "pybind11/stl.h"
 #include "absl/base/casts.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
@@ -28,9 +31,6 @@ limitations under the License.
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/numpy.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
 
 namespace py = pybind11;
 

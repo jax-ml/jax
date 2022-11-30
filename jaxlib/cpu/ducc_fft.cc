@@ -16,8 +16,8 @@ limitations under the License.
 #include <complex>
 #include <vector>
 
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
+#include "pybind11/pybind11.h"
+#include "pybind11/stl.h"
 #include "jaxlib/cpu/ducc_fft_generated.h"
 #include "jaxlib/cpu/ducc_fft_kernels.h"
 #include "jaxlib/kernel_pybind11_helpers.h"

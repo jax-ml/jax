@@ -18,14 +18,14 @@ limitations under the License.
 #include <utility>
 #include <vector>
 
+#include "pybind11/numpy.h"
+#include "pybind11/pybind11.h"
+#include "pybind11/stl.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "jaxlib/gpu/blas_kernels.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
-#include "include/pybind11/numpy.h"
-#include "include/pybind11/pybind11.h"
-#include "include/pybind11/stl.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
