@@ -1415,15 +1415,12 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   def test_bcoo_dot_general_sampled(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
     rng = jtu.rand_default(self.rng())
-    sprng = rand_sparse(self.rng())
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
     out_shape = lax.dot_general(
       jnp.zeros(lhs_shape), jnp.zeros(rhs_shape),
       dimension_numbers=dimension_numbers).shape
-
-    args_maker = lambda: [
-      rng(lhs_shape, dtype), rng(rhs_shape, dtype),
-      sparse.BCOO.fromdense(sprng(out_shape, dtype),
-                            n_batch=n_batch, n_dense=n_dense).indices]
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype),
+                          sprng(out_shape, dtype).indices]
 
     def dense_fun(lhs, rhs, indices):
       AB = lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
@@ -1433,8 +1430,7 @@ class BCOOTest(sptu.SparseTestCase):
                 lhs, rhs, indices, dimension_numbers=dimension_numbers)
 
     self._CheckAgainstNumpy(dense_fun, sparse_fun, args_maker)
-    # TODO: python_should_be_executing check occasionally fails... why?
-    # self._CompileAndCheck(sparse_fun, args_maker)
+    self._CompileAndCheckSparse(sparse_fun, args_maker)
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
@@ -1527,33 +1523,27 @@ class BCOOTest(sptu.SparseTestCase):
     lhs_contracting = dimension_numbers[0][0]
     should_error = (rhs_n_batch > len(rhs_batch) and lhs_n_sparse > len(lhs_contracting))
 
-    sprng = rand_sparse(self.rng())
-    def args_maker():
-      x = sprng(lhs_shape, dtype)
-      y = sprng(rhs_shape, dtype)
-      xsp = sparse.BCOO.fromdense(x, n_batch=lhs_n_batch)
-      ysp = sparse.BCOO.fromdense(y, n_batch=rhs_n_batch)
-      return x, y, xsp, ysp
+    sprng = sptu.rand_bcoo(self.rng())
+    args_maker = lambda: [sprng(lhs_shape, dtype, n_batch=lhs_n_batch),
+                          sprng(rhs_shape, dtype, n_batch=rhs_n_batch)]
 
-    def f_dense(x, y, xsp, ysp):
+    def f_dense(x, y):
       return lax.dot_general(x, y, dimension_numbers=dimension_numbers)
 
-    def f_sparse(x, y, xsp, ysp):
+    def f_sparse(xsp, ysp):
       shape = sparse.bcoo._dot_general_validated_shape(xsp.shape, ysp.shape, dimension_numbers)
       data, indices = sparse_bcoo._bcoo_spdot_general(
           xsp.data, xsp.indices, ysp.data, ysp.indices, lhs_spinfo=xsp._info,
           rhs_spinfo=ysp._info, dimension_numbers=dimension_numbers)
       return sparse_bcoo._bcoo_todense(data, indices, spinfo=BCOOInfo(shape))
 
-    tol = {"complex128": 1E-14}
+    tol = {"float64": 1E-14, "complex128": 1E-14}
     if should_error:
       with self.assertRaisesRegex(ValueError, ".*cannot have unused batch dims on rhs with unused sparse dims on lhs."):
         f_sparse(*args_maker())
     else:
-      self._CheckAgainstNumpy(f_dense, f_sparse, args_maker, tol=tol)
-      self._CheckAgainstNumpy(jit(f_dense), jit(f_sparse), args_maker, tol=tol)
-      # TODO(jakevdp): This occasionally fails python_should_be_executing check. Why?
-      # self._CompileAndCheck(f_sparse, args_maker)
+      self._CheckAgainstDense(f_dense, f_sparse, args_maker, tol=tol)
+      self._CompileAndCheckSparse(f_sparse, args_maker)
 
   def test_bcoo_spdot_general_nse(self):
     # vector-vector product -> nse=1
