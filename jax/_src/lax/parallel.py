@@ -1521,8 +1521,11 @@ def _build_axis_index_lowering_mhlo(ctx, axis_name, axis_env):
   is_spmd = isinstance(axis_context,
                        (mlir.SPMDAxisContext, mlir.ShardingContext))
   if is_spmd:
-    device_id = mhlo.PartitionIdOp(
-        ir.RankedTensorType.get([], ir.IntegerType.get_unsigned(32)))
+    if mlir_api_version >= 39:
+      device_id = mhlo.PartitionIdOp()
+    else:
+      device_id = mhlo.PartitionIdOp(
+          ir.RankedTensorType.get([], ir.IntegerType.get_unsigned(32)))
   else:
     device_id = mhlo.ReplicaIdOp()
   unsigned_index = mhlo.RemOp(mhlo.DivOp(device_id, div), mod)
