@@ -20,12 +20,13 @@ Remember to align the itemized text with the first line of an item within a list
   * We introduce `jax.Array` which is a unified array type that subsumes
     `DeviceArray`, `ShardedDeviceArray`, and `GlobalDeviceArray` types in JAX.
     The `jax.Array` type helps make parallelism a core feature of JAX,
-    simplifies and unifies JAX internals, and allows us to unify `jit` and `pjit`.
-    `jax.Array` has been enabled by default in JAX 0.4 and makes some breaking
-    change to the `pjit` API.
-    The [jax.Array migration guide](https://jax.readthedocs.io/en/latest/jax_array_migration.html)
-    can help you migrate your codebase to `jax.Array`. You can also look at
-    the [Parallelism with JAX](https://jax.readthedocs.io/en/latest/notebooks/jax_Array.html)
+    simplifies and unifies JAX internals, and allows us to unify `jit` and
+    `pjit`.  `jax.Array` has been enabled by default in JAX 0.4 and makes some
+    breaking change to the `pjit` API.  The [jax.Array migration
+    guide](https://jax.readthedocs.io/en/latest/jax_array_migration.html) can
+    help you migrate your codebase to `jax.Array`. You can also look at the
+    [Parallelism with
+    JAX](https://jax.readthedocs.io/en/latest/notebooks/Parallelism_with_JAX.html)
     tutorial to understand the new concepts.
 
 
