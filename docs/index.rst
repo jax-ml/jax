@@ -47,7 +47,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
 
    notebooks/autodiff_cookbook
    multi_process
-   notebooks/jax_Array
+   notebooks/Parallelism_with_JAX
    notebooks/vmapped_log_probs
    notebooks/neural_network_with_tfds_data
    notebooks/Custom_derivative_rules_for_Python_code
