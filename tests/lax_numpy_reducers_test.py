@@ -167,6 +167,18 @@ JAX_REDUCER_PROMOTE_INT_RECORDS = [
     op_record("sum", 1, all_dtypes, all_shapes, jtu.rand_default, []),
 ]
 
+def _reducer_output_dtype(name: str, input_dtype: np.dtype, promote_integers: bool = True) -> np.dtype:
+  if name in ['sum', 'prod', 'nansum', 'nanprod']:
+    if input_dtype == bool:
+      input_dtype = dtypes.to_numeric_dtype(input_dtype)
+    if promote_integers:
+      if dtypes.issubdtype(input_dtype, np.integer):
+        default_int = dtypes.canonicalize_dtype(
+            dtypes.uint if dtypes.issubdtype(input_dtype, np.unsignedinteger) else dtypes.int_)
+        if np.iinfo(input_dtype).bits < np.iinfo(default_int).bits:
+          return default_int
+  return input_dtype
+
 
 class JaxNumpyReducerTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy reduction operations."""
@@ -212,6 +224,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         x = x.astype(dtypes.to_inexact_dtype(x.dtype))
       x_cast = x if dtype != jnp.bfloat16 else x.astype(np.float32)
       t = out_dtype if out_dtype != jnp.bfloat16 else np.float32
+      if t is None:
+        t = _reducer_output_dtype(name, x_cast.dtype)
       return np_op(x_cast, axis, dtype=t, keepdims=keepdims)
 
     jnp_fun = lambda x: jnp_op(x, axis, dtype=out_dtype, keepdims=keepdims)
@@ -297,7 +311,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res
+      return res.astype(_reducer_output_dtype(name, x.dtype))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
@@ -337,10 +351,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      print(f"res.dtype = {res.dtype}")
-      if not promote_integers and dtypes.issubdtype(res.dtype, np.integer):
-        res = res.astype(dtypes.to_numeric_dtype(x.dtype))
-      return res
+      return res.astype(_reducer_output_dtype(name, x.dtype, promote_integers))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, promote_integers=promote_integers)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
@@ -377,7 +388,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res
+      return res.astype(_reducer_output_dtype(name, x.dtype))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
@@ -423,7 +434,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       x_cast = x if not is_bf16_nan_test else x.astype(np.float32)
       res = np_op(x_cast, axis, keepdims=keepdims, initial=initial, where=where)
       res = res if not is_bf16_nan_test else res.astype(jnp.bfloat16)
-      return res
+      return res.astype(_reducer_output_dtype(name, x.dtype))
 
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, initial=initial, where=where)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
@@ -593,7 +604,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/8128
     x = jnp.arange(5.0).at[0].set(jnp.nan)
     y = jax.grad(jnp.nanvar)(x)
-    self.assertAllClose(y, jnp.array([0.0, -0.75, -0.25, 0.25, 0.75]))
+    self.assertAllClose(y, jnp.array([0.0, -0.75, -0.25, 0.25, 0.75]), check_dtypes=False)
 
     z = jax.grad(jnp.nanstd)(x)
     self.assertEqual(jnp.isnan(z).sum(), 0)

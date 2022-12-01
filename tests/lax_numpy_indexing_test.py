@@ -1282,7 +1282,7 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     data = np.array([5, 1, 7, 2, 3, 4, 1, 3], dtype=float)
     segment_ids = np.array([0, 0, 0, 1, 2, 2, 3, 3])
 
-    ans = jnp.zeros(np.max(segment_ids) + 1).at[segment_ids].add(data)
+    ans = jnp.zeros_like(data, shape=np.max(segment_ids) + 1).at[segment_ids].add(data)
     expected = np.array([13, 2, 7, 4])
     self.assertAllClose(ans, expected, check_dtypes=False)
 
