@@ -397,9 +397,9 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
     sides = 'twosided'
 
   if sides == 'twosided':
-    freqs = jax.numpy.fft.fftfreq(nfft_int, 1/fs).astype(freq_dtype)
+    freqs = jax.numpy.fft.fftfreq(nfft_int, 1/fs, dtype=freq_dtype)
   elif sides == 'onesided':
-    freqs = jax.numpy.fft.rfftfreq(nfft_int, 1/fs).astype(freq_dtype)
+    freqs = jax.numpy.fft.rfftfreq(nfft_int, 1/fs, dtype=freq_dtype)
 
   # Perform the windowed FFTs
   result = _fft_helper(x, win, detrend_func,
