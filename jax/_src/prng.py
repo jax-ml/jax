@@ -1012,7 +1012,7 @@ def iota_32x2_shape_lowering(ctx, *, shape):
   aval_out, _ = ctx.avals_out
   aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
   iotas = [mlir.mhlo.IotaOp(mlir.aval_to_ir_type(aval_u64),
-                       mlir.i64_attr(dimension)).result
+                            mlir.i64_attr(dimension)).result
            for dimension in range(len(shape))]
   strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
   counts = _sum(_mul(s, i) for i, s in zip(iotas, strides))  # type: ignore
@@ -1023,7 +1023,7 @@ def iota_32x2_shape_lowering(ctx, *, shape):
   counts_lo = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
   counts_hi = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
                                   counts_shifted).result
-  return (counts_hi, counts_lo)
+  return counts_hi, counts_lo
 mlir.register_lowering(iota_32x2_shape_p, iota_32x2_shape_lowering)
 
 
