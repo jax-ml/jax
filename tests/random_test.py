@@ -1019,7 +1019,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     lam = jnp.array([-1, 0, jnp.nan])
     samples = random.poisson(key, lam, shape=(3,))
-    self.assertArraysEqual(samples, jnp.array([-1, 0, -1]))
+    self.assertArraysEqual(samples, jnp.array([-1, 0, -1]), check_dtypes=False)
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testGumbel(self, dtype):
@@ -1201,11 +1201,11 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testMultivariateNormalCovariance(self):
     # test code based on https://github.com/google/jax/issues/1869
     N = 100000
-    cov = jnp.array([[ 0.19,  0.00, -0.13,  0.00],
-                   [  0.00,  0.29,  0.00, -0.23],
-                   [ -0.13,  0.00,  0.39,  0.00],
-                   [  0.00, -0.23,  0.00,  0.49]])
     mean = jnp.zeros(4)
+    cov = jnp.array([[  0.19,  0.00, -0.13,  0.00],
+                     [  0.00,  0.29,  0.00, -0.23],
+                     [ -0.13,  0.00,  0.39,  0.00],
+                     [  0.00, -0.23,  0.00,  0.49]], dtype=mean.dtype)
 
     out_np = self.rng().multivariate_normal(mean, cov, N)
 
