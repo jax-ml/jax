@@ -560,7 +560,7 @@ class XMapTest(XMapTestCase):
                   yield {"testcase_name":
                              f"_xin={(sorted(xmap_dim_x.items()), sorted(xmap_dim_y.items()))}_"
                              f"xout={sorted(xmap_dim_z.items())}_vin={(vmap_dim_x, vmap_dim_y)}_"
-                             f"vout={vmap_dim_z}_vresult={vmap_dim_result}_vmap_as_xmap={vmap_as_xmap}",
+                             f"vout={vmap_dim_z}_vresult={vmap_dim_result}_{vmap_as_xmap=}",
                          "xmap_in_axes": (xmap_dim_x, xmap_dim_y),
                          "xmap_out_axes": xmap_dim_z,
                          "vmap_in_axes": (vmap_dim_x, vmap_dim_y),

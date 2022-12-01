@@ -93,7 +93,7 @@ class COO(JAXSparse):
     """Create an empty COO instance. Public method is sparse.empty()."""
     shape = tuple(shape)
     if len(shape) != 2:
-      raise ValueError(f"COO must have ndim=2; got shape={shape}")
+      raise ValueError(f"COO must have ndim=2; got {shape=}")
     data = jnp.empty(0, dtype)
     row = col = jnp.empty(0, index_dtype)
     return cls((data, row, col), shape=shape, rows_sorted=True,
@@ -187,7 +187,7 @@ def _coo_todense_gpu_lowering(coo_todense_mhlo, ctx, data, row, col, *, spinfo):
   data_aval, row_aval, _ = ctx.avals_in
   dtype = data_aval.dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"coo_todense cusparse/hipsparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_todense cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_todense_lowering(ctx, data, row, col, spinfo=spinfo)
 
@@ -306,7 +306,7 @@ def _coo_fromdense_gpu_lowering(coo_fromdense_mhlo, ctx, mat, *, nse,
                                 index_dtype):
   dtype = ctx.avals_in[0].dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
-    warnings.warn(f"coo_fromdense cusparse/hipsparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_fromdense cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_fromdense_lowering(ctx, mat, nse=nse, index_dtype=index_dtype)
   data, row, col = coo_fromdense_mhlo(
@@ -426,7 +426,7 @@ def _coo_matvec_gpu_lowering(coo_matvec_mhlo, ctx, data, row, col, v, *, spinfo,
   data_aval, row_aval, _, x_aval = ctx.avals_in
   dtype = data_aval.dtype
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"coo_matvec cusparse/hipsparse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_matvec cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matvec_lowering(ctx, data, row, col, v, spinfo=spinfo,
                                 transpose=transpose)
@@ -548,7 +548,7 @@ def _coo_matmat_gpu_lowering(coo_matmat_mhlo, ctx, data, row, col, B, *, spinfo,
   data_aval, row_aval, _, B_aval = ctx.avals_in
   dtype = data_aval.dtype
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f"coo_matmat cusparse/hipsprse lowering not available for dtype={dtype}. "
+    warnings.warn(f"coo_matmat cusparse/hipsprse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matmat_lowering(ctx, data, row, col, B, spinfo=spinfo,
                                 transpose=transpose)

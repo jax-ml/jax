@@ -93,7 +93,7 @@ def rand_bcoo(rng: np.random.RandomState,
                    n_batch: int = n_batch, n_dense: int = n_dense) -> sparse.BCOO:
     n_sparse = len(shape) - n_batch - n_dense
     if n_sparse < 0 or n_batch < 0 or n_dense < 0:
-      raise ValueError(f"Invalid parameters: shape={shape} n_batch={n_batch} n_sparse={n_sparse}")
+      raise ValueError(f"Invalid parameters: {shape=} {n_batch=} {n_sparse=}")
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
     if 0 <= nse < 1:
       nse = int(np.ceil(nse * np.prod(sparse_shape)))

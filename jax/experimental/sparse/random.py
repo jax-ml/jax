@@ -54,13 +54,13 @@ def random_bcoo(key, shape, *, dtype=jnp.float_, indices_dtype=jnp.int_,
   n_batch = operator.index(n_batch)
   n_dense = operator.index(n_dense)
   if n_batch < 0 or n_dense < 0 or n_batch + n_dense > len(shape):
-    raise ValueError(f"Invalid n_batch={n_batch}, n_dense={n_dense} for shape={shape}")
+    raise ValueError(f"Invalid {n_batch=}, {n_dense=} for {shape=}")
   n_sparse = len(shape) - n_batch - n_dense
   batch_shape, sparse_shape, dense_shape = map(tuple, split_list(shape, [n_batch, n_sparse]))
   batch_size = np.prod(batch_shape)
   sparse_size = np.prod(sparse_shape)
   if not 0 <= nse < sparse_size:
-    raise ValueError(f"got nse={nse}, expected to be between 0 and {sparse_size}")
+    raise ValueError(f"got {nse=}, expected to be between 0 and {sparse_size}")
   if 0 < nse < 1:
     nse = int(np.ceil(nse * sparse_size))
   nse = operator.index(nse)

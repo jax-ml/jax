@@ -93,10 +93,10 @@ class CliDebuggerTest(jtu.JaxTestCase):
       arr = "Array"
     else:
       arr = "DeviceArray"
-    expected = _format_multiline(r"""
+    expected = _format_multiline(rf"""
     Entering jdb:
     (jdb) {arr}(2., dtype=float32)
-    (jdb) """).format(arr=arr)
+    (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
     self.assertEqual(stdout.getvalue(), expected)

@@ -1383,7 +1383,7 @@ def _householder_product_abstract_eval(a, taus):
   *batch_dims, m, n = a.shape
   *taus_batch_dims, k = taus.shape
   if a.dtype != taus.dtype or batch_dims != taus_batch_dims or k > min(m, n):
-    raise ValueError(f"Type mismatch for Householder product: a={a} taus={taus}")
+    raise ValueError(f"Type mismatch for Householder product: {a=} {taus=}")
   if m < n:
     raise ValueError("Householder product inputs must have at least as many "
                      f"rows as columns, got shape {a.shape}")

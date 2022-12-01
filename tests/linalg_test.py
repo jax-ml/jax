@@ -1421,7 +1421,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       target_norms = [4.0e-1, 1.0, 3.0]
       tol = None
     else:
-      raise TypeError(f"dtype={dtype} is not supported.")
+      raise TypeError(f"{dtype=} is not supported.")
     for norm in target_norms:
       def args_maker():
         a = rng((n, n), dtype)
@@ -1454,7 +1454,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     elif dtype == np.float32 or dtype == np.complex64:
       target_norms = [4.0e-1, 1.0, 3.0]
     else:
-      raise TypeError(f"dtype={dtype} is not supported.")
+      raise TypeError(f"{dtype=} is not supported.")
     # TODO(zhangqiaorjc): Reduce tol to default 1e-5.
     # Lower tolerance is due to 2nd order derivative.
     tol = {

@@ -2587,7 +2587,7 @@ class SparseObjectTest(sptu.SparseTestCase):
       assert M.data.shape[M.n_batch] == M.indices.shape[-2]
       assert M.indices.shape[-1] == M.n_sparse
     else:
-      raise ValueError("Obj={Obj} not expected.")
+      raise ValueError(f"{Obj=} not expected.")
 
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(

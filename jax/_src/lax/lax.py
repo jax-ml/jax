@@ -1152,14 +1152,14 @@ def sort(operand: Union[Array, Sequence[Array]], dimension: int = -1,
     if len(operand) == 0:
       raise TypeError("Sort requires at least one operand")
     if not (1 <= num_keys <= len(operand)):
-      raise ValueError(f"num_keys={num_keys} must be between 1 and len(operand)={len(operand)}")
+      raise ValueError(f"{num_keys=} must be between 1 and {len(operand)=}")
     dimension = canonicalize_axis(dimension, len(operand[0].shape))
     return tuple(sort_p.bind(*operand, dimension=dimension,
                              is_stable=is_stable,
                              num_keys=num_keys))
   else:
     if num_keys != 1:
-      raise ValueError(f"num_keys={num_keys} must equal 1 for a single operand.")
+      raise ValueError(f"{num_keys=} must equal 1 for a single operand.")
     dimension = canonicalize_axis(dimension, len(operand.shape))
     return sort_p.bind(operand, dimension=dimension, is_stable=is_stable, num_keys=1)[0]
 
@@ -2970,12 +2970,10 @@ mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
 def _clamp_shape_rule(min, operand, max):
   if min.shape and min.shape != operand.shape:
     raise TypeError("clamp requires min.shape == operand.shape or min.shape == "
-                    f"(), got min.shape={min.shape}, "
-                    f"operand.shape={operand.shape}.")
+                    f"(), got min.shape={min.shape}, {operand.shape=}.")
   if max.shape and max.shape != operand.shape:
     raise TypeError("clamp requires max.shape == operand.shape or max.shape == "
-                    f"(), got max.shape={max.shape}, "
-                    f"operand.shape={operand.shape}.")
+                    f"(), got max.shape={max.shape}, {operand.shape=}.")
   return operand.shape
 
 _clamp_dtype_rule = partial(naryop_dtype_rule, _input_dtype, [_any, _any, _any],
@@ -3216,7 +3214,7 @@ def _compute_squeeze_shape(shape, dimensions):
   if any(not core.symbolic_equal_dim(shape[d], 1) for d in dimensions):
     raise ValueError(
         "cannot select an axis to squeeze out which has size not equal to "
-        f"one, got shape={shape} and dimensions={dimensions}")
+        f"one, got {shape=} and {dimensions=}")
   return tuple(s for i, s in enumerate(shape) if i not in dims_set)
 
 def _squeeze_transpose_rule(t, operand, *, dimensions):
@@ -3778,7 +3776,7 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
     raise ValueError(f"Invalid axis {axis} for operand shape {operand.shape}")
   if not core.greater_equal_dim(operand.shape[axis], 1):
     raise ValueError("argmin and argmax require non-empty reduced dimension. "
-                     f"operand.shape={operand.shape} axis={axis}")
+                     f"operand.shape={operand.shape} {axis=}")
   return tuple(np.delete(operand.shape, axis))
 
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
@@ -4473,7 +4471,7 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
     raise TypeError(msg.format(typename, ', '.join(accepted_typenames)))
   if not 0 <= dimension < len(shape):
     raise ValueError("iota dimension must be between 0 and len(shape), got "
-                     f"dimension={dimension} for shape {shape}")
+                     f"{dimension=} for {shape=}")
   if not any(isinstance(d, core.DArray) and
              type(core.get_aval(d).dtype) is core.bint for d in shape):
     return ShapedArray(shape, dtype)

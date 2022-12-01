@@ -217,7 +217,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # Run the "compiled" mode first, it is most important
     for mode in ("compiled", "eager", "graph"):
       def log_message(extra):
-        return f"[{self._testMethodName}] mode={mode}: {extra}"
+        return f"[{self._testMethodName}] {mode=}: {extra}"
 
       jax2tf_limits = tuple(filter(lambda l: l.filter(mode=mode), limitations))
 

@@ -1431,7 +1431,7 @@ def lower_parallel_callable(
       raise ValueError(
          f"On multi-host platforms, the input to pmapped functions must have "
          f"leading axis size equal to the number of local devices if no "
-         f"`devices` argument is specified. Got axis_size={axis_size}, "
+         f"`devices` argument is specified. Got {axis_size=}, "
          f"num_local_devices={xb.local_device_count(backend)}")
     else:
       raise ValueError(

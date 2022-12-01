@@ -100,7 +100,7 @@ class DtypesTest(jtu.JaxTestCase):
       dtypes.canonicalize_dtype("nonsense")
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_swap={swap}_jit={jit}",
+    {"testcase_name": f"_{swap=}_{jit=}",
      "swap": swap, "jit": jit}
     for swap in [False, True] for jit in [False, True])
   @jtu.ignore_warning(category=UserWarning,
@@ -298,13 +298,13 @@ class DtypesTest(jtu.JaxTestCase):
 class TestPromotionTables(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_jaxtype={jaxtype}", "jaxtype": jaxtype}
+      {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromType(self, jaxtype):
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(jaxtype)), jaxtype)
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_jaxtype={jaxtype}", "jaxtype": jaxtype}
+      {"testcase_name": f"_{jaxtype=}", "jaxtype": jaxtype}
       for jaxtype in dtypes._jax_types + dtypes._weak_types)
   def testJaxTypeFromVal(self, jaxtype):
     try:
@@ -314,7 +314,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     self.assertIs(dtypes._jax_type(*dtypes._dtype_and_weaktype(val)), jaxtype)
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_dtype={dtype}", "dtype": dtype}
+      {"testcase_name": f"_{dtype=}", "dtype": dtype}
       for dtype in dtypes._jax_types)
   def testJaxTypeWeak(self, dtype):
     jax_type = dtypes._jax_type(dtype, weak_type=True)
@@ -464,7 +464,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     self._CompileAndCheck(f, args_maker, check_dtypes=True)
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
+    {"testcase_name": f"_{dtype=}_{weak_type=}",
      "dtype": dtype, "weak_type": weak_type}
     for dtype in all_dtypes
     for weak_type in [True, False]
@@ -507,7 +507,7 @@ class TestPromotionTables(jtu.JaxTestCase):
     self.assertEqual(dtypes.is_weakly_typed(y), expected_weak_type)
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_dtype={dtype}_weak_type={weak_type}",
+    {"testcase_name": f"_{dtype=}_{weak_type=}",
      "dtype": dtype, "weak_type": weak_type}
     for dtype in all_dtypes
     for weak_type in [True, False]

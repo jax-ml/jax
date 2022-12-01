@@ -782,8 +782,7 @@ def _slice_transpose_rule(t, operand, *, start_indices, limit_indices, strides):
     pads = zip(start_indices, np.subtract(operand_shape, real_limits),
                np.subtract(strides, 1))
   result = lax.pad(t, lax._const(t, 0), pads)
-  assert result.shape == operand_shape, (
-    f"result.shape={result.shape} operand_shape={operand_shape}")
+  assert result.shape == operand_shape, f"{result.shape=} {operand_shape=}"
   return [result]
 
 
@@ -1171,7 +1170,7 @@ def _gather_shape_rule(operand, indices, *, dimension_numbers,
   if len(start_index_map) != indices.shape[index_vector_dim]:
     raise TypeError(f"Gather op has {len(start_index_map)} elements in "
                     f"start_index_map and the bound of dimension "
-                    f"index_vector_dim={index_vector_dim} of indices is "
+                    f"{index_vector_dim=} of indices is "
                     f"{indices.shape[index_vector_dim]}. These two "
                     f"numbers must be equal.")
 
@@ -1507,7 +1506,7 @@ def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
       indices.shape[index_vector_dim]):
     raise TypeError(f"Scatter op has {len(scatter_dims_to_operand_dims)} "
                     f"elements in scatter_dims_to_operand_dims and the bound "
-                    f"of dimension index_vector_dim={index_vector_dim} of "
+                    f"of dimension {index_vector_dim=} of "
                     f"indices is {indices.shape[index_vector_dim]}. These two "
                     f"numbers must be equal")
 

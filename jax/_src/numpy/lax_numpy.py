@@ -504,7 +504,7 @@ def histogramdd(sample: ArrayLike, bins: Union[ArrayLike, List[ArrayLike]] = 10,
   if range is not None and (
       len(range) != D or _any(r is not None and shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
     raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
-                     f"of {D} pairs or Nones; got range={range}")
+                     f"of {D} pairs or Nones; got {range=}")
 
   try:
     num_bins = len(bins)  # type: ignore[arg-type]
@@ -748,7 +748,7 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
   elif len(spacing) == len(axis_tuple):
     dx = list(spacing)
   else:
-    TypeError(f"Invalid number of spacing arguments {len(spacing)} for axis={axis}")
+    TypeError(f"Invalid number of spacing arguments {len(spacing)} for {axis=}")
 
   if ndim(dx[0]) != 0:
     raise NotImplementedError("Non-constant spacing not implemented")
@@ -1418,7 +1418,7 @@ def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
     # pad
     return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
   else:
-    raise ValueError(f"jnp.pad: {name} with nd={nd} has unsupported shape {nvals.shape}. "
+    raise ValueError(f"jnp.pad: {name} with {nd=} has unsupported shape {nvals.shape}. "
                      f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
 
 
@@ -2244,7 +2244,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
       raise ValueError(
           "jax.numpy.arange supports non-constant arguments only in "
           "single-argument form. Found "
-          f"jax.numpy.arange(start={start}, stop={stop}, step={step})")
+          f"jax.numpy.arange({start=}, {stop=}, {step=})")
     return lax.iota(dtype or int_, start)
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
@@ -3527,7 +3527,7 @@ def rollaxis(a, axis: int, start=0):
   a_ndim = ndim(a)
   axis = _canonicalize_axis(axis, a_ndim)
   if not (-a_ndim <= start <= a_ndim):
-    raise ValueError(f"start={start} must satisfy {-a_ndim}<=start<={a_ndim}")
+    raise ValueError(f"{start=} must satisfy {-a_ndim}<=start<={a_ndim}")
   if start < 0:
     start += a_ndim
   if start > axis:
@@ -4715,7 +4715,7 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   right = core.concrete_or_error(bool, right, "right argument of jnp.digitize()")
   bins_arr = asarray(bins)
   if bins_arr.ndim != 1:
-    raise ValueError(f"digitize: bins must be a 1-dimensional array; got bins={bins}")
+    raise ValueError(f"digitize: bins must be a 1-dimensional array; got {bins=}")
   if bins_arr.shape[0] == 0:
     return zeros(x, dtype=dtypes.canonicalize_dtype(int_))
   side = 'right' if not right else 'left'
@@ -4865,7 +4865,7 @@ def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
   if nbits_in not in byte_dtypes:
     raise NotImplementedError(f"arr.view() for arr.dtype={arr_dtype}")
   if nbits_out not in byte_dtypes:
-    raise NotImplementedError(f"arr.view(dtype) for dtype={dtype}")
+    raise NotImplementedError(f"arr.view(dtype) for {dtype=}")
   dt_in = byte_dtypes[nbits_in]
   dt_out = byte_dtypes[nbits_out]
   arr_bytes = lax.bitcast_convert_type(arr, dt_in)

@@ -54,11 +54,9 @@ def _validate_bcsr_indices(indices: jnp.ndarray, indptr: jnp.ndarray,
   assert n_dense >= 0
 
   if not _compatible(indices.shape[:n_batch], shape[:n_batch]):
-    raise ValueError("indices batch dimensions not compatible for "
-                     f"indices.shape={indices.shape}, shape={shape}")
+    raise ValueError(f"indices batch dimensions not compatible for {indices.shape=}, {shape=}")
   if not _compatible(indptr.shape[:n_batch], shape[:n_batch]):
-    raise ValueError("indptr batch dimensions not compatible for "
-                     f"indptr.shape={indptr.shape}, shape={shape}")
+    raise ValueError(f"indptr batch dimensions not compatible for {indptr.shape=}, {shape=}")
   if indptr.shape[n_batch:] != (shape[n_batch] + 1,):
     raise ValueError("indptr shape must match the matrix shape plus 1.")
 
@@ -75,11 +73,9 @@ def _validate_bcsr(data: jnp.ndarray, indices: jnp.ndarray,
     raise ValueError("BCSR array must have 2 sparse dimensions; "
                      f"{n_sparse} is given.")
   if not _compatible(data.shape[:n_batch], shape[:n_batch]):
-    raise ValueError("data batch dimensions not compatible for "
-                    f"data.shape={data.shape}, shape={shape}")
+    raise ValueError(f"data batch dimensions not compatible for {data.shape=}, {shape=}")
   if data.shape[-(n_dense + 1):] != (nse,) + shape[n_batch + 2:]:
-    raise ValueError(f"Invalid data.shape={data.shape} for "
-                    f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
+    raise ValueError(f"Invalid {data.shape=} for {nse=}, {n_batch=}, {n_dense=}")
   return props
 
 
@@ -183,7 +179,7 @@ def _bcsr_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch,
                                   n_dense, index_dtype):
   M, = batched_args
   if batch_dims != (0,):
-    raise NotImplementedError(f"batch_dims={batch_dims}")
+    raise NotImplementedError(f"{batch_dims=}")
   new_n_batch = n_batch + 1
   n_sparse = M.ndim - n_dense - new_n_batch
   if n_sparse != 2:
@@ -247,8 +243,7 @@ def _bcsr_todense_abstract_eval(data, indices, indptr, *, shape):
 def _bcsr_todense_batching_rule(batched_args, batch_dims, *, shape):
   data, indices, indptr = batched_args
   if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"batch_dims={batch_dims}. "
-                              "Only 0 and None are supported.")
+    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
   if batch_dims[0] is None:
     data = data[None, ...]
   if batch_dims[1] is None:
@@ -333,9 +328,9 @@ class BCSR(JAXSparse):
     except Exception:  # pylint: disable=broad-except
       repr_ = f"{name}(<invalid>)"
     else:
-      extra = f", nse={nse}"
-      if n_batch: extra += f", n_batch={n_batch}"
-      if n_dense: extra += f", n_dense={n_dense}"
+      extra = f", {nse=}"
+      if n_batch: extra += f", {n_batch=}"
+      if n_dense: extra += f", {n_dense=}"
       repr_ = f"{name}({dtype}{shape}{extra})"
     if isinstance(self.data, core.Tracer):
       repr_ = f"{type(self.data).__name__}[{repr_}]"
@@ -353,8 +348,7 @@ class BCSR(JAXSparse):
     """Create an empty BCSR instance. Public method is sparse.empty()."""
     shape = tuple(shape)
     if n_dense < 0 or n_batch < 0 or nse < 0:
-      raise ValueError(f"Invalid inputs: shape={shape}, n_dense={n_dense},"
-                       f"n_batch={n_batch}, nse={nse}")
+      raise ValueError(f"Invalid inputs: {shape=}, {n_dense=}, {n_batch=}, {nse=}")
     n_sparse = len(shape) - n_dense - n_batch
     if n_sparse != 2:
       raise ValueError("BCSR sparse.empty: must have 2 sparse dimensions.")

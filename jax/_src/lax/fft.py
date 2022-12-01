@@ -91,7 +91,7 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
     if x.shape[-len(fft_lengths):-1] != fft_lengths[:-1]:
       raise ValueError(f"IRFFT input shape {x.shape} minor dimensions must "
                       "be equal to all except the last fft_length, got "
-                      f"fft_lengths={fft_lengths}")
+                      f"{fft_lengths=}")
     shape = x.shape[:-len(fft_lengths)] + fft_lengths
     dtype = _real_dtype(x.dtype)
   else:

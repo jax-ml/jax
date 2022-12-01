@@ -1632,7 +1632,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       elif out_dims == 2:
         return x[:, None] + x[None, :]
       else:
-        raise NotImplementedError(f"out_dims={out_dims}")
+        raise NotImplementedError(f"{out_dims=}")
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     np_fun = lambda arr: np.apply_along_axis(func, axis, arr, out_dims=out_dims)
@@ -5214,8 +5214,8 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
       # Checks to prevent tests from becoming out-of-date. If these fail,
       # it means that extra_params or unsupported_params need to be updated.
-      assert extra.issubset(jnp_params), f"{name}: extra={extra} is not a subset of jnp_params={set(jnp_params)}."
-      assert not unsupported.intersection(jnp_params), f"{name}: unsupported={unsupported} overlaps with jnp_params={set(jnp_params)}."
+      assert extra.issubset(jnp_params), f"{name}: {extra=} is not a subset of jnp_params={set(jnp_params)}."
+      assert not unsupported.intersection(jnp_params), f"{name}: {unsupported=} overlaps with jnp_params={set(jnp_params)}."
 
       # Skip functions that only have *args and **kwargs; we can't introspect these further.
       var_args = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)

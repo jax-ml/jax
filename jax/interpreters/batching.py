@@ -877,8 +877,7 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
   else:
     if (not isinstance(axis_name, core._TempAxisName) and
         axis_name is not core.no_axis_name):
-      raise ValueError(f'vmap has mapped output (axis_name={axis_name}) '
-                       f'but out_axes is {dst}')
+      raise ValueError(f'vmap has mapped output ({axis_name=}) but out_axes is {dst}')
     else:
       raise ValueError(f'vmap has mapped output but out_axes is {dst}')
 

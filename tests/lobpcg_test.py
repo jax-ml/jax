@@ -295,7 +295,7 @@ class LobpcgTest(jtu.JaxTestCase):
     plt.switch_backend('Agg')
 
     fig, (ax0, ax1, ax2, ax3) = plt.subplots(1, 4, figsize=(24, 4))
-    fig.suptitle(fr'{matrix_name} $n={n},k={k}$, {dt}')
+    fig.suptitle(fr'{matrix_name} ${n=},{k=}$, {dt}')
     line_styles = [':', '--', '-.', '-']
 
     for key, ls in zip(['X orth', 'P orth', 'P.X'], line_styles):

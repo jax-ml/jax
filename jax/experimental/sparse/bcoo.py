@@ -119,11 +119,9 @@ def _validate_bcoo(data: jnp.ndarray, indices: jnp.ndarray, shape: Sequence[int]
   n_batch, n_sparse, n_dense, nse = props
   shape = tuple(shape)
   if any(s1 not in (1, s2) for s1, s2 in safe_zip(data.shape[:n_batch], shape[:n_batch])):
-    raise ValueError("data batch dimensions not compatible for "
-                     f"data.shape={data.shape}, shape={shape}")
+    raise ValueError(f"data batch dimensions not compatible for {data.shape=}, {shape=}")
   if data.shape[n_batch:] != (nse,) + shape[n_batch + n_sparse:]:
-    raise ValueError(f"Invalid data.shape={data.shape} for "
-                    f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
+    raise ValueError(f"Invalid {data.shape=} for {nse=}, {n_batch=}, {n_dense=}")
   return props
 
 
@@ -135,11 +133,9 @@ def _validate_bcoo_indices(indices: jnp.ndarray, shape: Sequence[int]) -> BCOOPr
   n_dense = len(shape) - n_batch - n_sparse
   assert n_dense >= 0
   if any(s1 not in (1, s2) for s1, s2 in safe_zip(indices.shape[:n_batch], shape[:n_batch])):
-    raise ValueError("indices batch dimensions not compatible for "
-                     f"indices.shape={indices.shape}, shape={shape}")
+    raise ValueError(f"indices batch dimensions not compatible for {indices.shape=}, {shape=}")
   if indices.shape[n_batch:] != (nse, n_sparse):
-    raise ValueError(f"Invalid indices.shape={indices.shape} for "
-                     f"nse={nse}, n_batch={n_batch}, n_dense={n_dense}")
+    raise ValueError(f"Invalid ={indices.shape=} for {nse=}, {n_batch=}, {n_dense=}")
   return BCOOProperties(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense, nse=nse)
 
 
@@ -234,7 +230,7 @@ def _bcoo_todense_transpose(ct, data, indices, *, spinfo):
 def _bcoo_todense_batching_rule(batched_args, batch_dims, *, spinfo):
   data, indices = batched_args
   if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
+    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
   if batch_dims[0] is None:
     data = data[None, ...]
   if batch_dims[1] is None:
@@ -368,7 +364,7 @@ def _bcoo_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
 def _bcoo_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch, n_dense, index_dtype):
   M, = batched_args
   if batch_dims != (0,):
-    raise NotImplementedError(f"batch_dims={batch_dims}")
+    raise NotImplementedError(f"{batch_dims=}")
   return _bcoo_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (0, 0)
 
 ad.primitive_jvps[bcoo_fromdense_p] = _bcoo_fromdense_jvp
@@ -447,7 +443,7 @@ def _bcoo_extract_batching_rule(batched_args, batch_dims):
     bdim = batch_dims[0]
   n_batch = indices.ndim - 2
   if bdim >= n_batch:
-    raise ValueError(f"batch_dims={batch_dims} out of range for indices with n_batch={n_batch}")
+    raise ValueError(f"{batch_dims=} out of range for indices with {n_batch=}")
   return bcoo_extract(indices, mat), bdim
 
 ad.defjvp(bcoo_extract_p, None, _bcoo_extract_jvp)
@@ -503,10 +499,10 @@ def _validate_permutation(data, indices, permutation, shape):
   dense_perm = [p - n_sparse - n_batch for p in permutation[n_batch + n_sparse:]]
   if n_batch and tuple(sorted(batch_perm)) != tuple(range(n_batch)):
     raise NotImplementedError("transpose permutation cannot permute batch axes with non-batch axes; "
-                              f"got permutation {permutation}, with n_batch={n_batch}.")
+                              f"got permutation {permutation}, with {n_batch=}.")
   if n_dense and tuple(sorted(dense_perm)) != tuple(range(n_dense)):
     raise NotImplementedError("transpose permutation cannot permute dense axes with non-dense axes; "
-                              f"got permutation {permutation}, with n_dense={n_dense}.")
+                              f"got permutation {permutation}, with {n_dense=}.")
   return batch_perm, sparse_perm, dense_perm
 
 @bcoo_transpose_p.def_impl
@@ -711,7 +707,7 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
   if lhs_batch and max(lhs_batch) >= n_batch:
     raise NotImplementedError(
       "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representtaion.\n"
-      f"got lhs_batch={lhs_batch}, n_batch={n_batch}")
+      f"got {lhs_batch=}, {n_batch=}")
 
   # TODO: support contraction of dense dimensions?
   if any(d >= n_batch + n_sparse for d in lhs_contracting):
@@ -901,7 +897,7 @@ def _bcoo_dot_general_gpu_lowering(
   dtype = lhs_data_aval.dtype
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
     warnings.warn(f'bcoo_dot_general cusparse/hipsparse lowering not available '
-                  f'for dtype={dtype}. Falling back to default implementation.',
+                  f'for {dtype=}. Falling back to default implementation.',
                   CuSparseEfficiencyWarning)
     return _bcoo_dot_general_default_lowering(
       ctx, lhs_data, lhs_indices, rhs,
@@ -1361,7 +1357,7 @@ def _bcoo_sort_indices_abstract_eval(data, indices, *, spinfo):
 def _bcoo_sort_indices_batching_rule(batched_args, batch_dims, *, spinfo):
   data, indices = batched_args
   if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
+    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
   if batch_dims[0] is None:
     data = data[None, ...]
   if batch_dims[1] is None:
@@ -1501,7 +1497,7 @@ def _bcoo_sum_duplicates_abstract_eval(data, indices, *, spinfo, nse):
 def _bcoo_sum_duplicates_batching_rule(batched_args, batch_dims, *, spinfo, nse):
   data, indices = batched_args
   if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"batch_dims={batch_dims}. Only 0 and None are supported.")
+    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
   if batch_dims[0] is None:
     data = data[None, ...]
   if batch_dims[1] is None:
@@ -1604,7 +1600,7 @@ def bcoo_update_layout(mat, *, n_batch=None, n_dense=None, on_inefficient='error
   if n_dense < 0:
     raise ValueError(f"n_dense must be non-negative; got {n_dense}")
   if n_sparse < 0:
-    raise ValueError(f"sum of n_batch={n_batch} and n_dense={n_dense} "
+    raise ValueError(f"sum of {n_batch=} and {n_dense=} "
                      f"cannot be larger than mat.ndim={mat.ndim}.")
 
   def _maybe_err_or_warn(msg):
@@ -1717,7 +1713,7 @@ def bcoo_broadcast_in_dim(mat, *, shape, broadcast_dimensions):
 def _bcoo_broadcast_in_dim(data, indices, *, spinfo, shape, broadcast_dimensions):
   """BCOO equivalent of lax.broadcast_in_dim"""
   if len(spinfo.shape) != len(broadcast_dimensions):
-    raise ValueError(f"spinfo.shape={spinfo.shape} and broadcast_dimensions={broadcast_dimensions} must have the same length")
+    raise ValueError(f"{spinfo.shape=} and {broadcast_dimensions=} must have the same length")
   props = _validate_bcoo(data, indices, spinfo.shape)
   batch_dims, sparse_dims, dense_dims = split_list(broadcast_dimensions, [props.n_batch, props.n_sparse])
 
@@ -1898,7 +1894,7 @@ def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
   dimensions = tuple(canonicalize_axis(dim, arr.ndim) for dim in dimensions)
   if any(arr.shape[dim] != 1 for dim in dimensions):
     raise ValueError("cannot select an axis to squeeze out which has size not equal to one, "
-                     f"got shape={arr.shape} and dimensions={dimensions}")
+                     f"got shape={arr.shape} and {dimensions=}")
   batch_dims = tuple(d for d in dimensions if d < arr.n_batch)
   sparse_dims = np.array([i for i in range(arr.n_sparse)
                           if i + arr.n_batch not in dimensions], dtype=int)
@@ -1944,8 +1940,8 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
 
   if not all(0 <= start <= end <= size
              for start, end, size in safe_zip(start_indices, limit_indices, mat.shape)):
-    raise ValueError(f"bcoo_slice: invalid indices. Got start_indices={start_indices}, "
-                     f"limit_indices={limit_indices} and shape={mat.shape}")
+    raise ValueError(f"bcoo_slice: invalid indices. Got {start_indices=}, "
+                     f"{limit_indices=} and shape={mat.shape}")
 
   start_batch, start_sparse, start_dense = split_list(start_indices, [mat.n_batch, mat.n_sparse])
   end_batch, end_sparse, end_dense = split_list(limit_indices, [mat.n_batch, mat.n_sparse])
@@ -2236,7 +2232,7 @@ def _bcoo_multiply_dense(data, indices, v, *, spinfo):
     raise NotImplementedError(
       "multiplication between sparse and dense is only implemented for cases "
       "where the output shape matches the sparse matrix shape. Got "
-      f"shape={shape}, v.shape={v.shape}")
+      f"{shape=}, {v.shape=}")
   v = lax.expand_dims(v, range(len(shape) - v.ndim))
 
   props = _validate_bcoo(data, indices, shape)
@@ -2265,7 +2261,7 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
     mode = GatherScatterMode.PROMISE_IN_BOUNDS
   parsed_mode = GatherScatterMode.from_any(mode)
   if parsed_mode != GatherScatterMode.PROMISE_IN_BOUNDS:
-    raise NotImplementedError(f"bcoo_gather: mode={mode} not yet supported.")
+    raise NotImplementedError(f"bcoo_gather: {mode=} not yet supported.")
 
   kwds = dict(dimension_numbers=dimension_numbers, slice_sizes=slice_sizes,
               unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
@@ -2396,9 +2392,9 @@ class BCOO(JAXSparse):
     except:
       repr_ = f"{name}(<invalid>)"
     else:
-      extra = f", nse={nse}"
-      if n_batch: extra += f", n_batch={n_batch}"
-      if n_dense: extra += f", n_dense={n_dense}"
+      extra = f", {nse=}"
+      if n_batch: extra += f", {n_batch=}"
+      if n_dense: extra += f", {n_dense=}"
       repr_ = f"{name}({dtype}{shape}{extra})"
     if isinstance(self.data, core.Tracer):
       repr_ = f"{type(self.data).__name__}[{repr_}]"
@@ -2440,7 +2436,7 @@ class BCOO(JAXSparse):
     shape = tuple(shape)
     n_sparse = len(shape) - n_dense - n_batch
     if n_sparse < 0 or n_dense < 0 or n_batch < 0 or nse < 0:
-      raise ValueError(f"Invalid inputs: shape={shape}, n_dense={n_dense}, n_batch={n_batch}, nse={nse}")
+      raise ValueError(f"Invalid inputs: {shape=}, {n_dense=}, {n_batch=}, {nse=}")
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
     data = jnp.zeros((*batch_shape, nse, *dense_shape), dtype)
     indices = jnp.full((*batch_shape, nse, n_sparse), jnp.array(sparse_shape), index_dtype)
@@ -2451,7 +2447,7 @@ class BCOO(JAXSparse):
   def _eye(cls, N, M, k, *, dtype=None, index_dtype='int32', n_batch=0, n_dense=0):
     n_sparse = 2 - n_batch - n_dense
     if n_sparse < 0 or n_dense < 0 or n_batch < 0:
-      raise ValueError(f"Invalid inputs: shape={(N, M)}, n_dense={n_dense}, n_batch={n_batch}")
+      raise ValueError(f"Invalid inputs: shape={(N, M)}, {n_dense=}, {n_batch=}")
 
     if k > 0:
       diag_size = min(N, M - k)

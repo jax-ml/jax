@@ -493,7 +493,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
   @parameterized.named_parameters(
       dict(
-          testcase_name=f"_degree={degree}{'_jit' if with_jit else ''}",
+          testcase_name=f"_{degree=}{'_jit' if with_jit else ''}",
           degree=degree,
           with_jit=with_jit)
       for degree in [1, 2, 3, 4]
