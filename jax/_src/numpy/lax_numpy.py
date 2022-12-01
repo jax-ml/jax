@@ -3507,7 +3507,7 @@ def _roll(a, shift, axis):
     i = _canonicalize_axis(i, a_ndim)
     x = remainder(x, (a_shape[i] or 1))
     a = lax.concatenate((a, a), i)
-    a = lax.dynamic_slice_in_dim(a, a_shape[i] - x, a_shape[i], axis=i)
+    a = lax.dynamic_slice_in_dim(a, array(a_shape[i]) - x, a_shape[i], axis=i)
   return a
 
 

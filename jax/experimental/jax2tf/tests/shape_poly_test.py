@@ -1716,7 +1716,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   expect_error=(core.InconclusiveDimensionOperation,
                                 re.escape(
                                   "Cannot divide evenly the sizes of shapes (b0, 2, 4) and (b0, -1, 3)"))),
-
+    _make_harness("roll", "axis=0",
+                  lambda x: jnp.roll(x, 2, axis=0),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
+    _make_harness("roll", "axis=None",
+                  lambda x: jnp.roll(x, 2),
+                  [RandArg((3, 4), _f32)],
+                  poly_axes=[0]),
     _make_harness("scatter_add", "",
                   partial(lax.scatter_add, indices_are_sorted=False, unique_indices=True),
                   [RandArg((7, 4), _f32),
@@ -1932,7 +1939,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="repeat_repeats=poly_axis=None_scalar_poly_axes=[None, 0]",
+      #one_containing="roll_axis=None",
   )
   def test_prim(self, harness: Harness):
     _test_one_harness(self, harness)
