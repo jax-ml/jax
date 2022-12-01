@@ -729,7 +729,9 @@ class LaxVmapTest(jtu.JaxTestCase):
         which = an >= bn
         return (jnp.where(which, an, bn), jnp.where(which, ai, bi))
 
-      _, idxs = lax.reduce_window((norms, idxs), (-np.inf, -1), g,
+      inf = jnp.array(np.inf, dtype=norms.dtype)
+      one = jnp.array(1, dtype=idxs.dtype)
+      _, idxs = lax.reduce_window((norms, idxs), (-inf, -one), g,
                         window_dimensions=(2,), window_strides=(2,),
                         padding=((0, 0),))
       return x[idxs]

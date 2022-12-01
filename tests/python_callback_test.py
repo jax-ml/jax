@@ -587,16 +587,20 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @functools.partial(jax.vmap, in_axes=(0, None))
     def h(x, y):
-      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y)
+      out_shape = jax.ShapeDtypeStruct(x.shape, np.result_type(x.dtype, y.dtype))
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y)
     out = h(jnp.arange(4.), 4.)
-    np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
+    self.assertArraysAllClose(out, np.sin(np.arange(4.)) + 4.,
+                              rtol=1E-7, check_dtypes=False)
 
     @jax.jit
     @functools.partial(jax.vmap)
     def h(x, y):
-      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y)
+      out_shape = jax.ShapeDtypeStruct(x.shape, np.result_type(x.dtype, y.dtype))
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y)
     out = h(jnp.arange(4.), jnp.arange(10., 14.))
-    np.testing.assert_allclose(out, np.sin(np.arange(4.)) + jnp.arange(10., 14.))
+    self.assertArraysAllClose(out, np.sin(np.arange(4.)) + np.arange(10., 14.),
+                              rtol=1E-7, check_dtypes=False)
 
   def test_vmap_vectorized_callback(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':

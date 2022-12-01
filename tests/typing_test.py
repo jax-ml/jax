@@ -81,7 +81,7 @@ class TypingTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, jnp.arange(4))
 
     out3: typing.Array = arraylike_to_array(np.arange(4))
-    self.assertArraysEqual(out3, jnp.arange(4))
+    self.assertArraysEqual(out3, jnp.arange(4), check_dtypes=False)
 
     out4: typing.Array = arraylike_to_array(True)
     self.assertArraysEqual(out4, jnp.array(True))

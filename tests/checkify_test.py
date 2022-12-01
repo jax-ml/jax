@@ -91,6 +91,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     self.assertStartsWith(err.get(), "out-of-bounds indexing")
 
   @jtu.sample_product(jit=[False, True])
+  @jax.numpy_dtype_promotion('standard')
   def test_jit_div_errors(self, jit):
     def f(x, y):
       return x / y

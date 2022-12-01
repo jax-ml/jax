@@ -511,8 +511,8 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       @jax.named_scope('scan_body')
       def body(carry, x):
         return carry + x, carry + x
-      return lax.scan(body, x, jnp.arange(5.))
-    jaxpr = jax.make_jaxpr(f)(1.)
+      return lax.scan(body, x, jnp.arange(5, dtype='float32'))
+    jaxpr = jax.make_jaxpr(f)(jnp.float32(1))
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     self.assertEqual(str(
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
@@ -546,9 +546,9 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       @jax.named_scope('scan_body')
       def body(carry, x):
         return carry + x, carry + x
-      return lax.scan(body, x, jnp.arange(8.))
+      return lax.scan(body, x, jnp.arange(8, dtype='float32'))
     g = lambda x, t: jax.jvp(f, (x,), (t,))
-    jaxpr = jax.make_jaxpr(g)(1., 1.)
+    jaxpr = jax.make_jaxpr(g)(jnp.float32(1), jnp.float32(1))
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
     self.assertEqual(str(
       jaxpr.eqns[1].params['jaxpr'].eqns[0].source_info.name_stack),
@@ -565,8 +565,8 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       @jax.named_scope('scan_body')
       def body(carry, x):
         return 2 * carry * x, carry + x
-      return lax.scan(body, x, jnp.arange(8.))[0]
-    jaxpr = jax.make_jaxpr(f)(1.)
+      return lax.scan(body, x, jnp.arange(8., dtype='float32'))[0]
+    jaxpr = jax.make_jaxpr(f)(jnp.float32(2))
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'jvp(foo)')
     self.assertEqual(str(jaxpr.eqns[3].source_info.name_stack),
         'transpose(jvp(foo))')

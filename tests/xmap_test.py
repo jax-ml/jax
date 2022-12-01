@@ -312,7 +312,7 @@ class XMapTest(XMapTestCase):
                   in_axes=['i', 'j', ...],
                   out_axes=['i', 'j', ...],
                   axis_resources={'i': 'x', 'j': 'y'})(x).reshape((-1,))
-    self.assertAllClose(result, perm)
+    self.assertAllClose(result, perm, check_dtypes=False)
 
   def testCollectivePermute1D(self):
     perm = np.array([3, 1, 2, 0])
@@ -320,7 +320,7 @@ class XMapTest(XMapTestCase):
     result = xmap(lambda x: lax.pshuffle(x, 'i', perm),
                   in_axes=['i', ...],
                   out_axes=['i', ...])(x)
-    self.assertAllClose(result, perm)
+    self.assertAllClose(result, perm, check_dtypes=False)
 
   def testCollectiveAllGather(self):
     x = jnp.arange(4, dtype='int32')
@@ -423,6 +423,7 @@ class XMapTest(XMapTestCase):
       ('Multiple', (('x', 2), ('y', 2), ('z', 2)), (('a', 'y'), ('b', ('x', 'z')))),
     ))
   @jtu.with_mesh_from_kwargs
+  @jax.numpy_dtype_promotion('standard')
   def testNestedMesh(self, mesh, axis_resources):
     @partial(xmap, in_axes={1: 'a'}, out_axes=({0: 'a'}, {}),
               axis_resources=dict([axis_resources[0]]))
@@ -813,6 +814,7 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
     super().setUp()
 
   @jtu.with_mesh([('x', 2), ('y', 2), ('z', 2)])
+  @jax.numpy_dtype_promotion('standard')
   def testNestedMeshSPMD(self):
     h = xmap(lambda y: (jnp.sin(y) * np.arange(y.size, dtype=float),
                         lax.psum(y, ('a', 'b', 'c'))),
@@ -1046,7 +1048,7 @@ class NamedNNTest(XMapTestCase):
     expected = jnp.array([[0., 1., 0.],
                           [0., 0., 1.],
                           [1., 0., 0.]]).T
-    self.assertAllClose(f(jnp.ones(3, dtype='int32')), expected)
+    self.assertAllClose(f(jnp.ones(3, dtype='int32')), expected, check_dtypes=False)
 
   def testOneHotOutOfBound(self):
     f = xmap(lambda x: jax.nn.one_hot(jnp.array([-1, 3], dtype='int32'), 3, axis='i'),
