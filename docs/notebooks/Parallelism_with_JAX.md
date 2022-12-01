@@ -19,6 +19,8 @@ kernelspec:
 
 **This tutorial discusses parallelism via `jax.Array`, the unified array object model available in JAX v0.4.0 and newer.**
 
+See {ref}`jax-array-migration` guide for migrating existing pre-v0.4.0 codebases to `jax.Array`.
+
 **The features required by `jax.Array` are not supported by the Colab TPU runtime at this time.**
 
 ```{code-cell}

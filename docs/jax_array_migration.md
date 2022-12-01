@@ -1,3 +1,4 @@
+(jax-array-migration)=
 # jax.Array migration
 
 **yashkatariya@**
@@ -16,6 +17,8 @@ the unified jax.Array
 
 After the migration is complete `jax.Array` will be the only type of array in
 JAX.
+
+This doc explains how to migrate existing codebases to `jax.Array`. For more information on using `jax.Array` and JAX parallelism APIs, see the [Parallelism with JAX](https://jax.readthedocs.io/en/latest/notebooks/Parallelism_with_JAX.html) tutorial.
 
 
 ### How to enable jax.Array?
