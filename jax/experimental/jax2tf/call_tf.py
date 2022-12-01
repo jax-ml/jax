@@ -23,8 +23,10 @@ https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#callin
 
 """
 import functools
-import logging
+import re
 from typing import Any, Callable, Optional, Sequence, Tuple
+
+from absl import logging
 
 import jax
 from jax import core
@@ -80,6 +82,7 @@ def call_tf(callable_tf: Callable) -> Callable:
   Args:
     callable_tf: a TensorFlow Callable that can take a pytree of TensorFlow
       arguments.
+
   Returns: a JAX callable that can be invoked with JAX pytree arguments, in
     op-by-op mode or in a staged context. This callable can be used with
     JAX's reverse-mode autodiff (:func:`jax.grad`).
@@ -226,23 +229,59 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
 
 call_tf_p.def_impl(_call_tf_impl)
 
+@functools.lru_cache(maxsize=128)
+def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.ConcreteFunction
+  with jax2tf_internal.inside_call_tf():
+    return function_flat_tf.get_concrete_function(*args_flat_sig_tf)
+
 
 def _call_tf_abstract_eval(*_,
                            function_flat_tf,
                            args_flat_sig_tf, **__):
-  # See comments in _code_generator_and_avals of why we overkill and do a
-  # full compilation only to get the abstract avals.
+  # Called only when we form a Jaxpr, i.e., under jit, scan, etc.
+
+  concrete_function_flat_tf = _get_concrete_function_tf(function_flat_tf,
+                                                        args_flat_sig_tf)
+
+  def is_fully_known_shape(s):
+    return s.rank is not None and all([d is not None for d in s])
+  if all([is_fully_known_shape(s)
+          for s in concrete_function_flat_tf.output_shapes]):
+    return tuple([
+        # We convert to JAX type, and canonicalize to 32-bit if necessary
+        core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
+        for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
+                                concrete_function_flat_tf.output_shapes)])
+
+  # There are some cases when TF shape inference is not powerful enough to
+  # figure out the output shapes (e.g., b/128924522), even in situations where
+  # XLA can compile the code, from which we can get the shapes.
+
+  # We use the "cpu" as the platform, since JAX abstract eval is not platform
+  # specific; the "cpu" backend is always available and for abstract evaluation
+  # it should not matter which platform we use.
   _, result_avals = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,
-                                              code_gen_optional=True)
+                                              "CPU")
   return tuple(result_avals)
+
 
 call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
-def _call_tf_lowering(ctx, *args_op, function_flat_tf, args_flat_sig_tf, **_):
+def _call_tf_lowering(ctx, *args_op, platform,
+                      function_flat_tf, args_flat_sig_tf, **_):
   # This will most likely hit the cache, because we used it for abstract_eval
+  # We use the same TF lowering device as for the embedding JAX computation.
+  # One example when this is needed is when the code refers to variables on one
+  # device. Or, for sharding annotations (only supported on TPU).
+  if platform in ["cpu", "tpu"]:
+    tf_platform = platform.upper()
+  elif platform == "cuda":
+    tf_platform = "GPU"
+  else:
+    raise ValueError("platform {platform} not supported")
   code_gen, _ = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,  # type: ignore
-                                          code_gen_optional=False)
+                                          tf_platform)
   assert code_gen is not None
   return code_gen(ctx.module_context, args_op)
 
@@ -251,47 +290,14 @@ def _call_tf_lowering(ctx, *args_op, function_flat_tf, args_flat_sig_tf, **_):
 def _code_generator_and_avals(
     function_flat_tf,
     args_flat_sig_tf,
-    code_gen_optional=False
+    tf_platform,
 ) -> Tuple[Optional[Callable[[mlir.ModuleContext, Sequence[ir.Value]],
                              Sequence[ir.Value]]],
            Sequence[core.ShapedArray]]:
   # Returns and caches a code generator (taking a builder and the
   # XlaOps for the arguments) and a sequence of result abstract shapes.
 
-  # It turns out that both for abstract evaluation and for actual compilation
-  # it is useful to actually generate the HLO. This is true because in some
-  # cases just TF-level shape inference is not precise enough to recover the
-  # output shapes (e.g., b/128924522), even in situations where XLA can compile
-  # the code, from which we can get the shapes.
-
-  # Due to bugs like b/193754660, the compilation may fail. To work around this
-  # issue we pass the `code_gen_optional` when in an abstract evaluation context
-  # in which case we fallback on TF shape inference. Luckily it seen that
-  # it is never the case that we are under tf.function, and we call the
-  # XLA translation rule for call_tf. The latter happens only for jax.jit, but
-  # jax.jit under a tf.function must be under jax2tf.convert, which unrolls
-  # the jit.
-
-  # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
-  # We know of one case when TF is sensitive to the values of the tensors that
-  # affect shapes in the computation. In those cases, however, those tensors
-  # are inlined in the computation, which we detect below.
-  args_tf_flat = [
-      tf.constant((0 if a.dtype != tf.bool else False),
-                  shape=a.shape,
-                  dtype=a.dtype) for a in args_flat_sig_tf]
-
-  # TODO(necula): We should use the proper device, because in some cases we
-  # generate different HLO for different devices.
-  # One example is when the code refers to variables on one device. Or, for
-  # sharding annotations (only supported on TPU).
-  # For now we just use the default device, but ideally we should pass the
-  # intended platform in. The problem is that we want to reuse and cache this
-  # function across abstract_eval and XLA translation, but for abstract_eval
-  # we do not know the platform.
-  tf_device_name = f"/device:{jax.default_backend().upper()}:0"
-  with jax2tf_internal.inside_call_tf():
-    concrete_function_flat_tf = function_flat_tf.get_concrete_function(*args_flat_sig_tf)
+  concrete_function_flat_tf = _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf)
 
   captured_inputs = []
   if concrete_function_flat_tf.captured_inputs:
@@ -310,38 +316,27 @@ def _code_generator_and_avals(
       else:
         captured_inputs.append(inp)
 
+  # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
+  # We know of one case when TF is sensitive to the values of the tensors that
+  # affect shapes in the computation. In those cases, however, those tensors
+  # are inlined in the computation, which we detect below.
+  args_tf_flat = [
+      tf.constant((0 if a.dtype != tf.bool else False),
+                  shape=a.shape,
+                  dtype=a.dtype) for a in args_flat_sig_tf]
+
   with jax2tf_internal.inside_call_tf():
-    # The above has traced the function and in fact has cached a ConcreteFunction
-    # Grab it now, so that we don't have to construct `args_tf_flat` only to
-    # get a cache hit.
+    # When the TF computation uses variables on a particular device, we must
+    # get_compiler_ir for that exact device.
+    tf_device_name = f"/device:{tf_platform}:0"
     try:
       func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(*args_tf_flat)(
-            stage="hlo_serialized", device_name=tf_device_name)
+        stage="hlo_serialized", device_name=tf_device_name)
     except Exception as e:
-      # TODO(b/193754660): This is a workaround. Use a more robust mechanism
-      # instead of relying on error message.
-      # Check two different error messages, to ensure the code works internally
-      # (with "out of scope") and also in OSS (with "An op outside ...").
-      if type(e) is TypeError and ("out of scope" in str(e) or
-                                   "An op outside of the function building code" in str(e)):
-        # TODO(b/193754660): this may happen if we are in a function context
-        # Try to salvage the situation if we are just doing abstract_eval, maybe
-        # for jax2tf.convert. We can do that if all the output_shapes are known.
-        def is_fully_known_shape(s):
-          return s.rank is not None and all([d is not None for d in s])
-        if code_gen_optional and (
-            all([is_fully_known_shape(s)
-                 for s in concrete_function_flat_tf.output_shapes])):
-          result_avals = [
-              # We convert to JAX type, and canonicalize to 32-bit if necessary
-              core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
-              for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
-                                      concrete_function_flat_tf.output_shapes)]
-          return None, result_avals
       msg = ("Error compiling TensorFlow function. call_tf can used " +
-             "in a staged context (under jax.jit, lax.scan, etc.) only with " +
-             "compileable functions with static output shapes. " +
-             "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
+              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
+              "compileable functions with static output shapes. " +
+              "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg) from e
 
   xla_comp = xla_client.XlaComputation(func_tf_hlo)
@@ -421,8 +416,14 @@ def _code_generator_and_avals(
 
   return code_gen, result_avals
 
-mlir.register_lowering(call_tf_p, _call_tf_lowering)
+def _register_call_lowering(platform):
+  mlir.register_lowering(call_tf_p, functools.partial(_call_tf_lowering,
+                                                      platform=platform),
+                         platform=platform)
+for platform in ("cpu", "cuda", "tpu"):
+  _register_call_lowering(platform)
 
+# Support the call_tf under jax2tf.convert
 TfVal = jax2tf_internal.TfVal
 def _jax2tf_call_tf(*args: TfVal,
                     callable_flat_tf: Callable,

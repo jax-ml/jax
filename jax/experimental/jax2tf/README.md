@@ -1174,7 +1174,8 @@ The zero-copy does not yet work on TPU.
 The TF function must be compileable (`tf.function(func, jit_compile=True)`)
 and must have static output shapes
 when used in a JAX staging context, e.g., `jax.jit`, `lax.scan`, `lax.cond`,
-but not when used in a JAX op-by-op mode. For example, the following
+but may have unknown output shapes when used in a JAX op-by-op mode.
+For example, the following
 function uses strings operations that are not supported by XLA:
 
 ```python
@@ -1247,6 +1248,14 @@ def pure_func_tf(x, var1)
 
 This use case is likely to be revisited.
 
+Note that when the TF function captures a variable from the context, the
+TF function must be lowered for the same TF device that hosts the variable.
+By default, the lowering will use the first TF device on the same platform
+as the embedding JAX computation, e.g., "/device:TPU:0" if the embedding
+JAX computation runs on TPU. This will fail if the computation captures
+variables on some other devices. It is best to use ``call_tf``
+with TF functions that do not capture variables.
+
 A TF function wrapped with `call_tf` cannot be applied to inputs whose
 shapes are not constants. The may arise when you try to apply
 `jax2tf.convert` with polymorphic shapes on the result of
@@ -1264,6 +1273,7 @@ This is unsatisfying, because the result of the above conversion
 could be simply `tf.math.sin`, which is batch polymorphic. But
 JAX cannot keep track of shapes through a `call_tf` call, and it
 cannot be sure that the shape-polymorphic conversion is safe.
+
 
 # Misc notes
 
