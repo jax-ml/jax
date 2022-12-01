@@ -82,7 +82,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   dtype = lax.dtype(x)
   weak_type = dtypes.is_weakly_typed(x)
 
-  if dtype != dtypes.result_type(x, y):
+  if dtype != lax.dtype(y) and dtype != dtypes.result_type(x, y):
     # TODO(jakevdp): change this to an error after the deprecation period.
     warnings.warn("scatter inputs have incompatible types: cannot safely cast "
                   f"value from dtype={lax.dtype(y)} to dtype={lax.dtype(x)}. "
