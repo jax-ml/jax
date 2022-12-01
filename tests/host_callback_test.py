@@ -742,7 +742,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     if with_jit:
       func = jax.jit(func)
     res = func(1)
-    self.assertAllClose(jnp.array([1, 2, 3]), res)
+    self.assertAllClose(jnp.arange(1, 4), res)
     hcb.barrier_wait()
     assertMultiLineStrippedEqual(self, """
         where: 1
