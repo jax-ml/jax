@@ -1,6 +1,7 @@
 from absl.testing import absltest
 import scipy.optimize
 
+import jax
 from jax import grad
 from jax.config import config
 import jax.numpy as jnp
@@ -150,10 +151,11 @@ class TestLineSearch(jtu.JaxTestCase):
 
     # assert not line_search(jax.value_and_grad(f), np.ones(2), np.array([-0.5, -0.25])).failed
     xk = jnp.ones(2)
-    pk = jnp.array([-0.5, -0.25])
+    pk = jnp.array([-0.5, -0.25], dtype=xk.dtype)
     res = line_search(f, xk, pk, maxiter=100)
 
-    scipy_res = scipy.optimize.line_search(f, grad(f), xk, pk)
+    with jax.numpy_dtype_promotion('standard'):
+      scipy_res = scipy.optimize.line_search(f, grad(f), xk, pk)
 
     self.assertAllClose(scipy_res[0], res.a_k, atol=1e-5, check_dtypes=False)
     self.assertAllClose(scipy_res[3], res.f_k, atol=1e-5, check_dtypes=False)
