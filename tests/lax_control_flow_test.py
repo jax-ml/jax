@@ -1494,8 +1494,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(out, (7, 10))
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
-          jit_scan, jit_f, scan_name),
+      {"testcase_name": f"_{jit_scan=}_{jit_f=}_impl={scan_name}",
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl,
        "impl_name": scan_name}
       for jit_scan in [False, True]
@@ -1536,8 +1535,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         atol=atol)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
-          jit_scan, jit_f, scan_name),
+      {"testcase_name": f"_{jit_scan=}_{jit_f=}_impl={scan_name}",
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
@@ -1570,8 +1568,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["fwd"])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
-          jit_scan, jit_f, scan_name),
+      {"testcase_name": f"_{jit_scan=}_{jit_f=}_impl={scan_name}",
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
@@ -1608,8 +1605,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}_impl={}".format(
-          jit_scan, jit_f, scan_name),
+      {"testcase_name": f"_{jit_scan=}_{jit_f=}_impl={scan_name}",
        "jit_scan": jit_scan, "jit_f": jit_f, "scan": scan_impl}
       for jit_scan in [False, True]
       for jit_f in [False, True]
@@ -1721,7 +1717,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(losses, expected, check_dtypes=False, rtol=1e-2)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
+      {"testcase_name": f"_impl={scan_name}", "scan": scan_impl}
       for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testIssue711(self, scan):
     # Tests reverse-mode differentiation through a scan for which the scanned
@@ -1809,8 +1805,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                     modes=["rev"], order=2, rtol={np.float32: 6e-3})
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_scan={}_jit_f={}_in_axes={}_impl={}".format(
-          jit_scan, jit_f, in_axes, scan_name),
+      {"testcase_name": f"_{jit_scan=}_{jit_f=}_{in_axes=}_impl={scan_name}",
        "jit_scan": jit_scan, "jit_f": jit_f, "in_axes": in_axes,
        "scan": scan_impl}
       for jit_scan in [False, True]
@@ -1880,7 +1875,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @parameterized.named_parameters(
-      {"testcase_name": "_impl={}".format(scan_name), "scan": scan_impl}
+      {"testcase_name": f"_impl={scan_name}", "scan": scan_impl}
       for scan_impl, scan_name in SCAN_IMPLS_WITH_FOR)
   def testScanVmapFixpoint(self, scan):
     def f(carry_init):
@@ -1997,8 +1992,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(out, ())
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}".format(
-          jit_loop, jit_body, jit_cond),
+      {"testcase_name": f"_{jit_loop=}_{jit_body=}_{jit_cond=}",
        "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond}
       for jit_loop in [False, True]
       for jit_body in [False, True]
@@ -2026,8 +2020,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jtu.check_grads(loop, (x,), order=2, modes=["fwd"])
 
   @parameterized.named_parameters(
-      {"testcase_name": "_jit_loop={}_jit_body={}_jit_cond={}_impl={}".format(
-          jit_loop, jit_body, jit_cond, while_name),
+      {"testcase_name": f"_{jit_loop=}_{jit_body=}_{jit_cond=}_impl={while_name}",
        "jit_loop": jit_loop, "jit_body": jit_body, "jit_cond": jit_cond,
        "while_loop": while_impl}
       for jit_loop in [False, True]
@@ -2101,7 +2094,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     jax.linearize(func, 1.)  # doesn't crash
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_loop={loop}", loop=loop)
+      dict(testcase_name=f"_{loop=}", loop=loop)
       for loop in ["while", "fori_inside_cond", "fori_inside_scan"])
   def testWhileGradError(self, loop: str = "fori_inside_scan"):
     # Raise error for vjp for loops
@@ -2272,7 +2265,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_{shape}_axis={axis}",
+      {"testcase_name": f"_{shape}_{axis=}",
        "shape": shape, "axis": axis}
       for shape in [
         [0], [1], [2], [3], [5], [10], [1000],

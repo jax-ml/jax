@@ -474,7 +474,7 @@ def make_custom_gradient_fn_tf(
       raise ValueError(
           "Unexpected variables used in forward pass. "
           "This should not happen for first-order differentiation. "
-          f"variables={variables}")
+          f"{variables=}")
 
     out_cts_flat_polymorphic_shapes = tuple(str(out_aval.shape)  # Note: may be polynomials, not just DimVar
                                             for out_aval in out_avals)  # type: ignore
@@ -497,7 +497,7 @@ def make_custom_gradient_fn_tf(
         # else JAX gets unhappy. See issue #6975.
         if out_ct_jax is not None:
           return out_ct_jax
-        assert core.primal_dtype_to_tangent_dtype(out_ct_aval.dtype) == dtypes.float0, f"out_ct_jax={out_ct_jax}"
+        assert core.primal_dtype_to_tangent_dtype(out_ct_aval.dtype) == dtypes.float0, f"{out_ct_jax=}"
         # Note that out_ct_aval.shape contains dimension variable from the
         # primal function scope. It is Ok to use them here because we
         # use the same shape variables for the VJP function.
@@ -943,7 +943,7 @@ class TensorFlowTracer(core.Tracer):
       val_shape = val.shape
 
       if config.jax_enable_checks:
-        assert len(phys_aval.shape) == len(val_shape), f"_aval.shape={phys_aval.shape} different rank than val_shape={val_shape}"
+        assert len(phys_aval.shape) == len(val_shape), f"_aval.shape={phys_aval.shape} different rank than {val_shape=}"
         # To compare types, we must handle float0 in JAX and x64 in TF
         if phys_aval.dtype == dtypes.float0:
           assert _to_tf_dtype(phys_aval.dtype) == val.dtype, f"expected {phys_aval.dtype} == {val.dtype}"
@@ -2799,7 +2799,7 @@ def _fft(x, fft_type, fft_lengths):
     expected_lengths = x.shape[-len(fft_lengths):]
   if expected_lengths != fft_lengths:
     raise NotImplementedError(
-        f"Unsupported fft_lengths={fft_lengths} for fft_type={fft_type} of "
+        f"Unsupported {fft_lengths=} for {fft_type=} of "
         f"array with shape={x.shape}.")
   tf_funcs = {
       FFT: [tf.signal.fft, tf.signal.fft2d, tf.signal.fft3d],

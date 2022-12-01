@@ -2927,7 +2927,7 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r"vmap has mapped output \(axis_name=foo\) but out_axes is None"):
+        r"vmap has mapped output \(axis_name='foo'\) but out_axes is None"):
       # If the output is mapped (user-named axis), then there must be some
       # out_axes specified.
       api.vmap(lambda x: x, out_axes=None, axis_name="foo")(jnp.array([1., 2.]))

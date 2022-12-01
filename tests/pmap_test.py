@@ -1970,7 +1970,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       pmapped_f(inputs, np.asarray(1))
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_axis_size={axis_size}", "axis_size": axis_size}
+      {"testcase_name": f"_{axis_size=}", "axis_size": axis_size}
       for axis_size in [1, 2])
   def test_grad_of_pmap_compilation_caching(self, axis_size):
     if len(jax.local_devices()) < axis_size:
@@ -2893,7 +2893,7 @@ class ShardArgsTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       {"testcase_name":
-       f"_shape={shape}_spec={_spec_str(spec)}_arg={make_arg.__name__}"
+       f"_{shape=}_spec={_spec_str(spec)}_arg={make_arg.__name__}"
        .replace(" ", ""),
        "shape": shape, "spec": spec, "make_arg": make_arg}
       for make_arg in [numpy_array, device_array]

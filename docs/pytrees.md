@@ -150,15 +150,15 @@ value_structured = [1., (2., 3.)]
 
 # The leaves in value_flat correspond to the `*` markers in value_tree
 value_flat, value_tree = tree_flatten(value_structured)
-print("value_flat={}\nvalue_tree={}".format(value_flat, value_tree))
+print(f"{value_flat=}\n{value_tree=}")
 
 # Transform the flat value list using an element-wise numeric transformer
 transformed_flat = list(map(lambda v: v * 2., value_flat))
-print("transformed_flat={}".format(transformed_flat))
+print(f"{transformed_flat=}")
 
 # Reconstruct the structured output, using the original
 transformed_structured = tree_unflatten(value_tree, transformed_flat)
-print("transformed_structured={}".format(transformed_structured))
+print(f"{transformed_structured=}")
 ```
 
 By default, pytree containers can be lists, tuples, dicts, namedtuple, None,
@@ -180,8 +180,7 @@ example_containers = [
 def show_example(structured):
   flat, tree = tree_flatten(structured)
   unflattened = tree_unflatten(tree, flat)
-  print("structured={}\n  flat={}\n  tree={}\n  unflattened={}".format(
-      structured, flat, tree, unflattened))
+  print(f"{structured=}\n  {flat=}\n  {tree=}\n  {unflattened=}")
 
 for structured in example_containers:
   show_example(structured)

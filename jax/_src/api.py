@@ -408,7 +408,7 @@ def _prepare_jit(fun, static_argnums, static_argnames, donate_argnums,
   # Validate donate_argnums
   if max(donate_argnums, default=-1) >= len(args):
     raise ValueError(
-        f"jitted function has donate_argnums={donate_argnums} but "
+        f"jitted function has {donate_argnums=} but "
         f"was called with only {len(args)} positional arguments.")
 
   f = lu.wrap_init(fun)
@@ -592,7 +592,7 @@ def _cpp_jit(
   # feature.
   if device is not None and backend is not None:
     raise ValueError("can't specify both a device and a backend for jit, "
-                     f"got device={device} and backend={backend}.")
+                     f"got {device=} and {backend=}.")
 
   @api_boundary
   def cache_miss(*args, **kwargs):
@@ -957,8 +957,7 @@ def xla_computation(fun: Callable,
   @api_boundary
   def computation_maker(*args, **kwargs):
     if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      raise ValueError(f"jitted function has static_argnums={static_argnums},"
-                       f" donate_argnums={donate_argnums} but "
+      raise ValueError(f"jitted function has {static_argnums=}, {donate_argnums=} but "
                        f"was called with only {len(args)} positional arguments.")
 
     f = lu.wrap_init(fun)
@@ -1155,7 +1154,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   def value_and_grad_f(*args, **kwargs):
     max_argnum = argnums if isinstance(argnums, int) else max(argnums)
     if max_argnum >= len(args):
-      raise TypeError(f"differentiating with respect to argnums={argnums} requires at least "
+      raise TypeError(f"differentiating with respect to {argnums=} requires at least "
                       f"{max_argnum + 1} positional arguments to be passed by the caller, "
                       f"but got only {len(args)} positional arguments.")
 

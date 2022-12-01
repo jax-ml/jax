@@ -166,7 +166,7 @@ class CallToTFTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       dict(
-          testcase_name=f"_ad={ad}",
+          testcase_name=f"_{ad=}",
           ad=ad)
       for ad in CALL_TF_IMPLEMENTATIONS.keys())
   def test_impl(self, ad="simple"):
@@ -185,7 +185,7 @@ class CallToTFTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       dict(
-          testcase_name=f"_ad={ad}",
+          testcase_name=f"_{ad=}",
           ad=ad)
       for ad in CALL_TF_IMPLEMENTATIONS.keys()
       if ad != "none")

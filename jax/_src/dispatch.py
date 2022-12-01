@@ -644,7 +644,7 @@ def _xla_callable_device(nreps, backend, device,
   if nreps > 1:
     if device is not None or backend is not None:
       raise ValueError(f"can't specify device or backend for jit-of-pmap, "
-                       f"got device={device} and backend={backend}")
+                       f"got {device=} and {backend=}")
     return None
   else:
     # TODO(skye): dedup with C++ jit logic for determining jit device?

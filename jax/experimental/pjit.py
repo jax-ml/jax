@@ -324,8 +324,7 @@ def pjit(fun: Callable,
     if kwargs:
       raise NotImplementedError("pjit does not support kwargs")
     if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      raise ValueError(f"jitted function has static_argnums={static_argnums}, "
-                       f"donate_argnums={donate_argnums} but "
+      raise ValueError(f"jitted function has {static_argnums=}, {donate_argnums=} but "
                        f"was called with only {len(args)} positional arguments.")
 
     # Putting this outside of wrapped would make resources lexically scoped

@@ -788,7 +788,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     jit_fun1 = jax.jit(lambda xs: hcb.id_print(
         xs,
         a_new_test="************",
-        testcase_name=f"shape_{shape}_dtype_{dtype}_nr_args={nr_args}"))
+        testcase_name=f"{shape=}_{dtype=}_{nr_args=}"))
 
     res = jit_fun1(args)
     self.assertAllClose(args, res, check_dtypes=True)

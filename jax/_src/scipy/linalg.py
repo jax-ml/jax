@@ -203,7 +203,7 @@ def _schur(a: Array, output: str) -> Tuple[Array, Array]:
 def schur(a: ArrayLike, output: str = 'real') -> Tuple[Array, Array]:
   if output not in ('real', 'complex'):
     raise ValueError(
-      f"Expected 'output' to be either 'real' or 'complex', got output={output}.")
+      f"Expected 'output' to be either 'real' or 'complex', got {output=}.")
   return _schur(a, output)
 
 @_wraps(scipy.linalg.inv,
@@ -858,7 +858,7 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: Optio
     else:
       raise NotImplementedError("method='qdwh' only supports mxn matrices "
                                 "where m < n where side='right' and m >= n "
-                                f"side='left', got {a.shape} with side={side}")
+                                f"side='left', got {a.shape} with {side=}")
   elif method == "svd":
     u_svd, s_svd, vh_svd = lax_linalg.svd(a, full_matrices=False)
     s_svd = s_svd.astype(u_svd.dtype)

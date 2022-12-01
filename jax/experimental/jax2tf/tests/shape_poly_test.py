@@ -74,7 +74,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
   a, b = shape_poly._parse_spec("a, b", (2, 3))
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dim_spec={dim_spec}",
+      dict(testcase_name=f"_{dim_spec=}",
            dim_spec=dim_spec, dim_poly=dim_poly)
       for dim_spec, dim_poly in [
           ("2*a*b", 2 * a * b),
@@ -93,7 +93,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((dim_poly,), shape_poly._parse_spec(str(dim_poly), (2,)))
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_dim_spec={dim_spec}",
+      dict(testcase_name=f"_{dim_spec=}",
            dim_spec=dim_spec, dim_poly=dim_poly)
       for dim_spec, dim_poly in [
           ("2*a*b", 2 * a * b),
@@ -1234,7 +1234,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   enable_and_disable_xla=True),
     [
         _make_harness("average",
-                      f"axis={axis}_weights=None",
+                      f"{axis=}_weights=None",
                       lambda x, axis: jnp.average(x, axis=axis, returned=False, weights=None),
                       [RandArg((7, 8, 4), _f32), StaticArg(axis)],
                       poly_axes=[0])
@@ -1242,7 +1242,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     ],
     [
         _make_harness("average",
-                      f"axis={axis}_weights=Some",
+                      f"{axis=}_weights=Some",
                       lambda x, weights, axis: jnp.average(x, axis=axis, returned=False, weights=weights),
                       [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), _f32), StaticArg(axis)],
                       poly_axes=[0, 0])
@@ -1570,7 +1570,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   tol=1e-5),
     [
         _make_harness("mean",
-                      f"axis={axis}_keepdims={keepdims}_where=None",
+                      f"{axis=}_{keepdims=}_where=None",
                       lambda x, axis, keepdims: jnp.mean(x, axis=axis, keepdims=keepdims, where=None),
                       [RandArg((7, 8, 4), _f32), StaticArg(axis), StaticArg(keepdims)],
                       poly_axes=[0])
@@ -1579,7 +1579,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     ],
     [
         _make_harness("mean",
-                      f"axis={axis}_keepdims={keepdims}_where=Some",
+                      f"{axis=}_{keepdims=}_where=Some",
                       lambda x, where, axis, keepdims: jnp.mean(x, axis=axis, keepdims=keepdims, where=where),
                       [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), np.bool_), StaticArg(axis), StaticArg(keepdims)],
                       poly_axes=[0, 0])
@@ -1823,7 +1823,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   poly_axes=[0]),
     [
         _make_harness("var",
-                      f"axis={axis}_keepdims={keepdims}_where=None",
+                      f"{axis=}_{keepdims=}_where=None",
                       lambda x, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=None),
                       [RandArg((7, 8, 4), _f32), StaticArg(axis), StaticArg(keepdims)],
                       poly_axes=[0])
@@ -1832,7 +1832,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     ],
     [
         _make_harness("var",
-                      f"axis={axis}_keepdims={keepdims}_where=Some",
+                      f"{axis=}_{keepdims=}_where=Some",
                       lambda x, where, axis, keepdims: jnp.var(x, axis=axis, keepdims=keepdims, where=where),
                       [RandArg((7, 8, 4), _f32), RandArg((7, 8, 4), np.bool_), StaticArg(axis), StaticArg(keepdims)],
                       poly_axes=[0, 0])

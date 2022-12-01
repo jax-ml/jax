@@ -90,7 +90,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   if operand is not _no_operand_sentinel:
     if operands:
       raise TypeError("if 'operand' keyword is passed then no positional "
-                      f"operands can be passed, got operand={operand} "
+                      f"operands can be passed, got {operand=} "
                       f"and positional operands {operands}")
     operands = (operand,)
   del operand
@@ -184,7 +184,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   if operand is not _no_operand_sentinel:
     if operands:
       raise TypeError("if 'operand' keyword is passed then no positional "
-                      f"operands can be passed, got operand={operand} "
+                      f"operands can be passed, got {operand=} "
                       f"and positional operands {operands}")
     operands = (operand,)
   del operand

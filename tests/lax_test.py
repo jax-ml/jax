@@ -1281,7 +1281,7 @@ class LaxTest(jtu.JaxTestCase):
     elif input_type == "np.float32":
       operand = np.float32(2.0)
     else:
-      raise ValueError(f"Unrecognized input_type={input_type}")
+      raise ValueError(f"Unrecognized {input_type=}")
 
     op = lambda x: lax.squeeze(x, dimensions=())
     if jit:

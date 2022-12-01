@@ -51,7 +51,7 @@ class JAXSparse(abc.ABC):
     except:
       repr_ = f"{name}(<invalid>)"
     else:
-      repr_ = f"{name}({dtype}{shape}, nse={nse})"
+      repr_ = f"{name}({dtype}{shape}, {nse=})"
     if isinstance(self.data, core.Tracer):
       repr_ = f"{type(self.data).__name__}[{repr_}]"
     return repr_
