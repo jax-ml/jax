@@ -2661,6 +2661,74 @@ class ArrayPjitTest(jtu.JaxTestCase):
          "this feature.")):
       pjit(lambda x: x)
 
+  def test_vmap_of_jvp_pjit_no_axis_resources(self):
+    if not jax.config.jax_array:
+      self.skipTest("This test does not work without jax.Array")
+
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    pjit_inp1 = jax.device_put(
+        jnp.arange(8.), jax.sharding.NamedSharding(mesh, P('x')))
+    pjit_inp2 = jax.device_put(
+        jnp.arange(8.), jax.sharding.NamedSharding(mesh, P(('x', 'y'))))
+
+    def f_(x, n):
+      if n == 0:
+        return x * 2.
+      return jax.jit(partial(f_, n=n-1))(x - 1)
+    f = jax.jit(partial(f_, n=5))
+    jit_out1, jit_out2 = jax.vmap(lambda xs, ts: jax.jvp(f, xs, ts))(
+        (jnp.arange(8.),), (jnp.arange(8.),))
+
+    def g_(x, n):
+      if n == 0:
+        return x * 2.
+      return pjit(partial(g_, n=n - 1))(x - 1)
+    g = pjit(partial(g_, n=5))
+    pjit_out1, pjit_out2 = jax.vmap(lambda xs, ts: jax.jvp(g, xs, ts))(
+        (pjit_inp1,), (pjit_inp2,))
+
+    self.assertArraysEqual(pjit_out1, jit_out1)
+    self.assertArraysEqual(pjit_out2, jit_out2)
+
+  def test_vmap_of_jvp_pjit_no_axis_resources_2d(self):
+    if not jax.config.jax_array:
+      self.skipTest("This test does not work without jax.Array")
+
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    f_inp = jnp.arange(8.).reshape(2, 2, 2)
+
+    # g_inp is sharded with P(None, 'x') because f_inp is sharded with P('x')
+    # and then `f` will get vmapped and pjit's batching rule will insert a
+    # replicated axis for the batched dimension converting it into P(None, 'x')
+    g_inp = jax.device_put(f_inp,
+                           jax.sharding.NamedSharding(mesh, P(None, 'x')))
+
+    # Reference pjit with axis_resources
+    def f_(x, n):
+      if n == 0:
+        return x * 2.
+      return pjit(partial(f_, n=n-1), in_axis_resources=P('x'),
+                  out_axis_resources=P('x'))(x - 1)
+    f = pjit(partial(f_, n=5), in_axis_resources=P('x'),
+             out_axis_resources=P('x'))
+    with mesh:
+      f_out1, f_out2 = jax.vmap(lambda xs, ts: jax.jvp(f, xs, ts))(
+          (f_inp,), (f_inp,))
+
+    # pjit with no axis_resources
+    def g_(x, n):
+      if n == 0:
+        return x * 2.
+      return pjit(partial(g_, n=n - 1))(x - 1)
+    g = pjit(partial(g_, n=5))
+    g_out1, g_out2 = jax.vmap(lambda xs, ts: jax.jvp(g, xs, ts))(
+        (g_inp,), (g_inp,))
+
+    self.assertArraysEqual(f_out1, g_out1)
+    self.assertArraysEqual(f_out2, g_out2)
+    self.assertEqual(f_out1.sharding, g_out1.sharding)
+    self.assertEqual(f_out2.sharding, g_out2.sharding)
+
 
 class TempSharding(Sharding):
 

@@ -1115,17 +1115,20 @@ batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
 pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
-    s: OpShardingSharding, dim: int, val: Tuple[str, ...], mesh, ndim: int):
+    s: Union[OpShardingSharding, _UnspecifiedValue], dim: int,
+    val: Tuple[str, ...], mesh, ndim: int):
+  if _is_unspecified(s):
+    return s
   if not val:
-    new_op = s._op_sharding.clone()
+    new_op = s._op_sharding.clone()  # type: ignore
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    return OpShardingSharding(s._device_assignment, new_op)
+    return OpShardingSharding(s._device_assignment, new_op)  # type: ignore
   else:
     assert isinstance(s, OpShardingSharding)
     assert not mesh.empty
-    parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
+    parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
     return OpShardingSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
