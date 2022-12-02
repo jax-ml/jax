@@ -351,13 +351,22 @@ class ArrayImpl(basearray.Array):
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
   def unsafe_buffer_pointer(self):
-    assert len(self._arrays) == 1
+    if len(self._arrays) != 1:
+      raise ValueError("unsafe_buffer_pointer() is supported only for unsharded"
+                       " arrays.")
     return self._arrays[0].unsafe_buffer_pointer()
 
   @property
   def __cuda_array_interface__(self):
-    assert len(self._arrays) == 1
+    if len(self._arrays) != 1:
+      raise ValueError("__cuda_array_interface__() is supported only for "
+                       "unsharded arrays.")
     return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
+
+  def on_device_size_in_bytes(self):
+    """Returns the total global on-device size of the array in bytes."""
+    return (self._arrays[0].on_device_size_in_bytes() *
+            len(self.sharding.device_set))
 
   # TODO(yashkatariya): Remove this method when everyone is using devices().
   def device(self) -> Device:

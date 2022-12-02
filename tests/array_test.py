@@ -638,6 +638,14 @@ class JaxArrayTest(jtu.JaxTestCase):
     # device memory address. Other ideas include causing enough fragmentation to
     # OOM, and exposing allocator stats in Python.
 
+  def test_on_device_size_in_bytes(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    a, _ = create_array(
+        (8, 2), sharding.NamedSharding(global_mesh, P('x', 'y')))
+    shard_size = a.addressable_shards[0].data.on_device_size_in_bytes()
+    self.assertGreaterEqual(shard_size, 4 * 2)
+    self.assertEqual(shard_size * len(a.global_shards),
+                     a.on_device_size_in_bytes())
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
