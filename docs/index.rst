@@ -5,6 +5,11 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
 It provides composable transformations of Python+NumPy programs: differentiate, vectorize,
 parallelize, Just-In-Time compile to GPU/TPU, and more.
 
+.. note::
+   JAX 0.4.0 introduces new parallelism APIs, including breaking changes to :func:`jax.experimental.pjit` and a new unified ``jax.Array`` type.
+   Please see `Parallelism with JAX <https://jax.readthedocs.io/en/latest/notebooks/Parallelism_with_JAX.html>`_ tutorial and the :ref:`jax-array-migration`
+   guide for more information.
+
 .. toctree::
    :maxdepth: 1
    :caption: Getting Started
