@@ -187,7 +187,7 @@ def _minimize_lbfgs(
       s_history=_update_history_vectors(history=state.s_history, new=s_k),
       y_history=_update_history_vectors(history=state.y_history, new=y_k),
       rho_history=_update_history_scalars(history=state.rho_history, new=rho_k),
-      gamma=gamma,
+      gamma=gamma.astype(state.g_k.dtype),
       status=jnp.where(converged, 0, status),
       ls_status=ls_results.status,
     )

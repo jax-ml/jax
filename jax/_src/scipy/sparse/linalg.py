@@ -400,7 +400,8 @@ def _kth_arnoldi_iteration(k, A, M, V, H):
   subspace is declared to have been found, in which case in which case the new
   vector is taken to be the zero vector.
   """
-  dtype = jnp.result_type(*tree_leaves(V))
+  dtype, _ = dtypes._lattice_result_type(*tree_leaves(V))
+  dtype = dtypes.canonicalize_dtype(dtype)
   eps = jnp.finfo(dtype).eps
 
   v = tree_map(lambda x: x[..., k], V)  # Gets V[:, k]

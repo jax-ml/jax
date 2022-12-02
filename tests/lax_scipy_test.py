@@ -492,8 +492,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     def args_maker():
       m = rng(shape, dtype)
       n = abs(m)
-      theta = jnp.linspace(-4.0, 5.0, num_z)
-      phi = jnp.linspace(-2.0, 1.0, num_z)
+      theta = np.linspace(-4.0, 5.0, num_z)
+      phi = np.linspace(-2.0, 1.0, num_z)
       return m, n, theta, phi
 
     with self.subTest('Test JIT compatibility'):

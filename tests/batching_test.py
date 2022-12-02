@@ -567,7 +567,7 @@ class BatchingTest(jtu.JaxTestCase):
   def testCumProd(self):
    x = jnp.arange(9).reshape(3, 3) + 1
    y = vmap(lambda x: jnp.cumprod(x, axis=-1))(x)
-   self.assertAllClose(jnp.cumprod(x, axis=1, dtype=int), y)
+   self.assertAllClose(jnp.cumprod(x, axis=1), y)
 
   def testSelect(self):
     pred = np.array([True, False])
