@@ -758,7 +758,6 @@ class MainTrace:
 
 class TraceStack:
   # See comments in https://github.com/google/jax/pull/3370
-  __slots__ = ['stack', 'dynamic']
   stack: List[MainTrace]
   dynamic: MainTrace
 
@@ -809,7 +808,6 @@ AxisName = Hashable
 no_axis_name = object()
 
 class TraceState:
-  __slots__ = ['trace_stack', 'substack', 'axis_env']
   trace_stack: TraceStack
   substack: List[Sublevel]
   axis_env: List[AxisEnvFrame]
@@ -1116,14 +1114,17 @@ def full_lower(val):
     return val
 
 def find_top_trace(xs) -> Trace:
-  top_main = thread_local_state.trace_state.trace_stack.dynamic
-  for x in xs:
-    if isinstance(x, Tracer):
-      main = x._trace.main
-      if top_main.level < main.level:
-        x._assert_live()
-        top_main = main
-  return top_main.with_cur_sublevel()
+  top_tracer = max((x for x in xs if isinstance(x, Tracer)),
+                    default=None, key=attrgetter('_trace.level'))
+  if top_tracer is not None:
+    top_tracer._assert_live()
+    top_main = top_tracer._trace.main
+  else:
+    top_main = None  # type: ignore
+  dynamic = thread_local_state.trace_state.trace_stack.dynamic
+  top_main = (dynamic if top_main is None or dynamic.level > top_main.level
+              else top_main)
+  return top_main and top_main.with_cur_sublevel()  # type: ignore
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
