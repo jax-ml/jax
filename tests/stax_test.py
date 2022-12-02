@@ -41,6 +41,8 @@ def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
   rng_key, init_key = random.split(rng_key)
   result_shape, params = init_fun(init_key, input_shape)
   inputs = random_inputs(test_case.rng(), input_shape)
+  if params:
+    inputs = inputs.astype(np.dtype(params[0]))
   result = apply_fun(params, inputs, rng=rng_key)
   test_case.assertEqual(result.shape, result_shape)
 
@@ -200,9 +202,9 @@ class StaxTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 1, 2))
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
+    inputs = random_inputs(self.rng(), input_shape).astype(params[0].dtype)
     out = apply_fun(params, inputs)
 
     self.assertEqual(out_shape, input_shape)
@@ -216,9 +218,9 @@ class StaxTest(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/461
     init_fun, apply_fun = stax.BatchNorm(axis=(0, 2, 3))
     input_shape = (4, 5, 6, 7)
-    inputs = random_inputs(self.rng(), input_shape)
 
     out_shape, params = init_fun(key, input_shape)
+    inputs = random_inputs(self.rng(), input_shape).astype(params[0].dtype)
     out = apply_fun(params, inputs)
 
     self.assertEqual(out_shape, input_shape)
