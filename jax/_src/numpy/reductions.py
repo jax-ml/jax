@@ -612,7 +612,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None =
   normalizer = sum(lax_internal.bitwise_not(lax_internal._isnan(a)),
                    axis=axis, keepdims=keepdims, where=where)
   normalizer = normalizer - ddof
-  normalizer_mask = lax.le(normalizer, 0)
+  normalizer_mask = lax.le(normalizer, lax_internal._zero(normalizer))
   result = sum(centered, axis, keepdims=keepdims, where=where)
   result = _where(normalizer_mask, np.nan, result)
   divisor = _where(normalizer_mask, 1, normalizer)
