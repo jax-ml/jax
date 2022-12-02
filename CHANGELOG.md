@@ -47,6 +47,8 @@ Remember to align the itemized text with the first line of an item within a list
     to calculate preallocation. Please refer to
     [GPU memory allocation](https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html) for
     more details.
+  * The deprecated method `.block_host_until_ready()` has been removed. Use
+    `.block_until_ready()` instead.
 
 
 ## jax 0.3.25 (Nov 15, 2022)
