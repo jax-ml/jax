@@ -111,6 +111,8 @@ class FrozenDict(abc.Mapping):
 
 AxisName = core.AxisName
 ResourceAxisName = AxisName  # Different name just for documentation purposes
+# TODO(https://github.com/google/jax/issues/13487): Remove Mesh in
+# 3 months from `jax.experimental.maps.Mesh`.
 Mesh = pxla.Mesh
 ResourceEnv = pxla.ResourceEnv
 EMPTY_ENV = pxla.EMPTY_ENV

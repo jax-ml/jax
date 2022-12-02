@@ -36,9 +36,8 @@ from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
 from jax import prng
-# TODO(skye): do we still wanna call this PartitionSpec?
+from jax.sharding import PartitionSpec as P
 from jax.experimental import maps
-from jax.experimental import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
@@ -328,7 +327,7 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testTwoMeshAxisSharding(self):
     @partial(pjit,
              in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             out_axis_resources=jax.sharding.PartitionSpec(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -2210,7 +2209,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
                              [devices[4], devices[6]],
                              [devices[7], devices[5]]])
     shape = (8, 2)
-    mesh = maps.Mesh(mesh_devices, ('x', 'y'))
+    mesh = jax.sharding.Mesh(mesh_devices, ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
 

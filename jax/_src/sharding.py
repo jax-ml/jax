@@ -18,23 +18,20 @@ import functools
 from collections import Counter
 import operator as op
 from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
-                    FrozenSet, Union, cast, TYPE_CHECKING)
+                    FrozenSet, Union, cast)
 
 import jax
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax.interpreters import mlir
+from jax.interpreters import pxla
 
 import numpy as np
-
-if TYPE_CHECKING:
-  from jax.interpreters import pxla
 
 Shape = Tuple[int, ...]
 Device = xc.Device
 Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
-
 
 @use_cpp_class(xc.Sharding if xc._version >= 94 else None)
 class Sharding(metaclass=abc.ABCMeta):
@@ -137,9 +134,6 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
-    # TODO(https://github.com/google/jax/issues/12016): Remove the local import
-    from jax.interpreters import pxla
-
     op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
     if pxla.is_op_sharding_replicated(op_sharding):
       return global_shape
@@ -205,6 +199,42 @@ def _enable_cpp_named_sharding():
     return None
 
 
+class _UnconstrainedPartitionSingleton:
+
+  def __str__(self):
+    return "UNCONSTRAINED"
+
+
+# Unconstrained sentinel value for PartitionSpec, representing a dimension for
+# which the user wants XLA to assign the best partitioning.
+# TODO(yashkatariya): May rename to AUTO.
+_UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
+
+
+class PartitionSpec(tuple):
+  """Tuple of integer specifying how a value should be partitioned.
+
+  Each integer corresponds to how many ways a dimension is partitioned. We
+  create a separate class for this so JAX's pytree utilities can distinguish it
+  from a tuple that should be treated as a pytree.
+  """
+
+  # A sentinel value representing a dim is unconstrained.
+  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
+
+  def __init__(self, *partitions):
+    pass
+
+  def __new__(cls, *partitions):
+    return tuple.__new__(PartitionSpec, partitions)
+
+  def __repr__(self):
+    return "PartitionSpec%s" % tuple.__repr__(self)
+
+  def __reduce__(self):
+    return (PartitionSpec, tuple(self))
+
+
 @use_cpp_class(_enable_cpp_named_sharding())
 class NamedSharding(XLACompatibleSharding):
   r"""NamedSharding is a way to express ``Sharding``\s using named axes.
@@ -241,7 +271,7 @@ class NamedSharding(XLACompatibleSharding):
 
   @use_cpp_method
   def __init__(
-      self, mesh: pxla.Mesh, spec: pxla.PartitionSpec, _parsed_pspec = None):
+      self, mesh: pxla.Mesh, spec: PartitionSpec, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
@@ -309,7 +339,6 @@ class NamedSharding(XLACompatibleSharding):
       axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
   ) -> xc.OpSharding:
     from jax.experimental.pjit import get_array_mapping
-    from jax.interpreters import pxla
 
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -432,8 +461,6 @@ class PmapSharding(XLACompatibleSharding):
       shape: The shape of the input array.
       sharded_dim: Dimension the input array is sharded on. Defaults to 0.
     """
-    from jax.interpreters import pxla
-
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
     aval = jax.ShapedArray(shape, np.int32)
@@ -457,7 +484,6 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    from jax.interpreters import pxla
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
@@ -470,8 +496,6 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
-    from jax.interpreters import pxla
-
     sharded_dim = None
     for i, s in enumerate(self.sharding_spec.sharding):
       if isinstance(s, pxla.Unstacked):
@@ -616,8 +640,6 @@ class OpShardingSharding(XLACompatibleSharding):
     return hash(xc.HloSharding.from_proto(self._op_sharding))
 
   def __eq__(self, other):
-    from jax.interpreters import pxla
-
     if not isinstance(other, OpShardingSharding):
       return False
     if id(self) == id(other):
@@ -634,8 +656,6 @@ class OpShardingSharding(XLACompatibleSharding):
     return f'OpShardingSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    from jax.interpreters import pxla
-
     num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
@@ -649,8 +669,6 @@ class OpShardingSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    from jax.interpreters import pxla
-
     indices = pxla.op_sharding_to_indices(self._op_sharding, global_shape,
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))

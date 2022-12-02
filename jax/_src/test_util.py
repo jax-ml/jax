@@ -46,7 +46,6 @@ from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
 from jax.interpreters import mlir
-from jax.experimental.maps import Mesh
 
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and
@@ -1000,7 +999,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
   mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
-  with Mesh(mesh_devices, axis_names):
+  with jax.sharding.Mesh(mesh_devices, axis_names):
     yield
 
 def with_mesh_from_kwargs(f):
@@ -1040,7 +1039,7 @@ def create_global_mesh(mesh_shape, axis_names):
     raise unittest.SkipTest(f"Test requires {size} global devices.")
   devices = sorted(api.devices(), key=lambda d: d.id)
   mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
-  global_mesh = Mesh(mesh_devices, axis_names)
+  global_mesh = jax.sharding.Mesh(mesh_devices, axis_names)
   return global_mesh
 
 

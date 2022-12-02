@@ -19,8 +19,11 @@ from jax._src.sharding import (
     MeshPspecSharding as MeshPspecSharding,
     # New name of MeshPspecSharding to match PositionalSharding below.
     NamedSharding as NamedSharding,
+    PartitionSpec as PartitionSpec,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
     OpShardingSharding as OpShardingSharding,
     PositionalSharding as PositionalSharding,
 )
+
+from jax.interpreters.pxla import Mesh as Mesh

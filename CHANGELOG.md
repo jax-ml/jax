@@ -28,6 +28,10 @@ Remember to align the itemized text with the first line of an item within a list
     [Parallelism with
     JAX](https://jax.readthedocs.io/en/latest/notebooks/Parallelism_with_JAX.html)
     tutorial to understand the new concepts.
+  * `PartitionSpec` and `Mesh` are now out of experimental. The new API endpoints
+    are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.
+    `jax.experimental.maps.Mesh` and `jax.experimental.PartitionSpec` are
+    deprecated and will be removed in 3 months.
 
 
 ## jaxlib 0.4.0
