@@ -586,7 +586,7 @@ def multivariate_normal(key: KeyArray,
                         mean: RealArray,
                         cov: RealArray,
                         shape: Optional[Shape] = None,
-                        dtype: DTypeLikeFloat = dtypes.float_,
+                        dtype: DTypeLikeFloat = None,
                         method: str = 'cholesky') -> Array:
   """Sample multivariate normal random values with given mean and covariance.
 
@@ -610,12 +610,14 @@ def multivariate_normal(key: KeyArray,
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
   key, _ = _check_prng_key(key)
+  mean, cov = _promote_dtypes_inexact(mean, cov)
   if method not in {'svd', 'eigh', 'cholesky'}:
     raise ValueError("method must be one of {'svd', 'eigh', 'cholesky'}")
+  if dtype is None:
+    dtype = mean.dtype
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `multivariate_normal` must be a float "
                      f"dtype, got {dtype}")
-  dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
