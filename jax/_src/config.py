@@ -79,13 +79,10 @@ class Config:
     self._update_hooks = {}
 
   def update(self, name, val):
-    if self.use_absl:
-      setattr(self.absl_flags.FLAGS, name, val)
-    else:
-      self.check_exists(name)
-      if name not in self.values:
-        raise Exception(f"Unrecognized config option: {name}")
-      self.values[name] = val
+    self.check_exists(name)
+    if name not in self.values:
+      raise Exception(f"Unrecognized config option: {name}")
+    self.values[name] = val
 
     hook = self._update_hooks.get(name, None)
     if hook:
@@ -99,11 +96,10 @@ class Config:
     return self._read(name)
 
   def _read(self, name):
-    if self.use_absl:
-      return getattr(self.absl_flags.FLAGS, name)
-    else:
-      self.check_exists(name)
+    try:
       return self.values[name]
+    except KeyError:
+      raise AttributeError(f"Unrecognized config option: {name}")
 
   def add_option(self, name, default, opt_type, meta_args, meta_kwargs,
                  update_hook=None):
@@ -160,7 +156,9 @@ class Config:
 
   def complete_absl_config(self, absl_flags):
     for name, _ in self.values.items():
-      self.update(name, getattr(absl_flags.FLAGS, name))
+      flag = absl_flags.FLAGS[name]
+      if flag.present:
+        self.update(name, flag.value)
 
   def parse_flags_with_absl(self):
     global already_configured_with_absl
