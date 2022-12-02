@@ -1666,9 +1666,14 @@ def fori_loop(lower, upper, body_fun, init_val):
   lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
   upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
   if lower_dtype != upper_dtype:
-    msg = ("lower and upper arguments to fori_loop must have equal types, "
-           "got {} and {}")
-    raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
+    # Check for scalar integer inputs in case of type mismatch
+    if dtypes.is_weakly_typed(lower) and np.issubdtype(lower_dtype, np.integer):
+      lower = lax.convert_element_type(lower, upper_dtype)
+    elif dtypes.is_weakly_typed(upper) and np.issubdtype(lower_dtype, np.integer):
+      upper = lax.convert_element_type(upper, lower_dtype)
+    else:
+      raise TypeError("lower and upper arguments to fori_loop must have equal types, "
+                      f"got {lower_dtype.name} and {upper_dtype.name}")
 
   # If we can specialize on the trip count, call scan instead of a while_loop
   # to enable efficient reverse-mode differentiation.
