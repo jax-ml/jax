@@ -49,6 +49,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
@@ -879,6 +880,21 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
             raise NotImplementedError('Having uncommitted Array sharded on '
                                       'multiple devices is not supported.')
     else:
+      if isinstance(arg, np.ndarray) and not pxla.is_op_sharding_replicated(
+          pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:
+        raise ValueError(
+            'When jax.Array is enabled, passing non-trivial shardings for numpy '
+            'inputs is not allowed. To fix this error, either specify a '
+            'replicated sharding explicitly or use '
+            '`jax.experimental.multihost_utils.host_local_array_to_global_array(...)` '
+            'to convert your host local numpy inputs to a jax.Array which you '
+            'can pass to pjit. '
+            'If the numpy input is the same on each process, then you can use '
+            '`jax.make_array_from_callback(...) to create a `jax.Array` which '
+            'you can pass to pjit. '
+            'Please see the jax.Array migration guide for more information '
+            'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
+            f'Got arg shape: {arg.shape}, arg value: {arg}')
       if not _is_unspecified(arg_s):
         if committed and not pxla.are_op_shardings_equal(
             pjit_in_s._to_xla_op_sharding(arg.ndim),
