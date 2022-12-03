@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import operator
 
 from jax import config
 from jax.tree_util import tree_map, tree_reduce
@@ -81,6 +82,9 @@ default_gradient_tolerance = {
   np.dtype(np.complex128): 1e-5,
 }
 
+def is_python_scalar(val):
+  return not isinstance(val, np.generic) and isinstance(val, (bool, int, float, complex))
+
 def _assert_numpy_allclose(a, b, atol=None, rtol=None, err_msg=''):
   if a.dtype == b.dtype == _dtypes.float0:
     np.testing.assert_array_equal(a, b, err_msg=err_msg)
@@ -141,17 +145,28 @@ def _safe_subtract(x, y, *, dtype):
     return np.where(np.equal(x, y), np.array(0, dtype),
                     np.subtract(x, y, dtype=dtype))
 
-add = partial(tree_map, lambda x, y: np.add(x, y, dtype=_dtype(x)))
-sub = partial(tree_map, lambda x, y: np.subtract(x, y, dtype=_dtype(x)))
+def _preserve_input_types(f):
+  def wrapped(*args):
+    dtype = _dtype(args[0])
+    result = np.array(f(*args), dtype=dtype)
+    if all(is_python_scalar(arg) for arg in args):
+      result = result.item()
+    return result
+  return wrapped
+
+
+add = partial(tree_map, _preserve_input_types(operator.add))
+sub = partial(tree_map, _preserve_input_types(operator.sub))
 safe_sub = partial(tree_map,
                    lambda x, y: _safe_subtract(x, y, dtype=_dtype(x)))
-conj = partial(tree_map, lambda x: np.conj(x, dtype=_dtype(x)))
+conj = partial(tree_map, _preserve_input_types(np.conj))
 
 
 def scalar_mul(xs, a):
   def mul(x):
     dtype = _dtype(x)
-    return np.multiply(x, np.array(a, dtype=dtype), dtype=dtype)
+    result = np.multiply(x, np.array(a, dtype=dtype), dtype=dtype)
+    return result.item() if is_python_scalar(x) else result
   return tree_map(mul, xs)
 
 
@@ -160,9 +175,10 @@ def rand_like(rng, x):
   dtype = _dtype(x)
   randn = lambda: np.asarray(rng.randn(*shape), dtype=dtype)
   if _dtypes.issubdtype(dtype, np.complexfloating):
-    return randn() + dtype.type(1.0j) * randn()
+    result = randn() + dtype.type(1.0j) * randn()
   else:
-    return randn()
+    result = randn()
+  return result.item() if is_python_scalar(x) else result
 
 
 def numerical_jvp(f, primals, tangents, eps=EPS):
