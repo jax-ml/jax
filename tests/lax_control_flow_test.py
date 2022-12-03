@@ -27,6 +27,7 @@ import numpy as np
 
 import jax
 from jax import core
+from jax import dtypes
 from jax.errors import UnexpectedTracerError
 from jax import lax
 from jax import random
@@ -368,7 +369,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       def body_fun(state):
         arr, num, i, total = state
         arr_i = lax.dynamic_index_in_dim(arr, i, 0, False)
-        return (arr, num, lax.add(i, 1), lax.add(total, arr_i))
+        return (arr, num, i + 1, total + arr_i)
 
       init_val = (arr, num, 0, 0.)
       _, _, _, total = lax.while_loop(cond_fun, body_fun, init_val)
@@ -552,7 +553,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         arr_i = lax.dynamic_index_in_dim(arr, i, 0, False)
         return (arr, lax.add(total, arr_i))
 
-      init_val = (arr, 0.)
+      init_val = (arr, arr.dtype.type(0))
       _, total = lax.fori_loop(0, lax.min(arr.shape[0], num), body_fun,
                                init_val)
       return total
@@ -573,7 +574,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         arr_i = lax.dynamic_index_in_dim(arr, i, 0, False)
         return {'arr': arr, 'total': lax.add(total, arr_i)}
 
-      init_val = {'arr': arr, 'total': 0.}
+      init_val = {'arr': arr, 'total': arr.dtype.type(0)}
       out_val = lax.fori_loop(0, lax.min(arr.shape[0], num), body_fun, init_val)
       return out_val['total']
 
@@ -593,7 +594,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         arr_i = lax.dynamic_index_in_dim(arr, i, 0, False)
         return (arr, lax.add(total, arr_i), ())
 
-      init_val = (arr, 0., ())
+      init_val = (arr, arr.dtype.type(0), ())
       _, tot, _ = lax.fori_loop(0, lax.min(arr.shape[0], num), body_fun, init_val)
       return tot
 
@@ -1181,7 +1182,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       jtu.check_grads(f, (x,), order=2, modes=["fwd", "rev"])
 
   def testSwitchGradWithWeakTypeMismatch(self):  # issue #4696, PR #4896
-    dtype = jnp.ones(1).dtype
+    dtype = dtypes.canonicalize_dtype(np.float64)
     dtype = jnp.float32 if dtype == jnp.float32 else jnp.float64
 
     branches = [
@@ -1206,13 +1207,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for cond, name in COND_IMPLS)
   def testCondGrad2(self, cond):
     def f_ref(x):
-      z = jnp.array([1., 2.]) * x if x[0] < 2 else jnp.sin(x)
+      z = jnp.array([1., 2.], x.dtype) * x if x[0] < 2 else jnp.sin(x)
       return z.sum()
 
     def _f(x):
       return cond(
           x[0] < 2,
-          lambda x: jnp.array([1., 2.]) * x,
+          lambda x: jnp.array([1., 2.], x.dtype) * x,
           lambda x: jnp.sin(x),
           x)
 
@@ -1332,13 +1333,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       for cond, name in COND_IMPLS)
   def testCondLinearize2(self, cond):
     def f_ref(x):
-      z = jnp.array([1., 2.]) * x if x[0] < 2 else jnp.cos(jnp.sin(x))
+      z = jnp.array([1., 2.], x.dtype) * x if x[0] < 2 else jnp.cos(jnp.sin(x))
       return z.sum()
 
     def f(x):
       return cond(
           x[0] < 2,
-          lambda x: jnp.array([1., 2.]) * x,
+          lambda x: jnp.array([1., 2.], x.dtype) * x,
           lambda x: jnp.cos(jnp.sin(x)),
           x).sum()
 
@@ -1799,7 +1800,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       return c, b
 
     as_ = jnp.arange(6.).reshape((3, 2))
-    c = 1.
+    c = jnp.array(1, dtype=as_.dtype)
 
     jtu.check_grads(lambda c, as_: scan(f, c, as_), (c, as_),
                     modes=["rev"], order=2, rtol={np.float32: 6e-3})
@@ -2469,7 +2470,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     scan_v = jax.vmap(scan, in_axes=0, out_axes=0, axis_name='i')
     self.assertAllClose(
       scan_v(jnp.ones([1]), jnp.arange(5.).reshape((1, 5))),
-      (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])))
+      (jnp.array([1.]), jnp.array([[0., 1., 2., 3., 4.]])), check_dtypes=False)
 
   def test_xla_cpu_gpu_loop_cond_bug(self):
     # https://github.com/google/jax/issues/5900

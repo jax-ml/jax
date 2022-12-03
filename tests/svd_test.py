@@ -124,7 +124,7 @@ class SvdTest(jtu.JaxTestCase):
       u, s, v = jnp.linalg.svd(a, full_matrices=False)
       cond = 10**log_cond
       s = jnp.linspace(cond, 1, m)
-      s = s.at[r:m].set(jnp.zeros((m-r,)))
+      s = s.at[r:m].set(0)
       a = (u * s) @ v
 
       with jax.default_matmul_precision('float32'):

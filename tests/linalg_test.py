@@ -996,14 +996,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       (1,),
       (7, -2),
       (3, 4, 5),
-      (np.ones((3, 4), dtype=jnp.float_), 5,
-       np.random.randn(5, 2).astype(jnp.float_)),
+      (np.ones((3, 4), dtype=float), 5,
+       np.random.randn(5, 2).astype(float)),
     ]
   )
   def testBlockDiag(self, args):
     args_maker = lambda: args
     self._CheckAgainstNumpy(osp.linalg.block_diag, jsp.linalg.block_diag,
-                            args_maker)
+                            args_maker, check_dtypes=False)
     self._CompileAndCheck(jsp.linalg.block_diag, args_maker)
 
 

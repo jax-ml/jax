@@ -2306,9 +2306,8 @@ class BCSRTest(sptu.SparseTestCase):
       row, col = jnp.where(x != 0, size=3)
       val = x[row, col]
       indices = col
-      indptr = jnp.zeros(x.shape[0] + 1, dtype=int)
-      indptr = indptr.at[1:].set(jnp.cumsum(
-          jnp.bincount(row, length=x.shape[0]).astype(int)))
+      indptr = jnp.zeros(x.shape[0] + 1, dtype=int).at[1:].set(
+        jnp.cumsum(jnp.bincount(row, length=x.shape[0])))
       return sparse.BCSR((val, indices, indptr), shape=x.shape)
 
     with self.subTest('_bcsr_from_elt'):
@@ -2803,7 +2802,7 @@ class SparseUtilTest(sptu.SparseTestCase):
                      [[0, 0, 0, 1], [0, 0, 2, 0], [3, 0, 0, 4]]]], dtype=dtype)
     actual_nse = sparse.util._count_stored_elements_per_batch(
         mat, n_batch=n_batch, n_dense=n_dense)
-    self.assertArraysEqual(expected_nse, actual_nse)
+    self.assertArraysEqual(expected_nse, actual_nse, check_dtypes=False)
 
 
 if __name__ == "__main__":
