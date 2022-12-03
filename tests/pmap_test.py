@@ -2605,7 +2605,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
   def testThreadsafeIndexing(self):
     # NOTE(skye): I picked these values to be big enough to cause interesting
     # execution overlap, but small enough to not use too much memory. YMMV.
-    shape = (8, 8000, 1000)
+    shape = (8, 4000, 1000)
 
     if jax.device_count() < shape[0]:
       raise SkipTest(f"requires {shape[0]} devices")
