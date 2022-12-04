@@ -282,13 +282,13 @@ def base_arr_shape_to_keys_shape(impl, base_arr_shape):
 class KeyTyRules:
 
   @staticmethod
-  def physical_avals(aval):  # TODO(frostig): rename to `grounded_avals`
+  def physical_avals(aval) -> Sequence[core.AbstractValue]:  # TODO(frostig): rename to `grounded_avals`
     # TODO(frostig): dedup with `keys_aval_to_base_arr_aval``
-    return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),
+    return [core.ShapedArray((*aval.shape, *aval.dtype.impl.key_shape),  # type: ignore
                              jnp.dtype('uint32'))]
 
   @staticmethod
-  def aval_to_ir_types(aval):
+  def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[mlir.ir.Type]:
     phys_aval, = KeyTyRules.physical_avals(aval)
     return mlir.aval_to_ir_types(phys_aval)
 
@@ -393,70 +393,63 @@ class KeyTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def empty_mlir(ctx):
-    aval_out, = ctx.avals_out
+  def empty_mlir(ctx, aval_out) -> Sequence[mlir.ir.Value]:
     return mlir.ir_constants(np.zeros(aval_out.dtype.impl.key_shape,
                                       dtype=np.dtype('uint32')))
 
   @staticmethod
-  def slice_mlir(ctx, x, start_indices, limit_indices, strides):
-    aval_out, = ctx.avals_out
+  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides) -> mlir.ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [0] * len(key_shape)
     trailing_ones  = [1] * len(key_shape)
     start_indices = (*start_indices, *trailing_zeros)
     limit_indices = (*limit_indices, *key_shape)
     strides = (*strides, *trailing_ones)
-    return mhlo.SliceOp(x,
-                        mlir.dense_int_elements(start_indices),
-                        mlir.dense_int_elements(limit_indices),
-                        mlir.dense_int_elements(strides)).results
+    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    return mlir.slice_op(ctx, x, physical_aval_out,
+                         start_indices=start_indices, limit_indices=limit_indices, strides=strides)
 
   @staticmethod
-  def dynamic_slice_mlir(ctx, x, start_indices, slice_sizes):
-    aval_out, = ctx.avals_out
+  def dynamic_slice_mlir(ctx, aval_out, x, start_indices) -> mlir.ir.Value:
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     key_shape = aval_out.dtype.impl.key_shape
     trailing_zeros = [mlir.ir_constant(np.array(0, dtype))] * len(key_shape)
     start_indices = (*start_indices, *trailing_zeros)
-    slice_sizes_ = mlir.dense_int_elements((*slice_sizes, *key_shape))
-    return mhlo.DynamicSliceOp(x, start_indices, slice_sizes_).results
+    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    return mlir.dynamic_slice(ctx, physical_aval_out, x,
+                              start_indices=start_indices)
 
   @staticmethod
-  def dynamic_update_slice_mlir(ctx, x, update, *start_indices):
-    aval_out, = ctx.avals_out
+  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices) -> mlir.ir.Value:
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     key_shape = aval_out.dtype.impl.key_shape
     zeros = [mlir.ir_constant(np.array(0, dtype=dtype))] * len(key_shape)
     start_indices = (*start_indices, *zeros)
     return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
-                                     start_indices).results
+                                     start_indices).result
 
   @staticmethod
-  def broadcast_in_dim_mlir(ctx, x, *dyn_shape, shape, broadcast_dimensions):
-    if dyn_shape: raise NotImplementedError
-    aval_out, = ctx.avals_out
+  def broadcast_in_dim_mlir(ctx, aval_out, x,
+                            broadcast_dimensions) -> mlir.ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
     broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
-    return mhlo.BroadcastInDimOp(
-        mlir.aval_to_ir_type(aval_out), x,
-        mlir.dense_int_elements(broadcast_dimensions)).results
+    physical_aval_out, = KeyTyRules.physical_avals(aval_out)
+    return mlir.broadcast_in_dim(ctx, x, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
 
   @staticmethod
-  def transpose_mlir(ctx, x, *, permutation):
-    aval_out, = ctx.avals_out
+  def transpose_mlir(ctx, aval_out, x, *, permutation) -> mlir.ir.Value:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
     perm = [*permutation, *trailing_dims]
-    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).results
+    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
 
   @staticmethod
-  def gather_mlir(ctx, x, indices, *,
+  def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
-                  indices_are_sorted, mode, fill_value):
-    aval_x, aval_indices = ctx.avals_in
-    aval_y, = ctx.avals_out
+                  indices_are_sorted, mode, fill_value) -> mlir.ir.Value:
+    aval_x, aval_indices = avals_in
+    aval_y = aval_out
     key_shape = aval_x.dtype.impl.key_shape
     trailing_offset_dims = [aval_y.ndim + i for i in range(len(key_shape))]
     dimension_numbers = dimension_numbers._replace(
@@ -466,10 +459,11 @@ class KeyTyRules:
         lax_internal.slicing._gather_lower, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
         indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
-    return mlir.delegate_lowering(
+    res, = mlir.delegate_lowering(
         ctx, gather_lower, x, indices,
         avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices],
         avals_out=[keys_aval_to_base_arr_aval(aval_y)])
+    return res
 
 
 class KeyTy:

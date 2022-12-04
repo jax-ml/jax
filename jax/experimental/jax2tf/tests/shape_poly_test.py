@@ -2113,7 +2113,7 @@ class ShapePolyVmapPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_VMAP_TEST_HARNESSES),
-      #one_containing="gather_from_slicing_name=[0,1]_enable_xla=True_poly_axes=[0]"
+      one_containing=""
   )
   def test_vmap_prim(self, harness: Harness):
     return _test_one_harness(self, harness)

@@ -2893,14 +2893,11 @@ def _broadcast_in_dim_partial_eval(
   out_tracer.recipe = eqn
   return out_tracer
 
-def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions):
+def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions) -> Sequence[ir.Value]:
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.broadcast_in_dim_mlir(
-        ctx, x, *dyn_shape, shape=shape,
-        broadcast_dimensions=broadcast_dimensions)
   if dyn_shape:
     aval_out = aval_out.update(shape=_merge_dyn_shape(shape, dyn_shape))
+
 
   return [mlir.broadcast_in_dim(ctx, x, aval_out,
                                 broadcast_dimensions=broadcast_dimensions)]
@@ -3372,7 +3369,7 @@ def _transpose_batch_rule(batched_args, batch_dims, *, permutation):
 def _transpose_lower(ctx, x, *, permutation):
   aval_out, = ctx.avals_out
   if core.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.transpose_mlir(ctx, x, permutation=permutation)
+    return [aval_out.dtype._rules.transpose_mlir(ctx, aval_out, x, permutation=permutation)]
   return mhlo.TransposeOp(x, mlir.dense_int_elements(permutation)).results
 
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
@@ -4831,7 +4828,7 @@ empty_p = core.Primitive('empty')
 empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
   if core.is_opaque_dtype(dtype):
-    return dtype._rules.empty_mlir(ctx)
+    return dtype._rules.empty_mlir(ctx, ctx.avals_out[0])
   return mlir.ir_constants(np.zeros((), np.dtype(dtype)))
 mlir.register_lowering(empty_p, _empty_lower)
 

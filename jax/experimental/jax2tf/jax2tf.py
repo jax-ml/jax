@@ -693,6 +693,7 @@ def _lower_native_and_run(fun_jax: Callable,
   if "in_shardings" in lowered.compile_args:
     args_tf = tuple(
       map(_shard_value, args_tf, args_avals, lowered.compile_args["in_shardings"]))
+
   res = tfxla.call_module(
       args_tf,
       version=xla_call_module_version,
