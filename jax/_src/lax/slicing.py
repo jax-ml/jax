@@ -1403,9 +1403,19 @@ def _gather_lower(ctx, operand, indices, *,
     start_index_map=list(dimension_numbers.start_index_map))
   if not core.is_constant_shape(slice_sizes):
     slice_sizes = mlir.eval_dynamic_shape(ctx, slice_sizes)
-    return mhlo.DynamicGatherOp(
-        operand, indices, mlir.shape_tensor(slice_sizes),
-        dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+    # TODO(burmako): Fix overly conservative type inference of DynamicGatherOp.
+    # For now use the build_generic so that we can specify the result type.
+    # return mhlo.DynamicGatherOp(
+    #     operand, indices, mlir.shape_tensor(slice_sizes),
+    #     dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+    results = [mlir.aval_to_ir_type(aval_out)]
+    operands = [operand, indices, mlir.shape_tensor(slice_sizes)]
+    attributes = {
+        "dimension_numbers": dnums,
+        "indices_are_sorted": ir.BoolAttr.get(indices_are_sorted)
+    }
+    return mhlo.DynamicGatherOp.build_generic(
+        results=results, operands=operands, attributes=attributes).results
   else:
     return mhlo.GatherOp(
         operand,
