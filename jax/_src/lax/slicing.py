@@ -813,23 +813,8 @@ batching.primitive_batchers[slice_p] = _slice_batching_rule
 def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   strides = strides or [1] * len(start_indices)
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.slice_mlir(
-        ctx, x, start_indices, limit_indices, strides)
-  if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
-    start_indices = mlir.eval_dynamic_shape(ctx, start_indices)
-    limit_indices = mlir.eval_dynamic_shape(ctx, limit_indices)
-    strides = mlir.eval_dynamic_shape(ctx, strides)
-    return mhlo.RealDynamicSliceOp(mlir.aval_to_ir_type(aval_out),
-                                   x,
-                                   mlir.shape_tensor(start_indices),
-                                   mlir.shape_tensor(limit_indices),
-                                   mlir.shape_tensor(strides)).results
-  else:
-    return mhlo.SliceOp(x,
-                        mlir.dense_int_elements(start_indices),
-                        mlir.dense_int_elements(limit_indices),
-                        mlir.dense_int_elements(strides)).results
+  return [mlir.slice_op(ctx, x, aval_out,
+                        start_indices=start_indices, limit_indices=limit_indices, strides=strides)]
 
 mlir.register_lowering(slice_p, _slice_lower)
 
@@ -963,24 +948,9 @@ def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   x_aval, *_ = ctx.avals_in
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype) and dyn: raise NotImplementedError
-  if core.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.dynamic_slice_mlir(ctx, x, start_indices,
-                                                    slice_sizes)
   if dyn:
-    slice_sizes = lax._merge_dyn_shape(slice_sizes, dyn)
-
-  if not core.is_constant_shape(slice_sizes):
-    slice_sizes = mlir.eval_dynamic_shape(ctx, slice_sizes)
-    return mhlo.RealDynamicSliceOp(
-        mlir.aval_to_ir_type(aval_out), x,
-        mlir.shape_tensor(start_indices),
-        mlir.shape_tensor(slice_sizes),
-        mlir.shape_tensor([1] * len(slice_sizes))
-    ).results
-  else:
-    return mhlo.DynamicSliceOp(x, start_indices,
-                               mlir.dense_int_elements(slice_sizes)).results
+    aval_out = aval_out.update(shape=lax._merge_dyn_shape(slice_sizes, dyn))
+  return [mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -1083,11 +1053,8 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
-  if core.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.dynamic_update_slice_mlir(
-        ctx, x, update, *start_indices)
-  return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
-                                   start_indices).results
+  return [mlir.dynamic_update_slice(ctx, aval_out, x, update,
+                                    start_indices=start_indices)]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
@@ -1411,10 +1378,10 @@ def _gather_lower(ctx, operand, indices, *,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
   if core.is_opaque_dtype(aval_out.dtype):
-    return aval_out.dtype._rules.gather_mlir(
-        ctx, operand, indices, dimension_numbers=dimension_numbers,
+    return [aval_out.dtype._rules.gather_mlir(
+        ctx, ctx.avals_in, aval_out, operand, indices, dimension_numbers=dimension_numbers,
         slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+        indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)]
 
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)

@@ -2858,54 +2858,52 @@ class FooTyRules:
   # element-type-polymorphic primitive lowering rules
 
   @staticmethod
-  def empty_mlir(ctx):
+  def empty_mlir(ctx, aval_out):
     return mlir.ir_constants(np.zeros((2,), dtype=np.dtype('uint32')))
 
   @staticmethod
-  def slice_mlir(ctx, x, start_indices, limit_indices, strides):
+  def slice_mlir(ctx, aval_out, x, start_indices, limit_indices, strides):
     start_indices = (*start_indices, 0)
     limit_indices = (*limit_indices, 2)
     strides = (*strides, 1)
     return mhlo.SliceOp(x,
                         mlir.dense_int_elements(start_indices),
                         mlir.dense_int_elements(limit_indices),
-                        mlir.dense_int_elements(strides)).results
+                        mlir.dense_int_elements(strides)).result
 
   @staticmethod
-  def dynamic_slice_mlir(ctx, x, start_indices, slice_sizes):
+  def dynamic_slice_mlir(ctx, aval_out, x, start_indices):
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    slice_sizes_ = mlir.dense_int_elements((*slice_sizes, 2))
-    return mhlo.DynamicSliceOp(x, start_indices, slice_sizes_).results
+    slice_sizes_ = mlir.dense_int_elements((*aval_out.shape, 2))
+    return mhlo.DynamicSliceOp(x, start_indices, slice_sizes_).result
 
   @staticmethod
-  def dynamic_update_slice_mlir(ctx, x, update, *start_indices):
+  def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices):
     aval_out, = ctx.avals_out
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
     return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
-                                     start_indices).results
+                                     start_indices).result
 
   @staticmethod
-  def broadcast_in_dim_mlir(ctx, x, *dyn_shape, shape, broadcast_dimensions):
-    if dyn_shape: raise NotImplementedError
-    aval_out, = ctx.avals_out
+  def broadcast_in_dim_mlir(ctx, aval_out, x, broadcast_dimensions):
     broadcast_dimensions = [*broadcast_dimensions, aval_out.ndim]
     return mhlo.BroadcastInDimOp(
         mlir.aval_to_ir_type(aval_out), x,
-        mlir.dense_int_elements(broadcast_dimensions)).results
+        mlir.dense_int_elements(broadcast_dimensions)).result
 
   @staticmethod
-  def transpose_mlir(ctx, x, *, permutation):
+  def transpose_mlir(ctx, aval_out, x, *, permutation):
     perm = [*permutation, len(permutation)]
-    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).results
+    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
 
   @staticmethod
-  def gather_mlir(ctx, x, indices, *,
+  def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
                   dimension_numbers, slice_sizes, unique_indices,
                   indices_are_sorted, mode, fill_value):
-    aval_x, aval_indices = ctx.avals_in
-    aval_y, = ctx.avals_out
+    aval_x, aval_indices = avals_in
+    aval_y = aval_out
     dimension_numbers = dimension_numbers._replace(
         offset_dims=(*dimension_numbers.offset_dims, aval_y.ndim))
     slice_sizes = (*slice_sizes, 2)
@@ -2917,7 +2915,7 @@ class FooTyRules:
     aval_y_raw = core.ShapedArray((*aval_y.shape, 2), np.dtype('uint32'))
     return mlir.delegate_lowering(ctx, gather_lower, x, indices,
                                   avals_in=[aval_x_raw, aval_indices],
-                                  avals_out=[aval_y_raw])
+                                  avals_out=[aval_y_raw])[0]
 
 
 class FooTy:
