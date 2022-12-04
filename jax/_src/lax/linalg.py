@@ -32,7 +32,7 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.util import prod
-from jax.core import Primitive, ShapedArray, raise_to_shaped
+from jax.core import Primitive, ShapedArray, raise_to_shaped, is_constant_shape
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)
@@ -423,6 +423,8 @@ def _cholesky_lowering(ctx, x):
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 
 def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (cholesky); b/261671778")
   operand_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
@@ -483,6 +485,8 @@ def eig_abstract_eval(operand, *, compute_left_eigenvectors,
 
 def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
                       compute_right_eigenvectors):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (eig); b/261671778")
   operand_aval, = ctx.avals_in
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
@@ -632,6 +636,9 @@ def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
 
 def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
                            sort_eigenvalues):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (eigh); b/261671778")
+
   del sort_eigenvalues  # The CPU/GPU implementations always sort.
   operand_aval, = ctx.avals_in
   v_aval, w_aval = ctx.avals_out
@@ -1171,6 +1178,8 @@ def _lu_batching_rule(batched_args, batch_dims):
   return lu_p.bind(x), (0, 0, 0)
 
 def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (lu); b/261671778")
   operand_aval, = ctx.avals_in
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
@@ -1315,6 +1324,8 @@ def _geqrf_translation_rule(ctx, avals_in, avals_out, operand):
   return xops.QrDecomposition(operand)
 
 def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (geqrf); b/261671778")
   a_aval, taus_aval = ctx.avals_out
   *batch_dims, m, n = a_aval.shape
   batch = prod(batch_dims)
@@ -1404,6 +1415,8 @@ def _householder_product_translation_rule(ctx, avals_in, avals_out, a, taus):
   return [xops.ProductOfElementaryHouseholderReflectors(a, taus)]
 
 def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (householder product); b/261671778")
   a_aval, _ = ctx.avals_in
   *batch_dims, m, n = a_aval.shape
 
@@ -1614,6 +1627,8 @@ def _empty_svd(a, *, full_matrices, compute_uv):
 
 def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
                           compute_uv):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (svd); b/261671778")
   operand_aval, = ctx.avals_in
   s_aval = ctx.avals_out[0]
   m, n = operand_aval.shape[-2:]
