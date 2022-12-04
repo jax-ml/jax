@@ -49,6 +49,8 @@ def _threefry2x32_lowering(prng, platform, keys, data):
           ir.IntegerType.get_unsigned(32)), keys[0].type
   typ = keys[0].type
   dims = ir.RankedTensorType(typ).shape
+  if any(d < 0 for d in dims):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (threefry); b/261671778")
 
   for x in itertools.chain(keys, data):
     assert x.type == typ, (x.type, typ)

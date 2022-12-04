@@ -1941,6 +1941,35 @@ def _flatten_harnesses(harnesses):
       res.append(h)
   return res
 
+# Set of harness.group_name:platform that are implemented with custom call
+custom_call_harnesses = {
+    "cholesky:cpu", "cholesky:gpu", "eig:cpu",
+    "eigh:cpu", "eigh:gpu", "fft:cpu",
+    "householder_product:cpu", "householder_product:gpu",
+    "geqrf:cpu", "geqrf:gpu", "lu:cpu", "lu:gpu", "qr:cpu", "qr:gpu",
+    "random_gamma:gpu", "random_categorical:gpu",
+    "random_randint:gpu", "random_uniform:gpu", "random_split:gpu",
+    "svd:cpu", "svd:gpu"}
+
+# Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
+fallback_lowering_harnesses = {
+    "approx_top_k:cpu", "bessel_i0e", "eigh:tpu",
+    "erf_inv", "igamma", "igammac", "lu",
+    "regularized_incomplete_beta", "qr:tpu",
+    "random_gamma:cpu", "random_gamma:tpu", "svd:tpu"}
+
+def _exclude_native_lowering_harnesses(harness: Harness):
+  if config.jax2tf_default_experimental_native_lowering and not harness.params.get("enable_xla", True):
+    raise unittest.SkipTest("disabled for experimental_native_lowering and enable_xla=False")
+  if config.jax2tf_default_experimental_native_lowering:
+    if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
+      raise unittest.SkipTest("native lowering with shape polymorphism not implemented for custom calls; b/261671778")
+  if (config.jax2tf_default_experimental_native_lowering and
+      (harness.group_name in fallback_lowering_harnesses or
+       f"{harness.group_name}:{jtu.device_under_test()}" in fallback_lowering_harnesses)):
+    raise unittest.SkipTest(
+      "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
+
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
 
@@ -1952,11 +1981,10 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_TEST_HARNESSES),
-      #one_containing="roll_axis=None",
+      #one_containing="",
   )
   def test_prim(self, harness: Harness):
-    if config.jax2tf_default_experimental_native_lowering and not harness.params.get("enable_xla", True):
-      raise unittest.SkipTest("disabled for experimental_native_lowering and enable_xla=False")
+    _exclude_native_lowering_harnesses(harness)
     _test_one_harness(self, harness)
 
   def test_vmap_while(self):
@@ -2116,6 +2144,7 @@ class ShapePolyVmapPrimitivesTest(tf_test_util.JaxToTfTestCase):
       one_containing=""
   )
   def test_vmap_prim(self, harness: Harness):
+    _exclude_native_lowering_harnesses(harness)
     return _test_one_harness(self, harness)
 
 

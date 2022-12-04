@@ -1526,6 +1526,12 @@ def xla_fallback_lowering(prim: core.Primitive):
       axis_env = axis_ctx.unsafe_axis_env
     else:
       axis_env = module_ctx.axis_env
+
+    if any(hasattr(a, "shape") and
+           not core.is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+      raise NotImplementedError(
+          f"Shape polymorphism for xla_fallback_lowering is not implemented ({ctx.primitive}); b/261682623")
+
     xla_computation = xla.primitive_subcomputation(
         module_ctx.platform, axis_env, prim, ctx.avals_in,
         ctx.avals_out, **params)
