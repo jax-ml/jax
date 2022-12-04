@@ -713,7 +713,11 @@ def lower_jaxpr_to_module(
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
 
-  ctx.module.operation.verify()
+  if not ctx.module.operation.verify():
+    module_string = module_to_string(ctx.module)
+    raise ValueError(
+        f"Cannot lower jaxpr with verifier errors: {module_string}")
+
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks)
 
 def module_to_string(module: ir.Module) -> str:
