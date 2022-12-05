@@ -1041,6 +1041,10 @@ iota_32x2_shape_p.def_impl(partial(xla.apply_primitive, iota_32x2_shape_p))
 def iota_32x2_shape_abstract_eval(*, shape):
   return (core.ShapedArray(shape, np.dtype('uint32')),) * 2
 
+def bcast_iotas_to_reshaped_iota(add, mul, shape, iotas):
+  strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
+  return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])  # type: ignore
+
 def iota_32x2_shape_lowering(ctx, *, shape):
   def _add(x, y):
     return mlir.mhlo.AddOp(x, y).result
@@ -1051,17 +1055,13 @@ def iota_32x2_shape_lowering(ctx, *, shape):
     x_bcast = mlir.mhlo.BroadcastOp(x_const, mlir.dense_int_elements(shape))
     return mlir.mhlo.MulOp(x_bcast, y).result
 
-  def _sum(xs):
-    return reduce(_add, xs)
-
   assert len(shape) > 0
   aval_out, _ = ctx.avals_out
   aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
   iotas = [mlir.mhlo.IotaOp(mlir.aval_to_ir_type(aval_u64),
-                       mlir.i64_attr(dimension)).result
+                            mlir.i64_attr(dimension)).result
            for dimension in range(len(shape))]
-  strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
-  counts = _sum(_mul(s, i) for i, s in zip(iotas, strides))  # type: ignore
+  counts = bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
   shift = mlir.ir_constant(np.array(32, np.dtype('uint64')),
                            canonicalize_types=False)
   shift = mlir.mhlo.BroadcastOp(shift, mlir.dense_int_elements(shape)).result
@@ -1069,7 +1069,7 @@ def iota_32x2_shape_lowering(ctx, *, shape):
   counts_lo = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
   counts_hi = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
                                   counts_shifted).result
-  return (counts_hi, counts_lo)
+  return counts_hi, counts_lo
 mlir.register_lowering(iota_32x2_shape_p, iota_32x2_shape_lowering)
 
 

@@ -54,6 +54,7 @@ from jax import numpy as jnp
 
 from jax._src import ad_util
 from jax._src import dispatch
+from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
@@ -3241,3 +3242,16 @@ for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
             shape=shape,
             dtype=dtype,
             algorithm=algorithm)
+
+def _make_iota_32x2_shape_harness(shape):
+  shapestr = ','.join(str(dim) for dim in shape)
+  define(
+      prng.iota_32x2_shape_p,
+      f"shape=({shapestr})",
+      lambda shape: prng.iota_32x2_shape_p.bind(shape=shape),
+      [StaticArg(shape)],
+      dtype=jnp.uint32,
+      shape=shape)
+
+for shape in [(3,), (5, 7, 4), (100, 100)]:
+  _make_iota_32x2_shape_harness(shape)
