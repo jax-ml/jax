@@ -1223,6 +1223,21 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertAllClose(var_np, var_jnp, rtol=1e-2, atol=1e-2,
                         check_dtypes=False)
 
+  @jtu.sample_product(method=['cholesky', 'eigh', 'svd'])
+  def testMultivariateNormalSingularCovariance(self, method):
+    # Singular covariance matrix https://github.com/google/jax/discussions/13293
+    mu = jnp.zeros((2,))
+    sigma = jnp.ones((2, 2))
+    key = jax.random.PRNGKey(0)
+    result = jax.random.multivariate_normal(key, mean=mu, cov=sigma, shape=(10,), method=method)
+    self.assertAllClose(result[:, 0], result[:, 1])
+
+    # Cholesky fails for singular inputs.
+    if method == 'cholesky':
+      self.assertTrue(np.all(np.isnan(result)))
+    else:
+      self.assertFalse(np.any(np.isnan(result)))
+
   def testIssue222(self):
     x = random.randint(self.seed_prng(10003), (), 0, 0)
     assert x == 0
