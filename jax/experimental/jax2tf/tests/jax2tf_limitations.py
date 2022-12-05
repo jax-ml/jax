@@ -130,7 +130,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       "broadcast", "broadcast_in_dim", "cbrt", "ceil", "clamp", "concatenate",
       "cos", "cosh", "complex", "conj", "convert_element_type", "cummax",
       "cummin", "device_put", "dynamic_slice", "dynamic_update_slice", "exp",
-      "eq", "floor", "gather", "ge", "gt", "imag", "iota", "iota_32x2_shape",
+      "eq", "floor", "gather", "ge", "gt", "imag", "iota", "iota_2x32_shape",
       "is_finite", "le", "logistic", "lt", "log", "mul", "ne", "neg", "not",
       "or", "pad", "population_count", "random_categorical", "random_uniform",
       "random_randint", "reduce", "reduce_and", "reduce_prod", "reduce_or",

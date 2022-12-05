@@ -3243,15 +3243,15 @@ for algorithm in [lax.RandomAlgorithm.RNG_THREE_FRY,
             dtype=dtype,
             algorithm=algorithm)
 
-def _make_iota_32x2_shape_harness(shape):
+def _make_iota_2x32_shape_harness(shape):
   shapestr = ','.join(str(dim) for dim in shape)
   define(
-      prng.iota_32x2_shape_p,
+      prng.iota_2x32_shape_p,
       f"shape=({shapestr})",
-      lambda shape: prng.iota_32x2_shape_p.bind(shape=shape),
+      lambda shape: prng.iota_2x32_shape_p.bind(shape=shape),
       [StaticArg(shape)],
       dtype=jnp.uint32,
       shape=shape)
 
 for shape in [(3,), (5, 7, 4), (100, 100)]:
-  _make_iota_32x2_shape_harness(shape)
+  _make_iota_2x32_shape_harness(shape)

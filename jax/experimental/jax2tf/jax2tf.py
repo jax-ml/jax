@@ -2443,7 +2443,7 @@ def _rng_uniform(minval: TfVal, maxval: TfVal, *, shape) -> TfVal:
 tf_impl[lax.rng_uniform_p] = _rng_uniform
 
 
-def _iota_32x2_shape(*, shape):
+def _iota_2x32_shape(*, shape):
   def _add(x, y): return x + y
   def _mul(x, y): return x * y
   def _cast32(xs): return tf.dtypes.cast(xs, _to_tf_dtype(jnp.uint32))
@@ -2454,7 +2454,7 @@ def _iota_32x2_shape(*, shape):
   counts_hi = _cast32(tf.bitwise.right_shift(counts, 32))
   return counts_hi, counts_lo
 
-tf_impl[prng.iota_32x2_shape_p] = _iota_32x2_shape
+tf_impl[prng.iota_2x32_shape_p] = _iota_2x32_shape
 
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
