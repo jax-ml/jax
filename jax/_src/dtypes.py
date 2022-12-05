@@ -21,8 +21,7 @@
 
 
 import functools
-from typing import cast, overload, Any, Dict, List, Optional, Set, Tuple, Union
-from typing_extensions import Literal
+from typing import cast, overload, Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import numpy as np
 

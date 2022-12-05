@@ -17,8 +17,7 @@ import dataclasses
 import inspect
 import threading
 
-from typing import Any, Dict, Hashable, List, Optional, Tuple
-from typing_extensions import Protocol
+from typing import Any, Dict, Hashable, List, Optional, Protocol, Tuple
 
 import jax.numpy as jnp
 from jax import core

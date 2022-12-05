@@ -67,7 +67,6 @@ setup(
         'numpy>=1.20',
         'opt_einsum',
         'scipy>=1.5',
-        'typing_extensions',
     ],
     extras_require={
         # Minimum jaxlib version; used in testing.

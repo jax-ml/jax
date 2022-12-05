@@ -16,8 +16,7 @@ from __future__ import annotations
 import dataclasses
 from functools import partial
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-from typing_extensions import Protocol
+from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 
 import numpy as np
 

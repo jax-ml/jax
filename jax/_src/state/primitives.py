@@ -14,8 +14,7 @@
 """Module for state primitives."""
 from functools import partial
 
-from typing import Any, List, Tuple, TypeVar, Union
-from typing_extensions import Protocol
+from typing import Any, List, Protocol, Tuple, TypeVar, Union
 
 from jax import core
 from jax import lax

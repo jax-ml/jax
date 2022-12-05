@@ -19,8 +19,7 @@ import numpy as np
 import scipy.linalg
 import textwrap
 import warnings
-from typing import cast, overload, Any, Optional, Tuple, Union
-from typing_extensions import Literal
+from typing import cast, overload, Any, Literal, Optional, Tuple, Union
 
 import jax
 from jax import jit, vmap, jvp

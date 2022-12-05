@@ -26,10 +26,8 @@ import functools
 from functools import partial
 import inspect
 import itertools as it
-from typing import (Any, Callable, Generator, Iterable, NamedTuple, Mapping,
-                    Optional, Sequence, Tuple, TypeVar, Union, overload, Dict,
-                    Hashable, List)
-from typing_extensions import Literal
+from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
+                    NamedTuple, Optional, Sequence, Tuple, TypeVar, Union, overload)
 from warnings import warn
 
 import numpy as np

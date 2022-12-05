@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import overload, Optional, Tuple, Union
-from typing_extensions import Literal
+from typing import overload, Literal, Optional, Tuple, Union
 
 import jax
 from jax import lax

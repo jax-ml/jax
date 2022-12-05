@@ -33,8 +33,7 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
-from typing_extensions import Protocol
+from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple
 
 import jax
 from jax import core

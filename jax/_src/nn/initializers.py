@@ -18,10 +18,9 @@ used in Keras and Sonnet.
 """
 
 
-from typing import Any, Sequence, Tuple, Union
+from typing import Any, Literal, Protocol, Sequence, Tuple, Union
 
 import numpy as np
-from typing_extensions import Literal, Protocol
 
 import jax.numpy as jnp
 from jax import lax

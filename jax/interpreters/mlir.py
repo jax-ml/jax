@@ -25,8 +25,7 @@ import itertools
 import re
 import typing
 from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
-                    Sequence, Set, Tuple, Type, Union, FrozenSet)
-from typing_extensions import Protocol
+                    Protocol, Sequence, Set, Tuple, Type, Union, FrozenSet)
 import warnings
 
 from jax import core
