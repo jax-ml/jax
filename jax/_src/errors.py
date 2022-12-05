@@ -45,6 +45,34 @@ class ConcretizationTypeError(JAXTypeError):
   program is doing operations that are not directly supported by JAX's JIT
   compilation model.
 
+  Using non-JAX aware functions
+    One common cause of this error is using non-JAX aware functions within JAX
+    code. For example:
+
+      >>> from jax import jit
+      >>> import jax.numpy as jnp
+      >>> @jit
+      ... def func(x):
+      ...   return min(x, 0)
+
+      >>> func(2)  # doctest: +IGNORE_EXCEPTION_DETAIL
+      Traceback (most recent call last):
+          ...
+      ConcretizationTypeError: Abstract tracer value encountered where concrete
+      value is expected:
+      The problem arose with the `bool` function.
+
+    In this case, the error occurs because Python's built-in ``min`` function is not
+    compatible with JAX transforms. This can be fixed by replacing it with
+    ``jnp.minumum``:
+
+      >>> @jit
+      ... def func(x):
+      ...   return jnp.minimum(x, 0)
+
+      >>> print(func(2))
+      0
+
   Traced value where static value is expected
     One common cause of this error is using a traced value where a static value
     is required. For example:
