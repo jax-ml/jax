@@ -169,6 +169,9 @@ py_test(
 jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Times out.
+    },
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
