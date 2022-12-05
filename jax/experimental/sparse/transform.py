@@ -243,13 +243,13 @@ def spvalues_to_avals(
 #------------------------------------------------------------------------------
 # Implementation of sparsify() using tracers.
 
-def popattr(obj, name):
+def popattr(obj: Any, name: str) -> Any:
   assert hasattr(obj, name)
   val = getattr(obj, name)
   delattr(obj, name)
   return val
 
-def setnewattr(obj, name, val):
+def setnewattr(obj: Any, name: str, val: Any):
   assert not hasattr(obj, name)
   setattr(obj, name, val)
 

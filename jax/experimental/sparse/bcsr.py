@@ -13,10 +13,11 @@
 # limitations under the License.
 
 """BCSR (Bached compressed row) matrix object and associated primitives."""
+from __future__ import annotations
 
 import operator
 
-from typing import NamedTuple, Sequence, Tuple
+from typing import NamedTuple, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -28,6 +29,7 @@ import jax.numpy as jnp
 from jax.util import split_list, safe_zip
 from jax.interpreters import batching
 from jax.interpreters import mlir
+from jax._src.typing import Array, ArrayLike, DTypeLike
 
 Shape = Tuple[int, ...]
 
@@ -38,7 +40,7 @@ class BCSRProperties(NamedTuple):
   nse: int
 
 
-def _compatible(shape1, shape2):
+def _compatible(shape1: Sequence[int], shape2: Sequence[int]) -> bool:
   return all(s1 in (1, s2) for s1, s2 in safe_zip(shape1, shape2))
 
 
@@ -102,7 +104,8 @@ value to the nse (number of stored elements) argument.
 """
 
 
-def bcsr_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32):
+def bcsr_fromdense(mat: ArrayLike, *, nse: Optional[int] = None, n_batch: int = 0,
+                   n_dense:int = 0, index_dtype: DTypeLike = jnp.int32) -> BCSR:
   """Create BCSR-format sparse matrix from a dense matrix.
 
   Args:
@@ -118,13 +121,14 @@ def bcsr_fromdense(mat, *, nse=None, n_batch=0, n_dense=0, index_dtype=jnp.int32
   mat = jnp.asarray(mat)
   if nse is None:
     nse = _count_stored_elements(mat, n_batch, n_dense)
-  nse = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
-  return BCSR(_bcsr_fromdense(mat, nse=nse, n_batch=n_batch, n_dense=n_dense,
+  nse_int: int = core.concrete_or_error(operator.index, nse, _TRACED_NSE_ERROR)
+  return BCSR(_bcsr_fromdense(mat, nse=nse_int, n_batch=n_batch, n_dense=n_dense,
                               index_dtype=index_dtype),
               shape=mat.shape)
 
 
-def _bcsr_fromdense(mat, *, nse, n_batch=0, n_dense=0, index_dtype=jnp.int32):
+def _bcsr_fromdense(mat: ArrayLike, *, nse: int, n_batch: int = 0, n_dense: int = 0,
+                    index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array, Array]:
   """Create BCSR-format sparse matrix from a dense matrix.
 
   Args:
@@ -199,7 +203,7 @@ mlir.register_lowering(bcsr_fromdense_p, mlir.lower_fun(
 bcsr_todense_p = core.Primitive('bcsr_todense')
 
 
-def bcsr_todense(mat):
+def bcsr_todense(mat: BCSR) -> Array:
   """Convert batched sparse matrix to a dense matrix.
 
   Args:
@@ -212,7 +216,7 @@ def bcsr_todense(mat):
                        shape=tuple(mat.shape))
 
 
-def _bcsr_todense(data, indices, indptr, *, shape):
+def _bcsr_todense(data: ArrayLike, indices: ArrayLike, indptr: ArrayLike, *, shape: Shape) -> Array:
   """Convert batched sparse matrix to a dense matrix.
 
   Args:
@@ -262,7 +266,7 @@ mlir.register_lowering(bcsr_todense_p, mlir.lower_fun(
 bcsr_extract_p = core.Primitive('bcsr_extract')
 
 
-def bcsr_extract(indices, indptr, mat):
+def bcsr_extract(indices: ArrayLike, indptr: ArrayLike, mat: ArrayLike) -> Array:
   """Extract values from a dense matrix at given BCSR (indices, indptr).
 
   Args:
