@@ -31,6 +31,7 @@ Further down are some examples of potential high-level wrappers for sparse objec
 """
 from functools import partial
 import operator
+from typing import Optional, Union
 
 import jax
 from jax import core
@@ -45,6 +46,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src import dtypes
+from jax._src.typing import Array, DTypeLike, Shape
 
 
 #----------------------------------------------------------------------
@@ -53,7 +55,7 @@ from jax._src import dtypes
 todense_p = core.Primitive('todense')
 todense_p.multiple_results = False
 
-def todense(arr):
+def todense(arr: Union[JAXSparse, Array]) -> Array:
   """Convert input to a dense matrix. If input is already dense, pass through."""
   bufs, tree = tree_util.tree_flatten(arr)
   return todense_p.bind(*bufs, tree=tree)
@@ -105,7 +107,8 @@ mlir.register_lowering(todense_p, mlir.lower_fun(
     _todense_impl, multiple_results=False))
 
 
-def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
+def empty(shape: Shape, dtype: Optional[DTypeLike]=None, index_dtype: DTypeLike = 'int32',
+          sparse_format: str = 'bcoo', **kwds) -> JAXSparse:
   """Create an empty sparse array.
 
   Args:
@@ -125,7 +128,8 @@ def empty(shape, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
   return cls._empty(shape, dtype=dtype, index_dtype=index_dtype, **kwds)
 
 
-def eye(N, M=None, k=0, dtype=None, index_dtype='int32', sparse_format='bcoo', **kwds):
+def eye(N: int, M: Optional[int] = None, k: int = 0, dtype: Optional[DTypeLike] = None,
+        index_dtype: DTypeLike = 'int32', sparse_format: str = 'bcoo', **kwds) -> JAXSparse:
   """Create 2D sparse identity matrix.
 
   Args:

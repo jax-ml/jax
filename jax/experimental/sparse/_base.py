@@ -14,11 +14,12 @@
 
 """Base JAX Sparse object."""
 import abc
-from typing import Tuple
+from typing import Sequence, Tuple
 
 from jax import core
 import jax.numpy as jnp
 from jax._src import util
+from jax._src.typing import Array
 
 
 class JAXSparse(abc.ABC):
@@ -32,14 +33,14 @@ class JAXSparse(abc.ABC):
   __hash__ = None  # type: ignore
 
   @property
-  def size(self):
+  def size(self) -> int:
     return util.prod(self.shape)
 
   @property
-  def ndim(self):
+  def ndim(self) -> int:
     return len(self.shape)
 
-  def __init__(self, args, *, shape):
+  def __init__(self, args: Tuple[Array, ...], *, shape: Sequence[int]):
     self.shape = tuple(shape)
 
   def __repr__(self):
