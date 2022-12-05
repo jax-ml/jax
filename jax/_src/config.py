@@ -241,7 +241,7 @@ class Config:
     self._contextmanager_flags.add(name)
 
     def get_state(self):
-      val = getattr(_thread_local_state, name, unset)
+      val = _thread_local_state.__dict__.get(name, unset)
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
@@ -278,7 +278,7 @@ class Config:
     self._contextmanager_flags.add(name)
 
     def get_state(self):
-      val = getattr(_thread_local_state, name, unset)
+      val = _thread_local_state.__dict__.get(name, unset)
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
@@ -320,7 +320,7 @@ class Config:
     self._contextmanager_flags.add(name)
 
     def get_state(self):
-      val = getattr(_thread_local_state, name, unset)
+      val = _thread_local_state.__dict__.get(name, unset)
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
@@ -361,7 +361,7 @@ class Config:
     self._contextmanager_flags.add(name)
 
     def get_state(self):
-      val = getattr(_thread_local_state, name, unset)
+      val = _thread_local_state.__dict__.get(name, unset)
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
@@ -447,7 +447,7 @@ class Config:
     self._contextmanager_flags.add(name)
 
     def get_state(self):
-      val = getattr(_thread_local_state, name, unset)
+      val = _thread_local_state.__dict__.get(name, unset)
       return val if val is not unset else self._read(name)
     setattr(Config, name, property(get_state))
 
