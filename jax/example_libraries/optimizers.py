@@ -538,8 +538,8 @@ def polynomial_decay(step_size, decay_steps, final_step_size, power=1.0):
   return schedule
 
 def piecewise_constant(boundaries: Any, values: Any):
-  boundaries = jnp.array(boundaries, dtype=jnp.result_type(*boundaries))
-  values = jnp.array(values, dtype=jnp.result_type(*values))
+  boundaries = jnp.array(boundaries)
+  values = jnp.array(values)
   if not boundaries.ndim == values.ndim == 1:
     raise ValueError("boundaries and values must be sequences")
   if not boundaries.shape[0] == values.shape[0] - 1:
