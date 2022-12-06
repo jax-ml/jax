@@ -600,8 +600,6 @@ value of ``y``.
 Buffer donation
 ---------------
 
-(This feature is implemented only for TPU and GPU.)
-
 When JAX executes a computation it uses buffers on the device for all inputs and outputs.
 If you know that one of the inputs is not needed after the computation, and if it
 matches the shape and element type of one of the outputs, you can specify that you
@@ -673,9 +671,6 @@ the donation::
    # Execute `add` with donation of the buffer for `y`.
    z = jax.jit(add, donate_argnums=(1,))(x, y)
    # >> UserWarning: Some donated buffers were not usable: f32[1,3]{1,0}
-
-Buffer donation is implemented for GPU and TPU. You will get the above warning
-anytime you try to use donation on CPU.
 
 Gradients contain `NaN` where using ``where``
 ------------------------------------------------
