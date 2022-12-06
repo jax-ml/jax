@@ -98,10 +98,6 @@ def bcoo_eliminate_zeros(mat: BCOO, nse: Optional[int] = None) -> BCOO:
   indices = f(indices, mask)
   return bcoo_sum_duplicates(BCOO((data, indices), shape=shape), nse=nse)
 
-def _unbatch_bcoo(data: Array, indices: Array, shape: Shape) -> Tuple[Array, Array]:
-  mat = bcoo_update_layout(BCOO((data, indices), shape=shape), n_batch=0)
-  return mat.data, mat.indices  # pytype: disable=bad-return-type
-
 
 class BCOOProperties(NamedTuple):
   n_batch: int
@@ -2201,10 +2197,10 @@ def _bcoo_multiply_sparse_unbatched(lhs_data, lhs_indices, rhs_data, rhs_indices
 
   # TODO(jakevdp): this can be made more efficient by utilizing batch structure.
   if lhs.n_batch:
-    lhs_data, lhs_indices = _unbatch_bcoo(lhs_data, lhs_indices, lhs_shape)
+    lhs_data, lhs_indices = bcoo_update_layout(BCOO((lhs_data, lhs_indices), shape=lhs_shape), n_batch=0)._bufs
     lhs = _validate_bcoo(lhs_data, lhs_indices, lhs_shape)
   elif rhs.n_batch:
-    rhs_data, rhs_indices = _unbatch_bcoo(rhs_data, rhs_indices, rhs_shape)
+    rhs_data, rhs_indices = bcoo_update_layout(BCOO((rhs_data, rhs_indices), shape=rhs_shape), n_batch=0)._bufs
     rhs = _validate_bcoo(rhs_data, rhs_indices, rhs_shape)
   dims = jnp.array([i for i, (s1, s2) in enumerate(safe_zip(lhs_shape[:lhs.n_sparse], rhs_shape[:rhs.n_sparse]))
                     if s1 != 1 and s2 != 1], dtype=int)
