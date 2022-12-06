@@ -15,11 +15,10 @@
 import builtins
 from functools import partial
 import operator
-from typing import overload, Any, Callable, Optional, Sequence, Tuple, Union
+from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
-from typing_extensions import Literal
 
 from jax import core
 from jax import lax

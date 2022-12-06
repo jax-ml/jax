@@ -30,14 +30,13 @@ from functools import partial
 import operator
 import types
 from typing import (
-  overload, Any, Callable, Dict, FrozenSet, List, Optional,
-  Sequence, Tuple, TypeVar, Union)
+  overload, Any, Callable, Dict, FrozenSet, List, Literal,
+  Optional, Sequence, Tuple, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
 import numpy as np
 import opt_einsum
-from typing_extensions import Literal
 
 import jax
 from jax import jit

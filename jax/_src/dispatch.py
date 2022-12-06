@@ -21,9 +21,8 @@ from functools import partial
 import itertools
 import time
 from typing import (
-    Any, Callable, Dict, Iterable, Iterator, Optional, Sequence,
-    Set, Tuple, List, Type, Union)
-from typing_extensions import Protocol
+    Any, Callable, Dict, Iterable, Iterator, Optional, Protocol,
+    Sequence, Set, Tuple, List, Type, Union)
 import logging
 import os
 import re

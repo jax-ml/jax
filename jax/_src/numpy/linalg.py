@@ -18,8 +18,7 @@ from functools import partial
 import numpy as np
 import textwrap
 import operator
-from typing import Optional, Tuple, Union, cast, overload
-from typing_extensions import Literal
+from typing import Literal, Optional, Tuple, Union, cast, overload
 
 import jax
 from jax import jit, custom_jvp

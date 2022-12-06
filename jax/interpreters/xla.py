@@ -22,8 +22,7 @@ import itertools as it
 import operator
 import re
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
-                    Sequence, Set, Type, Tuple, Union)
-from typing_extensions import Protocol
+                    Protocol, Sequence, Set, Type, Tuple, Union)
 
 import numpy as np
 

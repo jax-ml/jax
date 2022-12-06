@@ -15,11 +15,10 @@
 import inspect
 import functools
 from functools import partial
-from typing import cast, Any, Callable, List, Optional, Tuple, TypeVar, Union, overload
+from typing import cast, Any, Callable, List, Literal, Optional, Tuple, TypeVar, Union, overload
 import warnings
 
 import numpy as np
-from typing_extensions import Literal
 
 import jax
 from jax._src.numpy import lax_numpy as jnp
