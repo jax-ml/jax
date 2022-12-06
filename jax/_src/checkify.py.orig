@@ -20,9 +20,12 @@ from typing import Union, Optional, Callable, Dict, Tuple, TypeVar, FrozenSet, I
 
 import jax
 from jax import lax
-from jax._src import linear_util as lu
+from jax import linear_util as lu
+<<<<<<< HEAD
 from jax._src import core
+=======
 from jax._src import custom_derivatives
+>>>>>>> da3607926 (Checkify: switch to initial-style.)
 from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -1240,3 +1243,518 @@ def check_error(error: Error) -> None:
     raise ValueError('check_error takes an Error as argument, '
                      f'got type {type(error)} instead.')
   _check_error(error, debug=False)
+<<<<<<< HEAD
+
+
+## check primitive
+
+check_p = core.Primitive('check')
+check_p.multiple_results = True  # zero results
+
+# TODO(lenamartens): inherit from Exception instead of ValueError.
+class JaxRuntimeError(ValueError):
+  pass
+
+@check_p.def_impl
+def check_impl(*args, err_tree, debug):
+  if debug:
+    # NOOP (check will only trigger when discharged)
+    return []
+  error = tree_unflatten(err_tree, args)
+  exc = error.get_exception()
+  if exc:
+    raise JaxRuntimeError(str(exc)) from exc
+  return []
+
+@check_p.def_effectful_abstract_eval
+def check_abstract_eval(*args, err_tree, debug):
+  del debug
+  return [], set(tree_unflatten(err_tree, args)._pred.keys())
+
+# TODO(lenamartens) add in-depth error explanation to link to in module docs.
+functionalization_error = ValueError(
+    'Cannot abstractly evaluate a checkify.check which was not'
+    ' functionalized. This probably means you tried to stage'
+    ' (jit/scan/pmap/...) a `check` without functionalizing it'
+    ' through `checkify.checkify`.'
+    )
+
+def check_lowering_rule(ctx, *args, err_tree, debug):
+  if debug:
+    # NOOP (check will only trigger when discharged)
+    return []
+  if not config.jax_experimental_unsafe_xla_runtime_errors:
+    raise functionalization_error
+
+  out_op, _, keep_alive = mlir.emit_python_callback(
+      ctx, callback=functools.partial(python_err, err_tree),
+      token=None,
+      operands=args,
+      operand_avals=list(ctx.avals_in),
+      result_avals=list(ctx.avals_out),
+      has_side_effect=True)
+  ctx.module_context.add_keepalive(keep_alive)
+  return out_op
+
+def check_lowering_rule_unsupported(*a, debug, **k):
+  if debug:
+    return []
+  raise functionalization_error
+
+def python_err(err_tree, *args):
+  error = tree_unflatten(err_tree, args)
+  _check_error(error)
+  return []
+
+mlir.register_lowering(check_p, check_lowering_rule_unsupported,
+                       platform='tpu')
+mlir.register_lowering(check_p, check_lowering_rule,
+                       platform='cpu')
+mlir.register_lowering(check_p, check_lowering_rule,
+                       platform='gpu')
+
+def check_batching_rule(batched_args, batch_dims, *, err_tree, debug):
+  size = next(x.shape[dim] for x, dim in zip(batched_args, batch_dims)
+              if dim is not batching.not_mapped)
+  batched_args = (batching.bdim_at_front(a, d, size)
+                  for a, d in zip(batched_args, batch_dims))
+  err = tree_unflatten(err_tree, batched_args)
+  _check_error(err, debug=debug)
+  return [], []
+batching.primitive_batchers[check_p] = check_batching_rule
+
+def check_jvp_rule(primals, _, *, err_tree, debug):
+  # Check primals, discard tangents.
+  check_p.bind(*primals, err_tree=err_tree, debug=debug)
+  return [], []
+ad.primitive_jvps[check_p] = check_jvp_rule
+
+## checkify rules
+
+def _get_current_traceback(skip_frames = 0) -> Optional[types.TracebackType]:
+  # TODO(lenamartens): use c++ version from XLA?
+  tb = None
+  import inspect
+  for frame_info in inspect.stack():
+    frame = frame_info.frame
+    if skip_frames:
+      skip_frames -= 1
+    elif not traceback_util.include_frame(frame):
+      continue
+    else:
+      tb = types.TracebackType(tb, frame, frame.f_lasti, frame.f_lineno)
+  return tb
+
+def summary() -> str:
+  return str(source_info_util.summarize(source_info_util.current()))
+
+def nan_error_check(prim, error, enabled_errors, *in_vals, **params):
+  out = prim.bind(*in_vals, **params)
+  err = check_nans(prim, error, enabled_errors, out)
+  return out, err
+
+def check_nans(prim, error, enabled_errors, out):
+  if NaNError not in enabled_errors:
+    return error
+
+  def isnan(x):
+    if isinstance(x, prng.PRNGKeyArray):
+      return False
+    return jnp.any(jnp.isnan(x))
+
+  any_nans = (jnp.any(jnp.array([isnan(x) for x in out]))
+              if prim.multiple_results else isnan(out))
+  return assert_func(error, any_nans, NaNError(summary(), prim.name))
+
+
+# All primitives which can generate a NaN.
+nan_primitives = [lax.acos_p, lax.acosh_p, lax.add_p, lax.asin_p, lax.asinh_p,
+                  lax.atan2_p, lax.atan_p, lax.atanh_p, lax.bessel_i0e_p,
+                  lax.bessel_i1e_p, lax.cbrt_p, lax.conv_general_dilated_p,
+                  lax.cos_p, lax.cosh_p, lax.cumlogsumexp_p, lax.cummax_p,
+                  lax.cummin_p, lax.cumprod_p, lax.cumsum_p, lax.digamma_p,
+                  lax.dot_general_p, lax.erf_inv_p, lax.erf_p, lax.erfc_p,
+                  lax.exp_p, lax.expm1_p, lax.fft_p, lax.igamma_grad_a_p,
+                  lax.igamma_p, lax.igammac_p, lax.integer_pow_p, lax.lgamma_p,
+                  lax.linear_solve_p, lax.log1p_p, lax.log_p, lax.logistic_p,
+                  lax.mul_p, lax.pad_p, lax.pow_p, lax.psum_p,
+                  lax.random_gamma_grad_p, lax.reduce_p, lax.reduce_prod_p,
+                  lax.reduce_sum_p, lax.reduce_window_p,
+                  lax.reduce_window_sum_p, lax.regularized_incomplete_beta_p,
+                  lax.rem_p, lax.rng_uniform_p, lax.rsqrt_p, lax.sin_p,
+                  lax.sinh_p, lax.sqrt_p, lax.sub_p, lax.tan_p, lax.tanh_p]
+
+for prim in nan_primitives:
+  error_checks[prim] = functools.partial(nan_error_check, prim)
+
+
+def gather_error_check(error, enabled_errors, operand, start_indices, *,
+                       dimension_numbers, slice_sizes, unique_indices,
+                       indices_are_sorted, mode, fill_value):
+  out = lax.gather_p.bind(
+      operand, start_indices, dimension_numbers=dimension_numbers,
+      slice_sizes=slice_sizes, unique_indices=unique_indices,
+      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+
+  if OOBError not in enabled_errors:
+    return out, error
+
+  # compare to OOB masking logic in lax._gather_translation_rule
+  dnums = dimension_numbers
+  operand_dims = np.array(operand.shape)
+  num_batch_dims = len(start_indices.shape) - 1
+
+  upper_bound = operand_dims[np.array(dnums.start_index_map)]
+  upper_bound -= np.array(slice_sizes)[np.array(dnums.start_index_map)]
+  upper_bound = jnp.expand_dims(upper_bound, axis=tuple(range(num_batch_dims)))
+  oob_mask = (start_indices < 0) | (start_indices > upper_bound.astype(start_indices.dtype))
+
+  payload = oob_payload(oob_mask, start_indices, dnums.start_index_map, operand.shape)
+  return out, assert_func(error, jnp.any(oob_mask), OOBError(summary(), "gather", operand.shape, payload))
+error_checks[lax.gather_p] = gather_error_check
+
+def div_error_check(error, enabled_errors, x, y):
+  """Checks for division by zero and NaN."""
+  if DivisionByZeroError in enabled_errors:
+    any_zero = jnp.any(jnp.equal(y, 0))
+    error = assert_func(error, any_zero, DivisionByZeroError(summary()))
+  return nan_error_check(lax.div_p, error, enabled_errors, x, y)
+error_checks[lax.div_p] = div_error_check
+
+def oob_payload(oob_mask, indices, dims_map, operand_shape):
+  # Get first OOB index, axis and axis size so it can be added to the error msg.
+  flat_idx = jnp.argmin(jnp.logical_not(oob_mask))
+  multi_idx = jnp.unravel_index(flat_idx, indices.shape)
+  oob_axis = jnp.array(dims_map)[multi_idx[-1]]
+  oob_axis_size = jnp.array(operand_shape)[oob_axis]
+  oob_index = jnp.ravel(indices)[flat_idx]
+  payload = jnp.array([oob_index, oob_axis, oob_axis_size], dtype=jnp.int32)
+  return payload
+
+def scatter_oob(operand, indices, updates, dnums):
+  # Ref: see clamping code used in scatter_translation_rule
+  slice_sizes = []
+  pos = 0
+  for i in range(len(operand.shape)):
+    if i in dnums.inserted_window_dims:
+      slice_sizes.append(1)
+    else:
+      slice_sizes.append(updates.shape[dnums.update_window_dims[pos]])
+      pos += 1
+
+  upper_bound = np.array([operand.shape[i] - slice_sizes[i]
+                          for i in dnums.scatter_dims_to_operand_dims],
+                         np.int64)
+  upper_bound = np.minimum(upper_bound, np.iinfo(indices.dtype).max)
+  upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
+                                     (len(indices.shape) - 1,))
+
+  lower_oob = jnp.less(indices, 0)
+  upper_oob = jnp.greater(indices, upper_bound.astype(indices.dtype))
+  oob_mask = jnp.logical_or(lower_oob, upper_oob)
+  payload = oob_payload(oob_mask, indices,
+                        dnums.scatter_dims_to_operand_dims, operand.shape)
+  return jnp.any(oob_mask), payload
+
+def scatter_error_check(prim, error, enabled_errors, operand, indices, updates,
+                        *, update_jaxpr, update_consts, dimension_numbers,
+                        indices_are_sorted, unique_indices, mode):
+  """Checks if indices are within bounds and update does not generate NaN."""
+  out = prim.bind(
+      operand, indices, updates, update_jaxpr=update_jaxpr,
+      update_consts=update_consts, dimension_numbers=dimension_numbers,
+      indices_are_sorted=indices_are_sorted, unique_indices=unique_indices,
+      mode=mode)
+
+  if OOBError not in enabled_errors:
+    return out, error
+
+  out_of_bounds, payload = scatter_oob(operand, indices, updates, dimension_numbers)
+  oob_error = OOBError(summary(), prim.name, operand.shape, payload)
+  error = assert_func(error, out_of_bounds, oob_error)
+  return out, check_nans(prim, error, enabled_errors, out)
+error_checks[lax.scatter_p] = functools.partial(scatter_error_check, lax.scatter_p)
+error_checks[lax.scatter_add_p] = functools.partial(scatter_error_check,
+                                                    lax.scatter_add_p)
+error_checks[lax.scatter_mul_p] = functools.partial(scatter_error_check,
+                                                    lax.scatter_mul_p)
+error_checks[lax.scatter_min_p] = functools.partial(scatter_error_check,
+                                                    lax.scatter_min_p)
+error_checks[lax.scatter_max_p] = functools.partial(scatter_error_check,
+                                                    lax.scatter_max_p)
+
+def cond_error_check(error, enabled_errors, index, *ops, branches, linear):
+  _, out_trees_and_effects = unzip2(checkify_jaxpr(jxpr, error,
+                                                   enabled_errors)
+                                    for jxpr in branches)
+  _, effects = unzip2(out_trees_and_effects)
+
+  merged_error = error._add_placeholder_effects(set().union(*effects))
+  new_branches, out_trees_and_effects = unzip2(checkify_jaxpr(jxpr, merged_error,
+                                                              enabled_errors)
+                                               for jxpr in branches)
+  out_trees, _ = unzip2(out_trees_and_effects)
+
+  flat_error, _ = tree_flatten(merged_error)
+  new_linear = (*[False] * len(flat_error), *linear)
+  err_and_outs = lax.cond_p.bind(
+      index, *flat_error, *ops,
+      branches=tuple(new_branches), linear=new_linear)
+
+  # we need to merge metadata across out_trees (a tuple)
+  # maybe there's a better way to do this, but we can use the outs
+  # to unflatten all trees.
+  err0, *out = tree_unflatten(out_trees[0], err_and_outs)
+  merged_metadata = err0._metadata
+  for tr in out_trees[1:]:
+    err, *_ = tree_unflatten(tr, err_and_outs)
+    merged_metadata = {**merged_metadata, **err._metadata}
+  return out, err0._replace(_metadata=merged_metadata)
+error_checks[lax.cond_p] = cond_error_check
+
+def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
+                     num_consts, num_carry, linear, unroll):
+  consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
+  _, (_, effects) = checkify_jaxpr(jaxpr, error, enabled_errors)
+  merged_error = error._add_placeholder_effects(effects)
+  checked_jaxpr_, (out_tree, _) = checkify_jaxpr(jaxpr, merged_error, enabled_errors)
+
+  flat_error_vals, _ = tree_flatten(merged_error)
+  tomove = [False] * len(flat_error_vals) + [True] * len(consts) + [False] * (len(carry) + len(xs))
+  checked_jaxpr = pe.move_binders_to_front(checked_jaxpr_, tomove)
+  new_linear = (*[False] * len(flat_error_vals), *linear)
+  new_in_flat = [*consts, *flat_error_vals, *carry, *xs]
+  err_and_out = lax.scan_p.bind(
+      *new_in_flat, reverse=reverse, length=length, jaxpr=checked_jaxpr,
+      num_consts=len(consts), num_carry=len(carry)+len(flat_error_vals),
+      linear=new_linear, unroll=unroll)
+  err, *out = tree_unflatten(out_tree, err_and_out)
+  return out, err
+
+error_checks[lax.scan_p] = scan_error_check
+
+def checkify_while_body_jaxpr(cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts):
+  cond_f = core.jaxpr_as_fun(cond_jaxpr)
+  body_f = core.jaxpr_as_fun(body_jaxpr)
+  def new_body_f(*vals):
+    out = body_f(*vals)
+    # This checks if the next cond application will error
+    _ = cond_f(*c_consts, *out)
+    return out
+  return checkify_fun_to_jaxpr(lu.wrap_init(new_body_f), error, enabled_errors,
+                               body_jaxpr.in_avals)
+
+def ignore_error_output_jaxpr(jaxpr, num_error_vals):
+  """Constructs a checked jaxpr which does not output its error value."""
+  consts = jaxpr.consts
+  jaxpr = jaxpr.jaxpr
+  new_jaxpr = jaxpr.replace(outvars=jaxpr.outvars[num_error_vals:])
+  return core.ClosedJaxpr(new_jaxpr, consts)
+
+def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
+                           cond_jaxpr, body_nconsts, body_jaxpr):
+  if cond_jaxpr.out_avals[0].shape:
+    # TODO(lenamartens, sharadmv): support batched while.
+    raise ValueError('Checkify does not support batched while-loops '
+                     '(checkify-of-vmap-of-while). \nHint: if possible, move '
+                     'the vmap to the outer level to get '
+                     'vmap-of-checkify-of-while.')
+
+  err_vals, _ = tree_flatten(error)
+  c_consts, b_consts, carry = split_list(in_flat, [cond_nconsts, body_nconsts])
+
+  # Check if the first cond application will error.
+  checked_cond_jaxpr, (cond_out_tree, _) = checkify_jaxpr(
+      cond_jaxpr, error, enabled_errors)
+  outs = core.jaxpr_as_fun(checked_cond_jaxpr)(*err_vals, *c_consts, *carry)
+  error, _ = tree_unflatten(cond_out_tree, outs)
+
+  checked_body_jaxpr_, (_, error_effects) = checkify_while_body_jaxpr(
+      cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts)
+  # merged error!
+  error = error._add_placeholder_effects(error_effects)
+  checked_body_jaxpr_, (body_out_tree, _) = checkify_while_body_jaxpr(
+      cond_jaxpr, body_jaxpr, error, enabled_errors, c_consts)
+  err_vals = jtu.tree_leaves(error)
+  num_error_vals = len(err_vals)
+  to_move = [False] * num_error_vals + [True] * body_nconsts + [False] * len(carry)
+  checked_body_jaxpr = pe.move_binders_to_front(checked_body_jaxpr_, to_move)
+
+  checked_cond_jaxpr, _ = checkify_jaxpr(cond_jaxpr, error, enabled_errors)
+  compat_cond_jaxpr_ = ignore_error_output_jaxpr(checked_cond_jaxpr, num_error_vals)
+  to_move = [False] * num_error_vals + [True] * cond_nconsts + [False] * len(carry)
+  compat_cond_jaxpr = pe.move_binders_to_front(compat_cond_jaxpr_, to_move)
+  new_in_flat = [*c_consts, *b_consts, *err_vals, *carry]
+
+  all_out_vals = lax.while_p.bind(
+      *new_in_flat, cond_nconsts=cond_nconsts, cond_jaxpr=compat_cond_jaxpr,
+      body_nconsts=body_nconsts, body_jaxpr=checked_body_jaxpr)
+  # body_out_tree will have all the metadata of cond because it executes a cond!
+  # only need to merge metadata on the input error.
+  error, *out = tree_unflatten(body_out_tree, all_out_vals)
+  return out, error
+error_checks[lax.while_p] = while_loop_error_check
+
+
+def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
+                     in_shardings, out_shardings, resource_env,
+                     donated_invars, name,
+                     in_positional_semantics, out_positional_semantics,
+                     keep_unused, inline):
+  checked_jaxpr, (out_tree, effects) = checkify_jaxpr(jaxpr, error,
+                                                      enabled_errors)
+  out_error = error._add_placeholder_effects(effects)
+
+  flat_error_vals = jtu.tree_leaves(error)
+  num_error_vals = len(flat_error_vals)
+  new_vals_in = [*flat_error_vals, *vals_in]
+
+  sharding = OpShardingSharding.get_replicated(
+      list(resource_env.physical_mesh.devices.flat))
+  new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)
+  new_out_shardings = (*[sharding] * len(jtu.tree_leaves(out_error)),
+                       *out_shardings)
+
+  if config.jax_array:
+    pos_sem = maps._PositionalSemantics.GLOBAL
+  else:
+    pos_sem = maps._positional_semantics.val
+
+  if not isinstance(in_positional_semantics, Iterable):
+    in_positional_semantics = (in_positional_semantics,)
+  if not isinstance(out_positional_semantics, Iterable):
+    out_positional_semantics = (out_positional_semantics,)
+  new_positional_sems_in = (*[pos_sem] * num_error_vals,
+                            *in_positional_semantics)
+  new_positional_sems_out = (*[pos_sem] * num_error_vals,
+                             *out_positional_semantics)
+  new_donated_invars = (*[False] * num_error_vals, *donated_invars)
+
+  err_and_out = pjit.pjit_p.bind(
+      *new_vals_in,
+      jaxpr=checked_jaxpr,
+      in_shardings=new_in_shardings,
+      out_shardings=new_out_shardings,
+      resource_env=resource_env,
+      donated_invars=new_donated_invars,
+      name=name,
+      in_positional_semantics=new_positional_sems_in,
+      out_positional_semantics=new_positional_sems_out,
+      keep_unused=keep_unused,
+      inline=inline)
+  err, *out = tree_unflatten(out_tree, err_and_out)
+  return out, err
+error_checks[pjit.pjit_p] = pjit_error_check
+
+
+def check_discharge_rule(error, enabled_errors, *args, err_tree, debug):
+  del debug
+  new_error = tree_unflatten(err_tree, args)
+  # Split up new_error into error to be functionalized if it's included in
+  # enabled_errors (=discharged_error) and an error to be defunctionalized if
+  # it's not included (=recharged_error)
+  discharged_error = error
+  recharged_error = init_error
+  for error_effect in new_error._pred.keys():
+    pred = new_error._pred[error_effect]
+    code = new_error._code[error_effect]
+    payload = new_error._payload[error_effect]
+    if error_effect.error_type in enabled_errors:
+      discharged_error = update_error(discharged_error, pred, code, {}, payload,
+                                      error_effect)
+    else:
+      recharged_error = update_error(recharged_error, pred, code, {}, payload,
+                                     error_effect)
+
+  discharged_error = discharged_error._replace(
+      _metadata={**new_error._metadata, **discharged_error._metadata})
+  recharged_error = recharged_error._replace(_metadata=new_error._metadata)
+  # TODO(lenamartens): we actually need to recharge, but this would be a
+  # breaking API change so leaving for a follow-up.
+  # check_error(recharged_error)
+  return [], discharged_error
+error_checks[check_p] = check_discharge_rule
+
+
+## checkify api
+
+user_checks = frozenset({FailedCheckError})
+nan_checks = frozenset({NaNError})
+index_checks = frozenset({OOBError})
+div_checks = frozenset({DivisionByZeroError})
+float_checks = nan_checks | div_checks
+automatic_checks = float_checks | index_checks
+all_checks = automatic_checks | user_checks
+
+Out = TypeVar('Out')
+
+
+def checkify(fun: Callable[..., Out],
+             errors: FrozenSet[ErrorCategory] = user_checks
+             ) -> Callable[..., Tuple[Error, Out]]:
+  """Functionalize `check` calls in `fun`, and optionally add run-time error checks.
+
+  Run-time errors are either user-added :func:`~check` assertions, or
+  automatically added checks like NaN checks, depending on the ``errors``
+  argument.
+
+  The returned function will return an Error object `err` along with the output
+  of the original function. ``err.get()`` will either return ``None`` (if no
+  error occurred) or a string containing an error message. This error message
+  will correspond to the first error which occurred. ``err.throw()`` will raise
+  a ValueError with the error message if an error occurred.
+
+  By default only user-added :func:`~check` assertions are enabled. You can
+  enable automatic checks through the ``errors`` argument.
+
+  The automatic check sets which can be enabled, and when an error is generated:
+    - ``user_checks``: a :func:`~check` evaluated to False.
+    - ``nan_checks``: a floating-point operation generated a NaN value
+      as output.
+    - ``div_checks``: a division by zero.
+    - ``index_checks``: an index was out-of-bounds.
+
+  Multiple categories can be enabled together by passing in an error `Set` (eg.
+  ``errors=nan_checks``). Multiple sets can be re-combined (eg.
+  ``errors=float_checks|user_checks``)
+
+  Args:
+    fun: Callable which can contain user checks (see :func:`~check`).
+    errors: A set of ErrorCategory values which defines the set of enabled
+      checks. By default only explicit ``checks`` are enabled
+      (``user_checks``). You can also for example enable NAN and
+      DIV errors by passing the ``float_checks`` set, or for
+      example combine multiple sets through set operations
+      (``float_checks | user_checks``)
+  Returns:
+    A function which accepts the same arguments as ``fun`` and returns as output
+    a pair where the first element is an ``Error`` value, representing the first
+    failed :func:`~check`, and the second element is the original output of
+    ``fun``.
+
+  For example:
+
+    >>> import jax
+    >>> import jax.numpy as jnp
+    >>> from jax.experimental import checkify
+    >>>
+    >>> @jax.jit
+    ... def f(x):
+    ...   y = jnp.sin(x)
+    ...   return x+y
+    >>> err, out = checkify.checkify(f, errors=checkify.float_checks)(jnp.inf)
+    >>> err.throw()  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    jax._src.checkify.JaxRuntimeError: nan generated by primitive: sin
+  """
+  @traceback_util.api_boundary
+  def checked_fun(*args, **kwargs):
+    args_flat, in_tree = tree_flatten((args, kwargs))
+    f, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+    error, out_flat = checkify_flat(f, errors, *args_flat)
+    out = tree_unflatten(out_tree(), out_flat)
+    return error, out
+  return checked_fun
+=======
+>>>>>>> da3607926 (Checkify: switch to initial-style.)
