@@ -1125,9 +1125,13 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
   """
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
-  bind = partial(all_gather_p.bind, all_gather_dimension=axis,
-                 axis_name=axis_name, axis_index_groups=axis_index_groups,
-                 axis_size=axis_size, tiled=tiled)
+  def bind(leaf):
+    return all_gather_p.bind(
+        leaf,
+        all_gather_dimension=canonicalize_axis(
+            axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
+        axis_name=axis_name, axis_index_groups=axis_index_groups,
+        axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
 def _expand(dim, size, index, tiled, x):

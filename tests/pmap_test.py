@@ -361,6 +361,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
+  def testGatherNegativeAxis(self):
+    f = self.pmap(lambda x: lax.all_gather(x, 'i', axis=-1), axis_name='i')
+
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.array([x.T] * jax.device_count())
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testGatherTiled(self):
     f = self.pmap(lambda x: lax.all_gather(x, 'i', tiled=True), axis_name='i')
 
@@ -368,6 +377,17 @@ class PythonPmapTest(jtu.JaxTestCase):
     shape = (device_count, 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
     expected = np.array([x] * device_count).reshape(device_count, -1)
+    ans = f(x)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def testGatherTiledNegativeAxis(self):
+    f = self.pmap(lambda x: lax.all_gather(x, 'i', tiled=True, axis=-1),
+                  axis_name='i')
+
+    device_count = jax.device_count()
+    shape = (device_count, 4, 3)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    expected = np.array([x.transpose(1, 0, 2).reshape(4, -1)] * device_count)
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
