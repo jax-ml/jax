@@ -20,6 +20,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax import core
 from jax import numpy as jnp
@@ -603,7 +604,8 @@ def multivariate_normal(key: KeyArray,
     dtype: optional, a float dtype for the returned values (default float64 if
       jax_enable_x64 is true, otherwise float32).
     method: optional, a method to compute the factor of ``cov``.
-      Must be one of 'svd', eigh, and 'cholesky'. Default 'cholesky'.
+      Must be one of 'svd', 'eigh', and 'cholesky'. Default 'cholesky'. For
+      singular covariance matrices, use 'svd' or 'eigh'.
   Returns:
     A random array with the specified dtype and shape given by
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
@@ -650,7 +652,9 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   else: # 'cholesky'
     factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  return mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
+  with jax.numpy_rank_promotion('allow'):
+    result = mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
+  return result
 
 
 def truncated_normal(key: KeyArray,
