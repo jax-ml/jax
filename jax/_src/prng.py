@@ -982,20 +982,70 @@ mlir.register_lowering(
     platform='rocm')
 
 
-def iota_32x2_shape(shape):
+def iota_2x32_shape(shape):
+  """Reshaped ``uint64`` iota, as two parallel ``uint32`` arrays.
+
+  Setting aside representation, this function essentially computes the
+  equivalent of::
+
+    jax.lax.iota(dtype=np.uint64, size=np.prod(shape)).reshape(shape)
+
+  However:
+
+  * It returns two parallel ``uint32`` arrays instead of one
+    ``uint64`` array. This renders it invariant under either setting of
+    the system-wide ``jax_enable_x64`` configuration flag.
+
+  * It lowers in a way such that the compiler's automatic SPMD
+    partitioner recognizes its partitionability.
+
+  For example::
+
+    >>> import numpy as np
+    >>> from jax import lax
+    >>> from jax._src import prng
+
+    >>> prng.iota_2x32_shape((3, 4))
+    [Array([[0, 0, 0, 0],
+            [0, 0, 0, 0],
+            [0, 0, 0, 0]], dtype=uint32),
+     Array([[ 0,  1,  2,  3],
+            [ 4,  5,  6,  7],
+            [ 8,  9, 10, 11]], dtype=uint32)]
+
+    >>> def reshaped_iota(shape):
+    ...   return lax.iota(size=np.prod(shape), dtype=np.uint32).reshape(shape)
+    ...
+    >>> reshaped_iota((3, 4))
+    Array([[ 0,  1,  2,  3],
+           [ 4,  5,  6,  7],
+           [ 8,  9, 10, 11]], dtype=uint32)
+
+  Args:
+    shape: the output shape
+
+  Returns:
+    A pair of ``uint32`` arrays ``(counts_hi, counts_lo)``, both of
+    shape ``shape``, representing the higher-order and lower-order 32
+    bits of the 64 bit unsigned iota.
+  """
   if len(shape) == 0:
     return (jnp.zeros((), np.dtype('uint32')),) * 2
-  return iota_32x2_shape_p.bind(shape=shape)
+  return iota_2x32_shape_p.bind(shape=shape)
 
-iota_32x2_shape_p = core.Primitive('iota_32x2_shape')
-iota_32x2_shape_p.multiple_results = True
-iota_32x2_shape_p.def_impl(partial(xla.apply_primitive, iota_32x2_shape_p))
+iota_2x32_shape_p = core.Primitive('iota_2x32_shape')
+iota_2x32_shape_p.multiple_results = True
+iota_2x32_shape_p.def_impl(partial(xla.apply_primitive, iota_2x32_shape_p))
 
-@iota_32x2_shape_p.def_abstract_eval
-def iota_32x2_shape_abstract_eval(*, shape):
+@iota_2x32_shape_p.def_abstract_eval
+def iota_2x32_shape_abstract_eval(*, shape):
   return (core.ShapedArray(shape, np.dtype('uint32')),) * 2
 
-def iota_32x2_shape_lowering(ctx, *, shape):
+def bcast_iotas_to_reshaped_iota(add, mul, shape, iotas):
+  strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
+  return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])  # type: ignore
+
+def iota_2x32_shape_lowering(ctx, *, shape):
   def _add(x, y):
     return mlir.mhlo.AddOp(x, y).result
 
@@ -1005,17 +1055,13 @@ def iota_32x2_shape_lowering(ctx, *, shape):
     x_bcast = mlir.mhlo.BroadcastOp(x_const, mlir.dense_int_elements(shape))
     return mlir.mhlo.MulOp(x_bcast, y).result
 
-  def _sum(xs):
-    return reduce(_add, xs)
-
   assert len(shape) > 0
   aval_out, _ = ctx.avals_out
   aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
   iotas = [mlir.mhlo.IotaOp(mlir.aval_to_ir_type(aval_u64),
-                       mlir.i64_attr(dimension)).result
+                            mlir.i64_attr(dimension)).result
            for dimension in range(len(shape))]
-  strides = (*map(int, np.cumprod(shape[1:][::-1])[::-1]), 1)
-  counts = _sum(_mul(s, i) for i, s in zip(iotas, strides))  # type: ignore
+  counts = bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
   shift = mlir.ir_constant(np.array(32, np.dtype('uint64')),
                            canonicalize_types=False)
   shift = mlir.mhlo.BroadcastOp(shift, mlir.dense_int_elements(shape)).result
@@ -1023,8 +1069,8 @@ def iota_32x2_shape_lowering(ctx, *, shape):
   counts_lo = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
   counts_hi = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
                                   counts_shifted).result
-  return (counts_hi, counts_lo)
-mlir.register_lowering(iota_32x2_shape_p, iota_32x2_shape_lowering)
+  return counts_hi, counts_lo
+mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)
 
 
 @partial(jit, inline=True)
@@ -1075,7 +1121,7 @@ def _threefry_split_original(key, num) -> jnp.ndarray:
 @partial(jit, static_argnums=(1,), inline=True)
 def _threefry_split_foldlike(key, num) -> jnp.ndarray:
   k1, k2 = key
-  counts1, counts2 = iota_32x2_shape((num,))
+  counts1, counts2 = iota_2x32_shape((num,))
   bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
   return jnp.stack([bits1, bits2], axis=1)
 
@@ -1107,7 +1153,7 @@ def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
     raise NotImplementedError('random bits array of size exceeding 2 ** 64')
 
   k1, k2 = key
-  counts1, counts2 = iota_32x2_shape(shape)
+  counts1, counts2 = iota_2x32_shape(shape)
   bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
 
   dtype = UINT_DTYPES[bit_width]

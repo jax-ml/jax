@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-from functools import partial
+from functools import partial, reduce
 import contextlib
 import os
 import re
@@ -1237,7 +1237,6 @@ tf_not_yet_impl = [
     "pure_callback",
     "for",
     "inspect_sharding",
-    "iota_32x2_shape",
 
     # Not high priority?
     "after_all",
@@ -2465,6 +2464,20 @@ def _rng_uniform(minval: TfVal, maxval: TfVal, *, shape) -> TfVal:
   return tf.random.uniform(shape_tf, minval=minval, maxval=maxval, dtype=minval.dtype)
 
 tf_impl[lax.rng_uniform_p] = _rng_uniform
+
+
+def _iota_2x32_shape(*, shape):
+  def _add(x, y): return x + y
+  def _mul(x, y): return x * y
+  def _cast32(xs): return tf.dtypes.cast(xs, _to_tf_dtype(jnp.uint32))
+  iotas = [_iota(dtype=jnp.uint64, shape=shape, dimension=dimension)
+           for dimension in range(len(shape))]
+  counts = prng.bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
+  counts_lo = _cast32(counts)
+  counts_hi = _cast32(tf.bitwise.right_shift(counts, 32))
+  return counts_hi, counts_lo
+
+tf_impl[prng.iota_2x32_shape_p] = _iota_2x32_shape
 
 
 def _gather_dimensions_proto(indices_shape, dimension_numbers):
