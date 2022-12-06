@@ -2728,6 +2728,30 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(f_out1.sharding, g_out1.sharding)
     self.assertEqual(f_out2.sharding, g_out2.sharding)
 
+  def test_pjit_on_different_default_device_with_uncommitted_inputs(self):
+    if jax.device_count() < 2 or not jax.config.jax_array:
+      self.skipTest('Test requires >=2 devices and jax.Array should be '
+                    'enabled.')
+
+    @pjit
+    def f(x, y):
+      return x + y
+
+    a = jnp.array([1, 2, 3], dtype=jnp.float32)
+    self.assertFalse(a._committed)
+    out = f(a, a)
+    self.assertFalse(out._committed)
+    self.assertEqual(out.device(), jax.devices()[0])
+    self.assertArraysEqual(out, a * 2)
+
+    with jax.default_device(jax.devices()[1]):
+      b = jnp.array([4, 5, 6], dtype=jnp.float32)
+      self.assertFalse(b._committed)
+      out2 = f(b, b)
+      self.assertFalse(out2._committed)
+      self.assertEqual(out2.device(), jax.devices()[1])
+      self.assertArraysEqual(out2, b * 2)
+
 
 class TempSharding(Sharding):
 
