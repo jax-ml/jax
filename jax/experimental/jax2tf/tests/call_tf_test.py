@@ -248,26 +248,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
 
   @_parameterized_jit
-  def test_with_var_read_other_device(self, with_jit=True):
-    # Try to place the variable in device:1.
-    outer_var_array = np.array([3., 4.], dtype=np.float32)
-
-    tf_devices = tf.config.list_logical_devices(jtu.device_under_test().upper())
-    if len(tf_devices) <= 1:
-      raise unittest.SkipTest("Only 1 TF device")
-    with tf.device(tf_devices[1]):
-      outer_var = tf.Variable(outer_var_array)
-
-    def fun_tf(x):
-      return x * outer_var + 1.
-
-    x = np.array([2., 5.,], dtype=np.float32)
-    with self.assertRaisesRegex(ValueError,
-                                r".*Error compiling TensorFlow function.*"):
-      res = _maybe_jit(with_jit, jax2tf.call_tf(fun_tf))(x)
-      self.assertAllClose(x * outer_var_array + 1., res, check_dtypes=False)
-
-  @_parameterized_jit
   def test_with_var_read_x64(self, with_jit=True):
     outer_var_array = np.array([3., 4.], dtype=np.float64)
     outer_var = tf.Variable(outer_var_array)
