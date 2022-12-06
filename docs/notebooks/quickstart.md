@@ -57,6 +57,7 @@ We'll be generating random data in the following examples. One big difference be
 
 ```{code-cell} ipython3
 :id: u0nseKZNqOoH
+:outputId: 03e20e21-376c-41bb-a6bb-57431823691b
 
 key = random.PRNGKey(0)
 x = random.normal(key, (10,))
@@ -69,6 +70,7 @@ Let's dive right in and multiply two big matrices.
 
 ```{code-cell} ipython3
 :id: eXn8GUl6CG5N
+:outputId: ffce6bdc-86e6-4af0-ab5d-65d235022db9
 
 size = 3000
 x = random.normal(key, (size, size), dtype=jnp.float32)
@@ -83,6 +85,7 @@ JAX NumPy functions work on regular NumPy arrays.
 
 ```{code-cell} ipython3
 :id: ZPl0MuwYrM7t
+:outputId: 71219657-b559-474e-a877-5441ee39f18f
 
 import numpy as np
 x = np.random.normal(size=(size, size)).astype(np.float32)
@@ -95,6 +98,7 @@ That's slower because it has to transfer data to the GPU every time. You can ens
 
 ```{code-cell} ipython3
 :id: Jj7M7zyRskF0
+:outputId: a649a6d3-cf28-445e-c3fc-bcfe3069482c
 
 from jax import device_put
 
@@ -132,6 +136,7 @@ JAX runs transparently on the GPU or TPU (falling back to CPU if you don't have 
 
 ```{code-cell} ipython3
 :id: qLGdCtFKFLOR
+:outputId: 870253fa-ba1b-47ec-c5a4-1c6f706be996
 
 def selu(x, alpha=1.67, lmbda=1.05):
   return lmbda * jnp.where(x > 0, x, alpha * jnp.exp(x) - alpha)
@@ -146,6 +151,7 @@ We can speed it up with `@jit`, which will jit-compile the first time `selu` is 
 
 ```{code-cell} ipython3
 :id: fh4w_3NpFYTp
+:outputId: 4d56b4f2-5d58-4689-ecc2-ac361c0245cd
 
 selu_jit = jit(selu)
 %timeit selu_jit(x).block_until_ready()
@@ -159,6 +165,7 @@ In addition to evaluating numerical functions, we also want to transform them. O
 
 ```{code-cell} ipython3
 :id: IMAgNJaMJwPD
+:outputId: 6646cc65-b52f-4825-ff7f-e50b67083493
 
 def sum_logistic(x):
   return jnp.sum(1.0 / (1.0 + jnp.exp(-x)))
@@ -174,6 +181,7 @@ Let's verify with finite differences that our result is correct.
 
 ```{code-cell} ipython3
 :id: JXI7_OZuKZVO
+:outputId: 18c1f913-d5d6-4895-f71e-e62180c3ad1b
 
 def first_finite_differences(f, x):
   eps = 1e-3
@@ -190,6 +198,7 @@ Taking derivatives is as easy as calling {func}`~jax.grad`. {func}`~jax.grad` an
 
 ```{code-cell} ipython3
 :id: TO4g8ny-OEi4
+:outputId: 1a0421e6-60e9-42e3-dc9c-e558a69bbf17
 
 print(grad(jit(grad(jit(grad(sum_logistic)))))(1.0))
 ```
@@ -234,6 +243,7 @@ Given a function such as `apply_matrix`, we can loop over a batch dimension in P
 
 ```{code-cell} ipython3
 :id: KWVc9BsZv0Ki
+:outputId: bea78b6d-cd17-45e6-c361-1c55234e77c0
 
 def naively_batched_apply_matrix(v_batched):
   return jnp.stack([apply_matrix(v) for v in v_batched])
@@ -248,6 +258,7 @@ We know how to batch this operation manually. In this case, `jnp.dot` handles ex
 
 ```{code-cell} ipython3
 :id: ipei6l8nvrzH
+:outputId: 335cdc4c-c603-497b-fc88-3fa37c5630c2
 
 @jit
 def batched_apply_matrix(v_batched):
@@ -263,6 +274,7 @@ However, suppose we had a more complicated function without batching support. We
 
 ```{code-cell} ipython3
 :id: 67Oeknf5vuCl
+:outputId: 9c680e74-ebb5-4563-ebfc-869fd82de091
 
 @jit
 def vmap_batched_apply_matrix(v_batched):
