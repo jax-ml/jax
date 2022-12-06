@@ -160,7 +160,6 @@ _has_registered_tf_source_path = False
 
 class _ThreadLocalState(threading.local):
   def __init__(self):
-    self.name_stack = ""
     # XLA is not linked in all environments; when converting a primitive, if this
     # variable is disabled, we try harder to use only standard TF ops if they are
     # applicable to the concrete use case; if the resulting conversion path ends up
@@ -183,6 +182,12 @@ class _ThreadLocalState(threading.local):
     # See https://github.com/google/jax/issues/7992.
     self.constant_cache = None  # None means that we don't use a cache. We
     # may be outside a conversion scope.
+
+    # A cache for the outside tf name_scope when the converted
+    # function is running. We will add this as the prefix to the generated tf op
+    # name. For example, the tf op name will be like
+    # "{tf_outer_name_scope}/JAX_NAME_STACKS"
+    self.tf_outer_name_scope = ""
 
 _thread_local_state = _ThreadLocalState()
 
@@ -281,47 +286,62 @@ def convert(fun_jax: Callable,
   fun_name = getattr(fun_jax, "__name__", "unknown")
   name_stack = util.wrap_name(fun_name, "jax2tf")
   def converted_fun_tf(*args_tf: TfVal, **kwargs_tf: TfVal) -> TfVal:
-    # TODO: is there a better way to check if we are inside a transformation?
-    if not core.trace_state_clean() and not _thread_local_state.inside_call_tf:
-      # It is Ok to nest convert when we are inside a call_tf
-      raise ValueError("convert must be used outside all JAX transformations." +
-                       f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
-
-    fun_flat_jax, args_flat_tf, in_tree, out_tree_thunk = flatten_fun_jax(fun_jax, args_tf, kwargs_tf)
-    # out_tree_thunk will be ready after we call fun_flat_jax below.
-
-    # Expand the polymorphic_shapes to match the args_flat_tf. The polymorphic_shapes
-    # argument refers to positional arguments only.
-    if polymorphic_shapes is None or isinstance(polymorphic_shapes, (PolyShape, str)):
-      polymorphic_shapes_ = (polymorphic_shapes,) * len(args_tf)
-    else:
-      if not (isinstance(polymorphic_shapes, Sequence) and len(polymorphic_shapes) == len(args_tf)):
-        msg = ("polymorphic_shapes must be a sequence with the same length as the positional argument list "
-               f"({len(args_tf)}). Got polymorphic_shapes={repr(polymorphic_shapes)}.")
-        raise TypeError(msg)
-      polymorphic_shapes_ = tuple(polymorphic_shapes)
-
-    polymorphic_shapes_flat = tuple(
-        api_util.flatten_axes("jax2tf.convert polymorphic_shapes",
-                              in_tree,
-                              (polymorphic_shapes_, {k: None for k in kwargs_tf.keys()})))
-
-    args_and_avals = tuple(map(preprocess_arg_tf,
-                               range(len(args_flat_tf)), args_flat_tf, polymorphic_shapes_flat))
-    args_flat_tf, args_avals_flat = util.unzip2(args_and_avals)
-
-    dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(args_avals_flat)
-    dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
-                                       args_avals_flat, name_stack)
-    shape_env = zip(dim_vars, dim_values)
 
     try:
+      prev_enable_xla = _thread_local_state.enable_xla
+      prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
+      prev_tf_outer_name_scope = _thread_local_state.tf_outer_name_scope
+
+      _thread_local_state.tf_outer_name_scope = tf.get_current_name_scope()
+
+      # TODO: is there a better way to check if we are inside a transformation?
+      if not core.trace_state_clean(
+      ) and not _thread_local_state.inside_call_tf:
+        # It is Ok to nest convert when we are inside a call_tf
+        raise ValueError(
+            "convert must be used outside all JAX transformations." +
+            f"Trace state: {core.thread_local_state.trace_state.trace_stack}")
+
+      fun_flat_jax, args_flat_tf, in_tree, out_tree_thunk = flatten_fun_jax(
+          fun_jax, args_tf, kwargs_tf)
+      # out_tree_thunk will be ready after we call fun_flat_jax below.
+
+      # Expand the polymorphic_shapes to match the args_flat_tf. The polymorphic_shapes
+      # argument refers to positional arguments only.
+      if polymorphic_shapes is None or isinstance(polymorphic_shapes,
+                                                  (PolyShape, str)):
+        polymorphic_shapes_ = (polymorphic_shapes,) * len(args_tf)
+      else:
+        if not (isinstance(polymorphic_shapes, Sequence) and
+                len(polymorphic_shapes) == len(args_tf)):
+          msg = (
+              "polymorphic_shapes must be a sequence with the same length as "
+              "the positional argument list "
+              f"({len(args_tf)}). Got polymorphic_shapes={repr(polymorphic_shapes)}."
+          )
+          raise TypeError(msg)
+        polymorphic_shapes_ = tuple(polymorphic_shapes)
+
+      polymorphic_shapes_flat = tuple(
+          api_util.flatten_axes(
+              "jax2tf.convert polymorphic_shapes", in_tree,
+              (polymorphic_shapes_, {k: None for k in kwargs_tf.keys()})))
+
+      args_and_avals = tuple(
+          map(preprocess_arg_tf, range(len(args_flat_tf)), args_flat_tf,
+              polymorphic_shapes_flat))
+      args_flat_tf, args_avals_flat = util.unzip2(args_and_avals)
+
+      dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
+          args_avals_flat)
+      dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
+                                         args_avals_flat, name_stack)
+      shape_env = zip(dim_vars, dim_values)
+
       assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
 
-      prev_enable_xla = _thread_local_state.enable_xla
       _thread_local_state.enable_xla = enable_xla
 
-      prev_include_xla_op_metadata = _thread_local_state.include_xla_op_metadata
       # TODO(b/189306134): implement support for XLA metadata
       _thread_local_state.include_xla_op_metadata = False
 
@@ -366,6 +386,7 @@ def convert(fun_jax: Callable,
       _thread_local_state.shape_env = ()
       _thread_local_state.enable_xla = prev_enable_xla
       _thread_local_state.include_xla_op_metadata = prev_include_xla_op_metadata
+      _thread_local_state.tf_outer_name_scope = prev_tf_outer_name_scope
 
     out_flat_tf = [tf.identity(x, "jax2tf_out") for x in out_flat_tf]
     out_tf = tree_util.tree_unflatten(out_tree_thunk(), out_flat_tf)
@@ -1047,11 +1068,13 @@ class TensorFlowTrace(core.Trace):
     # transformations, which aren't allowed in `name_scope`.
     scope = '/'.join([s.name for s in current_name_stack.stack])  # type: ignore[union-attr]
 
-    if tf.get_current_name_scope():
-      scope = f"{tf.get_current_name_scope()}/{scope}"
-
+    # Here we reset the name scope to the memorized TF name scope
+    # + JAX name stack by using absolute scope.
     # We need to add a '/' to the name stack string to force `tf.name_scope`
     # to interpret it as an absolute scope, not a relative scope.
+    if _thread_local_state.tf_outer_name_scope:
+      scope = f"{_thread_local_state.tf_outer_name_scope}/{scope}"
+
     if not scope.endswith("/"):
       scope = scope + "/"
 
