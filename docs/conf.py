@@ -197,6 +197,8 @@ nb_execution_timeout = 100
 # List of patterns, relative to source directory, that match notebook
 # files that will not be executed.
 nb_execution_excludepatterns = [
+    # Includes GPU timings that shouldn't be executed by doc build
+    'notebooks/quickstart.*',
     # Slow notebook: long time to load tf.ds
     'notebooks/neural_network_with_tfds_data.*',
     # Slow notebook
