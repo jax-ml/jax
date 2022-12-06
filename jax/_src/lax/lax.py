@@ -84,13 +84,6 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-# TODO(jakevdp): replace this with an isinstance() check when JEP 12049 is complete.
-def _is_array_or_tracer(operand: Any) -> bool:
-  if config.jax_array:
-    return isinstance(operand, (core.Tracer, array.ArrayImpl))
-  else:
-    return isinstance(operand, (core.Tracer, device_array.DeviceArray))
-
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
     checked = canonicalize_shape(shape)
@@ -589,7 +582,7 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = N
     operand = np.asarray(operand, new_dtype)
     old_weak_type = False
 
-  if (old_dtype, old_weak_type) == (new_dtype, weak_type) and _is_array_or_tracer(operand):
+  if (old_dtype, old_weak_type) == (new_dtype, weak_type) and isinstance(operand, Array):
     return type_cast(Array, operand)
   else:
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
@@ -644,7 +637,7 @@ def concatenate(operands: Union[Array, Sequence[ArrayLike]], dimension: int) -> 
     raise ValueError("concatenate requires a non-empty sequences of arrays")
   if len(operands) == 1:
     op, = operands
-    if _is_array_or_tracer(op):
+    if isinstance(op, Array):
       return type_cast(Array, op)
   return concatenate_p.bind(*operands, dimension=dimension)
 
@@ -812,7 +805,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
   See Also:
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
-  if np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and _is_array_or_tracer(operand):
+  if np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and isinstance(operand, Array):
     return type_cast(Array, operand)
   if config.jax_dynamic_shapes:
     # We must gate this behavior under a flag because otherwise the errors
@@ -876,7 +869,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
   else:
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
-  if np.shape(operand) and same_shape and same_dims and _is_array_or_tracer(operand):
+  if np.shape(operand) and same_shape and same_dims and isinstance(operand, Array):
     return type_cast(Array, operand)
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
@@ -955,7 +948,7 @@ def transpose(operand: ArrayLike, permutation: Sequence[int]) -> Array:
   operator.
   """
   permutation = tuple(operator.index(d) for d in permutation)
-  if permutation == tuple(range(np.ndim(operand))) and _is_array_or_tracer(operand):
+  if permutation == tuple(range(np.ndim(operand))) and isinstance(operand, Array):
     return type_cast(Array, operand)
   else:
     return transpose_p.bind(operand, permutation=permutation)
@@ -1303,7 +1296,7 @@ def squeeze(array: ArrayLike, dimensions: Sequence[int]) -> Array:
   """Squeeze any number of size 1 dimensions from an array."""
   ndim = np.ndim(array)
   dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
-  if not dimensions and _is_array_or_tracer(array):
+  if not dimensions and isinstance(array, Array):
     return type_cast(Array, array)
   return squeeze_p.bind(array, dimensions=dimensions)
 
