@@ -1337,7 +1337,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @parameterized.parameters(['int', 'np.int', 'jnp.int'])
   def testIntegerPower(self, ptype):
     p = {'int': 2, 'np.int': np.int32(2), 'jnp.int': jnp.int32(2)}[ptype]
-    jaxpr = jax.make_jaxpr(partial(jnp.power, x2=p))(1)
+    jaxpr = jax.make_jaxpr(lambda x1: jnp.power(x1, p))(1)
     eqns = jaxpr.jaxpr.eqns
     self.assertLen(eqns, 1)
     self.assertEqual(eqns[0].primitive, lax.integer_pow_p)

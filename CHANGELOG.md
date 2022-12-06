@@ -6,13 +6,6 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Next jax
-* [GitHub commits](https://github.com/google/jax/compare/jax-v0.4.0...main).
-* Changes
-  * The jax2tf.call_tf function now uses for TF lowering the first TF
-    device of the same platform as used by the embedding JAX computation.
-    Before, it was using the 0th device for the JAX-default backend.
-
 ## jax 0.4.0
 * Changes
   * Support for Python 3.7 has been dropped, in accordance with JAX's
@@ -36,7 +29,11 @@ Remember to align the itemized text with the first line of an item within a list
     longer read or written after the JAX configuration options are initially
     populated from the ABSL flags. This change improves performance of reading
     `jax.config` options, which are used pervasively in JAX.
-
+  * The jax2tf.call_tf function now uses for TF lowering the first TF
+    device of the same platform as used by the embedding JAX computation.
+    Before, it was using the 0th device for the JAX-default backend.
+  * A number of `jax.numpy` functions now have their arguments marked as
+    positional-only, matching NumPy.
 
 ## jaxlib 0.4.0
 * Changes
