@@ -63,10 +63,10 @@ jobs:
           python -m pytest -m "multiaccelerator" --tb=short --maxfail=20 tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
-        if: ${{ failure() && github.ref_name == 'main' }}
+        if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}
         run: |
             curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
             --header 'Content-Type: application/json' \
             --data-raw "{
-            'text': '\"$GITHUB_WORKFLOW\", jaxlib/libtpu version \"${{ matrix.jaxlib-version }}\", TPU type ${{ matrix.tpu-type }} job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
+            'text': '\"$GITHUB_WORKFLOW\", jaxlib/libtpu version \"${{ matrix.jaxlib-version }}\", TPU type ${{ matrix.tpu-type }} job failed, timed out, or was cancelled: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
             }"
