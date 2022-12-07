@@ -11,15 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import abc
 from typing import Any, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
-# TODO(jakevdp) make this equal jax._src.sharding.Sharding
-Sharding = Any
-# TODO(jakevdp) make this equal jax._src.array.Shard
-Shard = Any
+from jax._src.sharding import Sharding
+from jax._src.array import Shard
 
 
 class Array(abc.ABC):
