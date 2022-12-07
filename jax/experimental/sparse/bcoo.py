@@ -1565,7 +1565,7 @@ mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_mhlo)
 # BCOO functions that maybe should be primitives?
 
 def bcoo_update_layout(mat: BCOO, *, n_batch: Optional[int] = None, n_dense: Optional[int] = None,
-                       on_inefficient: str = 'error') -> BCOO:
+                       on_inefficient: Optional[str] = 'error') -> BCOO:
   """Update the storage layout (i.e. n_batch & n_dense) of a BCOO matrix.
 
   In many cases this can be done without introducing undue storage overhead. However,
