@@ -4418,11 +4418,49 @@ mlir.register_lowering(rng_bit_generator_p,
 def _array_copy(arr: ArrayLike) -> Array:
   return copy_p.bind(arr)
 
+
+def _which_dim_sharded(s: PmapSharding) -> Optional[int]:
+  sharded_dim = None
+  for i, s in enumerate(s.sharding_spec.sharding):
+    if isinstance(s, pxla.Unstacked):
+      sharded_dim = i
+      break
+  return sharded_dim
+
+
+def _identity_fn(x): return x
+
+
+def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
+  axis_name, static_broadcasted_tuple, donate_tuple = api._shared_code_pmap(
+    _identity_fn, None, (), (), sharded_dim, sharded_dim)
+  p = api._prepare_pmap(
+      _identity_fn, sharded_dim, sharded_dim, static_broadcasted_tuple,
+      donate_tuple, None, None, args, kwargs)
+  out_flat =  pxla.xla_pmap_impl(
+      p.flat_fun, *p.flat_args, backend=None, axis_name=axis_name,
+      axis_size=p.local_axis_size, global_axis_size=None, devices=p.devices,
+      in_axes=p.in_axes_flat, out_axes_thunk=p.out_axes_thunk,
+      name=p.flat_fun.__name__, donated_invars=p.donated_invars,
+      global_arg_shapes=p.global_arg_shapes_flat)
+  return tree_util.tree_unflatten(p.out_tree(), out_flat)
+
+
+# TODO(https://github.com/google/jax/issues/13552): Look into making this a
+# method on jax.Array so that we can bypass the XLA compilation here.
+def _copy_impl(prim, *args, **kwargs):
+  a, = args
+  if (config.jax_array and isinstance(a, jax.Array) and
+      isinstance(a.sharding, PmapSharding)):
+    sharded_dim = _which_dim_sharded(a.sharding)
+    return _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs)
+  return xla.apply_primitive(prim, *args, **kwargs)
+
 # The copy_p primitive exists for expressing making copies of runtime arrays.
 # For that reason we don't simplify it out of jaxprs (e.g. for jit invariance).
 # It's used in jnp.array(x, copy=True), which is the user-facing API.
 copy_p = core.Primitive('copy')
-copy_p.def_impl(partial(xla.apply_primitive, copy_p))
+copy_p.def_impl(partial(_copy_impl, copy_p))
 copy_p.def_abstract_eval(lambda x: x)
 mlir.register_lowering(copy_p, lambda ctx, x: [x])
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])

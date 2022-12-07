@@ -1826,7 +1826,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     gc.collect()
     # 'f' should not be alive at this point; in particular the pmap cache must
     # not keep it alive.
-    self.assertTrue(w() is None)
+    self.assertIs(w(), None)
 
   def testJitOfPmapWarningMessage(self):
     device_count = jax.device_count()
@@ -3115,6 +3115,30 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertEqual(out1_sharding_id, out2_sharding_id)
     self.assertEqual(out1_sharding_id, out3_sharding_id)
     self.assertEqual(out2_sharding_id, out3_sharding_id)
+
+  def test_array_with_pmap_sharding_copy_without_round_trip(self):
+    if not jax.config.jax_array:
+      self.skipTest('This test only works with jax.Array')
+
+    def _compare_if_equal(out, out_copy):
+      self.assertArraysEqual(out, out_copy)
+      self.assertIsInstance(out_copy.sharding, jax.sharding.PmapSharding)
+      self.assertEqual(out.sharding, out_copy.sharding)
+      for o, o_copy in safe_zip(out.addressable_shards, out_copy.addressable_shards):
+        self.assertArraysEqual(o.data, o_copy.data)
+        self.assertEqual(o.device, o_copy.device)
+        self.assertEqual(o.index, o_copy.index)
+        self.assertEqual(o.replica_id, o_copy.replica_id)
+        self.assertNotEqual(o.data.unsafe_buffer_pointer(),
+                            o_copy.data.unsafe_buffer_pointer())
+
+    out, _ = create_input_array_for_pmap((jax.device_count(),))
+    out_copy = jnp.copy(out)
+    _compare_if_equal(out, out_copy)
+
+    out1, _ = create_input_array_for_pmap((1, jax.device_count(),), in_axes=1)
+    out_copy1 = jnp.copy(out1)
+    _compare_if_equal(out1, out_copy1)
 
 
 class EagerPmapMixin:

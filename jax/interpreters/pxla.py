@@ -944,17 +944,21 @@ _register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
-def xla_pmap_impl_lazy(fun: lu.WrappedFun, *args,
-                  backend: Optional[str],
-                  axis_name: core.AxisName,
-                  axis_size: int,
-                  global_axis_size: Optional[int],
-                  devices: Optional[Sequence[Any]],
-                  name: str,
-                  in_axes: Sequence[Optional[int]],
-                  out_axes_thunk: Callable[[], Sequence[Optional[int]]],
-                  donated_invars: Sequence[bool],
-                  global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+
+def xla_pmap_impl_lazy(
+    fun: lu.WrappedFun,
+    *args,
+    backend: Optional[str],
+    axis_name: core.AxisName,
+    axis_size: int,
+    global_axis_size: Optional[int],
+    devices: Optional[Sequence[Any]],
+    name: str,
+    in_axes: Sequence[Optional[int]],
+    out_axes_thunk: Callable[[], Sequence[Optional[int]]],
+    donated_invars: Sequence[bool],
+    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+):
   if (config.jax_disable_jit and config.jax_eager_pmap and
       global_axis_size is None and not any(d for d in donated_invars) and
       not all(g is not None for g in global_arg_shapes)):
