@@ -3583,8 +3583,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testMsort(self, dtype, shape):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    self._CheckAgainstNumpy(np.msort, jnp.msort, args_maker)
-    self._CompileAndCheck(jnp.msort, args_maker)
+
+    with self.assertWarnsRegex(DeprecationWarning, "jnp.msort is deprecated"):
+      jnp.msort(*args_maker())
+
+    with jtu.ignore_warning(category=DeprecationWarning, message=".*msort is deprecated"):
+      self._CheckAgainstNumpy(np.msort, jnp.msort, args_maker)
+      self._CompileAndCheck(jnp.msort, args_maker)
 
   @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)

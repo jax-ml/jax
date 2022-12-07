@@ -34,6 +34,9 @@ Remember to align the itemized text with the first line of an item within a list
     Before, it was using the 0th device for the JAX-default backend.
   * A number of `jax.numpy` functions now have their arguments marked as
     positional-only, matching NumPy.
+  * `jnp.msort` is now deprecated, following the deprecation of `np.msort` in numpy 1.24.
+    It will be removed in a future release, in accordance with the {ref}`api-compatibility`
+    policy. It can be replaced with `jnp.sort(a, axis=0)`.
 
 ## jaxlib 0.4.0
 * Changes
