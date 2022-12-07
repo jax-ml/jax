@@ -487,7 +487,7 @@ class _StateContextManager:
     self._default_value = default_value
 
   @contextlib.contextmanager
-  def __call__(self, new_val=no_default):
+  def __call__(self, new_val: Any = no_default):
     if new_val is no_default:
       if self._default_value is not no_default:
         new_val = self._default_value  # default_value provided to constructor
