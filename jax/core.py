@@ -858,8 +858,7 @@ def _initialize_jax_jit_thread_local_state():
   if tls.extra_jit_context is None:
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
     copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-    tls.extra_jit_context = jax_config._ThreadLocalExtraJitContext(
-        dynamic_trace_state=copy)
+    jax_config.update_thread_local_jit_state(dynamic_trace_state=copy)
 
 
 jax_jit.set_thread_local_state_initialization_callback(
