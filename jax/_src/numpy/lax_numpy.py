@@ -2040,8 +2040,12 @@ def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Optional[str] = No
 def copy(a: Any, order: Optional[str] = None) -> Array:
   return array(a, copy=True, order=order)
 
+def _zeros_like_dispatcher(a, dtype=None,  shape=None):
+  del dtype, shape
+  return (a,)
 
 @_wraps(np.zeros_like)
+@np.core.overrides.array_function_dispatch(_zeros_like_dispatcher)
 def zeros_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
                shape: Any = None) -> Array:
   _check_arraylike("zeros_like", a)
