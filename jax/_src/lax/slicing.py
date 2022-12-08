@@ -175,9 +175,9 @@ class GatherDimensionNumbers(NamedTuple):
   implicit; there is always an index vector dimension and it must always be the
   last dimension. To gather scalar indices, add a trailing dimension of size 1.
   """
-  offset_dims: Tuple[int, ...]
-  collapsed_slice_dims: Tuple[int, ...]
-  start_index_map: Tuple[int, ...]
+  offset_dims: Sequence[int]
+  collapsed_slice_dims: Sequence[int]
+  start_index_map: Sequence[int]
 
 
 class GatherScatterMode(enum.Enum):
@@ -1957,6 +1957,23 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
                             unique_indices=unique_indices, mode=mode)
   return val_out, tangent_out
 
+def scatter_to_gather_dnums(dimension_numbers: ScatterDimensionNumbers,
+                            operand_ndim: int,
+                            updates_shape: Tuple[int]):
+  gather_dnums = GatherDimensionNumbers(
+    offset_dims=dimension_numbers.update_window_dims,
+    collapsed_slice_dims=dimension_numbers.inserted_window_dims,
+    start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
+  slice_sizes = []
+  pos = 0
+  for i in range(operand_ndim):
+    if i in dimension_numbers.inserted_window_dims:
+      slice_sizes.append(1)
+    else:
+      slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
+      pos += 1
+  return gather_dnums, slice_sizes
+
 def _scatter_transpose_rule(t, operand, indices, updates, *,
                             update_jaxpr, update_consts, dimension_numbers,
                             indices_are_sorted, unique_indices, mode):
@@ -1983,21 +2000,13 @@ def _scatter_transpose_rule(t, operand, indices, updates, *,
       operand_t = lax.select(mask, t, lax._zeros(t))
 
     if ad.is_undefined_primal(updates):
-      gather_dnums = GatherDimensionNumbers(
-        offset_dims=dimension_numbers.update_window_dims,
-        collapsed_slice_dims=dimension_numbers.inserted_window_dims,
-        start_index_map=dimension_numbers.scatter_dims_to_operand_dims)
-      slice_sizes = []
-      pos = 0
-      for i in range(len(t.shape)):
-        if i in dimension_numbers.inserted_window_dims:
-          slice_sizes.append(1)
-        else:
-          slice_sizes.append(updates_shape[dimension_numbers.update_window_dims[pos]])
-          pos += 1
+      gather_dnums, slice_sizes = scatter_to_gather_dnums(dimension_numbers,
+                                                          len(t.shape),
+                                                          updates_shape)
       update_t = gather(t, indices, dimension_numbers=gather_dnums,
                         slice_sizes=slice_sizes, mode=mode,
-                        fill_value=0)
+                        fill_value=0, unique_indices=True,
+                        indices_are_sorted=indices_are_sorted)
 
   return [operand_t, None, update_t]
 

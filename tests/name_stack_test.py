@@ -268,17 +268,18 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
         return x < 5
       return lax.while_loop(cond, body, x)
     jaxpr = jax.make_jaxpr(f)(jnp.arange(2))
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'vmap(foo)')
+    self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'vmap(foo)')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['body_jaxpr'].eqns[0].source_info.name_stack),
+      jaxpr.eqns[1].params['body_jaxpr'].eqns[0].source_info.name_stack),
       'bar')
+    # vmap(while) with batched predicated moves the cond into the body
     self.assertEqual(str(
-      jaxpr.eqns[0].params['cond_jaxpr'].eqns[0].source_info.name_stack),
+      jaxpr.eqns[1].params['body_jaxpr'].eqns[2].source_info.name_stack),
       'bar_cond')
 
     hlo_text = _get_hlo(f)(jnp.arange(2.))
     self.assertIn('vmap(foo)/while/body/bar/add', hlo_text)
-    self.assertIn('vmap(foo)/while/cond/bar_cond/lt', hlo_text)
+    self.assertIn('vmap(foo)/while/body/bar_cond/lt', hlo_text)
 
   def test_jvp_of_while_loop_transforms_name_stack(self):
 
@@ -318,17 +319,18 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
       return lax.while_loop(cond, body, x)
     g = jax.vmap(lambda x, t: jax.jvp(f, (x,), (t,)))
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
-    self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'vmap(jvp(foo))')
+    self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'vmap(jvp(foo))')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['body_jaxpr'].eqns[0].source_info.name_stack),
+      jaxpr.eqns[1].params['body_jaxpr'].eqns[0].source_info.name_stack),
       'bar')
+    # vmap(while) with batched predicated moves the cond into the body
     self.assertEqual(str(
-      jaxpr.eqns[0].params['cond_jaxpr'].eqns[0].source_info.name_stack),
+      jaxpr.eqns[1].params['body_jaxpr'].eqns[3].source_info.name_stack),
       'bar_cond')
 
     hlo_text = _get_hlo(g)(jnp.arange(2.), jnp.ones(2))
     self.assertIn('vmap(jvp(foo))/while/body/bar/add', hlo_text)
-    self.assertIn('vmap(jvp(foo))/while/body_pred/bar_cond', hlo_text)
+    self.assertIn('vmap(jvp(foo))/while/body/bar_cond', hlo_text)
 
 
   def test_cond_body_should_not_have_name_stack(self):

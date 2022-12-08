@@ -1032,8 +1032,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     checked_f = checkify.checkify(fun, errors=checkify.all_checks)
 
-    with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
-      checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
+    checked_f(jnp.asarray([1., 2., 3.]), jnp.asarray([5., 2., 4.]))
     # TODO(lenamartens): reenable assertions below.
     # self.assertIsNotNone(err.get())
     # self.assertStartsWith(err.get(), "division by zero")
@@ -1061,8 +1060,7 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
 
     checked_f = checkify.checkify(fun)
 
-    with self.assertRaisesRegex(ValueError, "checkify-of-vmap-of-while"):
-      checked_f(jnp.arange(5))
+    checked_f(jnp.arange(5))
     # TODO(lenamartens): reenable assertions below.
     # self.assertIsNone(err.get())
 

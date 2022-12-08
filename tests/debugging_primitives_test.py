@@ -630,49 +630,23 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       jax.vmap(f)(jnp.arange(2))
       jax.effects_barrier()
+    expected = _format_multiline("""
+    x: 0
+    x: 1
+    x: 1
+    x: 2
+    x: 2
+    x: 3
+    x: 3
+    x: 4
+    x: 4
+    x: 5
+    x: 5
+    x: 5
+    """)
     if ordered:
-      expected = _format_multiline("""
-      x: 0
-      x: 1
-      x: 1
-      x: 2
-      x: 2
-      x: 3
-      x: 3
-      x: 4
-      x: 4
-      x: 5
-      x: 5
-      x: 6
-      """)
       self.assertEqual(output(), expected)
     else:
-      # When the print is unordered, the `cond` is called an additional time
-      # after the `_body` runs, so we get more prints.
-      expected = _format_multiline("""
-      x: 0
-      x: 1
-      x: 0
-      x: 1
-      x: 1
-      x: 2
-      x: 1
-      x: 2
-      x: 2
-      x: 3
-      x: 2
-      x: 3
-      x: 3
-      x: 4
-      x: 3
-      x: 4
-      x: 4
-      x: 5
-      x: 4
-      x: 5
-      x: 5
-      x: 5
-      """)
       self._assertLinesEqual(output(), expected)
 
   @jtu.sample_product(ordered=[False, True])

@@ -66,6 +66,7 @@ from jax._src.lax.control_flow.common import (
     _typecheck_param,
     allowed_effects,
     )
+from jax._src.lax.control_flow.pattern_match import pattern_match_inplace_select
 
 _map = safe_map
 zip = safe_zip
@@ -992,6 +993,7 @@ def _scan_pp_rule(eqn, context, settings):
 
 
 def scan_bind(*args, **params):
+  params['jaxpr'] = pattern_match_inplace_select(params['jaxpr'])
   if config.jax_enable_checks:
     avals = _map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
@@ -1211,9 +1213,32 @@ def _while_loop_batching_rule(axis_size, axis_name, main_type, args, dims,
       assert new_axis is not batching.not_mapped
       new_init.append(batching.moveaxis(x, old_axis, new_axis))
 
+  if pred_bat:
+    def new_cond(*args):
+      pred, *_ = args
+      return pred.any()
+
+    def new_body(*args):
+      cconsts, bconsts, [pred], carry = split_list(args,
+                                                   [cond_nconsts, body_nconsts, 1])
+      carry2 = jax.core.jaxpr_as_fun(body_jaxpr_batched)(*bconsts, *carry)
+      carry2 = [jax.vmap(lax.select)(pred, c2, c) for c, c2 in zip(carry, carry2)]
+      [pred2] = jax.core.jaxpr_as_fun(cond_jaxpr_batched)(*cconsts, *carry2)
+      pred2 = pred & pred2
+      return [pred2, *carry2]
+
+    [init_pred] = jax.core.jaxpr_as_fun(cond_jaxpr_batched)(*cconsts, *new_init)
+    new_init = [init_pred, *new_init]
+    body_jaxpr_batched = jax.make_jaxpr(new_body)(*cconsts, *bconsts, *new_init)
+    cond_jaxpr_batched = jax.make_jaxpr(new_cond)(*new_init)
+    body_nconsts = cond_nconsts + body_nconsts
+    cond_nconsts = 0
+
   outs = while_p.bind(*(cconsts + bconsts + new_init),
                       cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr_batched,
                       body_nconsts=body_nconsts, body_jaxpr=body_jaxpr_batched)
+  if pred_bat:
+    outs = outs[1:]
   return outs, carry_dims
 
 def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
@@ -1550,8 +1575,13 @@ def _while_typecheck(*in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
         f'Effects not supported in `while`: {joined_effects - allowed_effects}')
   return body_jaxpr.out_avals, joined_effects
 
+def _while_bind(*args, **params):
+  params['body_jaxpr'] = pattern_match_inplace_select(params['body_jaxpr'])
+  return core.AxisPrimitive.bind(while_p, *args, **params)
+
 while_p = core.AxisPrimitive('while')
 while_p.multiple_results = True
+while_p.def_custom_bind(_while_bind)
 while_p.def_impl(partial(xla.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
