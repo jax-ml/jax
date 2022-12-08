@@ -835,6 +835,12 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
     self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
+  def test_mesh_repr(self):
+    mesh = jtu.create_global_mesh((1, 1), ('x', 'y'))
+    mesh_repr = repr(mesh)
+    self.assertIn('device_ids', mesh_repr)
+    self.assertIn('axis_names', mesh_repr)
+
 
 @jtu.with_config(jax_array=True)
 class RngShardingTest(jtu.JaxTestCase):

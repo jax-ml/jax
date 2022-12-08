@@ -2477,8 +2477,8 @@ class Mesh(ContextDecorator):
 
   def __repr__(self):
     if self.empty:
-      return "Mesh([], ())"
-    return f"Mesh({self.device_ids!r}, {self.axis_names!r})"
+      return "Mesh(device_ids=[], axis_names=())"
+    return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r})"
 
   @cached_property
   def local_devices(self):
