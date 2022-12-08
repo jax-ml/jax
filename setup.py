@@ -19,14 +19,14 @@ import sys
 
 from setuptools import setup, find_packages
 
-_current_jaxlib_version = '0.3.25'
+_current_jaxlib_version = '0.4.0'
 # The following should be updated with each new jaxlib release.
 _latest_jaxlib_version_on_pypi = '0.3.25'
 _available_cuda_versions = ['11']
 _default_cuda_version = '11'
 _available_cudnn_versions = ['82', '86']
 _default_cudnn_version = '86'
-_libtpu_version = '0.1.dev20221109'
+_libtpu_version = '0.1.dev20221207'
 
 _dct = {}
 with open('jax/version.py') as f:
@@ -96,7 +96,7 @@ setup(
 
         # CUDA installations require adding jax releases URL; e.g.
         # $ pip install jax[cuda11_cudnn82] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-        # $ pip install jax[cuda11_cudnn805] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        # $ pip install jax[cuda11_cudnn86] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
         **{f'cuda{cuda_version}_cudnn{cudnn_version}': f"jaxlib=={_current_jaxlib_version}+cuda{cuda_version}.cudnn{cudnn_version}"
            for cuda_version in _available_cuda_versions for cudnn_version in _available_cudnn_versions}
     },

@@ -427,15 +427,15 @@ learning systems, JAX does not bundle CUDA or CuDNN as part of the `pip`
 package.
 
 JAX provides pre-built CUDA-compatible wheels for **Linux only**,
-with CUDA 11.1 or newer, and CuDNN 8.0.5 or newer. Note these existing wheels are currently for `x86_64` architectures only. Other combinations of
+with CUDA 11.4 or newer, and CuDNN 8.2 or newer. Note these existing wheels are currently for `x86_64` architectures only. Other combinations of
 operating system, CUDA, and CuDNN are possible, but require [building from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
-* CUDA 11.1 or newer is *required*.
+* CUDA 11.4 or newer is *required*.
 * The supported cuDNN versions for the prebuilt wheels are:
-  * cuDNN 8.2 or newer. We recommend using the cuDNN 8.2 wheel if your cuDNN
+  * cuDNN 8.6 or newer. We recommend using the cuDNN 8.6 wheel if your cuDNN
     installation is new enough, since it supports additional functionality.
-  * cuDNN 8.0.5 or newer.
+  * cuDNN 8.2 or newer.
 * You *must* use an NVidia driver version that is at least as new as your
   [CUDA toolkit's corresponding driver version](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cuda-major-component-versions__table-cuda-toolkit-driver-versions).
   For example, if you have CUDA 11.4 update 4 installed, you must use NVidia
@@ -453,7 +453,7 @@ Next, run
 
 ```bash
 pip install --upgrade pip
-# Installs the wheel compatible with CUDA 11 and cuDNN 8.2 or newer.
+# Installs the wheel compatible with CUDA 11 and cuDNN 8.6 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
@@ -468,11 +468,11 @@ version for jaxlib explicitly:
 ```bash
 pip install --upgrade pip
 
+# Installs the wheel compatible with Cuda >= 11.8 and cudnn >= 8.6
+pip install "jax[cuda11_cudnn86]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+
 # Installs the wheel compatible with Cuda >= 11.4 and cudnn >= 8.2
 pip install "jax[cuda11_cudnn82]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-
-# Installs the wheel compatible with Cuda >= 11.1 and cudnn >= 8.0.5
-pip install "jax[cuda11_cudnn805]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
 You can find your CUDA version with the command:
@@ -483,7 +483,7 @@ nvcc --version
 
 Some GPU functionality expects the CUDA installation to be at
 `/usr/local/cuda-X.X`, where X.X should be replaced with the CUDA version number
-(e.g. `cuda-11.1`). If CUDA is installed elsewhere on your system, you can either
+(e.g. `cuda-11.8`). If CUDA is installed elsewhere on your system, you can either
 create a symlink:
 
 ```bash
