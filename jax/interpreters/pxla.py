@@ -2239,7 +2239,7 @@ def _mhlo_shard(aval, axis_env, xs, in_axis):
 
 
 # TODO(b/110096942): more efficient gather
-def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
+def _mhlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, platform):
   if aval is core.abstract_token:
     return xs
   elif isinstance(aval, core.ShapedArray):
@@ -2253,7 +2253,7 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
 
     dims = list(aval.shape)
     padded_aval = aval.update(shape=[axis_env.sizes[-1]] + dims)
-    padded = mlir.full_like_aval(0, padded_aval)
+    padded = mlir.full_like_aval(ctx, 0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [_unravel_index_mhlo(axis_env)] + [zero] * len(dims)
     broadcast_result = mhlo.BroadcastOp(
@@ -2274,7 +2274,7 @@ def _mhlo_unshard(aval, axis_env, out_axis, xs, platform):
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
-      float_zero = mlir.full_like_aval(0, padded_aval)
+      float_zero = mlir.full_like_aval(ctx, 0, padded_aval)
       out = mhlo.CompareOp(
           out,
           float_zero,
@@ -2312,9 +2312,10 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
         name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                          util.wrap_name(name, 'pmap')))
     sharded_outs, _ = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, mlir.TokenSet(), (),
-                                         *in_nodes_sharded)
+                                         *in_nodes_sharded,
+                                         dim_var_values=ctx.dim_var_values)
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_mhlo_unshard(aval, new_env, out_axis, shard,
+  outs = [_mhlo_unshard(ctx, aval, new_env, out_axis, shard,
                         platform=ctx.module_context.platform)
           for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]
   return outs

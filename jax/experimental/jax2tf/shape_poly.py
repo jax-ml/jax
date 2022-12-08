@@ -41,6 +41,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 import jax
 from jax._src.numpy import lax_numpy
 from jax._src import dtypes
+from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lax import lax
 from jax._src.typing import DimSize, Shape
@@ -52,8 +53,9 @@ import numpy as np
 
 TfVal = Any
 # A dimension environment maps dimension variables to expressions that
-# compute the value of the dimension. These expressions refer to the
-# function arguments.
+# compute the value of the dimension. An expression must support addition
+# and multiplication with other expressions or with np.int32, e.g.,
+# by overloading __add__, __radd__, __mul__, __rmul__.
 ShapeEnv = Dict[str, Any]
 DType = Any
 
@@ -142,7 +144,7 @@ class _DimMon(dict):
     return _DimMon(d)
 
   def evaluate(self, env: ShapeEnv):
-    prod = lambda xs: functools.reduce(_multiply, xs) if xs else np.int32(1)
+    prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else np.int32(1)
     def pow_opt(v, p: int):
       return v if p == 1 else prod([v] * p)
     return prod([pow_opt(env[id], deg) for id, deg in self.items()])
@@ -406,8 +408,8 @@ class _DimPolynomial():
     return max(self.monomials())
 
   def evaluate(self, env: ShapeEnv):
-    terms = [_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.monomials()]
-    return functools.reduce(_add, terms) if len(terms) > 1 else terms[0]
+    terms = [_evaluate_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.monomials()]
+    return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   @staticmethod
   def get_aval(_: "_DimPolynomial"):
@@ -537,6 +539,12 @@ dim_as_value_p.def_abstract_eval(_dim_as_value_abstract)
 
 def _dim_as_value(dim: DimSize):
   return dim_as_value_p.bind(dim=dim)
+
+def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
+                           dim):
+  return mlir.eval_dynamic_shape(ctx, (dim,))
+mlir.register_lowering(dim_as_value_p, _dim_as_value_lowering)
+
 
 class PolyShape(tuple):
   """Tuple of polymorphic dimension specifications.
@@ -672,18 +680,18 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
   return dims
 
 
-def _add(v1, v2):
-  if isinstance(v1, int) and v1 == 0:
+def _evaluate_add(v1, v2):
+  if isinstance(v1, (int, np.int32)) and v1 == 0:
     return v2
-  elif isinstance(v2, int) and v2 == 0:
+  elif isinstance(v2, (int, np.int32)) and v2 == 0:
     return v1
   else:
     return v1 + v2
 
-def _multiply(v1, v2):
-  if isinstance(v1, int) and v1 == 1:
+def _evaluate_multiply(v1, v2):
+  if isinstance(v1, (int, np.int32)) and v1 == 1:
     return v2
-  elif isinstance(v2, int) and v2 == 1:
+  elif isinstance(v2, (int, np.int32)) and v2 == 1:
     return v1
   else:
     return v1 * v2
@@ -812,7 +820,7 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
-        dim_expr = dim_expr - _multiply(mon_value, np.int32(factor))
+        dim_expr = dim_expr - _evaluate_multiply(mon_value, np.int32(factor))
         continue
       except KeyError:
         # There are some indeterminate variables. We handle only the case of

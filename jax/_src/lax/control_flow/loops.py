@@ -936,8 +936,7 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry
      type(linear) is tuple and all(type(x) is bool for x in linear))
   tc(unroll, 'unroll', 'positive int', type(unroll) is int and unroll > 0)
 
-  tc(length, 'length', 'non-negative int',
-     type(length) is int and length >= 0)
+  tc(length, 'length', 'non-negative int', core.greater_equal_dim(length, 0))
 
   if len(linear) != len(avals):
     raise core.JaxprTypeError(
@@ -1487,8 +1486,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     cond_ctx = ctx.module_context.replace(
         name_stack=xla.extend_name_stack(name_stack, 'cond'))
     ((pred,),), _ = mlir.jaxpr_subcomp(cond_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
-                                    _map(mlir.ir_constants, cond_jaxpr.consts),
-                                    *(x + z))
+                                       _map(mlir.ir_constants, cond_jaxpr.consts),
+                                       *(x + z), dim_var_values=ctx.dim_var_values)
     if batched:
       pred_ctx = mlir.LoweringRuleContext(
           module_context=ctx.module_context,
@@ -1519,7 +1518,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     body_ctx = ctx.module_context.replace(
         name_stack=xla.extend_name_stack(name_stack, 'body'))
     new_z, tokens_out = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
-        tokens_in, _map(mlir.ir_constants, body_jaxpr.consts), *(y + z))
+        tokens_in, _map(mlir.ir_constants, body_jaxpr.consts),
+        *(y + z), dim_var_values=ctx.dim_var_values)
     out_tokens = [tokens_out.get(eff) for eff in body_effects]
     if batched:
       body_pred_ctx = ctx.module_context.replace(
@@ -1527,9 +1527,10 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
                                            'body_pred'))
       ((body_pred,),), _ = mlir.jaxpr_subcomp(
           body_pred_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
-          _map(mlir.ir_constants, cond_jaxpr.consts), *(x + z))
+          _map(mlir.ir_constants, cond_jaxpr.consts),
+          *(x + z), dim_var_values=ctx.dim_var_values)
       new_z = _map(
-          partial(_pred_bcast_select_mhlo, pred_aval, body_pred), new_z, z,
+          partial(_pred_bcast_select_mhlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
     mhlo.ReturnOp([*util.flatten(out_tokens), *util.flatten(x),
@@ -1564,7 +1565,7 @@ mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
 
 
-def _pred_bcast_select_mhlo(
+def _pred_bcast_select_mhlo(ctx,
     pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
     ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
   if x_y_aval is core.abstract_token:
@@ -1578,12 +1579,12 @@ def _pred_bcast_select_mhlo(
     assert x.type == y.type, (x.type, y.type)
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
             pred_aval.shape, x_y_aval)
-    x_y_type = mlir.aval_to_ir_type(x_y_aval)
-    bcast_pred_type = ir.RankedTensorType.get(
-        x_y_type.shape, mlir.dtype_to_ir_type(np.dtype(np.bool_)))
-    bcast_pred = mhlo.BroadcastInDimOp(
-        bcast_pred_type, pred,
-        mlir.dense_int_elements(list(range(len(pred_aval.shape))))).result
+    if core.is_opaque_dtype(x_y_aval.dtype):
+      x_y_shape = mlir.aval_to_ir_type(x_y_aval).shape
+    else:
+      x_y_shape = x_y_aval.shape
+    bcast_pred = mlir.broadcast_in_dim(ctx, pred, core.DShapedArray(x_y_shape, np.dtype(np.bool_)),
+                                       broadcast_dimensions=list(range(len(pred_aval.shape))))
     return mhlo.SelectOp(bcast_pred, x, y).results
 
 ### fori_loop

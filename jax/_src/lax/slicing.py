@@ -816,10 +816,20 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   if core.is_opaque_dtype(aval_out.dtype):
     return aval_out.dtype._rules.slice_mlir(
         ctx, x, start_indices, limit_indices, strides)
-  return mhlo.SliceOp(x,
-                      mlir.dense_int_elements(start_indices),
-                      mlir.dense_int_elements(limit_indices),
-                      mlir.dense_int_elements(strides)).results
+  if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
+    start_indices = mlir.eval_dynamic_shape(ctx, start_indices)
+    limit_indices = mlir.eval_dynamic_shape(ctx, limit_indices)
+    strides = mlir.eval_dynamic_shape(ctx, strides)
+    return mhlo.RealDynamicSliceOp(mlir.aval_to_ir_type(aval_out),
+                                   x,
+                                   mlir.shape_tensor(start_indices),
+                                   mlir.shape_tensor(limit_indices),
+                                   mlir.shape_tensor(strides)).results
+  else:
+    return mhlo.SliceOp(x,
+                        mlir.dense_int_elements(start_indices),
+                        mlir.dense_int_elements(limit_indices),
+                        mlir.dense_int_elements(strides)).results
 
 mlir.register_lowering(slice_p, _slice_lower)
 
@@ -954,19 +964,24 @@ def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
   aval_out, = ctx.avals_out
   if core.is_opaque_dtype(aval_out.dtype) and dyn: raise NotImplementedError
-  if not dyn:
-    if core.is_opaque_dtype(aval_out.dtype):
-      return aval_out.dtype._rules.dynamic_slice_mlir(ctx, x, start_indices,
-                                                      slice_sizes)
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.dynamic_slice_mlir(ctx, x, start_indices,
+                                                    slice_sizes)
+  if dyn:
+    slice_sizes = lax._merge_dyn_shape(slice_sizes, dyn)
+
+  if not core.is_constant_shape(slice_sizes):
+    slice_sizes = mlir.eval_dynamic_shape(ctx, slice_sizes)
+    return mhlo.RealDynamicSliceOp(
+        mlir.aval_to_ir_type(aval_out), x,
+        mlir.shape_tensor(start_indices),
+        mlir.shape_tensor(slice_sizes),
+        mlir.shape_tensor([1] * len(slice_sizes))
+    ).results
+  else:
     return mhlo.DynamicSliceOp(x, start_indices,
                                mlir.dense_int_elements(slice_sizes)).results
-  slice_sizes = lax._merge_dyn_shape(slice_sizes, dyn)
-  return mhlo.RealDynamicSliceOp(
-      mlir.aval_to_ir_type(aval_out), x,
-      mlir.shape_tensor(start_indices),
-      mlir.shape_tensor(slice_sizes),
-      mlir.shape_tensor([1] * len(slice_sizes))
-  ).results
+
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
 # def _getslice_lower(ctx, x, lo, hi):
@@ -1416,12 +1431,18 @@ def _gather_lower(ctx, operand, indices, *,
     index_vector_dim=len(ctx.avals_in[1].shape) - 1,
     offset_dims=list(dimension_numbers.offset_dims),
     start_index_map=list(dimension_numbers.start_index_map))
-  return mhlo.GatherOp(
-      operand,
-      indices,
-      dnums,
-      mlir.dense_int_elements(slice_sizes),
-      indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+  if not core.is_constant_shape(slice_sizes):
+    slice_sizes = mlir.eval_dynamic_shape(ctx, slice_sizes)
+    return mhlo.DynamicGatherOp(
+        operand, indices, mlir.shape_tensor(slice_sizes),
+        dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
+  else:
+    return mhlo.GatherOp(
+        operand,
+        indices,
+        dnums,
+        mlir.dense_int_elements(slice_sizes),
+        indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
 
 mlir.register_lowering(gather_p, _gather_lower)
 
@@ -2045,7 +2066,8 @@ def _scatter_lower(ctx, operand, indices, updates, *,
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(
         update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
-        (update.arguments[0],), (update.arguments[1],))
+        (update.arguments[0],), (update.arguments[1],),
+        dim_var_values=ctx.dim_var_values)
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 

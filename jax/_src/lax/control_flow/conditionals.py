@@ -820,7 +820,8 @@ def _cond_lowering(ctx, index, *args, branches, linear):
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr.jaxpr, tokens_in,
           map(mlir.ir_constants, jaxpr.consts),
-          *map(mlir.wrap_singleton_ir_values, args))
+          *map(mlir.wrap_singleton_ir_values, args),
+          dim_var_values=ctx.dim_var_values)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]
       mhlo.ReturnOp(util.flatten(out_vals))

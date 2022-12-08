@@ -331,7 +331,8 @@ def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
     if jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `reduce_window`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr,
-        mlir.TokenSet(), consts, *([a] for a in reducer.arguments))
+        mlir.TokenSet(), consts, *([a] for a in reducer.arguments),
+        dim_var_values=ctx.dim_var_values)
     mhlo.ReturnOp(util.flatten(out_nodes))
   return rw.results
 
@@ -469,7 +470,7 @@ def _reduce_window_lower(
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
   rw = mhlo.ReduceWindowOp(
       mlir.aval_to_ir_types(aval_out), [operand],
-      [mlir.full_like_aval(init_value(scalar_aval.dtype), scalar_aval)],
+      [mlir.full_like_aval(ctx, init_value(scalar_aval.dtype), scalar_aval)],
       mlir.dense_int_elements(window_dimensions),
       window_strides=mlir.dense_int_elements(window_strides),
       base_dilations=mlir.dense_int_elements(base_dilation),
@@ -528,7 +529,8 @@ def _select_and_scatter_lower(
       raise NotImplementedError('Cannot lower effectful `select`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
                                       mlir.TokenSet(), select_consts,
-                                      *([a] for a in select.arguments))
+                                      *([a] for a in select.arguments),
+                                      dim_var_values=ctx.dim_var_values)
     mhlo.ReturnOp(util.flatten(out_nodes))
   scatter = op.scatter.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(scatter):
@@ -536,7 +538,8 @@ def _select_and_scatter_lower(
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
                                       mlir.TokenSet(), scatter_consts,
-                                      *([a] for a in scatter.arguments))
+                                      *([a] for a in scatter.arguments),
+                                      dim_var_values=ctx.dim_var_values)
     mhlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 

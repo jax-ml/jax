@@ -1794,8 +1794,16 @@ def is_special_dim_size(v: Any) -> bool:
   return (handler is not None)
 
 def is_constant_dim(d: DimSize) -> bool:
-  handler, ds = _dim_handler_and_canonical(d)
-  return handler.is_constant(*ds)
+  # Whether the dimension is a static constant.
+  try:
+    int(d)
+    return True
+  except:
+    return False
+
+def is_constant_shape(s: Shape) -> bool:
+  # Whether the shape is a static constant.
+  return all(is_constant_dim(d) for d in s)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
   if d1 is d2 or get_referent(d1) is get_referent(d2): return True
