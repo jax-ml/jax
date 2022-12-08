@@ -25,7 +25,7 @@ from jax._src import array
 from jax._src.sharding import NamedSharding, OpShardingSharding
 from jax.experimental import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
-from jax.experimental.gda_serialization import serialization
+from jax.experimental.array_serialization import serialization
 import numpy as np
 import tensorstore as ts
 
