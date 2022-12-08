@@ -45,6 +45,7 @@ jax.scipy.linalg
    solve_triangular
    sqrtm
    svd
+   toeplitz
    tril
    triu
 
