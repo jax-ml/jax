@@ -2294,7 +2294,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       instance_shape.insert(concat_axis, pmap_dim_id)
       expected_shape = (split_axis_id, vmap_dim_id, *instance_shape)
 
-      x = np.empty(start_shape)
+      x = np.ones(start_shape)
       self.assertEqual(reference(x, split_axis, concat_axis, vmap_axis).shape,
                        expected_shape)
 

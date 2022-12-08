@@ -25,7 +25,7 @@ from jax._src import test_util as jtu
 
 import numpy as np
 
-numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
+numpy_version = jtu.numpy_version()
 
 config.parse_flags_with_absl()
 

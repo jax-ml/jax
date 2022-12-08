@@ -1650,7 +1650,7 @@ class LaxTest(jtu.JaxTestCase):
     rng_factory = (jtu.rand_default if dtypes.issubdtype(dtype, np.integer)
                    else jtu.rand_small)
     rng = rng_factory(self.rng())
-    init_val = np.asarray(init_val, dtype=dtype)
+    init_val = np.asarray(init_val).astype(dtype)
     fun = lambda operand, init_val: lax.reduce(operand, init_val, op, dims)
     args_maker = lambda: [rng(shape, dtype), init_val]
     self._CompileAndCheck(fun, args_maker)

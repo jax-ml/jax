@@ -1231,7 +1231,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     sigma = jnp.ones((2, 2))
     key = jax.random.PRNGKey(0)
     result = jax.random.multivariate_normal(key, mean=mu, cov=sigma, shape=(10,), method=method)
-    self.assertAllClose(result[:, 0], result[:, 1])
+    self.assertAllClose(result[:, 0], result[:, 1], atol=1e-3, rtol=1e-3)
 
     # Cholesky fails for singular inputs.
     if method == 'cholesky':

@@ -35,7 +35,6 @@ FLAGS = config.FLAGS
 
 
 python_version = (sys.version_info[0], sys.version_info[1])
-numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
 
 
 # TODO(https://github.com/google/jax/issues/12291): Enable jax.Array
