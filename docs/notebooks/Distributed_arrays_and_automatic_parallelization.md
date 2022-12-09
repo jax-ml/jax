@@ -33,8 +33,6 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-
-jax.config.update('jax_array', True)
 ```
 
 +++ {"id": "eyHMwyEfQJcz"}
@@ -253,14 +251,14 @@ So far we've worked with `PositionalSharding`, but there are alternative ways to
 Another convenient way to express sharding is with the `NamedSharding`:
 
 ```{code-cell}
-from jax.experimental import maps
-from jax.experimental import PartitionSpec
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec
 from jax.experimental import mesh_utils
 from jax.sharding import NamedSharding
 P = PartitionSpec
 
 devices = mesh_utils.create_device_mesh((4, 2))
-mesh = maps.Mesh(devices, axis_names=('a', 'b'))
+mesh = Mesh(devices, axis_names=('a', 'b'))
 y = jax.device_put(x, NamedSharding(mesh, P('a', 'b')))
 jax.debug.visualize_array_sharding(y)
 ```
@@ -271,10 +269,10 @@ We can define a helper function to make things simpler:
 
 ```{code-cell}
 devices = mesh_utils.create_device_mesh((4, 2))
-default_mesh = maps.Mesh(devices, axis_names=('a', 'b'))
+default_mesh = Mesh(devices, axis_names=('a', 'b'))
 
 def mesh_sharding(
-    pspec: PartitionSpec, mesh: Optional[maps.Mesh] = None,
+    pspec: PartitionSpec, mesh: Optional[Mesh] = None,
   ) -> NamedSharding:
   if mesh is None:
     mesh = default_mesh
@@ -478,11 +476,6 @@ print('no error!')
 +++ {"id": "g4LrDDcJwkHc"}
 
 While the compiler will attempt to decide how a function's intermediate values and outputs should be sharded, we can also give it hints using `jax.lax.with_sharding_constraint`. Using `jax.lax.with_sharding_constraint` is much like `jax.device_put`, except we use it inside staged-out (i.e. `jit`-decorated) functions:
-
-```{code-cell}
-# TODO(mattjj,yashkatariya): remove cell when with_sharding_constraint is in jax.lax
-jax.lax.with_sharding_constraint = jax.experimental.pjit.with_sharding_constraint
-```
 
 ```{code-cell}
 sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
