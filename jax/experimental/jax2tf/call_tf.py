@@ -346,8 +346,21 @@ def _code_generator_and_avals(
     # get_compiler_ir for that exact device.
     tf_device_name = f"/device:{tf_platform}:0"
     try:
-      func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(*args_tf_flat)(
-        stage="hlo_serialized", device_name=tf_device_name)
+      if tf.executing_eagerly():
+        func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(
+            *args_tf_flat)(
+                stage="hlo_serialized", device_name=tf_device_name)
+      else:
+        # Use TensorSpec inputs for tf.function context and lift to eager mode.
+        with tf.init_scope():
+
+          def _convert_to_tf_spec(x):
+            return tf.TensorSpec.from_tensor(tf.convert_to_tensor(x))
+
+          args_tf_spec_flat = [_convert_to_tf_spec(arg) for arg in args_tf_flat]
+          func_tf_hlo = function_flat_tf.experimental_get_compiler_ir(
+              *args_tf_spec_flat)(
+                  stage="hlo_serialized", device_name=tf_device_name)
     except Exception as e:
       msg = ("Error compiling TensorFlow function. call_tf can used " +
               "in a staged context (under jax.jit, lax.scan, etc.) only with " +
