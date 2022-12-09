@@ -9,12 +9,13 @@ permissions:
   contents: read
 jobs:
   cloud-tpu-test:
-    runs-on: [self-hosted, tpu, v4-8]
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
         python-version: ["3.10"] # TODO(jakevdp): update to 3.11 when available.
         jaxlib-version: ["latest-release", "nightly"]
+        tpu-type: ["v3-8", "v4-8"]
+    runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
       # mandates using a specific commit for non-Google actions. We use
@@ -40,6 +41,7 @@ jobs:
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
             pip install libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+            pip install requests
 
           else
             echo "Unknown jaxlib-version: ${{ matrix.jaxlib-version }}"
@@ -66,5 +68,5 @@ jobs:
             curl --location --request POST '${{ secrets.BUILD_CHAT_WEBHOOK }}' \
             --header 'Content-Type: application/json' \
             --data-raw "{
-            'text': '\"$GITHUB_WORKFLOW\", jaxlib/libtpu version \"${{ matrix.jaxlib-version }}\" job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
+            'text': '\"$GITHUB_WORKFLOW\", jaxlib/libtpu version \"${{ matrix.jaxlib-version }}\", TPU type ${{ matrix.tpu-type }} job failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'
             }"
