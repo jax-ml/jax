@@ -598,7 +598,7 @@ def checkify_fun_to_jaxpr(
 
 
 
-def check(pred: Bool, msg: str, *args, **kwargs) -> None:
+def check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:
   """Check a predicate, add an error with msg if predicate is False.
 
   This is an effectful operation, and can't be staged (jitted/scanned/...).
@@ -606,7 +606,14 @@ def check(pred: Bool, msg: str, *args, **kwargs) -> None:
 
   Args:
     pred: if False, an error is added.
-    msg: error message if error is added.
+    msg: error message if error is added. Can be a format string.
+    fmt_args, fmt_kwargs: Positional and keyword formatting arguments for
+      `msg`, eg.:
+      ``check(.., "check failed on values {} and {named_arg}", x, named_arg=y)``
+      Note that these arguments can be traced values allowing you to add
+      run-time values to the error message.
+      Note that tracking these run-time arrays will increase your memory usage,
+      even if no error happens.
 
   For example:
 
@@ -614,21 +621,22 @@ def check(pred: Bool, msg: str, *args, **kwargs) -> None:
     >>> import jax.numpy as jnp
     >>> from jax.experimental import checkify
     >>> def f(x):
-    ...   checkify.check(x!=0, "cannot be zero!")
+    ...   checkify.check(x>0, "{x} needs to be positive!", x=x)
     ...   return 1/x
     >>> checked_f = checkify.checkify(f)
-    >>> err, out = jax.jit(checked_f)(0)
+    >>> err, out = jax.jit(checked_f)(-3.)
     >>> err.throw()  # doctest: +IGNORE_EXCEPTION_DETAIL
     Traceback (most recent call last):
       ...
-    jax._src.checkify.JaxRuntimeError: cannot be zero!
+    jax._src.checkify.JaxRuntimeError: -3. needs to be positive!
 
   """
   if not is_scalar_pred(pred):
     raise TypeError(f'check takes a scalar pred as argument, got {pred}')
-  new_error = FailedCheckError(summary(), msg, *args, **kwargs)
+  new_error = FailedCheckError(summary(), msg, *fmt_args, **fmt_kwargs)
   error = assert_func(init_error, jnp.logical_not(pred), new_error)
   return check_error(error)
+
 
 def is_scalar_pred(pred) -> bool:
   return (isinstance(pred, bool) or
