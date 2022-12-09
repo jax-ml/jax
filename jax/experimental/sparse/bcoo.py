@@ -31,7 +31,8 @@ from jax import vmap
 from jax.config import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
-  _broadcasting_vmap, _count_stored_elements, _safe_asarray, CuSparseEfficiencyWarning,
+  _broadcasting_vmap, _count_stored_elements, _safe_asarray,
+  _dot_general_validated_shape, CuSparseEfficiencyWarning,
   SparseEfficiencyError, SparseEfficiencyWarning)
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
@@ -582,14 +583,6 @@ mlir.register_lowering(bcoo_transpose_p, mlir.lower_fun(
 
 bcoo_dot_general_p = core.Primitive('bcoo_dot_general')
 
-def _dot_general_validated_shape(lhs_shape: Shape, rhs_shape: Shape, dimension_numbers: DotDimensionNumbers) -> Shape:
-  """Validate the inputs and return the output shape."""
-  lhs = core.ShapedArray(lhs_shape, np.float32)
-  rhs = core.ShapedArray(rhs_shape, np.float32)
-  return _dot_general_shape_rule(
-    lhs, rhs, dimension_numbers=dimension_numbers,
-    precision=None, preferred_element_type=None)
-
 def bcoo_dot_general(lhs: Union[BCOO, Array], rhs: Union[BCOO, Array], *, dimension_numbers: DotDimensionNumbers,
                      precision: None = None, preferred_element_type: None = None) -> Union[BCOO, Array]:
   """A general contraction operation.
@@ -611,7 +604,8 @@ def bcoo_dot_general(lhs: Union[BCOO, Array], rhs: Union[BCOO, Array], *, dimens
   # TODO(jakevdp) make use of these?
   del precision, preferred_element_type  # unused
   if isinstance(lhs, BCOO) and isinstance(rhs, BCOO):
-    shape = _dot_general_validated_shape(lhs.shape, rhs.shape, dimension_numbers)
+    shape = _dot_general_validated_shape(lhs.shape, rhs.shape,
+                                         dimension_numbers)
     bufs = _bcoo_spdot_general(lhs.data, lhs.indices, rhs.data, rhs.indices,
                                lhs_spinfo=lhs._info, rhs_spinfo=rhs._info,
                                dimension_numbers=dimension_numbers)
@@ -712,7 +706,8 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
 
   (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_spinfo.shape)
-  out_shape = _dot_general_validated_shape(lhs_spinfo.shape, rhs.shape, dimension_numbers)
+  out_shape = _dot_general_validated_shape(lhs_spinfo.shape, rhs.shape,
+                                           dimension_numbers)
 
   if lhs_batch and max(lhs_batch) >= n_batch:
     raise NotImplementedError(
@@ -1183,7 +1178,8 @@ def _bcoo_spdot_general_impl(lhs_data, lhs_indices, rhs_data, rhs_indices, *, lh
   data_aval, indices_aval = _bcoo_spdot_general_abstract_eval(
     lhs_data.aval, lhs_indices.aval, rhs_data.aval, rhs_indices.aval,
     lhs_spinfo=lhs_spinfo, rhs_spinfo=rhs_spinfo, dimension_numbers=dimension_numbers)
-  out_shape = _dot_general_validated_shape(lhs_shape, rhs_shape, dimension_numbers)
+  out_shape = _dot_general_validated_shape(lhs_shape, rhs_shape,
+                                           dimension_numbers)
   _validate_bcoo(data_aval, indices_aval, out_shape)
 
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers

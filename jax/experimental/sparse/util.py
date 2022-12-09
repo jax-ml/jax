@@ -28,6 +28,7 @@ from jax._src import stages
 from jax._src.api_util import flatten_axes
 import jax.numpy as jnp
 from jax.util import safe_zip
+from jax._src.lax.lax import _dot_general_shape_rule, DotDimensionNumbers
 from jax._src.typing import Array
 
 class SparseEfficiencyError(ValueError):
@@ -110,3 +111,13 @@ def _safe_asarray(args: Sequence[Any]) -> Iterable[Union[np.ndarray, Array]]:
   if _is_pytree_placeholder(*args) or _is_aval(*args) or _is_arginfo(*args):
     return args
   return map(_asarray_or_float0, args)
+
+def _dot_general_validated_shape(
+    lhs_shape: Tuple[int, ...], rhs_shape: Tuple[int, ...],
+    dimension_numbers: DotDimensionNumbers) -> Tuple[int, ...]:
+  """Validate the inputs and return the output shape."""
+  lhs = core.ShapedArray(lhs_shape, np.float32)
+  rhs = core.ShapedArray(rhs_shape, np.float32)
+  return _dot_general_shape_rule(
+    lhs, rhs, dimension_numbers=dimension_numbers,
+    precision=None, preferred_element_type=None)

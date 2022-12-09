@@ -32,7 +32,7 @@ from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse.bcoo import BCOOInfo
-from jax.experimental.sparse.util import _csr_to_coo
+from jax.experimental.sparse import util as sparse_util
 from jax.experimental.sparse import test_util as sptu
 from jax import lax
 from jax._src.lib import gpu_sparse
@@ -179,7 +179,7 @@ class cuSparseTest(sptu.SparseTestCase):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
     data, indices, indptr = sparse.csr_fromdense(M, nse=(M != 0).sum())
-    row, col = sparse.util._csr_to_coo(indices, indptr)
+    row, col = sparse_util._csr_to_coo(indices, indptr)
     f = lambda data: sparse.csr_todense(data, indices, indptr, shape=M.shape)
 
     # Forward-mode
@@ -1531,7 +1531,8 @@ class BCOOTest(sptu.SparseTestCase):
       return lax.dot_general(x, y, dimension_numbers=dimension_numbers)
 
     def f_sparse(xsp, ysp):
-      shape = sparse.bcoo._dot_general_validated_shape(xsp.shape, ysp.shape, dimension_numbers)
+      shape = sparse_util._dot_general_validated_shape(xsp.shape, ysp.shape,
+                                                       dimension_numbers)
       data, indices = sparse_bcoo._bcoo_spdot_general(
           xsp.data, xsp.indices, ysp.data, ysp.indices, lhs_spinfo=xsp._info,
           rhs_spinfo=ysp._info, dimension_numbers=dimension_numbers)
@@ -2317,7 +2318,7 @@ class BCSRTest(sptu.SparseTestCase):
       assert bcsr_mat.ndim == 2
       assert bcsr_mat.n_sparse == 2
       x = jnp.empty(bcsr_mat.shape, dtype=bcsr_mat.dtype)
-      row, col = _csr_to_coo(bcsr_mat.indices, bcsr_mat.indptr)
+      row, col = sparse_util._csr_to_coo(bcsr_mat.indices, bcsr_mat.indptr)
       return x.at[row, col].set(bcsr_mat.data)
 
     with self.subTest('_bcsr_to_elt'):
