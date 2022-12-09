@@ -22,6 +22,7 @@ from typing import NamedTuple, Optional, Sequence, Tuple
 import numpy as np
 
 from jax import core
+from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import _broadcasting_vmap, _count_stored_elements, _csr_to_coo, _safe_asarray
@@ -298,6 +299,7 @@ mlir.register_lowering(bcsr_extract_p, mlir.lower_fun(
     _bcsr_extract_impl, multiple_results=False))
 
 
+@tree_util.register_pytree_node_class
 class BCSR(JAXSparse):
   """Experimental batched CSR matrix implemented in JAX."""
 
@@ -344,7 +346,7 @@ class BCSR(JAXSparse):
     raise NotImplementedError("Tranpose is not implemented.")
 
   def tree_flatten(self):
-    return (self.data, self.indices, self.indptr), {}
+    return (self.data, self.indices, self.indptr), {'shape': self.shape}
 
   @classmethod
   def _empty(cls, shape, *, dtype=None, index_dtype='int32', n_dense=0,
