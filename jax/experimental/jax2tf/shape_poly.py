@@ -886,5 +886,7 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
   err_msg = (
       f"Cannot solve for values of dimension variables {unsolved_vars} from "
       f"the remaining dimension polynomials\n  {eqns_str}.{_shapeenv_to_str()} "
-      "Dimension variables can be solved only from linear polynomials.")
+      "Dimension variables can be solved only from linear polynomials.\n"
+      "\n"
+      "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
   raise ValueError(err_msg)
