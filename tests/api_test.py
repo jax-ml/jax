@@ -78,8 +78,7 @@ FLAGS = config.FLAGS
 
 
 python_version = (sys.version_info[0], sys.version_info[1])
-numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
-
+numpy_version = jtu.numpy_version()
 
 def _check_instance(self, x):
   if config.jax_array:

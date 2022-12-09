@@ -52,7 +52,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
-numpy_version = tuple(map(int, np.__version__.split('.')[:3]))
+numpy_version = jtu.numpy_version()
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (3, 1), (1, 4), (2, 1, 4), (2, 3, 4)]
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
@@ -2315,7 +2315,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertEqual(out_int64.dtype, np.int64)
     else:
       with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
-        out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+        with jtu.ignore_warning(category=DeprecationWarning,
+                                message="NumPy will stop allowing conversion.*"):
+          out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
   @jtu.sample_product(
     dtype=inexact_dtypes,
@@ -2432,7 +2434,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if numpy_version < (1, 24) or op == "dstack":
       np_fun = jtu.promote_like_jnp(lambda *args: getattr(np, op)(*args).astype(out_dtype))
     else:
-      np_fun = partial(jtu.promote_like_jnp(getattr(np, op)), dtype=out_dtype)
+      np_fun = partial(jtu.promote_like_jnp(getattr(np, op)), dtype=out_dtype,
+                       casting='unsafe')
 
     jnp_fun = partial(getattr(jnp, op), dtype=out_dtype)
     with jtu.strict_promotion_if_dtypes_match(dtypes):
@@ -3051,19 +3054,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertEqual(np.uint64(val), jnp.array(val, dtype='uint64'))
 
   def testArrayFromList(self):
-    int_max = jnp.iinfo(jnp.int64).max
-    int_min = jnp.iinfo(jnp.int64).min
+    dtype = dtypes.canonicalize_dtype('int64')
+    int_max = jnp.iinfo(dtype).max
+    int_min = jnp.iinfo(dtype).min
 
     # Values at extremes are converted correctly.
     for val in [int_min, 0, int_max]:
-      self.assertEqual(jnp.array([val]).dtype, dtypes.canonicalize_dtype('int64'))
+      self.assertEqual(jnp.array([val]).dtype, dtype)
 
     # list of values results in promoted type.
     with jax.numpy_dtype_promotion('standard'):
       self.assertEqual(jnp.array([0, np.float16(1)]).dtype, jnp.result_type('int64', 'float16'))
 
     # out of bounds leads to an OverflowError
-    val = int_min - 1
+    val = jnp.iinfo(jnp.int64).min - 1
     with self.assertRaisesRegex(OverflowError, "Python int too large.*"):
       jnp.array([0, val])
 

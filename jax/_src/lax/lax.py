@@ -1060,7 +1060,7 @@ def _get_monoid_reducer(monoid_op: Callable,
   return None
 
 def _get_bitwise_and_identity(dtype: DTypeLike) -> np.ndarray:
-  return np.array(-1, dtype)
+  return np.array(-1).astype(dtype)
 
 def _get_bitwise_or_identity(dtype: DTypeLike) -> np.ndarray:
   return np.array(0, dtype)

@@ -31,7 +31,7 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
-numpy_version = tuple(map(int, np.version.version.split('.')[:3]))
+numpy_version = jtu.numpy_version()
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
