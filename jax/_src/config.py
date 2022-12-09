@@ -1010,9 +1010,10 @@ traceback_filtering = config.define_enum_state(
 
 # This flag is for internal use.
 # TODO(tianjianlu): Removes once we always enable cusparse lowering.
+# TODO(b/262050896): Set to true after bug is fixed
 bcoo_cusparse_lowering = config.define_bool_state(
     name='jax_bcoo_cusparse_lowering',
-    default=True,
+    default=False,
     help=('Enables lowering BCOO ops to cuSparse.'))
 
 # TODO(mattjj): remove this flag when we ensure we only succeed at trace-staging
