@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Sparse test utilities."""
+import functools
+
 from typing import Any, Callable, Sequence, Union
 
 import numpy as np
@@ -23,6 +25,7 @@ from jax._src.typing import DTypeLike
 from jax import tree_util
 from jax.util import split_list
 from jax.experimental import sparse
+from jax.experimental.sparse import bcoo as sparse_bcoo
 import jax.numpy as jnp
 
 
@@ -84,23 +87,52 @@ class SparseTestCase(jtu.JaxTestCase):
     self.assertSparseArraysEquivalent(python_ans, compiled_ans, check_dtypes=check_dtypes,
                                       atol=atol, rtol=rtol)
 
+def _rand_sparse(shape: Sequence[int], dtype: DTypeLike, *,
+                 rng: np.random.RandomState, rand_method: Callable[..., Any],
+                 nse: Union[int, float], n_batch: int, n_dense: int,
+                 sparse_format: str) -> Union[sparse.BCOO, sparse.BCSR]:
+  if sparse_format not in ['bcoo', 'bcsr']:
+    raise ValueError(f"Sparse format {sparse_format} not supported.")
+
+  n_sparse = len(shape) - n_batch - n_dense
+
+  if n_sparse < 0 or n_batch < 0 or n_dense < 0:
+    raise ValueError(f"Invalid parameters: {shape=} {n_batch=} {n_sparse=}")
+
+  if sparse_format == 'bcsr' and n_sparse != 2:
+    raise ValueError("bcsr array must have 2 sparse dimensions; "
+                     f"{n_sparse} is given.")
+
+  batch_shape, sparse_shape, dense_shape = split_list(shape,
+                                                      [n_batch, n_sparse])
+  if 0 <= nse < 1:
+    nse = int(np.ceil(nse * np.prod(sparse_shape)))
+  data_rng = rand_method(rng)
+  index_shape = (*batch_shape, nse, n_sparse)
+  data_shape = (*batch_shape, nse, *dense_shape)
+  bcoo_indices = jnp.array(
+      rng.randint(0, sparse_shape, size=index_shape, dtype=np.int32))  # type: ignore[arg-type]
+  data = jnp.array(data_rng(data_shape, dtype))
+
+  if sparse_format == 'bcoo':
+    return sparse.BCOO((data, bcoo_indices), shape=shape)
+
+  bcsr_indices, bcsr_indptr = sparse_bcoo._bcoo_to_bcsr(
+      bcoo_indices, shape=shape)
+  return sparse.BCSR((data, bcsr_indices, bcsr_indptr), shape=shape)
 
 def rand_bcoo(rng: np.random.RandomState,
-              rand_method: Callable[..., Any] = jtu.rand_default,
-              nse: Union[int, float] = 0.5,
-              n_batch: int = 0, n_dense: int = 0) -> Callable[..., sparse.BCOO]:
-  def _rand_sparse(shape: Sequence[int], dtype: DTypeLike, nse: Union[int, float] = nse,
-                   n_batch: int = n_batch, n_dense: int = n_dense) -> sparse.BCOO:
-    n_sparse = len(shape) - n_batch - n_dense
-    if n_sparse < 0 or n_batch < 0 or n_dense < 0:
-      raise ValueError(f"Invalid parameters: {shape=} {n_batch=} {n_sparse=}")
-    batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
-    if 0 <= nse < 1:
-      nse = int(np.ceil(nse * np.prod(sparse_shape)))
-    data_rng = rand_method(rng)
-    index_shape = (*batch_shape, nse, n_sparse)
-    data_shape = (*batch_shape, nse, *dense_shape)
-    indices = jnp.array(rng.randint(0, sparse_shape, size=index_shape, dtype=np.int32))  # type: ignore[arg-type]
-    data = jnp.array(data_rng(data_shape, dtype))
-    return sparse.BCOO((data, indices), shape=shape)
-  return _rand_sparse
+              rand_method: Callable[..., Any]=jtu.rand_default,
+              nse: Union[int, float]=0.5, n_batch: int=0, n_dense: int=0):
+  """Generates a random BCOO array."""
+  return functools.partial(_rand_sparse, rng=rng, rand_method=rand_method,
+                           nse=nse, n_batch=n_batch, n_dense=n_dense,
+                           sparse_format='bcoo')
+
+def rand_bcsr(rng: np.random.RandomState,
+              rand_method: Callable[..., Any]=jtu.rand_default,
+              nse: Union[int, float]=0.5, n_batch: int=0, n_dense: int=0):
+  """Generates a random BCSR array."""
+  return functools.partial(_rand_sparse, rng=rng, rand_method=rand_method,
+                           nse=nse, n_batch=n_batch, n_dense=n_dense,
+                           sparse_format='bcsr')
