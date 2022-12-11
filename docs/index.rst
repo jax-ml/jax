@@ -7,7 +7,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
 
 .. note::
    JAX 0.4.0 introduces new parallelism APIs, including breaking changes to :func:`jax.experimental.pjit` and a new unified ``jax.Array`` type.
-   Please see `Parallelism with JAX <https://jax.readthedocs.io/en/latest/notebooks/Parallelism_with_JAX.html>`_ tutorial and the :ref:`jax-array-migration`
+   Please see `Distributed arrays and automatic parallelization <https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html>`_ tutorial and the :ref:`jax-array-migration`
    guide for more information.
 
 .. toctree::
@@ -52,7 +52,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
 
    notebooks/autodiff_cookbook
    multi_process
-   notebooks/Parallelism_with_JAX
+   notebooks/Distributed_arrays_and_automatic_parallelization
    notebooks/vmapped_log_probs
    notebooks/neural_network_with_tfds_data
    notebooks/Custom_derivative_rules_for_Python_code

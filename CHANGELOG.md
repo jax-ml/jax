@@ -18,8 +18,7 @@ Remember to align the itemized text with the first line of an item within a list
     breaking change to the `pjit` API.  The [jax.Array migration
     guide](https://jax.readthedocs.io/en/latest/jax_array_migration.html) can
     help you migrate your codebase to `jax.Array`. You can also look at the
-    [Parallelism with
-    JAX](https://jax.readthedocs.io/en/latest/notebooks/Parallelism_with_JAX.html)
+    [Distributed arrays and automatic parallelization](https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
     tutorial to understand the new concepts.
   * `PartitionSpec` and `Mesh` are now out of experimental. The new API endpoints
     are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.

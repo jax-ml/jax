@@ -210,7 +210,7 @@ nb_execution_excludepatterns = [
     # TODO(jakevdp): enable execution on the following if possible:
     'jax-101/*',
     'notebooks/xmap_tutorial.*',
-    'notebooks/Parallelism_with_JAX.*',
+    'notebooks/Distributed_arrays_and_automatic_parallelization.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
