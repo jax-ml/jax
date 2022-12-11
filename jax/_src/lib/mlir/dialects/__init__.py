@@ -23,3 +23,5 @@ import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
 from jax.lib import xla_client
 if xla_client.mlir_api_version >= 37:
   import jaxlib.mlir.dialects.stablehlo as stablehlo
+
+xhlo = stablehlo if xla_client.mlir_api_version >= 40 else mhlo

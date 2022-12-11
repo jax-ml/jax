@@ -370,43 +370,47 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect='foo')
       return x + 1.
-    mhlo = f.lower(2.).compiler_ir()
-    main = mhlo.body.operations[0]
+
+    module = f.lower(2.).compiler_ir()
+    main = module.body.operations[0]
     first_op = main.body.blocks[0].operations[0]
-    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', first_op.operation.name)
 
     @jax.jit
     def f(x):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='foo2')
       return x + 1.
-    mhlo = f.lower(2.).compiler_ir()
-    main = mhlo.body.operations[0]
+
+    module = f.lower(2.).compiler_ir()
+    main = module.body.operations[0]
     first_op = main.body.blocks[0].operations[0]
-    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', first_op.operation.name)
     second_op = main.body.blocks[0].operations[1]
-    self.assertEqual(second_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', second_op.operation.name)
 
     @jax.jit
     def f(x):
       effect_p.bind(effect='foo')
       return x + 1.
-    mhlo = f.lower(2.).compiler_ir()
-    main = mhlo.body.operations[0]
+
+    module = f.lower(2.).compiler_ir()
+    main = module.body.operations[0]
     first_op = main.body.blocks[0].operations[0]
-    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', first_op.operation.name)
 
     @jax.jit
     def f(x):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='foo2')
       return x + 1.
-    mhlo = f.lower(2.).compiler_ir()
-    main = mhlo.body.operations[0]
+
+    module = f.lower(2.).compiler_ir()
+    main = module.body.operations[0]
     first_op = main.body.blocks[0].operations[0]
-    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', first_op.operation.name)
     second_op = main.body.blocks[0].operations[1]
-    self.assertEqual(second_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', second_op.operation.name)
 
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
 
@@ -417,18 +421,18 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       return x + 1.
 
-    mhlo = f.lower(2.).compiler_ir()
-    main = mhlo.body.operations[0]
+    module = f.lower(2.).compiler_ir()
+    main = module.body.operations[0]
     first_op = main.body.blocks[0].operations[0]
-    self.assertEqual(first_op.operation.name, "mhlo.create_token")
+    self.assertIn('hlo.create_token', first_op.operation.name)
     second_op = main.body.blocks[0].operations[1]
     self.assertEqual(second_op.operation.name, "func.call")
     self.assertEqual(str(second_op.attributes["callee"]), "@effect")
     self.assertEqual(second_op.operands[0].owner, first_op)
-    func = mhlo.body.operations[1]
+    func = module.body.operations[1]
     self.assertEqual(func.name.value, "effect")
-    self.assertEqual(str(func.type.inputs[0]), "!mhlo.token")
-    self.assertEqual(str(func.type.results[0]), "!mhlo.token")
+    self.assertIn('hlo.token', str(func.type.inputs[0]))
+    self.assertIn('hlo.token', str(func.type.results[0]))
 
   def test_nontrivial_lowering_with_unordered_effect_should_consume_token(self):
 
@@ -439,13 +443,13 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       effect_p.bind(effect='bar')
       return x + 1.
 
-    mhlo = f.lower(2.).compiler_ir()
-    main = mhlo.body.operations[0]
+    module = f.lower(2.).compiler_ir()
+    main = module.body.operations[0]
     first_op = main.body.blocks[0].operations[0]
     self.assertEqual(first_op.operation.name, "func.call")
     self.assertEqual(str(first_op.attributes["callee"]), "@effect")
     self.assertLen(list(first_op.operands), 0)
-    func = mhlo.body.operations[1]
+    func = module.body.operations[1]
     self.assertEqual(func.name.value, "effect")
     self.assertLen(list(func.type.inputs), 0)
     self.assertLen(list(func.type.results), 0)
@@ -455,13 +459,14 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect='bar')
       return x + 1.
-    mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
-    input_types = mhlo.body.operations[0].type.inputs
+
+    module = f.lower(1.).compiler_ir()
+    input_types = module.body.operations[0].type.inputs
     self.assertLen(list(input_types), 1)
     self.assertEqual(str(input_types[0]), 'tensor<f32>')
 
     # First output should be output token
-    result_types = mhlo.body.operations[0].type.results
+    result_types = module.body.operations[0].type.results
     if not can_execute_with_token:
       self.assertLen(list(result_types), 2)
       self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
@@ -476,14 +481,15 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     def f(x):
       effect_p.bind(effect='foo')
       return x + 1.
-    mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
-    input_types = mhlo.body.operations[0].type.inputs
+
+    module = f.lower(1.).compiler_ir()
+    input_types = module.body.operations[0].type.inputs
     # First argument should be dummy token
     self.assertLen(list(input_types), 2)
     self.assertEqual(str(input_types[0]), 'tensor<0xi1>')
 
     # First output should be dummy token
-    result_types = mhlo.body.operations[0].type.results
+    result_types = module.body.operations[0].type.results
     self.assertLen(list(result_types), 2)
     self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
 
@@ -493,15 +499,16 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='foo2')
       return x + 1.
-    mhlo = f.lower(1.).compiler_ir(dialect='mhlo')
-    input_types = mhlo.body.operations[0].type.inputs
+
+    module = f.lower(1.).compiler_ir()
+    input_types = module.body.operations[0].type.inputs
     # First two arguments should be dummy values
     self.assertLen(list(input_types), 3)
     self.assertEqual(str(input_types[0]), 'tensor<0xi1>')
     self.assertEqual(str(input_types[1]), 'tensor<0xi1>')
 
     # First two outputs should be dummy values
-    result_types = mhlo.body.operations[0].type.results
+    result_types = module.body.operations[0].type.results
     self.assertLen(list(result_types), 3)
     self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
     self.assertEqual(str(result_types[1]), 'tensor<0xi1>')

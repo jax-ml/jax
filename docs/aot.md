@@ -20,7 +20,7 @@ are arrays, JAX does the following in order:
    their shape and element type).
 
 2. **Lower** this specialized, staged-out computation to the XLA compiler's
-   input language, MHLO.
+   input language, StableHLO.
 
 3. **Compile** the lowered HLO program to produce an optimized executable for
    the target device (CPU, GPU, or TPU).
@@ -45,9 +45,9 @@ way. An example:
 >>> print(lowered.as_text())
 module @jit_f.0 {
   func.func public @main(%arg0: tensor<i32>, %arg1: tensor<i32>) -> tensor<i32> {
-    %0 = mhlo.constant dense<2> : tensor<i32>
-    %1 = mhlo.multiply %0, %arg0 : tensor<i32>
-    %2 = mhlo.add %1, %arg1 : tensor<i32>
+    %0 = stablehlo.constant dense<2> : tensor<i32>
+    %1 = stablehlo.multiply %0, %arg0 : tensor<i32>
+    %2 = stablehlo.add %1, %arg1 : tensor<i32>
     return %2 : tensor<i32>
   }
 }
@@ -129,8 +129,8 @@ to invoke the resulting compiled function. Continuing with our example above:
 >>> print(lowered_with_x.as_text())
 module @jit_f.1 {
   func.func public @main(%arg0: tensor<i32>) -> tensor<i32> {
-    %0 = mhlo.constant dense<14> : tensor<i32>
-    %1 = mhlo.add %0, %arg0 : tensor<i32>
+    %0 = stablehlo.constant dense<14> : tensor<i32>
+    %1 = stablehlo.add %0, %arg0 : tensor<i32>
     return %1 : tensor<i32>
   }
 }

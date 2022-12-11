@@ -15,10 +15,9 @@
 from typing import List
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
+import jaxlib.mlir.dialects.stablehlo as xhlo
 
-
-from .mhlo_helpers import custom_call
+from .xhlo_helpers import custom_call
 from .cpu import _ducc_fft
 import numpy as np
 
@@ -107,7 +106,7 @@ def _ducc_fft_descriptor(shape: List[int], dtype, fft_type: FftType,
   return descriptor, out_dtype, out_shape
 
 
-def ducc_fft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
+def ducc_fft_xhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
   """DUCC FFT kernel for CPU."""
   a_type = ir.RankedTensorType(a.type)
   n = len(a_type.shape)
@@ -128,15 +127,13 @@ def ducc_fft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
     raise ValueError(f"Unknown output type {out_dtype}")
 
   if 0 in a_type.shape or 0 in out_shape:
-    zero = mhlo.ConstantOp(
-        ir.DenseElementsAttr.get(
-            np.array(0, dtype=out_dtype), type=out_type))
-    return mhlo.BroadcastOp(
-        zero,
-        ir.DenseElementsAttr.get(np.asarray(out_shape, np.int64))).result
+    zero = xhlo.ConstantOp(
+        ir.DenseElementsAttr.get(np.array(0, dtype=out_dtype), type=out_type))
+    return xhlo.BroadcastOp(
+        zero, ir.DenseElementsAttr.get(np.asarray(out_shape, np.int64))).result
 
   u8_type = ir.IntegerType.get_unsigned(8)
-  descriptor = mhlo.ConstantOp(
+  descriptor = xhlo.ConstantOp(
       ir.DenseElementsAttr.get(
           np.frombuffer(descriptor_bytes, dtype=np.uint8), type=u8_type))
   layout = tuple(range(n - 1, -1, -1))

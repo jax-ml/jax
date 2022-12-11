@@ -26,7 +26,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src import util
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import xhlo
 from jax._src.lib import xla_client
 
 _max = builtins.max
@@ -688,35 +688,56 @@ def _conv_general_dilated_lower(
     return complex_conv(ctx, lhs, rhs)
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  dnums = mhlo.ConvDimensionNumbers.get(
-    input_batch_dimension=lhs_spec[0],
-    input_feature_dimension=lhs_spec[1],
-    input_spatial_dimensions=list(lhs_spec[2:]),
-    kernel_output_feature_dimension=rhs_spec[0],
-    kernel_input_feature_dimension=rhs_spec[1],
-    kernel_spatial_dimensions=list(rhs_spec[2:]),
-    output_batch_dimension=out_spec[0],
-    output_feature_dimension=out_spec[1],
-    output_spatial_dimensions=list(out_spec[2:]))
+  dnums = xhlo.ConvDimensionNumbers.get(
+      input_batch_dimension=lhs_spec[0],
+      input_feature_dimension=lhs_spec[1],
+      input_spatial_dimensions=list(lhs_spec[2:]),
+      kernel_output_feature_dimension=rhs_spec[0],
+      kernel_input_feature_dimension=rhs_spec[1],
+      kernel_spatial_dimensions=list(rhs_spec[2:]),
+      output_batch_dimension=out_spec[0],
+      output_feature_dimension=out_spec[1],
+      output_spatial_dimensions=list(out_spec[2:]))
   num_spatial_dims = len(rhs_spec) - 2
   if len(padding) == 0:
     padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  return [
-      mhlo.ConvolutionOp(
-        mlir.aval_to_ir_type(aval_out),
-        lhs,
-        rhs,
-        dimension_numbers=dnums,
-        feature_group_count=mlir.i64_attr(feature_group_count),
-        batch_group_count=mlir.i64_attr(batch_group_count),
-        window_strides=mlir.dense_int_elements(window_strides),
-        padding=mlir.dense_int_elements(padding),
-        lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-        rhs_dilation=mlir.dense_int_elements(rhs_dilation),
-        window_reversal=window_reversal,
-        precision_config=lax.precision_attr(precision)).result
-  ]
+  if xla_client.mlir_api_version < 40:
+    return [
+        xhlo.ConvolutionOp(
+            mlir.aval_to_ir_type(aval_out),
+            lhs,
+            rhs,
+            dimension_numbers=dnums,
+            feature_group_count=mlir.i64_attr(feature_group_count),
+            batch_group_count=mlir.i64_attr(batch_group_count),
+            window_strides=mlir.dense_int_elements(window_strides),
+            padding=mlir.dense_int_elements(padding),
+            lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+            rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+            window_reversal=window_reversal,
+            precision_config=lax.precision_attr(precision)).result
+    ]
+  else:
+    # TODO(b/253644255): Improve type inference of ConvolutionOp to take
+    # preferred_element_type into account.
+    results = [mlir.aval_to_ir_type(aval_out)]
+    operands = [lhs, rhs]
+    attributes = {
+        "dimension_numbers": dnums,
+        "feature_group_count": mlir.i64_attr(feature_group_count),
+        "batch_group_count": mlir.i64_attr(batch_group_count),
+        "window_strides": mlir.dense_int_elements(window_strides),
+        "padding": mlir.dense_int_elements(padding),
+        "lhs_dilation": mlir.dense_int_elements(lhs_dilation),
+        "rhs_dilation": mlir.dense_int_elements(rhs_dilation),
+        "window_reversal": window_reversal,
+        "precision_config": lax.precision_attr(precision)
+    }
+    return [
+        xhlo.ConvolutionOp.build_generic(
+            results=results, operands=operands, attributes=attributes).result
+    ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on

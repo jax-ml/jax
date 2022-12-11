@@ -43,7 +43,7 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
 from jax._src import device_array
-from jax._src.lib import xla_bridge
+from jax._src.lib import mlir_api_version, xla_bridge
 from jax._src.util import prod, safe_map, safe_zip
 from jax.interpreters import pxla
 from jax.interpreters import xla
@@ -276,6 +276,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
     self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+    if mlir_api_version >= 37:
+      self.assertIsInstance(f.as_text(dialect='stablehlo'), str)
 
   def testLowerCompilerIR(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -285,6 +287,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+    if mlir_api_version >= 37:
+      self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
   @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):

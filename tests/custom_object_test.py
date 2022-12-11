@@ -155,10 +155,12 @@ def _sp_indices_abstract_eval(mat):
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
 
-def _sp_indices_mhlo_lowering(ctx, data_and_indices):
+
+def _sp_indices_xhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[1]]
 
-mlir.register_lowering(sp_indices_p, _sp_indices_mhlo_lowering)
+
+mlir.register_lowering(sp_indices_p, _sp_indices_xhlo_lowering)
 
 sp_data_p = core.Primitive('sp_data')
 
@@ -173,10 +175,12 @@ def _sp_data_abstract_eval(mat):
 # Note: cannot use lower_fun to define attribute access primitives
 # because it leads to infinite recursion.
 
-def _sp_data_mhlo_lowering(ctx, data_and_indices):
+
+def _sp_data_xhlo_lowering(ctx, data_and_indices):
   return [data_and_indices[0]]
 
-mlir.register_lowering(sp_data_p, _sp_data_mhlo_lowering)
+
+mlir.register_lowering(sp_data_p, _sp_data_xhlo_lowering)
 
 def identity(x):
   return identity_p.bind(x)

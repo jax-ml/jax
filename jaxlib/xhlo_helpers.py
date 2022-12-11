@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Helpers for building MHLO operators
+# Helpers for building StableHLO operators
 
 from typing import Dict, Optional, Sequence, Union
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
+import jaxlib.mlir.dialects.stablehlo as xhlo
 import numpy as np
 
 
@@ -31,18 +31,17 @@ def custom_call(
     api_version: int = 2,
     operand_output_aliases: Dict[int, int] = {},
 ) -> Union[ir.Value, Sequence[ir.Value]]:
-  """Less-verbose helper for building an MHLO custom call op.
+  """Less-verbose helper for building an StableHLO custom call op.
 
   Once https://github.com/llvm/llvm-project/issues/54932 is fixed, this helper
   may be able to go away.
 
-  Args:
-  ...
+  Args: ...
   operand_output_alias: a dictionary mapping input numbers -> output numbers
-    that must alias.
+  that must alias.
   """
   i32_type = ir.IntegerType.get_signless(32)
-  out = mhlo.CustomCallOp(
+  out = xhlo.CustomCallOp(
       (out_types
        if len(out_types) == 1 else [ir.TupleType.get_tuple(out_types)]),
       operands,
@@ -63,7 +62,7 @@ def custom_call(
               type=ir.IndexType.get()) for l in result_layouts
       ]),
       output_operand_aliases=ir.ArrayAttr.get([
-          mhlo.OutputOperandAlias.get(
+          xhlo.OutputOperandAlias.get(
               output_tuple_indices=[] if len(out_types) == 1 else [output],
               operand_index=input,
               operand_tuple_indices=[])
@@ -73,6 +72,6 @@ def custom_call(
     return out.result
   else:
     return [
-        mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
+        xhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
         for i in range(len(out_types))
     ]

@@ -1205,8 +1205,8 @@ unreachable_p.def_impl(unreachable_impl)
 
 # Translation raises an exception
 # TODO(frostig,mattjj): We have no good way to translate a function
-# that errs. Since MHLO lowering over-approximates concrete evaluation,
-# we err on MHLO lowering for the time being.
+# that errs. Since StableHLO lowering over-approximates concrete evaluation,
+# we err on StableHLO lowering for the time being.
 mlir.register_lowering(unreachable_p, unreachable_impl)
 
 # Abstract evaluation proceeds without issue, to allow for staging

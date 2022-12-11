@@ -41,8 +41,9 @@ from jax._src import util
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import xhlo
 from jax._src.numpy.ufuncs import logaddexp
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (
@@ -1419,7 +1420,7 @@ def _while_transpose_error(*_, **kwargs):
 #     break
 #   token, x = body(token, x)
 # ```
-# Unfortunately, with an MHLO while we can't (1) return multiple values
+# Unfortunately, with an StableHLO while we can't (1) return multiple values
 # from a `cond` and (2) can't break a while loop. We thus adopt the
 # following rewrite strategy:
 # ```
@@ -1470,7 +1471,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
   args = [*tokens, *args]
 
   flat_args = mlir.flatten_lowering_ir_args(args)
-  while_op = mhlo.WhileOp(flat_loop_carry_types, flat_args)
+  while_op = xhlo.WhileOp(flat_loop_carry_types, flat_args)
 
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(*flat_loop_carry_types)
@@ -1497,12 +1498,12 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           tokens_in=mlir.TokenSet(),
           tokens_out=None)
       pred, = lax._unary_reduce_lower(
-          mhlo.OrOp,
+          xhlo.OrOp,
           lambda dtype: np.array(False, dtype),
           pred_ctx,
           pred,
           axes=tuple(range(len(pred_aval.shape))))
-    mhlo.ReturnOp([pred])
+    xhlo.ReturnOp([pred])
 
   # Loop body
   body_block = while_op.regions[1].blocks.append(*flat_loop_carry_types)
@@ -1530,11 +1531,13 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           _map(mlir.ir_constants, cond_jaxpr.consts),
           *(x + z), dim_var_values=ctx.dim_var_values)
       new_z = _map(
-          partial(_pred_bcast_select_mhlo, ctx, pred_aval, body_pred), new_z, z,
+          partial(_pred_bcast_select_xhlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
-    mhlo.ReturnOp([*util.flatten(out_tokens), *util.flatten(x),
-                   *util.flatten(y), *util.flatten(new_z)])
+    xhlo.ReturnOp([
+        *util.flatten(out_tokens), *util.flatten(x), *util.flatten(y),
+        *util.flatten(new_z)
+    ])
 
   outputs = util.unflatten(while_op.results, _map(len, loop_carry_types))
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])
@@ -1565,13 +1568,16 @@ mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck
 
 
-def _pred_bcast_select_mhlo(ctx,
-    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
-    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
+def _pred_bcast_select_xhlo(ctx, pred_aval: core.ShapedArray, pred: ir.Value,
+                            xs: Sequence[ir.Value], ys: Sequence[ir.Value],
+                            x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
   if x_y_aval is core.abstract_token:
     x, = xs
     y, = ys
-    return [mhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
+    if xc.mlir_api_version < 40:
+      return [xhlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
+    else:
+      return [xhlo.AfterAllOp([x, y]).result]
   else:
     assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
     x, = xs
@@ -1585,7 +1591,7 @@ def _pred_bcast_select_mhlo(ctx,
       x_y_shape = x_y_aval.shape
     bcast_pred = mlir.broadcast_in_dim(ctx, pred, core.DShapedArray(x_y_shape, np.dtype(np.bool_)),
                                        broadcast_dimensions=list(range(len(pred_aval.shape))))
-    return mhlo.SelectOp(bcast_pred, x, y).results
+    return xhlo.SelectOp(bcast_pred, x, y).results
 
 ### fori_loop
 

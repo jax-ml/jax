@@ -30,77 +30,77 @@ jax.config.update("jax_enable_x64", True)
 
 def main(_):
   # CHECK-LABEL: TEST: bitwise_not bool[7]
-  # CHECK: mhlo.not
+  # CHECK: hlo.not
   # CHECK-SAME: tensor<7xi1>
   print_ir(np.empty([7], np.bool_))(lax.bitwise_not)
 
   # CHECK-LABEL: TEST: neg int8[]
-  # CHECK: mhlo.negate
+  # CHECK: hlo.negate
   # CHECK-SAME: tensor<i8>
   print_ir(np.int8(0))(lax.neg)
 
   # CHECK-LABEL: TEST: neg int16[0]
-  # CHECK: mhlo.negate
+  # CHECK: hlo.negate
   # CHECK-SAME: tensor<0xi16>
   print_ir(np.empty([0], np.int16))(lax.neg)
 
   # CHECK-LABEL: TEST: neg int32[2,3]
-  # CHECK: mhlo.negate
+  # CHECK: hlo.negate
   # CHECK-SAME: tensor<2x3xi32>
   print_ir(np.empty([2, 3], np.int32))(lax.neg)
 
   # CHECK-LABEL: TEST: neg int64[2,3,4]
-  # CHECK: mhlo.negate
+  # CHECK: hlo.negate
   # CHECK-SAME: tensor<2x3x4xi64>
   print_ir(np.empty([2,3,4], np.int64))(lax.neg)
 
   # CHECK-LABEL: TEST: add uint8[4,0,1] uint8[4,0,1]
-  # CHECK: mhlo.add
+  # CHECK: hlo.add
   # CHECK-SAME: tensor<4x0x1xui8>
   print_ir(np.empty([4,0,1], np.uint8), np.empty([4,0,1], np.uint8))(lax.add)
 
   # CHECK-LABEL: TEST: add uint16[] uint16[]
-  # CHECK: mhlo.add
+  # CHECK: hlo.add
   # CHECK-SAME: tensor<ui16>
   print_ir(np.uint16(0), np.uint16(0))(lax.add)
 
   # CHECK-LABEL: TEST: add uint32[] uint32[]
-  # CHECK: mhlo.add
+  # CHECK: hlo.add
   # CHECK-SAME: tensor<ui32>
   print_ir(np.uint32(0), np.uint32(0))(lax.add)
 
   # CHECK-LABEL: TEST: add uint64[] uint64[]
-  # CHECK: mhlo.add
+  # CHECK: hlo.add
   # CHECK-SAME: tensor<ui64>
   print_ir(np.uint64(0), np.uint64(0))(lax.add)
 
   # CHECK-LABEL: TEST: sin float16[]
-  # CHECK: mhlo.sine
+  # CHECK: hlo.sine
   # CHECK-SAME: tensor<f16>
   print_ir(np.float16(0))(lax.sin)
 
   # CHECK-LABEL: TEST: sin bfloat16[]
-  # CHECK: mhlo.sine
+  # CHECK: hlo.sine
   # CHECK-SAME: tensor<bf16>
   print_ir(jnp.bfloat16(0))(lax.sin)
 
   # CHECK-LABEL: TEST: sin float32[]
-  # CHECK: mhlo.sine
+  # CHECK: hlo.sine
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.sin)
 
   # CHECK-LABEL: TEST: sin float64[]
-  # CHECK: mhlo.sine
+  # CHECK: hlo.sine
   # CHECK-SAME: tensor<f64>
   print_ir(np.float64(0))(lax.sin)
 
   # CHECK-LABEL: TEST: cos complex64[]
-  # CHECK: mhlo.cosine
+  # CHECK: hlo.cosine
   # CHECK-SAME: tensor<complex<f32>>
   print_ir(np.complex64(0))(lax.cos)
 
   # CHECK-LABEL: TEST: cos complex128[]
-  # CHECK: mhlo.cosine
+  # CHECK: hlo.cosine
   # CHECK-SAME: tensor<complex<f64>>
   print_ir(np.complex128(0))(lax.cos)
 

@@ -169,7 +169,8 @@ class Lowering(Protocol):
     compiler.
 
     Args:
-      dialect: Optional string specifying a representation dialect (e.g. "mhlo")
+      dialect: Optional string specifying a representation dialect
+      (e.g. "stablehlo")
     """
     raise NotImplementedError
 
@@ -264,22 +265,31 @@ class XlaLowering(Lowering):
 
   def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""
-    raise NotImplementedError("must override")
+    if xc.mlir_api_version < 40:
+      raise NotImplementedError("must override")
+    module_str = xla_extension.mlir.stablehlo_to_mhlo(
+        mlir.module_to_string(self.stablehlo()))
+    with mlir.make_ir_context():
+      return ir.Module.parse(module_str)
 
   def stablehlo(self) -> ir.Module:
     """Return a StableHLO representation of this computation."""
     if xc.mlir_api_version < 37:
       raise NotImplementedError("unsupported in older versions of jaxlib")
-    module_str = xla_extension.mlir.mhlo_to_stablehlo(
-        mlir.module_to_string(self.mhlo()))
-    with mlir.make_ir_context():
-      return ir.Module.parse(module_str)
+    if xc.mlir_api_version < 40:
+      module_str = xla_extension.mlir.mhlo_to_stablehlo(
+          mlir.module_to_string(self.mhlo()))
+      with mlir.make_ir_context():
+        return ir.Module.parse(module_str)
+    raise NotImplementedError("must override")
 
   def compile(self) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
-    if dialect is None or dialect == "mhlo":
+    if dialect is None:
+      dialect = "stablehlo" if xc.mlir_api_version >= 40 else "mhlo"
+    if dialect == "mhlo":
       return str(self.mhlo())
     elif dialect == "stablehlo":
       return str(self.stablehlo())
@@ -289,7 +299,9 @@ class XlaLowering(Lowering):
       raise ValueError(f"unknown dialect: {dialect}")
 
   def compiler_ir(self, dialect: Optional[str] = None) -> Any:
-    if dialect is None or dialect == "mhlo":
+    if dialect is None:
+      dialect = "stablehlo" if xc.mlir_api_version >= 40 else "mhlo"
+    if dialect == "mhlo":
       return self.mhlo()
     elif dialect == "stablehlo":
       return self.stablehlo()
@@ -581,7 +593,7 @@ class Lowered(Stage):
     nor reliable serialization. It is relayed directly to external callers.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
     """
     return self._lowering.as_text(dialect)
 
@@ -596,7 +608,7 @@ class Lowered(Stage):
     runtime.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
     """
     try:
       return self._lowering.compiler_ir(dialect)

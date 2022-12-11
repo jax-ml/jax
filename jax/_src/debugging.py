@@ -38,7 +38,7 @@ from jax._src import util
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import xhlo
 import jax.numpy as jnp
 
 import numpy as np
@@ -335,15 +335,15 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   # partitioner runs so we keep it alive by attaching it to the executable.
   ctx.module_context.add_keepalive(sharding_callback_info)
 
-  mhlo.CustomCallOp([value.type], [value],
-                    call_target_name=ir.StringAttr.get(
-                      _INSPECT_SHARDING_CALL_NAME),
-                    has_side_effect=ir.BoolAttr.get(True),
-                    api_version=mlir.i32_attr(1),
-                    called_computations=ir.ArrayAttr.get([]),
-                    backend_config=ir.StringAttr.get(key),
-                    operand_layouts=None,
-                    result_layouts=None)
+  xhlo.CustomCallOp(
+      [value.type], [value],
+      call_target_name=ir.StringAttr.get(_INSPECT_SHARDING_CALL_NAME),
+      has_side_effect=ir.BoolAttr.get(True),
+      api_version=mlir.i32_attr(1),
+      called_computations=ir.ArrayAttr.get([]),
+      backend_config=ir.StringAttr.get(key),
+      operand_layouts=None,
+      result_layouts=None)
   return []
 mlir.register_lowering(inspect_sharding_p, _inspect_sharding_lowering_rule)
 

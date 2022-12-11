@@ -530,9 +530,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(actual, expected, check_dtypes=False)
     self.assertLen(actual[0]['a'].device_buffers, 4)
 
-    mhlo_str = str(f.lower(x).compiler_ir(dialect="mhlo"))
-    self.assertIn("unspecified_dims=[0]", mhlo_str)
-    self.assertIn("unspecified_dims=[1]", mhlo_str)
+    mlir_str = str(f.lower(x).compiler_ir())
+    self.assertIn('unspecified_dims=[0]', mlir_str)
+    self.assertIn('unspecified_dims=[1]', mlir_str)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testShardingConstraintPyTreeVmapWithUnconstrainedDims(self):
@@ -550,9 +550,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     v = np.arange(prod(shape)).reshape(shape)
     x = [{'a': v, 'b': v * 2}, v * 3]
 
-    mhlo_str = str(f.lower(x).compiler_ir(dialect="mhlo"))
-    self.assertIn("unspecified_dims=[0,1]", mhlo_str)
-    self.assertIn("unspecified_dims=[0,2]", mhlo_str)
+    mlir_str = str(f.lower(x).compiler_ir())
+    self.assertIn('unspecified_dims=[0,1]', mlir_str)
+    self.assertIn('unspecified_dims=[0,2]', mlir_str)
 
   def testCaching(self):
     def f(x):
@@ -952,6 +952,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
     self.assertIsInstance(f.as_text(dialect='mhlo'), str)
+    if xc.mlir_api_version >= 37:
+      self.assertIsInstance(f.as_text(dialect='stablehlo'), str)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompilerIR(self):
@@ -967,6 +969,8 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
+    if xc.mlir_api_version >= 37:
+      self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
   @jtu.ignore_warning(category=DeprecationWarning)
   @jtu.with_mesh([('x', 2), ('y', 2)])

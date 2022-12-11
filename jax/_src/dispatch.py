@@ -66,10 +66,11 @@ BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
 FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
-    'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
-    help="Path to which HLO/MHLO IR that is emitted by JAX as input to the "
-         "compiler should be dumped as text files. Optional. If omitted, JAX "
-         "will not dump IR.")
+    "jax_dump_ir_to",
+    os.getenv("JAX_DUMP_IR_TO", ""),
+    help="Path to which HLO/StableHLO IR that is emitted by JAX as input to "
+    "the compiler should be dumped as text files. Optional. If omitted, "
+    "JAX will not dump IR.")
 
 
 traceback_util.register_exclusion(__file__)
@@ -980,8 +981,21 @@ class XlaComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
+    if xc.mlir_api_version < 40:
+      if self.is_trivial():
+        raise ValueError("A trivial computation has no MHLO")
+      if isinstance(self._hlo, xc.XlaComputation):
+        module_str = xe.mlir.xla_computation_to_mlir_module(self._hlo)
+        with mlir.make_ir_context():
+          return ir.Module.parse(module_str)
+      return self._hlo
+    return super().mhlo()
+
+  def stablehlo(self) -> ir.Module:
+    if xc.mlir_api_version < 40:
+      return super().stablehlo()
     if self.is_trivial():
-      raise ValueError("A trivial computation has no MHLO")
+      raise ValueError("A trivial computation has no StableHLO")
     if isinstance(self._hlo, xc.XlaComputation):
       module_str = xe.mlir.xla_computation_to_mlir_module(self._hlo)
       with mlir.make_ir_context():

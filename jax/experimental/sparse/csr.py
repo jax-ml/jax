@@ -209,7 +209,8 @@ def _csr_todense_abstract_eval(data, indices, indptr, *, shape):
 _csr_todense_lowering = mlir.lower_fun(
     _csr_todense_impl, multiple_results=False)
 
-def _csr_todense_gpu_lowering(csr_todense_mhlo, ctx, data, indices, indptr, *,
+
+def _csr_todense_gpu_lowering(csr_todense_xhlo, ctx, data, indices, indptr, *,
                               shape):
   data_aval, indices_aval, _ = ctx.avals_in
   dtype = data_aval.dtype
@@ -217,9 +218,15 @@ def _csr_todense_gpu_lowering(csr_todense_mhlo, ctx, data, indices, indptr, *,
     warnings.warn(f"csr_todense cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_todense_lowering(ctx, data, indices, indptr, shape=shape)
-  return [csr_todense_mhlo(
-      data, indices, indptr, shape=shape, data_dtype=dtype,
-      index_dtype=indices_aval.dtype)]
+  return [
+      csr_todense_xhlo(
+          data,
+          indices,
+          indptr,
+          shape=shape,
+          data_dtype=dtype,
+          index_dtype=indices_aval.dtype)
+  ]
 
 
 def _csr_todense_jvp(data_dot, data, indices, indptr, *, shape):
@@ -301,15 +308,20 @@ def _csr_fromdense_abstract_eval(mat, *, nse, index_dtype):
 _csr_fromdense_lowering = mlir.lower_fun(_csr_fromdense_impl,
                                          multiple_results=True)
 
-def _csr_fromdense_gpu_lowering(csr_fromdense_mhlo, ctx, mat, *, nse, index_dtype):
+
+def _csr_fromdense_gpu_lowering(csr_fromdense_xhlo, ctx, mat, *, nse,
+                                index_dtype):
   dtype = ctx.avals_in[0].dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
     warnings.warn(f"csr_fromdense cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_fromdense_lowering(ctx, mat, nse=nse, index_dtype=index_dtype)
-  data, indices, indptr = csr_fromdense_mhlo(
-      mat, nnz=nse, index_dtype=np.dtype(index_dtype),
-      data_dtype=dtype, index_type=mlir.dtype_to_ir_type(np.dtype(index_dtype)))
+  data, indices, indptr = csr_fromdense_xhlo(
+      mat,
+      nnz=nse,
+      index_dtype=np.dtype(index_dtype),
+      data_dtype=dtype,
+      index_type=mlir.dtype_to_ir_type(np.dtype(index_dtype)))
   return [data, indices, indptr]
 
 
@@ -394,7 +406,8 @@ def _csr_matvec_abstract_eval(data, indices, indptr, v, *, shape, transpose):
 
 _csr_matvec_lowering = mlir.lower_fun(_csr_matvec_impl, multiple_results=False)
 
-def _csr_matvec_gpu_lowering(csr_matvec_mhlo, ctx, data, indices, indptr, v, *,
+
+def _csr_matvec_gpu_lowering(csr_matvec_xhlo, ctx, data, indices, indptr, v, *,
                              shape, transpose):
   data_aval, indices_aval, _, v_aval = ctx.avals_in
   dtype = data_aval.dtype
@@ -403,9 +416,18 @@ def _csr_matvec_gpu_lowering(csr_matvec_mhlo, ctx, data, indices, indptr, v, *,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_matvec_lowering(ctx, data, indices, indptr, v, shape=shape,
                                 transpose=transpose)
-  return [csr_matvec_mhlo(
-      data, indices, indptr, v, shape=shape, transpose=transpose,
-      data_dtype=dtype, index_dtype=indices_aval.dtype, x_dtype=v_aval.dtype)]
+  return [
+      csr_matvec_xhlo(
+          data,
+          indices,
+          indptr,
+          v,
+          shape=shape,
+          transpose=transpose,
+          data_dtype=dtype,
+          index_dtype=indices_aval.dtype,
+          x_dtype=v_aval.dtype)
+  ]
 
 
 def _csr_matvec_jvp_mat(data_dot, data, indices, indptr, v, *, shape, transpose):
@@ -486,7 +508,8 @@ def _csr_matmat_abstract_eval(data, indices, indptr, B, *, shape, transpose):
 
 _csr_matmat_lowering = mlir.lower_fun(_csr_matmat_impl, multiple_results=False)
 
-def _csr_matmat_gpu_lowering(csr_matmat_mhlo, ctx, data, indices, indptr, B, *,
+
+def _csr_matmat_gpu_lowering(csr_matmat_xhlo, ctx, data, indices, indptr, B, *,
                              shape, transpose):
   data_aval, indices_aval, _, B_aval = ctx.avals_in
   dtype = data_aval.dtype
@@ -495,10 +518,18 @@ def _csr_matmat_gpu_lowering(csr_matmat_mhlo, ctx, data, indices, indptr, B, *,
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _csr_matmat_lowering(ctx, data, indices, indptr, B, shape=shape,
                                 transpose=transpose)
-  return [csr_matmat_mhlo(
-      data, indices, indptr, B, shape=shape, transpose=transpose,
-      index_dtype=indices_aval.dtype, data_dtype=data_aval.dtype,
-      B_dtype=B_aval.dtype)]
+  return [
+      csr_matmat_xhlo(
+          data,
+          indices,
+          indptr,
+          B,
+          shape=shape,
+          transpose=transpose,
+          index_dtype=indices_aval.dtype,
+          data_dtype=data_aval.dtype,
+          B_dtype=B_aval.dtype)
+  ]
 
 
 def _csr_matmat_jvp_left(data_dot, data, indices, indptr, B, *, shape, transpose):

@@ -33,7 +33,8 @@ from jax._src import traceback_util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir.dialects import xhlo
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
@@ -621,7 +622,10 @@ def _optimization_barrier_lowering_rule(ctx, *args):
   barrier_types = map(mlir.aval_to_ir_types, ctx.avals_in)
   flat_barrier_types = util.flatten(barrier_types)
   flat_args = mlir.flatten_lowering_ir_args(args)
-  barrier_op = mhlo.OptimizationBarrierOp(flat_barrier_types, flat_args)
+  if xc.mlir_api_version < 40:
+    barrier_op = xhlo.OptimizationBarrierOp(flat_barrier_types, flat_args)
+  else:
+    barrier_op = xhlo.OptimizationBarrierOp(flat_args)
   return util.unflatten(barrier_op.results, map(len, barrier_types))
 
 def _optimization_barrier(arg):

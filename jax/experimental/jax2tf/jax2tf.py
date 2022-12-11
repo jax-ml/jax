@@ -589,7 +589,7 @@ def _lower_native_and_run(fun_jax: Callable,
 
   Work-in-progress.
 
-  Uses JAX native lowering to MHLO, and then wraps the result in a
+  Uses JAX native lowering to StableHLO, and then wraps the result in a
   XlaCallModule TF op. This op does not have backward-compatibility yet.
 
   Special care must be taken in presence of shape polymorphism.
@@ -653,17 +653,17 @@ def _lower_native_and_run(fun_jax: Callable,
     fun_jax_lower = fun_jax.lower
   lowered = fun_jax_lower(*arg_specs_jax)._lowering
   if config.jax2tf_use_stablehlo:
-    mhlo_module = lowered.stablehlo()
+    mlir_module = lowered.stablehlo()
     xla_call_module_version = 2
   else:
-    mhlo_module = lowered.mhlo()
+    mlir_module = lowered.mhlo()
     xla_call_module_version = 1
   if logging.vlog_is_on(3):
-    mhlo_module_text = mlir.module_to_string(mhlo_module)
+    mlir_module_text = mlir.module_to_string(mlir_module)
     logging.vlog(3, "XlaCallModule (version=%d)\n%s", xla_call_module_version,
-                 mhlo_module_text)
+                 mlir_module_text)
 
-  mhlo_serialized_module = mlir.module_to_bytecode(mhlo_module)
+  mlir_serialized_module = mlir.module_to_bytecode(mlir_module)
   # Figure out the result types and shapes
   if "global_out_avals" in lowered.compile_args:
     # This is currently the case for pjit
@@ -686,7 +686,7 @@ def _lower_native_and_run(fun_jax: Callable,
   out_types = tuple(_out_type(out_aval.dtype) for out_aval in out_avals)
 
   # Apply the shardings on arguments and results for pjit. This is redundant
-  # because the mhlo_module_text will already contain the shardings, but it
+  # because the mlir_module_text will already contain the shardings, but it
   # makes it easier for tools like the TPU inference converter to see the
   # sharding without digging into the `module` attribute of the `XlaCallModule`
   # op, in the same way as it is done for the legacy jax2tf conversion.
@@ -697,7 +697,7 @@ def _lower_native_and_run(fun_jax: Callable,
   res = tfxla.call_module(
       args_tf,
       version=xla_call_module_version,
-      module=mhlo_serialized_module,
+      module=mlir_serialized_module,
       Tout=out_types,
       Sout=out_shapes,
       dim_args_spec=dim_args_spec)

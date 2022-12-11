@@ -17,17 +17,19 @@
 import jax
 import jax.tree_util as tree_util
 import numpy as np
+from jax._src.lib import mlir_api_version
 
 def print_ir(*prototypes):
   def lower(f):
-    """Prints the MHLO IR that results from lowering `f`.
+    """Prints the StableHLO IR that results from lowering `f`.
 
-    The arguments to `f` are taken to be arrays shaped like `prototypes`."""
+    The arguments to `f` are taken to be arrays shaped like `prototypes`.
+    """
     inputs = tree_util.tree_map(np.array, prototypes)
     flat_inputs, _ = tree_util.tree_flatten(inputs)
     shape_strs = " ".join([f"{x.dtype.name}[{','.join(map(str, x.shape))}]"
                            for x in flat_inputs])
     name = f.func.__name__ if hasattr(f, "func") else f.__name__
     print(f"\nTEST: {name} {shape_strs}")
-    print(jax.jit(f).lower(*inputs).compiler_ir(dialect="mhlo"))
+    print(jax.jit(f).lower(*inputs).compiler_ir())
   return lower

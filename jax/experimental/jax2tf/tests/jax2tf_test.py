@@ -1395,9 +1395,9 @@ def get_serialized_computation(
                    out_axis_resources=out_axis_resources).lower(*args)
   else:
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
-  stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
-  logging.info(f'Serialized ir.Module = {stablehlo_module_text}')
-  return stablehlo_module_text
+  mlir_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
+  logging.info(f"Serialized ir.Module = {mlir_module_text}")
+  return mlir_module_text
 
 
 class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
@@ -1457,7 +1457,9 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
                         jax_res)
 
-  @unittest.skip("TODO(necula): 'mhlo.dynamic_iota' op can't be translated to XLA HLO")
+  @unittest.skip(
+      "TODO(necula): 'stablehlo.dynamic_iota' op can't be translated to XLA HLO"
+  )
   def test_shape_poly_arange(self):
     if not config.jax_dynamic_shapes:
       raise unittest.SkipTest("jax_dynamic_shapes must be enabled")

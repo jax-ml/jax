@@ -36,7 +36,7 @@ py_library(
         "gpu_sparse.py",
         "init.py",
         "lapack.py",
-        "mhlo_helpers.py",
+        "xhlo_helpers.py",
         ":version",
         ":xla_client",
     ],

@@ -16,12 +16,12 @@
 # via CustomCallWithLayout.
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
+import jaxlib.mlir.dialects.stablehlo as xhlo
 
 import numpy as np
 from jaxlib import xla_client
 
-from .mhlo_helpers import custom_call
+from .xhlo_helpers import custom_call
 from .cpu import _lapack
 
 for _name, _value in _lapack.registrations().items():
@@ -32,14 +32,15 @@ for _name, _value in _lapack.registrations().items():
 _initialize = _lapack.initialize
 
 
-def _mhlo_u8(x):
-  return mhlo.ConstantOp(
+def _xhlo_u8(x):
+  return xhlo.ConstantOp(
       ir.DenseElementsAttr.get(
           np.array(x, dtype=np.uint8),
           type=ir.IntegerType.get_unsigned(8))).result
 
-def _mhlo_s32(x):
-  return mhlo.ConstantOp(
+
+def _xhlo_s32(x):
+  return xhlo.ConstantOp(
       ir.DenseElementsAttr.get(
           np.array(x, dtype=np.int32),
           type=ir.IntegerType.get_signless(32))).result
@@ -48,8 +49,15 @@ def _mhlo_s32(x):
 
 # ?trsm(left_side, lower, trans_a, diag, m, n, alpha, a, b):
 # triangular solve
-def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
-               conj_a=False, diag=False):
+def trsm_xhlo(dtype,
+              alpha,
+              a,
+              b,
+              left_side=False,
+              lower=False,
+              trans_a=False,
+              conj_a=False,
+              diag=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
@@ -87,10 +95,15 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
   return custom_call(
       fn,
       [b.type],
-      [_mhlo_s32(int(left_side)), _mhlo_s32(int(lower)),
-       _mhlo_s32((2 if conj_a else 1) if trans_a else 0), _mhlo_s32(int(diag)),
-       _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(num_b),
-       alpha, a, b],
+      [
+          _xhlo_s32(int(left_side)),
+          _xhlo_s32(int(lower)),
+          _xhlo_s32((2 if conj_a else 1) if trans_a else 0),
+          _xhlo_s32(int(diag)),
+          _xhlo_s32(m),
+          _xhlo_s32(n),
+          _xhlo_s32(num_b), alpha, a, b
+      ],
       operand_layouts=[scalar_layout] * 8 + [layout] * 2,
       result_layouts=[layout],
       operand_output_aliases={9: 0},
@@ -99,7 +112,8 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
 
 # # ?getrf: LU decomposition
 
-def getrf_mhlo(dtype, a):
+
+def getrf_xhlo(dtype, a):
   _initialize()
   dims = ir.RankedTensorType(a.type).shape
   assert len(dims) >= 2
@@ -127,16 +141,17 @@ def getrf_mhlo(dtype, a):
   return custom_call(
       fn,
       [
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
+          a.type,
+          ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
       ],
-      [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), a],
+      [_xhlo_s32(int(b)), _xhlo_s32(m),
+       _xhlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
+          layout,
+          tuple(range(num_bd, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
       ],
       operand_output_aliases={3: 0},
   )
@@ -144,7 +159,8 @@ def getrf_mhlo(dtype, a):
 
 # # ?geqrf: QR decomposition
 
-def geqrf_mhlo(dtype, a):
+
+def geqrf_xhlo(dtype, a):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -177,18 +193,22 @@ def geqrf_mhlo(dtype, a):
   out = custom_call(
       fn,
       [
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (min(m, n),), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+          a.type,
+          ir.RankedTensorType.get(batch_dims +
+                                  (min(m, n),), a_type.element_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(lwork), a],
+      [_xhlo_s32(int(b)),
+       _xhlo_s32(m),
+       _xhlo_s32(n),
+       _xhlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
+          layout,
+          tuple(range(num_bd, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
       ],
       operand_output_aliases={4: 0},
   )
@@ -197,7 +217,8 @@ def geqrf_mhlo(dtype, a):
 
 # # ?orgqr: product of elementary Householder reflectors:
 
-def orgqr_mhlo(dtype, a, tau):
+
+def orgqr_xhlo(dtype, a, tau):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -234,20 +255,25 @@ def orgqr_mhlo(dtype, a, tau):
   out = custom_call(
       fn,
       [
-        a.type,
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+          a.type,
+          ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(k),
-       _mhlo_s32(lwork), a, tau],
+      [
+          _xhlo_s32(int(b)),
+          _xhlo_s32(m),
+          _xhlo_s32(n),
+          _xhlo_s32(k),
+          _xhlo_s32(lwork), a, tau
+      ],
       operand_layouts=[scalar_layout] * 5 + [
-        layout,
-        tuple(range(num_bd, -1, -1)),
+          layout,
+          tuple(range(num_bd, -1, -1)),
       ],
       result_layouts=[
-        layout,
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
+          layout,
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
       ],
       operand_output_aliases={5: 0},
   )
@@ -256,7 +282,8 @@ def orgqr_mhlo(dtype, a, tau):
 
 # ?potrf: Cholesky decomposition
 
-def potrf_mhlo(dtype, a, lower=False):
+
+def potrf_xhlo(dtype, a, lower=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -284,9 +311,12 @@ def potrf_mhlo(dtype, a, lower=False):
   info_layout = tuple(range(num_bd - 1, -1, -1))
   out = custom_call(
       fn,
-      [a.type,
-       ir.RankedTensorType.get(batch_dims, ir.IntegerType.get_signless(32))],
-      [_mhlo_s32(int(lower)), _mhlo_s32(b), _mhlo_s32(n), a],
+      [
+          a.type,
+          ir.RankedTensorType.get(batch_dims, ir.IntegerType.get_signless(32))
+      ],
+      [_xhlo_s32(int(lower)),
+       _xhlo_s32(b), _xhlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[layout, info_layout],
       operand_output_aliases={3: 0},
@@ -297,7 +327,8 @@ def potrf_mhlo(dtype, a, lower=False):
 
 # # ?gesdd: Singular value decomposition
 
-def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
+
+def gesdd_xhlo(dtype, a, full_matrices=True, compute_uv=True):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -361,17 +392,24 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
       fn,
       [
           a.type,
-          ir.RankedTensorType.get(batch_dims + (min(m, n),), singular_vals_type),
+          ir.RankedTensorType.get(batch_dims +
+                                  (min(m, n),), singular_vals_type),
           ir.RankedTensorType.get(
-            batch_dims + (m, m if full_matrices else min(m, n)),
-            a_type.element_type),
+              batch_dims +
+              (m, m if full_matrices else min(m, n)), a_type.element_type),
           ir.RankedTensorType.get(
-            batch_dims + (n if full_matrices else min(m, n), n),
-            a_type.element_type),
+              batch_dims +
+              (n if full_matrices else min(m, n), n), a_type.element_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
       ] + workspace,
-      [_mhlo_s32(int(full_matrices)), _mhlo_s32(int(compute_uv)), _mhlo_s32(b),
-       _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(lwork), a],
+      [
+          _xhlo_s32(int(full_matrices)),
+          _xhlo_s32(int(compute_uv)),
+          _xhlo_s32(b),
+          _xhlo_s32(m),
+          _xhlo_s32(n),
+          _xhlo_s32(lwork), a
+      ],
       operand_layouts=[scalar_layout] * 6 + [layout],
       result_layouts=[
           layout,
@@ -387,7 +425,8 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
 
 # # syevd: Symmetric eigendecomposition
 
-def syevd_mhlo(dtype, a, lower=False):
+
+def syevd_xhlo(dtype, a, lower=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -452,7 +491,9 @@ def syevd_mhlo(dtype, a, lower=False):
           ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
       ] + workspace,
-      [_mhlo_s32(1 if lower else 0), _mhlo_s32(b), _mhlo_s32(n), a],
+      [_xhlo_s32(1 if lower else 0),
+       _xhlo_s32(b),
+       _xhlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
           layout,
@@ -466,7 +507,8 @@ def syevd_mhlo(dtype, a, lower=False):
 
 # # geev: Nonsymmetric eigendecomposition
 
-def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
+
+def geev_xhlo(dtype, a, jobvl=True, jobvr=True):
   _initialize()
   dims = ir.RankedTensorType(a.type).shape
   assert len(dims) >= 2
@@ -535,23 +577,25 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
   out = custom_call(
       fn,
       workspaces + eigvals + [
-        ir.RankedTensorType.get(dims, eigvecs_type),
-        ir.RankedTensorType.get(dims, eigvecs_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-      ],
-      [_mhlo_s32(b), _mhlo_s32(n), _mhlo_u8(jobvl_c), _mhlo_u8(jobvr_c), a],
+          ir.RankedTensorType.get(dims, eigvecs_type),
+          ir.RankedTensorType.get(dims, eigvecs_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
+      ], [_xhlo_s32(b),
+          _xhlo_s32(n),
+          _xhlo_u8(jobvl_c),
+          _xhlo_u8(jobvr_c), a],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
-                      [info_layout])
-  )
+                      [info_layout]))
   if real:
-    return (mhlo.ComplexOp(out[3], out[4]).result, out[5], out[6], out[7])
+    return (xhlo.ComplexOp(out[3], out[4]).result, out[5], out[6], out[7])
   else:
     return out[2:6]
 
 # # gees : Schur factorization
 
-def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
+
+def gees_xhlo(dtype, a, jobvs=True, sort=False, select=None):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   etype = a_type.element_type
@@ -604,23 +648,23 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
   out = custom_call(
       fn,
       workspaces + eigvals + [
-        ir.RankedTensorType.get(dims, etype),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get(dims, etype),
+          ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
       ],
       [
-        _mhlo_s32(b),
-        _mhlo_s32(n),
-        _mhlo_u8(np.uint8(jobvs)),
-        _mhlo_u8(np.uint8(sort)),
-        # TODO: figure out how to put the callable select function here
-        a
+          _xhlo_s32(b),
+          _xhlo_s32(n),
+          _xhlo_u8(np.uint8(jobvs)),
+          _xhlo_u8(np.uint8(sort)),
+          # TODO: figure out how to put the callable select function here
+          a
       ],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=workspace_layouts + eigvals_layouts + [
-        layout,
-        tuple(range(num_bd - 1, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
+          layout,
+          tuple(range(num_bd - 1, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
       ],
       operand_output_aliases={4: 0},
   )
@@ -631,7 +675,7 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
 
 
 # gehrd: Reduction of a non-symmetric square matrix to upper Hessenberg form.
-def gehrd_mhlo(dtype, a):
+def gehrd_xhlo(dtype, a):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -664,19 +708,25 @@ def gehrd_mhlo(dtype, a):
   out = custom_call(
       fn,
       [
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+          a.type,
+          ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(n), _mhlo_s32(1), _mhlo_s32(n), _mhlo_s32(n), _mhlo_s32(b),
-       _mhlo_s32(lwork), a],
+      [
+          _xhlo_s32(n),
+          _xhlo_s32(1),
+          _xhlo_s32(n),
+          _xhlo_s32(n),
+          _xhlo_s32(b),
+          _xhlo_s32(lwork), a
+      ],
       operand_layouts=[[]] * 6 + [layout],
       result_layouts=[
-        layout,
-        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
+          layout,
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
       ],
       operand_output_aliases={6: 0},
   )
@@ -684,7 +734,7 @@ def gehrd_mhlo(dtype, a):
 
 
 # sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
-def sytrd_mhlo(dtype, a, *, lower):
+def sytrd_xhlo(dtype, a, *, lower):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -721,23 +771,28 @@ def sytrd_mhlo(dtype, a, *, lower):
   out = custom_call(
       fn,
       [
-        a.type,
-        ir.RankedTensorType.get(batch_dims + (n,), diag_type),
-        ir.RankedTensorType.get(batch_dims + (n - 1,), diag_type),
-        ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
-        ir.RankedTensorType.get(batch_dims, i32_type),
-        ir.RankedTensorType.get([lwork], a_type.element_type),
+          a.type,
+          ir.RankedTensorType.get(batch_dims + (n,), diag_type),
+          ir.RankedTensorType.get(batch_dims + (n - 1,), diag_type),
+          ir.RankedTensorType.get(batch_dims + (n - 1,), a_type.element_type),
+          ir.RankedTensorType.get(batch_dims, i32_type),
+          ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(n), _mhlo_s32(1 if lower else 0), _mhlo_s32(max(1, n)),
-       _mhlo_s32(b), _mhlo_s32(lwork), a],
+      [
+          _xhlo_s32(n),
+          _xhlo_s32(1 if lower else 0),
+          _xhlo_s32(max(1, n)),
+          _xhlo_s32(b),
+          _xhlo_s32(lwork), a
+      ],
       operand_layouts=[[]] * 5 + [layout],
       result_layouts=[
-        layout,
-        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
-        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
-        (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
+          layout,
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+          (num_bd,) + tuple(range(num_bd - 1, -1, -1)),
+          tuple(range(num_bd - 1, -1, -1)),
+          [0],
       ],
       operand_output_aliases={5: 0},
   )

@@ -2613,6 +2613,7 @@ class APITest(jtu.JaxTestCase):
     # TODO(phawkins): merge these tests with the `xla_computation` tests.
     def e(x):
       return jnp.sin(jnp.cos(x))
+
     hlo = api.jit(e).lower(2.).compiler_ir(dialect="hlo").as_hlo_text()
     self.assertIn(' cosine', hlo)
     self.assertIn(' sine', hlo)
