@@ -381,6 +381,10 @@ lowered with the batch dimension polymorphic and the remaining dimensions concre
 
 It is reasonable to expect that there will be JAX programs for which there is a
 shape-polymorphic TensorFlow graph, but which will give an error when lowering with jax2tf.
+In general, you should expect that shape polymorphism can handle those programs for which
+all the intermediate shapes can be expressed as polynomials in the dimension variables
+appearing in the input shapes. In particular, this does not include programs whose
+intermediate shapes depend on the data.
 
 ### Details
 
@@ -612,6 +616,38 @@ be known to be a multiple of `2`. You can specify that by replacing
 jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
                polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
 ```
+
+### Dimension variables must be solvable from the input shapes
+
+`jax2tf` will generate code to derive the values of the dimension variables
+from the input shapes. This works only if dimension polynomials in the input shapes are linear.
+For example, the following `polymorphic_shapes` will result in errors:
+
+```python
+polymorphic_shapes = ["a * a"]  # Not a linear polynomial
+polymorphic_shapes = ["a + b"]  # Too few equations to derive both `a` and `b`
+```
+
+If you are using native lowering, the restrictions are stronger: every dimension
+variable must occur as the value of some dimension of some input, e.g.,
+the following will work:
+
+```python
+polymorphic_shapes = ["a, 2*a, b"]
+polymorphic_shapes = ["a * a, a"]
+```
+
+Furthermore, when using the native lowering the inputs that are not needed in the computation
+are ignored, so the dimension variables must be derivable only from used inputs.
+In the following example, the `x_unused` is not part of the computation so its
+input shapes cannot be used for deriving the dimension variables, and you will
+get an error that `a` cannot be derived:
+
+```python
+jax2tf.convert(lambda x_unused, y: y * 2.,
+               polymorphic_shapes=["b, a", "b, 2 * a"])(x, y)
+```
+
 
 ## Known issues
 

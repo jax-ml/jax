@@ -20,7 +20,6 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 import collections
 import functools
 from functools import partial
-import logging
 import operator
 import re
 
@@ -722,6 +721,70 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None, None])],
         polymorphic_shapes=["w, h"])
 
+  def test_non_trivial_polynomials(self):
+    if config.jax_dynamic_shapes:
+      raise unittest.SkipTest("--jax_dynamic_shapes supports only trivial polynomials")
+    # We can handle non-trivial polynomials in the input shape,
+    # as long as all variables also occur in trivial polynoamials
+    self.CheckShapePolymorphism(
+        lambda x, y: x + y.reshape((-1,)),
+        input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None, None])],
+        polymorphic_shapes=["b * b", "b, b"])
+
+  def test_unused_args(self):
+    # Tests with functions that do not use their inputs.
+
+    # First arg unused, not polymorphic
+    self.CheckShapePolymorphism(
+        lambda x_unused, y: y * 2.0,
+        input_signature=[tf.TensorSpec([]), tf.TensorSpec([None])],
+        polymorphic_shapes=[None, "b"])
+
+    # Some args unused, not polymorphic
+    self.CheckShapePolymorphism(
+        lambda x_unused, y, z_unused, w: jnp.concatenate([y, w]),
+        input_signature=[tf.TensorSpec([]), tf.TensorSpec([None]),
+                         tf.TensorSpec([]), tf.TensorSpec([None])],
+        polymorphic_shapes=[None, "b1", None, "b2"])
+
+    # A polymorphic arg is not used, but the dimension var appears
+    # in a used arg also
+    self.CheckShapePolymorphism(
+        lambda x_unused, y: y * 2.0,
+        input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+        polymorphic_shapes=["b", "b"])
+
+    # A polymorphic arg is not used, and the dimension var does not appear
+    # elsewhere.
+    if config.jax2tf_default_experimental_native_lowering:
+      with self.assertRaisesRegex(ValueError,
+                                  "The following dimension variables cannot be computed"):
+        self.CheckShapePolymorphism(
+            lambda x_unused, y: y * 2.0,
+            input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+            polymorphic_shapes=["b1", "b2"])
+    else:
+      self.CheckShapePolymorphism(
+          lambda x_unused, y: y * 2.0,
+          input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+          polymorphic_shapes=["b1", "b2"])
+
+    # A polymorphic arg is not used, and the dimension var does appear
+    # elsewhere but not as a trivial monomial.
+    if config.jax2tf_default_experimental_native_lowering:
+      with self.assertRaisesRegex(ValueError,
+                                  "The following dimension variables cannot be computed"):
+        self.CheckShapePolymorphism(
+            lambda x_unused, y: y * 2.0,
+            input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+            polymorphic_shapes=["b1", "b1 * b1"])
+    else:
+      self.CheckShapePolymorphism(
+          lambda x_unused, y: y * 2.0,
+          input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+          polymorphic_shapes=["b1", "b1 * b1"])
+
+
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
 
@@ -1064,6 +1127,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     f_tf = tf.function(
         jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
     self.assertEqual(1, f_tf(x45))
+
+    x = np.ones((5,), dtype=np.float32)
+    with self.assertRaisesRegex(ValueError,
+                                "Cannot solve for values of dimension variables"):
+      jax2tf.convert(lambda x: x, polymorphic_shapes=["a + b"])(x)
 
 
 class DimAsValueTest(tf_test_util.JaxToTfTestCase):

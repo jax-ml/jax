@@ -818,6 +818,28 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     jax2tf.convert(func)(2.)  # No error
 
+  def test_jit_unused(self):
+    def f_jax(x, y_unused):
+      return x * np.float32(2.)
+    x, y_unused = np.float32(5.), np.arange(7, dtype=np.int32)
+    res_tf = jax2tf.convert(jax.jit(f_jax, keep_unused=False))(x, y_unused)
+    self.assertAllClose(f_jax(x, None), res_tf)
+
+  def test_jit_unused_grad(self):
+    def f_jax(x, y_unused):
+      return x * np.float32(2.)
+
+    x, y_unused = np.float32(5.), np.arange(7, dtype=np.int32)
+    f_tf = jax2tf.convert(jax.jit(f_jax, keep_unused=False))
+    xv, y_unused_v = tf.Variable(x), tf.Variable(y_unused)
+    with tf.GradientTape() as tape:
+      res_tf = f_tf(xv, y_unused_v)
+      grad_tf_x, grad_tf_y = tape.gradient(res_tf, (xv, y_unused_v))
+
+    self.assertAllClose(f_jax(x, None), res_tf)
+    self.assertAllClose(np.float32(2.), grad_tf_x)
+    self.assertIsNone(grad_tf_y)
+
   def test_nested_convert_error(self):
     def outer(y):
       return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
