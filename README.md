@@ -432,6 +432,9 @@ operating system, CUDA, and CuDNN are possible, but require [building from
 source](https://jax.readthedocs.io/en/latest/developer.html#building-from-source).
 
 * CUDA 11.4 or newer is *required*.
+  * Your CUDA installation must be new enough to support your GPU. If you have
+    an Ada Lovelace (e.g., RTX 4080) or Hopper (e.g., H100) GPU,
+    you must use CUDA 11.8 or newer.
 * The supported cuDNN versions for the prebuilt wheels are:
   * cuDNN 8.6 or newer. We recommend using the cuDNN 8.6 wheel if your cuDNN
     installation is new enough, since it supports additional functionality.
