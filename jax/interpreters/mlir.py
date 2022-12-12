@@ -1253,6 +1253,10 @@ register_lowering(core.closed_call_p,
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
   # Lower a possibly-dynamic broadcast_in_dim
+  if core.is_opaque_dtype(aval_out.dtype):  # type: ignore
+    return aval_out.dtype._rules.broadcast_in_dim_mlir(  # type: ignore
+        ctx, aval_out, op,
+        broadcast_dimensions=broadcast_dimensions)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
     return mhlo.DynamicBroadcastInDimOp(
@@ -1284,18 +1288,65 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
-  aval_out_shape = aval_out.shape  # type: ignore
-  if not core.is_constant_shape(aval_out_shape):
-    if core.is_opaque_dtype(aval_out.dtype):  # type: ignore
-      # TODO(necula)
-      raise NotImplementedError("reshaping opaque types")
-    shape = eval_dynamic_shape(ctx, aval_out_shape)
+  if core.is_opaque_dtype(aval_out.dtype):  # type: ignore
+    aval_out, = aval_out.dtype._rules.physical_avals(aval_out)  # type: ignore
+  if not core.is_constant_shape(aval_out.shape):  # type: ignore
+    shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
     return mhlo.DynamicReshapeOp(
         aval_to_ir_type(aval_out), op,
         shape_tensor(shape),
     ).result
   else:
     return mhlo.ReshapeOp(aval_to_ir_type(aval_out), op).result
+
+def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
+             start_indices, limit_indices, strides) -> ir.Value:
+  if core.is_opaque_dtype(aval_out.dtype):
+    return [aval_out.dtype._rules.slice_mlir(
+        ctx, aval_out, x, start_indices, limit_indices, strides)]
+
+  if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
+    start_indices = eval_dynamic_shape(ctx, start_indices)
+    limit_indices = eval_dynamic_shape(ctx, limit_indices)
+    strides = eval_dynamic_shape(ctx, strides)
+    return mhlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
+                                   x,
+                                   shape_tensor(start_indices),
+                                   shape_tensor(limit_indices),
+                                   shape_tensor(strides)).result
+  else:
+    return mhlo.SliceOp(x,
+                        dense_int_elements(start_indices),
+                        dense_int_elements(limit_indices),
+                        dense_int_elements(strides)).result
+
+def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
+                  start_indices) -> ir.Value:
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.dynamic_slice_mlir(ctx, aval_out, x,
+                                                    start_indices)
+  slice_sizes = aval_out.shape
+  if not core.is_constant_shape(slice_sizes):
+    slice_sizes = eval_dynamic_shape(ctx, slice_sizes)
+    return mhlo.RealDynamicSliceOp(
+        aval_to_ir_type(aval_out), x,
+        shape_tensor(start_indices),
+        shape_tensor(slice_sizes),
+        shape_tensor([1] * len(slice_sizes))
+    ).result
+  else:
+    return mhlo.DynamicSliceOp(x, start_indices,
+                               dense_int_elements(slice_sizes)).result
+
+def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
+                         start_indices) -> ir.Value:
+  if core.is_opaque_dtype(aval_out.dtype):
+    return aval_out.dtype._rules.dynamic_update_slice_mlir(
+        ctx, aval_out, x, update, *start_indices)
+
+  # TODO(necula): handle dynamic shapes
+  return mhlo.DynamicUpdateSliceOp(aval_to_ir_type(aval_out), x, update,
+                                  start_indices).result
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""

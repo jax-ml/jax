@@ -29,12 +29,11 @@ from jax import core
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import shape_poly
 from jax import lax
-from jax import linear_util as lu
 import jax.numpy as jnp
+from jax import random
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
-from jax._src import util
 import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util
@@ -893,6 +892,30 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(g_tf[0][0], np.zeros_like(xi))
     self.assertAllClose(g_tf[0][1], (xi * 2).astype(yf.dtype))
     self.assertAllClose(g_tf[1], np.zeros_like(zb))
+
+  def test_prng(self):
+    # The PRNG implementation uses opaque types, test shape polymorphism
+    try:
+      prev_custom_prng = config.jax_enable_custom_prng
+      config.update("jax_enable_custom_prng", True)
+
+      def f_jax(x):  # x: f32[b1, b2]
+        key = random.PRNGKey(123)  #  key
+        # Exercise key operations that have custom lowering rules
+        broadcast_keys = lax.broadcast_in_dim(key, x.shape, ())  # key[b1, b2]
+        gather_keys = lax.broadcast_in_dim(broadcast_keys[0], (1, x.shape[1]), (1,))  # : key[1, b2]
+        slice_keys1 = lax.slice(broadcast_keys, (0, 0), (1, x.shape[1]), (1, 1))  # key[1, b2]
+        slice_keys2 = lax.dynamic_slice(broadcast_keys, (0, 0), slice_sizes=(1, x.shape[1]))  # key[1, b2]
+        upd1 = lax.dynamic_update_slice(slice_keys2, slice_keys1, start_indices=(0, 0))  # key[1, b2]
+        _ = lax.dynamic_update_slice(upd1, gather_keys, start_indices=(0, 0))
+        return x
+
+      self.CheckShapePolymorphism(f_jax,
+                                  input_signature=[tf.TensorSpec([None, None], dtype=tf.float32)],
+                                  polymorphic_shapes=["b1, b2"])
+    finally:
+      config.update("jax_enable_custom_prng", prev_custom_prng)
+
 
   def test_saved_model(self):
     f_jax = jnp.sin
@@ -2113,7 +2136,7 @@ class ShapePolyVmapPrimitivesTest(tf_test_util.JaxToTfTestCase):
   # to parameterized below.
   @primitive_harness.parameterized(
       _flatten_harnesses(_POLY_SHAPE_VMAP_TEST_HARNESSES),
-      #one_containing="gather_from_slicing_name=[0,1]_enable_xla=True_poly_axes=[0]"
+      one_containing=""
   )
   def test_vmap_prim(self, harness: Harness):
     return _test_one_harness(self, harness)
