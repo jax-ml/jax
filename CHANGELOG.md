@@ -24,6 +24,8 @@ Remember to align the itemized text with the first line of an item within a list
     are `jax.sharding.PartitionSpec` and `jax.sharding.Mesh`.
     `jax.experimental.maps.Mesh` and `jax.experimental.PartitionSpec` are
     deprecated and will be removed in 3 months.
+  * `with_sharding_constraint`s new public endpoint is
+    `jax.lax.with_sharding_constraint`.
   * If using ABSL flags together with `jax.config`, the ABSL flag values are no
     longer read or written after the JAX configuration options are initially
     populated from the ABSL flags. This change improves performance of reading
