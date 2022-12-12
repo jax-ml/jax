@@ -21,6 +21,7 @@ from jax._src.checkify import (
     check as check,
     check_error as check_error,
     checkify as checkify,
+    debug_check as debug_check,
     div_checks as div_checks,
     float_checks as float_checks,
     index_checks as index_checks,
