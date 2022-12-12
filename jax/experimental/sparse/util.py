@@ -107,11 +107,6 @@ def _is_aval(*args: Any) -> bool:
 def _is_arginfo(*args: Any) -> bool:
   return all(isinstance(arg, stages.ArgInfo) for arg in args)
 
-def _safe_asarray(args: Sequence[Any]) -> Iterable[Union[np.ndarray, Array]]:
-  if _is_pytree_placeholder(*args) or _is_aval(*args) or _is_arginfo(*args):
-    return args
-  return map(_asarray_or_float0, args)
-
 def _dot_general_validated_shape(
     lhs_shape: Tuple[int, ...], rhs_shape: Tuple[int, ...],
     dimension_numbers: DotDimensionNumbers) -> Tuple[int, ...]:

@@ -31,7 +31,7 @@ from jax import vmap
 from jax.config import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
-  _broadcasting_vmap, _count_stored_elements, _safe_asarray,
+  _broadcasting_vmap, _count_stored_elements,
   _dot_general_validated_shape, CuSparseEfficiencyWarning,
   SparseEfficiencyError, SparseEfficiencyWarning)
 from jax.interpreters import batching
@@ -2386,10 +2386,11 @@ class BCOO(JAXSparse):
                indices_sorted: bool = False, unique_indices: bool = False):
     # JAX transforms will sometimes instantiate pytrees with null values, so we
     # must catch that in the initialization of inputs.
-    self.data, self.indices = _safe_asarray(args)  # type: ignore[assignment]
+    self.data, self.indices = map(jnp.asarray, args)
     self.indices_sorted = indices_sorted
     self.unique_indices = unique_indices
     super().__init__(args, shape=tuple(shape))
+    _validate_bcoo(self.data, self.indices, self.shape)
 
   def __repr__(self):
     name = self.__class__.__name__
@@ -2581,6 +2582,15 @@ class BCOO(JAXSparse):
 
   def tree_flatten(self):
     return (self.data, self.indices), self._info._asdict()
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    obj = object.__new__(cls)
+    obj.data, obj.indices = children
+    if aux_data.keys() != {'shape', 'indices_sorted', 'unique_indices'}:
+      raise ValueError(f"BCOO.tree_unflatten: invalid {aux_data=}")
+    obj.__dict__.update(**aux_data)
+    return obj
 
 
 # vmappable handlers

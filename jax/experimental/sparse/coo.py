@@ -27,7 +27,7 @@ from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
-from jax.experimental.sparse.util import _coo_extract, _safe_asarray, CuSparseEfficiencyWarning
+from jax.experimental.sparse.util import _coo_extract, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import mhlo
@@ -69,7 +69,7 @@ class COO(JAXSparse):
 
   def __init__(self, args: Tuple[Array, Array, Array], *, shape: Shape,
                rows_sorted: bool = False, cols_sorted: bool = False):
-    self.data, self.row, self.col = _safe_asarray(args)  # type: ignore[assignment]
+    self.data, self.row, self.col = map(jnp.asarray, args)
     self._rows_sorted = rows_sorted
     self._cols_sorted = cols_sorted
     super().__init__(args, shape=shape)
@@ -134,6 +134,17 @@ class COO(JAXSparse):
 
   def tree_flatten(self) -> Tuple[Tuple[Array, Array, Array], Dict[str, Any]]:
     return (self.data, self.row, self.col), self._info._asdict()
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    obj = object.__new__(cls)
+    obj.data, obj.row, obj.col = children
+    if aux_data.keys() != {'shape', 'rows_sorted', 'cols_sorted'}:
+      raise ValueError(f"COO.tree_unflatten: invalid {aux_data=}")
+    obj.shape = aux_data['shape']
+    obj._rows_sorted = aux_data['rows_sorted']
+    obj._cols_sorted = aux_data['cols_sorted']
+    return obj
 
   def __matmul__(self, other: ArrayLike) -> Array:
     if isinstance(other, JAXSparse):
