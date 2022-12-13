@@ -254,9 +254,6 @@ build:rbe_linux_cuda11.8_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
 build:tensorflow_testing_rbe --project_id=tensorflow-testing
 common:tensorflow_testing_rbe_linux --remote_instance_name=projects/tensorflow-testing/instances/default_instance
 build:tensorflow_testing_rbe_linux --config=tensorflow_testing_rbe
-# Build GPU binaries for the RBE test machines (Tesla T4s i.e. sm_75) and
-# kokoro (P100 i.e sm_60)
-build:tensorflow_testing_rbe_linux --repo_env=TF_CUDA_COMPUTE_CAPABILITIES=sm_60,sm_75
 #############################################################################
 
 # Load `.jax_configure.bazelrc` file written by build.py
