@@ -2604,6 +2604,8 @@ def _bcoo_to_elt(cont, _, val, axis):
               shape=val.shape[:axis] + val.shape[axis + 1:])
 
 def _bcoo_from_elt(cont, axis_size, elt, axis):
+  if axis is None:
+    return elt
   if axis > elt.n_batch:
     raise ValueError(f"BCOO: cannot add out_axis={axis} for BCOO array with n_batch={elt.n_batch}. "
                      "BCOO batch axes must be a contiguous block of leading dimensions.")
