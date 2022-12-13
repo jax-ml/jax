@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.1
+## jax 0.4.2
+
+## jaxlib 0.4.2
+
+## jax 0.4.1 (Dec 13, 2022)
 
 * Changes
   * Support for Python 3.7 has been dropped, in accordance with JAX's
@@ -40,7 +44,7 @@ Remember to align the itemized text with the first line of an item within a list
     It will be removed in a future release, in accordance with the {ref}`api-compatibility`
     policy. It can be replaced with `jnp.sort(a, axis=0)`.
 
-## jaxlib 0.4.1
+## jaxlib 0.4.1 (Dec 13, 2022)
 
 * Changes
   * Support for Python 3.7 has been dropped, in accordance with JAX's
