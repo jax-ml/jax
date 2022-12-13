@@ -263,35 +263,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(np.asarray(actual.device_buffers[3]), split1,
                         check_dtypes=False)
 
-  def testBasic2DWithMeshContextManager(self):
-    @partial(pjit,
-             in_axis_resources=(P(None, 'x', 'y'), P('y')),
-             out_axis_resources=P('x'))
-    def f(x, y):
-      return x @ y
-
-    x_shape = (8, 6, 4)
-    y_shape = (4, 2)
-    x = jnp.arange(np.prod(x_shape)).reshape(x_shape)
-    y = jnp.arange(np.prod(y_shape)).reshape(y_shape)
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    with mesh:
-      actual = f(x, y)
-    expected = x @ y
-    self.assertAllClose(actual, expected, check_dtypes=False)
-    _check_instance(self, actual)
-    self.assertLen(actual.device_buffers, 4)
-
-    split0, split1 = np.split(expected, 2)
-    self.assertAllClose(np.asarray(actual.device_buffers[0]), split0,
-                        check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[1]), split0,
-                        check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[2]), split1,
-                        check_dtypes=False)
-    self.assertAllClose(np.asarray(actual.device_buffers[3]), split1,
-                        check_dtypes=False)
-
   def testDifferentNestedMesh(self):
     with jtu.create_global_mesh((2, 1), ("x", "y")) as m1:
       with jtu.create_global_mesh((2, 2), ("a", "b")) as m2:
@@ -1732,6 +1703,15 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
 class ArrayPjitTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    self.jax_array_enabled = jax.config.jax_array
+    jax.config.update('jax_array', True)
+
+  def tearDown(self):
+    config.update('jax_array', self.jax_array_enabled)
+    super().tearDown()
+
   @parameterized.named_parameters(
     ('fully_sharded_output', P('x', 'y'), (2, 4)),
     ('fully_replicated_output', P(None), (8, 8)),
@@ -2751,6 +2731,89 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertFalse(out2._committed)
       self.assertEqual(out2.device(), jax.devices()[1])
       self.assertArraysEqual(out2, b * 2)
+
+  def test_pjit_with_static_argnames(self):
+
+    def f(x: str) -> int:
+      assert x == 'foo'
+      return 1
+
+    f_nums = pjit(f, static_argnums=0)
+    assert f_nums('foo') == 1
+    assert f_nums(x='foo') == 1
+
+    f_names = pjit(f, static_argnames='x')
+    assert f_names('foo') == 1
+    assert f_names(x='foo') == 1
+
+  def test_new_static_argnum_on_keyword_arguments(self):
+    f = pjit(lambda x: x, static_argnums=0)
+    y = f(x=4)
+    assert y == 4
+
+  def test_new_static_argnum_with_default_arguments(self):
+    f = pjit(lambda x=4: x, static_argnums=0)
+    y = f()
+    assert y == 4
+
+  def test_pjit_with_mismatched_static_argnames(self):
+    x_is_tracer, y_is_tracer = False, False
+    def f(x, y):
+      assert isinstance(x, jax.core.Tracer) == x_is_tracer
+      assert isinstance(y, jax.core.Tracer) == y_is_tracer
+      return 1
+
+    # If both static_argnums and static_argnames are provided, they are allowed
+    # to disagree and `jit` will respect the user's choices.
+    f_nums = pjit(f, static_argnums=1, static_argnames=())
+    x_is_tracer, y_is_tracer = True, False
+    assert f_nums(2, 3) == 1
+    x_is_tracer, y_is_tracer = True, True
+    assert f_nums(1, y=2) == 1
+
+    f_names = pjit(f, static_argnums=(), static_argnames='y')
+    x_is_tracer, y_is_tracer = True, True
+    assert f_names(2, 3) == 1
+    x_is_tracer, y_is_tracer = True, False
+    assert f_names(1, y=3) == 1
+
+    f_mixed = pjit(f, static_argnums=(1,), static_argnames='x')
+    x_is_tracer, y_is_tracer = True, False
+    assert f_mixed(2, 3) == 1
+    x_is_tracer, y_is_tracer = True, True
+    assert f_mixed(1, y=3) == 1
+    x_is_tracer, y_is_tracer = False, True
+    assert f_mixed(x=2, y=3) == 1
+
+  def test_pjit_kwargs(self):
+    a = jnp.arange(8.)
+    b = jnp.arange(4.)
+    c = jnp.arange(2.)
+
+    @pjit
+    def f(x, y, z):
+      return x, y, z
+
+    o1, o2, o3 = f(a, y=b, z=c)
+    self.assertArraysEqual(o1, a)
+    self.assertArraysEqual(o2, b)
+    self.assertArraysEqual(o3, c)
+
+    o4, o5, o6 = f(x=a, y=b, z=c)
+    self.assertArraysEqual(o4, a)
+    self.assertArraysEqual(o5, b)
+    self.assertArraysEqual(o6, c)
+
+    o7, o8, o9 = f(a, b, c)
+    self.assertArraysEqual(o7, a)
+    self.assertArraysEqual(o8, b)
+    self.assertArraysEqual(o9, c)
+
+  def test_pjit_kwargs_axis_resources_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "pjit does not support kwargs when in_axis_resources is specified."):
+      pjit(lambda x: x, in_axis_resources=None)(x=jnp.arange(8.))
 
 
 class TempSharding(Sharding):

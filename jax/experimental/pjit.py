@@ -16,7 +16,8 @@ import dataclasses
 from enum import IntEnum
 import numpy as np
 from collections import OrderedDict, Counter
-from typing import Any, Callable, Sequence, Tuple, Union, cast, List, Optional, Iterable, NamedTuple
+from typing import (Callable, Sequence, Tuple, Union, cast, List, Optional,
+                    Iterable)
 import itertools as it
 from functools import partial, lru_cache
 import threading
@@ -25,20 +26,19 @@ from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax._src.sharding import (
     NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
-    XLADeviceAssignment, PmapSharding)
+    XLADeviceAssignment)
 from jax import core
 from jax import linear_util as lu
 from jax import stages
 from jax._src import array
-from jax._src.stages import CompiledCallParams
-from jax._src.api import _check_callable, _check_arg, FLAGS, device_put
+from jax._src.api import (_check_callable, _check_arg, FLAGS, _resolve_argnums,
+                          argnames_partial_except)
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
 from jax._src.api_util import (argnums_partial_except, flatten_axes,
-                               flatten_fun_nokwargs, _ensure_index_tuple,
-                               donation_vector, rebase_donate_argnums,
-                               shaped_abstractify)
+                               flatten_fun, flatten_fun_nokwargs,
+                               donation_vector, shaped_abstractify)
 from jax.errors import JAXTypeError
 from jax.interpreters import ad
 from jax.interpreters import mlir
@@ -171,11 +171,14 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
 # TODO(yashkatariya): Add pjit microbenchmarks.
 # in_axis_resources and out_axis_resources can't be None as the default value
 # because `None` means that the input is fully replicated.
-def pjit(fun: Callable,
-         in_axis_resources=_UNSPECIFIED,
-         out_axis_resources=_UNSPECIFIED,
-         static_argnums: Union[int, Sequence[int]] = (),
-         donate_argnums: Union[int, Sequence[int]] = ()) -> stages.Wrapped:
+def pjit(
+    fun: Callable,
+    in_axis_resources=_UNSPECIFIED,
+    out_axis_resources=_UNSPECIFIED,
+    static_argnums: Union[int, Sequence[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
+    donate_argnums: Union[int, Sequence[int]] = (),
+) -> stages.Wrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
 
   The returned function has semantics equivalent to those of ``fun``, but is
@@ -264,6 +267,11 @@ def pjit(fun: Callable,
       static.
 
       If ``static_argnums`` is not provided, no arguments are treated as static.
+    static_argnames: An optional string or collection of strings specifying
+      which named arguments to treat as static (compile-time constant). See the
+      comment on ``static_argnums`` for details. If not
+      provided but ``static_argnums`` is set, the default is based on calling
+      ``inspect.signature(fun)`` to find corresponding named arguments.
     donate_argnums: Specify which argument buffers are "donated" to the computation.
       It is safe to donate argument buffers if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
@@ -317,16 +325,13 @@ def pjit(fun: Callable,
   out_axis_resources, _, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
 
-  static_argnums = _ensure_index_tuple(static_argnums)
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
+  donate_argnums, static_argnums, static_argnames = _resolve_argnums(
+      fun, donate_argnums, static_argnums, static_argnames)
 
   def infer_params(*args, _global_avals=False, **kwargs):
-    if kwargs:
-      raise NotImplementedError("pjit does not support kwargs")
-    if max(static_argnums + donate_argnums, default=-1) >= len(args):
-      raise ValueError(f"jitted function has {static_argnums=}, {donate_argnums=} but "
-                       f"was called with only {len(args)} positional arguments.")
+    if kwargs and not _is_unspecified(in_axis_resources):
+      raise ValueError(
+          "pjit does not support kwargs when in_axis_resources is specified.")
 
     # Putting this outside of wrapped would make resources lexically scoped
     resource_env = pxla.thread_resources.env
@@ -341,13 +346,25 @@ def pjit(fun: Callable,
                            "it's defined at the call site?")
 
     f = lu.wrap_init(fun)
-    f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
+    f, dyn_args = argnums_partial_except(f, static_argnums, args,
+                                         allow_invalid=True)
     del args
 
-    args_flat, in_tree = tree_flatten(dyn_args)
-    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
+    # TODO(yashkatariya): Merge the nokwargs and kwargs path. One blocker is
+    # flatten_axes which if kwargs are present in the treedef (even empty {}),
+    # leads to wrong expansion.
+    if kwargs:
+      f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
+      args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+      flat_fun, out_tree = flatten_fun(f, in_tree)
+    else:
+      args_flat, in_tree = tree_flatten(dyn_args)
+      flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
+      dyn_kwargs = ()
+    del kwargs
+
     if donate_argnums and not config.jax_debug_nans:
-      donated_invars = donation_vector(donate_argnums, dyn_args, ())
+      donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -431,8 +448,13 @@ def pjit(fun: Callable,
         params['resource_env'], params['donated_invars'], params['name'],
         in_is_global, always_lower=True)
 
-    args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
-    local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
+    if kwargs:
+      args_kwargs_in_tree = in_tree
+      local_in_avals = in_tree.unflatten(flat_local_in_avals)
+    else:
+      args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
+      local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
+
     return stages.Lowered.from_flat_info(
         lowering,
         args_kwargs_in_tree,
