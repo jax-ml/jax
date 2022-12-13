@@ -3121,9 +3121,6 @@ def _pjit(*args: TfVal,
           _in_avals: Sequence[core.ShapedArray],
           _out_aval: Sequence[core.ShapedArray]) -> TfVal:
   del donated_invars
-  if resource_env.physical_mesh.is_multi_process:
-    raise NotImplementedError("jax2tf translation for pjit over multi-process "
-                              "meshes is not supported yet")
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
       map(_shard_value, args, _in_avals, in_shardings))
