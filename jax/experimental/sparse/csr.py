@@ -26,7 +26,7 @@ from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
-from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, _safe_asarray, CuSparseEfficiencyWarning
+from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, CuSparseEfficiencyWarning
 from jax import lax
 from jax import tree_util
 from jax._src.lax.lax import _const
@@ -51,7 +51,7 @@ class CSR(JAXSparse):
   dtype = property(lambda self: self.data.dtype)
 
   def __init__(self, args, *, shape):
-    self.data, self.indices, self.indptr = _safe_asarray(args)
+    self.data, self.indices, self.indptr = map(jnp.asarray, args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -116,6 +116,15 @@ class CSR(JAXSparse):
   def tree_flatten(self):
     return (self.data, self.indices, self.indptr), {"shape": self.shape}
 
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    obj = object.__new__(cls)
+    obj.data, obj.indices, obj.indptr = children
+    if aux_data.keys() != {'shape'}:
+      raise ValueError(f"CSR.tree_unflatten: invalid {aux_data=}")
+    obj.__dict__.update(**aux_data)
+    return obj
+
 
 @tree_util.register_pytree_node_class
 class CSC(JAXSparse):
@@ -128,7 +137,7 @@ class CSC(JAXSparse):
   dtype = property(lambda self: self.data.dtype)
 
   def __init__(self, args, *, shape):
-    self.data, self.indices, self.indptr = _safe_asarray(args)
+    self.data, self.indices, self.indptr = map(jnp.asarray, args)
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -173,6 +182,15 @@ class CSC(JAXSparse):
 
   def tree_flatten(self):
     return (self.data, self.indices, self.indptr), {"shape": self.shape}
+
+  @classmethod
+  def tree_unflatten(cls, aux_data, children):
+    obj = object.__new__(cls)
+    obj.data, obj.indices, obj.indptr = children
+    if aux_data.keys() != {'shape'}:
+      raise ValueError(f"CSC.tree_unflatten: invalid {aux_data=}")
+    obj.__dict__.update(**aux_data)
+    return obj
 
 
 #--------------------------------------------------------------------

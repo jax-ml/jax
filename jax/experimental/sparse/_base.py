@@ -62,8 +62,9 @@ class JAXSparse(abc.ABC):
     ...
 
   @classmethod
+  @abc.abstractmethod
   def tree_unflatten(cls, aux_data, children):
-    return cls(children, **aux_data)
+    ...
 
   @abc.abstractmethod
   def transpose(self, axes=None):

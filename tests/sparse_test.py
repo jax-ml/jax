@@ -692,7 +692,8 @@ class BCOOTest(sptu.SparseTestCase):
     y = sparse.BCOO.fromdense(jnp.arange(6, dtype='float32').reshape(2, 3), n_batch=1, n_dense=1)
     self.assertEqual(repr(y), "BCOO(float32[2, 3], nse=1, n_batch=1, n_dense=1)")
 
-    M_invalid = sparse.BCOO(([], []), shape=(100,))
+    M_invalid = sparse.BCOO.fromdense(jnp.arange(6, dtype='float32').reshape(2, 3))
+    M_invalid.indices = jnp.array([])
     self.assertEqual(repr(M_invalid), "BCOO(<invalid>)")
 
     @jit
