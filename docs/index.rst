@@ -6,7 +6,7 @@ It provides composable transformations of Python+NumPy programs: differentiate, 
 parallelize, Just-In-Time compile to GPU/TPU, and more.
 
 .. note::
-   JAX 0.4.0 introduces new parallelism APIs, including breaking changes to :func:`jax.experimental.pjit` and a new unified ``jax.Array`` type.
+   JAX 0.4.1 introduces new parallelism APIs, including breaking changes to :func:`jax.experimental.pjit` and a new unified ``jax.Array`` type.
    Please see `Distributed arrays and automatic parallelization <https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html>`_ tutorial and the :ref:`jax-array-migration`
    guide for more information.
 
