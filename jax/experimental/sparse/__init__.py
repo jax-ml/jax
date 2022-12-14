@@ -183,6 +183,9 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
      -0.670236    0.03132951 -0.05356663]
 """
 
+# Note: import <name> as <name> is required for names to be exported.
+# See PEP 484 & https://github.com/google/jax/issues/7570
+
 from jax.experimental.sparse.ad import (
     grad as grad,
     value_and_grad as value_and_grad,

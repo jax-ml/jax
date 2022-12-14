@@ -35,6 +35,9 @@ del _cloud_tpu_init
 from jax import config as _config_module
 del _config_module
 
+# Note: import <name> as <name> is required for names to be exported.
+# See PEP 484 & https://github.com/google/jax/issues/7570
+
 from jax._src.basearray import Array as Array
 
 from jax._src.config import (
