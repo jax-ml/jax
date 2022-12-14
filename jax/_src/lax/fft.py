@@ -19,7 +19,7 @@ from typing import Union, Sequence
 import numpy as np
 
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
-from jax.core import Primitive
+from jax.core import Primitive, is_constant_shape
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.util import prod
@@ -103,14 +103,15 @@ def fft_abstract_eval(x, fft_type, fft_lengths):
   return x.update(shape=shape, dtype=dtype)
 
 def _fft_lowering(ctx, x, *, fft_type, fft_lengths):
-  out_aval, = ctx.avals_out
   return [
       mhlo.FftOp(x, mhlo.FftTypeAttr.get(fft_type.name),
-                  mlir.dense_int_elements(fft_lengths)).result
+                 mlir.dense_int_elements(fft_lengths)).result
   ]
 
 
 def _fft_lowering_cpu(ctx, x, *, fft_type, fft_lengths):
+  if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
+    raise NotImplementedError("Shape polymorphism for custom call is not implemented (fft); b/261671778")
   x_aval, = ctx.avals_in
   return [ducc_fft.ducc_fft_mhlo(x, x_aval.dtype, fft_type=fft_type,
                                   fft_lengths=fft_lengths)]
