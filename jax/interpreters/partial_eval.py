@@ -714,7 +714,7 @@ class JaxprTracer(Tracer):
     if self.pval.is_known():
       return get_referent(self.pval.get_known())
     elif isinstance(self.recipe, (FreeVar, ConstVar, Literal)):
-      return get_referent(self.recipe.val)
+      return get_referent(self.recipe.val)  # pytype: disable=attribute-error
     else:
       return self
 
@@ -2406,11 +2406,11 @@ def _substitute_axis_sizes(env: Dict, aval: AbstractValue) -> AbstractValue:
 
 def _is_bint_axis_size(d: Union[int, core.DArray, core.Var]) -> bool:
   if isinstance(d, core.DArray):
-    assert not d.shape
-    return type(d.dtype) is core.bint
+    assert not d.shape                 # pytype: disable=attribute-error
+    return type(d.dtype) is core.bint  # pytype: disable=attribute-error
   elif isinstance(d, core.Var):
-    return (isinstance(d.aval, core.DShapedArray) and
-            type(d.aval.dtype) is core.bint)
+    return (isinstance(d.aval, core.DShapedArray) and  # pytype: disable=attribute-error
+            type(d.aval.dtype) is core.bint)           # pytype: disable=attribute-error
   return False
 
 

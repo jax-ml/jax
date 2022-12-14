@@ -2789,7 +2789,7 @@ def _broadcast_in_dim_typecheck_rule(
   else:
     # TODO(mattjj): perform more checks like _broadcast_in_dim_shape_rule
     out_shape = _merge_dyn_shape(shape, dyn_shape)
-    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]
+    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]  # pytype: disable=attribute-error
     out_aval = core.DShapedArray(tuple(out_shape), operand.aval.dtype,
                                  operand.aval.weak_type)
     return [out_aval], core.no_effects
@@ -3273,7 +3273,7 @@ def _reshape_typecheck_rule(operand, *dyn_shape, new_sizes, dimensions):
   else:
     # TODO(mattjj, necula): perform more checks like _reshape_shape_rule
     out_shape = _merge_dyn_shape(new_sizes, dyn_shape)
-    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]
+    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]  # pytype: disable=attribute-error
     out_aval = core.DShapedArray(tuple(out_shape), operand.aval.dtype,
                                  operand.aval.weak_type)
     return [out_aval], core.no_effects
@@ -4511,7 +4511,7 @@ def _iota_typecheck_rule(*dyn_shape, dtype, shape, dimension):
     return [out_aval], effects
   else:
     out_shape = _merge_dyn_shape(shape, dyn_shape)
-    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]
+    out_shape = [x.val if type(x) is core.Literal else x for x in out_shape]  # pytype: disable=attribute-error
     out_aval = core.DShapedArray(tuple(out_shape), dtype, False)
     return [out_aval], core.no_effects
 core.custom_typechecks[iota_p] = _iota_typecheck_rule
