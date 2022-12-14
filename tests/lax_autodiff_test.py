@@ -415,7 +415,9 @@ class LaxAutodiffTest(jtu.JaxTestCase):
     rhs = rng(rhs_shape, dtype)
     dot_general = partial(lax.dot_general, dimension_numbers=dimension_numbers,
                           precision=lax.Precision.HIGHEST)
-    check_grads_bilinear(dot_general, (lhs, rhs), order=2, modes=["fwd", "rev"])
+    atol = {np.float16: 5E-2} if jtu.device_under_test() == 'tpu' else None
+    check_grads_bilinear(dot_general, (lhs, rhs), order=2,
+                         modes=["fwd", "rev"], atol=atol)
     # check that precision config is preserved
     result, pullback = jax.vjp(dot_general, lhs, rhs)
     gresult = lax.zeros_like_array(result)
