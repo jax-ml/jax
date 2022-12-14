@@ -1345,12 +1345,14 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   def testTridiagonal(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
     def jax_func(a):
+      a = (a + T(a.conj())) / 2 #Make input hermitian/symmetric
       return lax.linalg.tridiagonal(a, lower=lower)
 
     real_dtype = jnp.finfo(dtype).dtype
     @partial(np.vectorize, otypes=(dtype, real_dtype, real_dtype, dtype),
             signature='(n,n)->(n,n),(n),(k),(k)')
     def sp_func(a):
+      a = (a + T(a.conj())) / 2 #Make input hermitian/symmetric
       if dtype == np.float32:
         c, d, e, tau, info = scipy.linalg.lapack.ssytrd(a, lower=lower)
       elif dtype == np.float64:
