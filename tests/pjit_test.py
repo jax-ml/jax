@@ -2855,6 +2855,112 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(compiled._executable._kept_var_idx, {5})
     self.assertLen(compiled._executable.in_avals, 1)
 
+  def test_pjit_with_device_arg(self):
+    def mul(x):
+      return x @ x.T
+
+    def _check(out, expected_device, expected_out):
+      self.assertEqual(out.device(), expected_device)
+      self.assertLen(out.sharding.device_set, 1)
+      self.assertArraysEqual(out, expected_out @ expected_out.T)
+
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    f = pjit(mul, device=jax.devices()[1])
+    x = jnp.arange(8).reshape(4, 2)
+    f_out = f(x)
+    f_out2 = f(f_out)
+    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
+    _check(f_out, jax.devices()[1], x)
+    _check(f_out2, jax.devices()[1], f_out)
+
+    y = jax.device_put(x, jax.sharding.NamedSharding(mesh, P('x', 'y')))
+    out2 = f(y)
+    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
+    _check(out2, jax.devices()[1], y)
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+
+    h = pjit(mul, device=jax.devices()[4])
+    h_out = h(y)
+    cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
+    _check(h_out, jax.devices()[4], y)
+
+    self.assertEqual(cache_info3.hits, cache_info2.hits)
+    self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
+
+    # AOT test
+    compiled = f.lower(jax.ShapedArray(y.shape, y.dtype)).compile()
+    out3 = compiled(y)
+    _check(out3, jax.devices()[1], y)
+
+  def test_pjit_with_device_arg_input_from_another_pjit(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    inp = np.arange(8).reshape(4, 2)
+
+    y = jax.device_put(inp, jax.sharding.NamedSharding(mesh, P('x', 'y')))
+    out = pjit(lambda x: x * 2)(y)
+
+    expected_device = jax.devices()[2]
+    final_out = pjit(lambda x: x * 3, device=expected_device)(out)
+
+    self.assertEqual(final_out.device(), expected_device)
+    self.assertLen(final_out.sharding.device_set, 1)
+    self.assertArraysEqual(final_out, inp * 6)
+
+  @jtu.skip_on_devices("gpu", "cpu")
+  def test_pjit_with_backend_arg(self):
+    def _check(out, expected_device, expected_out):
+      self.assertEqual(out.device(), expected_device)
+      self.assertLen(out.sharding.device_set, 1)
+      self.assertArraysEqual(out, expected_out)
+
+    x = jnp.arange(8)
+    g = pjit(lambda x: x, backend='tpu')
+    g_out = g(x)
+    _check(g_out, jax.devices()[0], x)
+
+    compiled = g.lower(jax.ShapedArray(x.shape, x.dtype)).compile()
+    out4 = compiled(x)
+    _check(out4, jax.devices()[0], x)
+
+  def test_autodiff_with_device_arg(self):
+    if jax.device_count() <= 1:
+      self.skipTest('Test requires more >1 device.')
+    # Add a constant captured by the nested pjit to make things more complicated
+    h = jnp.arange(4.)
+    f = pjit(lambda x: x.sum(1) * h.sum(), device=jax.devices()[1])
+    g = pjit(lambda x: f(jnp.sin(x * 4 + 2)), device=jax.devices()[1])
+    jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
+
+  def test_pjit_device_backend_axis_resources_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        'If backend or device is specified on jit, then '
+        'in_axis_resources should not be specified.'):
+      pjit(lambda x: x, in_axis_resources=None, backend='cpu')
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'If backend or device is specified on jit, then '
+        'out_axis_resources should not be specified.'):
+      pjit(lambda x: x, out_axis_resources=None, device=jax.devices()[0])
+
+  def test_pjit_device_backend_both_error(self):
+    with self.assertRaisesRegex(
+        ValueError, "can't specify both a device and a backend for jit"):
+      pjit(lambda x: x, device=jax.devices()[0], backend='cpu')
+
+  def test_pjit_mesh_with_device_or_backend_error(self):
+    mesh = jtu.create_global_mesh((1,), ('x',))
+    with mesh:
+      with self.assertRaisesRegex(
+          ValueError,
+          "Mesh context manager should not be used with jit when backend or "
+          "device is also specified as an argument to jit."):
+        pjit(lambda x: x, device=jax.devices()[0])(jnp.arange(8))
+
 
 class TempSharding(Sharding):
 

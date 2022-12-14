@@ -248,8 +248,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     _check_instance(self, x)
     self.assertEqual(x.device(), device)
 
+  @parameterized.named_parameters(
+      ('jit', jax.jit),
+      ('pjit', pjit.pjit),
+  )
   @jtu.skip_on_devices("cpu")
-  def test_jit_default_device(self):
+  def test_jit_default_device(self, module):
     if jax.device_count() == 1:
       raise unittest.SkipTest("Test requires multiple devices")
 
@@ -257,7 +261,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     test_device = jax.devices()[-1]
     self.assertNotEqual(system_default_device, test_device)
 
-    f = jax.jit(lambda x: x + 1)
+    f = module(lambda x: x + 1)
     self.assertEqual(f(1).device(), system_default_device)
 
     with jax.default_device(test_device):
@@ -270,14 +274,10 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     with jax.default_device(test_device):
       # Explicit `device` or `backend` argument to jit overrides default_device
       self.assertEqual(
-          jax.jit(f, device=system_default_device)(1).device(),
+          module(f, device=system_default_device)(1).device(),
           system_default_device)
-      out = jax.jit(f, backend="cpu")(1)
-      if config.jax_array:
-        self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
-        self.assertEqual(out._arrays[0].platform(), "cpu")
-      else:
-        self.assertEqual(out.platform(), "cpu")
+      out = module(f, backend="cpu")(1)
+      self.assertEqual(out.device().platform, "cpu")
 
       # Sticky input device overrides default_device
       sticky = jax.device_put(1, system_default_device)
@@ -715,29 +715,31 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     else:
       self.assertIsInstance(jitted_f(2), device_array.Buffer)
 
+  @parameterized.named_parameters(
+      ('jit', jax.jit),
+      ('pjit', pjit.pjit)
+  )
   @jtu.skip_on_devices("cpu")
-  def test_explicit_backend(self):
+  def test_explicit_backend(self, module):
     f = lambda x: x + 1
-    jitted_f = jit(f, backend=jtu.device_under_test())
-    jitted_f_cpu = jit(f, backend="cpu")
+    jitted_f = module(f, backend=jtu.device_under_test())
+    jitted_f_cpu = module(f, backend="cpu")
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
-    if config.jax_array:
-      buf = result._arrays[0]
-      buf_cpu = result_cpu._arrays[0]
-    else:
-      buf = result.device_buffer
-      buf_cpu = result_cpu.device_buffer
-    self.assertEqual(buf.platform(), jtu.device_under_test())
-    self.assertEqual(buf_cpu.platform(), "cpu")
+    self.assertEqual(result.device().platform, jtu.device_under_test())
+    self.assertEqual(result_cpu.device().platform, "cpu")
 
+  @parameterized.named_parameters(
+      ('jit', jax.jit),
+      ('pjit', pjit.pjit)
+  )
   @jtu.skip_on_devices("cpu")
-  def test_device_to_device_copy_between_backends(self):
+  def test_device_to_device_copy_between_backends(self, module):
     # b/186624243
     f = lambda x: x + 1
-    jitted_f = jit(f, backend=jtu.device_under_test())
-    jitted_f_cpu = jit(f, backend="cpu")
+    jitted_f = module(f, backend=jtu.device_under_test())
+    jitted_f_cpu = module(f, backend="cpu")
 
     x = np.arange(30).reshape(1, 10, 3)
     result = jitted_f(x)
@@ -747,16 +749,23 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(result_2, x + 3)
     self.assertAllClose(result_cpu_2, x + 4)
 
+  @parameterized.named_parameters(
+      ('jit', jax.jit),
+      ('pjit', pjit.pjit)
+  )
   @jtu.skip_on_devices("cpu")
-  def test_mismatched_nested_backends(self):
-    @partial(jit, backend=jtu.device_under_test())
+  def test_mismatched_nested_backends(self, module):
+    @partial(module, backend=jtu.device_under_test())
     def f(x):
-      return jit(lambda x: x + 1, backend="cpu")(x)
+      return module(lambda x: x + 1, backend="cpu")(x)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "Outer-jit backend specification .* must match explicit inner-jit "
-        "backend specification cpu."):
+    if module is pjit.pjit:
+      msg = 'Devices of all `Array` inputs and outputs should be the same'
+    else:
+      msg = ("Outer-jit backend specification .* must match explicit inner-jit "
+             "backend specification cpu.")
+
+    with self.assertRaisesRegex(ValueError, msg):
       f(1.)
 
   def test_omnistaging(self):

@@ -21,12 +21,13 @@ from typing import (Callable, Sequence, Tuple, Union, cast, List, Optional,
 import itertools as it
 from functools import partial, lru_cache
 import threading
+import warnings
 
 from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax._src.sharding import (
     NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
-    XLADeviceAssignment)
+    XLADeviceAssignment, SingleDeviceSharding)
 from jax import core
 from jax import linear_util as lu
 from jax import stages
@@ -182,6 +183,8 @@ def pjit(
     static_argnames: Union[str, Iterable[str], None] = None,
     donate_argnums: Union[int, Sequence[int]] = (),
     keep_unused: bool = False,
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
 ) -> stages.Wrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
 
@@ -287,6 +290,16 @@ def pjit(
       unused by `fun` *may* be dropped from resulting compiled XLA executables.
       Such arguments will not be transferred to the device nor provided to the
       underlying executable. If `True`, unused arguments will not be pruned.
+    device: This argument is deprecated. Please put your arguments on the
+      device you want before passing them to jit.
+      Optional, the Device the jitted function will run on. (Available devices
+      can be retrieved via :py:func:`jax.devices`.) The default is inherited
+      from XLA's DeviceAssignment logic and is usually to use
+      ``jax.devices()[0]``.
+    backend: This argument is deprecated. Please put your arguments on the
+      backend you want before passing them to jit.
+      Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
 
       For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
   Returns:
@@ -319,6 +332,23 @@ def pjit(
         "this feature. You can use jax.config.update('jax_array', True) or "
         "set the environment variable  JAX_ARRAY=1 , or set the `jax_array` "
         "boolean flag to something true-like.")
+
+  if backend is not None or device is not None:
+    warnings.warn(
+        'backend and device argument on jit is deprecated. You can use a '
+        '`jax.sharding.Mesh` context manager or device_put the arguments '
+        'before passing them to `jit`. Please see '
+        'https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html '
+        'for more information.', DeprecationWarning)
+    if device is not None and backend is not None:
+      raise ValueError("can't specify both a device and a backend for jit, "
+                       f"got {device=} and {backend=}")
+    if not _is_unspecified(in_axis_resources):
+      raise ValueError('If backend or device is specified on jit, then '
+                       'in_axis_resources should not be specified.')
+    if not _is_unspecified(out_axis_resources):
+      raise ValueError('If backend or device is specified on jit, then '
+                       'out_axis_resources should not be specified.')
 
   if isinstance(in_axis_resources, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -353,6 +383,11 @@ def pjit(
         raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
                            "it's defined at the call site?")
 
+    if (backend or device) and not pjit_mesh.empty:
+      raise ValueError(
+          "Mesh context manager should not be used with jit when backend or "
+          "device is also specified as an argument to jit.")
+
     f = lu.wrap_init(fun)
     f, dyn_args = argnums_partial_except(f, static_argnums, args,
                                          allow_invalid=True)
@@ -377,10 +412,17 @@ def pjit(
       donated_invars = (False,) * len(args_flat)
 
     if config.jax_array:
-      in_shardings = tree_map(
-          lambda x: _create_sharding_for_array(pjit_mesh, x), in_axis_resources)
-      out_shardings = tree_map(
-          lambda x: _create_sharding_for_array(pjit_mesh, x), out_axis_resources)
+      # If backend or device is set as an arg on jit, then resolve them to
+      # in_shardings and out_shardings as if user passed in in_axis_resources
+      # and out_axis_resources.
+      if backend or device:
+        in_shardings = out_shardings = _create_sharding_with_device_backend(
+            device, backend)
+      else:
+        in_shardings = tree_map(
+            lambda x: _create_sharding_for_array(pjit_mesh, x), in_axis_resources)
+        out_shardings = tree_map(
+            lambda x: _create_sharding_for_array(pjit_mesh, x), out_axis_resources)
     else:
       in_shardings = tree_map(
           lambda x: _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x),
@@ -506,6 +548,18 @@ def _create_sharding_for_array(mesh, x):
   # A nice user error is raised in _prepare_axis_resources.
   assert isinstance(x, ParsedPartitionSpec), x
   return _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x)
+
+
+def _create_sharding_with_device_backend(device, backend):
+  if device is not None:
+    assert backend is None
+    out = SingleDeviceSharding(device)
+  elif backend is not None:
+    assert device is None
+    out = SingleDeviceSharding(
+        xb.get_backend(backend).get_default_device_assignment(1)[0])
+  out._device_backend = True
+  return out
 
 
 def flatten_axis_resources(what, tree, shardings, tupled_args):
@@ -877,6 +931,14 @@ pjit_p.multiple_results = True
 
 
 def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
+  # If True, means that device or backend is set by the user on pjit and it
+  # has the same semantics as device_put i.e. doesn't matter which device the
+  # arg is on, reshard it to the device mentioned. So don't do any of the
+  # checks and just return the pjit_in_shardings directly. `shard_args` will
+  # handle the resharding.
+  if pxla._check_device_backend_on_shardings(pjit_in_shardings):
+    return pjit_in_shardings
+
   committed_arg_shardings = []
   for a in args:
     if hasattr(a, 'sharding'):
@@ -1405,7 +1467,8 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
   for aval, s in zip(jaxpr.in_avals, params['in_shardings']):
     if _is_unspecified(s) or _is_auto(s):
       continue
-    elif hasattr(s, '_original_sharding'):
+    elif hasattr(s, '_original_sharding') and hasattr(
+        s._original_sharding, '_parsed_pspec'):
       parsed_pspec = s._original_sharding._parsed_pspec
     else:
       parsed_pspec = parse_flatten_op_sharding(
@@ -1421,7 +1484,8 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
   for aval, s in zip(jaxpr.out_avals, params['out_shardings']):
     if _is_unspecified(s) or _is_auto(s):
       continue
-    elif hasattr(s, '_original_sharding'):
+    elif hasattr(s, '_original_sharding') and hasattr(
+        s._original_sharding, '_parsed_pspec'):
       parsed_pspec = s._original_sharding._parsed_pspec
     else:
       parsed_pspec = parse_flatten_op_sharding(

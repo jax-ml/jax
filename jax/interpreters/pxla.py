@@ -3234,7 +3234,8 @@ def _get_normalized_avals_and_shardings(
       in_sharding = i
     else:
       assert isinstance(i, sharding_internal.NamedSharding)
-      aval = i.mesh._global_to_local(cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)
+      aval = i.mesh._global_to_local(
+          cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)  # pylint: disable=g-bare-generic
       in_sharding = sharding_internal.NamedSharding(i.mesh.local_mesh, i.spec)
     avals.append(aval)
     shardings.append(in_sharding)
@@ -3467,9 +3468,8 @@ class UnloadedMeshExecutable:
         are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
       input_avals, input_shardings = (
-          _get_normalized_avals_and_shardings(global_in_avals,
-                                              in_shardings,  # type: ignore # arg-type
-                                              in_is_global))
+          _get_normalized_avals_and_shardings(
+              global_in_avals, in_shardings, in_is_global))  # type: ignore # arg-type
 
       return UnloadedMeshExecutable(
           xla_executable=xla_executable,
@@ -3718,6 +3718,16 @@ def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
   return sharding_internal.NamedSharding(mesh, pspec, parsed_pspec)
 
 
+def _check_device_backend_on_shardings(shardings) -> bool:
+  for i in shardings:
+    if _is_unspecified(i) or _is_auto(i):
+      continue
+    if hasattr(i, '_original_sharding') and getattr(
+        i._original_sharding, '_device_backend', False):
+      return True
+  return False
+
+
 def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
   from jax.experimental.global_device_array import GlobalDeviceArray
   from jax._src.array import ArrayImpl
@@ -3736,9 +3746,10 @@ def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
 
     # No need to cache this check since MeshExecutable has a C++ fast path
     # for AOT compiled call.
-    if committed and not are_op_shardings_equal(
-        arg_sharding._to_xla_op_sharding(arg.ndim),
-        xs._to_xla_op_sharding(arg.ndim)):
+    if (not _check_device_backend_on_shardings([xs]) and
+        committed and
+        not are_op_shardings_equal(arg_sharding._to_xla_op_sharding(arg.ndim),
+                                   xs._to_xla_op_sharding(arg.ndim))):
       raise ValueError(
           f"{arg_type} sharding does not match the input sharding. "
           f"Got {arg_type} sharding: {arg_sharding} and xla sharding: {xs} for "
