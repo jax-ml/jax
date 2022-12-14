@@ -2258,8 +2258,11 @@ def _mhlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, p
     idxs = [_unravel_index_mhlo(axis_env)] + [zero] * len(dims)
     broadcast_result = mhlo.BroadcastOp(
         x, mlir.dense_int_elements([1])).result
-    padded = mhlo.DynamicUpdateSliceOp(
-        padded.type, padded, broadcast_result, idxs).result
+    if xc.mlir_api_version < 40:
+      padded = mhlo.DynamicUpdateSliceOp(padded.type, padded, broadcast_result,
+                                         idxs).result
+    else:
+      padded = mhlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
     replica_groups = mlir.dense_int_elements(
       xla.axis_groups(axis_env, axis_env.names[-1]))
     out = mhlo.CrossReplicaSumOp(padded, replica_groups).result

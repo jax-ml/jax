@@ -302,8 +302,12 @@ def _device_array_constant_handler(val, canonicalize_types):
 for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
 
-register_constant_handler(
-  core.Token, lambda _, __: [mhlo.CreateTokenOp(mhlo.TokenType.get()).result])
+def _token_constant_handler(val, canonicalize_types):
+  if mlir_api_version < 40:
+    return [mhlo.CreateTokenOp(mhlo.TokenType.get()).result]
+  else:
+    return [mhlo.CreateTokenOp().result]
+register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
 
@@ -760,8 +764,11 @@ def token_type() -> Sequence[ir.Type]:
   return [mhlo.TokenType.get()]
 
 def create_token() -> Token:
-  return wrap_singleton_ir_values(
-      mhlo.CreateTokenOp(mhlo.TokenType.get()).result)
+  if mlir_api_version < 40:
+    return wrap_singleton_ir_values(
+        mhlo.CreateTokenOp(mhlo.TokenType.get()).result)
+  else:
+    return wrap_singleton_ir_values(mhlo.CreateTokenOp().result)
 
 class TokenSet:
   """An immutable container of tokens to be used to lower effectful jaxprs. When lowering
@@ -980,7 +987,10 @@ def lower_jaxpr_to_fun(
     args: List[List[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_tokens_with_dummy and aval is core.abstract_token:
-        args.append(mhlo.CreateTokenOp(mhlo.TokenType.get()).results)
+        if mlir_api_version < 40:
+          args.append(mhlo.CreateTokenOp(mhlo.TokenType.get()).results)
+        else:
+          args.append(mhlo.CreateTokenOp().results)
       else:
         args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
@@ -1345,8 +1355,11 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
         ctx, aval_out, x, update, *start_indices)
 
   # TODO(necula): handle dynamic shapes
-  return mhlo.DynamicUpdateSliceOp(aval_to_ir_type(aval_out), x, update,
-                                  start_indices).result
+  if mlir_api_version < 40:
+    return mhlo.DynamicUpdateSliceOp(
+        aval_to_ir_type(aval_out), x, update, start_indices).result
+  else:
+    return mhlo.DynamicUpdateSliceOp(x, update, start_indices).result
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
@@ -1602,8 +1615,12 @@ def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
                  aval: core.ShapedArray, name: str, *,
                  sharding: Optional[xc.OpSharding] = None) -> ir.Value:
   channel_handle = mhlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
-  send_op = mhlo.SendOp(mhlo.TokenType.get(), [operand], token, channel_handle,
-                        is_host_transfer=ir.BoolAttr.get(True))
+  if mlir_api_version < 40:
+    send_op = mhlo.SendOp(mhlo.TokenType.get(), [operand], token, channel_handle,
+                          is_host_transfer=ir.BoolAttr.get(True))
+  else:
+    send_op = mhlo.SendOp([operand], token, channel_handle,
+                          is_host_transfer=ir.BoolAttr.get(True))
   dtype_str = _dtype_to_xla_type_string(aval.dtype)
   if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
     raise NotImplementedError("64-bit types not supported.")
@@ -1652,7 +1669,10 @@ def _emit_tpu_python_callback(
     *,
     sharding: Optional[xc.OpSharding] = None
 ) -> Tuple[List[ir.Value], Any, Any]:
-  token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
+  if mlir_api_version < 40:
+    token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
+  else:
+    token = token or mhlo.CreateTokenOp().result
   _wrapped_callback = callback
 
   send_channels = []

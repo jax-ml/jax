@@ -47,6 +47,7 @@ from jax._src import test_util as jtu
 from jax._src import lax_reference
 from jax._src.util import prod
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_client as xc
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -2883,8 +2884,11 @@ class FooTyRules:
     aval_out, = ctx.avals_out
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
-    return mhlo.DynamicUpdateSliceOp(mlir.aval_to_ir_type(aval_out), x, update,
-                                     start_indices).result
+    if xc.mlir_api_version < 40:
+      return mhlo.DynamicUpdateSliceOp(
+          mlir.aval_to_ir_type(aval_out), x, update, start_indices).result
+    else:
+      return mhlo.DynamicUpdateSliceOp(x, update, start_indices).result
 
   @staticmethod
   def broadcast_in_dim_mlir(ctx, aval_out, x, broadcast_dimensions):
