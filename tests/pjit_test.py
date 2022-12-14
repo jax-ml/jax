@@ -728,7 +728,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     # execution of the compiled function is blocking, so transferring data
     # to infeed before executing ensures that the execution does not deadlock
     # waiting for the infeed data.
-    logging.info('Transferring to infeed for the jit call')
+    logging.info('Transfering to infeed for the jit call')
     d = devices[0]
     d.transfer_to_infeed((y,))
     d.transfer_to_infeed((z,))
@@ -759,7 +759,7 @@ class PJitTest(jtu.BufferDonationTestCase):
           partitions=(P(1, nr_devices),))
       return x + y + z + w
 
-    logging.info('Transferring to infeed for the pjit call')
+    logging.info('Transfering to infeed for the pjit call')
     for didx, d in enumerate(devices):
       # Transfer the whole array to all devices for replicated.
       d.transfer_to_infeed((y,))
@@ -801,7 +801,7 @@ class PJitTest(jtu.BufferDonationTestCase):
           xc.shape_from_pyval((x,)).with_major_to_minor_layout_if_absent())
       self.assertAllClose(x, y, check_dtypes=True)
 
-    logging.info('Transferring from outfeed for the pjit call')
+    logging.info('Transfering from outfeed for the pjit call')
     for didx, d in enumerate(devices):
       # Transfer the whole array from all devices for replicated.
       check_outfeed(d, x)
@@ -2635,7 +2635,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        ("in_axis_resources and out_axis_resources should not "
+        ("in_axis_resources and out_axis_resouces should not "
          "be the unspecified singleton value. Please enable `jax.Array` to use "
          "this feature.")):
       pjit(lambda x: x)
@@ -2814,38 +2814,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         "pjit does not support kwargs when in_axis_resources is specified."):
       pjit(lambda x: x, in_axis_resources=None)(x=jnp.arange(8.))
-
-  def test_pjit_keep_unused_true(self):
-    @partial(pjit, keep_unused=True)
-    def f(x, y):
-      return y
-
-    inp = jnp.arange(4)
-    unused_inp = jnp.arange(8)
-    out = f(unused_inp, inp)
-    self.assertArraysEqual(out, inp)
-
-    compiled = f.lower(unused_inp, inp).compile()
-    self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
-    self.assertLen(compiled._executable.in_avals, 2)
-
-    with jtu.count_device_put() as count:
-      _ = f(1, 2)
-    self.assertEqual(count[0], 1)
-
-  def test_pjit_keep_unused_default_false(self):
-    @pjit
-    def f(x, y):
-      return y
-
-    inp = jnp.arange(4)
-    unused_inp = jnp.arange(8)
-    out = f(unused_inp, inp)
-    self.assertArraysEqual(out, inp)
-
-    compiled = f.lower(unused_inp, inp).compile()
-    self.assertEqual(compiled._executable._kept_var_idx, {1})
-    self.assertLen(compiled._executable.in_avals, 1)
 
 
 class TempSharding(Sharding):
