@@ -1092,6 +1092,64 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "hi!")
 
+  def test_debug_check_noop(self):
+    def f(x):
+      checkify.debug_check(jnp.all(x != x), "{x} cannot be {x}", x=x)
+      return x
+    x = jnp.ones(())
+    f(x)  # no error.
+    jax.jit(f)(x)  # no error.
+    jax.vmap(f)(jnp.ones((2,)))  # no error.
+    jax.grad(f)(x)  # no error.
+
+  @parameterized.named_parameters(("with_jit", True), ("without_jit", False))
+  def test_debug_check_nonscalar_pred(self, with_jit):
+    def f(x):
+      checkify.debug_check(x != x, "{x} cannot be {x}", x=x)
+      return x
+    checked_f = checkify.checkify(f)
+    if with_jit:
+      checked_f = jax.jit(checked_f)
+
+    with self.assertRaisesRegex(TypeError, "debug_check takes a scalar pred"):
+      checked_f(jnp.ones((5,)))
+
+
+  @parameterized.named_parameters(("with_jit", True), ("without_jit", False))
+  def test_debug_check(self, with_jit):
+    def f(x):
+      checkify.debug_check(jnp.all(x != x), "{x} cannot be {x}", x=x)
+      return x
+    checked_f = checkify.checkify(f)
+    if with_jit:
+      checked_f = jax.jit(checked_f)
+    err, _ = checked_f(jnp.ones(()))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "1.0 cannot be 1.0")
+
+  @parameterized.named_parameters(("with_jit", True), ("without_jit", False))
+  def test_debug_check_disabled_errors(self, with_jit):
+    def f(x):
+      checkify.debug_check(jnp.all(x != x), "{x} cannot be {x}", x=x)
+      return x
+    checked_f = checkify.checkify(f, errors={})
+    if with_jit:
+      checked_f = jax.jit(checked_f)
+    err, _ = checked_f(jnp.ones((1,)))
+    self.assertIsNone(err.get())
+
+  def test_debug_check_jaxpr_roundtrip(self):
+    def f(x):
+      checkify.debug_check(jnp.all(x != x), "{x} cannot be {x}", x=x)
+      return x
+    x = jnp.ones(())
+    jaxpr = jax.make_jaxpr(f)(x)
+    roundtrip_f = partial(jax.core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts)
+    checked_f = checkify.checkify(jax.jit(roundtrip_f))
+    err, _ = checked_f(jnp.ones(()))
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "1.0 cannot be 1.0")
+
 
 class LowerableChecksTest(jtu.JaxTestCase):
   def setUp(self):
