@@ -357,3 +357,12 @@ jax.scipy.stats.gaussian_kde
    gaussian_kde.resample
    gaussian_kde.pdf
    gaussian_kde.logpdf
+
+jax.scipy.stats.vonmises
+~~~~~~~~~~~~~~~~~~~~~~~~
+.. automodule:: jax.scipy.stats.vonmises
+.. autosummary::
+  :toctree: _autosummary
+
+   logpdf
+   pdf
