@@ -904,6 +904,17 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(j1.shape, data.shape + M.shape)
     self.assertEqual(hess.shape, data.shape + 2 * M.shape)
 
+  def test_bcoo_extract_zero_nse(self):
+    # Regression test for https://github.com/google/jax/issues/13653
+
+    # (n_batch, n_sparse, n_dense) = (1, 0, 0), nse = 2
+    args_maker = lambda: (jnp.zeros((3, 2, 0), dtype='int32'), jnp.arange(3))
+    self._CompileAndCheck(sparse.bcoo_extract, args_maker)
+
+    # (n_batch, n_sparse, n_dense) = (0, 0, 1), nse = 2
+    args_maker = lambda: (jnp.zeros((2, 0), dtype='int32'), jnp.arange(3))
+    self._CompileAndCheck(sparse.bcoo_extract, args_maker)
+
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
       for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
