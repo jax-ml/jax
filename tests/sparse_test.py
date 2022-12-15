@@ -2771,6 +2771,19 @@ class SparseUtilTest(sptu.SparseTestCase):
     self.assertEqual(expected_nse, actual_nse)
 
   @jtu.sample_product(
+    [dict(n_batch=n_batch, n_dense=n_dense)
+     for n_batch in range(3)
+     for n_dense in range(3 - n_batch)
+    ],
+    dtype=all_dtypes,
+  )
+  def test_count_stored_elements_empty(self, dtype, n_batch, n_dense):
+    mat = np.empty((0, 4), dtype=dtype)
+    actual_nse = sparse.util._count_stored_elements(
+        mat, n_batch=n_batch, n_dense=n_dense)
+    self.assertEqual(0, actual_nse)
+
+  @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, expected_nse=expected_nse)
       for n_batch, n_dense, expected_nse in
         [(0, 0, 14), (1, 0, np.array([6, 8])), (0, 1, 9),
