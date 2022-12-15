@@ -2882,10 +2882,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
-    h = pjit(mul, device=jax.devices()[4])
+    h = pjit(mul, device=jax.devices()[-1])
     h_out = h(y)
     cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
-    _check(h_out, jax.devices()[4], y)
+    _check(h_out, jax.devices()[-1], y)
 
     self.assertEqual(cache_info3.hits, cache_info2.hits)
     self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
