@@ -106,7 +106,7 @@ We first create primitive operations, `_rms_norm_fwd_p` and `_rms_norm_bwd_p`, w
 We set the `multipe_results` attribute to `True` for these operations, which means that the operation produces multipel outputs collected in an list.
 When it is set to `False`, the operation produces a single output without a list.
 
-```ipython3
+```python
 from functools import partial
 
 from build import gpu_ops
@@ -150,7 +150,7 @@ The functions `_rms_norm_fwd_cuda_lowering` and `_rms_norm_bwd_cuda_lowering` be
 
 Note that an `RMSNormDescriptor` object is created in the lowering function, and passed to the custom call as `opaque`.
 
-```ipython3
+```python
 from jax.interpreters import mlir
 from jax.interpreters.mlir import ir
 from jaxlib.mhlo_helpers import custom_call
@@ -262,7 +262,7 @@ mlir.register_lowering(
 
 # Let's test it
 
-```ipython3
+```python
 import jax
 
 
@@ -273,10 +273,10 @@ weight = jax.numpy.ones(norm_shape, dtype=jax.numpy.float16)
 
 ## Test forward function
 
-```ipython3
+```python
 out = rms_norm_fwd(x, weight)
 ```
-```ipython3
+```python
 ---------------------------------------------------------------------------
 NotImplementedError                       Traceback (most recent call last)
 Cell In [5], line 1
@@ -447,7 +447,7 @@ These functions are passed to `.def_abstract_eval` method to be registered with 
 
 See [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html#abstract-evaluation-rules) for more information on abstract evaluation.
 
-```ipython3
+```python
 from functools import reduce
 from operator import mul
 
@@ -508,7 +508,7 @@ _rms_norm_bwd_p.def_abstract_eval(_rms_norm_bwd_abstract)
 
 ## Test forward function
 
-```ipython3
+```python
 out = rms_norm_fwd(x, weight)
 ```
 
@@ -516,7 +516,7 @@ out = rms_norm_fwd(x, weight)
 
 Now let's test the backward operation using `jax.grad`.
 
-```ipython3
+```python
 def loss(x, weight):
     predictions = rms_norm_fwd(x, weight)
     return -jax.numpy.mean(predictions**2)
@@ -525,7 +525,7 @@ def loss(x, weight):
 loss_grad = jax.grad(loss)
 out = loss_grad(x, weight)
 ```
-```ipython3
+```python
 ---------------------------------------------------------------------------
 NotImplementedError                       Traceback (most recent call last)
 Cell In [8], line 7
@@ -563,7 +563,7 @@ The backward operation failed with the error `NotImplementedError: Differentiati
 
 We can teach JAX that `rms_norm_bwd` is the backward operation for `rms_norm_fwd`, using `jax.custom_vjp` and its convention.  As the first step, we need to refine the definition of `rms_norm_fwd` and `rms_norm_bwd`.
 
-```ipython3
+```python
 # rms_norm_fwd was previously defined as
 #
 # def rms_norm_fwd(x, weight, eps=1e-05):
@@ -600,7 +600,7 @@ Now that `rms_norm_fwd` returns the residual data, which is not needed for simpl
 
 See [Custom derivative rules for JAX-transformable Python functions](https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html#use-jax-custom-vjp-to-define-custom-reverse-mode-only-rules) for more information on `jax.custom_vjp`.
 
-```ipython3
+```python
 @partial(jax.custom_vjp, nondiff_argnums=(2,))
 def rms_norm(x, weight, eps=1e-05):
     output, _ = rms_norm_fwd(x, weight, eps=eps)
@@ -612,7 +612,7 @@ rms_norm.defvjp(rms_norm_fwd, rms_norm_bwd)
 
 With the refinement we have made, the backward operation test works with a modification: `loss` now calls `rms_norm` instead of `rms_norm_fwd`.
 
-```ipython3
+```python
 def loss(x, weight):
     predictions = rms_norm(x, weight)
     return -jax.numpy.mean(predictions**2)
@@ -630,7 +630,7 @@ We are using `jax.experimental.pjit.pjit` for parallel execution on multiple dev
 
 Let's first test the forward operation on multiple devices.  We are creating a simple 1D mesh and sharding `x` on all devices.
 
-```ipython3
+```python
 import numpy
 from jax.experimental.maps import Mesh
 from jax.experimental.pjit import PartitionSpec, pjit
@@ -650,7 +650,7 @@ with mesh:
 
 numpy.allclose(ref, out)
 ```
-```ipython3
+```python
 HloModule pjit_rms_norm, entry_computation_layout={(f16[4,512,512]{2,1,0},f16[512,512]{1,0})->f16[4,512,512]{2,1,0}}
 
 %fused_computation (param_1: f16[32,512,512], param_1.3: u32[]) -> f16[4,512,512] {
@@ -673,7 +673,7 @@ ENTRY %main.7_spmd (param: f16[4,512,512], param.1: f16[512,512]) -> f16[4,512,5
   ROOT %fusion = f16[4,512,512]{2,1,0} fusion(f16[32,512,512]{2,1,0} %get-tuple-element, u32[] %partition-id), kind=kLoop, calls=%fused_computation, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
 }
 ```
-```ipython3
+```python
 True
 ```
 
@@ -683,7 +683,7 @@ As XLA does not have enough knowledge about the custom functions to shard input 
 
 To avoid this overhead, we need to use the xmap manual sharding with the following configuration updates
 
-```ipython3
+```python
 jax.config.update("experimental_xmap_spmd_lowering", True)
 jax.config.update("experimental_xmap_spmd_lowering_manual", True)
 ```
@@ -694,7 +694,7 @@ We first define a function that wraps `rms_norm` with `xmap`.  As the size of th
 
 After running `rms_norm` through `xmap`, we reshape the output to match the shape of `x` to match the expectation from clients.
 
-```ipython3
+```python
 from jax.experimental.maps import xmap
 
 
@@ -713,7 +713,7 @@ def xmap_rms_norm(x, weight, *, device_count):
 
 Now we need to run `xmap_rms_norm`, not `rms_norm` through `pjit`.
 
-```ipython3
+```python
 with mesh:
 
     pjitted = pjit(
@@ -729,7 +729,7 @@ with mesh:
 
 numpy.allclose(ref, out)
 ```
-```ipython3
+```python
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f16[4,512,512]{2,1,0},f16[512,512]{1,0})->f16[4,512,512]{2,1,0}}
 
 ENTRY %main.17_spmd (param: f16[4,512,512], param.1: f16[512,512]) -> f16[4,512,512] {
@@ -739,7 +739,7 @@ ENTRY %main.17_spmd (param: f16[4,512,512], param.1: f16[512,512]) -> f16[4,512,
   ROOT %get-tuple-element = f16[4,512,512]{2,1,0} get-tuple-element((f16[4,512,512]{2,1,0}, f32[4]{0}) %custom-call.0), index=0, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
 }
 ```
-```ipython3
+```python
 True
 ```
 
@@ -753,7 +753,7 @@ Similiarly to the forward operation test, we are creating a simple 1D mesh and s
 
 We also define the `loss` function with `xmap_rms_norm` instead of `rms_norm`
 
-```ipython3
+```python
 def loss_ref(x, weight):
     predictions = rms_norm(x, weight)
     return -jax.numpy.mean(predictions**2)
@@ -786,19 +786,19 @@ with mesh:
 for r, o in zip(ref, out):
     print(numpy.allclose(r, o))
 ```
-```ipython3
+```python
 True
 True
 ```
 
 We can inspect the generated jaxpr, which is the JAX internal representation, to make sure `jax.grad` inserts a `psum` for the gradient accumulation across the devices when needed.
 
-```ipython3
+```python
 with mesh:
     
     print(jax.make_jaxpr(pjitted)(x, weight))
 ```
-```ipython3
+```python
 { lambda ; a:f16[32,512,512] b:f16[512,512]. let
     c:f16[32,512,512] d:f16[512,512] = pjit[
       donated_invars=(False, False)
@@ -913,7 +913,7 @@ return (
 
 Here is the complete code that is functional.
 
-```ipython3
+```python
 from functools import partial, reduce
 from operator import mul
 
@@ -1199,7 +1199,7 @@ with Mesh(numpy.array(jax.local_devices()).reshape(-1), ("a",)):
 for r, o in zip(ref, out):
     print(numpy.allclose(r, o))
 ```
-```ipython3
+```python
 True
 True
 ```
