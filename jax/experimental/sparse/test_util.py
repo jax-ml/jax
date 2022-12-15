@@ -13,11 +13,11 @@
 # limitations under the License.
 """Sparse test utilities."""
 import functools
-
 from typing import Any, Callable, Sequence, Union
 
 import numpy as np
 
+import jax
 from jax._src import api
 from jax._src import dispatch
 from jax._src import test_util as jtu
@@ -27,6 +27,10 @@ from jax.util import split_list
 from jax.experimental import sparse
 from jax.experimental.sparse import bcoo as sparse_bcoo
 import jax.numpy as jnp
+
+
+def is_sparse(x):
+  return isinstance(x, sparse.JAXSparse)
 
 
 class SparseTestCase(jtu.JaxTestCase):
@@ -43,8 +47,6 @@ class SparseTestCase(jtu.JaxTestCase):
                          check_dtypes=True, tol=None, atol=None, rtol=None,
                          canonicalize_dtypes=True):
     """Check an operation against a dense equivalent"""
-    is_sparse = lambda x: isinstance(x, sparse.JAXSparse)
-
     sparse_args = args_maker()
     dense_args = tree_util.tree_map(sparse.todense, sparse_args, is_leaf=is_sparse)
 
@@ -86,6 +88,33 @@ class SparseTestCase(jtu.JaxTestCase):
                                       atol=atol, rtol=rtol)
     self.assertSparseArraysEquivalent(python_ans, compiled_ans, check_dtypes=check_dtypes,
                                       atol=atol, rtol=rtol)
+
+  def _CheckGradsSparse(self, dense_fun, sparse_fun, args_maker, *,
+                        modes=('fwd', 'rev'), atol=None, rtol=None):
+    assert [mode in ['fwd', 'rev'] for mode in modes]
+
+    args = args_maker()
+    args_flat, tree = tree_util.tree_flatten(args)
+    num_bufs = [len(tree_util.tree_flatten(arg)[0]) for arg in args]
+    argnums = np.cumsum([0, *num_bufs[:-1]]).tolist()
+
+    def dense_fun_flat(*args_flat):
+      args = tree_util.tree_unflatten(tree, args_flat)
+      return dense_fun(*map(sparse.todense, args))
+
+    def sparse_fun_flat(*args_flat):
+      out = sparse_fun(*tree_util.tree_unflatten(tree, args_flat))
+      return tree_util.tree_map(sparse.todense, out, is_leaf=is_sparse)
+
+    if 'rev' in modes:
+      result_de = jax.jacrev(dense_fun_flat, argnums=argnums)(*args_flat)
+      result_sp = jax.jacrev(sparse_fun_flat, argnums=argnums)(*args_flat)
+      self.assertAllClose(result_de, result_sp, atol=atol, rtol=rtol)
+
+    if 'fwd' in modes:
+      result_de = jax.jacfwd(dense_fun_flat, argnums=argnums)(*args_flat)
+      result_sp = jax.jacfwd(sparse_fun_flat, argnums=argnums)(*args_flat)
+      self.assertAllClose(result_de, result_sp, atol=atol, rtol=rtol)
 
 def _rand_sparse(shape: Sequence[int], dtype: DTypeLike, *,
                  rng: np.random.RandomState, rand_method: Callable[..., Any],

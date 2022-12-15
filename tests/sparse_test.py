@@ -939,6 +939,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
@@ -967,39 +969,6 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
-    dtype=jtu.dtypes.floating,
-  )
-  @jax.default_matmul_precision("float32")
-  def test_bcoo_transpose_ad(self, shape, dtype, n_batch, n_dense):
-    n_sparse = len(shape) - n_batch - n_dense
-    rng = self.rng()
-    sprng = rand_sparse(self.rng())
-
-    M = sprng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-    data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
-
-    permutation = np.concatenate([
-      rng.permutation(range(n_batch)),
-      rng.permutation(range(n_batch, n_batch + n_sparse)),
-      rng.permutation(range(n_batch + n_sparse, len(shape)))]).astype(int)
-
-    def f_sparse(data):
-      return sparse_bcoo._bcoo_transpose(data, indices, spinfo=BCOOInfo(shape), permutation=permutation)[0]
-
-    jf_sparse = jax.jacfwd(f_sparse)(data)
-    jr_sparse = jax.jacrev(f_sparse)(data)
-
-    # TODO(jakevdp) also test against dense version?
-    self.assertAllClose(jf_sparse, jr_sparse)
 
   def test_bcoo_transpose_indices_sorted(self):
     rng = self.rng()
@@ -1527,6 +1496,8 @@ class BCOOTest(sptu.SparseTestCase):
     else:
       self._CheckAgainstDense(f_dense, f_sparse, args_maker, tol=tol)
       self._CompileAndCheckSparse(f_sparse, args_maker)
+      if jnp.issubdtype(dtype, jnp.floating):
+        self._CheckGradsSparse(f_dense, f_sparse, args_maker, modes=['fwd'])
 
   def test_bcoo_spdot_general_nse(self):
     # vector-vector product -> nse=1
@@ -1540,52 +1511,6 @@ class BCOOTest(sptu.SparseTestCase):
     # matrix-matrix product -> product of nse
     N = sparse.BCOO.fromdense(jnp.arange(12).reshape(3, 4))
     self.assertEqual((M @ N).nse, M.nse * N.nse)
-
-  @jtu.sample_product(
-    [dict(lhs_n_batch=lhs_n_batch, rhs_n_batch=rhs_n_batch, lhs_shape=lhs_shape,
-          rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
-      for lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dimension_numbers in [
-          ((4, 5), 0, (5,), 0, (([1], [0]), ([], []))),
-          ((2, 4, 5), 1, (5,), 0, (([2], [0]), ([], []))),
-          ((4, 5), 0, (5, 3), 0, (([1], [0]), ([], []))),
-          ((2, 4, 5), 1, (2, 5, 3), 1, (([2], [1]), ([0], [0]))),
-      ]
-    ],
-    dtype=jtu.dtypes.floating,
-  )
-  @jax.default_matmul_precision("float32")
-  def test_bcoo_spdot_general_ad(self, lhs_shape, rhs_shape, dtype,
-                                 dimension_numbers, lhs_n_batch, rhs_n_batch):
-    rng = rand_sparse(self.rng())
-
-    lhs = rng(lhs_shape, dtype)
-    rhs = rng(rhs_shape, dtype)
-
-    lhs_sp = sparse.BCOO.fromdense(lhs, n_batch=lhs_n_batch)
-    rhs_sp = sparse.BCOO.fromdense(rhs, n_batch=rhs_n_batch)
-
-    def f_dense(lhs_data, rhs_data):
-      lhs = sparse.BCOO((lhs_data, lhs_sp.indices), shape=lhs_sp.shape).todense()
-      rhs = sparse.BCOO((rhs_data, rhs_sp.indices), shape=rhs_sp.shape).todense()
-      return (lhs @ rhs).sum()
-
-    def f_sparse(lhs_data, rhs_data):
-      lhs = sparse.BCOO((lhs_data, lhs_sp.indices), shape=lhs_sp.shape)
-      rhs = sparse.BCOO((rhs_data, rhs_sp.indices), shape=rhs_sp.shape)
-      return (lhs @ rhs).sum()
-
-    jf_dense_0 = jax.jacfwd(f_dense, argnums=0)(lhs_sp.data, rhs_sp.data)
-    jf_sparse_0 = jax.jacfwd(f_sparse, argnums=0)(lhs_sp.data, rhs_sp.data)
-    self.assertAllClose(jf_dense_0, jf_sparse_0)
-
-    jf_dense_1 = jax.jacfwd(f_dense, argnums=1)(lhs_sp.data, rhs_sp.data)
-    jf_sparse_1 = jax.jacfwd(f_sparse, argnums=1)(lhs_sp.data, rhs_sp.data)
-    self.assertAllClose(jf_dense_1, jf_sparse_1)
-
-    jf_dense_0, jf_dense_1 = jax.jacfwd(f_dense, argnums=(0, 1))(lhs_sp.data, rhs_sp.data)
-    jf_sparse_0, jf_sparse_1 = jax.jacfwd(f_sparse, argnums=(0, 1))(lhs_sp.data, rhs_sp.data)
-    self.assertAllClose(jf_dense_0, jf_sparse_0)
-    self.assertAllClose(jf_dense_1, jf_sparse_1)
 
   def test_bcoo_spdot_general_ad_bug(self):
     # Regression test for https://github.com/google/jax/issues/10163
@@ -1680,6 +1605,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
     mat, = args_maker()
     out = sparse_func(mat)
@@ -1716,6 +1643,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
     mat, = args_maker()
     out = sparse_func(mat)
@@ -1761,6 +1690,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(fun, fun, args_maker)
     self._CompileAndCheckSparse(fun, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(fun, fun, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
@@ -1959,6 +1890,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_fun, sparse_fun, args_maker)
     self._CompileAndCheckSparse(sparse_fun, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_fun, sparse_fun, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, dimensions=dimensions, n_batch=n_batch, n_dense=n_dense)
@@ -1984,6 +1917,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
   @jtu.sample_product(
     [dict(batch_shapes=shapes, batch_perm=perm)
@@ -2019,6 +1954,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
   def test_bcoo_reshape_error(self):
     x = sparse.BCOO.fromdense(jnp.ones((2, 2, 3)), n_batch=1)
