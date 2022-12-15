@@ -1815,10 +1815,10 @@ class BCOOTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, nse=nse)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for shape in [(0,), (5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for n_batch in range(len(shape) + 1)
       for n_dense in range(len(shape) + 1 - n_batch)
-      for nse in [None, 5, np.prod(shape) - 1]
+      for nse in [None, 5, max(0, np.prod(shape) - 1)]
     ],
     dtype=jtu.dtypes.floating,
   )
@@ -1829,13 +1829,6 @@ class BCOOTest(sptu.SparseTestCase):
     new_indices = jnp.concatenate([M.indices, M.indices], axis=n_batch)
     new_data = jnp.concatenate([M.data, M.data], axis=n_batch)
     M = sparse.BCOO((new_data, new_indices), shape=M.shape)
-
-    # TODO(jakevdp) address this corner case.
-    if M.nse == 0:
-      self.skipTest("known failure for nse=0")
-
-    if nse == 'all':
-      nse = M.nse
 
     def dedupe(data, nse=nse):
       mat = sparse.BCOO((data, M.indices), shape=M.shape)
