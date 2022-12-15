@@ -5,15 +5,11 @@ To accommodate such scenarios, JAX allows users to define custom operations and 
 
 This tutorial contains information from [Extending JAX with custom C++ and CUDA code](https://github.com/dfm/extending-jax).
 
-+++
-
 # RMS Normalization
 
 For this tutorial, we are going to add the RMS normalization as a custom operation in JAX.
 The CUDA code in `rms_norm_kernels.cu` for this operation has been borrowed from <https://github.com/NVIDIA/apex/blob/master/csrc/layer_norm_cuda_kernel.cu> and adapted to eliminate any dependency on PyTorch.
 See [`gpu_ops` code listing](#gpu_ops-code-listing) for complete code listing of C++ and CUDA files.
-
-+++
 
 `rms_norm_kernels.cu` defines the following functions, which are declared with the XLA custom function signature.
 These functions are responsible for launching RMS normalization kernels with the given `buffers` on the specified `stream`.
@@ -54,8 +50,6 @@ struct RMSNormDescriptor {
 } // namespace gpu_ops
 ```
 
-+++
-
 Now, we need to expose these functions as well as `ElementType` and `RMSNormDescriptor` as a Python module, `gpu_ops`, through `pybind11`.
 
 ```cpp
@@ -86,8 +80,6 @@ PYBIND11_MODULE(gpu_ops, m) {
 }
 ```
 
-+++
-
 # Build `gpu_ops` extension module
 
 We build the `gpu_ops` Python extension module with the aforementioned code.
@@ -107,8 +99,6 @@ import sys
 # Add RMS normalization to JAX as custom call
 
 `gpu_ops` is just a Python extension module and we need more work to plug it into JAX.
-
-+++
 
 ## Create primitive ops
 
@@ -516,8 +506,6 @@ _rms_norm_bwd_p.def_abstract_eval(_rms_norm_bwd_abstract)
 
 # Let's test it again
 
-+++
-
 ## Test forward function
 
 ```ipython3
@@ -638,8 +626,6 @@ out = loss_grad(x, weight)
 
 We are using `jax.experimental.pjit.pjit` for parallel execution on multiple devices, and we produce reference values with sequential execution on a single device.
 
-+++
-
 ## Test forward function
 
 Let's first test the forward operation on multiple devices.  We are creating a simple 1D mesh and sharding `x` on all devices.
@@ -758,8 +744,6 @@ True
 ```
 
 With this modification, the `all-gather` operation is eliminated and the custom call is made on each shard of `x`.
-
-+++
 
 ## Test backward function
 
@@ -924,8 +908,6 @@ return (
     ....
 )
 ```
-
-+++
 
 # Let's put it together
 
