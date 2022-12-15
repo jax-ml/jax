@@ -20,6 +20,9 @@ JAX, such as `PIX`_.
 .. _PIX: https://github.com/deepmind/dm_pix
 """
 
+# Note: import <name> as <name> is required for names to be exported.
+# See PEP 484 & https://github.com/google/jax/issues/7570
+
 from jax._src.image.scale import (
   resize as resize,
   ResizeMethod as ResizeMethod,
