@@ -400,7 +400,7 @@ def bcoo_extract(indices: Array, mat: Array) -> Array:
 @bcoo_extract_p.def_impl
 def _bcoo_extract_impl(indices, mat):
   mat = jnp.asarray(mat)
-  n_batch, n_sparse, _, _ = _validate_bcoo_indices(indices, mat.shape)
+  n_batch, n_sparse, _, nse = _validate_bcoo_indices(indices, mat.shape)
 
   ind_slices = tuple(np.zeros(s, int) if i_s == 1 else np.arange(s)
                      for s, i_s in zip(mat.shape[:n_batch], indices.shape[:n_batch]))
@@ -412,8 +412,13 @@ def _bcoo_extract_impl(indices, mat):
   batch_ind = tuple(grid)[:-1]
 
   if not sparse_ind + batch_ind:
-    return mat[None]
-  return mat.at[batch_ind + sparse_ind].get(mode='fill', fill_value=0)
+    result = mat[None]
+  else:
+    result = mat.at[batch_ind + sparse_ind].get(mode='fill', fill_value=0)
+  if n_sparse == 0 and nse != 1:
+    result = lax.broadcast_in_dim(
+      result, _tuple_replace(result.shape, n_batch, nse), range(result.ndim))
+  return result
 
 @bcoo_extract_p.def_abstract_eval
 def _bcoo_extract_abstract_eval(indices, mat):
