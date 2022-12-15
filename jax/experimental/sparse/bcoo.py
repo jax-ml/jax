@@ -1547,7 +1547,12 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   data_out = jnp.empty((*map(max, indices.shape[:props.n_batch], data.shape[:props.n_batch]),
                         nse, *data.shape[props.n_batch + 1:]), dtype=data.dtype)
   data_dot_out = data_out
-  permute = lambda d_out, m, d: d_out.at[m].add(d, mode='drop')
+  # This check is because scatter-add on zero-sized arrays has poorly defined
+  # semantics; see https://github.com/google/jax/issues/13656.
+  if data_out.size:
+    permute = lambda x, i, y: x.at[i].add(y, mode='drop')
+  else:
+    permute = lambda x, i, y: x
   for _ in range(props.n_batch):
     permute = _broadcasting_vmap(permute)
   data_out = permute(data_out, mapping, data)
