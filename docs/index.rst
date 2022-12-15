@@ -61,7 +61,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    notebooks/Neural_Network_and_Data_Loading
    notebooks/xmap_tutorial
    notebooks/external_callbacks
-   notebooks/Custom_Operation_for_GPUs
+   Custom_Operation_for_GPUs
 
 
 .. toctree::
