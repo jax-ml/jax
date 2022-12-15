@@ -187,4 +187,5 @@ from jax._src.random import (
   uniform as uniform,
   unsafe_rbg_key as unsafe_rbg_key,
   weibull_min as weibull_min,
+  vonmises as vonmises
 )

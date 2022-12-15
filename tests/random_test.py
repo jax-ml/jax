@@ -1489,6 +1489,20 @@ class LaxRandomTest(jtu.JaxTestCase):
                                      axis=axis, shape=shape)
     self.assertEqual(samples.shape, shape)
 
+  @jtu.sample_product(
+    x = [-1000.0, -100.0, -10.0, -1.0, 0.0, 1.0, 10.0, 100.0, 1000.0],
+    kappa = [0.1, 0.5, 1.0, 2.0, 10.0, 100.0, 1000.0],
+    dtype=float_dtypes)
+  def testVonmises(self, x, kappa, dtype):
+    key = self.seed_prng(0)
+    rand = lambda key: random.vonmises(key, x, kappa, shape = (10000,), dtype = dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.vonmises(loc = x, kappa = kappa).cdf)
 
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:

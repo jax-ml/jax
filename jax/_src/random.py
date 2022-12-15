@@ -1724,3 +1724,85 @@ def ball(
   g = generalized_normal(k1, p, (*shape, d), dtype)
   e = exponential(k2, shape, dtype)
   return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]
+
+def vonmises(
+  key: KeyArray,
+  x: float,
+  kappa: float,
+  shape: Optional[Shape] = None,
+  dtype: DTypeLikeFloat = dtypes.float_
+) -> Array:
+  """Draw samples from a von Mises distribution.
+
+  Reference:
+    Best, D. J., & Fisher, N. I. (1979). Efficient Simulation of the
+    von Mises Distribution. Applied Statistics, 28(2), 152.
+    https://doi.org/10.2307/2346732
+
+  Args:
+    key: a PRNG key used as the random key.
+    x: mean of the distribution.
+    kappa: concentration of the distribution.
+    shape: shape of the output array.
+    dtype: dtype of the output array.
+
+  Returns:
+    theta: A random array of specified shape and dtype."""
+  # Run Checks
+  key, _ = _check_prng_key(key)
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError(f"dtype argument to `t` must be a float"
+                     f"dtype, got {dtype}.")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  else:
+    shape = np.shape(x)
+
+  def _true():
+    return jnp.pi * 2 * uniform(key, shape, dtype)
+
+  def _false():
+    return _vonmises(key, x, kappa, shape, dtype, 100)
+
+  # Return Distribution
+  return lax.cond(kappa <= 1e-6, _true, _false)
+
+@partial(jit, static_argnums = (3, 4, 5), inline = True)
+def _vonmises(key, x, kappa, shape, dtype, max_iters):
+
+  def _body_fn(pars):
+    iteration, key, theta_out, accepted = pars
+    key, subkey1, subkey2, subkey3 = _split(key, 4)
+
+    u1 = uniform(subkey1, shape, dtype)
+    u2 = uniform(subkey2, shape, dtype)
+    u3 = uniform(subkey3, shape, dtype)
+    z = lax.cos(jnp.pi * u1)
+    f = (1 + r * z) / (r + z)
+    c = kappa * (r - f)
+
+    accept = (lax.ge((c * (2 - c) - u2), zero)) | (lax.ge((lax.log(c / u2) + 1) - c, zero))
+    result = (jnp.sign(u3 - 0.5) * jnp.arccos(f)) + x
+    out = jnp.mod(jnp.abs(result) + jnp.pi, (2 * jnp.pi)) - jnp.pi
+    theta = jnp.sign(result) * out
+    theta_out = lax.select(accept, theta, theta_out)
+    accepted |= accept
+
+    return iteration + 1, key, theta_out, accepted
+
+  def _cond_fn(pars):
+    iteration, _, _, accepted = pars
+    return (~accepted).any() & (iteration < max_iters)
+
+  x = lax.convert_element_type(x, dtype)
+  kappa = lax.convert_element_type(kappa, dtype)
+  zero = _lax_const(x, 0)
+  a = 1 + lax.sqrt(1 + 4 * kappa * kappa)
+  b = (a - lax.sqrt(2 * a)) / (2 * kappa)
+  r = (1 + b * b) / (2 * b)
+
+  theta_init = lax.full(shape, -1, dtype)
+  accepted_init = lax.full(shape, False, jnp.bool_)
+  _, _, theta, _ = lax.while_loop(_cond_fn, _body_fn, (0, key, theta_init, accepted_init))
+  return theta.astype(dtype)
