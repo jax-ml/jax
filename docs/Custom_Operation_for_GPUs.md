@@ -542,11 +542,10 @@ from jax.experimental.maps import xmap
 
 def xmap_rms_norm(x, weight, *, device_count):
     reshaped = x.reshape(device_count, x.shape[0] // device_count, *x.shape[1:])
-    xmap_axes = (("x", None, None, None), (None, None))
     xmapped = xmap(
         rms_norm,
-        in_axes=xmap_axes,
-        out_axes=xmap_axes[0],
+        in_axes=(("x", None, None, None), (None, None)),
+        out_axes=("x", None, None, None),
         axis_resources={"x": "x"},
     )
     reshaped_out = xmapped(reshaped, weight)
@@ -989,11 +988,10 @@ jax.config.update("experimental_xmap_spmd_lowering_manual", True)
 
 def xmap_rms_norm(x, weight, *, device_count):
     reshaped = x.reshape(device_count, x.shape[0] // device_count, *x.shape[1:])
-    xmap_axes = (("x", None, None, None), (None, None))
     xmapped = xmap(
         rms_norm,
-        in_axes=xmap_axes,
-        out_axes=xmap_axes[0],
+        in_axes=(("x", None, None, None), (None, None)),
+        out_axes=("x", None, None, None),
         axis_resources={"x": "x"},
     )
     reshaped_out = xmapped(reshaped, weight)
