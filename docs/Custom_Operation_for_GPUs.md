@@ -8,6 +8,7 @@ This tutorial contains information from [Extending JAX with custom C++ and CUDA 
 # RMS Normalization
 
 For this tutorial, we are going to add the RMS normalization as a custom operation in JAX.
+Although the RMS normalization can be expressed with `jax.numpy` directly, we are using it as an example to show the process of creating a custom operation for GPUs.
 The CUDA code in `rms_norm_kernels.cu` for this operation has been borrowed from <https://github.com/NVIDIA/apex/blob/master/csrc/layer_norm_cuda_kernel.cu> and adapted to eliminate any dependency on PyTorch.
 See [`gpu_ops` code listing](#gpu_ops-code-listing) for complete code listing of C++ and CUDA files.
 
@@ -100,15 +101,17 @@ import sys
 
 `gpu_ops` is just a Python extension module and we need more work to plug it into JAX.
 
-## Create primitive ops
+## Create primitives
 
-We first create primitive operations, `_rms_norm_fwd_p` and `_rms_norm_bwd_p`, which the custom functions can be mapped to.
-We set the `multipe_results` attribute to `True` for these operations, which means that the operation produces multipel outputs collected in an list.
-When it is set to `False`, the operation produces a single output without a list.
+We first create primitives, `_rms_norm_fwd_p` and `_rms_norm_bwd_p`, which the custom functions can be mapped to.
+We set the `multiple_results` attribute to `True` for these operations, which means that the operation produces multiple outputs as a tuple.
+When it is set to `False`, the operation produces a single output without a tuple.
 
 ```python
 from functools import partial
 
+import jax
+import jax.numpy as jnp
 from build import gpu_ops
 from jax import core, dtypes
 from jax.interpreters import xla
@@ -141,12 +144,12 @@ def rms_norm_bwd(g, invvar, x, weight, eps):
 
 ## Lowering to MLIR custom call
 
-To map the custom functions to the new primitive operations, `_rms_norm_fwd_p` and `_rms_norm_bwd_p`, we need to:
+To map the custom functions to the new primitives, `_rms_norm_fwd_p` and `_rms_norm_bwd_p`, we need to:
 
 * Register custom functions as custom call targets with `xla_client.register_custom_call_target`, and
-* Register lowering functions that lower the primitive operations to MLIR custom calls with the registered custom call targets.
+* Register lowering functions that lower the primitives to MLIR custom calls with the registered custom call targets.
 
-The functions `_rms_norm_fwd_cuda_lowering` and `_rms_norm_bwd_cuda_lowering` below lower the primitive operations to MLIR custom call operations with the custom targets from `gpu_ops`.  These functions are registered with `jax.interpreters.mlir.register_lowering`.
+The functions `_rms_norm_fwd_cuda_lowering` and `_rms_norm_bwd_cuda_lowering` below lower the primitives to MLIR custom call operations with the custom targets from `gpu_ops`.  These functions are registered with `jax.interpreters.mlir.register_lowering`.
 
 Note that an `RMSNormDescriptor` object is created in the lowering function, and passed to the custom call as `opaque`.
 
@@ -263,12 +266,16 @@ mlir.register_lowering(
 # Let's test it
 
 ```python
-import jax
-
-
-x = jax.random.normal(jax.random.PRNGKey(0), shape=(jax.local_device_count() * 4, 512, 512), dtype=jax.numpy.float16)
+per_core_batch_size=4
+seq_len=512
+emb_dim=512
+x = jax.random.normal(
+    jax.random.PRNGKey(0),
+    shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
+    dtype=jnp.float16,
+)
 norm_shape = x.shape[-2:]
-weight = jax.numpy.ones(norm_shape, dtype=jax.numpy.float16)
+weight = jnp.ones(norm_shape, dtype=jnp.float16)
 ```
 
 ## Test forward function
@@ -282,154 +289,7 @@ NotImplementedError                       Traceback (most recent call last)
 Cell In [5], line 1
 ----> 1 out = rms_norm_fwd(x, weight)
 
-Cell In [2], line 16, in rms_norm_fwd(x, weight, eps)
-     15 def rms_norm_fwd(x, weight, eps=1e-05):
----> 16     output, invvar = _rms_norm_fwd_p.bind(x, weight, eps=eps)
-     17     return output
-
-File /usr/local/lib/python3.8/dist-packages/jax/core.py:329, in Primitive.bind(self, *args, **params)
-    326 def bind(self, *args, **params):
-    327   assert (not config.jax_enable_checks or
-    328           all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
---> 329   return self.bind_with_trace(find_top_trace(args), args, params)
-
-File /usr/local/lib/python3.8/dist-packages/jax/core.py:332, in Primitive.bind_with_trace(self, trace, args, params)
-    331 def bind_with_trace(self, trace, args, params):
---> 332   out = trace.process_primitive(self, map(trace.full_raise, args), params)
-    333   return map(full_lower, out) if self.multiple_results else full_lower(out)
-
-File /usr/local/lib/python3.8/dist-packages/jax/core.py:712, in EvalTrace.process_primitive(self, primitive, tracers, params)
-    711 def process_primitive(self, primitive, tracers, params):
---> 712   return primitive.impl(*tracers, **params)
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/dispatch.py:118, in apply_primitive(prim, *args, **params)
-    116 def apply_primitive(prim, *args, **params):
-    117   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
---> 118   compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
-    119                                         **params)
-    120   return compiled_fun(*args)
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/util.py:254, in cache.<locals>.wrap.<locals>.wrapper(*args, **kwargs)
-    252   return f(*args, **kwargs)
-    253 else:
---> 254   return cached(config._trace_context(), *args, **kwargs)
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/util.py:247, in cache.<locals>.wrap.<locals>.cached(_, *args, **kwargs)
-    245 @functools.lru_cache(max_size)
-    246 def cached(_, *args, **kwargs):
---> 247   return f(*args, **kwargs)
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/dispatch.py:202, in xla_primitive_callable(prim, *arg_specs, **params)
-    200   else:
-    201     return out,
---> 202 compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), device, None,
-    203                                   prim.name, donated_invars, False, *arg_specs)
-    204 if not prim.multiple_results:
-    205   return lambda *args, **kw: compiled(*args, **kw)[0]
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/dispatch.py:357, in _xla_callable_uncached(fun, device, backend, name, donated_invars, keep_unused, *arg_specs)
-    354 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
-    355                            donated_invars, keep_unused, *arg_specs):
-    356   if config.jax_array:
---> 357     computation = sharded_lowering(fun, device, backend, name, donated_invars,
-    358                                    False, keep_unused, *arg_specs)
-    359     return computation.compile(_allow_propagation_to_outputs=True).unsafe_call
-    360   else:
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/dispatch.py:348, in sharded_lowering(fun, device, backend, name, donated_invars, always_lower, keep_unused, *arg_specs)
-    343 in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]
-    345 # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
-    346 # the number of output avals at this stage. lower_sharding_computation will
-    347 # apply it to all out_avals.
---> 348 return pxla.lower_sharding_computation(
-    349     fun, 'jit', name, in_shardings, pjit._UNSPECIFIED, donated_invars,
-    350     in_avals, in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-    351     always_lower=always_lower, devices_from_context=da)
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/profiler.py:314, in annotate_function.<locals>.wrapper(*args, **kwargs)
-    311 @wraps(func)
-    312 def wrapper(*args, **kwargs):
-    313   with TraceAnnotation(name, **decorator_kwargs):
---> 314     return func(*args, **kwargs)
-    315   return wrapper
-
-File /usr/local/lib/python3.8/dist-packages/jax/interpreters/pxla.py:2792, in lower_sharding_computation(fun, api_name, fun_name, in_shardings, out_shardings, donated_invars, global_in_avals, in_is_global, keep_unused, always_lower, devices_from_context)
-   2787 name_stack = new_name_stack(wrap_name(fun_name, api_name))
-   2789 with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
-   2790                                "in {elapsed_time} sec",
-   2791                                event=dispatch.JAXPR_TRACE_EVENT):
--> 2792   jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-   2793       fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
-   2794 kept_outputs = [True] * len(global_out_avals)
-   2796 if _is_unspecified(out_shardings):
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/profiler.py:314, in annotate_function.<locals>.wrapper(*args, **kwargs)
-    311 @wraps(func)
-    312 def wrapper(*args, **kwargs):
-    313   with TraceAnnotation(name, **decorator_kwargs):
---> 314     return func(*args, **kwargs)
-    315   return wrapper
-
-File /usr/local/lib/python3.8/dist-packages/jax/interpreters/partial_eval.py:2065, in trace_to_jaxpr_final(fun, in_avals, debug_info, keep_inputs)
-   2063   main.jaxpr_stack = ()  # type: ignore
-   2064   with core.new_sublevel():
--> 2065     jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(
-   2066       fun, main, in_avals, keep_inputs=keep_inputs, debug_info=debug_info)
-   2067   del fun, main
-   2068 return jaxpr, out_avals, consts
-
-File /usr/local/lib/python3.8/dist-packages/jax/interpreters/partial_eval.py:1998, in trace_to_subjaxpr_dynamic(fun, main, in_avals, keep_inputs, debug_info)
-   1996 in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
-   1997 in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
--> 1998 ans = fun.call_wrapped(*in_tracers_)
-   1999 out_tracers = map(trace.full_raise, ans)
-   2000 jaxpr, consts = frame.to_jaxpr(out_tracers)
-
-File /usr/local/lib/python3.8/dist-packages/jax/linear_util.py:167, in WrappedFun.call_wrapped(self, *args, **kwargs)
-    164 gen = gen_static_args = out_store = None
-    166 try:
---> 167   ans = self.f(*args, **dict(self.params, **kwargs))
-    168 except:
-    169   # Some transformations yield from inside context managers, so we have to
-    170   # interrupt them before reraising the exception. Otherwise they will only
-    171   # get garbage-collected at some later time, running their cleanup tasks
-    172   # only after this exception is handled, which can corrupt the global
-    173   # state.
-    174   while stack:
-
-File /usr/local/lib/python3.8/dist-packages/jax/_src/dispatch.py:197, in xla_primitive_callable.<locals>.prim_fun(*args)
-    196 def prim_fun(*args):
---> 197   out = prim.bind(*args, **params)
-    198   if prim.multiple_results:
-    199     return out
-
-File /usr/local/lib/python3.8/dist-packages/jax/core.py:329, in Primitive.bind(self, *args, **params)
-    326 def bind(self, *args, **params):
-    327   assert (not config.jax_enable_checks or
-    328           all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
---> 329   return self.bind_with_trace(find_top_trace(args), args, params)
-
-File /usr/local/lib/python3.8/dist-packages/jax/core.py:332, in Primitive.bind_with_trace(self, trace, args, params)
-    331 def bind_with_trace(self, trace, args, params):
---> 332   out = trace.process_primitive(self, map(trace.full_raise, args), params)
-    333   return map(full_lower, out) if self.multiple_results else full_lower(out)
-
-File /usr/local/lib/python3.8/dist-packages/jax/interpreters/partial_eval.py:1713, in DynamicJaxprTrace.process_primitive(self, primitive, tracers, params)
-   1711 if primitive in custom_staging_rules:
-   1712   return custom_staging_rules[primitive](self, *tracers, **params)
--> 1713 return self.default_process_primitive(primitive, tracers, params)
-
-File /usr/local/lib/python3.8/dist-packages/jax/interpreters/partial_eval.py:1717, in DynamicJaxprTrace.default_process_primitive(self, primitive, tracers, params)
-   1715 def default_process_primitive(self, primitive, tracers, params):
-   1716   avals = [t.aval for t in tracers]
--> 1717   out_avals, effects = primitive.abstract_eval(*avals, **params)
-   1718   out_avals = [out_avals] if not primitive.multiple_results else out_avals
-   1719   source_info = source_info_util.current()
-
-File /usr/local/lib/python3.8/dist-packages/jax/core.py:356, in Primitive.abstract_eval(self, *args, **params)
-    355 def abstract_eval(self, *args, **params):
---> 356   raise NotImplementedError("Abstract evaluation for '{}' not implemented"
-    357                             .format(self.name))
+...
 
 NotImplementedError: Abstract evaluation for 'rms_norm_fwd' not implemented
 ```
@@ -438,12 +298,12 @@ NotImplementedError: Abstract evaluation for 'rms_norm_fwd' not implemented
 
 The test above failed with `NotImplementedError: Abstract evaluation for 'rms_norm_fwd' not implemented`.  Why did the test fail?  What does it mean?
 
-As part of the execution, JAX performs abstract evaluation.  As JAX has no knowledge about the new primitive operations, it doesn't know how to compute the ouptut shapes and outut data types, thus can't evaluate these operations abstractly.
+As part of the execution, JAX performs abstract evaluation.  As JAX has no knowledge about the new primitives, it doesn't know how to compute the output shapes and output data types, thus can't evaluate these operations abstractly.
 
-We need to provide a function for abstract evaluation of each primitive operation.
+We need to provide a function for abstract evaluation of each primitive.
 These abstract evaluation functions compute the shape and the data type of the outputs, but don't compute actual values for the operations.
 
-These functions are passed to `.def_abstract_eval` method to be registered with the corresponding primitive operations.
+These functions are passed to `.def_abstract_eval` method to be registered with the corresponding primitives.
 
 See [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How_JAX_primitives_work.html#abstract-evaluation-rules) for more information on abstract evaluation.
 
@@ -451,7 +311,6 @@ See [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How
 from functools import reduce
 from operator import mul
 
-import jax.numpy as jnp
 from jax.abstract_arrays import ShapedArray
 
 
@@ -519,7 +378,7 @@ Now let's test the backward operation using `jax.grad`.
 ```python
 def loss(x, weight):
     predictions = rms_norm_fwd(x, weight)
-    return -jax.numpy.mean(predictions**2)
+    return -jnp.mean(predictions**2)
 
 
 loss_grad = jax.grad(loss)
@@ -529,30 +388,11 @@ out = loss_grad(x, weight)
 ---------------------------------------------------------------------------
 NotImplementedError                       Traceback (most recent call last)
 Cell In [8], line 7
-      3     return -jax.numpy.mean(predictions**2)
+      3     return -jnp.mean(predictions**2)
       6 loss_grad = jax.grad(loss)
 ----> 7 out = loss_grad(x, weight)
 
-    [... skipping hidden 10 frame]
-
-Cell In [8], line 2, in loss(x, weight)
-      1 def loss(x, weight):
-----> 2     predictions = rms_norm_fwd(x, weight)
-      3     return -jax.numpy.mean(predictions**2)
-
-Cell In [2], line 16, in rms_norm_fwd(x, weight, eps)
-     15 def rms_norm_fwd(x, weight, eps=1e-05):
----> 16     output, invvar = _rms_norm_fwd_p.bind(x, weight, eps=eps)
-     17     return output
-
-    [... skipping hidden 2 frame]
-
-File /usr/local/lib/python3.8/dist-packages/jax/interpreters/ad.py:309, in JVPTrace.process_primitive(self, primitive, tracers, params)
-    307 if not jvp:
-    308   msg = f"Differentiation rule for '{primitive}' not implemented"
---> 309   raise NotImplementedError(msg)
-    310 primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
-    311 if primitive.multiple_results:
+...
 
 NotImplementedError: Differentiation rule for 'rms_norm_fwd' not implemented
 ```
@@ -593,7 +433,7 @@ def rms_norm_bwd(eps, res, g):
 
 `rms_norm_fwd` now returns an extra output `(invvar, x, weight)` for the residual data and `rms_norm_bwd` takes `eps`, `res`, and `g` as the parameters.
 
-Once the relationship between `rms_norm_fwd` and `rms_norm_bwd` is estabilished through `jax.custom_vjp`, JAX will ensure that the residual data from `rms_norm_fwd` is passed to `rms_norm_bwd` as `res` for backward operation.
+Once the relationship between `rms_norm_fwd` and `rms_norm_bwd` is established through `jax.custom_vjp`, JAX will ensure that the residual data from `rms_norm_fwd` is passed to `rms_norm_bwd` as `res` for backward operation.
 For non-differentiable parameters such as `eps`, JAX ensures that they are passed to the backward operation before the residual data.  That's why `eps` precedes `res` in the parameter list of `rms_norm_bwd`.
 
 Now that `rms_norm_fwd` returns the residual data, which is not needed for simple RMS normalization operation, we define a wrapper around it, `rms_norm`.  It simply calls `rms_norm_fwd` and returns only `output`.  Note that `rms_norm` is annotated with `@partial(jax.custom_vjp, nondiff_argnums=(2,))` and we are passing `rms_norm_fwd` and `rms_norm_bwd` to `rms_norm.defvjp`.  It teaches JAX that, when `rms_norm` is differentiated, `rms_norm_fwd` is to be used for forward operation, and `rms_norm_bwd` is to be used for backward operation.
@@ -615,7 +455,7 @@ With the refinement we have made, the backward operation test works with a modif
 ```python
 def loss(x, weight):
     predictions = rms_norm(x, weight)
-    return -jax.numpy.mean(predictions**2)
+    return -jnp.mean(predictions**2)
 
 
 loss_grad = jax.grad(loss)
@@ -624,31 +464,33 @@ out = loss_grad(x, weight)
 
 # Let's test it on multiple devices
 
-We are using `jax.experimental.pjit.pjit` for parallel execution on multiple devices, and we produce reference values with sequential execution on a single device.
+We are using [`jax.experimental.pjit.pjit`](https://jax.readthedocs.io/en/latest/jax.experimental.pjit.html#jax.experimental.pjit.pjit) for parallel execution on multiple devices, and we produce reference values with sequential execution on a single device.
 
 ## Test forward function
 
 Let's first test the forward operation on multiple devices.  We are creating a simple 1D mesh and sharding `x` on all devices.
 
 ```python
-import numpy
+import numpy as np
 from jax.experimental.maps import Mesh
 from jax.experimental.pjit import PartitionSpec, pjit
 
 
-mesh = Mesh(numpy.array(jax.local_devices()).reshape(-1), ("a",))
+mesh = Mesh(jax.local_devices(), ("x",))
 ref = rms_norm(x, weight)
 pjitted = pjit(
     rms_norm,
-    in_axis_resources=(PartitionSpec("a", None, None), PartitionSpec(None, None)),
-    out_axis_resources=PartitionSpec("a", None, None),
+    # Shard x by batch dimension and replicate weight on all devices.
+    in_axis_resources=(PartitionSpec("x", None, None), PartitionSpec(None, None)),
+    # Shard the output by batch dimension.
+    out_axis_resources=PartitionSpec("x", None, None),
 )
 
 with mesh:
     print(pjitted.lower(x, weight).compile().runtime_executable().hlo_modules()[0].to_string())
     out = pjitted(x, weight)
 
-numpy.allclose(ref, out)
+np.allclose(ref, out)
 ```
 ```python
 HloModule pjit_rms_norm, entry_computation_layout={(f16[4,512,512]{2,1,0},f16[512,512]{1,0})->f16[4,512,512]{2,1,0}}
@@ -700,12 +542,12 @@ from jax.experimental.maps import xmap
 
 def xmap_rms_norm(x, weight, *, device_count):
     reshaped = x.reshape(device_count, x.shape[0] // device_count, *x.shape[1:])
-    xmap_axes = (("a", None, None, None), (None, None))
+    xmap_axes = (("x", None, None, None), (None, None))
     xmapped = xmap(
         rms_norm,
         in_axes=xmap_axes,
         out_axes=xmap_axes[0],
-        axis_resources={"a": "a"},
+        axis_resources={"x": "x"},
     )
     reshaped_out = xmapped(reshaped, weight)
     return reshaped_out.reshape(x.shape)
@@ -718,16 +560,18 @@ with mesh:
 
     pjitted = pjit(
         partial(xmap_rms_norm, device_count=jax.local_device_count()),
+        # Shard x by batch dimension and replicate weight on all devices.
         in_axis_resources=(
-            PartitionSpec("a", None, None),
+            PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
-        out_axis_resources=PartitionSpec("a", None, None),
+        # Shard the output by batch dimension.
+        out_axis_resources=PartitionSpec("x", None, None),
     )
     print(pjitted.lower(x, weight).compile().runtime_executable().hlo_modules()[0].to_string())
     out = pjitted(x, weight)
 
-numpy.allclose(ref, out)
+np.allclose(ref, out)
 ```
 ```python
 HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f16[4,512,512]{2,1,0},f16[512,512]{1,0})->f16[4,512,512]{2,1,0}}
@@ -747,16 +591,16 @@ With this modification, the `all-gather` operation is eliminated and the custom 
 
 ## Test backward function
 
-We are moving onto the the backward operation using `jax.grad` on multiple devices.
+We are moving onto the backward operation using `jax.grad` on multiple devices.
 
-Similiarly to the forward operation test, we are creating a simple 1D mesh and sharding `x` on all devices.
+Similarly to the forward operation test, we are creating a simple 1D mesh and sharding `x` on all devices.
 
 We also define the `loss` function with `xmap_rms_norm` instead of `rms_norm`
 
 ```python
 def loss_ref(x, weight):
     predictions = rms_norm(x, weight)
-    return -jax.numpy.mean(predictions**2)
+    return -jnp.mean(predictions**2)
 
 
 ref = jax.grad(loss_ref, argnums=(0, 1))(x, weight)
@@ -765,26 +609,28 @@ ref = jax.grad(loss_ref, argnums=(0, 1))(x, weight)
 # Re-define loss to use xmap_rms_norm instead of rms_norm
 def loss(x, weight, *, device_count):
     predictions = xmap_rms_norm(x, weight, device_count=device_count)
-    return -jax.numpy.mean(predictions**2)
+    return -jnp.mean(predictions**2)
 
 
 with mesh:
 
     pjitted = pjit(
         jax.grad(partial(loss, device_count=jax.local_device_count()), argnums=(0, 1)),
+        # Shard x by batch dimension and replicate weight on all devices.
         in_axis_resources=(
-            PartitionSpec("a", None, None),
+            PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
+        # Shard the output by batch dimension and replicate weight grad on all devices.
         out_axis_resources=(
-            PartitionSpec("a", None, None),
+            PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
     )
     out = pjitted(x, weight)
 
 for r, o in zip(ref, out):
-    print(numpy.allclose(r, o))
+    print(np.allclose(r, o))
 ```
 ```python
 True
@@ -810,19 +656,19 @@ with mesh:
             new_sizes=(8, 4, 512, 512)
           ] e
           h:f16[8,4,512,512] i:f32[8,4] j:f16[8,4,512,512] k:f16[512,512] = xmap[
-            axis_resources=FrozenDict({'a': ('a',)})
+            axis_resources=FrozenDict({'x': ('x',)})
             backend=None
             call_jaxpr={ lambda ; l:f16[4,512,512;a:8] m:f16[512,512]. let
                 n:f16[4,512,512;a:8] o:f32[4;a:8] = rms_norm_fwd[eps=1e-05] l m
               in (n, o, l, m) }
             donated_invars=(False, False)
-            global_axis_sizes=FrozenDict({'a': 8})
-            in_axes=(FrozenDict({'a': 0}), FrozenDict({}))
+            global_axis_sizes=FrozenDict({'x': 8})
+            in_axes=(FrozenDict({'x': 0}), FrozenDict({}))
             in_positional_semantics=(<_PositionalSemantics.GLOBAL: 1>, <_PositionalSemantics.GLOBAL: 1>)
             name=rms_norm
-            out_axes=(FrozenDict({'a': 0}), FrozenDict({'a': 0}), FrozenDict({'a': 0}), FrozenDict({}))
+            out_axes=(FrozenDict({'x': 0}), FrozenDict({'x': 0}), FrozenDict({'x': 0}), FrozenDict({}))
             out_positional_semantics=_PositionalSemantics.GLOBAL
-            resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('a',)), ())
+            resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('x',)), ())
             spmd_in_axes=None
             spmd_out_axes=None
           ] g f
@@ -855,23 +701,23 @@ with mesh:
             new_sizes=(8, 4, 512, 512)
           ] bc
           be:f16[8,4,512,512] bf:f16[512,512] = xmap[
-            axis_resources=FrozenDict({'a': ('a',)})
+            axis_resources=FrozenDict({'x': ('x',)})
             backend=None
             call_jaxpr={ lambda ; bg:f32[4;a:8] bh:f16[4,512,512;a:8] bi:f16[512,512]
                 bj:f16[4,512,512;a:8]. let
                 bk:f16[4,512,512;a:8] bl:f16[512,512;a:8] _:f32[16,262144;a:8] = rms_norm_bwd[
                   eps=1e-05
                 ] bj bg bh bi
-                bm:f16[512,512] = psum[axes=('a',) axis_index_groups=None] bl
+                bm:f16[512,512] = psum[axes=('x',) axis_index_groups=None] bl
               in (bk, bm) }
             donated_invars=(False, False, False, False)
-            global_axis_sizes=FrozenDict({'a': 8})
-            in_axes=(FrozenDict({'a': 0}), FrozenDict({'a': 0}), FrozenDict({}), FrozenDict({'a': 0}))
+            global_axis_sizes=FrozenDict({'x': 8})
+            in_axes=(FrozenDict({'x': 0}), FrozenDict({'x': 0}), FrozenDict({}), FrozenDict({'x': 0}))
             in_positional_semantics=(<_PositionalSemantics.GLOBAL: 1>, <_PositionalSemantics.GLOBAL: 1>)
             name=transpose(rms_norm)
-            out_axes=(FrozenDict({'a': 0}), FrozenDict({}))
+            out_axes=(FrozenDict({'x': 0}), FrozenDict({}))
             out_positional_semantics=_PositionalSemantics.GLOBAL
-            resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('a',)), ())
+            resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('x',)), ())
             spmd_in_axes=None
             spmd_out_axes=None
           ] i j k bd
@@ -880,18 +726,18 @@ with mesh:
       name=<unnamed function>
       out_positional_semantics=_PositionalSemantics.GLOBAL
       out_shardings=(OpShardingSharding({devices=[8,1,1]0,1,2,3,4,5,6,7}), OpShardingSharding({replicated}))
-      resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('a',)), ())
+      resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('x',)), ())
     ] a b
   in (c, d) }
 ```
 
-We see that `bm:f16[512,512] = psum[axes=('a',) axis_index_groups=None] bl` has been added after the call to `rms_norm_bwd` to reduce `grad_weight` across the devics on the axis `a`, but there is no `psum` for `grad_input`.
+We see that `bm:f16[512,512] = psum[axes=('x',) axis_index_groups=None] bl` has been added after the call to `rms_norm_bwd` to reduce `grad_weight` across the devices on the axis `"x"`, but there is no `psum` for `grad_input`.
 
 This is controlled by `named_shape` passed to the `ShapedArray` construction in abstract evaluation and the axes given to `xmap`.
 
 The following code snippet from `_rms_norm_bwd_abstract` shows that `grad_input` has the exact same shape, type, and named shape as `x` does, which means `grad_input` is sharded the same way as `x`, hence no need for a `psum` for `grad_input`.
-In contrast, `grad_weight` has the same shape and type as `weight` does, but, when `weight.named_shape` is empty, `x.named_shape` is used for `grad_weight`.  In `in_axes` of our `xmap` call, `weight` has no named axis and `weight.named_shape` is empty, but `grad_weight` now has a named axis `"a"` in `grad_weight.named_shape`.
-This makes `jax.grad` insert `psum` on the axis `"a"` for `grad_weight`.
+In contrast, `grad_weight` has the same shape and type as `weight` does, but, when `weight.named_shape` is empty, `x.named_shape` is used for `grad_weight`.  In `in_axes` of our `xmap` call, `weight` has no named axis and `weight.named_shape` is empty, but `grad_weight` now has a named axis `"x"` in `grad_weight.named_shape`.
+This makes `jax.grad` insert `psum` on the axis `"x"` for `grad_weight`.
 
 ```
 weight_named_shape = (
@@ -911,7 +757,7 @@ return (
 
 # Let's put it together
 
-Here is the complete code that is functional.
+Here is the complete code.
 
 ```python
 from functools import partial, reduce
@@ -1143,12 +989,12 @@ jax.config.update("experimental_xmap_spmd_lowering_manual", True)
 
 def xmap_rms_norm(x, weight, *, device_count):
     reshaped = x.reshape(device_count, x.shape[0] // device_count, *x.shape[1:])
-    xmap_axes = (("a", None, None, None), (None, None))
+    xmap_axes = (("x", None, None, None), (None, None))
     xmapped = xmap(
         rms_norm,
         in_axes=xmap_axes,
         out_axes=xmap_axes[0],
-        axis_resources={"a": "a"},
+        axis_resources={"x": "x"},
     )
     reshaped_out = xmapped(reshaped, weight)
     return reshaped_out.reshape(x.shape)
@@ -1160,17 +1006,24 @@ def xmap_rms_norm(x, weight, *, device_count):
 
 
 import jax
-import numpy
+import numpy as np
 
 
-x = jax.random.normal(jax.random.PRNGKey(0), shape=(jax.local_device_count() * 4, 512, 512), dtype=jax.numpy.float16)
+per_core_batch_size=4
+seq_len=512
+emb_dim=512
+x = jax.random.normal(
+    jax.random.PRNGKey(0),
+    shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
+    dtype=jnp.float16,
+)
 norm_shape = x.shape[-2:]
-weight = jax.numpy.ones(norm_shape, dtype=jax.numpy.float16)
+weight = jnp.ones(norm_shape, dtype=jnp.float16)
 
 
 def loss_ref(x, weight):
     predictions = rms_norm(x, weight)
-    return -jax.numpy.mean(predictions**2)
+    return -jnp.mean(predictions**2)
 
 
 ref = jax.grad(loss_ref, argnums=(0, 1))(x, weight)
@@ -1178,26 +1031,28 @@ ref = jax.grad(loss_ref, argnums=(0, 1))(x, weight)
 
 def loss(x, weight, *, device_count):
     predictions = xmap_rms_norm(x, weight, device_count=device_count)
-    return -jax.numpy.mean(predictions**2)
+    return -jnp.mean(predictions**2)
 
 
-with Mesh(numpy.array(jax.local_devices()).reshape(-1), ("a",)):
+with Mesh(jax.local_devices(), ("x",)):
 
     pjitted = pjit(
         jax.grad(partial(loss, device_count=jax.local_device_count()), argnums=(0, 1)),
+        # Shard x by batch dimension and replicate weight on all devices.
         in_axis_resources=(
-            PartitionSpec("a", None, None),
+            PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
+        # Shard the output by batch dimension and replicate weight grad on all devices.
         out_axis_resources=(
-            PartitionSpec("a", None, None),
+            PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
     )
     out = pjitted(x, weight)
 
 for r, o in zip(ref, out):
-    print(numpy.allclose(r, o))
+    print(np.allclose(r, o))
 ```
 ```python
 True
