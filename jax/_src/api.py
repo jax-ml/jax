@@ -742,6 +742,12 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
       if abstracted_axes:
         raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
       in_avals, _ = unzip2(arg_specs_and_devices)
+      if any(not core.is_constant_shape(a.shape) for a in in_avals):
+        # TODO(b/262808613): Do not drop unused inputs when we have
+        # shape polymorphism, to ensure that we can always derive
+        # the dimension variables from the kept inputs.
+        nonlocal keep_unused
+        keep_unused = True
     if jax.config.jax_array:
       computation = dispatch.sharded_lowering(
           flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
