@@ -3498,7 +3498,6 @@ class _MeshExecutableFastpathData(NamedTuple):
   out_shardings: Sequence[Any]
   out_avals: Sequence[Any]
   out_committed: Sequence[bool]
-  kept_var_bitvec: Iterable[bool]
 
 
 class MeshExecutable(stages.XlaExecutable):
@@ -3578,24 +3577,26 @@ class MeshExecutable(stages.XlaExecutable):
             not self.unsafe_call.has_host_callbacks):
       return None
 
-    if not flags.FLAGS.experimental_cpp_pjit or xc._version < 111:
+    if not flags.FLAGS.experimental_cpp_pjit or xc._version < 96:
       return None
 
     def aot_cache_miss(*args, **kwargs):
       params = stages.CompiledCallParams(self, no_kwargs, in_tree, out_tree)
-      outs, out_flat, args_flat = stages.Compiled.call(params, *args, **kwargs)
+      outs, out_flat = stages.Compiled.call(params, *args, **kwargs)
+
       use_fastpath = (all(isinstance(x, xc.ArrayImpl) for x in out_flat))
 
       if use_fastpath:
         out_avals = [o.aval for o in out_flat]
         out_committed = [o._committed for o in out_flat]
-        kept_var_bitvec = [i in self._kept_var_idx
-                           for i in range(len(args_flat))]
-        fastpath_data = _MeshExecutableFastpathData(
-            self.xla_executable, out_tree, self._in_shardings,
-            self._out_shardings, out_avals, out_committed, kept_var_bitvec)
+        fastpath_data = _MeshExecutableFastpathData(self.xla_executable,
+                                                    out_tree,
+                                                    self._in_shardings,
+                                                    self._out_shardings,
+                                                    out_avals, out_committed)
       else:
         fastpath_data = None
+
       return outs, fastpath_data
 
     if xc._version < 108:

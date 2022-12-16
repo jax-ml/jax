@@ -497,13 +497,13 @@ class Compiled(Stage):
       else:
         raise
     outs = tree_util.tree_unflatten(params.out_tree, out_flat)
-    return outs, out_flat, args_flat
+    return outs, out_flat
 
   def __call__(self, *args, **kwargs):
     if self._cpp_call is not None:
       return self._cpp_call(*args, **kwargs)
 
-    outs, _, _ = Compiled.call(self._params, *args, **kwargs)
+    outs, _ = Compiled.call(self._params, *args, **kwargs)
     return outs
 
 
