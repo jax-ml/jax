@@ -34,6 +34,7 @@ Only public JAX APIs are covered, which includes the following modules:
 * `jax.random`
 * `jax.scipy`
 * `jax.tree_util`
+* `jax.test_util`
 
 Not everything in these modules is public. Over time, we are working to separate
 public and private APIs. Public APIs are documented in the JAX documentation.
@@ -50,7 +51,6 @@ prefixed with underscores, although we do not entirely comply with this yet.
 * `jax.interpreters`
 * `jax.experimental`
 * `jax.example_libraries`
-* `jax.test_util`
 
 
 These lists are not exhaustive.
