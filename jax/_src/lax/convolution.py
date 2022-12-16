@@ -26,7 +26,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src import util
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 
 _max = builtins.max
@@ -688,7 +688,7 @@ def _conv_general_dilated_lower(
     return complex_conv(ctx, lhs, rhs)
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
-  dnums = mhlo.ConvDimensionNumbers.get(
+  dnums = hlo.ConvDimensionNumbers.get(
     input_batch_dimension=lhs_spec[0],
     input_feature_dimension=lhs_spec[1],
     input_spatial_dimensions=list(lhs_spec[2:]),
@@ -703,7 +703,7 @@ def _conv_general_dilated_lower(
     padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
   return [
-      mhlo.ConvolutionOp(
+      hlo.ConvolutionOp(
         mlir.aval_to_ir_type(aval_out),
         lhs,
         rhs,

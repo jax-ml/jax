@@ -18,7 +18,7 @@ import operator
 
 import jaxlib.mlir.ir as ir
 
-from .mhlo_helpers import custom_call
+from .hlo_helpers import custom_call
 
 from jaxlib import xla_client
 
@@ -39,7 +39,7 @@ except ImportError:
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def _lu_pivots_to_permutation_mhlo(platform, gpu_linalg, pivots, *, permutation_size):
+def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_size):
   """Kernel for the transformation of pivots to permutations on GPU."""
   typ = ir.RankedTensorType(pivots.type)
   dims = typ.shape
@@ -65,7 +65,7 @@ def _lu_pivots_to_permutation_mhlo(platform, gpu_linalg, pivots, *, permutation_
       operand_layouts=[pivots_layout],
       result_layouts=[permutations_layout])
 
-cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_mhlo, "cu",
+cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu",
                                         _cuda_linalg)
 hip_lu_pivots_to_permutation = partial(
-    _lu_pivots_to_permutation_mhlo, "hip", _hip_linalg)
+    _lu_pivots_to_permutation_hlo, "hip", _hip_linalg)

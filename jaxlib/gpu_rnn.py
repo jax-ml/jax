@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
+import jaxlib.mlir.dialects.mhlo as hlo
 
 import numpy as np
 
@@ -61,7 +61,7 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
 
   i32_type = ir.IntegerType.get_signless(32)
 
-  out = mhlo.CustomCallOp(
+  out = hlo.CustomCallOp(
       [
           ir.TupleType.get_tuple([
               output_type, h_0.type, c_0.type, workspace_type,
@@ -76,13 +76,13 @@ def cudnn_rnn_lowering(ctx, input, h_0, c_0, weights, seq_lengths, *,
       called_computations=ir.ArrayAttr.get([]),
   )
   return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
+      hlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
       for i in range(5)
   ]
 
 
-def _mhlo_zeros_f32(shape):
-  return mhlo.ConstantOp(
+def _hlo_zeros_f32(shape):
+  return hlo.ConstantOp(
       ir.DenseElementsAttr.get(
           np.zeros(shape, dtype=np.float32), type=ir.F32Type.get())).result
 
@@ -102,8 +102,8 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y, workspace,
                                      reserve_space_shape[0])
 
   i32_type = ir.IntegerType.get_signless(32)
-  zeroed_dw = _mhlo_zeros_f32(ctx.avals_out[3].shape)
-  out = mhlo.CustomCallOp(
+  zeroed_dw = _hlo_zeros_f32(ctx.avals_out[3].shape)
+  out = hlo.CustomCallOp(
       [ir.TupleType.get_tuple([x.type, h0.type, c0.type, w.type])], [
           dy, dhn, dcn, x, h0, c0, w, y, workspace, reserve_space, zeroed_dw,
           seq_lengths
@@ -114,12 +114,12 @@ def cudnn_rnn_bwd_lowering(ctx, dy, dhn, dcn, x, h0, c0, w, y, workspace,
       api_version=ir.IntegerAttr.get(i32_type, 2),
       called_computations=ir.ArrayAttr.get([]),
       output_operand_aliases=ir.ArrayAttr.get([
-          mhlo.OutputOperandAlias.get(
+          hlo.OutputOperandAlias.get(
               output_tuple_indices=[3],
               operand_index=10,
               operand_tuple_indices=[])
       ]))
   return [
-      mhlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
+      hlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
       for i in range(4)
   ]

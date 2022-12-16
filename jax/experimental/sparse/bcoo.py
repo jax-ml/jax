@@ -48,7 +48,7 @@ from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge
 from jax._src.lib import gpu_sparse
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
@@ -728,13 +728,13 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
 _bcoo_dot_general_default_lowering = mlir.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
 
-def _collapse_mhlo(x, start, end):
+def _collapse_hlo(x, start, end):
   x_type = ir.RankedTensorType(x.type)
   shape = x_type.shape
   shape = (shape[:start]
            + [functools.reduce(operator.mul, shape[start:end + 1])]
            + shape[end + 1:])
-  return mhlo.ReshapeOp(
+  return hlo.ReshapeOp(
       ir.RankedTensorType.get(shape, x_type.element_type), x).result
 
 def _bcoo_dot_general_cuda_lowering(
@@ -766,7 +766,7 @@ def _bcoo_dot_general_cuda_lowering(
   elif rhs_ndim == 2:
     bcoo_dot_general_fn = coo_matmat_lowering
     if rhs_contract[0] == 1:
-      rhs = mhlo.TransposeOp(
+      rhs = hlo.TransposeOp(
           rhs, permutation=mlir.dense_int_elements([1, 0])).result
   else:
     raise ValueError(f"rhs has to be 1d or 2d; get {rhs_ndim}d.")
@@ -776,7 +776,7 @@ def _bcoo_dot_general_cuda_lowering(
     lhs_transpose = False
     if props.n_sparse == 1:
       # Converts lhs to a row vector.
-      col = _collapse_mhlo(lhs_indices, start=0, end=1)
+      col = _collapse_hlo(lhs_indices, start=0, end=1)
       row = mlir.full_like_aval(
           ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
                               np.dtype(np.int32)))
@@ -788,23 +788,23 @@ def _bcoo_dot_general_cuda_lowering(
 
       if rhs_ndim == 1:
         # Transforms a single-element array to a scalar.
-        return [mhlo.ReshapeOp(
+        return [hlo.ReshapeOp(
             ir.RankedTensorType.get(
                 [], ir.RankedTensorType(dot_product.type).element_type),
             dot_product).result]
       else:
-        return [_collapse_mhlo(dot_product, start=0, end=1)]
+        return [_collapse_hlo(dot_product, start=0, end=1)]
     elif props.n_sparse == 2:
       lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
-      row = _collapse_mhlo(
-          mhlo.SliceOp(
+      row = _collapse_hlo(
+          hlo.SliceOp(
               lhs_indices,
               start_indices=mlir.dense_int_elements([0, 0]),
               limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 1]),
               strides=mlir.dense_int_elements([1, 1])).result,
           start=0, end=1)
-      col = _collapse_mhlo(
-          mhlo.SliceOp(
+      col = _collapse_hlo(
+          hlo.SliceOp(
               lhs_indices,
               start_indices=mlir.dense_int_elements([0, 1]),
               limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 2]),
@@ -833,28 +833,28 @@ def _bcoo_dot_general_cuda_lowering(
                             lhs_indices_shape[-1])
     lhs_data_1d_shape = (np.prod(np.array(lhs_data_shape)), )
 
-    lhs_indices_2d = mhlo.ReshapeOp(
+    lhs_indices_2d = hlo.ReshapeOp(
         ir.RankedTensorType.get(
             lhs_indices_2d_shape,
             ir.RankedTensorType(lhs_indices.type).element_type),
         lhs_indices).result
 
-    lhs_data_1d = mhlo.ReshapeOp(
+    lhs_data_1d = hlo.ReshapeOp(
         ir.RankedTensorType.get(
             lhs_data_1d_shape,
             ir.RankedTensorType(lhs_data.type).element_type),
         lhs_data).result
 
-    row = _collapse_mhlo(
-        mhlo.SliceOp(
+    row = _collapse_hlo(
+        hlo.SliceOp(
             lhs_indices_2d,
             start_indices=mlir.dense_int_elements([0, 0]),
             limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 1]),
             strides=mlir.dense_int_elements([1, 1])).result,
         start=0, end=1)
 
-    col = _collapse_mhlo(
-        mhlo.SliceOp(
+    col = _collapse_hlo(
+        hlo.SliceOp(
             lhs_indices_2d,
             start_indices=mlir.dense_int_elements([0, 1]),
             limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 2]),
@@ -867,13 +867,13 @@ def _bcoo_dot_general_cuda_lowering(
     # The issue (https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643)
     # in cusparse library does not allow batch_stride = 0 for a non-batched rhs.
     batched_rhs_shape = (batch_count,) + tuple(rhs_shape)
-    batched_rhs = mhlo.BroadcastInDimOp(
+    batched_rhs = hlo.BroadcastInDimOp(
         ir.RankedTensorType.get(batched_rhs_shape,
                                 ir.RankedTensorType(rhs.type).element_type),
         rhs,
         broadcast_dimensions=mlir.dense_int_elements([1, 2])).result
     batched_rhs_2d_shape = (np.prod(np.array(batched_rhs_shape)[:-1]), batched_rhs_shape[-1])
-    batched_rhs_2d = mhlo.ReshapeOp(
+    batched_rhs_2d = hlo.ReshapeOp(
         ir.RankedTensorType.get(
             batched_rhs_2d_shape,
             ir.RankedTensorType(batched_rhs.type).element_type),
@@ -1404,12 +1404,12 @@ def _bcoo_sort_indices_jvp(primals, tangents, *, spinfo):
   data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot, perm)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
-_bcoo_sort_indices_mhlo = mlir.lower_fun(
+_bcoo_sort_indices_hlo = mlir.lower_fun(
     _bcoo_sort_indices_impl, multiple_results=True)
 
 ad.primitive_jvps[bcoo_sort_indices_p] = _bcoo_sort_indices_jvp
 batching.primitive_batchers[bcoo_sort_indices_p] = _bcoo_sort_indices_batching_rule
-mlir.register_lowering(bcoo_sort_indices_p, _bcoo_sort_indices_mhlo)
+mlir.register_lowering(bcoo_sort_indices_p, _bcoo_sort_indices_hlo)
 
 
 #----------------------------------------------------------------------
@@ -1560,12 +1560,12 @@ def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   data_dot_out = ad.Zero.from_value(data_out) if type(data_dot) is ad.Zero else permute(data_dot_out, mapping, data_dot)
   return (data_out, indices_out), (data_dot_out, indices_dot_out)
 
-_bcoo_sum_duplicates_mhlo = mlir.lower_fun(
+_bcoo_sum_duplicates_hlo = mlir.lower_fun(
     _bcoo_sum_duplicates_impl, multiple_results=True)
 
 ad.primitive_jvps[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_jvp
 batching.primitive_batchers[bcoo_sum_duplicates_p] = _bcoo_sum_duplicates_batching_rule
-mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_mhlo)
+mlir.register_lowering(bcoo_sum_duplicates_p, _bcoo_sum_duplicates_hlo)
 
 #----------------------------------------------------------------------
 # BCOO functions that maybe should be primitives?

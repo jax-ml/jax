@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Lowering and execution path that converts jaxprs into the MLIR MHLO/CHLO
-# dialects.
+# Lowering and execution path that converts jaxprs into MLIR.
 from __future__ import annotations
 
 import collections
@@ -35,8 +34,7 @@ from jax._src import device_array
 from jax._src import dtypes
 from jax._src.lib import mlir_api_version, xla_extension_version
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import chlo
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
@@ -86,12 +84,12 @@ def shape_tensor(sizes: Sequence[Union[int, ir.RankedTensorType]]
     if type(d) is int:
       return ir_constant(np.array([d], np.int32))
     else:
-      return mhlo.ReshapeOp(int1d, mhlo.ConvertOp(aval_to_ir_type(core.ShapedArray((), np.int32)), d))
+      return hlo.ReshapeOp(int1d, hlo.ConvertOp(aval_to_ir_type(core.ShapedArray((), np.int32)), d))
   d, *ds = map(lower_dim, sizes)
   if not ds:
     return d
   else:
-    return mhlo.ConcatenateOp([d, *ds], i64_attr(0)).result
+    return hlo.ConcatenateOp([d, *ds], i64_attr(0)).result
 
 
 def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
@@ -162,7 +160,7 @@ def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[ir.Type]:
 
 ir_type_handlers[core.ShapedArray] = _array_ir_types
 ir_type_handlers[core.ConcreteArray] = _array_ir_types
-ir_type_handlers[core.AbstractToken] = lambda _: [mhlo.TokenType.get()]
+ir_type_handlers[core.AbstractToken] = lambda _: [hlo.TokenType.get()]
 ir_type_handlers[core.DShapedArray] = _dynamic_array_ir_types
 
 def aval_to_ir_type(aval: core.AbstractValue) -> ir.Type:
@@ -239,7 +237,7 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
     x = x.view(np.uint16)
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
-  return (mhlo.ConstantOp(attr).result,)
+  return (hlo.ConstantOp(attr).result,)
 
 
 
@@ -272,7 +270,7 @@ def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
     if canonicalize_types:
       collapsed_val = np.asarray(
           collapsed_val, dtypes.canonicalize_dtype(collapsed_val.dtype))
-    out = mhlo.BroadcastInDimOp(
+    out = hlo.BroadcastInDimOp(
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),
         _numpy_array_constant(collapsed_val, canonicalize_types=False)[0],
@@ -304,9 +302,9 @@ for t in device_array.device_array_types:
 
 def _token_constant_handler(val, canonicalize_types):
   if mlir_api_version < 40:
-    return [mhlo.CreateTokenOp(mhlo.TokenType.get()).result]
+    return [hlo.CreateTokenOp(hlo.TokenType.get()).result]
   else:
-    return [mhlo.CreateTokenOp().result]
+    return [hlo.CreateTokenOp().result]
 register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
@@ -331,12 +329,12 @@ def _source_info_to_location(
 # Translation rules
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
+  from jax._src.lib.mlir import dialects
   context = ir.Context()
-  mhlo.register_mhlo_dialect(context)
-  chlo.register_dialect(context)
+  dialects.mhlo.register_mhlo_dialect(context)
+  dialects.chlo.register_dialect(context)
   if mlir_api_version >= 37:
-    from jax._src.lib.mlir.dialects import stablehlo
-    stablehlo.register_dialect(context)
+    dialects.stablehlo.register_dialect(context)
   return context
 
 
@@ -581,18 +579,18 @@ class DimPolyEvaluator:
   def __add__(self, other: Union[np.int32, DimPolyEvaluator]):
     if not isinstance(other, DimPolyEvaluator):
       other = DimPolyEvaluator(ir_constant(other))
-    return DimPolyEvaluator(mhlo.AddOp(self.value, other.value).result)
+    return DimPolyEvaluator(hlo.AddOp(self.value, other.value).result)
 
   def __radd__(self, other: np.int32):
-    return DimPolyEvaluator(mhlo.AddOp(ir_constant(other), self.value).result)
+    return DimPolyEvaluator(hlo.AddOp(ir_constant(other), self.value).result)
 
   def __mul__(self, other: Union[np.int32, DimPolyEvaluator]):
     if not isinstance(other, DimPolyEvaluator):
       other = DimPolyEvaluator(ir_constant(other))
-    return DimPolyEvaluator(mhlo.MulOp(self.value, other.value).result)
+    return DimPolyEvaluator(hlo.MulOp(self.value, other.value).result)
 
   def __rmul__(self, other: np.int32):
-    return DimPolyEvaluator(mhlo.MulOp(ir_constant(other), self.value).result)
+    return DimPolyEvaluator(hlo.MulOp(ir_constant(other), self.value).result)
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
@@ -640,7 +638,7 @@ def lower_jaxpr_to_module(
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None
 ) -> LoweringResult:
-  """Lowers a top-level jaxpr to an MHLO module.
+  """Lowers a top-level jaxpr to an MLIR module.
 
   Handles the quirks of the argument/return value passing conventions of the
   runtime.
@@ -678,7 +676,7 @@ def lower_jaxpr_to_module(
       msg = f"Donation is not implemented for {platform}.\n{msg}"
     warnings.warn(f"Some donated buffers were not usable: {', '.join(unused_donations)}.\n{msg}")
 
-  # MHLO channels need to start at 1
+  # HLO channels need to start at 1
   channel_iter = itertools.count(1)
   # Create a keepalives list that will be mutated during the lowering.
   keepalives: List[Any] = []
@@ -761,20 +759,20 @@ def _set_up_aliases(avals_in, avals_out, donated_args):
 Token = Sequence[ir.Value]
 
 def token_type() -> Sequence[ir.Type]:
-  return [mhlo.TokenType.get()]
+  return [hlo.TokenType.get()]
 
 def create_token() -> Token:
   if mlir_api_version < 40:
     return wrap_singleton_ir_values(
-        mhlo.CreateTokenOp(mhlo.TokenType.get()).result)
+        hlo.CreateTokenOp(hlo.TokenType.get()).result)
   else:
-    return wrap_singleton_ir_values(mhlo.CreateTokenOp().result)
+    return wrap_singleton_ir_values(hlo.CreateTokenOp().result)
 
 class TokenSet:
   """An immutable container of tokens to be used to lower effectful jaxprs. When lowering
-  effectful jaxprs, we need to thread MHLO tokens to sequence them. Each effect
+  effectful jaxprs, we need to thread HLO tokens to sequence them. Each effect
   will need its own token that will be threaded in and out of the effectful
-  primitives. A `TokenSet` encapsulates a set of MHLO tokens that will be
+  primitives. A `TokenSet` encapsulates a set of HLO tokens that will be
   used by the lowering rules.
   """
   _tokens: typing.OrderedDict[core.Effect, Token]
@@ -850,18 +848,18 @@ def lower_jaxpr_to_fun(
     jaxpr: the jaxpr to lower.
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
-    create_tokens: if true, the MHLO will create tokens and ignore dummy input tokens.
+    create_tokens: if true, the HLO will create tokens and ignore dummy input tokens.
     public: if true, the function's visibility is set to "public".
     replace_tokens_with_dummy: if true, token arguments/return values are
       replaced with bool arrays of size [0].
     replicated_args: if present, annotates arguments as replicated.
     arg_shardings: sharding annotations for each argument (optional).
     result_shardings: sharding annotations for each argument (optional).
-    use_sharding_annotations: if True, use mhlo.sharding annotations on
+    use_sharding_annotations: if True, use "mhlo.sharding" annotations on
       parameters and return values to express sharding. If False, use
-      mhlo.custom_call operators with sharding annotations.
-      TODO(b/228598865): remove this option when mhlo.sharding annotations are
-      propagated on non-entry functions during MHLO->HLO conversion.
+      hlo.custom_call operators with sharding annotations.
+      TODO(b/228598865): remove this option when "mhlo.sharding" annotations are
+      propagated on non-entry functions during MLIR->HLO conversion.
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
   Returns the name of the function.
@@ -988,9 +986,9 @@ def lower_jaxpr_to_fun(
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_tokens_with_dummy and aval is core.abstract_token:
         if mlir_api_version < 40:
-          args.append(mhlo.CreateTokenOp(mhlo.TokenType.get()).results)
+          args.append(hlo.CreateTokenOp(hlo.TokenType.get()).results)
         else:
-          args.append(mhlo.CreateTokenOp().results)
+          args.append(hlo.CreateTokenOp().results)
       else:
         args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
@@ -1061,7 +1059,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                   *args: Sequence[ir.Value],
                   dim_var_values: Sequence[ir.Value]
                   ) -> Tuple[Sequence[Sequence[ir.Value]], TokenSet]:
-  """Lowers a jaxpr into mHLO, inlined into an existing function.
+  """Lowers a jaxpr into MLIR, inlined into an existing function.
 
   Assumes that an MLIR context, location, and insertion point are set.
 
@@ -1269,13 +1267,13 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
         broadcast_dimensions=broadcast_dimensions)
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
-    return mhlo.DynamicBroadcastInDimOp(
+    return hlo.DynamicBroadcastInDimOp(
         aval_to_ir_type(aval_out), op,
         shape_tensor(shape),
         dense_int_elements(broadcast_dimensions),
     ).result
   else:
-    return mhlo.BroadcastInDimOp(
+    return hlo.BroadcastInDimOp(
         aval_to_ir_type(aval_out), op,
         dense_int_elements(broadcast_dimensions)).result
 
@@ -1302,12 +1300,12 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
     aval_out, = aval_out.dtype._rules.physical_avals(aval_out)  # type: ignore
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape(ctx, aval_out.shape)  # type: ignore
-    return mhlo.DynamicReshapeOp(
+    return hlo.DynamicReshapeOp(
         aval_to_ir_type(aval_out), op,
         shape_tensor(shape),
     ).result
   else:
-    return mhlo.ReshapeOp(aval_to_ir_type(aval_out), op).result
+    return hlo.ReshapeOp(aval_to_ir_type(aval_out), op).result
 
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
@@ -1319,16 +1317,16 @@ def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
     start_indices = eval_dynamic_shape(ctx, start_indices)
     limit_indices = eval_dynamic_shape(ctx, limit_indices)
     strides = eval_dynamic_shape(ctx, strides)
-    return mhlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
-                                   x,
-                                   shape_tensor(start_indices),
-                                   shape_tensor(limit_indices),
-                                   shape_tensor(strides)).result
+    return hlo.RealDynamicSliceOp(aval_to_ir_type(aval_out),
+                                  x,
+                                  shape_tensor(start_indices),
+                                  shape_tensor(limit_indices),
+                                  shape_tensor(strides)).result
   else:
-    return mhlo.SliceOp(x,
-                        dense_int_elements(start_indices),
-                        dense_int_elements(limit_indices),
-                        dense_int_elements(strides)).result
+    return hlo.SliceOp(x,
+                       dense_int_elements(start_indices),
+                       dense_int_elements(limit_indices),
+                       dense_int_elements(strides)).result
 
 def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
@@ -1338,15 +1336,15 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
   slice_sizes = aval_out.shape
   if not core.is_constant_shape(slice_sizes):
     slice_sizes = eval_dynamic_shape(ctx, slice_sizes)
-    return mhlo.RealDynamicSliceOp(
+    return hlo.RealDynamicSliceOp(
         aval_to_ir_type(aval_out), x,
         shape_tensor(start_indices),
         shape_tensor(slice_sizes),
         shape_tensor([1] * len(slice_sizes))
     ).result
   else:
-    return mhlo.DynamicSliceOp(x, start_indices,
-                               dense_int_elements(slice_sizes)).result
+    return hlo.DynamicSliceOp(x, start_indices,
+                              dense_int_elements(slice_sizes)).result
 
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
@@ -1356,10 +1354,10 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
 
   # TODO(necula): handle dynamic shapes
   if mlir_api_version < 40:
-    return mhlo.DynamicUpdateSliceOp(
+    return hlo.DynamicUpdateSliceOp(
         aval_to_ir_type(aval_out), x, update, start_indices).result
   else:
-    return mhlo.DynamicUpdateSliceOp(x, update, start_indices).result
+    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
@@ -1373,14 +1371,14 @@ def zeros_like_lowering(ctx, x):
 register_lowering(ad_util.zeros_like_p, zeros_like_lowering)
 
 def add_jaxvals_lowering(ctx, x, y):
-  return mhlo.AddOp(x, y).results
+  return hlo.AddOp(x, y).results
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
 register_lowering(ad_util.stop_gradient_p, lambda ctx, x: [x])
 
 
-def compare_mhlo(x, y, direction: str, comparison_type: Optional[str] = None):
-  """Creates mhlo.CompareOp."""
+def compare_hlo(x, y, direction: str, comparison_type: Optional[str] = None):
+  """Creates CompareOp."""
   if comparison_type is None:
     elem_type = ir.RankedTensorType(x.type).element_type
     if ir.IntegerType.isinstance(elem_type):
@@ -1389,34 +1387,34 @@ def compare_mhlo(x, y, direction: str, comparison_type: Optional[str] = None):
     else:
       comparison_type = "FLOAT"
 
-  return mhlo.CompareOp(
+  return hlo.CompareOp(
       x,
       y,
-      mhlo.ComparisonDirectionAttr.get(direction),
-      compare_type=mhlo.ComparisonTypeAttr.get(comparison_type))
+      hlo.ComparisonDirectionAttr.get(direction),
+      compare_type=hlo.ComparisonTypeAttr.get(comparison_type))
 
-def _minmax_mhlo(op, cmp, x, y):
+def _minmax_hlo(op, cmp, x, y):
   """Min/max that compares complex values lexicographically as pairs."""
   tensor_type = ir.RankedTensorType(x.type)
   if ir.ComplexType.isinstance(tensor_type.element_type):
-    rx = mhlo.RealOp(x).result
-    ry = mhlo.RealOp(y).result
-    real_eq = compare_mhlo(rx, ry, "EQ", "FLOAT")
-    real_cmp = compare_mhlo(rx, ry, cmp, "FLOAT")
-    imag_cmp = compare_mhlo(
-        mhlo.ImagOp(x).result,
-        mhlo.ImagOp(y).result, cmp, "FLOAT")
-    which = mhlo.SelectOp(real_eq, imag_cmp, real_cmp).result
-    return mhlo.SelectOp(which, x, y)
+    rx = hlo.RealOp(x).result
+    ry = hlo.RealOp(y).result
+    real_eq = compare_hlo(rx, ry, "EQ", "FLOAT")
+    real_cmp = compare_hlo(rx, ry, cmp, "FLOAT")
+    imag_cmp = compare_hlo(
+        hlo.ImagOp(x).result,
+        hlo.ImagOp(y).result, cmp, "FLOAT")
+    which = hlo.SelectOp(real_eq, imag_cmp, real_cmp).result
+    return hlo.SelectOp(which, x, y)
   else:
     return op(x, y)
 
-min_mhlo = partial(_minmax_mhlo, mhlo.MinOp, "LT")
-max_mhlo = partial(_minmax_mhlo, mhlo.MaxOp, "GT")
+min_hlo = partial(_minmax_hlo, hlo.MinOp, "LT")
+max_hlo = partial(_minmax_hlo, hlo.MaxOp, "GT")
 
 
-def convert_mhlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
-  """Variant of convert that has XLA HLO semantics.
+def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
+  """Variant of convert that has HLO semantics.
 
   In particular, treat casts to boolean as x != 0, rather than truncating
   integer values (b/209440332)."""
@@ -1428,9 +1426,9 @@ def convert_mhlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
       compare_type = "SIGNED"
     else:
       compare_type = "UNSIGNED"
-    return compare_mhlo(x, full_like_aval(ctx, 0, aval_in), "NE",
-                         compare_type).result
-  return mhlo.ConvertOp(aval_to_ir_type(aval_out), x).result
+    return compare_hlo(x, full_like_aval(ctx, 0, aval_in), "NE",
+                       compare_type).result
+  return hlo.ConvertOp(aval_to_ir_type(aval_out), x).result
 
 def _wrap_with_spmd_op(name: str,
                        result_type: ir.Type,
@@ -1444,14 +1442,14 @@ def _wrap_with_spmd_op(name: str,
         [str(i) for i in sorted(unspecified_dims)]) + "]"
   else:
     backend_config = ""
-  op = mhlo.CustomCallOp([result_type], [x],
-                         call_target_name=ir.StringAttr.get(name),
-                         has_side_effect=ir.BoolAttr.get(False),
-                         backend_config=ir.StringAttr.get(backend_config),
-                         api_version=i32_attr(1),
-                         called_computations=ir.ArrayAttr.get([]),
-                         operand_layouts=None,
-                         result_layouts=None)
+  op = hlo.CustomCallOp([result_type], [x],
+                        call_target_name=ir.StringAttr.get(name),
+                        has_side_effect=ir.BoolAttr.get(False),
+                        backend_config=ir.StringAttr.get(backend_config),
+                        api_version=i32_attr(1),
+                        called_computations=ir.ArrayAttr.get([]),
+                        operand_layouts=None,
+                        result_layouts=None)
   op.attributes["mhlo.sharding"] = ir.StringAttr.get(
       sharding_proto.SerializeToString())
   return op.result
@@ -1489,7 +1487,7 @@ def cache_lowering(f):
     except TypeError:
       # If the parameters aren't hashable, give up on caching.
       # TODO(phawkins): switch to requiring hashability, when XLA fallback
-      # computations have been ported to MHLO.
+      # computations have been ported to MLIR.
       return f(ctx, *args, **params)
     if func is None:
       func = _emit_lowering_rule_as_fun(partial(f, **params), ctx)
@@ -1506,12 +1504,12 @@ def cache_lowering(f):
 
 
 
-def xla_computation_to_mhlo_module(xla_computation: xc.XlaComputation
+def xla_computation_to_mlir_module(xla_computation: xc.XlaComputation
                                   ) -> ir.Module:
   module_str = xc._xla.mlir.xla_computation_to_mlir_module(xla_computation)
   return ir.Module.parse(module_str)
 
-def merge_mhlo_modules(dst_module: ir.Module,
+def merge_mlir_modules(dst_module: ir.Module,
                        sym_name: str,
                        src_module: ir.Module) -> str:
   """Returns the name of src_module's main() function, after renaming."""
@@ -1563,8 +1561,8 @@ def xla_fallback_lowering(prim: core.Primitive):
     xla_computation = xla.primitive_subcomputation(
         module_ctx.platform, axis_env, prim, ctx.avals_in,
         ctx.avals_out, **params)
-    xla_module = xla_computation_to_mhlo_module(xla_computation)
-    callee_name = merge_mhlo_modules(
+    xla_module = xla_computation_to_mlir_module(xla_computation)
+    callee_name = merge_mlir_modules(
         module_ctx.module, f"xla_fallback_{prim.name}", xla_module)
     output_types = map(aval_to_ir_types, ctx.avals_out)
     flat_output_types = util.flatten(output_types)
@@ -1576,7 +1574,7 @@ def xla_fallback_lowering(prim: core.Primitive):
                                flatten_lowering_ir_args(args)).result
     if not prim.multiple_results:
       return [call]
-    flat_results = [mhlo.GetTupleElementOp(call, i32_attr(i)).result
+    flat_results = [hlo.GetTupleElementOp(call, i32_attr(i)).result
                     for i in range(len(flat_output_types))]
 
     return util.unflatten(flat_results, map(len, output_types))
@@ -1611,16 +1609,16 @@ def _dtype_to_xla_type_string(dtype: np.dtype) -> str:
     raise NotImplementedError(dtype)
   return _dtype_to_xla_type_string_map[dtype]
 
-def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
+def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
                  aval: core.ShapedArray, name: str, *,
                  sharding: Optional[xc.OpSharding] = None) -> ir.Value:
-  channel_handle = mhlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
+  channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
   if mlir_api_version < 40:
-    send_op = mhlo.SendOp(mhlo.TokenType.get(), [operand], token, channel_handle,
-                          is_host_transfer=ir.BoolAttr.get(True))
+    send_op = hlo.SendOp(hlo.TokenType.get(), [operand], token, channel_handle,
+                         is_host_transfer=ir.BoolAttr.get(True))
   else:
-    send_op = mhlo.SendOp([operand], token, channel_handle,
-                          is_host_transfer=ir.BoolAttr.get(True))
+    send_op = hlo.SendOp([operand], token, channel_handle,
+                         is_host_transfer=ir.BoolAttr.get(True))
   dtype_str = _dtype_to_xla_type_string(aval.dtype)
   if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
     raise NotImplementedError("64-bit types not supported.")
@@ -1634,13 +1632,13 @@ def send_to_host(channel: int, token: mhlo.TokenType, operand: Any,
   return send_op.result
 
 
-def receive_from_host(channel: int, token: mhlo.TokenType,
+def receive_from_host(channel: int, token: hlo.TokenType,
                       out_aval: core.ShapedArray, name: str, *,
                       sharding: Optional[xc.OpSharding] = None) -> ir.Value:
-  channel_handle = mhlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
-  recv_op = mhlo.RecvOp([aval_to_ir_type(out_aval),
-                         mhlo.TokenType.get()], token, channel_handle,
-                         is_host_transfer=ir.BoolAttr.get(True))
+  channel_handle = hlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
+  recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
+                        hlo.TokenType.get()], token, channel_handle,
+                        is_host_transfer=ir.BoolAttr.get(True))
   dtype_str = _dtype_to_xla_type_string(out_aval.dtype)
   if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
     raise NotImplementedError("64-bit types not supported.")
@@ -1670,9 +1668,9 @@ def _emit_tpu_python_callback(
     sharding: Optional[xc.OpSharding] = None
 ) -> Tuple[List[ir.Value], Any, Any]:
   if mlir_api_version < 40:
-    token = token or mhlo.CreateTokenOp(mhlo.TokenType.get()).result
+    token = token or hlo.CreateTokenOp(hlo.TokenType.get()).result
   else:
-    token = token or mhlo.CreateTokenOp().result
+    token = token or hlo.CreateTokenOp().result
   _wrapped_callback = callback
 
   send_channels = []
@@ -1680,7 +1678,7 @@ def _emit_tpu_python_callback(
     # If there are no operands to the callback, we need to insert a dummy send
     # op or the callback will never be triggered!
     # TODO(sharadmv,chky): Enable this fix in the runtime as opposed to in
-    # MHLO builder.
+    # MLIR builder.
     callback_without_args = _wrapped_callback
     def _wrapped_callback(*args):  # pylint: disable=function-redefined
       del args
@@ -1761,7 +1759,7 @@ def emit_python_callback(
     operand_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
     result_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
     ) -> Tuple[List[ir.Value], Any, Any]:
-  """Emits MHLO that calls back to a provided Python function."""
+  """Emits MLIR that calls back to a provided Python function."""
   platform = ctx.module_context.platform
   if platform not in {"cpu", "cuda", "rocm", "tpu"}:
     raise ValueError(
@@ -1842,7 +1840,7 @@ def emit_python_callback(
   result_type = ir.TupleType.get_tuple(result_types)
   call_target_name = ("xla_python_gpu_callback"
                      if platform in {"cuda", "rocm"} else "xla_python_cpu_callback")
-  result = mhlo.CustomCallOp(
+  result = hlo.CustomCallOp(
       [result_type],
       callback_operands,
       call_target_name=ir.StringAttr.get(call_target_name),
@@ -1859,7 +1857,7 @@ def emit_python_callback(
   if sharding is not None:
     set_sharding(result, sharding)
   results = [
-      mhlo.GetTupleElementOp(result, i32_attr(i)).result
+      hlo.GetTupleElementOp(result, i32_attr(i)).result
       for i in range(len(result_types))
   ]
   if token:

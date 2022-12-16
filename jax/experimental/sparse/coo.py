@@ -30,7 +30,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src.lax.lax import _const
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import gpu_sparse
 from jax._src.numpy.lax_numpy import _promote_dtypes
 from jax._src.typing import Array, ArrayLike, DTypeLike
@@ -199,7 +199,7 @@ def _coo_todense_abstract_eval(data, row, col, *, spinfo):
 _coo_todense_lowering = mlir.lower_fun(
     _coo_todense_impl, multiple_results=False)
 
-def _coo_todense_gpu_lowering(coo_todense_mhlo, ctx, data, row, col, *, spinfo):
+def _coo_todense_gpu_lowering(coo_todense_hlo, ctx, data, row, col, *, spinfo):
   data_aval, row_aval, _ = ctx.avals_in
   dtype = data_aval.dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
@@ -220,10 +220,10 @@ def _coo_todense_gpu_lowering(coo_todense_mhlo, ctx, data, row, col, *, spinfo):
                   "back to the default implementation.", CuSparseEfficiencyWarning)
     return _coo_todense_lowering(ctx, data, row, col, spinfo=spinfo)
 
-  result = coo_todense_mhlo(
+  result = coo_todense_hlo(
       data, row, col, shape=shape, data_dtype=dtype, index_dtype=row_aval.dtype)
   return (
-      [mhlo.TransposeOp(result, mlir.dense_int_elements([1, 0])).result]
+      [hlo.TransposeOp(result, mlir.dense_int_elements([1, 0])).result]
       if transpose else [result])
 
 
@@ -318,14 +318,14 @@ def _coo_fromdense_abstract_eval(mat, *, nse, index_dtype):
 _coo_fromdense_lowering = mlir.lower_fun(
     _coo_fromdense_impl, multiple_results=True)
 
-def _coo_fromdense_gpu_lowering(coo_fromdense_mhlo, ctx, mat, *, nse,
+def _coo_fromdense_gpu_lowering(coo_fromdense_hlo, ctx, mat, *, nse,
                                 index_dtype):
   dtype = ctx.avals_in[0].dtype
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
     warnings.warn(f"coo_fromdense cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_fromdense_lowering(ctx, mat, nse=nse, index_dtype=index_dtype)
-  data, row, col = coo_fromdense_mhlo(
+  data, row, col = coo_fromdense_hlo(
       mat, nnz=nse,
       data_dtype=dtype,
       index_dtype=np.dtype(index_dtype),
@@ -438,7 +438,7 @@ def _coo_matvec_abstract_eval(data, row, col, v, *, spinfo, transpose):
 _coo_matvec_lowering = mlir.lower_fun(
     _coo_matvec_impl, multiple_results=False)
 
-def _coo_matvec_gpu_lowering(coo_matvec_mhlo, ctx, data, row, col, v, *, spinfo,
+def _coo_matvec_gpu_lowering(coo_matvec_hlo, ctx, data, row, col, v, *, spinfo,
                              transpose):
   data_aval, row_aval, _, x_aval = ctx.avals_in
   dtype = data_aval.dtype
@@ -461,7 +461,7 @@ def _coo_matvec_gpu_lowering(coo_matvec_mhlo, ctx, data, row, col, v, *, spinfo,
     return _coo_matvec_lowering(ctx, data, row, col, v, spinfo=spinfo,
                                 transpose=transpose)
 
-  return [coo_matvec_mhlo(
+  return [coo_matvec_hlo(
       data, row, col, v, shape=shape, transpose=transpose,
       index_dtype=row_aval.dtype, data_dtype=dtype, x_dtype=x_aval.dtype)]
 
@@ -561,7 +561,7 @@ def _coo_matmat_abstract_eval(data, row, col, B, *, spinfo, transpose):
 
 _coo_matmat_lowering = mlir.lower_fun(_coo_matmat_impl, multiple_results=False)
 
-def _coo_matmat_gpu_lowering(coo_matmat_mhlo, ctx, data, row, col, B, *, spinfo,
+def _coo_matmat_gpu_lowering(coo_matmat_hlo, ctx, data, row, col, B, *, spinfo,
                              transpose):
   data_aval, row_aval, _, B_aval = ctx.avals_in
   dtype = data_aval.dtype
@@ -583,7 +583,7 @@ def _coo_matmat_gpu_lowering(coo_matmat_mhlo, ctx, data, row, col, B, *, spinfo,
     return _coo_matmat_lowering(ctx, data, row, col, B, spinfo=spinfo,
                                 transpose=transpose)
 
-  return [coo_matmat_mhlo(data, row, col, B, shape=shape,
+  return [coo_matmat_hlo(data, row, col, B, shape=shape,
                                       transpose=transpose, x_dtype=B_aval.dtype,
                                       data_dtype=data_aval.dtype,
                                       index_dtype=row_aval.dtype)]

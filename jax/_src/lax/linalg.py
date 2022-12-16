@@ -52,7 +52,7 @@ from jax._src.lib import xla_client
 
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.typing import Array, ArrayLike
 
 xops = xla_client.ops
@@ -418,7 +418,7 @@ ad.primitive_jvps[cholesky_p] = _cholesky_jvp_rule
 batching.primitive_batchers[cholesky_p] = _cholesky_batching_rule
 
 def _cholesky_lowering(ctx, x):
-  return mhlo.CholeskyOp(x, lower=ir.BoolAttr.get(True)).results
+  return hlo.CholeskyOp(x, lower=ir.BoolAttr.get(True)).results
 
 mlir.register_lowering(cholesky_p, _cholesky_lowering)
 
@@ -429,22 +429,28 @@ def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   result, info = potrf_impl(operand_aval.dtype, operand, lower=True)
-  ok = mlir.compare_mhlo(
+  ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
   select_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  return [_broadcasting_select_mhlo(
+  return [_broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok,
                             select_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_aval,
-      result, out_aval, _nan_like_mhlo(ctx, out_aval), out_aval)]
+      result, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)]
 
-mlir.register_lowering(
-    cholesky_p,
-    partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
-    platform='cpu')
+if xla_client.mlir_api_version < 41:
+  mlir.register_lowering(
+      cholesky_p,
+      partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
+      platform='cpu')
+else:
+  mlir.register_lowering(
+      cholesky_p,
+      partial(_cholesky_cpu_gpu_lowering, lapack.potrf_hlo),
+      platform='cpu')
 
 # Asymmetric eigendecomposition
 
@@ -491,42 +497,47 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
 
-  w, vl, vr, info = lapack.geev_mhlo(operand_aval.dtype, operand,
-                                     jobvl=compute_left_eigenvectors,
-                                     jobvr=compute_right_eigenvectors)
+  if xla_client.mlir_api_version < 41:
+    w, vl, vr, info = lapack.geev_mhlo(operand_aval.dtype, operand,
+                                       jobvl=compute_left_eigenvectors,
+                                       jobvr=compute_right_eigenvectors)
+  else:
+    w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
+                                      jobvl=compute_left_eigenvectors,
+                                      jobvr=compute_right_eigenvectors)
 
-  ok = mlir.compare_mhlo(
+  ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
   select_w_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
-  w = _broadcasting_select_mhlo(
+  w = _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_w_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_w_aval,
-      w, out_aval, _nan_like_mhlo(ctx, out_aval), out_aval)
+      w, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)
   output = [w]
 
   if compute_left_eigenvectors:
     aval = ctx.avals_out[len(output)]
     select_vl_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vl = _broadcasting_select_mhlo(
+    vl = _broadcasting_select_hlo(
         ctx,
         mlir.broadcast_in_dim(ctx, ok, select_vl_aval,
                               broadcast_dimensions=range(len(batch_dims))),
         select_vl_aval,
-        vl, aval, _nan_like_mhlo(ctx, aval), aval)
+        vl, aval, _nan_like_hlo(ctx, aval), aval)
     output.append(vl)
 
   if compute_right_eigenvectors:
     aval = ctx.avals_out[len(output)]
     select_vr_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vr = _broadcasting_select_mhlo(
+    vr = _broadcasting_select_hlo(
         ctx,
         mlir.broadcast_in_dim(ctx, ok, select_vr_aval,
                               broadcast_dimensions=range(len(batch_dims))),
         select_vr_aval,
-        vr, aval, _nan_like_mhlo(ctx, aval), aval)
+        vr, aval, _nan_like_hlo(ctx, aval), aval)
     output.append(vr)
 
   return output
@@ -645,21 +656,21 @@ def _eigh_cpu_gpu_lowering(syevd_impl, ctx, operand, *, lower,
   batch_dims = operand_aval.shape[:-2]
   v, w, info = syevd_impl(operand_aval.dtype, operand, lower=lower)
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
-  ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
   select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  v = _broadcasting_select_mhlo(
+  v = _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_v_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_v_aval,
-      v, v_aval, _nan_like_mhlo(ctx, v_aval), v_aval)
+      v, v_aval, _nan_like_hlo(ctx, v_aval), v_aval)
   select_w_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
-  w = _broadcasting_select_mhlo(
+  w = _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_w_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_w_aval,
-      w, w_aval, _nan_like_mhlo(ctx, w_aval), w_aval)
+      w, w_aval, _nan_like_hlo(ctx, w_aval), w_aval)
   return [v, w]
 
 def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
@@ -742,9 +753,14 @@ eigh_p.def_abstract_eval(_eigh_abstract_eval)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
-mlir.register_lowering(
-    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
-    platform='cpu')
+if xla_client.mlir_api_version < 41:
+  mlir.register_lowering(
+      eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
+      platform='cpu')
+else:
+  mlir.register_lowering(
+      eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo),
+      platform='cpu')
 
 if gpu_solver is not None:
   mlir.register_lowering(
@@ -882,15 +898,15 @@ def _triangular_solve_lowering(
   else:
     transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
   if mlir_api_version < 36:
-    return mhlo.TriangularSolveOp(
+    return hlo.TriangularSolveOp(
         mlir.aval_to_ir_type(out_aval), a, b, ir.BoolAttr.get(left_side),
         ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-        mhlo.TransposeAttr.get(transpose)).results
+        hlo.TransposeAttr.get(transpose)).results
   else:
-    return mhlo.TriangularSolveOp(
+    return hlo.TriangularSolveOp(
         a, b, ir.BoolAttr.get(left_side),
         ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-        mhlo.TransposeAttr.get(transpose)).results
+        hlo.TransposeAttr.get(transpose)).results
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
@@ -904,9 +920,14 @@ def _triangular_solve_cpu_lower(
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    return [lapack.trsm_mhlo(
-      a_aval.dtype, alpha,
-      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
+    if xla_client.mlir_api_version < 41:
+      return [lapack.trsm_mhlo(
+        a_aval.dtype, alpha,
+        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
+    else:
+      return [lapack.trsm_hlo(
+        a_aval.dtype, alpha,
+        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -915,15 +936,15 @@ def _triangular_solve_cpu_lower(
     else:
       transpose = "NO_TRANSPOSE"
     if mlir_api_version < 36:
-      return mhlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
-                                    ir.BoolAttr.get(lower),
-                                    ir.BoolAttr.get(unit_diagonal),
-                                    mhlo.TransposeAttr.get(transpose)).results
+      return hlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
+                                   ir.BoolAttr.get(lower),
+                                   ir.BoolAttr.get(unit_diagonal),
+                                   hlo.TransposeAttr.get(transpose)).results
     else:
-      return mhlo.TriangularSolveOp(a, b, ir.BoolAttr.get(left_side),
-                                    ir.BoolAttr.get(lower),
-                                    ir.BoolAttr.get(unit_diagonal),
-                                    mhlo.TransposeAttr.get(transpose)).results
+      return hlo.TriangularSolveOp(a, b, ir.BoolAttr.get(left_side),
+                                   ir.BoolAttr.get(lower),
+                                   ir.BoolAttr.get(unit_diagonal),
+                                   hlo.TransposeAttr.get(transpose)).results
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
@@ -1186,17 +1207,17 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
   m = operand_aval.shape[-2]
   lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
   # Subtract 1 from the pivot to get 0-based indices.
-  pivot = mhlo.SubtractOp(pivot, mlir.full_like_aval(ctx, 1, pivot_aval)).result
-  ok = mlir.compare_mhlo(
+  pivot = hlo.SubtractOp(pivot, mlir.full_like_aval(ctx, 1, pivot_aval)).result
+  ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "GE", "SIGNED")
   select_lu_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  lu = _broadcasting_select_mhlo(
+  lu = _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_lu_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_lu_aval,
-      lu, out_aval, _nan_like_mhlo(ctx, out_aval), out_aval)
+      lu, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)
   sub_ctx = ctx.replace(primitive=None, avals_in=[pivot_aval], avals_out=[perm_aval])
   perm_fn = mlir.lower_fun(lambda x: lu_pivots_to_permutation(x, m),
                            multiple_results=False)
@@ -1216,9 +1237,14 @@ mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-mlir.register_lowering(lu_p,
-                       partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
-                       platform='cpu')
+if xla_client.mlir_api_version < 41:
+  mlir.register_lowering(lu_p,
+                         partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
+                         platform='cpu')
+else:
+  mlir.register_lowering(lu_p,
+                         partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo),
+                         platform='cpu')
 
 mlir.register_lowering(
     lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf),
@@ -1339,15 +1365,15 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
   else:
     a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
-    ok = mlir.compare_mhlo(info_geqrf, zeros, "EQ", "SIGNED")
+    ok = mlir.compare_hlo(info_geqrf, zeros, "EQ", "SIGNED")
     select_ok_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
     ok_a = mlir.broadcast_in_dim(ctx, ok, select_ok_a_aval,
                                  broadcast_dimensions=range(len(batch_dims)))
-    a_out = _broadcasting_select_mhlo(ctx, ok_a, select_ok_a_aval, a_out, a_aval, _nan_like_mhlo(ctx, a_aval), a_aval)
+    a_out = _broadcasting_select_hlo(ctx, ok_a, select_ok_a_aval, a_out, a_aval, _nan_like_hlo(ctx, a_aval), a_aval)
     select_ok_taus_aval = ShapedArray(batch_dims + [1], np.dtype(np.bool_))
     ok_taus = mlir.broadcast_in_dim(ctx, ok, select_ok_taus_aval,
                                     broadcast_dimensions=range(len(batch_dims)))
-    taus = _broadcasting_select_mhlo(ctx, ok_taus, select_ok_taus_aval, taus, taus_aval, _nan_like_mhlo(ctx, taus_aval), taus_aval)
+    taus = _broadcasting_select_hlo(ctx, ok_taus, select_ok_taus_aval, taus, taus_aval, _nan_like_hlo(ctx, taus_aval), taus_aval)
   return a_out, taus
 
 geqrf_p = Primitive('geqrf')
@@ -1357,9 +1383,14 @@ geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
 batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
 xla.register_translation(geqrf_p, _geqrf_translation_rule)
 
-mlir.register_lowering(
-    geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_mhlo, None),
-    platform='cpu')
+if xla_client.mlir_api_version < 41:
+  mlir.register_lowering(
+      geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_mhlo, None),
+      platform='cpu')
+else:
+  mlir.register_lowering(
+      geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_hlo, None),
+      platform='cpu')
 mlir.register_lowering(
     geqrf_p,
     partial(_geqrf_cpu_gpu_lowering, gpu_solver.cuda_geqrf,
@@ -1425,11 +1456,11 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
 
   a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
-  ok = mlir.compare_mhlo(info_orgqr, zeros, "EQ", "SIGNED")
+  ok = mlir.compare_hlo(info_orgqr, zeros, "EQ", "SIGNED")
   select_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))
   ok = mlir.broadcast_in_dim(ctx, ok, select_a_aval,
                              broadcast_dimensions=range(len(batch_dims)))
-  a = _broadcasting_select_mhlo(ctx, ok, select_a_aval, a, a_aval, _nan_like_mhlo(ctx, a_aval), a_aval)
+  a = _broadcasting_select_hlo(ctx, ok, select_a_aval, a, a_aval, _nan_like_hlo(ctx, a_aval), a_aval)
   return [a]
 
 
@@ -1439,10 +1470,16 @@ householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
 batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
 xla.register_translation(householder_product_p, _householder_product_translation_rule)
 
-mlir.register_lowering(
-    householder_product_p,
-    partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_mhlo),
-    platform='cpu')
+if xla_client.mlir_api_version < 41:
+  mlir.register_lowering(
+      householder_product_p,
+      partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_mhlo),
+      platform='cpu')
+else:
+  mlir.register_lowering(
+      householder_product_p,
+      partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_hlo),
+      platform='cpu')
 mlir.register_lowering(
     householder_product_p,
     partial(_householder_product_cpu_gpu_lowering, gpu_solver.cuda_orgqr),
@@ -1642,32 +1679,32 @@ def _svd_cpu_gpu_lowering(gesvd_impl, ctx, operand, *, full_matrices,
                               full_matrices=full_matrices,
                               compute_uv=compute_uv)
   zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
-  ok = mlir.compare_mhlo(info, zeros, "EQ", "SIGNED")
+  ok = mlir.compare_hlo(info, zeros, "EQ", "SIGNED")
   select_s_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
-  s = _broadcasting_select_mhlo(
+  s = _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_s_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_s_aval,
-      s, s_aval, _nan_like_mhlo(ctx, s_aval), s_aval)
+      s, s_aval, _nan_like_hlo(ctx, s_aval), s_aval)
   result = [s]
 
   if compute_uv:
     u_aval, vt_aval = ctx.avals_out[1:]
     select_u_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    u = _broadcasting_select_mhlo(
+    u = _broadcasting_select_hlo(
         ctx,
         mlir.broadcast_in_dim(ctx, ok, select_u_aval,
                               broadcast_dimensions=range(len(batch_dims))),
         select_u_aval,
-        u, u_aval, _nan_like_mhlo(ctx, u_aval), u_aval)
+        u, u_aval, _nan_like_hlo(ctx, u_aval), u_aval)
     select_v_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vt = _broadcasting_select_mhlo(
+    vt = _broadcasting_select_hlo(
         ctx,
         mlir.broadcast_in_dim(ctx, ok, select_v_aval,
                               broadcast_dimensions=range(len(batch_dims))),
         select_v_aval,
-        vt, vt_aval, _nan_like_mhlo(ctx, vt_aval), vt_aval)
+        vt, vt_aval, _nan_like_hlo(ctx, vt_aval), vt_aval)
     result += [u, vt]
 
   return result
@@ -1715,9 +1752,14 @@ svd_p.def_abstract_eval(_svd_abstract_eval)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
 batching.primitive_batchers[svd_p] = _svd_batching_rule
 
-mlir.register_lowering(
-    svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
-    platform='cpu')
+if xla_client.mlir_api_version < 41:
+  mlir.register_lowering(
+      svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
+      platform='cpu')
+else:
+  mlir.register_lowering(
+      svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_hlo),
+      platform='cpu')
 mlir.register_lowering(
   svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.cuda_gesvd),
   platform='cuda')
@@ -1877,33 +1919,40 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
 
-  gees_result = lapack.gees_mhlo(operand_aval.dtype, operand,
+  if xla_client.mlir_api_version < 41:
+    gees_result = lapack.gees_mhlo(operand_aval.dtype, operand,
+                                   jobvs=compute_schur_vectors,
+                                   sort=sort_eig_vals,
+                                   select=select_callable)
+  else:
+    gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
                                   jobvs=compute_schur_vectors,
                                   sort=sort_eig_vals,
                                   select=select_callable)
+
   # Number of return values depends on value of sort_eig_vals.
   T, vs, *_, info = gees_result
 
-  ok = mlir.compare_mhlo(
+  ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
 
   select_T_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  T = _broadcasting_select_mhlo(
+  T = _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_T_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_T_aval,
-      T, ctx.avals_out[0],_nan_like_mhlo(ctx, ctx.avals_out[0]), ctx.avals_out[0])
+      T, ctx.avals_out[0],_nan_like_hlo(ctx, ctx.avals_out[0]), ctx.avals_out[0])
   output = [T]
   if compute_schur_vectors:
     select_vs_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vs = _broadcasting_select_mhlo(
+    vs = _broadcasting_select_hlo(
         ctx,
         mlir.broadcast_in_dim(ctx, ok, select_vs_aval,
                               broadcast_dimensions=range(len(batch_dims))),
         select_vs_aval,
-        vs, ctx.avals_out[1], _nan_like_mhlo(ctx, ctx.avals_out[1]), ctx.avals_out[1])
+        vs, ctx.avals_out[1], _nan_like_hlo(ctx, ctx.avals_out[1]), ctx.avals_out[1])
 
     output.append(vs)
 
@@ -1983,35 +2032,38 @@ def _hessenberg_batching_rule(batched_args, batch_dims):
 
 batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
 
-def _hessenberg_cpu_mhlo(ctx, a):
+def _hessenberg_cpu_hlo(ctx, a):
   # TODO(phawkins): remove this test after jaxlib 0.3.25 is the minimum.
-  if not hasattr(lapack, "gehrd_mhlo"):
+  if not hasattr(lapack, "gehrd_mhlo") and not hasattr(lapack, "gehrd_hlo"):
     raise RuntimeError("Hessenberg reduction on CPU requires jaxlib 0.3.25 or "
                        "newer")
   a_aval, = ctx.avals_in
   batch_dims = a_aval.shape[:-2]
-  a, taus, info = lapack.gehrd_mhlo(a_aval.dtype, a)
-  ok = mlir.compare_mhlo(
+  if xla_client.mlir_api_version < 41:
+    a, taus, info = lapack.gehrd_mhlo(a_aval.dtype, a)
+  else:
+    a, taus, info = lapack.gehrd_hlo(a_aval.dtype, a)
+  ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
   select_a_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
   select_taus_aval = ShapedArray(batch_dims + (1,), np.dtype(np.bool_))
   return [
-    _broadcasting_select_mhlo(
+    _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_a_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_a_aval,
-      a, ctx.avals_out[0], _nan_like_mhlo(ctx, ctx.avals_out[0]), ctx.avals_out[0]),
-    _broadcasting_select_mhlo(
+      a, ctx.avals_out[0], _nan_like_hlo(ctx, ctx.avals_out[0]), ctx.avals_out[0]),
+    _broadcasting_select_hlo(
       ctx,
       mlir.broadcast_in_dim(ctx, ok, select_taus_aval,
                             broadcast_dimensions=range(len(batch_dims))),
       select_taus_aval,
-      taus, ctx.avals_out[1], _nan_like_mhlo(ctx, ctx.avals_out[1]), ctx.avals_out[1]),
+      taus, ctx.avals_out[1], _nan_like_hlo(ctx, ctx.avals_out[1]), ctx.avals_out[1]),
     ]
 
-mlir.register_lowering(hessenberg_p, _hessenberg_cpu_mhlo, platform='cpu')
+mlir.register_lowering(hessenberg_p, _hessenberg_cpu_hlo, platform='cpu')
 
 
 # tridiagonal: Upper Hessenberg reduction
@@ -2085,35 +2137,40 @@ def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
 
 batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule
 
-def _tridiagonal_cpu_gpu_mhlo(sytrd_impl, ctx, a, *, lower):
+def _tridiagonal_cpu_gpu_hlo(sytrd_impl, ctx, a, *, lower):
   a_aval, = ctx.avals_in
   a, d, e, taus, info = sytrd_impl(a_aval.dtype, a, lower=lower)
   return a, d, e, taus, info
 
 if jaxlib_version >= (0, 3, 25):
+  if xla_client.mlir_api_version < 41:
+    mlir.register_lowering(
+        tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_mhlo),
+        platform='cpu')
+  else:
+    mlir.register_lowering(
+        tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo),
+        platform='cpu')
   mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, lapack.sytrd_mhlo),
-      platform='cpu')
-  mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, gpu_solver.cuda_sytrd),
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd),
       platform='cuda')
   mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_mhlo, gpu_solver.rocm_sytrd),
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.rocm_sytrd),
       platform='rocm')
 
 # Utilities
 
-def _nan_like_mhlo(ctx: mlir.LoweringRuleContext, aval) -> ir.Value:
+def _nan_like_hlo(ctx: mlir.LoweringRuleContext, aval) -> ir.Value:
   if jnp.issubdtype(aval.dtype, np.complexfloating):
     return mlir.full_like_aval(ctx, np.nan + np.nan * 1j, aval)
   else:
     return mlir.full_like_aval(ctx, np.nan, aval)
 
-def _broadcasting_select_mhlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir.Value:
+def _broadcasting_select_hlo(ctx, which, which_aval, x, x_aval, y, y_aval) -> ir.Value:
   """Wrapper around XLA `Select` that broadcasts its arguments."""
   out_shapes = list(lax_internal.broadcast_shapes(
       tuple(which_aval.shape), tuple(x_aval.shape), tuple(y_aval.shape)))
   which, x, y = mlir.multi_broadcast_in_dim(ctx, (which, x, y),
                                             (which_aval, x_aval, y_aval),
                                             out_shapes)
-  return mhlo.SelectOp(which, x, y).result
+  return hlo.SelectOp(which, x, y).result

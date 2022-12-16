@@ -77,7 +77,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
@@ -2211,14 +2211,14 @@ ad.call_transpose_param_updaters[xla_pmap_p] = \
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 
 
-def _unravel_index_mhlo(axis_env):
+def _unravel_index_hlo(axis_env):
   div = mlir.ir_constant(
       np.array(axis_env.nreps // util.prod(axis_env.sizes), np.uint32))
   mod = mlir.ir_constant(np.array(axis_env.sizes[-1], np.uint32))
-  return mhlo.RemOp(
-      mhlo.DivOp(mhlo.ReplicaIdOp().result, div).result, mod).result
+  return hlo.RemOp(
+      hlo.DivOp(hlo.ReplicaIdOp().result, div).result, mod).result
 
-def _mhlo_shard(aval, axis_env, xs, in_axis):
+def _hlo_shard(aval, axis_env, xs, in_axis):
   if aval is core.abstract_token:
     return xs
   elif isinstance(aval, core.ShapedArray):
@@ -2226,20 +2226,20 @@ def _mhlo_shard(aval, axis_env, xs, in_axis):
     dims = list(aval.shape)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
     idxs = [zero] * len(dims)
-    idxs.insert(in_axis, _unravel_index_mhlo(axis_env))
+    idxs.insert(in_axis, _unravel_index_hlo(axis_env))
     dims_unsqueezed = dims.copy()
     dims_unsqueezed.insert(in_axis, 1)
-    dynamic_slice_result = mhlo.DynamicSliceOp(
+    dynamic_slice_result = hlo.DynamicSliceOp(
         x, idxs, mlir.dense_int_elements(dims_unsqueezed)).result
     return [
-      mhlo.ReshapeOp(mlir.aval_to_ir_type(aval), dynamic_slice_result).result
+      hlo.ReshapeOp(mlir.aval_to_ir_type(aval), dynamic_slice_result).result
     ]
   else:
     raise TypeError(aval)
 
 
 # TODO(b/110096942): more efficient gather
-def _mhlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, platform):
+def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, platform):
   if aval is core.abstract_token:
     return xs
   elif isinstance(aval, core.ShapedArray):
@@ -2249,23 +2249,23 @@ def _mhlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, p
                     and platform in ('cpu', 'gpu'))
     if convert_bool:
       aval = aval.update(dtype=np.dtype(np.float32))
-      x = mhlo.ConvertOp(mlir.aval_to_ir_type(aval), x).result
+      x = hlo.ConvertOp(mlir.aval_to_ir_type(aval), x).result
 
     dims = list(aval.shape)
     padded_aval = aval.update(shape=[axis_env.sizes[-1]] + dims)
     padded = mlir.full_like_aval(ctx, 0, padded_aval)
     zero = mlir.ir_constant(np.zeros((), dtype=np.uint32))
-    idxs = [_unravel_index_mhlo(axis_env)] + [zero] * len(dims)
-    broadcast_result = mhlo.BroadcastOp(
+    idxs = [_unravel_index_hlo(axis_env)] + [zero] * len(dims)
+    broadcast_result = hlo.BroadcastOp(
         x, mlir.dense_int_elements([1])).result
     if xc.mlir_api_version < 40:
-      padded = mhlo.DynamicUpdateSliceOp(padded.type, padded, broadcast_result,
-                                         idxs).result
+      padded = hlo.DynamicUpdateSliceOp(padded.type, padded, broadcast_result,
+                                        idxs).result
     else:
-      padded = mhlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
+      padded = hlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
     replica_groups = mlir.dense_int_elements(
       xla.axis_groups(axis_env, axis_env.names[-1]))
-    out = mhlo.CrossReplicaSumOp(padded, replica_groups).result
+    out = hlo.CrossReplicaSumOp(padded, replica_groups).result
     if out_axis != 0:
       # TODO(apaszke,mattjj): Change the indices to DynamicUpdateSlice instead
       perm = list(range(1, len(dims)))
@@ -2273,16 +2273,16 @@ def _mhlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, p
       transposed_dims = list(dims)
       transposed_dims.insert(out_axis, axis_env.sizes[-1])
       aval = aval.update(shape=transposed_dims)
-      out = mhlo.TransposeOp(out, mlir.dense_int_elements(perm)).result
+      out = hlo.TransposeOp(out, mlir.dense_int_elements(perm)).result
 
     # TODO(mattjj): remove this logic when AllReduce PRED supported on CPU / GPU
     if convert_bool:
       float_zero = mlir.full_like_aval(ctx, 0, padded_aval)
-      out = mhlo.CompareOp(
+      out = hlo.CompareOp(
           out,
           float_zero,
-          mhlo.ComparisonDirectionAttr.get("NE"),
-          compare_type=mhlo.ComparisonTypeAttr.get("FLOAT")).result
+          hlo.ComparisonDirectionAttr.get("NE"),
+          compare_type=hlo.ComparisonTypeAttr.get("FLOAT")).result
     return out
   else:
     raise TypeError(aval)
@@ -2305,7 +2305,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
   # Shard the in_nodes that are mapped
   in_avals = [v.aval for v in call_jaxpr.invars]
   in_nodes_sharded = (
-    _mhlo_shard(aval, new_env, mlir.wrap_singleton_ir_values(in_node), in_axis)
+    _hlo_shard(aval, new_env, mlir.wrap_singleton_ir_values(in_node), in_axis)
     if in_axis is not None else mlir.wrap_singleton_ir_values(in_node)
     for aval, in_node, in_axis in zip(in_avals, in_nodes, in_axes))
 
@@ -2318,7 +2318,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
                                          *in_nodes_sharded,
                                          dim_var_values=ctx.dim_var_values)
   out_avals = [v.aval for v in call_jaxpr.outvars]
-  outs = [_mhlo_unshard(ctx, aval, new_env, out_axis, shard,
+  outs = [_hlo_unshard(ctx, aval, new_env, out_axis, shard,
                         platform=ctx.module_context.platform)
           for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]
   return outs

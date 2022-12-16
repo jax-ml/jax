@@ -524,7 +524,7 @@ from jax._src.lib import pytree
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
 
@@ -1143,14 +1143,14 @@ def _outside_call_lowering(
   assert has_token
   current_token = args[-2]
   current_itoken = args[-1]
-  assert current_token.type == mhlo.TokenType.get(), "The last two arguments must be tokens"
-  assert current_itoken.type == mhlo.TokenType.get(), "The last two arguments must be tokens"
+  assert current_token.type == hlo.TokenType.get(), "The last two arguments must be tokens"
+  assert current_itoken.type == hlo.TokenType.get(), "The last two arguments must be tokens"
 
   args_to_outfeed = args[:-2]
   # TODO(necula): this is a weak attempt to get the device. This works
   # inside pmap, but does not work when we just execute on a single device,
   # because in such executions we always get replica_id == 0.
-  replica_id = mhlo.ReplicaIdOp()
+  replica_id = hlo.ReplicaIdOp()
   callback_operands = [replica_id, *args_to_outfeed]
   callback_operand_avals = [
       core.ShapedArray((), np.uint32), *ctx.avals_in[:-2]]

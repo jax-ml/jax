@@ -36,7 +36,7 @@ from jax._src.lax import lax
 from jax._src import util
 from jax._src.util import safe_map, safe_zip
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.typing import Array, ArrayLike, Shape
@@ -956,7 +956,7 @@ mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
 # def _getslice_lower(ctx, x, lo, hi):
 #   aval_out, = ctx.avals_out
-#   return mhlo.RealDynamicSliceOp(
+#   return hlo.RealDynamicSliceOp(
 #       mlir.aval_to_ir_type(aval_out), x,
 #       mlir.shape_tensor([lo]), mlir.shape_tensor([hi]), mlir.shape_tensor([1])
 #   ).results
@@ -1393,7 +1393,7 @@ def _gather_lower(ctx, operand, indices, *,
 
   assert mode in (GatherScatterMode.PROMISE_IN_BOUNDS,
                   GatherScatterMode.CLIP), mode
-  dnums = mhlo.GatherDimensionNumbers.get(
+  dnums = hlo.GatherDimensionNumbers.get(
     collapsed_slice_dims=list(dimension_numbers.collapsed_slice_dims),
     index_vector_dim=len(ctx.avals_in[1].shape) - 1,
     offset_dims=list(dimension_numbers.offset_dims),
@@ -1402,7 +1402,7 @@ def _gather_lower(ctx, operand, indices, *,
     slice_sizes = mlir.eval_dynamic_shape(ctx, slice_sizes)
     # TODO(burmako): Fix overly conservative type inference of DynamicGatherOp.
     # For now use the build_generic so that we can specify the result type.
-    # return mhlo.DynamicGatherOp(
+    # return hlo.DynamicGatherOp(
     #     operand, indices, mlir.shape_tensor(slice_sizes),
     #     dnums, indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
     results = [mlir.aval_to_ir_type(aval_out)]
@@ -1411,10 +1411,10 @@ def _gather_lower(ctx, operand, indices, *,
         "dimension_numbers": dnums,
         "indices_are_sorted": ir.BoolAttr.get(indices_are_sorted)
     }
-    return mhlo.DynamicGatherOp.build_generic(
+    return hlo.DynamicGatherOp.build_generic(
         results=results, operands=operands, attributes=attributes).results
   else:
-    return mhlo.GatherOp(
+    return hlo.GatherOp(
         operand,
         indices,
         dnums,
@@ -2019,7 +2019,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
 
   aval_out, = ctx.avals_out
   dnums = dimension_numbers
-  scatter_dnums = mhlo.ScatterDimensionNumbers.get(
+  scatter_dnums = hlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),
     inserted_window_dims=list(dnums.inserted_window_dims),
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
@@ -2027,7 +2027,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
   result = mlir.aval_to_ir_types(aval_out)
   operand = [operand]
   updates = [updates]
-  op = mhlo.ScatterOp(
+  op = hlo.ScatterOp(
       result,
       operand,
       indices,
@@ -2045,7 +2045,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
         update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
         (update.arguments[0],), (update.arguments[1],),
         dim_var_values=ctx.dim_var_values)
-    mhlo.ReturnOp(util.flatten(out_nodes))
+    hlo.ReturnOp(util.flatten(out_nodes))
   return op.results
 
 mlir.register_lowering(scatter_p, _scatter_lower)
@@ -2076,7 +2076,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
 
   aval_out, = ctx.avals_out
   dnums = dimension_numbers
-  scatter_dnums = mhlo.ScatterDimensionNumbers.get(
+  scatter_dnums = hlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),
     inserted_window_dims=list(dnums.inserted_window_dims),
     scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
@@ -2089,7 +2089,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     operand_part = [operand_part]
     updates_part = [updates_part]
 
-    scatter = mhlo.ScatterOp(
+    scatter = hlo.ScatterOp(
         operand_type_part,
         operand_part,
         indices,
@@ -2100,13 +2100,13 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), real_dtype))
     reducer = scatter.regions[0].blocks.append(scalar_type, scalar_type)
     with ir.InsertionPoint(reducer):
-      add = mhlo.AddOp(*reducer.arguments).result
-      mhlo.ReturnOp([add])
+      add = hlo.AddOp(*reducer.arguments).result
+      hlo.ReturnOp([add])
     return scatter.result
 
-  real = _scatter(mhlo.RealOp(operand).result, mhlo.RealOp(updates).result)
-  imag = _scatter(mhlo.ImagOp(operand).result, mhlo.ImagOp(updates).result)
-  return mhlo.ComplexOp(real, imag).results
+  real = _scatter(hlo.RealOp(operand).result, hlo.RealOp(updates).result)
+  imag = _scatter(hlo.ImagOp(operand).result, hlo.ImagOp(updates).result)
+  return hlo.ComplexOp(real, imag).results
 
 mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 

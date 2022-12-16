@@ -1176,7 +1176,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
       name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
                                        wrap_name(name, "pjit")))
   # TODO(b/228598865): inlined calls cannot have shardings set directly on the
-  # inputs or outputs because they are lost during MHLO->HLO conversion.
+  # inputs or outputs because they are lost during MLIR->HLO conversion.
   # using_sharding_annotation=False means we add an identity operation instead.
   func = mlir.lower_jaxpr_to_fun(sub_ctx, f"pjit_{name}", jaxpr, (),
                                  arg_shardings=arg_shardings,
@@ -1544,8 +1544,8 @@ sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 
-def _sharding_constraint_mhlo_lowering(ctx, x_node, *, sharding,
-                                       resource_env, unconstrained_dims):
+def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
+                                      resource_env, unconstrained_dims):
   aval, = ctx.avals_in
   axis_ctx = ctx.module_context.axis_context
   # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
@@ -1564,7 +1564,7 @@ def _sharding_constraint_mhlo_lowering(ctx, x_node, *, sharding,
           unspecified_dims=unconstrained_dims)
   ]
 mlir.register_lowering(sharding_constraint_p,
-                       _sharding_constraint_mhlo_lowering)
+                       _sharding_constraint_hlo_lowering)
 
 
 def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,

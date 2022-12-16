@@ -1479,7 +1479,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
                         jax_res)
 
-  @unittest.skip("TODO(necula): 'mhlo.dynamic_iota' op can't be translated to XLA HLO")
+  @unittest.skip("TODO(necula): 'dynamic_iota' op can't be translated to XLA HLO")
   def test_shape_poly_arange(self):
     if not config.jax_dynamic_shapes:
       raise unittest.SkipTest("jax_dynamic_shapes must be enabled")

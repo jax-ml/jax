@@ -20,7 +20,7 @@ from jax import tree_util
 from jax import linear_util as lu
 from jax.experimental import pjit
 
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import ir
 import jax.interpreters.pxla as pxla
 from jax.interpreters import mlir
@@ -245,7 +245,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   else:
     out_type = [ir.TupleType.get_tuple(mlir_shapes)]
 
-  out = mhlo.CustomCallOp(
+  out = hlo.CustomCallOp(
       out_type,
       list(values),
       call_target_name=ir.StringAttr.get(_CUSTOM_PARTITIONING_CALL_NAME),
@@ -259,7 +259,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
     return [out.result]
   else:
     return [
-        mhlo.GetTupleElementOp(out, mlir.i32_attr(i)).result
+        hlo.GetTupleElementOp(out, mlir.i32_attr(i)).result
         for i in range(len(mlir_shapes))
     ]
 

@@ -39,7 +39,7 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
 
@@ -392,16 +392,16 @@ def _code_generator_and_avals(
     captured_ops = tuple(mlir.ir_constant(np.asarray(inp),
                                           canonicalize_types=False)
                          for inp in captured_inputs)
-    submodule = mlir.xla_computation_to_mhlo_module(xla_comp)
+    submodule = mlir.xla_computation_to_mlir_module(xla_comp)
     symtab = ir.SymbolTable(submodule.operation)
     callee_result_types = symtab["main"].type.results
-    fn = mlir.merge_mhlo_modules(ctx.module, f"call_tf_{function_flat_tf.name}",
+    fn = mlir.merge_mlir_modules(ctx.module, f"call_tf_{function_flat_tf.name}",
                                  submodule)
     call = func_dialect.CallOp(callee_result_types,
                                ir.FlatSymbolRefAttr.get(fn),
                                tuple(args_op) + captured_ops)
     if result_shape.is_tuple():
-      flat_results = [mhlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
+      flat_results = [hlo.GetTupleElementOp(call, mlir.i32_attr(i)).result
                       for i in range(len(result_shapes))]
     else:
       flat_results = call.results
@@ -410,7 +410,7 @@ def _code_generator_and_avals(
     for op, res_aval, res_shape in zip(flat_results, result_avals,
                                        result_shapes):
       if res_aval.dtype != res_shape.numpy_dtype():
-        op = mhlo.ConvertOp(mlir.aval_to_ir_type(res_aval), op).result
+        op = hlo.ConvertOp(mlir.aval_to_ir_type(res_aval), op).result
       outputs.append(op)
     return outputs
 

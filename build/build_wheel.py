@@ -169,7 +169,7 @@ def prepare_wheel(sources_path):
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
   copy_to_jaxlib(f"__main__/jaxlib/cpu_feature_guard.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
-  copy_to_jaxlib("__main__/jaxlib/mhlo_helpers.py")
+  copy_to_jaxlib("__main__/jaxlib/hlo_helpers.py")
   copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_prng.py")
   copy_to_jaxlib("__main__/jaxlib/gpu_linalg.py")

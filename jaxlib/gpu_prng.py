@@ -22,7 +22,7 @@ import jaxlib.mlir.ir as ir
 
 from jaxlib import xla_client
 
-from .mhlo_helpers import custom_call
+from .hlo_helpers import custom_call
 
 try:
   from .cuda import _prng as _cuda_prng

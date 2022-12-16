@@ -767,7 +767,7 @@ class DynamicShapeTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=True)
 
   # TODO(mattjj,dougalm,phawkins): debug iree failure, "failed to legalize
-  # operation 'mhlo.while' that was explicitly marked illegal"
+  # operation 'while' that was explicitly marked illegal"
   @unittest.skip("revising slicing logic")
   def test_scan_basic(self):
     def cumsum(x):
@@ -1275,8 +1275,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
       return x.sum()
 
     f_lowered = f.lower(np.arange(3, dtype='int32'))
-    mhlo = f_lowered.compiler_ir('mhlo')
-    self.assertIn('tensor<?xi32>', str(mhlo))
+    mlir_str = f_lowered.compiler_ir()
+    self.assertIn('tensor<?xi32>', str(mlir_str))
 
   def test_lower_abstracted_axes_shapedtypestruct(self):
     @partial(jax.jit, abstracted_axes=('n',))
@@ -1284,8 +1284,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
       return x.sum()
 
     f_lowered = f.lower(jax.ShapeDtypeStruct((3,), np.int32))
-    mhlo = f_lowered.compiler_ir('mhlo')
-    self.assertIn('tensor<?xi32>', str(mhlo))
+    mlir_str = f_lowered.compiler_ir()
+    self.assertIn('tensor<?xi32>', str(mlir_str))
 
   def test_vmap_abstracted_axis(self):
     def foo(x, y):

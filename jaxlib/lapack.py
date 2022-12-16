@@ -16,12 +16,12 @@
 # via CustomCallWithLayout.
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
+import jaxlib.mlir.dialects.mhlo as hlo
 
 import numpy as np
 from jaxlib import xla_client
 
-from .mhlo_helpers import custom_call
+from .hlo_helpers import custom_call
 from .cpu import _lapack
 
 for _name, _value in _lapack.registrations().items():
@@ -32,24 +32,30 @@ for _name, _value in _lapack.registrations().items():
 _initialize = _lapack.initialize
 
 
-def _mhlo_u8(x):
-  return mhlo.ConstantOp(
+def _hlo_u8(x):
+  return hlo.ConstantOp(
       ir.DenseElementsAttr.get(
           np.array(x, dtype=np.uint8),
           type=ir.IntegerType.get_unsigned(8))).result
 
-def _mhlo_s32(x):
-  return mhlo.ConstantOp(
+def _hlo_s32(x):
+  return hlo.ConstantOp(
       ir.DenseElementsAttr.get(
           np.array(x, dtype=np.int32),
           type=ir.IntegerType.get_signless(32))).result
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
+def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
+              conj_a=False, diag=False):
+  return trsm_hlo(dtype, alpha, a, b, left_side=left_side, lower=lower,
+                  trans_a=trans_a, conj_a=conj_a, diag=diag)
+
 # ?trsm(left_side, lower, trans_a, diag, m, n, alpha, a, b):
 # triangular solve
-def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
-               conj_a=False, diag=False):
+def trsm_hlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
+             conj_a=False, diag=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   b_type = ir.RankedTensorType(b.type)
@@ -87,9 +93,9 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
   return custom_call(
       fn,
       [b.type],
-      [_mhlo_s32(int(left_side)), _mhlo_s32(int(lower)),
-       _mhlo_s32((2 if conj_a else 1) if trans_a else 0), _mhlo_s32(int(diag)),
-       _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(num_b),
+      [_hlo_s32(int(left_side)), _hlo_s32(int(lower)),
+       _hlo_s32((2 if conj_a else 1) if trans_a else 0), _hlo_s32(int(diag)),
+       _hlo_s32(m), _hlo_s32(n), _hlo_s32(num_b),
        alpha, a, b],
       operand_layouts=[scalar_layout] * 8 + [layout] * 2,
       result_layouts=[layout],
@@ -99,7 +105,11 @@ def trsm_mhlo(dtype, alpha, a, b, left_side=False, lower=False, trans_a=False,
 
 # # ?getrf: LU decomposition
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def getrf_mhlo(dtype, a):
+  return getrf_hlo(dtype, a)
+
+def getrf_hlo(dtype, a):
   _initialize()
   dims = ir.RankedTensorType(a.type).shape
   assert len(dims) >= 2
@@ -131,7 +141,7 @@ def getrf_mhlo(dtype, a):
         ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
       ],
-      [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), a],
+      [_hlo_s32(int(b)), _hlo_s32(m), _hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
         layout,
@@ -144,7 +154,11 @@ def getrf_mhlo(dtype, a):
 
 # # ?geqrf: QR decomposition
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def geqrf_mhlo(dtype, a):
+  return geqrf_hlo(dtype, a)
+
+def geqrf_hlo(dtype, a):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -182,7 +196,7 @@ def geqrf_mhlo(dtype, a):
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(lwork), a],
+      [_hlo_s32(int(b)), _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=[
         layout,
@@ -197,7 +211,11 @@ def geqrf_mhlo(dtype, a):
 
 # # ?orgqr: product of elementary Householder reflectors:
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def orgqr_mhlo(dtype, a, tau):
+  return orgqr_hlo(dtype, a, tau)
+
+def orgqr_hlo(dtype, a, tau):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -238,8 +256,8 @@ def orgqr_mhlo(dtype, a, tau):
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(int(b)), _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(k),
-       _mhlo_s32(lwork), a, tau],
+      [_hlo_s32(int(b)), _hlo_s32(m), _hlo_s32(n), _hlo_s32(k),
+       _hlo_s32(lwork), a, tau],
       operand_layouts=[scalar_layout] * 5 + [
         layout,
         tuple(range(num_bd, -1, -1)),
@@ -256,7 +274,11 @@ def orgqr_mhlo(dtype, a, tau):
 
 # ?potrf: Cholesky decomposition
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def potrf_mhlo(dtype, a, lower=False):
+  return potrf_hlo(dtype, a, lower=lower)
+
+def potrf_hlo(dtype, a, lower=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -286,7 +308,7 @@ def potrf_mhlo(dtype, a, lower=False):
       fn,
       [a.type,
        ir.RankedTensorType.get(batch_dims, ir.IntegerType.get_signless(32))],
-      [_mhlo_s32(int(lower)), _mhlo_s32(b), _mhlo_s32(n), a],
+      [_hlo_s32(int(lower)), _hlo_s32(b), _hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[layout, info_layout],
       operand_output_aliases={3: 0},
@@ -297,7 +319,11 @@ def potrf_mhlo(dtype, a, lower=False):
 
 # # ?gesdd: Singular value decomposition
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
+  return gesdd_hlo(dtype, a, full_matrices=full_matrices, compute_uv=compute_uv)
+
+def gesdd_hlo(dtype, a, full_matrices=True, compute_uv=True):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -370,8 +396,8 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
             a_type.element_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
       ] + workspace,
-      [_mhlo_s32(int(full_matrices)), _mhlo_s32(int(compute_uv)), _mhlo_s32(b),
-       _mhlo_s32(m), _mhlo_s32(n), _mhlo_s32(lwork), a],
+      [_hlo_s32(int(full_matrices)), _hlo_s32(int(compute_uv)), _hlo_s32(b),
+       _hlo_s32(m), _hlo_s32(n), _hlo_s32(lwork), a],
       operand_layouts=[scalar_layout] * 6 + [layout],
       result_layouts=[
           layout,
@@ -387,7 +413,11 @@ def gesdd_mhlo(dtype, a, full_matrices=True, compute_uv=True):
 
 # # syevd: Symmetric eigendecomposition
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def syevd_mhlo(dtype, a, lower=False):
+  return syevd_hlo(dtype, a, lower=lower)
+
+def syevd_hlo(dtype, a, lower=False):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -452,7 +482,7 @@ def syevd_mhlo(dtype, a, lower=False):
           ir.RankedTensorType.get(batch_dims + (n,), eigvals_type),
           ir.RankedTensorType.get(batch_dims, i32_type),
       ] + workspace,
-      [_mhlo_s32(1 if lower else 0), _mhlo_s32(b), _mhlo_s32(n), a],
+      [_hlo_s32(1 if lower else 0), _hlo_s32(b), _hlo_s32(n), a],
       operand_layouts=[scalar_layout] * 3 + [layout],
       result_layouts=[
           layout,
@@ -466,7 +496,11 @@ def syevd_mhlo(dtype, a, lower=False):
 
 # # geev: Nonsymmetric eigendecomposition
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
+  return geev_hlo(dtype, a, jobvl=jobvl, jobvr=jobvr)
+
+def geev_hlo(dtype, a, jobvl=True, jobvr=True):
   _initialize()
   dims = ir.RankedTensorType(a.type).shape
   assert len(dims) >= 2
@@ -539,19 +573,23 @@ def geev_mhlo(dtype, a, jobvl=True, jobvr=True):
         ir.RankedTensorType.get(dims, eigvecs_type),
         ir.RankedTensorType.get(batch_dims, i32_type),
       ],
-      [_mhlo_s32(b), _mhlo_s32(n), _mhlo_u8(jobvl_c), _mhlo_u8(jobvr_c), a],
+      [_hlo_s32(b), _hlo_s32(n), _hlo_u8(jobvl_c), _hlo_u8(jobvr_c), a],
       operand_layouts=[scalar_layout] * 4 + [layout],
       result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
                       [info_layout])
   )
   if real:
-    return (mhlo.ComplexOp(out[3], out[4]).result, out[5], out[6], out[7])
+    return (hlo.ComplexOp(out[3], out[4]).result, out[5], out[6], out[7])
   else:
     return out[2:6]
 
 # # gees : Schur factorization
 
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
+  return gees_hlo(dtype, a, jobvs=jobvs, sort=sort, select=select)
+
+def gees_hlo(dtype, a, jobvs=True, sort=False, select=None):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   etype = a_type.element_type
@@ -609,10 +647,10 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
         ir.RankedTensorType.get(batch_dims, i32_type),
       ],
       [
-        _mhlo_s32(b),
-        _mhlo_s32(n),
-        _mhlo_u8(np.uint8(jobvs)),
-        _mhlo_u8(np.uint8(sort)),
+        _hlo_s32(b),
+        _hlo_s32(n),
+        _hlo_u8(np.uint8(jobvs)),
+        _hlo_u8(np.uint8(sort)),
         # TODO: figure out how to put the callable select function here
         a
       ],
@@ -630,8 +668,12 @@ def gees_mhlo(dtype, a, jobvs=True, sort=False, select=None):
     return (out[0], out[3], out[5])
 
 
-# gehrd: Reduction of a non-symmetric square matrix to upper Hessenberg form.
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def gehrd_mhlo(dtype, a):
+  return gehrd_hlo(dtype, a)
+
+# gehrd: Reduction of a non-symmetric square matrix to upper Hessenberg form.
+def gehrd_hlo(dtype, a):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -669,8 +711,8 @@ def gehrd_mhlo(dtype, a):
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(n), _mhlo_s32(1), _mhlo_s32(n), _mhlo_s32(n), _mhlo_s32(b),
-       _mhlo_s32(lwork), a],
+      [_hlo_s32(n), _hlo_s32(1), _hlo_s32(n), _hlo_s32(n), _hlo_s32(b),
+       _hlo_s32(lwork), a],
       operand_layouts=[[]] * 6 + [layout],
       result_layouts=[
         layout,
@@ -683,8 +725,12 @@ def gehrd_mhlo(dtype, a):
   return out[:3]
 
 
-# sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
+# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
 def sytrd_mhlo(dtype, a, *, lower):
+  return sytrd_hlo(dtype, a, lower=lower)
+
+# sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form.
+def sytrd_hlo(dtype, a, *, lower):
   _initialize()
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -728,8 +774,8 @@ def sytrd_mhlo(dtype, a, *, lower):
         ir.RankedTensorType.get(batch_dims, i32_type),
         ir.RankedTensorType.get([lwork], a_type.element_type),
       ],
-      [_mhlo_s32(n), _mhlo_s32(1 if lower else 0), _mhlo_s32(max(1, n)),
-       _mhlo_s32(b), _mhlo_s32(lwork), a],
+      [_hlo_s32(n), _hlo_s32(1 if lower else 0), _hlo_s32(max(1, n)),
+       _hlo_s32(b), _hlo_s32(lwork), a],
       operand_layouts=[[]] * 5 + [layout],
       result_layouts=[
         layout,

@@ -67,7 +67,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_string(
     'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
-    help="Path to which HLO/MHLO IR that is emitted by JAX as input to the "
+    help="Path to which the IR that is emitted by JAX as input to the "
          "compiler should be dumped as text files. Optional. If omitted, JAX "
          "will not dump IR.")
 

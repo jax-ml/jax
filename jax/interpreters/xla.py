@@ -586,6 +586,6 @@ def lower_fun(fun: Callable, *, multiple_results: bool, backend=None,
   def f(*args, **kw):
     raise RuntimeError("XLA translation rules are deprecated and "
                        "jax.interpreters.xla.lower_fun is no longer supported. "
-                       "Add an MLIR (MHLO) lowering via jax.interpreters.mlir "
+                       "Add an MLIR lowering via jax.interpreters.mlir "
                        "instead.")
   return f

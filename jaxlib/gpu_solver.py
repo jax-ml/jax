@@ -18,13 +18,13 @@ from functools import partial
 import operator
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as mhlo
+import jaxlib.mlir.dialects.mhlo as hlo
 
 import numpy as np
 
 from jaxlib import xla_client
 
-from .mhlo_helpers import custom_call
+from .hlo_helpers import custom_call
 
 try:
   from .cuda import _blas as _cublas
@@ -63,7 +63,7 @@ def _real_type(dtype):
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def _getrf_mhlo(platform, gpu_blas, gpu_solver, dtype, a):
+def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   """LU decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -106,11 +106,11 @@ def _getrf_mhlo(platform, gpu_blas, gpu_solver, dtype, a):
       operand_output_aliases={0: 0})
   return out[:3]
 
-cuda_getrf = partial(_getrf_mhlo, "cu", _cublas, _cusolver)
-rocm_getrf = partial(_getrf_mhlo, "hip", _hipblas, _hipsolver)
+cuda_getrf = partial(_getrf_hlo, "cu", _cublas, _cusolver)
+rocm_getrf = partial(_getrf_hlo, "hip", _hipblas, _hipsolver)
 
 
-def _geqrf_mhlo(platform, gpu_solver, dtype, a):
+def _geqrf_hlo(platform, gpu_solver, dtype, a):
   """QR decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -145,10 +145,10 @@ def _geqrf_mhlo(platform, gpu_solver, dtype, a):
       operand_output_aliases={0: 0})
   return out[:3]
 
-cuda_geqrf = partial(_geqrf_mhlo, "cu", _cusolver)
-rocm_geqrf = partial(_geqrf_mhlo, "hip", _hipsolver)
+cuda_geqrf = partial(_geqrf_hlo, "cu", _cusolver)
+rocm_geqrf = partial(_geqrf_hlo, "hip", _hipsolver)
 
-def _geqrf_batched_mhlo(platform, gpu_blas, dtype, a):
+def _geqrf_batched_hlo(platform, gpu_blas, dtype, a):
   """Batched QR decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -183,12 +183,12 @@ def _geqrf_batched_mhlo(platform, gpu_blas, dtype, a):
   )
   return out[:2]
 
-cuda_geqrf_batched = partial(_geqrf_batched_mhlo, "cu", _cublas)
-rocm_geqrf_batched = partial(_geqrf_batched_mhlo, "hip", _hipblas)
+cuda_geqrf_batched = partial(_geqrf_batched_hlo, "cu", _cublas)
+rocm_geqrf_batched = partial(_geqrf_batched_hlo, "hip", _hipblas)
 
 
-def _csrlsvqr_mhlo(platform, gpu_solver, dtype, data,
-                   indices, indptr, b, tol, reorder):
+def _csrlsvqr_hlo(platform, gpu_solver, dtype, data,
+                  indices, indptr, b, tol, reorder):
   """Sparse solver via QR decomposition. CUDA only."""
   b_type = ir.RankedTensorType(b.type)
   data_type = ir.RankedTensorType(data.type)
@@ -209,10 +209,10 @@ def _csrlsvqr_mhlo(platform, gpu_solver, dtype, data,
   )
   return [out]
 
-cuda_csrlsvqr = partial(_csrlsvqr_mhlo, "cu", _cusolver)
+cuda_csrlsvqr = partial(_csrlsvqr_hlo, "cu", _cusolver)
 
 
-def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
+def _orgqr_hlo(platform, gpu_solver, dtype, a, tau):
   """Product of elementary Householder reflections."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -252,12 +252,12 @@ def _orgqr_mhlo(platform, gpu_solver, dtype, a, tau):
       operand_output_aliases={0: 0})
   return out[:2]
 
-cuda_orgqr = partial(_orgqr_mhlo, "cu", _cusolver)
-rocm_orgqr = partial(_orgqr_mhlo, "hip", _hipsolver)
+cuda_orgqr = partial(_orgqr_hlo, "cu", _cusolver)
+rocm_orgqr = partial(_orgqr_hlo, "hip", _hipsolver)
 
 
-def _syevd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
-                lower=False):
+def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
+               lower=False):
   """Symmetric (Hermitian) eigendecomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -304,12 +304,12 @@ def _syevd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
       operand_output_aliases={0: 0})
   return out[:3]
 
-cuda_syevd = partial(_syevd_mhlo, "cu", _cusolver, True)
-rocm_syevd = partial(_syevd_mhlo, "hip", _hipsolver, True)
+cuda_syevd = partial(_syevd_hlo, "cu", _cusolver, True)
+rocm_syevd = partial(_syevd_hlo, "hip", _hipsolver, True)
 
 
-def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
-                full_matrices=True, compute_uv=True):
+def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
+               full_matrices=True, compute_uv=True):
   """Singular value decomposition."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -358,18 +358,18 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
             [0],
         ],
         operand_output_aliases={0: 0})
-    vt = mhlo.TransposeOp(
+    vt = hlo.TransposeOp(
         v,
         ir.DenseIntElementsAttr.get(np.array(tuple(range(num_bd)) + (num_bd + 1, num_bd)))).result
     if np.issubdtype(dtype, np.complexfloating):
-      vt = mhlo.ComplexOp(mhlo.RealOp(vt), mhlo.NegOp(mhlo.ImagOp(vt))).result
+      vt = hlo.ComplexOp(hlo.RealOp(vt), hlo.NegOp(hlo.ImagOp(vt))).result
     if not full_matrices and not econ:
-      u = mhlo.SliceOp(
+      u = hlo.SliceOp(
           u,
           ir.DenseIntElementsAttr.get(np.zeros([len(dims)], np.int64)),
           ir.DenseIntElementsAttr.get(np.array(batch_dims + (m, min(m, n)))),
           ir.DenseIntElementsAttr.get(np.ones([len(dims)], np.int64))).result
-      vt = mhlo.SliceOp(
+      vt = hlo.SliceOp(
           vt,
           ir.DenseIntElementsAttr.get(np.zeros([len(dims)], np.int64)),
           ir.DenseIntElementsAttr.get(np.array(batch_dims + (min(m, n), n))),
@@ -430,11 +430,11 @@ def _gesvd_mhlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
         operand_output_aliases={0: 0})
   return s, u, vt, info
 
-cuda_gesvd = partial(_gesvd_mhlo, "cu", _cusolver, True)
-rocm_gesvd = partial(_gesvd_mhlo, "hip", _hipsolver, False)
+cuda_gesvd = partial(_gesvd_hlo, "cu", _cusolver, True)
+rocm_gesvd = partial(_gesvd_hlo, "hip", _hipsolver, False)
 
 
-def _sytrd_mhlo(platform, gpu_solver, dtype, a, *, lower):
+def _sytrd_hlo(platform, gpu_solver, dtype, a, *, lower):
   """sytrd: Reduction of a symmetric (Hermitian) matrix to tridiagonal form."""
   a_type = ir.RankedTensorType(a.type)
   dims = a_type.shape
@@ -490,20 +490,20 @@ def _sytrd_mhlo(platform, gpu_solver, dtype, a, *, lower):
   if not lower and platform == "cu" and m > 1:
     start = (0,) * len(batch_dims) + (0,)
     end = batch_dims + (1,)
-    s = mhlo.SliceOp(e, intattr(start), intattr(end), intattr([1] * len(start)))
+    s = hlo.SliceOp(e, intattr(start), intattr(end), intattr([1] * len(start)))
     s_type = ir.RankedTensorType.get(batch_dims + (1, 1), diag_type)
-    s = mhlo.BroadcastInDimOp(s_type, s, intattr(range(len(dims) - 1)))
+    s = hlo.BroadcastInDimOp(s_type, s, intattr(range(len(dims) - 1)))
     # The diagonals are always real; convert to complex if needed.
-    s = mhlo.ConvertOp(
+    s = hlo.ConvertOp(
         ir.RankedTensorType.get(s_type.shape, a_type.element_type), s)
-    offsets = tuple(mhlo.ConstantOp(intattr(i))
+    offsets = tuple(hlo.ConstantOp(intattr(i))
                     for i in ((0,) * len(batch_dims) + (0, 1)))
     if xla_client.mlir_api_version < 40:
-      a = mhlo.DynamicUpdateSliceOp(a.type, a, s, offsets).result
+      a = hlo.DynamicUpdateSliceOp(a.type, a, s, offsets).result
     else:
-      a = mhlo.DynamicUpdateSliceOp(a, s, offsets).result
+      a = hlo.DynamicUpdateSliceOp(a, s, offsets).result
 
   return a, d, e, taus, info
 
-cuda_sytrd = partial(_sytrd_mhlo, "cu", _cusolver)
-rocm_sytrd = partial(_sytrd_mhlo, "hip", _hipsolver)
+cuda_sytrd = partial(_sytrd_hlo, "cu", _cusolver)
+rocm_sytrd = partial(_sytrd_hlo, "hip", _hipsolver)

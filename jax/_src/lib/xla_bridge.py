@@ -280,7 +280,7 @@ def canonicalize_platform(platform: str) -> str:
 
   In particular, replaces "gpu" with either "cuda" or "rocm", depending on which
   hardware is actually present. We want to distinguish "cuda" and "rocm" for
-  purposes such as MHLO lowering rules, but in many cases we don't want to
+  purposes such as MLIR lowering rules, but in many cases we don't want to
   force users to care.
   """
   platforms = _alias_to_platforms.get(platform, None)

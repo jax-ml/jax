@@ -40,7 +40,7 @@ from jax._src import dtypes
 from jax._src.api import jit, vmap
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
 import jax._src.pretty_printer as pp
 from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
@@ -443,7 +443,7 @@ class KeyTyRules:
     key_shape = aval_out.dtype.impl.key_shape
     trailing_dims = [aval_out.ndim + i for i in range(len(key_shape))]
     perm = [*permutation, *trailing_dims]
-    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
+    return hlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
 
   @staticmethod
   def gather_mlir(ctx, avals_in, aval_out, x, indices, *,
@@ -1041,27 +1041,27 @@ def bcast_iotas_to_reshaped_iota(add, mul, shape, iotas):
 
 def iota_2x32_shape_lowering(ctx, *, shape):
   def _add(x, y):
-    return mlir.mhlo.AddOp(x, y).result
+    return mlir.hlo.AddOp(x, y).result
 
   def _mul(x, y):
     x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')),
                                canonicalize_types=False)
-    x_bcast = mlir.mhlo.BroadcastOp(x_const, mlir.dense_int_elements(shape))
-    return mlir.mhlo.MulOp(x_bcast, y).result
+    x_bcast = mlir.hlo.BroadcastOp(x_const, mlir.dense_int_elements(shape))
+    return mlir.hlo.MulOp(x_bcast, y).result
 
   assert len(shape) > 0
   aval_out, _ = ctx.avals_out
   aval_u64 = core.ShapedArray(shape, np.dtype('uint64'))
-  iotas = [mlir.mhlo.IotaOp(mlir.aval_to_ir_type(aval_u64),
+  iotas = [mlir.hlo.IotaOp(mlir.aval_to_ir_type(aval_u64),
                             mlir.i64_attr(dimension)).result
            for dimension in range(len(shape))]
   counts = bcast_iotas_to_reshaped_iota(_add, _mul, shape, iotas)
   shift = mlir.ir_constant(np.array(32, np.dtype('uint64')),
                            canonicalize_types=False)
-  shift = mlir.mhlo.BroadcastOp(shift, mlir.dense_int_elements(shape)).result
-  counts_shifted = mlir.mhlo.ShiftRightLogicalOp(counts, shift).result
-  counts_lo = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
-  counts_hi = mlir.mhlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
+  shift = mlir.hlo.BroadcastOp(shift, mlir.dense_int_elements(shape)).result
+  counts_shifted = mlir.hlo.ShiftRightLogicalOp(counts, shift).result
+  counts_lo = mlir.hlo.ConvertOp(mlir.aval_to_ir_type(aval_out), counts).result
+  counts_hi = mlir.hlo.ConvertOp(mlir.aval_to_ir_type(aval_out),
                                   counts_shifted).result
   return counts_hi, counts_lo
 mlir.register_lowering(iota_2x32_shape_p, iota_2x32_shape_lowering)

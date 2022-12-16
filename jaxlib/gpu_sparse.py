@@ -23,7 +23,7 @@ import numpy as np
 
 from jaxlib import xla_client
 
-from .mhlo_helpers import custom_call
+from .hlo_helpers import custom_call
 
 try:
   from .cuda import _sparse as _cusparse
@@ -46,7 +46,7 @@ cuda_is_supported : bool = _cusparse and _cusparse.sparse_supported
 rocm_is_supported : bool = _hipsparse and _hipsparse.sparse_supported
 
 
-def _validate_csr_mhlo(data, indices, indptr, shape):
+def _validate_csr_hlo(data, indices, indptr, shape):
   data_type = ir.RankedTensorType(data.type)
   indices_type = ir.RankedTensorType(indices.type)
   indptr_type = ir.RankedTensorType(indptr.type)
@@ -57,7 +57,7 @@ def _validate_csr_mhlo(data, indices, indptr, shape):
   assert indptr_type.shape == [shape[0] + 1]
   return data_type.element_type, indices_type.element_type, nnz
 
-def _validate_coo_mhlo(data, row, col):
+def _validate_coo_hlo(data, row, col):
   data_type = ir.RankedTensorType(data.type)
   row_type = ir.RankedTensorType(row.type)
   col_type = ir.RankedTensorType(col.type)
@@ -69,10 +69,10 @@ def _validate_coo_mhlo(data, row, col):
   return data_type.element_type, row_type.element_type, nnz
 
 
-def _csr_todense_mhlo(platform, gpu_sparse, data, indices, indptr, *, shape,
-                      data_dtype, index_dtype):
+def _csr_todense_hlo(platform, gpu_sparse, data, indices, indptr, *, shape,
+                     data_dtype, index_dtype):
   """CSR to dense matrix."""
-  data_type, index_type, nnz = _validate_csr_mhlo(data, indices, indptr, shape)
+  data_type, index_type, nnz = _validate_csr_hlo(data, indices, indptr, shape)
   rows, cols = shape
 
   buffer_size, opaque = gpu_sparse.build_csr_todense_descriptor(
@@ -91,12 +91,12 @@ def _csr_todense_mhlo(platform, gpu_sparse, data, indices, indptr, *, shape,
       result_layouts=[[1, 0], [0]])
   return out[0]
 
-cuda_csr_todense = partial(_csr_todense_mhlo, "cu", _cusparse)
-rocm_csr_todense = partial(_csr_todense_mhlo, "hip", _hipsparse)
+cuda_csr_todense = partial(_csr_todense_hlo, "cu", _cusparse)
+rocm_csr_todense = partial(_csr_todense_hlo, "hip", _hipsparse)
 
 
-def _csr_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, index_dtype,
-                        data_dtype, index_type):
+def _csr_fromdense_hlo(platform, gpu_sparse, mat, *, nnz, index_dtype,
+                       data_dtype, index_type):
   """CSR from dense matrix."""
   mat_type = ir.RankedTensorType(mat.type)
   rows, cols = mat_type.shape
@@ -119,15 +119,15 @@ def _csr_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, index_dtype,
       result_layouts=[[0]] * 4)
   return out[:3]
 
-cuda_csr_fromdense = partial(_csr_fromdense_mhlo, "cu", _cusparse)
-rocm_csr_fromdense = partial(_csr_fromdense_mhlo, "hip", _hipsparse)
+cuda_csr_fromdense = partial(_csr_fromdense_hlo, "cu", _cusparse)
+rocm_csr_fromdense = partial(_csr_fromdense_hlo, "hip", _hipsparse)
 
 
-def _csr_matvec_mhlo(platform, gpu_sparse, data, indices, indptr, x, *, shape,
-                     transpose=False, compute_dtype=None, compute_type=None,
-                     data_dtype, index_dtype, x_dtype):
+def _csr_matvec_hlo(platform, gpu_sparse, data, indices, indptr, x, *, shape,
+                    transpose=False, compute_dtype=None, compute_type=None,
+                    data_dtype, index_dtype, x_dtype):
   """CSR matrix/vector multiply."""
-  data_type, index_type, nnz = _validate_csr_mhlo(data, indices, indptr, shape)
+  data_type, index_type, nnz = _validate_csr_hlo(data, indices, indptr, shape)
   rows, cols = shape
 
   if compute_dtype is None:
@@ -152,15 +152,15 @@ def _csr_matvec_mhlo(platform, gpu_sparse, data, indices, indptr, x, *, shape,
       result_layouts=[[0]] * 2)
   return out[0]
 
-cuda_csr_matvec = partial(_csr_matvec_mhlo, "cu", _cusparse)
-rocm_csr_matvec = partial(_csr_matvec_mhlo, "hip", _hipsparse)
+cuda_csr_matvec = partial(_csr_matvec_hlo, "cu", _cusparse)
+rocm_csr_matvec = partial(_csr_matvec_hlo, "hip", _hipsparse)
 
 
-def _csr_matmat_mhlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
-                     transpose=False, compute_dtype=None, compute_type=None,
-                     index_dtype, data_dtype, B_dtype):
+def _csr_matmat_hlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
+                    transpose=False, compute_dtype=None, compute_type=None,
+                    index_dtype, data_dtype, B_dtype):
   """CSR from dense matrix."""
-  data_type, index_type, nnz = _validate_csr_mhlo(data, indices, indptr, shape)
+  data_type, index_type, nnz = _validate_csr_hlo(data, indices, indptr, shape)
   rows, cols = shape
   B_shape = ir.RankedTensorType(B.type).shape
   _, Ccols = B_shape
@@ -187,14 +187,14 @@ def _csr_matmat_mhlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
       result_layouts=[[1, 0], [0]])
   return out[0]
 
-cuda_csr_matmat = partial(_csr_matmat_mhlo, "cu", _cusparse)
-rocm_csr_matmat = partial(_csr_matmat_mhlo, "hip", _hipsparse)
+cuda_csr_matmat = partial(_csr_matmat_hlo, "cu", _cusparse)
+rocm_csr_matmat = partial(_csr_matmat_hlo, "hip", _hipsparse)
 
 
-def _coo_todense_mhlo(platform, gpu_sparse, data, row, col, *, shape,
-                      data_dtype, index_dtype):
+def _coo_todense_hlo(platform, gpu_sparse, data, row, col, *, shape,
+                     data_dtype, index_dtype):
   """COO to dense matrix."""
-  data_type, _, nnz = _validate_coo_mhlo(data, row, col)
+  data_type, _, nnz = _validate_coo_hlo(data, row, col)
   rows, cols = shape
 
   buffer_size, opaque = gpu_sparse.build_coo_todense_descriptor(
@@ -213,12 +213,12 @@ def _coo_todense_mhlo(platform, gpu_sparse, data, row, col, *, shape,
       result_layouts=[[1, 0], [0]])
   return out[0]
 
-cuda_coo_todense = partial(_coo_todense_mhlo, "cu", _cusparse)
-rocm_coo_todense = partial(_coo_todense_mhlo, "hip", _hipsparse)
+cuda_coo_todense = partial(_coo_todense_hlo, "cu", _cusparse)
+rocm_coo_todense = partial(_coo_todense_hlo, "hip", _hipsparse)
 
 
-def _coo_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, data_dtype,
-                        index_dtype, index_type):
+def _coo_fromdense_hlo(platform, gpu_sparse, mat, *, nnz, data_dtype,
+                       index_dtype, index_type):
   """COO from dense matrix."""
   mat_type = ir.RankedTensorType(mat.type)
   rows, cols = mat_type.shape
@@ -241,15 +241,15 @@ def _coo_fromdense_mhlo(platform, gpu_sparse, mat, *, nnz, data_dtype,
       result_layouts=[[0]] * 4)
   return out[:3]
 
-cuda_coo_fromdense = partial(_coo_fromdense_mhlo, "cu", _cusparse)
-rocm_coo_fromdense = partial(_coo_fromdense_mhlo, "hip", _hipsparse)
+cuda_coo_fromdense = partial(_coo_fromdense_hlo, "cu", _cusparse)
+rocm_coo_fromdense = partial(_coo_fromdense_hlo, "hip", _hipsparse)
 
 
-def _coo_matvec_mhlo(platform, gpu_sparse, data, row, col, x, *, shape,
-                     transpose=False, compute_dtype=None, compute_type=None,
-                     index_dtype, data_dtype, x_dtype):
+def _coo_matvec_hlo(platform, gpu_sparse, data, row, col, x, *, shape,
+                    transpose=False, compute_dtype=None, compute_type=None,
+                    index_dtype, data_dtype, x_dtype):
   """COO matrix/vector multiply."""
-  data_type, _, nnz = _validate_coo_mhlo(data, row, col)
+  data_type, _, nnz = _validate_coo_hlo(data, row, col)
   rows, cols = shape
 
   if compute_dtype is None:
@@ -274,15 +274,15 @@ def _coo_matvec_mhlo(platform, gpu_sparse, data, row, col, x, *, shape,
       result_layouts=[[0]] * 2)
   return out[0]
 
-cuda_coo_matvec = partial(_coo_matvec_mhlo, "cu", _cusparse)
-rocm_coo_matvec = partial(_coo_matvec_mhlo, "hip", _hipsparse)
+cuda_coo_matvec = partial(_coo_matvec_hlo, "cu", _cusparse)
+rocm_coo_matvec = partial(_coo_matvec_hlo, "hip", _hipsparse)
 
 
-def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
-                     transpose=False, compute_dtype=None, compute_type=None,
-                     x_dtype, data_dtype, index_dtype):
+def _coo_matmat_hlo(platform, gpu_sparse, data, row, col, B, *, shape,
+                    transpose=False, compute_dtype=None, compute_type=None,
+                    x_dtype, data_dtype, index_dtype):
   """COO from dense matrix."""
-  data_type, _, nnz = _validate_coo_mhlo(data, row, col)
+  data_type, _, nnz = _validate_coo_hlo(data, row, col)
   is_batched_matmat = False
   batch_count = 1
   if len(shape) == 2:
@@ -334,11 +334,11 @@ def _coo_matmat_mhlo(platform, gpu_sparse, data, row, col, B, *, shape,
       result_layouts=[out_layout, [0]])
   return out[0]
 
-cuda_coo_matmat = partial(_coo_matmat_mhlo, "cu", _cusparse)
-rocm_coo_matmat = partial(_coo_matmat_mhlo, "hip", _hipsparse)
+cuda_coo_matmat = partial(_coo_matmat_hlo, "cu", _cusparse)
+rocm_coo_matmat = partial(_coo_matmat_hlo, "hip", _hipsparse)
 
 
-def _gtsv2_mhlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
+def _gtsv2_hlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
   """Calls `cusparse<t>gtsv2(dl, d, du, B, m, n, ldb)`."""
   f32 = (t == np.float32)
   if f32:
@@ -360,5 +360,5 @@ def _gtsv2_mhlo(platform, gpu_sparse, dl, d, du, B, *, m, n, ldb, t):
       operand_output_aliases={3: 0})
   return out[0]
 
-cuda_gtsv2 = partial(_gtsv2_mhlo, "cu", _cusparse)
-rocm_gtsv2 = partial(_gtsv2_mhlo, "hip", _hipsparse)
+cuda_gtsv2 = partial(_gtsv2_hlo, "cu", _cusparse)
+rocm_gtsv2 = partial(_gtsv2_hlo, "hip", _hipsparse)

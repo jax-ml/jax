@@ -23,3 +23,8 @@ import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
 from jax.lib import xla_client
 if xla_client.mlir_api_version >= 37:
   import jaxlib.mlir.dialects.stablehlo as stablehlo
+
+# Alias that is set up to abstract away the transition from MHLO to StableHLO.
+# At the moment, it points to MHLO, but in the future it will start to
+# conditionally and then unconditionally point to StableHLO.
+import jaxlib.mlir.dialects.mhlo as hlo

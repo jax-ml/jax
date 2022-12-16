@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Tests for lowering of array origami ops into MHLO.
+# Tests for lowering of array origami ops into MLIR.
 
 # RUN: %PYTHON %s | FileCheck %s
 
@@ -65,7 +65,7 @@ def main(_):
   with m1.context:
     # Reparse m2 in m1's context.
     m2_copy = ir.Module.parse(m2)
-    mlir.merge_mhlo_modules(m1, "m2_main_renamed", m2_copy)
+    mlir.merge_mlir_modules(m1, "m2_main_renamed", m2_copy)
   print("\nTEST: merge_modules")
   print(str(m1))
 

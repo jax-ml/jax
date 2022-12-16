@@ -40,7 +40,7 @@ from jax.interpreters import mlir
 from jax.interpreters import batching
 from jax.interpreters import pxla
 from jax._src import array
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -2867,17 +2867,17 @@ class FooTyRules:
     start_indices = (*start_indices, 0)
     limit_indices = (*limit_indices, 2)
     strides = (*strides, 1)
-    return mhlo.SliceOp(x,
-                        mlir.dense_int_elements(start_indices),
-                        mlir.dense_int_elements(limit_indices),
-                        mlir.dense_int_elements(strides)).result
+    return hlo.SliceOp(x,
+                       mlir.dense_int_elements(start_indices),
+                       mlir.dense_int_elements(limit_indices),
+                       mlir.dense_int_elements(strides)).result
 
   @staticmethod
   def dynamic_slice_mlir(ctx, aval_out, x, start_indices):
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
     slice_sizes_ = mlir.dense_int_elements((*aval_out.shape, 2))
-    return mhlo.DynamicSliceOp(x, start_indices, slice_sizes_).result
+    return hlo.DynamicSliceOp(x, start_indices, slice_sizes_).result
 
   @staticmethod
   def dynamic_update_slice_mlir(ctx, aval_out, x, update, *start_indices):
@@ -2885,22 +2885,22 @@ class FooTyRules:
     dtype = dtypes.canonicalize_dtype(np.dtype('int64'))
     start_indices = (*start_indices, mlir.ir_constant(np.array(0, dtype=dtype)))
     if xc.mlir_api_version < 40:
-      return mhlo.DynamicUpdateSliceOp(
+      return hlo.DynamicUpdateSliceOp(
           mlir.aval_to_ir_type(aval_out), x, update, start_indices).result
     else:
-      return mhlo.DynamicUpdateSliceOp(x, update, start_indices).result
+      return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
 
   @staticmethod
   def broadcast_in_dim_mlir(ctx, aval_out, x, broadcast_dimensions):
     broadcast_dimensions = [*broadcast_dimensions, aval_out.ndim]
-    return mhlo.BroadcastInDimOp(
+    return hlo.BroadcastInDimOp(
         mlir.aval_to_ir_type(aval_out), x,
         mlir.dense_int_elements(broadcast_dimensions)).result
 
   @staticmethod
   def transpose_mlir(ctx, aval_out, x, *, permutation):
     perm = [*permutation, len(permutation)]
-    return mhlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
+    return hlo.TransposeOp(x, mlir.dense_int_elements(perm)).result
 
   @staticmethod
   def gather_mlir(ctx, avals_in, aval_out, x, indices, *,

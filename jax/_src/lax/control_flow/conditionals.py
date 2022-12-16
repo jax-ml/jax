@@ -41,7 +41,7 @@ from jax._src.traceback_util import api_boundary
 from jax._src.util import (safe_map, extend_name_stack, split_list,
                            partition_list)
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import mhlo
+from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
@@ -806,11 +806,11 @@ def _cond_lowering(ctx, index, *args, branches, linear):
       *output_token_types, *map(mlir.aval_to_ir_types, ctx.avals_out)]
   flat_output_types = util.flatten(output_types)
 
-  # mhlo.CaseOp takes a single argument 'index' and the corresponding blocks
+  # CaseOp takes a single argument 'index' and the corresponding blocks
   # have no arguments; the computation within the block uses implicit
   # captures.
-  case_op = mhlo.CaseOp(flat_output_types, index=index,
-                        num_branches=len(branches))
+  case_op = hlo.CaseOp(flat_output_types, index=index,
+                       num_branches=len(branches))
   name_stack = extend_name_stack(ctx.module_context.name_stack, 'cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
@@ -824,7 +824,7 @@ def _cond_lowering(ctx, index, *args, branches, linear):
           dim_var_values=ctx.dim_var_values)
       out_tokens = [tokens_out.get(eff) for eff in ordered_effects]
       out_vals = [*out_tokens, *out_vals]
-      mhlo.ReturnOp(util.flatten(out_vals))
+      hlo.ReturnOp(util.flatten(out_vals))
 
   tokens_and_outputs = util.unflatten(case_op.results, map(len, output_types))
   tokens, outputs = util.split_list(tokens_and_outputs, [num_tokens])

@@ -20,7 +20,7 @@ import numpy as np
 
 def print_ir(*prototypes):
   def lower(f):
-    """Prints the MHLO IR that results from lowering `f`.
+    """Prints the MLIR IR that results from lowering `f`.
 
     The arguments to `f` are taken to be arrays shaped like `prototypes`."""
     inputs = tree_util.tree_map(np.array, prototypes)
@@ -29,5 +29,5 @@ def print_ir(*prototypes):
                            for x in flat_inputs])
     name = f.func.__name__ if hasattr(f, "func") else f.__name__
     print(f"\nTEST: {name} {shape_strs}")
-    print(jax.jit(f).lower(*inputs).compiler_ir(dialect="mhlo"))
+    print(jax.jit(f).lower(*inputs).compiler_ir())
   return lower
