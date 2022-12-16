@@ -1115,7 +1115,7 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_shardings, out_shardings, resource_env,
                      donated_invars, name,
                      in_positional_semantics, out_positional_semantics,
-                     keep_unused):
+                     keep_unused, inline):
   checked_jaxpr, (out_tree, effects) = checkify_jaxpr(jaxpr, error,
                                                       enabled_errors)
   out_error = error._add_placeholder_effects(effects)
@@ -1155,7 +1155,8 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
       name=name,
       in_positional_semantics=new_positional_sems_in,
       out_positional_semantics=new_positional_sems_out,
-      keep_unused=keep_unused)
+      keep_unused=keep_unused,
+      inline=inline)
   err, *out = tree_unflatten(out_tree, err_and_out)
   return out, err
 error_checks[pjit.pjit_p] = pjit_error_check

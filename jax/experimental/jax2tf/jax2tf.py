@@ -3119,6 +3119,7 @@ def _pjit(*args: TfVal,
           in_positional_semantics,
           out_positional_semantics,
           keep_unused: bool,
+          inline: bool,
           _in_avals: Sequence[core.ShapedArray],
           _out_aval: Sequence[core.ShapedArray]) -> TfVal:
   del donated_invars

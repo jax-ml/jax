@@ -2795,19 +2795,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x, y, z
 
     o1, o2, o3 = f(a, y=b, z=c)
+    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertArraysEqual(o1, a)
     self.assertArraysEqual(o2, b)
     self.assertArraysEqual(o3, c)
 
     o4, o5, o6 = f(x=a, y=b, z=c)
+    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertArraysEqual(o4, a)
     self.assertArraysEqual(o5, b)
     self.assertArraysEqual(o6, c)
 
+    self.assertEqual(cache_info2.hits, cache_info1.hits)
+    self.assertEqual(cache_info2.misses, cache_info1.misses + 1)
+
     o7, o8, o9 = f(a, b, c)
+    cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertArraysEqual(o7, a)
     self.assertArraysEqual(o8, b)
     self.assertArraysEqual(o9, c)
+
+    self.assertEqual(cache_info3.hits, cache_info2.hits)
+    self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
 
   def test_pjit_kwargs_axis_resources_error(self):
     with self.assertRaisesRegex(
@@ -2960,6 +2969,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
           "Mesh context manager should not be used with jit when backend or "
           "device is also specified as an argument to jit."):
         pjit(lambda x: x, device=jax.devices()[0])(jnp.arange(8))
+
+  def test_pjit_inline(self):
+    @partial(pjit, inline=False)
+    def f(x):
+      return x * 2
+
+    jaxpr = jax.make_jaxpr(f)(3)
+    self.assertIn('pjit', str(jaxpr))
+
+    @partial(pjit, inline=True)
+    def g(x):
+      return x * 2
+
+    jaxpr = jax.make_jaxpr(g)(3)
+    self.assertNotIn('pjit', str(jaxpr))
 
 
 class TempSharding(Sharding):
