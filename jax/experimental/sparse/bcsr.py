@@ -25,14 +25,12 @@ from jax import core
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
-from jax.experimental.sparse.util import _broadcasting_vmap, _count_stored_elements, _csr_to_coo
+from jax.experimental.sparse.util import _broadcasting_vmap, _count_stored_elements, _csr_to_coo, Shape
 import jax.numpy as jnp
 from jax.util import split_list, safe_zip
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike
-
-Shape = Tuple[int, ...]
 
 
 class BCSRProperties(NamedTuple):

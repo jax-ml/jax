@@ -15,7 +15,7 @@
 """Sparse utilities."""
 
 import functools
-from typing import Any, Iterable, Sequence, Tuple, Union
+from typing import Any, NamedTuple, Tuple, Union
 
 import numpy as np
 import jax
@@ -39,6 +39,13 @@ class SparseEfficiencyWarning(UserWarning):
 
 class CuSparseEfficiencyWarning(SparseEfficiencyWarning):
   pass
+
+Shape = Tuple[int, ...]
+
+class SparseInfo(NamedTuple):
+  shape: Shape
+  indices_sorted: bool = False
+  unique_indices: bool = False
 
 #--------------------------------------------------------------------
 # utilities

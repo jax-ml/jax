@@ -31,7 +31,6 @@ from jax.experimental import sparse
 from jax.experimental.sparse import coo as sparse_coo
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse import bcsr as sparse_bcsr
-from jax.experimental.sparse.bcoo import BCOOInfo
 from jax.experimental.sparse import util as sparse_util
 from jax.experimental.sparse import test_util as sptu
 from jax import lax
@@ -741,7 +740,7 @@ class BCOOTest(sptu.SparseTestCase):
     assert indices.dtype == jnp.int32  # TODO: test passing this arg
     assert indices.shape == shape[:n_batch] + (nse, n_sparse)
 
-    todense = partial(sparse_bcoo._bcoo_todense, spinfo=BCOOInfo(shape))
+    todense = partial(sparse_bcoo._bcoo_todense, spinfo=sparse_util.SparseInfo(shape))
     self.assertArraysEqual(M, todense(data, indices))
     self.assertArraysEqual(M, jit(todense)(data, indices))
 
@@ -760,7 +759,7 @@ class BCOOTest(sptu.SparseTestCase):
                                              n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
-    todense = partial(sparse_bcoo._bcoo_todense, indices=indices, spinfo=BCOOInfo(shape))
+    todense = partial(sparse_bcoo._bcoo_todense, indices=indices, spinfo=sparse_util.SparseInfo(shape))
     j1 = jax.jacfwd(todense)(data)
     j2 = jax.jacrev(todense)(data)
     hess = jax.hessian(todense)(data)
@@ -827,7 +826,7 @@ class BCOOTest(sptu.SparseTestCase):
                                              n_dense=n_dense)
 
     fromdense = partial(sparse_bcoo._bcoo_fromdense, nse=nse, n_dense=n_dense)
-    todense = partial(sparse_bcoo._bcoo_todense, spinfo=BCOOInfo(shape[n_batch:]))
+    todense = partial(sparse_bcoo._bcoo_todense, spinfo=sparse_util.SparseInfo(shape[n_batch:]))
     for i in range(n_batch):
       fromdense = jax.vmap(fromdense)
       todense = jax.vmap(todense)
@@ -1001,12 +1000,12 @@ class BCOOTest(sptu.SparseTestCase):
                                              n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
-    M1 = sparse_bcoo._bcoo_todense(data, indices[:1], spinfo=BCOOInfo(M.shape))
-    M2 = sparse_bcoo._bcoo_todense(data, jnp.stack(shape[0] * [indices[0]]), spinfo=BCOOInfo(M.shape))
+    M1 = sparse_bcoo._bcoo_todense(data, indices[:1], spinfo=sparse_util.SparseInfo(M.shape))
+    M2 = sparse_bcoo._bcoo_todense(data, jnp.stack(shape[0] * [indices[0]]), spinfo=sparse_util.SparseInfo(M.shape))
     self.assertAllClose(M1, M2)
 
-    M3 = sparse_bcoo._bcoo_todense(data[:1], indices, spinfo=BCOOInfo(M.shape))
-    M4 = sparse_bcoo._bcoo_todense(jnp.stack(shape[0] * [data[0]]), indices, spinfo=BCOOInfo(M.shape))
+    M3 = sparse_bcoo._bcoo_todense(data[:1], indices, spinfo=sparse_util.SparseInfo(M.shape))
+    M4 = sparse_bcoo._bcoo_todense(jnp.stack(shape[0] * [data[0]]), indices, spinfo=sparse_util.SparseInfo(M.shape))
     self.assertAllClose(M3, M4)
 
   @jtu.sample_product(
@@ -1271,11 +1270,11 @@ class BCOOTest(sptu.SparseTestCase):
       return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
 
     def f_sparse(data, indices, Y):
-      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=BCOOInfo(X.shape),
+      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=sparse_util.SparseInfo(X.shape),
                                            dimension_numbers=dimension_numbers)
 
     for data, indices in itertools.product([data, data[:1]], [indices, indices[:1]]):
-      X = sparse_bcoo._bcoo_todense(data, indices, spinfo=BCOOInfo(X.shape))
+      X = sparse_bcoo._bcoo_todense(data, indices, spinfo=sparse_util.SparseInfo(X.shape))
       self.assertAllClose(f_dense(X, Y), f_sparse(data, indices, Y))
 
   @jtu.sample_product(
@@ -1312,7 +1311,7 @@ class BCOOTest(sptu.SparseTestCase):
       return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
 
     def f_sparse(Y):
-      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=BCOOInfo(X.shape),
+      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=sparse_util.SparseInfo(X.shape),
                                            dimension_numbers=dimension_numbers)
 
     jf_dense = jax.jacfwd(f_dense)(Y)
@@ -1329,7 +1328,7 @@ class BCOOTest(sptu.SparseTestCase):
       return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
 
     def g_sparse(data):
-      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=BCOOInfo(X.shape),
+      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=sparse_util.SparseInfo(X.shape),
                                            dimension_numbers=dimension_numbers)
 
     jf_dense = jax.jacfwd(g_dense)(X)
@@ -1487,7 +1486,7 @@ class BCOOTest(sptu.SparseTestCase):
       data, indices = sparse_bcoo._bcoo_spdot_general(
           xsp.data, xsp.indices, ysp.data, ysp.indices, lhs_spinfo=xsp._info,
           rhs_spinfo=ysp._info, dimension_numbers=dimension_numbers)
-      return sparse_bcoo._bcoo_todense(data, indices, spinfo=BCOOInfo(shape))
+      return sparse_bcoo._bcoo_todense(data, indices, spinfo=sparse_util.SparseInfo(shape))
 
     tol = {"float64": 1E-14, "complex128": 1E-14}
     if should_error:
@@ -2128,7 +2127,7 @@ class BCOOTest(sptu.SparseTestCase):
     def make_bcoo(M):
       return sparse_bcoo._bcoo_fromdense(M, nse=np.prod(M.shape[:-1], dtype=int), n_dense=1)
 
-    todense = partial(sparse_bcoo._bcoo_todense, spinfo=BCOOInfo(shape))
+    todense = partial(sparse_bcoo._bcoo_todense, spinfo=sparse_util.SparseInfo(shape))
 
     for _ in range(3):
       make_bcoo = jax.vmap(make_bcoo)
