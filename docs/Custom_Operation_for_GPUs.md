@@ -112,6 +112,7 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import jax._src.test_util as jtu
 from build import gpu_ops
 from jax import core, dtypes
 from jax.interpreters import xla
@@ -272,10 +273,10 @@ emb_dim=512
 x = jax.random.normal(
     jax.random.PRNGKey(0),
     shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
-    dtype=jnp.float16,
+    dtype=jnp.bfloat16,
 )
 norm_shape = x.shape[-2:]
-weight = jnp.ones(norm_shape, dtype=jnp.float16)
+weight = jnp.ones(norm_shape, dtype=jnp.bfloat16)
 ```
 
 ## Test forward function
@@ -373,7 +374,7 @@ out = rms_norm_fwd(x, weight)
 
 ## Test backward function
 
-Now let's test the backward operation using `jax.grad`.
+Now let's test the backward operation using `jax.grad` and `jtu.check_grads`.
 
 ```python
 def loss(x, weight):
@@ -383,6 +384,7 @@ def loss(x, weight):
 
 loss_grad = jax.grad(loss)
 out = loss_grad(x, weight)
+jtu.check_grads(loss, (x, weight), modes=["rev"], order=1)
 ```
 ```python
 ---------------------------------------------------------------------------
@@ -460,6 +462,7 @@ def loss(x, weight):
 
 loss_grad = jax.grad(loss)
 out = loss_grad(x, weight)
+jtu.check_grads(loss, (x, weight), modes=["rev"], order=1)
 ```
 
 # Let's test it on multiple devices
@@ -471,7 +474,6 @@ We are using [`jax.experimental.pjit.pjit`](https://jax.readthedocs.io/en/latest
 Let's first test the forward operation on multiple devices.  We are creating a simple 1D mesh and sharding `x` on all devices.
 
 ```python
-import numpy as np
 from jax.experimental.maps import Mesh
 from jax.experimental.pjit import PartitionSpec, pjit
 
@@ -490,29 +492,29 @@ with mesh:
     print(pjitted.lower(x, weight).compile().runtime_executable().hlo_modules()[0].to_string())
     out = pjitted(x, weight)
 
-np.allclose(ref, out)
+jnp.allclose(ref, out, atol=1e-2, rtol=1e-2)
 ```
 ```python
-HloModule pjit_rms_norm, entry_computation_layout={(f16[4,512,512]{2,1,0},f16[512,512]{1,0})->f16[4,512,512]{2,1,0}}
+HloModule pjit_rms_norm, entry_computation_layout={(bf16[4,512,512]{2,1,0},bf16[512,512]{1,0})->bf16[4,512,512]{2,1,0}}
 
-%fused_computation (param_1: f16[32,512,512], param_1.3: u32[]) -> f16[4,512,512] {
-  %param_1 = f16[32,512,512]{2,1,0} parameter(0)
+%fused_computation (param_1: bf16[32,512,512], param_1.3: u32[]) -> bf16[4,512,512] {
+  %param_1 = bf16[32,512,512]{2,1,0} parameter(0)
   %param_1.3 = u32[] parameter(1)
   %convert.2 = s32[] convert(u32[] %param_1.3), metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
   %constant_9 = s32[] constant(4), metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
   %multiply.3 = s32[] multiply(s32[] %convert.2, s32[] %constant_9), metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
   %constant_8 = s32[] constant(0), metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
-  ROOT %dynamic-slice.2 = f16[4,512,512]{2,1,0} dynamic-slice(f16[32,512,512]{2,1,0} %param_1, s32[] %multiply.3, s32[] %constant_8, s32[] %constant_8), dynamic_slice_sizes={4,512,512}, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
+  ROOT %dynamic-slice.2 = bf16[4,512,512]{2,1,0} dynamic-slice(bf16[32,512,512]{2,1,0} %param_1, s32[] %multiply.3, s32[] %constant_8, s32[] %constant_8), dynamic_slice_sizes={4,512,512}, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
 }
 
-ENTRY %main.7_spmd (param: f16[4,512,512], param.1: f16[512,512]) -> f16[4,512,512] {
-  %param = f16[4,512,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]0,1,2,3,4,5,6,7}
-  %all-gather = f16[32,512,512]{2,1,0} all-gather(f16[4,512,512]{2,1,0} %param), channel_id=1, replica_groups={{0,1,2,3,4,5,6,7}}, dimensions={0}, use_global_device_ids=true, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
-  %param.1 = f16[512,512]{1,0} parameter(1), sharding={replicated}
-  %custom-call.0 = (f16[32,512,512]{2,1,0}, f32[32]{0}) custom-call(f16[32,512,512]{2,1,0} %all-gather, f16[512,512]{1,0} %param.1), custom_call_target="rms_forward_affine_mixed_dtype", operand_layout_constraints={f16[32,512,512]{2,1,0}, f16[512,512]{1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}, backend_config=" \000\000\000\000\000\004\000\361h\343\210\265\370\344>\001\000\000\000\001\000\000\000\000\000\000\000\206\177\000\000"
-  %get-tuple-element = f16[32,512,512]{2,1,0} get-tuple-element((f16[32,512,512]{2,1,0}, f32[32]{0}) %custom-call.0), index=0, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
+ENTRY %main.7_spmd (param: bf16[4,512,512], param.1: bf16[512,512]) -> bf16[4,512,512] {
+  %param = bf16[4,512,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]0,1,2,3,4,5,6,7}
+  %all-gather = bf16[32,512,512]{2,1,0} all-gather(bf16[4,512,512]{2,1,0} %param), channel_id=1, replica_groups={{0,1,2,3,4,5,6,7}}, dimensions={0}, use_global_device_ids=true, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
+  %param.1 = bf16[512,512]{1,0} parameter(1), sharding={replicated}
+  %custom-call.0 = (bf16[32,512,512]{2,1,0}, f32[32]{0}) custom-call(bf16[32,512,512]{2,1,0} %all-gather, bf16[512,512]{1,0} %param.1), custom_call_target="rms_forward_affine_mixed_dtype", operand_layout_constraints={bf16[32,512,512]{2,1,0}, bf16[512,512]{1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}, backend_config=" \000\000\000\000\000\004\000\361h\343\210\265\370\344>\000\000\000\000\000\000\000\000\000\000\000\000\255\177\000\000"
+  %get-tuple-element = bf16[32,512,512]{2,1,0} get-tuple-element((bf16[32,512,512]{2,1,0}, f32[32]{0}) %custom-call.0), index=0, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
   %partition-id = u32[] partition-id(), metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
-  ROOT %fusion = f16[4,512,512]{2,1,0} fusion(f16[32,512,512]{2,1,0} %get-tuple-element, u32[] %partition-id), kind=kLoop, calls=%fused_computation, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
+  ROOT %fusion = bf16[4,512,512]{2,1,0} fusion(bf16[32,512,512]{2,1,0} %get-tuple-element, u32[] %partition-id), kind=kLoop, calls=%fused_computation, metadata={op_name="pjit(rms_norm)/jit(main)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
 }
 ```
 ```python
@@ -570,16 +572,16 @@ with mesh:
     print(pjitted.lower(x, weight).compile().runtime_executable().hlo_modules()[0].to_string())
     out = pjitted(x, weight)
 
-np.allclose(ref, out)
+jnp.allclose(ref, out, atol=1e-2, rtol=1e-2)
 ```
 ```python
-HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(f16[4,512,512]{2,1,0},f16[512,512]{1,0})->f16[4,512,512]{2,1,0}}
+HloModule pjit__unnamed_wrapped_function_, entry_computation_layout={(bf16[4,512,512]{2,1,0},bf16[512,512]{1,0})->bf16[4,512,512]{2,1,0}}
 
-ENTRY %main.17_spmd (param: f16[4,512,512], param.1: f16[512,512]) -> f16[4,512,512] {
-  %param = f16[4,512,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]0,1,2,3,4,5,6,7}, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/squeeze[dimensions=(0,)]" source_file="/tmp/ipykernel_25235/3123505662.py" source_line=13}
-  %param.1 = f16[512,512]{1,0} parameter(1), sharding={replicated}, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/full_to_shard[axes=OrderedDict() mesh=Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=(\'a\',)) manual_axes=(\'a\',)]" source_file="/tmp/ipykernel_25235/3123505662.py" source_line=13}
-  %custom-call.0 = (f16[4,512,512]{2,1,0}, f32[4]{0}) custom-call(f16[4,512,512]{2,1,0} %param, f16[512,512]{1,0} %param.1), custom_call_target="rms_forward_affine_mixed_dtype", operand_layout_constraints={f16[4,512,512]{2,1,0}, f16[512,512]{1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}, backend_config="\004\000\000\000\000\000\004\000\361h\343\210\265\370\344>\001\000\000\000\001\000\000\000\000\000\000\000\000\000\000\000"
-  ROOT %get-tuple-element = f16[4,512,512]{2,1,0} get-tuple-element((f16[4,512,512]{2,1,0}, f32[4]{0}) %custom-call.0), index=0, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
+ENTRY %main.17_spmd (param: bf16[4,512,512], param.1: bf16[512,512]) -> bf16[4,512,512] {
+  %param = bf16[4,512,512]{2,1,0} parameter(0), sharding={devices=[8,1,1]0,1,2,3,4,5,6,7}, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/squeeze[dimensions=(0,)]" source_file="/tmp/ipykernel_25235/3123505662.py" source_line=13}
+  %param.1 = bf16[512,512]{1,0} parameter(1), sharding={replicated}, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/full_to_shard[axes=OrderedDict() mesh=Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=(\'x\',)) manual_axes=(\'x\',)]" source_file="/tmp/ipykernel_25235/3123505662.py" source_line=13}
+  %custom-call.0 = (bf16[4,512,512]{2,1,0}, f32[4]{0}) custom-call(bf16[4,512,512]{2,1,0} %param, bf16[512,512]{1,0} %param.1), custom_call_target="rms_forward_affine_mixed_dtype", operand_layout_constraints={bf16[4,512,512]{2,1,0}, bf16[512,512]{1,0}}, api_version=API_VERSION_STATUS_RETURNING, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}, backend_config="\004\000\000\000\000\000\004\000\361h\343\210\265\370\344>\000\000\000\000\000\000\000\000\000\000\000\000\027\177\000\000"
+  ROOT %get-tuple-element = bf16[4,512,512]{2,1,0} get-tuple-element((bf16[4,512,512]{2,1,0}, f32[4]{0}) %custom-call.0), index=0, metadata={op_name="pjit(<unnamed wrapped function>)/jit(main)/xmap(rms_norm)/rms_norm_fwd[eps=1e-05]" source_file="/tmp/ipykernel_25235/3343076723.py" source_line=8}
 }
 ```
 ```python
@@ -629,7 +631,7 @@ with mesh:
     out = pjitted(x, weight)
 
 for r, o in zip(ref, out):
-    print(np.allclose(r, o))
+    print(jnp.allclose(r, o, atol=1e-2, rtol=1e-2))
 ```
 ```python
 True
@@ -644,21 +646,21 @@ with mesh:
     print(jax.make_jaxpr(pjitted)(x, weight))
 ```
 ```python
-{ lambda ; a:f16[32,512,512] b:f16[512,512]. let
-    c:f16[32,512,512] d:f16[512,512] = pjit[
+{ lambda ; a:bf16[32,512,512] b:bf16[512,512]. let
+    c:bf16[32,512,512] d:bf16[512,512] = pjit[
       donated_invars=(False, False)
       in_positional_semantics=(<_PositionalSemantics.GLOBAL: 1>, <_PositionalSemantics.GLOBAL: 1>)
       in_shardings=(OpShardingSharding({devices=[8,1,1]0,1,2,3,4,5,6,7}), OpShardingSharding({replicated}))
-      jaxpr={ lambda ; e:f16[32,512,512] f:f16[512,512]. let
-          g:f16[8,4,512,512] = reshape[
+      jaxpr={ lambda ; e:bf16[32,512,512] f:bf16[512,512]. let
+          g:bf16[8,4,512,512] = reshape[
             dimensions=None
             new_sizes=(8, 4, 512, 512)
           ] e
-          h:f16[8,4,512,512] i:f32[8,4] j:f16[8,4,512,512] k:f16[512,512] = xmap[
+          h:bf16[8,4,512,512] i:f32[8,4] j:bf16[8,4,512,512] k:bf16[512,512] = xmap[
             axis_resources=FrozenDict({'x': ('x',)})
             backend=None
-            call_jaxpr={ lambda ; l:f16[4,512,512;a:8] m:f16[512,512]. let
-                n:f16[4,512,512;a:8] o:f32[4;a:8] = rms_norm_fwd[eps=1e-05] l m
+            call_jaxpr={ lambda ; l:bf16[4,512,512;x:8] m:bf16[512,512]. let
+                n:bf16[4,512,512;x:8] o:f32[4;x:8] = rms_norm_fwd[eps=1e-05] l m
               in (n, o, l, m) }
             donated_invars=(False, False)
             global_axis_sizes=FrozenDict({'x': 8})
@@ -671,43 +673,43 @@ with mesh:
             spmd_in_axes=None
             spmd_out_axes=None
           ] g f
-          p:f16[32,512,512] = reshape[dimensions=None new_sizes=(32, 512, 512)] h
-          q:f16[32,512,512] = integer_pow[y=2] p
-          r:f16[32,512,512] = integer_pow[y=1] p
-          s:f16[32,512,512] = mul 2.0 r
+          p:bf16[32,512,512] = reshape[dimensions=None new_sizes=(32, 512, 512)] h
+          q:bf16[32,512,512] = integer_pow[y=2] p
+          r:bf16[32,512,512] = integer_pow[y=1] p
+          s:bf16[32,512,512] = mul 2 r
           t:f32[32,512,512] = convert_element_type[
             new_dtype=float32
             weak_type=False
           ] q
           u:f32[] = reduce_sum[axes=(0, 1, 2)] t
-          v:f16[] = convert_element_type[new_dtype=float16 weak_type=False] u
-          w:f16[] = div v inf
-          _:f16[] = neg w
-          x:f16[] = neg 1.0
-          y:f16[] = div x inf
+          v:bf16[] = convert_element_type[new_dtype=bfloat16 weak_type=False] u
+          w:bf16[] = div v 8.38861e+06
+          _:bf16[] = neg w
+          x:bf16[] = neg 1
+          y:bf16[] = div x 8.38861e+06
           z:f32[] = convert_element_type[new_dtype=float32 weak_type=False] y
           ba:f32[32,512,512] = broadcast_in_dim[
             broadcast_dimensions=()
             shape=(32, 512, 512)
           ] z
-          bb:f16[32,512,512] = convert_element_type[
-            new_dtype=float16
+          bb:bf16[32,512,512] = convert_element_type[
+            new_dtype=bfloat16
             weak_type=False
           ] ba
-          bc:f16[32,512,512] = mul bb s
-          bd:f16[8,4,512,512] = reshape[
+          bc:bf16[32,512,512] = mul bb s
+          bd:bf16[8,4,512,512] = reshape[
             dimensions=None
             new_sizes=(8, 4, 512, 512)
           ] bc
-          be:f16[8,4,512,512] bf:f16[512,512] = xmap[
+          be:bf16[8,4,512,512] bf:bf16[512,512] = xmap[
             axis_resources=FrozenDict({'x': ('x',)})
             backend=None
-            call_jaxpr={ lambda ; bg:f32[4;a:8] bh:f16[4,512,512;a:8] bi:f16[512,512]
-                bj:f16[4,512,512;a:8]. let
-                bk:f16[4,512,512;a:8] bl:f16[512,512;a:8] _:f32[16,262144;a:8] = rms_norm_bwd[
+            call_jaxpr={ lambda ; bg:f32[4;x:8] bh:bf16[4,512,512;x:8] bi:bf16[512,512]
+                bj:bf16[4,512,512;x:8]. let
+                bk:bf16[4,512,512;x:8] bl:bf16[512,512;x:8] _:f32[16,262144;x:8] = rms_norm_bwd[
                   eps=1e-05
                 ] bj bg bh bi
-                bm:f16[512,512] = psum[axes=('x',) axis_index_groups=None] bl
+                bm:bf16[512,512] = psum[axes=('x',) axis_index_groups=None] bl
               in (bk, bm) }
             donated_invars=(False, False, False, False)
             global_axis_sizes=FrozenDict({'x': 8})
@@ -720,7 +722,10 @@ with mesh:
             spmd_in_axes=None
             spmd_out_axes=None
           ] i j k bd
-          bn:f16[32,512,512] = reshape[dimensions=None new_sizes=(32, 512, 512)] be
+          bn:bf16[32,512,512] = reshape[
+            dimensions=None
+            new_sizes=(32, 512, 512)
+          ] be
         in (bn, bf) }
       name=<unnamed function>
       out_positional_semantics=_PositionalSemantics.GLOBAL
@@ -730,7 +735,7 @@ with mesh:
   in (c, d) }
 ```
 
-We see that `bm:f16[512,512] = psum[axes=('x',) axis_index_groups=None] bl` has been added after the call to `rms_norm_bwd` to reduce `grad_weight` across the devices on the axis `"x"`, but there is no `psum` for `grad_input`.
+We see that `bm:bf16[512,512] = psum[axes=('x',) axis_index_groups=None] bl` has been added after the call to `rms_norm_bwd` to reduce `grad_weight` across the devices on the axis `"x"`, but there is no `psum` for `grad_input`.
 
 This is controlled by `named_shape` passed to the `ShapedArray` construction in abstract evaluation and the axes given to `xmap`.
 
@@ -1004,7 +1009,6 @@ def xmap_rms_norm(x, weight, *, device_count):
 
 
 import jax
-import numpy as np
 
 
 per_core_batch_size=4
@@ -1013,10 +1017,10 @@ emb_dim=512
 x = jax.random.normal(
     jax.random.PRNGKey(0),
     shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
-    dtype=jnp.float16,
+    dtype=jnp.bfloat16,
 )
 norm_shape = x.shape[-2:]
-weight = jnp.ones(norm_shape, dtype=jnp.float16)
+weight = jnp.ones(norm_shape, dtype=jnp.bfloat16)
 
 
 def loss_ref(x, weight):
@@ -1050,7 +1054,7 @@ with Mesh(jax.local_devices(), ("x",)):
     out = pjitted(x, weight)
 
 for r, o in zip(ref, out):
-    print(np.allclose(r, o))
+    print(jnp.allclose(r, o, atol=1e-2, rtol=1e-2))
 ```
 ```python
 True
