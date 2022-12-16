@@ -45,8 +45,8 @@ from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import NamedSharding, Sharding, OpShardingSharding
-import jax.experimental.pjit as pjit_lib
-from jax.experimental.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
+import jax._src.pjit as pjit_lib
+from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
 from jax.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src.lib import xla_client as xc, xla_bridge, xla_extension_version
