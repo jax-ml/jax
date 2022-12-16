@@ -155,6 +155,43 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(2)
+  def testBernoulliCdf(self, shapes, dtypes):
+    rng_int = jtu.rand_int(self.rng(), -100, 100)
+    rng_uniform = jtu.rand_uniform(self.rng())
+    scipy_fun = osp_stats.bernoulli.cdf
+    lax_fun = lsp_stats.bernoulli.cdf
+
+    def args_maker():
+      x = rng_int(shapes[0], dtypes[0])
+      p = rng_uniform(shapes[1], dtypes[1])
+      return [x, p]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(2)
+  def testBernoulliPpf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.bernoulli.ppf
+    lax_fun = lsp_stats.bernoulli.ppf
+
+    if scipy_version < (1, 9, 2):
+      self.skipTest("Scipy 1.9.2 needed for fix https://github.com/scipy/scipy/pull/17166.")
+
+    def args_maker():
+      q, p = map(rng, shapes, dtypes)
+      q = expit(q)
+      p = expit(p)
+      return [q, p]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                             tol=5e-4)
+      self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(3)
   def testGeomLogPmf(self, shapes, dtypes):
     rng = jtu.rand_default(self.rng())

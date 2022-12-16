@@ -159,6 +159,8 @@ jax.scipy.stats.bernoulli
 
    logpmf
    pmf
+   cdf
+   ppf
 
 jax.scipy.stats.beta
 ~~~~~~~~~~~~~~~~~~~~
