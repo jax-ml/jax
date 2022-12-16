@@ -756,33 +756,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     # A polymorphic arg is not used, and the dimension var does not appear
     # elsewhere.
-    if config.jax2tf_default_experimental_native_lowering:
-      with self.assertRaisesRegex(ValueError,
-                                  "The following dimension variables cannot be computed"):
-        self.CheckShapePolymorphism(
-            lambda x_unused, y: y * 2.0,
-            input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-            polymorphic_shapes=["b1", "b2"])
-    else:
-      self.CheckShapePolymorphism(
-          lambda x_unused, y: y * 2.0,
-          input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-          polymorphic_shapes=["b1", "b2"])
+    self.CheckShapePolymorphism(
+        lambda x_unused, y: y * 2.0,
+        input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+        polymorphic_shapes=["b1", "b2"])
 
     # A polymorphic arg is not used, and the dimension var does appear
     # elsewhere but not as a trivial monomial.
-    if config.jax2tf_default_experimental_native_lowering:
-      with self.assertRaisesRegex(ValueError,
-                                  "The following dimension variables cannot be computed"):
-        self.CheckShapePolymorphism(
-            lambda x_unused, y: y * 2.0,
-            input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-            polymorphic_shapes=["b1", "b1 * b1"])
-    else:
-      self.CheckShapePolymorphism(
-          lambda x_unused, y: y * 2.0,
-          input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-          polymorphic_shapes=["b1", "b1 * b1"])
+    self.CheckShapePolymorphism(
+        lambda x_unused, y: y * 2.0,
+        input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+        polymorphic_shapes=["b1", "b1 * b1"])
 
 
   def test_with_custom_vjp(self):
