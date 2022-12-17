@@ -811,6 +811,19 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         jax.effects_barrier()
       self.assertEqual(output(), "140\n")
 
+  def test_nested_pjit_debug_print(self):
+    if not jax.config.jax_array:
+      self.skipTest("This test only works with jax.Array.")
+
+    def f(x):
+      debug_print("{}", x)
+      return x
+
+    with jtu.capture_stdout() as output:
+      pjit.pjit(pjit.pjit(f))(jnp.arange(8))
+      jax.effects_barrier()
+    self.assertEqual(output(), "[0 1 2 3 4 5 6 7]\n")
+
   def test_unordered_print_of_pjit_of_while(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('Host callback not supported for runtime type: stream_executor.')

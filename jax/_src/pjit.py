@@ -1160,8 +1160,9 @@ pe.custom_staging_rules[pjit_p] = pjit_staging_rule
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
                         out_positional_semantics, **_):
-  if jaxpr.effects:
-    raise NotImplementedError('Effects not supported in `pjit`.')
+  disallowed_effects = jaxpr.effects - mlir.lowerable_effects
+  if disallowed_effects:
+    raise ValueError('Effects not supported in `pjit`.')
   return global_to_local(out_positional_semantics, jaxpr.out_avals,
                          out_shardings, resource_env.physical_mesh), jaxpr.effects
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)

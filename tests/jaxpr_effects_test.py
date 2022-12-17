@@ -279,9 +279,9 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     else:
       spec = pjit.PartitionSpec('x')
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
-    with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
-      with mesh:
-        jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
+    with mesh:
+      jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
+    self.assertSetEqual(jaxpr.effects, {"foo", "bar"})
 
 
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
