@@ -812,6 +812,10 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       self.assertEqual(output(), "140\n")
 
   def test_nested_pjit_debug_print(self):
+    if xla_bridge.get_backend().runtime_type == 'stream_executor':
+      raise self.skipTest(
+          'Host callback not supported for runtime type: stream_executor.')
+
     if not jax.config.jax_array:
       self.skipTest("This test only works with jax.Array.")
 
