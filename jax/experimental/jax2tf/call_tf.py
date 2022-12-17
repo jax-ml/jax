@@ -22,6 +22,7 @@ For examples and details, see
 https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
+import enum
 import functools
 import re
 from typing import Any, Callable, Optional, Sequence, Tuple
@@ -35,6 +36,9 @@ from jax import dtypes
 from jax import tree_util
 from jax._src import util
 from jax._src import ad_util
+from jax._src.lax import control_flow as lax_control_flow
+from jax._src import ad_checkpoint
+from jax._src import custom_derivatives
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lib.mlir import ir
@@ -235,6 +239,14 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
     return function_flat_tf.get_concrete_function(*args_flat_sig_tf)
 
 
+CallTfEffect = enum.Enum('CallTfEffect', ['EFFECT'])
+
+mlir.lowerable_effects.add(CallTfEffect.EFFECT)
+lax_control_flow.allowed_effects.add(CallTfEffect.EFFECT)
+ad_checkpoint.remat_allowed_effects.add(CallTfEffect.EFFECT)
+custom_derivatives.allowed_effects.add(CallTfEffect.EFFECT)
+
+
 def _call_tf_abstract_eval(*_,
                            function_flat_tf,
                            args_flat_sig_tf, **__):
@@ -247,11 +259,14 @@ def _call_tf_abstract_eval(*_,
     return s.rank is not None and all([d is not None for d in s])
   if all([is_fully_known_shape(s)
           for s in concrete_function_flat_tf.output_shapes]):
-    return tuple([
-        # We convert to JAX type, and canonicalize to 32-bit if necessary
-        core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
-        for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
-                                concrete_function_flat_tf.output_shapes)])
+    return (
+        tuple([
+            # We convert to JAX type, and canonicalize to 32-bit if necessary
+            core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
+            for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
+                                    concrete_function_flat_tf.output_shapes)
+        ]),
+        {CallTfEffect.EFFECT})
 
   # There are some cases when TF shape inference is not powerful enough to
   # figure out the output shapes (e.g., b/128924522), even in situations where
@@ -262,10 +277,11 @@ def _call_tf_abstract_eval(*_,
   # it should not matter which platform we use.
   _, result_avals = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,
                                               "CPU")
-  return tuple(result_avals)
+  # Add an effect to the abstract eval rule of call_tf so that JAX's DCE pass
+  # doesn't prune args passed to call_tf.
+  return tuple(result_avals), {CallTfEffect.EFFECT}
 
-
-call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
+call_tf_p.def_effectful_abstract_eval(_call_tf_abstract_eval)
 
 
 def _call_tf_lowering(ctx, *args_op, platform,
