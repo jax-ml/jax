@@ -1192,7 +1192,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None)
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
   return broadcast(fill_value, shape)
 
-def zeros_like_shaped_array(aval: ArrayLike) -> Array:
+def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   assert isinstance(aval, ShapedArray)
   if aval.dtype == dtypes.float0:
     scalar_zero = np.zeros((), dtype=aval.dtype)
