@@ -18,7 +18,7 @@ import itertools
 import operator
 import random
 import unittest
-from typing import NamedTuple, Tuple
+from typing import Iterable, Iterator, NamedTuple, Tuple, Sequence
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -77,47 +77,52 @@ COMPATIBLE_SHAPE_PAIRS = [
 class BcooDotGeneralProperties(NamedTuple):
   lhs_shape: Tuple[int, ...]
   rhs_shape: Tuple[int, ...]
-  dtype: np.dtype
   n_batch: int
   n_dense: int
   dimension_numbers: DotDimensionNumbers
 
-  def testcase_name(self):
-    return "_{}_{}_nbatch={}_ndense={}_dimension_numbers={}".format(
-      jtu.format_shape_dtype_string(self.lhs_shape, self.dtype),
-      jtu.format_shape_dtype_string(self.rhs_shape, self.dtype),
-      self.n_batch, self.n_dense, self.dimension_numbers)
-
-def _iter_subsets(s):
+def _iter_subsets(s: Sequence) -> Iterable[Tuple]:
+  """Return an iterator over all subsets of a sequence s"""
   return itertools.chain.from_iterable(itertools.combinations(s, n) for n in range(len(s) + 1))
 
-def _generate_bcoo_dot_general_properties(shapes, dtypes) -> BcooDotGeneralProperties:
+
+class SparseLayout(NamedTuple):
+  n_batch: int
+  n_dense: int
+  n_sparse: int
+
+
+def iter_sparse_layouts(shape: Sequence[int], min_n_batch=0) -> Iterator[SparseLayout]:
+  for n_batch in range(min_n_batch, len(shape) + 1):
+    for n_dense in range(len(shape) + 1 - n_batch):
+      n_sparse = len(shape) - n_batch - n_dense
+      yield SparseLayout(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense)
+
+
+def _generate_bcoo_dot_general_properties(shapes=((5,), (2, 3), (2, 3, 4), (2, 3, 4, 4))) -> BcooDotGeneralProperties:
   """Generator of properties for bcoo_dot_general tests."""
   rng = random.Random(0)
 
   for shape in shapes:
-    for n_batch in range(len(shape) + 1):
-      for n_dense in range(len(shape) + 1 - n_batch):
-        n_sparse = len(shape) - n_batch - n_dense
-        subsets = split_list(range(len(shape)), [n_batch, n_sparse])
-        for batch_dims in _iter_subsets(range(n_batch)):
-          for contracting_dims in _iter_subsets(remaining(range(n_batch + n_sparse), batch_dims)):
-            # We want coverage of permutations & dtypes without generating hundreds of thousands
-            # of test cases; we do this by deterministic pseudo-random sampling instead of iterating.
-            rhs_permute = rng.sample(range(len(shape)), len(shape))
-            lhs_permute = list(itertools.chain.from_iterable(
-              rng.sample(subset, len(subset)) for subset in subsets))
-            yield BcooDotGeneralProperties(
-              lhs_shape=tuple(shape[p] for p in lhs_permute),
-              rhs_shape=tuple(shape[p] for p in rhs_permute),
-              dtype=rng.choice(dtypes),
-              n_batch=n_batch,
-              n_dense=n_dense,
-              dimension_numbers=(
-                ([lhs_permute.index(d) for d in contracting_dims], [rhs_permute.index(d) for d in contracting_dims]),
-                ([lhs_permute.index(d) for d in batch_dims], [rhs_permute.index(d) for d in batch_dims])
-              ),
-            )
+    for layout in iter_sparse_layouts(shape):
+      subsets = split_list(range(len(shape)), [layout.n_batch, layout.n_sparse])
+      for batch_dims in _iter_subsets(range(layout.n_batch)):
+        for contracting_dims in _iter_subsets(remaining(range(layout.n_batch + layout.n_sparse), batch_dims)):
+          # We want coverage of permutations without generating hundreds of thousands of test cases;
+          # we do this by deterministic pseudo-random sampling instead of iterating.
+          rhs_permute = rng.sample(range(len(shape)), len(shape))
+          lhs_permute = list(itertools.chain.from_iterable(
+            rng.sample(subset, len(subset)) for subset in subsets))
+          yield BcooDotGeneralProperties(
+            lhs_shape=tuple(shape[p] for p in lhs_permute),
+            rhs_shape=tuple(shape[p] for p in rhs_permute),
+            n_batch=layout.n_batch,
+            n_dense=layout.n_dense,
+            dimension_numbers=(
+              ([lhs_permute.index(d) for d in contracting_dims], [rhs_permute.index(d) for d in contracting_dims]),
+              ([lhs_permute.index(d) for d in batch_dims], [rhs_permute.index(d) for d in batch_dims])
+            ),
+          )
 
 
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
@@ -678,11 +683,9 @@ class BCOOTest(sptu.SparseTestCase):
     f(x)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=all_dtypes,
   )
   def test_empty(self, shape, dtype, n_batch, n_dense):
@@ -717,11 +720,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(mat.todense(), expected)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=all_dtypes,
   )
   def test_bcoo_dense_round_trip(self, shape, dtype, n_batch, n_dense):
@@ -745,11 +746,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(M, jit(todense)(data, indices))
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating,
   )
   def test_bcoo_todense_ad(self, shape, dtype, n_batch, n_dense):
@@ -768,11 +767,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(hess.shape, M.shape + 2 * data.shape)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating,
   )
   def test_bcoo_fromdense_ad(self, shape, dtype, n_batch, n_dense):
@@ -811,11 +808,9 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertTrue(mat_resorted.unique_indices)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   def test_bcoo_dense_round_trip_batched(self, shape, dtype, n_batch, n_dense):
@@ -842,11 +837,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(M, jit(todense)(data, indices))
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   def test_bcoo_extract(self, shape, dtype, n_batch, n_dense):
@@ -881,11 +874,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(expected, actual)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating,
   )
   def test_bcoo_extract_ad(self, shape, dtype, n_batch, n_dense):
@@ -915,11 +906,9 @@ class BCOOTest(sptu.SparseTestCase):
     self._CompileAndCheck(sparse.bcoo_extract, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
-      for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_transpose(self, shape, dtype, n_batch, n_dense):
@@ -942,11 +931,9 @@ class BCOOTest(sptu.SparseTestCase):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(1, len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
     dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_transpose_batched(self, shape, dtype, n_batch, n_dense):
@@ -986,10 +973,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertFalse(mat_T_indices_unsorted.indices_sorted)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(1, len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
+      for layout in iter_sparse_layouts(shape, min_n_batch=1)
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
@@ -1009,17 +995,15 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertAllClose(M3, M4)
 
   @jtu.sample_product(
-    props=_generate_bcoo_dot_general_properties(
-      shapes=[(5,), (2, 3), (2, 3, 4), (2, 3, 4, 4)],
-      dtypes=jtu.dtypes.floating + jtu.dtypes.complex,
-    )
+    props=_generate_bcoo_dot_general_properties(),
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_bcoo_dot_general(self, props: BcooDotGeneralProperties):
+  def test_bcoo_dot_general(self, dtype: np.dtype, props: BcooDotGeneralProperties):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
-    args_maker = lambda: [sprng(props.lhs_shape, props.dtype),
-                          rng(props.rhs_shape, props.dtype)]
+    args_maker = lambda: [sprng(props.lhs_shape, dtype),
+                          rng(props.rhs_shape, dtype)]
     dense_fun = partial(lax.dot_general, dimension_numbers=props.dimension_numbers)
     sparse_fun = partial(sparse.bcoo_dot_general, dimension_numbers=props.dimension_numbers)
 
@@ -1220,17 +1204,15 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertArraysEqual(vecmat_expected, vecmat_unsorted_fallback)
 
   @jtu.sample_product(
-    props=_generate_bcoo_dot_general_properties(
-      shapes=[(5,), (2, 3), (2, 3, 4), (2, 3, 4, 4)],
-      dtypes=jtu.dtypes.floating + jtu.dtypes.complex,
-    )
+    props=_generate_bcoo_dot_general_properties(),
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_bcoo_rdot_general(self, props: BcooDotGeneralProperties):
+  def test_bcoo_rdot_general(self, dtype: np.dtype, props: BcooDotGeneralProperties):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
-    args_maker = lambda: [rng(props.rhs_shape, props.dtype),
-                          sprng(props.lhs_shape, props.dtype)]
+    args_maker = lambda: [rng(props.rhs_shape, dtype),
+                          sprng(props.lhs_shape, dtype)]
     dimension_numbers = tuple(d[::-1] for d in props.dimension_numbers)
     sparse_fun = partial(sparse.bcoo_dot_general, dimension_numbers=dimension_numbers)
     dense_fun = partial(lax.dot_general, dimension_numbers=dimension_numbers)
@@ -1581,11 +1563,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertAllClose(result_dense, result_sparse_jit.todense())
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_slice(self, shape, dtype, n_batch, n_dense):
@@ -1620,11 +1600,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertLessEqual(out.nse, max_nse)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_dynamic_slice(self, shape, dtype, n_batch, n_dense):
@@ -1708,10 +1686,9 @@ class BCOOTest(sptu.SparseTestCase):
     self._CompileAndCheckSparse(list, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, nse=nse)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, nse=nse)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
+      for layout in iter_sparse_layouts(shape)
       for nse in [None, np.prod(shape) - 1]
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
@@ -1744,10 +1721,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertTrue(M_dedup.unique_indices)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, nse=nse)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, nse=nse)
       for shape in [(0,), (5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
+      for layout in iter_sparse_layouts(shape)
       for nse in [None, 5, max(0, np.prod(shape) - 1)]
     ],
     dtype=jtu.dtypes.floating,
@@ -1771,11 +1747,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertAllClose(data_dot_fwd, data_dot_rev)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   def test_bcoo_sort_indices(self, shape, dtype, n_batch, n_dense):
@@ -1794,11 +1768,9 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertArraysEqual(sorted, lax.broadcasted_iota(sorted.dtype, sorted.shape, sorted.ndim - 1))
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating,
   )
   def test_bcoo_sort_indices_ad(self, shape, dtype, n_batch, n_dense):
@@ -1872,10 +1844,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(x.data, y.data)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, axes=axes)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, axes=axes)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
+      for layout in iter_sparse_layouts(shape)
       for naxes in range(len(shape))
       for axes in itertools.combinations(range(len(shape)), naxes)
     ],
@@ -1893,7 +1864,7 @@ class BCOOTest(sptu.SparseTestCase):
       self._CheckGradsSparse(dense_fun, sparse_fun, args_maker)
 
   @jtu.sample_product(
-    [dict(shape=shape, dimensions=dimensions, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, dimensions=dimensions, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape, dimensions in [
           [(1,), (0,)],
           [(1,), (-1,)],
@@ -1902,9 +1873,7 @@ class BCOOTest(sptu.SparseTestCase):
           [(2, 1, 3, 1), (1, 3)],
           [(2, 1, 3, 1), (3,)],
       ]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) - n_batch + 1)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_squeeze(self, shape, dtype, dimensions, n_batch, n_dense):
@@ -2011,13 +1980,12 @@ class BCOOTest(sptu.SparseTestCase):
       self._CompileAndCheckSparse(operator.matmul, args_maker_sp_de, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, n_batch=n_batch,
-          n_dense=n_dense)
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape, n_batch=layout.n_batch,
+          n_dense=layout.n_dense)
       for lhs_shape, rhs_shape in [[(3,), ()], [(3,), (1,)], [(3,), (3,)],
                                    [(3, 4), ()], [(3, 4), (4,)], [(3, 4), (3, 1)], [(3, 4), (3, 4)],
                                    [(3, 4, 5), (4, 5)], [(3, 4, 5), (3, 1, 1)], [(3, 4, 5), (1, 4, 1)]]
-      for n_batch in range(len(lhs_shape) + 1)
-      for n_dense in range(len(lhs_shape) + 1 - n_batch)
+      for layout in iter_sparse_layouts(lhs_shape)
     ],
     lhs_dtype=all_dtypes,
     rhs_dtype=all_dtypes,
@@ -2077,11 +2045,9 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual((mat * mat).todense(), mat.todense() * mat.todense())
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
        for shape in [(), (3,), (3, 5), (3, 5, 4)]
-       for n_batch in range(len(shape) + 1)
-       for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+       for layout in iter_sparse_layouts(shape)],
     dtype=all_dtypes,
   )
   def test_bcoo_broadcast_in_dim(self, shape, dtype, n_batch, n_dense):
@@ -2102,11 +2068,10 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertArraysEqual(xsp[:, None, :, None].todense(), x[:, None, :, None])
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, dimension=dimension)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, dimension=dimension)
        for shape in [ (3,), (3, 5), (3, 5, 4)]
-       for n_batch in range(len(shape) + 1)
-       for n_dense in range(len(shape) + 1 - n_batch)
-       for dimension in range(len(shape) - n_dense)  # Concatenation of dense dimensions not implemented.
+       for layout in iter_sparse_layouts(shape)
+       for dimension in range(len(shape) - layout.n_dense)  # Concatenation of dense dimensions not implemented.
     ],
     dtype=all_dtypes,
   )
@@ -2137,13 +2102,11 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertArraysEqual(Msp_dense, M)
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense, n_batch_out=n_batch_out,
-          n_dense_out=n_dense_out)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense,
+          n_batch_out=layout_out.n_batch, n_dense_out=layout_out.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-      for n_batch_out in range(len(shape) + 1)
-      for n_dense_out in range(len(shape) + 1 - n_batch_out)
+      for layout in iter_sparse_layouts(shape)
+      for layout_out in iter_sparse_layouts(shape)
     ],
     dtype=jtu.dtypes.integer,
   )
@@ -2248,7 +2211,7 @@ class BCSRTest(sptu.SparseTestCase):
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch)
       for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) - 1)
+      for n_batch in range(1, len(shape) - 1)
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
@@ -2635,11 +2598,9 @@ class SparseObjectTest(sptu.SparseTestCase):
 
 class SparseRandomTest(sptu.SparseTestCase):
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) + 1)
-      for n_dense in range(len(shape) + 1 - n_batch)
-    ],
+      for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating,
     indices_dtype=jtu.dtypes.integer,
   )
