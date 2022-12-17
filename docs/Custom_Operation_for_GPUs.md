@@ -8,11 +8,11 @@ This tutorial contains information from [Extending JAX with custom C++ and CUDA 
 # RMS Normalization
 
 For this tutorial, we are going to add the RMS normalization as a custom operation in JAX.
-Although the RMS normalization can be expressed with `jax.numpy` directly, we are using it as an example to show the process of creating a custom operation for GPUs.
-The CUDA code in `rms_norm_kernels.cu` for this operation has been borrowed from <https://github.com/NVIDIA/apex/blob/master/csrc/layer_norm_cuda_kernel.cu> and adapted to eliminate any dependency on PyTorch.
+It is to be noted that the RMS normalization can be expressed with [`jax.numpy`](https://jax.readthedocs.io/en/latest/jax.numpy.html) directly, however, we are using it as an example to show the process of creating a custom operation for GPUs.
+The CUDA code in `gpu_ops/rms_norm_kernels.cu` for this operation has been borrowed from <https://github.com/NVIDIA/apex/blob/master/csrc/layer_norm_cuda_kernel.cu> and adapted to eliminate any dependency on PyTorch.
 See [`gpu_ops` code listing](#gpu_ops-code-listing) for complete code listing of C++ and CUDA files.
 
-`rms_norm_kernels.cu` defines the following functions, which are declared with the XLA custom function signature.
+`gpu_ops/rms_norm_kernels.cu` defines the following functions, which are declared with the XLA custom function signature.
 These functions are responsible for launching RMS normalization kernels with the given `buffers` on the specified `stream`.
 
 ```cpp
