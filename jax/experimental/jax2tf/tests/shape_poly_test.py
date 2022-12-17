@@ -379,8 +379,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.CheckShapePolymorphism(
         f_jax,
         input_signature=[tf.TensorSpec([2, None]), tf.TensorSpec([2, 3])],
-        polymorphic_shapes="_, h",
-        expected_output_signature=tf.TensorSpec([2, 3]))
+        polymorphic_shapes="2, h",
+        expected_output_signature=(
+            # for native lowering we cannot refine the inferred shape of the
+            # output if the input is more specific than polymorphic_shapes.
+            tf.TensorSpec([2, 3]) if not config.jax2tf_default_experimental_native_lowering
+            else tf.TensorSpec([2, None])))
 
     self.CheckShapePolymorphism(
         f_jax,
@@ -824,8 +828,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
        tf_value_and_grad, autograph=False).get_concrete_function(
            tf.TensorSpec([3, 4, 8, 9]))
 
-    self.assertEqual((3, 4, 8, 8), tuple(tf_grad.output_shapes[0]))
-    self.assertEqual((3, 4, 8, 9), tuple(tf_grad.output_shapes[1]))
+    # for native lowering we cannot refine the inferred shape of the
+    # output if the input is more specific than polymorphic_shapes.
+    if config.jax2tf_default_experimental_native_lowering:
+      self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[0]))
+      self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[1]))
+    else:
+      self.assertEqual((3, 4, 8, 8), tuple(tf_grad.output_shapes[0]))
+      self.assertEqual((3, 4, 8, 9), tuple(tf_grad.output_shapes[1]))
 
   def test_gradients_pytree(self):
     """Shape polymorphism with gradients and pytrees for inputs and outputs."""
