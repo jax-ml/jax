@@ -23,19 +23,19 @@ from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
-from jax import core
-from jax.core import (ShapedArray, ConcreteArray)
 from jax import tree_util
 
 from jax._src import ad_util
+from jax._src import core
 from jax._src import dtypes
-import jax._src.lax.lax as lax
-import jax._src.lax.convolution as convolution
-import jax._src.lax.slicing as slicing
+from jax._src import util
+from jax._src.core import ShapedArray, ConcreteArray
+from jax._src.lax import lax
+from jax._src.lax import convolution
+from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.ufuncs import logaddexp
-import jax._src.util as util
 
 map = util.safe_map
 zip = util.safe_zip

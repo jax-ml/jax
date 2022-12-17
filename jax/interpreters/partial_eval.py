@@ -26,24 +26,27 @@ from weakref import ref
 
 import numpy as np
 
-from jax import core
 from jax import linear_util as lu
+from jax.config import config
 from jax._src import api_util
+from jax._src import core
 from jax._src import dtypes
 from jax._src import profiler
+from jax._src import source_info_util
 from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
+from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
+                           AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
+                           ConcreteArray, Var, DropVar,
+                           raise_to_shaped, Atom, JaxprEqn, Primitive,
+                           ShapedArray, DShapedArray, mapped_aval,
+                           unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
+                           InputType, OutputType, get_referent)
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
                                 tree_leaves)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache)
-from jax.core import (Trace, Tracer, Jaxpr, Literal, get_aval, AbstractValue,
-                      ClosedJaxpr, new_jaxpr_eqn, ConcreteArray, Var, DropVar,
-                      raise_to_shaped, Atom, JaxprEqn, Primitive, ShapedArray,
-                      DShapedArray, mapped_aval, unmapped_aval, DBIdx, InDBIdx,
-                      OutDBIdx, InputType, OutputType, get_referent)
-from jax._src import source_info_util
-from jax.config import config
+
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip

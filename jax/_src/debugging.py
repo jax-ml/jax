@@ -20,12 +20,10 @@ import weakref
 
 from typing import Any, Dict, Callable, Optional, Sequence, Set, Tuple, Union
 
-from jax import core
 from jax import tree_util
 from jax import lax
 from jax import linear_util as lu
 from jax.config import config
-from jax._src.sharding import Sharding, OpShardingSharding
 from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -33,12 +31,14 @@ from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax._src import ad_checkpoint
+from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import util
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.sharding import Sharding, OpShardingSharding
 import jax.numpy as jnp
 
 import numpy as np

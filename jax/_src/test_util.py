@@ -32,20 +32,21 @@ import numpy as np
 import numpy.random as npr
 
 import jax
-from jax._src import api
-from jax import core
-from jax._src import dtypes as _dtypes
 from jax import lax
+from jax.interpreters import mlir
+from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
+from jax._src import api
+from jax._src import core
+from jax._src import dispatch
+from jax._src import dtypes as _dtypes
 from jax._src.config import flags, bool_env, config
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.util import prod, unzip2
-from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src.lib import xla_bridge
-from jax._src import dispatch
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
-from jax.interpreters import mlir
+
 
 # This submodule includes private test utilities that are not exported to
 # jax.test_util. Functionality appearing here is for internal use only, and

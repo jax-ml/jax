@@ -28,9 +28,9 @@ import functools
 from typing import Optional, Tuple
 
 import jax
-from jax import core
-from jax import lax
 import jax.numpy as jnp
+from jax import lax
+from jax._src import core
 from jax._src.lax import linalg as lax_linalg
 
 

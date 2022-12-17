@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Type, Union
 
-from jax import core
-from jax.core import (lattice_join, Primitive, valid_jaxtype, raise_to_shaped,
-                      get_aval)
 from jax.tree_util import register_pytree_node
+
+from jax._src import core
+from jax._src.core import (lattice_join, Primitive, valid_jaxtype,
+                           raise_to_shaped, get_aval)
 from jax._src.util import safe_map
 
 from jax._src import traceback_util

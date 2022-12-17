@@ -23,9 +23,9 @@ import numpy as np
 
 import jax
 from jax.config import config
-from jax import core
-from jax.core import raise_to_shaped, Trace, Tracer
+from jax._src import core
 from jax._src import source_info_util
+from jax._src.core import raise_to_shaped, Trace, Tracer
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,

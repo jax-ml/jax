@@ -25,7 +25,7 @@ import warnings
 import numpy as np
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
@@ -38,8 +38,8 @@ from jax import tree_util
 from jax._src import source_info_util
 from jax._src.sharding import PmapSharding
 from jax._src.config import config
-from jax.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
-                      raise_to_shaped, abstract_token, canonicalize_shape)
+from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
+                           raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.abstract_arrays import array_types
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir

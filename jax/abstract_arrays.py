@@ -15,7 +15,7 @@
 # TODO(phawkins): fix users of these aliases and delete this file.
 
 from jax._src.abstract_arrays import array_types
-from jax.core import (
+from jax._src.core import (
   ShapedArray,
   raise_to_shaped,
 )

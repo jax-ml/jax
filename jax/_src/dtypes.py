@@ -25,7 +25,6 @@ from typing import cast, overload, Any, Dict, List, Literal, Optional, Set, Tupl
 
 import numpy as np
 
-import jax
 from jax._src.config import flags, config
 from jax._src.lib import xla_client
 from jax._src.typing import DType, DTypeLike, OpaqueDType
@@ -92,7 +91,8 @@ def to_complex_dtype(dtype: DTypeLike) -> DType:
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any) -> Union[DType, OpaqueDType]:
   """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
-  if jax.core.is_opaque_dtype(dtype):
+  from jax._src import core     # TODO(frostig): break this cycle
+  if core.is_opaque_dtype(dtype):
     if not allow_opaque_dtype:
       raise ValueError(f"Internal: canonicalize_dtype called onopaque dtype {dtype} "
                        "with allow_opaque_dtype=False")
@@ -450,13 +450,14 @@ def check_valid_dtype(dtype: DType) -> None:
 
 def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
+  from jax._src import core     # TODO(frostig): break this cycle
   if x is None:
     raise ValueError(f"Invalid argument to dtype: {x}.")
   elif isinstance(x, type) and x in python_scalar_dtypes:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]
-  elif jax.core.is_opaque_dtype(getattr(x, 'dtype', None)):
+  elif core.is_opaque_dtype(getattr(x, 'dtype', None)):
     dt = x.dtype
   else:
     dt = np.result_type(x)

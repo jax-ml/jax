@@ -36,10 +36,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple
 
 import jax
-from jax import core
 from jax import tree_util
 from jax.lib import xla_client as xc
 
+from jax._src import core
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util

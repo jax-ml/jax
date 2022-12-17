@@ -19,10 +19,10 @@ import numpy as np
 import functools
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
-from jax import core
 from jax._src import abstract_arrays
 from jax._src import api_util
 from jax._src import basearray
+from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.config import config

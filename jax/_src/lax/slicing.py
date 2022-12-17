@@ -20,8 +20,8 @@ import weakref
 import numpy as np
 
 import jax
-from jax import core
 from jax._src import ad_util
+from jax._src import core
 from jax._src import dtypes
 from jax.interpreters import ad
 from jax.interpreters import batching

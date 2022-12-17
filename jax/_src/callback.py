@@ -18,8 +18,8 @@ import functools
 
 from typing import Any, Callable, Sequence
 
-from jax import core
 from jax import tree_util
+from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src import dispatch

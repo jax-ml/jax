@@ -27,13 +27,16 @@ from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
 import numpy as np
 
 from jax.config import config
-from jax import core
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import ad
+
+from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
-from jax.core import (ConcreteArray, ShapedArray, str_eqn_compact)
-import jax._src.pretty_printer as pp
+from jax._src.core import ConcreteArray, ShapedArray, str_eqn_compact
 from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
                            partition_list)
 
@@ -45,8 +48,6 @@ from jax._src.typing import Shape
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import ad
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip

@@ -33,14 +33,14 @@ class Array(abc.ABC):
   {class}`DeviceArray`               ✅                      ❌
   {class}`ShardedDeviceArray`        ✅                      ❌
   {class}`GlobalDeviceArray`         ✅                      ❌
-  {class}`~jax.core.Tracer`          ✅                      ✅
+  {class}`~jax._src.core.Tracer`     ✅                      ✅
   {class}`~jax.experimental.Array`   ✅                      ✅
   ================================  ======================  =========================
 
   In other words, ``isinstance(x, jax.Array)`` will return True for any of these types,
   whereas annotations such as ``x : jax.Array`` will only type-check correctly for
-  instances of {class}`~jax.core.Tracer` and {class}`jax.experimental.Array`, and not
-  for the other soon-to-be-deprecated array types.
+  instances of {class}`~jax._src.core.Tracer` and {class}`jax.experimental.Array`, and
+  not for the other soon-to-be-deprecated array types.
   """
   # Note: no abstract methods are defined in this base class; the associated pyi
   # file contains the type signature for static type checking.

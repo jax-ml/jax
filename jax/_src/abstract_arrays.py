@@ -17,7 +17,7 @@ from functools import partial
 import numpy as np
 
 from jax._src import ad_util
-from jax import core
+from jax._src import core
 from jax._src import dtypes
 
 from jax._src import traceback_util

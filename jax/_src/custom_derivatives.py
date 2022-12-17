@@ -17,18 +17,18 @@ import inspect
 from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Set,
                     Any)
 
-from jax import core
 from jax import linear_util as lu
 from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                            treedef_is_leaf, treedef_tuple,
                            register_pytree_node_class, tree_leaves)
+from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
 from jax._src.api_util import argnums_partial, flatten_fun_nokwargs
-from jax.core import raise_to_shaped
+from jax._src.core import raise_to_shaped
 from jax.errors import UnexpectedTracerError
 from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe

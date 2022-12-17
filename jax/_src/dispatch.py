@@ -32,7 +32,6 @@ import warnings
 import numpy as np
 
 import jax
-from jax import core
 from jax import linear_util as lu
 from jax.errors import UnexpectedTracerError
 from jax.monitoring import record_event_duration_secs
@@ -43,6 +42,7 @@ import jax.interpreters.xla as xla
 from jax.interpreters import pxla
 import jax.interpreters.partial_eval as pe
 from jax._src import array
+from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import profiler

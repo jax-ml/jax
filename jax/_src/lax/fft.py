@@ -18,18 +18,18 @@ from typing import Union, Sequence
 
 import numpy as np
 
-from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
-from jax.core import Primitive, is_constant_shape
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax._src.util import prod
 from jax import lax
 from jax.interpreters import ad
 from jax.interpreters import batching
+from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
+from jax._src.core import Primitive, is_constant_shape
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
 from jax._src.numpy.util import _promote_dtypes_complex, _promote_dtypes_inexact
+from jax._src.util import prod
 
 __all__ = [
   "fft",

@@ -47,9 +47,7 @@ from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
 import numpy as np
 
 import jax
-from jax import core
 from jax import linear_util as lu
-from jax.core import ConcreteArray, ShapedArray
 from jax.errors import JAXTypeError
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -61,6 +59,7 @@ from jax.tree_util import tree_flatten, tree_map
 from jax._src import abstract_arrays
 from jax._src import api_util
 from jax._src import basearray
+from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
@@ -72,6 +71,7 @@ from jax._src import sharding as sharding_internal
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.config import flags
+from jax._src.core import ConcreteArray, ShapedArray
 from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -82,6 +82,7 @@ from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction)
+
 
 # Built in Python lists don't support weak refs but subclasses of lists do.
 class WeakRefList(list):

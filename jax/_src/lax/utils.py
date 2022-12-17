@@ -21,9 +21,9 @@ from functools import partial
 import operator
 from typing import Callable
 
-from jax import core
-from jax._src import dtypes
 from jax.interpreters import xla
+from jax._src import core
+from jax._src import dtypes
 from jax._src.util import safe_zip
 from jax._src.lib import xla_client
 

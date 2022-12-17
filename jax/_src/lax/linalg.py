@@ -32,7 +32,8 @@ from jax.interpreters import xla
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.util import prod
-from jax.core import Primitive, ShapedArray, raise_to_shaped, is_constant_shape
+from jax._src.core import (
+    Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
 from jax._src.lax.lax import (
     standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
     _input_dtype)

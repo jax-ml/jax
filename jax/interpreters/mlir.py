@@ -27,25 +27,27 @@ from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
                     Protocol, Sequence, Set, Tuple, Type, Union, FrozenSet)
 import warnings
 
-from jax import core
+import numpy as np
+
 from jax import linear_util as lu
+from jax.config import config
+from jax.interpreters import ad
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
 from jax._src import ad_util
+from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
-from jax._src.lib import mlir_api_version, xla_extension_version
+from jax._src import source_info_util
+from jax._src import util
+from jax._src.lib import (can_execute_with_token, mlir_api_version,
+                          xla_extension_version)
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import can_execute_with_token
-from jax._src.lib import xla_bridge as xb
-from jax._src.lib import xla_client as xc
-from jax._src import source_info_util
-import jax._src.util as util
-from jax.config import config
-import jax.interpreters.ad as ad
-import jax.interpreters.partial_eval as pe
-import jax.interpreters.xla as xla
-import numpy as np
+
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip

@@ -34,22 +34,21 @@ import numpy as np
 from contextlib import contextmanager, ExitStack
 
 import jax
-from jax import core
 from jax import linear_util as lu
 from jax import stages
-from jax.core import eval_jaxpr
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
                            treedef_is_leaf, treedef_children,
                            Partial, PyTreeDef, all_leaves, treedef_tuple)
 from jax._src import callback as jcb
+from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import array
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src.sharding import PmapSharding
+from jax._src.core import eval_jaxpr
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
@@ -61,6 +60,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
+from jax._src.sharding import PmapSharding
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix, _generate_key_paths
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
@@ -68,12 +68,12 @@ from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            wraps, HashableFunction, weakref_lru_cache)
 
 # Unused imports to be exported
+from jax._src.core import ShapedArray, raise_to_shaped
 from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      local_devices, process_index,
                                      process_count, host_id, host_ids,
                                      host_count, default_backend)
 from jax.ad_checkpoint import checkpoint_policies, checkpoint as new_checkpoint
-from jax.core import ShapedArray, raise_to_shaped
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
                                     custom_vjp, linear_call)

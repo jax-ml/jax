@@ -34,12 +34,12 @@ https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
 import functools
-
 from typing import Any, Sequence, Union
+
 import jax
-from jax import core
-from jax import lax
 import jax.numpy as jnp
+from jax import lax
+from jax._src import core
 
 
 @functools.partial(jax.jit, static_argnums=(1, 2))

@@ -23,15 +23,15 @@ import warnings
 
 import numpy as np
 
-from jax import core
 from jax import tree_util
-from jax.core import ShapedArray, AxisName, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
+from jax._src import core
 from jax._src import dtypes
+from jax._src.core import ShapedArray, AxisName, raise_to_shaped
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.numpy import lax_numpy

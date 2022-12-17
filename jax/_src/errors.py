@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from jax import core
+from jax._src import core
 
 class _JAXErrorMixin:
   """Mixin for JAX-specific errors"""

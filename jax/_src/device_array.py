@@ -23,13 +23,13 @@ import warnings
 import numpy as np
 
 import jax
-from jax import core
-from jax._src.config import config
+from jax._src import core
 from jax._src import abstract_arrays
 from jax._src import dtypes
 from jax._src import profiler
+from jax._src import util
+from jax._src.config import config
 from jax._src.lib import xla_client as xc
-import jax._src.util as util
 from jax._src.typing import Array
 
 ### device-persistent data

@@ -21,7 +21,7 @@ import warnings
 
 import numpy as np
 
-from jax import core
+from jax._src import core
 from jax._src import dtypes
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax import core
 from jax import numpy as jnp
+from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import array

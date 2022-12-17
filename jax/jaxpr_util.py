@@ -21,10 +21,10 @@ import json
 import types
 from typing import Any, Callable, DefaultDict, Dict, List, Optional, Tuple
 
-from jax import core
-from jax._src.lib import xla_client
+from jax._src import core
 from jax._src import util
 from jax._src import source_info_util
+from jax._src.lib import xla_client
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip

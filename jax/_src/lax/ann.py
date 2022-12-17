@@ -73,10 +73,11 @@ from functools import partial
 from typing import (Any, Tuple)
 
 import numpy as np
-from jax import core
+from jax._src import core
+from jax._src import ad_util
+from jax._src import dtypes
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
-from jax._src import ad_util, dtypes
 
 from jax.interpreters import ad, xla, batching
 
