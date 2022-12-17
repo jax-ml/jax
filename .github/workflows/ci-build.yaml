@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   lint_and_typecheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04-16core
     timeout-minutes: 5
     steps:
       - name: Cancel previous
@@ -46,7 +46,7 @@ jobs:
         include:
           - name-prefix: "with 3.8"
             python-version: "3.8"
-            os: ubuntu-latest
+            os: ubuntu-20.04-16core
             enable-x64: 0
             prng-upgrade: 0
             package-overrides: "none"
@@ -54,7 +54,7 @@ jobs:
             use-latest-jaxlib: false
           - name-prefix: "with numpy-dispatch"
             python-version: "3.9"
-            os: ubuntu-latest
+            os: ubuntu-20.04-16core
             enable-x64: 1
             prng-upgrade: 1
             # Test experimental NumPy dispatch
@@ -63,7 +63,7 @@ jobs:
             use-latest-jaxlib: false
           - name-prefix: "with 3.10"
             python-version: "3.10"
-            os: ubuntu-latest
+            os: ubuntu-20.04-16core
             enable-x64: 0
             prng-upgrade: 0
             package-overrides: "none"
@@ -123,7 +123,7 @@ jobs:
 
 
   documentation:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04-16core
     timeout-minutes: 5
     strategy:
       matrix:
