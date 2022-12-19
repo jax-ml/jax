@@ -74,6 +74,7 @@ from jax._src.config import flags
 from jax._src.core import ConcreteArray, ShapedArray
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -3563,7 +3564,7 @@ class MeshExecutable(stages.XlaExecutable):
             not self.unsafe_call.has_host_callbacks):
       return None
 
-    if not flags.FLAGS.experimental_cpp_pjit or xc._version < 111:
+    if not flags.FLAGS.experimental_cpp_pjit or xla_extension_version < 111:
       return None
 
     def aot_cache_miss(*args, **kwargs):
@@ -3583,13 +3584,7 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    if xc._version < 108:
-      def dummy():
-        pass
-      dummy.__name__ = self.unsafe_call.name
-      return xc._xla.pjit(dummy, aot_cache_miss, [])  # type: ignore
-    else:
-      return xc._xla.pjit(self.unsafe_call.name, aot_cache_miss, [])  # type: ignore
+    return xc._xla.pjit(self.unsafe_call.name, aot_cache_miss, [])  # type: ignore
 
 
 def _out_shardings_for_trivial(

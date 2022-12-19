@@ -99,7 +99,7 @@ def _single_device_array_from_buf(buf, committed):
                    committed=committed, _skip_checks=True)
 
 
-@use_cpp_class(xc.ArrayImpl if xc._version >= 99 else None)
+@use_cpp_class(xc.ArrayImpl)
 class ArrayImpl(basearray.Array):
   # TODO(yashkatariya): Add __slots__ here.
 
@@ -612,9 +612,8 @@ core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
 xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 api_util._shaped_abstractify_handlers[ArrayImpl] = op.attrgetter('aval')
-if xc._version >= 96:
-  # TODO(jakevdp) replace this with true inheritance at the C++ level.
-  basearray.Array.register(ArrayImpl)
+# TODO(jakevdp) replace this with true inheritance at the C++ level.
+basearray.Array.register(ArrayImpl)
 
 
 def _array_mlir_constant_handler(val, canonicalize_types=True):

@@ -511,7 +511,6 @@ def _cpp_jit_clear_cache(self):
 
 def _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
   use_fastpath = (
-      xc._version >= 96 and
       # This is if we have already executed this code-path (most-recent entry
       # has been reset to None). Thus, we do not support the fast-path.
       execute is not None and
@@ -2286,8 +2285,7 @@ def _cpp_pmap(
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(
-            isinstance(x, device_array.DeviceArray) or
-            xc._version >= 96 and isinstance(x, xc.ArrayImpl)
+            isinstance(x, device_array.DeviceArray) or isinstance(x, xc.ArrayImpl)
             for x in out_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
@@ -3453,8 +3451,4 @@ def live_arrays(platform=None):
 
   If platform is None, it is the default backend.
   """
-  if xc._version >= 102:
-    return xb.get_backend(platform).live_arrays()
-
-  raise RuntimeError(
-      "live_arrays() is not supported yet. Please update your jaxlib package.")
+  return xb.get_backend(platform).live_arrays()

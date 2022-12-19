@@ -52,6 +52,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, tree_structure, treedef_tuple)
 from jax._src.tree_util import prefix_errors
@@ -161,12 +162,9 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
 
     return outs, fastpath_data
 
-  if xc._version < 108:
-    cpp_pjit_f = xc._xla.pjit(fun, cache_miss, static_argnums)  # type: ignore
-  else:
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-        getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
-        cache_miss, static_argnums)
+  cpp_pjit_f = xc._xla.pjit(  # type: ignore
+      getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
+      cache_miss, static_argnums)
 
   return wraps(fun)(cpp_pjit_f)
 
@@ -479,7 +477,7 @@ def pjit(
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
-  if FLAGS.experimental_cpp_pjit and xc._version >= 111:
+  if FLAGS.experimental_cpp_pjit and xla_extension_version >= 111:
     wrapped = _cpp_pjit(fun, infer_params, static_argnums)
   else:
     wrapped = _python_pjit(fun, infer_params)

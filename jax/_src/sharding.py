@@ -33,7 +33,7 @@ Device = xc.Device
 Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
-@use_cpp_class(xc.Sharding if xc._version >= 94 else None)
+@use_cpp_class(xc.Sharding)
 class Sharding(metaclass=abc.ABCMeta):
   """Abstract ``Sharding`` interface which describes how a ``jax.Array`` is laid out
   across devices.
@@ -99,7 +99,7 @@ class Sharding(metaclass=abc.ABCMeta):
 
 # Shardings that inherit from XLACompatibleSharding should implement the
 # `_device_assignment` property and `_to_xla_op_sharding` method.
-@use_cpp_class(xc.XLACompatibleSharding if xc._version >= 94 else None)
+@use_cpp_class(xc.XLACompatibleSharding)
 class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
   """A `Sharding` that describes shardings expressible to XLA.
 
@@ -190,15 +190,6 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-def _enable_cpp_named_sharding():
-  if xc._version >= 107:
-    return xc.NamedSharding
-  elif xc._version >= 95:
-    return xc.MeshPspecSharding  # type: ignore
-  else:
-    return None
-
-
 class _UnconstrainedPartitionSingleton:
 
   def __str__(self):
@@ -235,7 +226,7 @@ class PartitionSpec(tuple):
     return (PartitionSpec, tuple(self))
 
 
-@use_cpp_class(_enable_cpp_named_sharding())
+@use_cpp_class(xc.NamedSharding)
 class NamedSharding(XLACompatibleSharding):
   r"""NamedSharding is a way to express ``Sharding``\s using named axes.
 
@@ -367,7 +358,7 @@ def _get_replicated_op_sharding():
   return proto
 
 
-@use_cpp_class(xc.SingleDeviceSharding if xc._version >= 95 else None)
+@use_cpp_class(xc.SingleDeviceSharding)
 class SingleDeviceSharding(XLACompatibleSharding):
   """A subclass of ``XLACompatibleSharding`` that places its data on a single device.
 
@@ -415,7 +406,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return _get_replicated_op_sharding()
 
 
-@use_cpp_class(xc.PmapSharding if xc._version >= 94 else None)
+@use_cpp_class(xc.PmapSharding)
 class PmapSharding(XLACompatibleSharding):
 
   @use_cpp_method
@@ -624,7 +615,7 @@ class DeviceIdSet:
             self._ids == other._ids)
 
 
-@use_cpp_class(xc.OpShardingSharding if xc._version >= 95 else None)
+@use_cpp_class(xc.OpShardingSharding)
 class OpShardingSharding(XLACompatibleSharding):
 
   @use_cpp_method
