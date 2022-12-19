@@ -379,7 +379,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
 
     with self.gpu_dense_conversion_warning_context(dtype):
-      data, indices, indptr = jit(fromdense)(M)
+      data, row, col = jit(fromdense)(M)
     self.assertArraysEqual(data, M_coo.data.astype(dtype))
     self.assertArraysEqual(row, M_coo.row.astype(index_dtype))
     self.assertArraysEqual(col, M_coo.col.astype(index_dtype))
