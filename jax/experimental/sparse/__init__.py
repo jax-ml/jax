@@ -282,4 +282,4 @@ from jax.experimental.sparse.transform import (
     SparseTracer as SparseTracer,
 )
 
-from jax.experimental.sparse import linalg
+from jax.experimental.sparse import linalg as linalg
