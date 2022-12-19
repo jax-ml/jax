@@ -16,7 +16,6 @@
 
 from functools import partial
 import itertools
-import unittest
 
 import numpy as np
 import scipy
@@ -30,7 +29,6 @@ from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
-from jax._src.lib import version as jaxlib_version
 from jax._src import test_util as jtu
 
 from jax.config import config
@@ -1317,7 +1315,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       calc_q=[False, True],
   )
   @jtu.skip_on_devices("gpu", "tpu")
-  @unittest.skipIf(jaxlib_version < (0, 3, 25), "Test requires jaxlib 0.3.25")
   def testHessenberg(self, shape, dtype, calc_q):
     rng = jtu.rand_default(self.rng())
     jsp_func = partial(jax.scipy.linalg.hessenberg, calc_q=calc_q)
@@ -1340,7 +1337,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       dtype=float_types + complex_types,
       lower=[False, True],
   )
-  @unittest.skipIf(jaxlib_version < (0, 3, 25), "Test requires jaxlib 0.3.25")
   @jtu.skip_on_devices("tpu")
   def testTridiagonal(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())

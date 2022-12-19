@@ -268,8 +268,6 @@ class XlaLowering(Lowering):
 
   def stablehlo(self) -> ir.Module:
     """Return a StableHLO representation of this computation."""
-    if xc.mlir_api_version < 37:
-      raise NotImplementedError("unsupported in older versions of jaxlib")
     module_str = xla_extension.mlir.mhlo_to_stablehlo(
         mlir.module_to_string(self.mhlo()))
     with mlir.make_ir_context():

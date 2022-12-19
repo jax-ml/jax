@@ -47,7 +47,6 @@ from jax._src.typing import Shape
 
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -64,10 +63,7 @@ XlaOp = xc.XlaOp
 XlaShape = xc.Shape
 XlaBuilder = xc.XlaBuilder
 XlaLoadedExecutable = Any
-if xla_extension_version >= 98:
-  XlaLoadedExecutable = xc.LoadedExecutable  # type:ignore
-else:
-  XlaLoadedExecutable = xc.Executable  # type:ignore
+XlaLoadedExecutable = xc.LoadedExecutable  # type:ignore
 
 # apply_primitive is defined in jax._src.dispatch.
 apply_primitive: Callable

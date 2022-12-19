@@ -62,9 +62,7 @@ from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
 from jax._src import prng
-from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax import linear_util as lu
@@ -411,8 +409,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
           str(w[-1].message))
 
   def test_jit_donate_argnums_invalidates_input(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     # We can't just use `lambda x: x` because JAX simplifies this away to an
     # empty XLA computation.
     move = self.jit(lambda x: x + x - x, donate_argnums=0)
@@ -422,8 +418,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(y, 1.)
 
   def test_jit_donate_argnums_static_argnums(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     jit_fun = self.jit(
         lambda a, b, c, d: ((a + b + c), (a + b + d)),
         static_argnums=(0, 1),
@@ -438,8 +432,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(d)
 
   def test_jit_donate_argnums_weak_type(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     # input has weak-type, output does not have weak-type
     move = self.jit(lambda x: x.astype(int), donate_argnums=0)
     x = jnp.broadcast_to(2, (3,))
@@ -447,8 +439,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   def test_jnp_array_copy(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     # https://github.com/google/jax/issues/3412
 
     @partial(self.jit, donate_argnums=(0,))
@@ -1028,8 +1018,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(f_exe(1., 1.), 1.)
 
   def test_jit_lower_donate_argnums_available(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     def f(*args):
       x, *_ = args
       return x + 4.
@@ -1052,24 +1040,21 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
     self.assertIsInstance(f.as_text(dialect='mhlo'), str)
-    if mlir_api_version >= 37:
-      self.assertIsInstance(f.as_text(dialect="stablehlo"), str)
+    self.assertIsInstance(f.as_text(dialect="stablehlo"), str)
 
   def test_jit_lower_compiler_ir(self):
     f = self.jit(lambda x: x + 4).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
-    if mlir_api_version >= 37:
-      self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
+    self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_lower_trivial_compiler_ir(self):
     f = self.jit(lambda x: x).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
-    if mlir_api_version >= 37:
-      self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
+    self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_lower_no_prunning(self):
     compiled = self.jit(lambda x, y: x + y).lower(1., 2.).compile()
@@ -1155,7 +1140,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       python_should_be_executing = False
       self.assertEqual(x, f(x))
 
-  @unittest.skipIf(xla_extension_version < 99, "C++ jax.Array is not available")
   def test_hitting_cpp_path(self):
     if not self.use_cpp_jit:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
@@ -1205,7 +1189,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(count[0], 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
 
-  @unittest.skipIf(xla_extension_version < 99, "C++ jax.Array is not available")
   def test_cache_key_defaults(self):
     # https://github.com/google/jax/discussions/11875
     if not self.use_cpp_jit:
@@ -2628,10 +2611,9 @@ class APITest(jtu.JaxTestCase):
     mhlo = str(api.jit(e).lower(2.).compiler_ir(dialect="mhlo"))
     self.assertIn('mhlo.cosine', mhlo)
     self.assertIn('mhlo.sine', mhlo)
-    if mlir_api_version >= 37:
-      stablehlo = str(api.jit(e).lower(2.).compiler_ir(dialect="stablehlo"))
-      self.assertIn("stablehlo.cosine", stablehlo)
-      self.assertIn("stablehlo.sine", stablehlo)
+    stablehlo = str(api.jit(e).lower(2.).compiler_ir(dialect="stablehlo"))
+    self.assertIn("stablehlo.cosine", stablehlo)
+    self.assertIn("stablehlo.sine", stablehlo)
 
   def test_staging_out_multi_replica(self):
     def f(x):
@@ -2702,8 +2684,6 @@ class APITest(jtu.JaxTestCase):
 
   @jtu.ignore_warning(message="Some donated buffers were not usable")
   def test_xla_computation_donate_argnums(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
 
   def test_xla_computation_lower_fun_axis_env(self):
@@ -9322,8 +9302,6 @@ class CustomApiTest(jtu.JaxTestCase):
 class BufferDonationTest(jtu.BufferDonationTestCase):
 
   def test_pmap_donate_argnums_invalidates_input(self):
-    if jtu.device_under_test() == "cpu" and xla_extension_version < 102:
-      raise unittest.SkipTest("CPU buffer donation requires jaxlib > 0.3.22")
     move = api.pmap(lambda x: x + x - x, donate_argnums=0)
     n = jax.local_device_count()
     x = api.pmap(lambda x: x)(jnp.ones([n]))
