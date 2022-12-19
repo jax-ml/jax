@@ -337,6 +337,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
     lower=[True, False],
   )
+  @jtu.skip_on_devices("rocm")
   def testEighIdentity(self, n, dtype, lower):
     tol = 1e-3
     uplo = "L" if lower else "U"
@@ -1337,7 +1338,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       dtype=float_types + complex_types,
       lower=[False, True],
   )
-  @jtu.skip_on_devices("tpu")
+  @jtu.skip_on_devices("tpu","rocm")
   def testTridiagonal(self, shape, dtype, lower):
     rng = jtu.rand_default(self.rng())
     def jax_func(a):
@@ -1594,6 +1595,7 @@ class ScipyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=[(), (3,), (1, 4), (1, 5, 9), (11, 0, 13)],
     dtype=float_types + complex_types + int_types)
+  @jtu.skip_on_devices("rocm")
   def testToeplitzSymmetricConstruction(self, shape, dtype):
     if (dtype in [np.float64, np.complex128]
         and not config.x64_enabled):
