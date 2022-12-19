@@ -74,12 +74,14 @@ COMPATIBLE_SHAPE_PAIRS = [
   [(2,), (2,)]
 ]
 
-class BcooDotGeneralProperties(NamedTuple):
+
+class BatchedDotGeneralProperties(NamedTuple):
   lhs_shape: Tuple[int, ...]
   rhs_shape: Tuple[int, ...]
   n_batch: int
   n_dense: int
   dimension_numbers: DotDimensionNumbers
+
 
 def _iter_subsets(s: Sequence) -> Iterable[Tuple]:
   """Return an iterator over all subsets of a sequence s"""
@@ -99,12 +101,19 @@ def iter_sparse_layouts(shape: Sequence[int], min_n_batch=0) -> Iterator[SparseL
       yield SparseLayout(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense)
 
 
-def _generate_bcoo_dot_general_properties(shapes=((5,), (2, 3), (2, 3, 4), (2, 3, 4, 4))) -> BcooDotGeneralProperties:
+def _generate_batched_dot_general_properties(
+    shapes=((5,), (2, 3), (2, 3, 4), (2, 3, 4, 4)),
+    sparse_format='bcoo') -> BatchedDotGeneralProperties:
   """Generator of properties for bcoo_dot_general tests."""
   rng = random.Random(0)
 
+  if sparse_format not in ['bcoo', 'bcsr']:
+    raise ValueError(f"Sparse format {sparse_format} not supported.")
+
   for shape in shapes:
     for layout in iter_sparse_layouts(shape):
+      if sparse_format == "bcsr" and layout.n_sparse != 2:
+        continue
       subsets = split_list(range(len(shape)), [layout.n_batch, layout.n_sparse])
       for batch_dims in _iter_subsets(range(layout.n_batch)):
         for contracting_dims in _iter_subsets(remaining(range(layout.n_batch + layout.n_sparse), batch_dims)):
@@ -113,7 +122,7 @@ def _generate_bcoo_dot_general_properties(shapes=((5,), (2, 3), (2, 3, 4), (2, 3
           rhs_permute = rng.sample(range(len(shape)), len(shape))
           lhs_permute = list(itertools.chain.from_iterable(
             rng.sample(subset, len(subset)) for subset in subsets))
-          yield BcooDotGeneralProperties(
+          yield BatchedDotGeneralProperties(
             lhs_shape=tuple(shape[p] for p in lhs_permute),
             rhs_shape=tuple(shape[p] for p in rhs_permute),
             n_batch=layout.n_batch,
@@ -140,6 +149,7 @@ def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
     M.flat[indices] = 0
     return post(M)
   return _rand_sparse
+
 
 def _is_required_cuda_version_satisfied(cuda_version):
   version = xla_bridge.get_backend().platform_version
@@ -995,11 +1005,11 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertAllClose(M3, M4)
 
   @jtu.sample_product(
-    props=_generate_bcoo_dot_general_properties(),
+    props=_generate_batched_dot_general_properties(),
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_bcoo_dot_general(self, dtype: np.dtype, props: BcooDotGeneralProperties):
+  def test_bcoo_dot_general(self, dtype: np.dtype, props: BatchedDotGeneralProperties):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
     args_maker = lambda: [sprng(props.lhs_shape, dtype),
@@ -1204,11 +1214,11 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertArraysEqual(vecmat_expected, vecmat_unsorted_fallback)
 
   @jtu.sample_product(
-    props=_generate_bcoo_dot_general_properties(),
+    props=_generate_batched_dot_general_properties(),
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_bcoo_rdot_general(self, dtype: np.dtype, props: BcooDotGeneralProperties):
+  def test_bcoo_rdot_general(self, dtype: np.dtype, props: BatchedDotGeneralProperties):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
     args_maker = lambda: [rng(props.rhs_shape, dtype),
@@ -2266,6 +2276,27 @@ class BCSRTest(sptu.SparseTestCase):
     args_maker_bcsr_extract = lambda: [indices, indptr, M]
     self._CompileAndCheck(sparse.bcsr_extract, args_maker_bcsr_extract)
 
+  @jtu.sample_product(
+    props=_generate_batched_dot_general_properties(
+        shapes=((2, 3), (2, 3, 4), (2, 3, 4, 4)), sparse_format='bcsr'),
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  @jax.default_matmul_precision("float32")
+  def test_bcsr_dot_general(self, dtype: np.dtype, props: BatchedDotGeneralProperties):
+    rng = jtu.rand_default(self.rng())
+    sprng = sptu.rand_bcsr(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
+    args_maker = lambda: [sprng(props.lhs_shape, dtype),
+                          rng(props.rhs_shape, dtype)]
+    dense_fun = partial(lax.dot_general,
+                        dimension_numbers=props.dimension_numbers)
+    sparse_fun = partial(sparse.bcsr_dot_general,
+                         dimension_numbers=props.dimension_numbers)
+
+    tol = {np.float64: 1E-12, np.complex128: 1E-12,
+           np.float32: 1E-5, np.complex64: 1E-5}
+
+    self._CheckAgainstDense(dense_fun, sparse_fun, args_maker, tol=tol)
+    self._CompileAndCheckSparse(sparse_fun, args_maker, atol=tol, rtol=tol)
 
 class SparseGradTest(sptu.SparseTestCase):
   def test_sparse_grad(self):

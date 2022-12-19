@@ -223,6 +223,8 @@ from jax.experimental.sparse.bcoo import (
 )
 
 from jax.experimental.sparse.bcsr import (
+    bcsr_dot_general as bcsr_dot_general,
+    bcsr_dot_general_p as bcsr_dot_general_p,
     bcsr_extract as bcsr_extract,
     bcsr_extract_p as bcsr_extract_p,
     bcsr_fromdense as bcsr_fromdense,
