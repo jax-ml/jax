@@ -72,7 +72,6 @@ from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.config import flags
 from jax._src.core import ConcreteArray, ShapedArray
-from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
@@ -2094,36 +2093,21 @@ class ExecuteReplicated:
     self.kept_var_idx = kept_var_idx
 
   def _call_with_tokens(self, input_bufs):
-    # TODO(sharadmv): simplify this logic when minimum jaxlib version is
-    # bumped
     if self.ordered_effects:
       device, = self._local_devices
       tokens = [list(dispatch.runtime_tokens.get_token(eff, device))
                 for eff in self.ordered_effects]
       input_bufs = [*tokens, *input_bufs]
-    num_output_tokens = len(self.ordered_effects) + (
-        not can_execute_with_token and self.has_unordered_effects)
-    if can_execute_with_token:
-      out_bufs, sharded_token = (
-          self.xla_executable.execute_sharded_on_local_devices_with_tokens(
-            input_bufs))
-      token_bufs, out_bufs = util.split_list(out_bufs, [num_output_tokens])
-      for i, device in enumerate(self._local_devices):
-        dispatch.runtime_tokens.set_output_runtime_token(
-            device, sharded_token.get_token(i))
-      for eff, token_buf in zip(self.ordered_effects, token_bufs):
-        dispatch.runtime_tokens.update_token(eff, token_buf)
-    else:
-      out_bufs = self.xla_executable.execute_sharded_on_local_devices(
-          input_bufs)
-      token_bufs, out_bufs = util.split_list(out_bufs, [num_output_tokens])
-      if self.has_unordered_effects:
-        unordered_token_buf, *token_bufs = token_bufs
-        for i, device in enumerate(self._local_devices):
-          token = (unordered_token_buf[i],)
-          dispatch.runtime_tokens.set_output_token(device, token)
-      for eff, token_buf in zip(self.ordered_effects, token_bufs):
-        dispatch.runtime_tokens.update_token(eff, token_buf)
+    num_output_tokens = len(self.ordered_effects)
+    out_bufs, sharded_token = (
+        self.xla_executable.execute_sharded_on_local_devices_with_tokens(
+          input_bufs))
+    token_bufs, out_bufs = util.split_list(out_bufs, [num_output_tokens])
+    for i, device in enumerate(self._local_devices):
+      dispatch.runtime_tokens.set_output_runtime_token(
+          device, sharded_token.get_token(i))
+    for eff, token_buf in zip(self.ordered_effects, token_bufs):
+      dispatch.runtime_tokens.update_token(eff, token_buf)
     return out_bufs
 
   @profiler.annotate_function

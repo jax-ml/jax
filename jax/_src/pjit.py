@@ -52,7 +52,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            treedef_is_leaf, tree_structure, treedef_tuple)
 from jax._src.tree_util import prefix_errors
@@ -1905,25 +1904,14 @@ def _get_partition_spec(ppspec: Sequence[ParsedPartitionSpec]) -> Sequence[Parti
 def _get_op_sharding_from_executable(
     executable) -> Tuple[Sequence[xc.OpSharding], Sequence[xc.OpSharding]]:
   in_op_shardings: List[xc.OpSharding] = []
-  if xla_extension_version >= 100:
-    parameter_shardings_from_xla = executable.get_parameter_shardings()
-    if parameter_shardings_from_xla is not None:
-      in_op_shardings = parameter_shardings_from_xla
-  else:
-    parameter_shardings_from_xla = executable.hlo_modules()[0].spmd_parameters_shardings
-    if parameter_shardings_from_xla is not None:
-      for s in parameter_shardings_from_xla:
-        in_op_shardings.extend(_get_op_sharding(s))
+  parameter_shardings_from_xla = executable.get_parameter_shardings()
+  if parameter_shardings_from_xla is not None:
+    in_op_shardings = parameter_shardings_from_xla
 
   out_op_shardings: List[xc.OpSharding] = []
-  if xla_extension_version >= 100:
-    output_shardings_from_xla = executable.get_output_shardings()
-    if output_shardings_from_xla is not None:
-      out_op_shardings = output_shardings_from_xla
-  else:
-    output_shardings_from_xla = executable.hlo_modules()[0].spmd_output_sharding
-    if output_shardings_from_xla is not None:
-      out_op_shardings = _get_op_sharding(output_shardings_from_xla)  # type: ignore
+  output_shardings_from_xla = executable.get_output_shardings()
+  if output_shardings_from_xla is not None:
+    out_op_shardings = output_shardings_from_xla
 
   return in_op_shardings, out_op_shardings
 

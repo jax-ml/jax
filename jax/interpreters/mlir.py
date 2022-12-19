@@ -40,8 +40,7 @@ from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
-from jax._src.lib import (can_execute_with_token, mlir_api_version,
-                          xla_extension_version)
+from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -143,7 +142,7 @@ def _array_ir_types(aval: Union[core.ShapedArray, core.DShapedArray]
   return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
-  dyn_size = ir.ShapedType.get_dynamic_size() if mlir_api_version >= 35 else -1
+  dyn_size = ir.ShapedType.get_dynamic_size()
   shape = [d if type(d) is int else dyn_size for d in aval.shape]
   return (ir.RankedTensorType.get(shape, dtype_to_ir_type(aval.dtype)),)
 
@@ -335,8 +334,7 @@ def make_ir_context() -> ir.Context:
   context = ir.Context()
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
-  if mlir_api_version >= 37:
-    dialects.stablehlo.register_dialect(context)
+  dialects.stablehlo.register_dialect(context)
   return context
 
 
@@ -620,10 +618,7 @@ class LoweringResult(NamedTuple):
   host_callbacks: List[Any]
 
 
-if xla_extension_version >= 102:
-  _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
-else:
-  _platforms_with_donation = ["cuda", "rocm", "tpu"]
+_platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
 def lower_jaxpr_to_module(
@@ -711,8 +706,7 @@ def lower_jaxpr_to_module(
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
         replace_tokens_with_dummy=True,
-        num_output_tokens=(
-          1 if (unordered_effects and not can_execute_with_token) else 0),
+        num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases)
@@ -1823,13 +1817,8 @@ def emit_python_callback(
     ]
     operands = [token, *operands]
     result_types = [token_type()[0], *result_types]
-    if xla_extension_version >= 105:
-      operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
-      result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
-    else:
-      # Token layouts aren't converted correctly into HLO in older XLA versions.
-      operand_mlir_layouts = None  # type: ignore
-      result_mlir_layouts = None  # type: ignore
+    operand_mlir_layouts = [_layout_to_mlir_layout(None), *operand_mlir_layouts]
+    result_mlir_layouts = [_layout_to_mlir_layout(None), *result_mlir_layouts]
   callback_descriptor, keepalive = (
       backend.get_emit_python_callback_descriptor(_wrapped_callback,
                                                   operand_shapes,

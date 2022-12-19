@@ -105,15 +105,7 @@ import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 # branch on the Jax github.
 xla_extension_version = getattr(xla_client, '_version', 0)
 
-if version > (0, 3, 25):
-  import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
-
-can_execute_with_token = (
-    xla_extension_version >= 89 and hasattr(
-        xla_client.LoadedExecutable  # type: ignore
-        if xla_extension_version >= 98 else
-        xla_client.Executable,  # type: ignore
-        'execute_with_token'))
+import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version

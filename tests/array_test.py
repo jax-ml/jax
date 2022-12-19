@@ -35,7 +35,6 @@ from jax.experimental.serialize_executable import (
 from jax._src import sharding
 from jax._src import array
 from jax._src import prng
-from jax._src.lib import xla_extension_version
 from jax.experimental import maps
 
 from jax.config import config
@@ -612,9 +611,6 @@ class JaxArrayTest(jtu.JaxTestCase):
   # defragment API
   @jtu.skip_on_devices('cpu')  # defragment not implemented for TFRT CPU
   def test_defragment(self):
-    if xc._version < 105:
-      self.skipTest('Test needs jaxlib 0.3.25 or greater to pass')
-
     # Create a few arrays
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape = (8, 2)
@@ -913,8 +909,6 @@ class RngShardingTest(jtu.JaxTestCase):
     y_ref1 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref1)
 
-  @unittest.skipIf(xla_extension_version < 106,
-                   'Pjit pickling requires newer jaxlib.')
   def test_pickle_pjit_lower(self):
     example_exe = jax.jit(lambda x: x * x).lower(
         jax.core.ShapedArray(

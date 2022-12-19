@@ -18,7 +18,6 @@ import functools
 from functools import partial
 import itertools
 import operator
-import unittest
 from unittest import SkipTest
 
 from absl.testing import absltest
@@ -33,7 +32,6 @@ from jax import numpy as jnp
 
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -492,7 +490,6 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     name=[rec.name for rec in JAX_OPERATOR_OVERLOADS if rec.nargs == 2],
     othertype=[dict, list, tuple, set],
   )
-  @unittest.skipIf(xla_extension_version < 99, "C++ jax.Array is not available")
   def testOperatorOverloadErrors(self, name, othertype):
     # Test that binary operators with builtin collections raise a TypeError
     # and report the types in the correct order.
@@ -512,7 +509,6 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     name=[rec.name for rec in JAX_RIGHT_OPERATOR_OVERLOADS if rec.nargs == 2],
     othertype=[dict, list, tuple, set],
   )
-  @unittest.skipIf(xla_extension_version < 99, "C++ jax.Array is not available")
   def testRightOperatorOverloadErrors(self, name, othertype):
     # Test that binary operators with builtin collections raise a TypeError
     # and report the types in the correct order.

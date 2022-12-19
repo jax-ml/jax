@@ -53,7 +53,6 @@ from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
-from jax._src.lib import can_execute_with_token
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
@@ -858,16 +857,10 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
   tokens_flat = flatten(tokens)
   input_bufs = [*tokens_flat, *input_bufs]
   def _remove_tokens(output_bufs, runtime_token):
-    # TODO(sharadmv): simplify when minimum jaxlib version is bumped
-    num_output_tokens = len(ordered_effects) + (not can_execute_with_token and
-        has_unordered_effects)
+    num_output_tokens = len(ordered_effects)
     token_bufs, output_bufs = util.split_list(output_bufs, [num_output_tokens])
     if has_unordered_effects or has_host_callbacks:
-      if can_execute_with_token:
-        runtime_tokens.set_output_runtime_token(device, runtime_token)
-      else:
-        output_token_buf, *token_bufs = token_bufs
-        runtime_tokens.set_output_token(device, output_token_buf)
+      runtime_tokens.set_output_runtime_token(device, runtime_token)
     for eff, token_buf in zip(ordered_effects, token_bufs):
       runtime_tokens.update_token(eff, token_buf)
     return output_bufs
@@ -888,11 +881,7 @@ def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
     in_flat, token_handler = _add_tokens(
         has_unordered_effects, ordered_effects, has_host_callbacks, device,
         in_flat)
-    if can_execute_with_token:
-      out_flat, runtime_token = compiled.execute_with_token(in_flat)
-    else:
-      out_flat = compiled.execute(in_flat)
-      runtime_token = None
+    out_flat, runtime_token = compiled.execute_with_token(in_flat)
   else:
     out_flat = compiled.execute(in_flat)
   check_special(name, out_flat)
@@ -1044,10 +1033,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   # (avoiding the overhead of back and forth conversions)
   serialized_computation: Union[str, bytes, ir.Module]
   if getattr(backend, "needs_str_ir", True):
-    if xc.mlir_api_version >= 34:
-      serialized_computation = mlir.module_to_bytecode(computation)
-    else:
-      serialized_computation = mlir.module_to_string(computation)
+    serialized_computation = mlir.module_to_bytecode(computation)
   else:
     serialized_computation = computation
 
@@ -1155,8 +1141,6 @@ def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):
   if ordered_effects or has_unordered_effects:
     num_output_tokens = len(ordered_effects)
     # TODO(sharadmv): remove check when minimum jaxlib version is bumped
-    if not can_execute_with_token:
-      num_output_tokens += has_unordered_effects
     buffer_counts = ([1] * num_output_tokens) + buffer_counts
   return buffer_counts
 

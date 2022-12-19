@@ -38,7 +38,6 @@ from jax._src.numpy import lax_numpy
 import jax._src.util as util
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis
 from jax._src.lib.mlir import ir
-from jax._src.lib import mlir_api_version
 from jax._src.lib.mlir.dialects import hlo
 
 unsafe_map, map = map, safe_map  # type: ignore
@@ -846,7 +845,7 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
 
   axis_context = ctx.module_context.axis_context
   is_manual = isinstance(axis_context, mlir.SPMDAxisContext) and axis_context.manual_axes
-  if is_manual and mlir_api_version >= 35:
+  if is_manual:
     channel = ctx.module_context.new_channel()
     other_args = dict(
         channel_handle=hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE))
@@ -943,7 +942,6 @@ def _all_to_all_lowering(ctx, x, *,
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
-    operand = [x] if mlir_api_version >= 38 else x
     is_spmd = isinstance(ctx.module_context.axis_context,
                          (mlir.SPMDAxisContext, mlir.ShardingContext))
     if is_spmd:
@@ -957,7 +955,7 @@ def _all_to_all_lowering(ctx, x, *,
     else:
       other_args = {}
     return hlo.AllToAllOp(
-        operand,
+        [x],
         split_dimension=mlir.i64_attr(split_axis),
         concat_dimension=mlir.i64_attr(concat_axis),
         split_count=mlir.i64_attr(split_count),
@@ -1538,11 +1536,7 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
   is_spmd = isinstance(axis_context,
                        (mlir.SPMDAxisContext, mlir.ShardingContext))
   if is_spmd:
-    if mlir_api_version >= 39:
-      device_id = hlo.PartitionIdOp()
-    else:
-      device_id = hlo.PartitionIdOp(
-          ir.RankedTensorType.get([], ir.IntegerType.get_unsigned(32)))
+    device_id = hlo.PartitionIdOp()
   else:
     device_id = hlo.ReplicaIdOp()
   unsigned_index = hlo.RemOp(hlo.DivOp(device_id, div), mod)

@@ -43,7 +43,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
 from jax._src.lib import lapack
 from jax._src.lib import mlir_api_version
-from jax._src.lib import version as jaxlib_version
 
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
@@ -442,7 +441,7 @@ def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
       select_aval,
       result, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)]
 
-if xla_client.mlir_api_version < 41:
+if mlir_api_version < 41:
   mlir.register_lowering(
       cholesky_p,
       partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
@@ -498,7 +497,7 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
 
-  if xla_client.mlir_api_version < 41:
+  if mlir_api_version < 41:
     w, vl, vr, info = lapack.geev_mhlo(operand_aval.dtype, operand,
                                        jobvl=compute_left_eigenvectors,
                                        jobvr=compute_right_eigenvectors)
@@ -754,7 +753,7 @@ eigh_p.def_abstract_eval(_eigh_abstract_eval)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
-if xla_client.mlir_api_version < 41:
+if mlir_api_version < 41:
   mlir.register_lowering(
       eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
       platform='cpu')
@@ -898,16 +897,10 @@ def _triangular_solve_lowering(
     transpose = "NO_TRANSPOSE"
   else:
     transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
-  if mlir_api_version < 36:
-    return hlo.TriangularSolveOp(
-        mlir.aval_to_ir_type(out_aval), a, b, ir.BoolAttr.get(left_side),
-        ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-        hlo.TransposeAttr.get(transpose)).results
-  else:
-    return hlo.TriangularSolveOp(
-        a, b, ir.BoolAttr.get(left_side),
-        ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
-        hlo.TransposeAttr.get(transpose)).results
+  return hlo.TriangularSolveOp(
+      a, b, ir.BoolAttr.get(left_side),
+      ir.BoolAttr.get(lower), ir.BoolAttr.get(unit_diagonal),
+      hlo.TransposeAttr.get(transpose)).results
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_lowering)
 
@@ -921,7 +914,7 @@ def _triangular_solve_cpu_lower(
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    if xla_client.mlir_api_version < 41:
+    if mlir_api_version < 41:
       return [lapack.trsm_mhlo(
         a_aval.dtype, alpha,
         a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
@@ -936,16 +929,10 @@ def _triangular_solve_cpu_lower(
       transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
     else:
       transpose = "NO_TRANSPOSE"
-    if mlir_api_version < 36:
-      return hlo.TriangularSolveOp(b.type, a, b, ir.BoolAttr.get(left_side),
-                                   ir.BoolAttr.get(lower),
-                                   ir.BoolAttr.get(unit_diagonal),
-                                   hlo.TransposeAttr.get(transpose)).results
-    else:
-      return hlo.TriangularSolveOp(a, b, ir.BoolAttr.get(left_side),
-                                   ir.BoolAttr.get(lower),
-                                   ir.BoolAttr.get(unit_diagonal),
-                                   hlo.TransposeAttr.get(transpose)).results
+    return hlo.TriangularSolveOp(a, b, ir.BoolAttr.get(left_side),
+                                  ir.BoolAttr.get(lower),
+                                  ir.BoolAttr.get(unit_diagonal),
+                                  hlo.TransposeAttr.get(transpose)).results
 
 mlir.register_lowering(triangular_solve_p, _triangular_solve_cpu_lower,
                        platform='cpu')
@@ -1238,7 +1225,7 @@ mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-if xla_client.mlir_api_version < 41:
+if mlir_api_version < 41:
   mlir.register_lowering(lu_p,
                          partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
                          platform='cpu')
@@ -1384,7 +1371,7 @@ geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
 batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
 xla.register_translation(geqrf_p, _geqrf_translation_rule)
 
-if xla_client.mlir_api_version < 41:
+if mlir_api_version < 41:
   mlir.register_lowering(
       geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_mhlo, None),
       platform='cpu')
@@ -1471,7 +1458,7 @@ householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
 batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
 xla.register_translation(householder_product_p, _householder_product_translation_rule)
 
-if xla_client.mlir_api_version < 41:
+if mlir_api_version < 41:
   mlir.register_lowering(
       householder_product_p,
       partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_mhlo),
@@ -1753,7 +1740,7 @@ svd_p.def_abstract_eval(_svd_abstract_eval)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
 batching.primitive_batchers[svd_p] = _svd_batching_rule
 
-if xla_client.mlir_api_version < 41:
+if mlir_api_version < 41:
   mlir.register_lowering(
       svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
       platform='cpu')
@@ -1920,7 +1907,7 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
 
-  if xla_client.mlir_api_version < 41:
+  if mlir_api_version < 41:
     gees_result = lapack.gees_mhlo(operand_aval.dtype, operand,
                                    jobvs=compute_schur_vectors,
                                    sort=sort_eig_vals,
@@ -2034,13 +2021,9 @@ def _hessenberg_batching_rule(batched_args, batch_dims):
 batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
 
 def _hessenberg_cpu_hlo(ctx, a):
-  # TODO(phawkins): remove this test after jaxlib 0.3.25 is the minimum.
-  if not hasattr(lapack, "gehrd_mhlo") and not hasattr(lapack, "gehrd_hlo"):
-    raise RuntimeError("Hessenberg reduction on CPU requires jaxlib 0.3.25 or "
-                       "newer")
   a_aval, = ctx.avals_in
   batch_dims = a_aval.shape[:-2]
-  if xla_client.mlir_api_version < 41:
+  if mlir_api_version < 41:
     a, taus, info = lapack.gehrd_mhlo(a_aval.dtype, a)
   else:
     a, taus, info = lapack.gehrd_hlo(a_aval.dtype, a)
@@ -2143,21 +2126,20 @@ def _tridiagonal_cpu_gpu_hlo(sytrd_impl, ctx, a, *, lower):
   a, d, e, taus, info = sytrd_impl(a_aval.dtype, a, lower=lower)
   return a, d, e, taus, info
 
-if jaxlib_version >= (0, 3, 25):
-  if xla_client.mlir_api_version < 41:
-    mlir.register_lowering(
-        tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_mhlo),
-        platform='cpu')
-  else:
-    mlir.register_lowering(
-        tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo),
-        platform='cpu')
+if mlir_api_version < 41:
   mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd),
-      platform='cuda')
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_mhlo),
+      platform='cpu')
+else:
   mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.rocm_sytrd),
-      platform='rocm')
+      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo),
+      platform='cpu')
+mlir.register_lowering(
+    tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd),
+    platform='cuda')
+mlir.register_lowering(
+    tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.rocm_sytrd),
+    platform='rocm')
 
 # Utilities
 

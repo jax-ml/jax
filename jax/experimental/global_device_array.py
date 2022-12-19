@@ -28,7 +28,6 @@ from jax._src.config import config
 from jax.interpreters import pxla, xla, mlir
 from jax._src.util import prod, safe_zip
 from jax._src.api import device_put
-from jax._src.lib import xla_extension_version
 from jax.interpreters.pxla import PartitionSpec
 
 Shape = Tuple[int, ...]
@@ -471,11 +470,7 @@ class GlobalDeviceArray:
 
   def delete(self):
     if self._sharded_buffer:
-      if xla_extension_version >= 101:
-        self._sharded_buffer.delete()
-      else:
-        for b in self._sharded_buffer.get_device_buffers():
-          b.delete()
+      self._sharded_buffer.delete()
       self._sharded_buffer = None
     if self._maybe_device_buffers:
       for b in self._maybe_device_buffers:

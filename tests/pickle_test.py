@@ -33,7 +33,6 @@ from jax.interpreters import xla
 from jax._src import sharding
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 
 import numpy as np
 
@@ -161,16 +160,12 @@ class PickleTest(jtu.JaxTestCase):
       jax.jit(pickle.dumps)(0)
 
   def testPickleSharding(self):
-    if xla_extension_version < 104:
-      raise unittest.SkipTest('CPU buffer donation requires jaxlib > 0.3.22')
     sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked(
         (2, 2)), pxla.Unstacked(3)), (pxla.ShardedAxis(0), pxla.ShardedAxis(1),
                                       pxla.ShardedAxis(2), pxla.Replicated(4)))
     self.assertEqual(pickle.loads(pickle.dumps(sharding)), sharding)
 
   def testPickleOpSharding(self):
-    if xla_extension_version < 104:
-      raise unittest.SkipTest('CPU buffer donation requires jaxlib > 0.3.22')
     sharding = pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
                                  (pxla.ShardedAxis(0), pxla.ShardedAxis(1)))
     op_sharding = sharding.sharding_proto()
@@ -182,8 +177,6 @@ class PickleTest(jtu.JaxTestCase):
     s = sharding.SingleDeviceSharding(jax.devices()[0])
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  @unittest.skipIf(xla_extension_version < 104,
-                   'ShardingSpec pickling requires newer jaxlib.')
   def test_pickle_pmap_sharding(self):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
@@ -191,16 +184,12 @@ class PickleTest(jtu.JaxTestCase):
     s = sharding.PmapSharding(jax.devices(), ss)
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  @unittest.skipIf(xla_extension_version < 104,
-                   'OpSharding pickling requires newer jaxlib.')
   def test_pickle_op_sharding_sharding(self):
     op_sharding = xla.xc.OpSharding()
     op_sharding.type = xla.xc.OpSharding.Type.REPLICATED
     s = sharding.OpShardingSharding(jax.devices(), op_sharding)
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  @unittest.skipIf(xla_extension_version < 104,
-                   'NamedSharding pickling requires newer jaxlib.')
   @unittest.skipIf(cloudpickle is None, "Requires cloudpickle")
   def test_pickle_named_sharding(self):
     s = jax.sharding.NamedSharding(
