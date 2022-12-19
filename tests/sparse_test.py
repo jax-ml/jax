@@ -1011,6 +1011,10 @@ class BCOOTest(sptu.SparseTestCase):
            np.float32: 1E-5, np.complex64: 1E-5}
     self._CheckAgainstDense(dense_fun, sparse_fun, args_maker, tol=tol)
     self._CompileAndCheckSparse(sparse_fun, args_maker, atol=tol, rtol=tol)
+    if jnp.issubdtype(dtype, jnp.floating) and props.n_dense == 0:
+      # Dense dimensions not yet fully supported in reverse mode.
+      modes = ['fwd'] if props.n_dense != 0 else ['fwd', 'rev']
+      self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=modes, atol=tol, rtol=tol)
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
@@ -1221,6 +1225,10 @@ class BCOOTest(sptu.SparseTestCase):
            np.float32: 1E-5, np.complex64: 1E-5}
     self._CheckAgainstDense(dense_fun, sparse_fun, args_maker, tol=tol)
     self._CompileAndCheckSparse(sparse_fun, args_maker, atol=tol, rtol=tol)
+    if jnp.issubdtype(dtype, jnp.floating):
+      # Dense dimensions not yet fully supported in reverse mode.
+      modes = ['fwd'] if props.n_dense != 0 else ['fwd', 'rev']
+      self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=modes, atol=tol, rtol=tol)
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
@@ -1258,75 +1266,6 @@ class BCOOTest(sptu.SparseTestCase):
     for data, indices in itertools.product([data, data[:1]], [indices, indices[:1]]):
       X = sparse_bcoo._bcoo_todense(data, indices, spinfo=sparse_util.SparseInfo(X.shape))
       self.assertAllClose(f_dense(X, Y), f_sparse(data, indices, Y))
-
-  @jtu.sample_product(
-    [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
-          rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
-      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
-          ((4, 5), (5, 3), (([1], [0]), ([], [])), 0, 0),
-          ((2, 4, 5), (2, 5, 3), (([2], [1]), ([0], [0])), 1, 0),
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
-          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 0),
-          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 0),
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 2, 0),
-          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 2, 0),
-          # This requires contraction over dense dimensions, which is not yet implemented:
-          # ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 1),
-      ]
-    ],
-    dtype=jtu.dtypes.floating,
-  )
-  @jax.default_matmul_precision("float32")
-  def test_bcoo_dot_general_ad(self, lhs_shape, rhs_shape, dtype,
-                               dimension_numbers, n_batch, n_dense):
-    rng = jtu.rand_small(self.rng())
-    rng_sparse = rand_sparse(self.rng())
-
-    X = rng_sparse(lhs_shape, dtype)
-    nse = sparse.util._count_stored_elements(X, n_batch=n_batch,
-                                             n_dense=n_dense)
-    data, indices = sparse_bcoo._bcoo_fromdense(X, nse=nse, n_batch=n_batch, n_dense=n_dense)
-    Y = rng(rhs_shape, dtype)
-
-    # gradient with respect to rhs
-    def f_dense(Y):
-      return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
-
-    def f_sparse(Y):
-      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=sparse_util.SparseInfo(X.shape),
-                                           dimension_numbers=dimension_numbers)
-
-    jf_dense = jax.jacfwd(f_dense)(Y)
-    jr_dense = jax.jacrev(f_dense)(Y)
-    jf_sparse = jax.jacfwd(f_sparse)(Y)
-    jr_sparse = jax.jacrev(f_sparse)(Y)
-
-    self.assertAllClose(jf_dense, jf_sparse)
-    self.assertAllClose(jr_dense, jr_sparse)
-    self.assertAllClose(jf_sparse, jr_sparse)
-
-    # gradient with respect to lhs
-    def g_dense(X):
-      return lax.dot_general(X, Y, dimension_numbers=dimension_numbers)
-
-    def g_sparse(data):
-      return sparse_bcoo._bcoo_dot_general(data, indices, Y, lhs_spinfo=sparse_util.SparseInfo(X.shape),
-                                           dimension_numbers=dimension_numbers)
-
-    jf_dense = jax.jacfwd(g_dense)(X)
-    jr_dense = jax.jacrev(g_dense)(X)
-    jf_sparse = jax.jacfwd(g_sparse)(data)
-    jr_sparse = jax.jacrev(g_sparse)(data)
-
-    self.assertAllClose(jf_dense, jr_dense)
-    self.assertAllClose(jf_sparse, jr_sparse)
-
-    # Extract the sparse jacobian from the dense & compare.
-    def extract(X):
-      return sparse.bcoo_extract(indices, X)
-    for i in range(g_dense(X).ndim):
-      extract = jax.vmap(extract)
-    self.assertAllClose(extract(jf_dense), jf_sparse)
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,

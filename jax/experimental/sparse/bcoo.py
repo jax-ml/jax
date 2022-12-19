@@ -966,18 +966,32 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
     permutation = list(lhs_batch) + lhs_kept + lhs_contract_sorted_by_rhs
     out_axes = list(np.argsort(permutation))
 
-    # What follows is essentially this, but computed in terms of dot_general_sampled:
-    # out_dense_T = lax.dot_general(ct, rhs, dimension_numbers=dims)
-    # out_dense = lax.transpose(out_dense_T, out_axes)
-    # result = bcoo_extract(lhs_indices, out_dense)
+    # Determine whether efficient approach is possible:
+    placeholder_data = jnp.empty((lhs_indices.ndim - 2) * (1,) + (lhs_indices.shape[-2],))
+    placeholder_shape = tuple(lhs_indices.shape[:-2]) + lhs_indices.shape[-1] * (1,)
+    try:
+      _validate_permutation(placeholder_data, lhs_indices, permutation, placeholder_shape)
+    except NotImplementedError:
+      indices_can_be_untransposed = False
+    else:
+      indices_can_be_untransposed = True
 
-    # Instead we (1) un-transpose indices, (2) compute SDDMM, (3) re-transpose result
-    dummy_data = jnp.ones([1 for i in range(lhs_indices.ndim - 2)] + [lhs_indices.shape[-2]])
-    dummy_spinfo = SparseInfo(tuple(lhs_indices.shape[:-2]) + tuple(1 for i in range(lhs_indices.shape[-1])))
-    _, lhs_indices_T = _bcoo_transpose(dummy_data, lhs_indices, permutation=permutation, spinfo=dummy_spinfo)
-    result_T = bcoo_dot_general_sampled(ct, rhs, lhs_indices_T, dimension_numbers=dims)
-    result, _ = _bcoo_transpose(result_T, lhs_indices_T, permutation=out_axes, spinfo=dummy_spinfo)
+    # TODO(jakevdp): explore implementing the efficient approach without actually un-transposing
+    # the indices. Could this be done by un-permuting ct, rhs, and dims?
 
+    if indices_can_be_untransposed:
+      # Efficient approach: (1) un-transpose indices, (2) compute SDDMM, (3) re-transpose result.
+      _, lhs_indices_T = _bcoo_transpose(placeholder_data, lhs_indices, permutation=permutation,
+                                         spinfo=SparseInfo(placeholder_shape))
+      result_T_shape = tuple(placeholder_shape[i] for i in permutation)
+      result_T = bcoo_dot_general_sampled(ct, rhs, lhs_indices_T, dimension_numbers=dims)
+      result, _ = _bcoo_transpose(result_T, lhs_indices_T, permutation=out_axes,
+                                  spinfo=SparseInfo(result_T_shape))
+    else:
+      # Fallback to direct approach when above is not possible.
+      out_dense_T = lax.dot_general(ct, rhs, dimension_numbers=dims)
+      out_dense = lax.transpose(out_dense_T, out_axes)
+      result = bcoo_extract(lhs_indices, out_dense)
     return result, lhs_indices, rhs
   else:
     dims = ((lhs_kept, ans_lhs), (lhs_batch, ans_batch))  # type: ignore[assignment]
