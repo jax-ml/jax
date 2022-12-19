@@ -30,7 +30,6 @@ from jax import tree_util
 
 from jax.config import config
 from jax.experimental import jax2tf
-from jax._src import util
 from jax._src.lib import xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -366,42 +365,6 @@ class JaxToTfTestCase(jtu.JaxTestCase):
       t_arg = np.stack([arg] * 4)
       return self.ConvertAndCompare(grad_func, t_arg)
     assert False, transform
-
-
-  def CheckShapePolymorphism(self, f_jax: Callable, *,
-                             input_signature: Sequence[tf.TensorSpec],
-                             polymorphic_shapes: Optional[Sequence[Any]],
-                             expected_output_signature: Optional[tf.TensorSpec] = None,
-                             enable_xla: bool = True):
-    """Converts a function using polymorphic shapes.
-
-    Args:
-      f_jax: a JAX function of `n` arguments
-      input_signature: used as the input signature for the tf.function.
-      polymorphic_shapes: Specifies input shapes to be treated polymorphically
-        during conversion.
-      expected_output_signature: if given, this function tests whether the
-        actual output signature is equal to this one.
-      enable_xla: Whether to enable XLA conversion for jax2tf.convert.
-    """
-    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
-                          enable_xla=enable_xla)
-    f_tf_func = tf.function(
-        f_tf, autograph=False, input_signature=input_signature)
-    concrete_f_tf = f_tf_func.get_concrete_function(*input_signature)
-    if expected_output_signature:
-      # Strangely, output_shapes can be a single shape for a function with a
-      # single result, or a list/tuple of shapes.
-      concrete_output_tf_shape = concrete_f_tf.output_shapes
-      if not isinstance(concrete_output_tf_shape, (tuple, list)):  # Single result
-        assert not isinstance(expected_output_signature, (tuple, list))
-        expected_output_signature = [expected_output_signature]
-        concrete_output_tf_shape = [concrete_output_tf_shape]
-
-      for expected, found in util.safe_zip(expected_output_signature,
-                                           concrete_output_tf_shape):
-        self.assertEqual(tuple(expected.shape), tuple(found))
-    return f_tf
 
   def TfToHlo(self, tf_fun: Callable, *args):
     # Converts a tf.function to HLO text which we can inspect for occurrence of

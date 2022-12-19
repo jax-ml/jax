@@ -974,9 +974,14 @@ def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize
   """Asserts that shape matches x.shape in the known dimensions and has
   dimension polynomials elsewhere."""
   # Ensures that the shape does not contain None; it should contain polynomials
+  def check_one(xd: Optional[int], sd: Any):
+    if core.is_constant_dim(sd):
+      return xd == sd
+    else:
+      assert isinstance(sd, shape_poly._DimPolynomial)
+      return True
   assert (len(x.shape) == len(shape) and
-          all((xd is None and isinstance(sd, shape_poly._DimPolynomial) or
-               core.is_constant_dim(sd) and xd == sd)
+          all(check_one(xd, sd)
               for xd, sd in zip(x.shape, shape))), \
     f"Shape {shape} does not match x.shape {x.shape}"
 
