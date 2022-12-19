@@ -33,7 +33,7 @@ class RnnTest(jtu.JaxTestCase):
       num_layers=[1, 4],
       bidirectional=[True, False],
   )
-  @jtu.skip_on_devices("cpu", "tpu")
+  @jtu.skip_on_devices("cpu", "tpu","rocm")
   def test_lstm(self, batch_size: int, seq_len: int, input_size: int,
                 hidden_size: int, num_layers: int, bidirectional: bool):
     batch_size = 6

@@ -861,7 +861,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     alpha=[np.array([0.2, 1., 5.]),],
     dtype=jtu.dtypes.floating,
   )
-  @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
+  @jtu.skip_on_devices("tpu","rocm")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
     key = self.seed_prng(0)
     rand = lambda key, alpha: random.dirichlet(key, alpha, (10000,), dtype)
@@ -876,6 +876,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for i, a in enumerate(alpha):
         self._CheckKolmogorovSmirnovCDF(samples[..., i], scipy.stats.beta(a, alpha_sum - a).cdf)
 
+  @jtu.skip_on_devices("rocm")
   def testDirichletSmallAlpha(self, dtype=np.float32):
     # Regression test for https://github.com/google/jax/issues/9896
     key = self.seed_prng(0)
