@@ -128,6 +128,8 @@ from jax._src.array import (
 from jax.version import __version__ as __version__
 from jax.version import __version_info__ as __version_info__
 
+from jax import monitoring as monitoring
+
 from jax._src.tree_util import (
   tree_map as tree_map,
   # TODO(jakevdp): remove these deprecated routines after October 2022
