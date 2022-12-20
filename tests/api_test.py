@@ -33,6 +33,7 @@ import weakref
 import functools
 import itertools as it
 import operator as op
+import gc
 
 from absl import logging
 from absl.testing import absltest, parameterized
@@ -479,11 +480,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x, y): return x + y
 
     client = jax.devices()[0].client
+    gc.collect()
     num_live_initial = len(client.live_executables())
     f(1, 2).block_until_ready()
+    gc.collect()
     num_live = len(client.live_executables())
     self.assertEqual(num_live_initial + 1, num_live)
     f.clear_cache()
+    gc.collect()
     num_live = len(client.live_executables())
     self.assertEqual(num_live_initial, num_live)
 
