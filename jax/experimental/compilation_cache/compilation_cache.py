@@ -22,7 +22,6 @@ from typing import List, Optional
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src import path as pathlib
 from jax._src.lib import version_str as jaxlib_version_str
-from jax._src.lib import xla_client
 from jax.interpreters import xla
 
 _cache = None
@@ -129,8 +128,7 @@ def _hash_computation(hash_obj, xla_computation):
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  # TODO(parkers): simplify this code when jaxlib >= 0.3.23 is the minimum.
-  expected_num_compile_options = 35 if xla_client._version >= 104 else 33
+  expected_num_compile_options = 35
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
