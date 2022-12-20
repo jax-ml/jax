@@ -138,7 +138,7 @@ def _get_random_data(x: jnp.ndarray) -> np.ndarray:
     return np.random.randint(0, 100, size=x.shape, dtype=dtype)
   elif np.issubdtype(dtype, np.floating):
     return np.array(np.random.uniform(size=x.shape), dtype=dtype)
-  elif dtype == np.bool:
+  elif dtype == bool:
     return np.random.choice(a=[False, True], size=x.shape)
   else:
     raise ValueError(f"Unsupported dtype for numerical comparison: {dtype}")
