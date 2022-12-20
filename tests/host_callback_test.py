@@ -176,9 +176,8 @@ def helper_set_hlo_dump():
 
 def helper_print_optimized_hlo(fun, *args):
   backend = xla_bridge.get_backend(platform=jtu.device_under_test())
-  c = jax.xla_computation(fun, backend=backend.platform)(*args)
-  print(re.sub(r", metadata.*", "",
-               backend.compile(c).hlo_modules()[0].to_string()))
+  c = jax.jit(fun, backend=backend.platform).lower(*args)
+  print(re.sub(r", metadata.*", "", c.compile().as_text()))
 
 
 def helper_log_ir(name,
@@ -187,29 +186,12 @@ def helper_log_ir(name,
                   num_partitions=None,
                   strip_metadata=False):
   print(f"Jaxpr[{name}]: {jax.make_jaxpr(f_jax)(*args)}")
-  jax_comp = f_jax.lower(*args).compiler_ir(dialect="hlo")
-  print(f"HLO[{name}]: {jax_comp.as_hlo_text()}")
-
-  backend = xla_bridge.get_backend()
-  if num_partitions is not None:
-    num_replicas = 1
-    device_assignment = np.array(jax.devices()[:num_partitions * num_replicas])
-    device_assignment = np.reshape(device_assignment, (-1, num_partitions))
-    use_spmd_partitioning = num_partitions > 1
-    compile_options = xla_bridge.get_compile_options(
-        num_replicas=num_replicas,
-        num_partitions=num_partitions,
-        device_assignment=device_assignment,
-        use_spmd_partitioning=use_spmd_partitioning,
-    )
-  else:
-    compile_options = None
-  jax_optimized_hlo = backend.compile(
-      jax_comp, compile_options).hlo_modules()[0].to_string()
+  jax_comp = f_jax.lower(*args)
+  print(f"HLO[{name}]: {jax_comp.compiler_ir(dialect='hlo').as_hlo_text()}")
+  jax_optimized_hlo = jax_comp.compile().as_text()
   if strip_metadata:
     jax_optimized_hlo = re.sub(r", metadata.*", "", jax_optimized_hlo)
-  print(f"Optimized HLO[{name}] for "
-               f"platform {backend.platform}: {jax_optimized_hlo}")
+  print(f"Optimized HLO[{name}]: {jax_optimized_hlo}")
 
 
 prev_xla_flags = None
