@@ -30,7 +30,8 @@ from jax._src.config import config
 from jax._src.lax import control_flow as cf
 from jax._src.sharding import OpShardingSharding
 from jax._src.typing import Array
-from jax._src.util import (as_hashable_function, unzip2, split_list, safe_map, safe_zip)
+from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
+                           unzip3)
 from jax.api_util import flatten_fun
 from jax.experimental import maps
 from jax.experimental import pjit
@@ -248,7 +249,7 @@ class Error:
 
   # Internal helpers
 
-  def _get_batched_exception(self):
+  def _get_batched_exception(self) -> Optional[BatchedError]:
     shape = np.shape(list(self._pred.values())[0])
     error_mapping = {}
     for idx in np.ndindex(*shape):
@@ -264,7 +265,10 @@ class Error:
         payload = tree_map(lambda x, i=idx: x[i], self._payload[cur_effect])
         jax_error = tree_unflatten(self._metadata[int(min_code)], payload)  # type: ignore
         error_mapping[idx] = jax_error
-    return BatchedError(error_mapping)
+    if error_mapping:
+      return BatchedError(error_mapping)
+    else:
+      return None
 
   def _update(self, effect_type: ErrorEffect, pred, code, metadata, payload):
     new_errs = {**self._pred, **{effect_type: pred}}  # type: ignore
@@ -372,6 +376,8 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
   out_tree, _ = metadata()
   error, out_vals = tree_unflatten(out_tree, all_vals)
+  if isinstance(primitive, core.MapPrimitive):
+    error = _reduce_any_error(error)
   return error, out_vals
 
 def get_shaped_aval(val):
@@ -406,7 +412,11 @@ def checkify_jaxpr_flat(jaxpr: core.Jaxpr, consts: Sequence[core.Value],
     invals = map(read_env, eqn.invars)
     checkify_rule = error_checks.get(
         eqn.primitive, functools.partial(default_checkify_rule, eqn.primitive))
-    error, outvals = checkify_rule(error, enabled_errors, *invals, **eqn.params)
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
+    with source_info_util.user_context(eqn.source_info.traceback,
+                                       name_stack=name_stack):
+      error, outvals = checkify_rule(error, enabled_errors,
+                                     *invals, **eqn.params)
     if eqn.primitive.multiple_results:
       map(write_env, eqn.outvars, outvals)
     else:
@@ -679,21 +689,6 @@ error_checks[lax.scatter_max_p] = functools.partial(scatter_error_check,
 
 # HOP error check rules
 
-def get_error_effects_from_jaxpr(closed_jaxpr: core.ClosedJaxpr,
-                                 enabled_errors,
-                                 error,
-                                 *args) -> Set[ErrorEffect]:
-  """Probes a jaxpr for its error effects."""
-  err_vals, err_tree = jtu.tree_flatten(error)
-  checkify_fun = lu.wrap_init(
-      functools.partial(checkify_jaxpr_flat, closed_jaxpr.jaxpr,
-                        closed_jaxpr.literals, enabled_errors, err_tree))
-  checkify_fun, metadata = _flatten_and_get_error_metadata_thunk(checkify_fun)
-  in_avals = map(get_shaped_aval, [*err_vals, *args])
-  pe.trace_to_jaxpr_final(checkify_fun, in_avals)
-  _, error_effects = metadata()
-  return error_effects
-
 def jaxpr_to_checkify_jaxpr(
     jaxpr: core.ClosedJaxpr, enabled_errors, err_tree: PyTreeDef,
     *flat_err_and_in_vals) -> Tuple[core.ClosedJaxpr, PyTreeDef, Set[ErrorEffect]]:
@@ -711,36 +706,28 @@ def jaxpr_to_checkify_jaxpr(
 def cond_error_check(error: Error, enabled_errors, index, *ops, branches, linear):
   # Get the error-effects out of all branches so the cond can be called with
   # a merged error with all these effects.
-  effects = [get_error_effects_from_jaxpr(jxpr, enabled_errors, error, *ops)
-             for jxpr in branches]
+  err_vals, err_tree = jtu.tree_flatten(error)
+  in_avals = map(get_shaped_aval, [*err_vals, *ops])
+  def get_error_effects_from_jaxpr(jxpr):
+    _, _, effects = jaxpr_to_checkify_jaxpr(jxpr, enabled_errors, err_tree,
+                                            *in_avals)
+    return effects
+  effects = [get_error_effects_from_jaxpr(jxpr) for jxpr in branches]
   merged_error = error._add_placeholder_effects(set().union(*effects))
   err_vals, err_tree = jtu.tree_flatten(merged_error)
   new_linear = (*[False] * len(err_vals), *linear)
 
   # Update branch jaxprs to be checkified jaxprs.
-  checked_branch_partials = tuple(
-      functools.partial(checkify_jaxpr_flat, closed_jaxpr.jaxpr,
-                        closed_jaxpr.consts, enabled_errors, err_tree)
-      for closed_jaxpr in branches)
-  checked_branch_funs_ = map(lu.wrap_init, checked_branch_partials)
-  checked_branch_funs, out_trees_and_effects = unzip2(
-      map(_flatten_and_get_error_metadata_thunk, checked_branch_funs_))
-  in_vals = jtu.tree_leaves((merged_error, ops))
-  in_avals = tuple(map(get_shaped_aval, in_vals))
-  def to_jaxpr(fun, in_avals):
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
-    return core.ClosedJaxpr(jaxpr, consts)
-  new_branches = map(
-      lambda fun: to_jaxpr(fun, in_avals),
-      checked_branch_funs)
-
+  in_avals = map(get_shaped_aval, [*err_vals, *ops])
+  new_branches, out_trees, _ = unzip3(
+      jaxpr_to_checkify_jaxpr(
+          jxpr, enabled_errors, err_tree, *in_avals) for jxpr in branches)
 
   err_and_outs = lax.cond_p.bind(
       index, *err_vals, *ops,
       branches=tuple(new_branches), linear=new_linear)
 
   # we need to merge metadata across out_trees (a tuple)
-  out_trees, _ = unzip2(map(lambda fun: fun(), out_trees_and_effects))
   err0, out = tree_unflatten(out_trees[0], err_and_outs)
   merged_metadata = err0._metadata
   for tr in out_trees[1:]:
@@ -753,14 +740,18 @@ def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
                      num_consts, num_carry, linear, unroll):
 
   consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
+  xs_mapped = [core.mapped_aval(length, 0, get_shaped_aval(val)) for val in xs]
   # Query body effects to create a merged error containing all effects (such
   # that in and out carried error are of the same type).
-  effects = get_error_effects_from_jaxpr(jaxpr, enabled_errors, error, *in_flat)
+  err_vals, err_tree = jtu.tree_flatten(error)
+  new_in_aval = map(get_shaped_aval, [*err_vals, *consts, *carry]) + xs_mapped
+  _, _, effects = jaxpr_to_checkify_jaxpr(jaxpr, enabled_errors,
+                                          err_tree, *new_in_aval)
+
   merged_error = error._add_placeholder_effects(effects)
   err_vals, err_tree = jtu.tree_flatten(merged_error)
 
   # Create checked-jaxpr, with the needed pre-processing on the inputs.
-  xs_mapped = [core.mapped_aval(length, 0, get_shaped_aval(val)) for val in xs]
   new_in_aval = map(get_shaped_aval, [*err_vals, *consts, *carry]) + xs_mapped
   checked_jaxpr_, out_tree, _ = jaxpr_to_checkify_jaxpr(jaxpr, enabled_errors,
                                                         err_tree, *new_in_aval)
@@ -852,7 +843,8 @@ error_checks[lax.while_p] = while_loop_error_check
 def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_shardings, out_shardings, resource_env,
                      donated_invars, name,
-                     in_positional_semantics, out_positional_semantics, inline):
+                     in_positional_semantics, out_positional_semantics,
+                     inline, keep_unused):
   # jaxpr to checked_jaxpr
   err_vals, err_tree = jtu.tree_flatten(error)
   new_vals_in = [*err_vals, *vals_in]
@@ -890,7 +882,9 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
       name=name,
       in_positional_semantics=new_positional_sems_in,
       out_positional_semantics=new_positional_sems_out,
-      inline=inline)
+      inline=inline,
+      keep_unused=keep_unused,
+  )
   return tree_unflatten(out_tree, err_and_out)
 error_checks[pjit.pjit_p] = pjit_error_check
 
