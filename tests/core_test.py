@@ -27,7 +27,7 @@ import jax
 from jax import core
 from jax import lax
 from jax import numpy as jnp
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray, DBIdx
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,

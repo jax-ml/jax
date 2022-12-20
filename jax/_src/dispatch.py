@@ -32,7 +32,7 @@ import warnings
 import numpy as np
 
 import jax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.errors import UnexpectedTracerError
 from jax.monitoring import record_event_duration_secs
 import jax.interpreters.ad as ad

@@ -32,7 +32,7 @@ from jax._src import api_util
 from jax._src import array
 from jax._src import device_array
 from jax._src import dispatch
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src import dtypes
 from jax import tree_util
 from jax._src import source_info_util

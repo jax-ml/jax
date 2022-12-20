@@ -25,7 +25,7 @@ from enum import Enum
 
 from jax import numpy as jnp
 from jax import core
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax import stages
 from jax._src.api import _check_callable, _check_arg
 from jax._src import dispatch

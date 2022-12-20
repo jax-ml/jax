@@ -18,7 +18,7 @@ from functools import partial
 from typing import Callable, Optional, Sequence, Set
 
 from jax import core
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax._src.lax import lax

@@ -47,7 +47,7 @@ from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
 import numpy as np
 
 import jax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.errors import JAXTypeError
 from jax.interpreters import ad
 from jax.interpreters import batching

@@ -30,7 +30,7 @@ from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero)
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)

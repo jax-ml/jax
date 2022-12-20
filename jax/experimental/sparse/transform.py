@@ -54,7 +54,7 @@ import numpy as np
 
 from jax import core
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs

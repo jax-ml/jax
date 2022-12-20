@@ -22,7 +22,7 @@ import operator
 from typing import Callable, Sequence, List, Tuple
 
 from jax import core
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.config import config
 from jax.core import ConcreteArray, raise_to_shaped
 from jax.interpreters import ad

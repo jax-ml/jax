@@ -18,7 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax import core
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.config import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client
