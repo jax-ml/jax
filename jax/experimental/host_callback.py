@@ -550,7 +550,14 @@ XlaDevice = xla_client.Device
 XlaLocalClient = xla_client.Client
 DType = Any
 
-def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
+
+def id_tap(tap_func,
+           arg,
+           *,
+           result=None,
+           tap_with_device=False,
+           device_index=0,
+           **kwargs):
   """Host-callback tap primitive, like identity function with a call to ``tap_func``.
 
   **Experimental: please give feedback, and expect changes!**
@@ -574,6 +581,8 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
       value of ``id_tap`` is ``arg``.
     tap_with_device: if True then the tap function is invoked with the
       device from which the tap originates as a keyword argument.
+    device_index: specifies from which device the tap function is invoked in a
+      SPMD program.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -607,8 +616,13 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
     for r in flat_results:
       api._check_arg(r)
 
-  call_res = _call(tap_func, arg, call_with_device=tap_with_device,
-                   result_shape=None, identity=True)
+  call_res = _call(
+      tap_func,
+      arg,
+      call_with_device=tap_with_device,
+      result_shape=None,
+      identity=True,
+      device_index=device_index)
 
   if result is not None:
     # Return the results, but add a dependency on the call, to ensure it
@@ -627,8 +641,14 @@ def id_tap(tap_func, arg, *, result=None, tap_with_device=False, **kwargs):
     return call_res
 
 
-def id_print(arg, *, result=None, tap_with_device=False,
-             output_stream=None, threshold=None, **kwargs):
+def id_print(arg,
+             *,
+             result=None,
+             tap_with_device=False,
+             device_index=0,
+             output_stream=None,
+             threshold=None,
+             **kwargs):
   """Like :func:`id_tap` with a printing tap function.
 
    **Experimental: please give feedback, and expect changes!**
@@ -651,7 +671,12 @@ def id_print(arg, *, result=None, tap_with_device=False,
   printer = functools.partial(_print_tap_func,
                               output_stream=output_stream,
                               threshold=threshold, **kwargs)
-  return id_tap(printer, arg, result=result, tap_with_device=tap_with_device)
+  return id_tap(
+      printer,
+      arg,
+      result=result,
+      tap_with_device=tap_with_device,
+      device_index=device_index)
 
 
 def call(callback_func: Callable, arg, *,
@@ -728,9 +753,12 @@ class _CallbackWrapper:
 
 # Helper function to implement both `call` and `id_tap`. The two cases are
 # differentiated by the `identity` flag.
-def _call(callback_func: Callable, arg, *,
+def _call(callback_func: Callable,
+          arg,
+          *,
           result_shape=None,
           call_with_device=False,
+          device_index=0,
           identity=False):
   # Lazy initialization
   _initialize_outfeed_receiver(
@@ -746,6 +774,7 @@ def _call(callback_func: Callable, arg, *,
                                         call_with_device)
   params["identity"] = identity
   params["arg_treedef"] = arg_treedef
+  params["device_index"] = device_index
 
   if not identity:
     # Turn abstract values into ShapesDtypeStruct
@@ -932,6 +961,7 @@ It takes the following parameters:
     going to be the non-token positional arguments, along with the updated
     token. The tokens and this parameter are added after all the JAX
     transformations, just before staging XLA.
+  * device_index: an integer, denotes from which device the invocation is from.
 """
 outside_call_p = core.Primitive("outside_call")
 outside_call_p.multiple_results = True
@@ -945,7 +975,7 @@ def _outside_call_abstract_eval(*args_a: pe.AbstractValue,
     assert "result_treedef" not in params
     assert "flat_results_aval" not in params
     return args_a
-
+  assert params["device_index"] is not None
   assert params["result_treedef"] is not None
   assert params["flat_results_aval"] is not None
   flat_results_aval = params["flat_results_aval"]
@@ -960,9 +990,13 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 
 
 def _outside_call_impl(*args, **params):
-  assert not "has_token" in params
+  assert "has_token" not in params
   if _inline_host_callback():
-    device = api.devices()[0]
+    if jaxlib.xla_extension_version >= 112:
+      device_index = params["device_index"]
+      device = api.devices()[device_index]
+    else:
+      device = api.devices()[0]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
   else:
@@ -979,10 +1013,13 @@ def _outside_call_impl(*args, **params):
 outside_call_p.def_impl(_outside_call_impl)
 
 
-def _outside_call_translation_rule(ctx, avals_in, avals_out,
+def _outside_call_translation_rule(ctx,
+                                   avals_in,
+                                   avals_out,
                                    *args_op: XlaOp,
                                    has_token,
                                    identity,
+                                   device_index,
                                    flat_results_aval=(),
                                    **params):
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
@@ -1014,9 +1051,12 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
             identity=identity,
             flat_results_aval=flat_results_aval,
             **params))
-    next_token = _callback_handler_data.receiver.add_outfeed(comp, current_token,
-                                                        callback_id,
-                                                        args_to_outfeed)
+    if jaxlib.xla_extension_version >= 112:
+      next_token = _callback_handler_data.receiver.add_outfeed(
+          comp, current_token, callback_id, args_to_outfeed, device_index)
+    else:
+      next_token = _callback_handler_data.receiver.add_outfeed(
+          comp, current_token, callback_id, args_to_outfeed)
     if identity:
       results = list(args_to_outfeed)
       next_itoken = current_itoken
@@ -1029,13 +1069,16 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
       if non_empty_flat_results_aval:
         assert need_callback_results_on_device
         after_outfeed_itoken = xops.AfterAll(comp, [current_itoken, next_token])
-        # We shard the infeed as AssignedDevice(0). This must match the
+        # We shard the infeed as AssignedDevice(device_index). This must match the
         # outfeed (from outfeed_receiver.cc). Since `lax.infeed` does not support
         # this kind of sharding, we use a custom translation for infeed.
         array_sharding_proto = xla_client.OpSharding()
         array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
         array_sharding_proto.tile_assignment_dimensions = [1]
-        array_sharding_proto.tile_assignment_devices = [0]
+        if jaxlib.xla_extension_version >= 112:
+          array_sharding_proto.tile_assignment_devices = [device_index]
+        else:
+          array_sharding_proto.tile_assignment_devices = [0]
 
         token_sharding_proto = xla_client.OpSharding()
         token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
@@ -1126,9 +1169,14 @@ def _outside_call_translation_rule(ctx, avals_in, avals_out,
 
 xla.register_translation(outside_call_p, _outside_call_translation_rule)
 
-def _outside_call_lowering(
-    ctx: mlir.LoweringRuleContext, *args, has_token: bool, identity: bool,
-    flat_results_aval=(), **params):
+
+def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
+                           *args,
+                           has_token: bool,
+                           identity: bool,
+                           device_index: int,
+                           flat_results_aval=(),
+                           **params):
   """MLIR Lowering for `CustomCall`-based HCB."""
   platform = ctx.module_context.platform
   use_outfeed = _use_outfeed(platform)
@@ -1136,9 +1184,14 @@ def _outside_call_lowering(
     # Fall back to XLA path if we are using the outfeed
     # TODO(sharadmv): update to use MLIR for this path as well and delete
     #                 XLA lowering
-    return mlir.xla_fallback_lowering(outside_call_p)(ctx, *args,
-        has_token=has_token, identity=identity,
-        flat_results_aval=flat_results_aval, **params)
+    return mlir.xla_fallback_lowering(outside_call_p)(
+        ctx,
+        *args,
+        has_token=has_token,
+        identity=identity,
+        flat_results_aval=flat_results_aval,
+        device_index=device_index,
+        **params)
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
   assert has_token
   current_token = args[-2]
@@ -1180,7 +1233,10 @@ def _outside_call_lowering(
     sharding = xla_client.OpSharding()
     sharding.type = xla_client.OpSharding.Type.MAXIMAL
     sharding.tile_assignment_dimensions = [1]
-    sharding.tile_assignment_devices = [0]
+    if jaxlib.xla_extension_version >= 112:
+      sharding.tile_assignment_devices = [device_index]
+    else:
+      sharding.tile_assignment_devices = [0]
   else:
     sharding = None
   results, next_token, keep_alive = mlir.emit_python_callback(ctx,

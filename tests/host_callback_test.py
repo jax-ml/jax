@@ -36,6 +36,7 @@ from jax.experimental import maps
 from jax.experimental import pjit
 from jax import lax
 from jax import numpy as jnp
+from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.lib import xla_client
@@ -100,11 +101,19 @@ def fun1_equiv(a):  # Numerical equivalent of fun1
   return (a * 2.) ** 2
 
 
-def maybe_print(do_print: bool, arg, what: str, tap_with_device: Optional[bool] = False):
+def maybe_print(do_print: bool,
+                arg,
+                what: str,
+                tap_with_device: Optional[bool] = False,
+                device_index: int = 0):
   """Conditionally print on testing_string"""
   if do_print:
-    return hcb.id_print(arg, what=what,
-                        output_stream=testing_stream, tap_with_device=tap_with_device)
+    return hcb.id_print(
+        arg,
+        what=what,
+        output_stream=testing_stream,
+        tap_with_device=tap_with_device,
+        device_index=device_index)
   else:
     return arg
 
@@ -903,12 +912,14 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     treedef = tree_util.tree_structure(arg)
     if FLAGS.jax_host_callback_ad_transforms:
-      assertMultiLineStrippedEqual(self, f"""
+      assertMultiLineStrippedEqual(
+          self, f"""
         {{ lambda ; a:f32[]. let
             b:f32[] = mul a 3.00
             c:f32[] = outside_call[
               arg_treedef={treedef}
               callback=...
+              device_index=0
               identity=True
               transforms=()
             ] b
@@ -923,12 +934,14 @@ class HostCallbackTapTest(jtu.JaxTestCase):
             f:f32[] = mul e 3.00
           in (f,) }}""", jaxpr)
     else:
-      assertMultiLineStrippedEqual(self, f"""
+      assertMultiLineStrippedEqual(
+          self, f"""
         {{ lambda ; a:f32[]. let
             b:f32[] = mul a 3.00
             c:f32[] = outside_call[
               arg_treedef={treedef}
               callback=...
+              device_index=0
               identity=True
             ] b
             _:f32[] = mul 2.00 c
@@ -1877,11 +1890,15 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     comp = xla_client.XlaBuilder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
+    if jaxlib.xla_extension_version >= 112:
+      args = [0]
+    else:
+      args = []
     with self.assertRaisesRegex(RuntimeError,
                                 "Consumer ID cannot be a reserved value: 0"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 0,
-          [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))])
+          [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], *args)
 
   def test_tap_error_different_shapes(self):
     """Try to register different shapes for the same consumer ID."""
@@ -1890,19 +1907,23 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     comp = xla_client.XlaBuilder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
+    if jaxlib.xla_extension_version >= 112:
+      args = [0]
+    else:
+      args = []
     hcb._callback_handler_data.receiver.add_outfeed(
         comp, token, 123,
-        [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))])
+        [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], *args)
     with self.assertRaisesRegex(
         RuntimeError, ".*does not match previous shape element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
-          [xops.Constant(comp, np.zeros((2, 3), dtype=np.int32))])
+          [xops.Constant(comp, np.zeros((2, 3), dtype=np.int32))], *args)
     with self.assertRaisesRegex(
         RuntimeError, ".*does not match previous shape element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
-          [xops.Constant(comp, np.zeros((2,), dtype=np.float32))])
+          [xops.Constant(comp, np.zeros((2,), dtype=np.float32))], *args)
 
   def test_tap_id_tap_removed_kwargs(self):
     def func(x, transforms, y):
