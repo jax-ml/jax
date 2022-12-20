@@ -207,8 +207,12 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_diff_executables(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
-      computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
-      computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
+      computation1 = str(jax.jit(lambda x, y: x + y)
+                         .lower(1, 1)
+                         .compiler_ir(dialect="mhlo"))
+      computation2 = str(jax.jit(lambda x, y: x * y)
+                         .lower(2, 2)
+                         .compiler_ir(dialect="mhlo"))
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()
@@ -224,8 +228,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_put_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
-      computation = jax.xla_computation(lambda x, y: x + y)(np.int32(1),
-                                                            np.int32(1))
+      computation = str(jax.jit(lambda x, y: x + y)
+                        .lower(np.int32(1), np.int32(1))
+                        .compiler_ir(dialect="mhlo"))
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()
