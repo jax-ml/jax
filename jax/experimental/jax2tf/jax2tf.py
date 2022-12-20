@@ -14,6 +14,7 @@
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
 from functools import partial, reduce
 import contextlib
+import operator
 import os
 import re
 import threading
@@ -962,6 +963,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
 
 
 def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
+  # Returns a tuple of shape_poly.dim_as_value_dtype
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
   if dtype is not None:
@@ -970,11 +972,12 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
     return tuple(int(d) for d in shape)
 
   dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
-  eval_shape_jax, dim_avals = shape_poly.get_shape_evaluator(dim_vars, shape)
+  eval_shape_jax = shape_poly.get_shape_evaluator(dim_vars, shape)
+  dim_aval = shape_poly.dim_as_value_abstract(1)
   shape_values_tf, _ = _interpret_fun_jax(eval_shape_jax,
-                                          dim_values, dim_avals, "")  # type: ignore
+                                          dim_values, [dim_aval] * len(dim_values), "")  # type: ignore
   # Keep only the non-constant dimensions
-  return tuple(int(d) if core.is_constant_dim(d) else d_tf
+  return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf
                for d, d_tf in zip(shape, shape_values_tf))
 
 def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
@@ -3179,10 +3182,15 @@ def _pjit_sharding_constraint(arg: TfVal, *,
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
 
-def _dimension_size_jax2tf(op: TfVal, *, dimension):
-  return tf.shape(op)[dimension]
+def _dimension_size_jax2tf(op: TfVal, *, dimension, _in_avals, _out_aval):
+  dim_tf = tf.shape(op)[dimension]
+  if dim_tf.dtype != _to_tf_dtype(_out_aval.dtype):
+    return _convert_element_type(dim_tf, new_dtype=_out_aval.dtype,
+                                 weak_type=_out_aval.weak_type)
+  else:
+    return dim_tf
 
-tf_impl[shape_poly.dimension_size_p] = _dimension_size_jax2tf
+tf_impl_with_avals[shape_poly.dimension_size_p] = _dimension_size_jax2tf
 
 def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   dim_tf, = _eval_shape((dim,))

@@ -53,8 +53,8 @@ import numpy as np
 
 TfVal = Any
 # A dimension environment maps dimension variables to expressions that
-# compute the value of the dimension. An expression must support addition
-# and multiplication with other expressions or with np.int32, e.g.,
+# compute the values of the dimension. An expression must support addition
+# and multiplication with other expressions or with int32/int64, e.g.,
 # by overloading __add__, __radd__, __mul__, __rmul__.
 ShapeEnv = Dict[str, Any]
 DType = Any
@@ -144,7 +144,7 @@ class _DimMon(dict):
     return _DimMon(d)
 
   def evaluate(self, env: ShapeEnv):
-    prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else np.int32(1)
+    prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else dim_constant(1)
     def pow_opt(v, p: int):
       return v if p == 1 else prod([v] * p)
     return prod([pow_opt(env[id], deg) for id, deg in self.items()])
@@ -443,14 +443,13 @@ class _DimPolynomial():
     return max(self.monomials())
 
   def evaluate(self, env: ShapeEnv):
-    terms = [_evaluate_multiply(mon.evaluate(env), np.int32(coeff)) for mon, coeff in self.monomials()]
+    # Evaluates as a value of dtype=dim_as_value_dtype()
+    terms = [_evaluate_multiply(mon.evaluate(env), dim_constant(coeff)) for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   @staticmethod
-  def get_aval(_: "_DimPolynomial"):
-    return core.ShapedArray((),
-                            dtypes.canonicalize_dtype(np.int64),
-                            weak_type=True)
+  def get_aval(dim: "_DimPolynomial"):
+    return dim_as_value_abstract(dim)
 
   def __jax_array__(self):
     # Used for implicit coercions of polynomials as JAX arrays
@@ -568,21 +567,32 @@ def _einsum_contract_path(*operands, **kwargs):
 lax_numpy._poly_einsum_handlers[_DimPolynomial] = _einsum_contract_path
 
 # A JAX primitive with no array arguments but with a dimension parameter
-# that is a DimPoly. The value of the primitive is the value of the dimension.
-# This primitive is used only in the context of jax2tf, so it does not need
-# XLA translation rules.
+# that is a DimPoly. The value of the primitive is the value of the dimension,
+# using int64 in x64 mode or int32 otherwise (dim_as_value_dtype())
 dim_as_value_p = core.Primitive("dim_as_value")
-def _dim_as_value_abstract(dim: DimSize) -> core.AbstractValue:
-  return core.ShapedArray((), np.int32)
+def dim_as_value_dtype():
+  return dtypes.canonicalize_dtype(np.int64)
 
-dim_as_value_p.def_abstract_eval(_dim_as_value_abstract)
+def dim_constant(ct: int):
+  return np.array(ct, dtype=dim_as_value_dtype())
+
+def dim_as_value_abstract(dim: DimSize) -> core.AbstractValue:
+  return core.ShapedArray((), dim_as_value_dtype(), weak_type=True)
+
+dim_as_value_p.def_abstract_eval(dim_as_value_abstract)
 
 def _dim_as_value(dim: DimSize):
   return dim_as_value_p.bind(dim=dim)
 
 def _dim_as_value_lowering(ctx: mlir.LoweringRuleContext, *,
                            dim):
-  return mlir.eval_dynamic_shape(ctx, (dim,))
+  res, = mlir.eval_dynamic_shape(ctx, (dim,))
+  out_type = mlir.aval_to_ir_type(ctx.avals_out[0])
+  if out_type != res.type:  # type: ignore
+    return mlir.hlo.ConvertOp(out_type, res).results
+  else:
+    return [res]
+
 mlir.register_lowering(dim_as_value_p, _dim_as_value_lowering)
 
 
@@ -721,17 +731,17 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
 
 
 def _evaluate_add(v1, v2):
-  if isinstance(v1, (int, np.int32)) and v1 == 0:
+  if isinstance(v1, (int, np.int32, np.int64)) and v1 == 0:
     return v2
-  elif isinstance(v2, (int, np.int32)) and v2 == 0:
+  elif isinstance(v2, (int, np.int32, np.int64)) and v2 == 0:
     return v1
   else:
     return v1 + v2
 
 def _evaluate_multiply(v1, v2):
-  if isinstance(v1, (int, np.int32)) and v1 == 1:
+  if isinstance(v1, (int, np.int32, np.int64)) and v1 == 1:
     return v2
-  elif isinstance(v2, (int, np.int32)) and v2 == 1:
+  elif isinstance(v2, (int, np.int32, np.int64)) and v2 == 1:
     return v1
   else:
     return v1 * v2
@@ -753,15 +763,15 @@ def _is_known_constant(v) -> Optional[int]:
     return None
 
 # dimension_size(operand, dimension=i) get the operand.shape[i] as a
-# JAX value.
+# value of type shape_poly.dim_as_value_dtype().
 dimension_size_p = core.Primitive("dimension_size")
 def _dimension_size_abstract(aval: core.AbstractValue, **_) -> core.AbstractValue:
-  return core.ShapedArray((), np.int32)
+  return dim_as_value_abstract(aval)
 
 dimension_size_p.def_abstract_eval(_dimension_size_abstract)
 
 def _dimension_size_impl(arg, *, dimension):
-  return arg.shape[dimension]
+  return dim_constant(arg.shape[dimension])
 dimension_size_p.def_impl(_dimension_size_impl)
 
 _JaxValue = Any
@@ -770,17 +780,15 @@ _JaxValue = Any
 class DimEquation:
   # Represents poly == _expr
   poly: _DimPolynomial
-  dim_expr: _JaxValue
+  dim_expr: _JaxValue  # Of type dim_as_value_dtype()
 
 
 def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
-  Tuple[Callable, Sequence[core.AbstractValue]]:
+  Callable[..., TfVal]:
   """Prepares a shape evaluator.
 
-  Returns a pair with the first component a function that given the values
-  for the dimension variables returns the values for the dimensions of `shape`.
-  The second component of the returned pair is a tuple of AbstractValues for
-  the dimension variables.
+  Returns a JAX function that given the values for the dimension variables
+  returns the values for the dimensions of `shape`.
   """
   def eval_shape(*dim_values: Any) -> Sequence[Any]:
     shape_env_jax = dict(zip(dim_vars, dim_values))
@@ -788,10 +796,9 @@ def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
     def eval_dim(d: DimSize):
       return d.evaluate(shape_env_jax)  # type: ignore[union-attr]
 
-    return tuple(eval_dim(d) if type(d) is _DimPolynomial else np.int32(d)  # type: ignore
+    return tuple(eval_dim(d) if type(d) is _DimPolynomial else np.array(d, dtype=dim_as_value_dtype())  # type: ignore
                  for d in shape)
-  return (eval_shape,
-          tuple(core.ShapedArray((), np.int32) for _ in dim_vars))
+  return eval_shape
 
 def arg_aval(
     arg_shape: Sequence[Optional[int]],
@@ -809,13 +816,15 @@ def arg_aval(
   return core.ShapedArray(aval_shape, arg_jax_dtype)
 
 def prepare_dim_var_env(args_avals: Sequence[core.AbstractValue]) -> \
-    Tuple[Sequence[str], Callable]:
+    Tuple[Sequence[str],
+          Callable[..., Sequence[TfVal]]]:
   """Get the dimension variables and the function to compute them.
 
   Returns a tuple of dimension variables that appear in `args_avals` along
   with a function that given the actual arguments of the top-level function
   returns a tuple of dimension variable values, in the same order as the
-  dimension variables returns in the first component.
+  dimension variables returned in the first component.
+  The dimension variables are TfVal with type dim_as_value_dtype().
   """
   dim_vars: Set[str] = set()
   for a in args_avals:
@@ -832,6 +841,7 @@ def prepare_dim_var_env(args_avals: Sequence[core.AbstractValue]) -> \
               poly=d, dim_expr=dimension_size_p.bind(a, dimension=i)))
 
     dim_env = _solve_dim_equations(dim_equations)
+    assert all(dim_env[dv].dtype == dim_as_value_dtype() for dv in dim_vars)
     return tuple(dim_env[dv] for dv in dim_vars)
   return tuple(dim_vars), get_dim_var_values
 
@@ -860,7 +870,7 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
-        dim_expr = dim_expr - _evaluate_multiply(mon_value, np.int32(factor))
+        dim_expr = dim_expr - _evaluate_multiply(mon_value, dim_constant(factor))
         continue
       except KeyError:
         # There are some indeterminate variables. We handle only the case of
@@ -874,10 +884,10 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
 
     if var is not None:
       if factor_var == 1:
-        var_value, var_remainder = dim_expr, np.int32(0)
+        var_value, var_remainder = dim_expr, dim_constant(0)
       else:
-        var_value = lax.div(dim_expr, np.int32(factor_var))  # type: ignore
-        var_remainder = lax.rem(dim_expr, np.int32(factor_var))  # type: ignore
+        var_value = lax.div(dim_expr, dim_constant(factor_var))  # type: ignore
+        var_remainder = lax.rem(dim_expr, dim_constant(factor_var))  # type: ignore
 
       # Check that the division is even. Works only in eager mode.
       var_remainder_int = _is_known_constant(var_remainder)

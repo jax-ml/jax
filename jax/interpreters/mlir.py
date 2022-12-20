@@ -21,6 +21,7 @@ import functools
 from functools import partial
 import io
 import itertools
+import operator
 import re
 import typing
 from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
@@ -576,20 +577,20 @@ class DimPolyEvaluator:
   def __init__(self, value: ir.Value):
     self.value = value
 
-  def __add__(self, other: Union[np.int32, DimPolyEvaluator]):
+  def __add__(self, other: Union[np.int32, np.int64, DimPolyEvaluator]):
     if not isinstance(other, DimPolyEvaluator):
       other = DimPolyEvaluator(ir_constant(other))
     return DimPolyEvaluator(hlo.AddOp(self.value, other.value).result)
 
-  def __radd__(self, other: np.int32):
+  def __radd__(self, other: Union[np.int32, np.int64]):
     return DimPolyEvaluator(hlo.AddOp(ir_constant(other), self.value).result)
 
-  def __mul__(self, other: Union[np.int32, DimPolyEvaluator]):
+  def __mul__(self, other: Union[np.int32, np.int64, DimPolyEvaluator]):
     if not isinstance(other, DimPolyEvaluator):
       other = DimPolyEvaluator(ir_constant(other))
     return DimPolyEvaluator(hlo.MulOp(self.value, other.value).result)
 
-  def __rmul__(self, other: np.int32):
+  def __rmul__(self, other: Union[np.int32, np.int64]):
     return DimPolyEvaluator(hlo.MulOp(ir_constant(other), self.value).result)
 
 
@@ -603,7 +604,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
                    for dv_name, dv_val in zip(ctx.module_context.dim_vars, ctx.dim_var_values)}
     def eval_dim(d: core.DimSize) -> Union[int, ir.Value]:
       try:
-        return int(d)
+        return operator.index(d)
       except:
         if isinstance(d, ir.Value):
           return d
@@ -866,7 +867,7 @@ def lower_jaxpr_to_fun(
     return aval_to_ir_types(aval)
 
   num_dim_vars = len(ctx.dim_vars)
-  dim_var_types = map(aval_to_types, [core.ShapedArray((), np.int32)] * num_dim_vars)
+  dim_var_types = map(aval_to_types, [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars)
 
   # Function inputs: *dim_var_values, *tokens, *actual_inputs
   input_types = map(aval_to_types, jaxpr.in_avals)
@@ -1020,7 +1021,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   """Emits the contents of a lowering rule as a private function."""
   num_dim_vars = len(ctx.module_context.dim_vars)
   # TODO(necula) maybe only pass the dim_vars if they are needed?
-  dim_var_types = map(aval_to_ir_types, [core.ShapedArray((), np.int32)] * num_dim_vars)
+  dim_var_types = map(aval_to_ir_types, [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars)
 
   input_types = map(aval_to_ir_types, ctx.avals_in)
   output_types = map(aval_to_ir_types, ctx.avals_out)
