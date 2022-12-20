@@ -940,7 +940,7 @@ class XlaComputation(stages.XlaLowering):
   _executable: Optional[XlaCompiledComputation]
   _donated_invars: Optional[Sequence[bool]]
 
-  def __init__(self, name: str, hlo, is_trivial: bool,
+  def __init__(self, name: str, hlo: Optional[ir.Module], is_trivial: bool,
                donated_invars: Optional[Sequence[bool]],
                in_type: Optional[pe.InputType],
                out_type: Optional[pe.OutputType],
@@ -962,8 +962,6 @@ class XlaComputation(stages.XlaLowering):
   def hlo(self) -> xc.XlaComputation:
     if self.is_trivial():
       raise ValueError("A trivial computation has no HLO")
-    if isinstance(self._hlo, xc.XlaComputation):
-      return self._hlo
     return xe.mlir.mlir_module_to_xla_computation(
         mlir.module_to_string(self._hlo),
         use_tuple_args=self.compile_args["tuple_args"])
@@ -971,10 +969,6 @@ class XlaComputation(stages.XlaLowering):
   def mhlo(self) -> ir.Module:
     if self.is_trivial():
       raise ValueError("A trivial computation has no MHLO")
-    if isinstance(self._hlo, xc.XlaComputation):
-      module_str = xe.mlir.xla_computation_to_mlir_module(self._hlo)
-      with mlir.make_ir_context():
-        return ir.Module.parse(module_str)
     return self._hlo
 
   def compile(self) -> XlaCompiledComputation:
