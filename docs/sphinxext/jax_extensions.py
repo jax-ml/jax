@@ -48,3 +48,8 @@ def doi_role(typ, rawtext, text, lineno, inliner, options=None, content=()):
 def setup(app):
   app.add_role('jax-issue', jax_issue_role)
   app.add_role('doi', doi_role)
+  return {
+    'version': 1.0,
+    'parallel_read_safe': True,
+    'parallel_write_safe': True,
+  }
