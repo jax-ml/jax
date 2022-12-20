@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
+import contextlib
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -465,23 +466,22 @@ class PolyHarness(Harness):
       f_jax = self.fun
     else:
       f_jax = self.dyn_fun
-    if expect_error_type is not None:
-      with tst.assertRaisesRegex(expect_error_type, expect_error_regex):
-        f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
-                              enable_xla=self.enable_xla)
-        f_tf_func = tf.function(
-            f_tf, autograph=False, input_signature=input_signature)
-        # Create tf.ConcreteFunction and check inferred output signature
-        f_tf_func.get_concrete_function(*input_signature)
 
-      return
-    else:
+    with contextlib.ExitStack() as stack:
+      if expect_error_type is not None:
+        stack.enter_context(tst.assertRaisesRegex(expect_error_type, expect_error_regex))
+
       f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
                             enable_xla=self.enable_xla)
+      # Run in tf.Eager mode first, because it is friendlier to debuggers
+      res_tf = f_tf(*args) if not self.skip_jax_run else None
       f_tf_func = tf.function(
           f_tf, autograph=False, input_signature=input_signature)
       # Create tf.ConcreteFunction and check inferred output signature
       concrete_f_tf = f_tf_func.get_concrete_function(*input_signature)
+
+    if expect_error_type is not None:
+      return
 
     if self.expected_output_signature:
       # Strangely, output_shapes can be a single shape for a function with a
@@ -499,7 +499,6 @@ class PolyHarness(Harness):
     # Run the JAX and the TF functions and compare the results
     if not self.skip_jax_run:
       res_jax = f_jax(*args)
-      res_tf = f_tf(*args)
       if self.check_result:
         tst.assertAllClose(res_jax, res_tf, atol=self.tol, rtol=self.tol)
 
@@ -1725,12 +1724,13 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[1, 0]),
     PolyHarness("einsum", "multiple_contractions",
                 lambda x, y, z: jnp.einsum("ab,bc,cd->ad", x, y, z),
-                arg_descriptors=[RandArg((3, 2), _f32), RandArg((2, 3), _f32), RandArg((3, 4), _f32),],
+                arg_descriptors=[RandArg((3, 2), _f32), RandArg((2, 3), _f32), RandArg((3, 4), _f32)],
                 poly_axes=[0, None, None]),
     PolyHarness("einsum", "incompatible_contractions_error",
                 lambda x, y: jnp.einsum("ab,cb->ac", x, y),
                 arg_descriptors=[RandArg((2, 3), _f32), RandArg((2, 3), _f32)],
-                poly_axes=[1, (0, 1)],
+                polymorphic_shapes=["(2, b0)", "(2, b1)"],
+                input_signature=[tf.TensorSpec((2, None)), tf.TensorSpec((2, None))],
                 expect_error=(core.InconclusiveDimensionOperation,
                               "Dimension polynomial comparison 'b1' == 'b0' is inconclusive")),
     PolyHarness("eye", "N=poly_M=None",
@@ -2227,22 +2227,6 @@ def _flatten_harnesses(harnesses):
       res.append(h)
   return res
 
-# Set of harness.group_name:platform that are implemented with custom call
-custom_call_harnesses = {
-    "cholesky:cpu", "cholesky:gpu", "eig:cpu",
-    "eigh:cpu", "eigh:gpu", "fft:cpu",
-    "householder_product:cpu", "householder_product:gpu",
-    "geqrf:cpu", "geqrf:gpu", "lu:cpu", "lu:gpu", "qr:cpu", "qr:gpu",
-    "random_gamma:gpu", "random_categorical:gpu",
-    "random_randint:gpu", "random_uniform:gpu", "random_split:gpu",
-    "svd:cpu", "svd:gpu"}
-
-# Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
-fallback_lowering_harnesses = {
-    "approx_top_k:cpu", "bessel_i0e", "eigh:tpu",
-    "erf_inv", "igamma", "igammac", "lu",
-    "regularized_incomplete_beta", "qr:tpu",
-    "random_gamma:cpu", "random_gamma:tpu", "svd:tpu"}
 
 class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   """Tests for primitives that take shape values as parameters."""
@@ -2258,17 +2242,48 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       #one_containing="",
   )
   def test_harness(self, harness: PolyHarness):
-    # Exclude some harnesses that are known to fail
-    if config.jax2tf_default_experimental_native_lowering and not harness.params.get("enable_xla", True):
-      raise unittest.SkipTest("disabled for experimental_native_lowering and enable_xla=False")
+    # Exclude some harnesses that are known to fail for native serialization
     if config.jax2tf_default_experimental_native_lowering:
+      if not harness.enable_xla:
+        raise unittest.SkipTest("disabled for experimental_native_lowering and enable_xla=False")
+
+      # Set of harness.group_name:platform that are implemented with custom call
+      custom_call_harnesses = {
+          "vmap_cholesky:cpu", "vmap_cholesky:gpu", "vmap_eig:cpu",
+          "vmap_eigh:cpu", "vmap_eigh:gpu", "vmap_fft:cpu",
+          "householder_product:cpu", "householder_product:gpu",
+          "vmap_geqrf:cpu", "vmap_geqrf:gpu",
+          "vmap_lu:cpu", "vmap_lu:gpu", "vmap_qr:cpu", "vmap_qr:gpu",
+          "random_gamma:gpu", "random_categorical:gpu",
+          "random_randint:gpu", "random_uniform:gpu", "random_split:gpu",
+          "vmap_svd:cpu", "vmap_svd:gpu"}
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for custom calls; b/261671778")
-    if (config.jax2tf_default_experimental_native_lowering and
-        (harness.group_name in fallback_lowering_harnesses or
-         f"{harness.group_name}:{jtu.device_under_test()}" in fallback_lowering_harnesses)):
-      raise unittest.SkipTest(
-          "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
+
+      # Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
+      fallback_lowering_harnesses = {
+          "vmap_approx_top_k:cpu", "vmap_bessel_i0e", "vmap_eigh:tpu",
+          "vmap_erf_inv", "vmap_igamma", "vmap_igammac", "vmap_lu",
+          "vmap_regularized_incomplete_beta", "vmap_qr:tpu",
+          "vmap_random_gamma:cpu", "vmap_random_gamma:tpu", "vmap_svd:tpu"}
+      if (harness.group_name in fallback_lowering_harnesses or
+          f"{harness.group_name}:{jtu.device_under_test()}" in fallback_lowering_harnesses):
+        raise unittest.SkipTest(
+            "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
+
+      # Disable these tests because they crash in MHLO
+      _dynamic_gather_failures = [
+          # In mlir::mhlo::simplifyDynamicGatherToGather(): LLVM ERROR: Failed to infer result type(s)
+          "getitem_op=poly_idx=slice-ct-2",
+          "image_resize_nearest_0",
+          "take__enable_xla=True",
+          "vmap_gather_from_slicing",
+          "vmap_random_randint",
+          "vmap_random_uniform",
+      ]
+      for s in _dynamic_gather_failures:
+        if harness.fullname.find(s) != -1:
+          raise unittest.SkipTest("TODO(necula): crashes in simplifyDynamicGatherToGather")
 
     harness.run_test(self)
 
