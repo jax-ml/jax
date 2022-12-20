@@ -100,7 +100,8 @@ class SparseTestCase(jtu.JaxTestCase):
 
     def dense_fun_flat(*args_flat):
       args = tree_util.tree_unflatten(tree, args_flat)
-      return dense_fun(*map(sparse.todense, args))
+      args_dense = tree_util.tree_map(sparse.todense, args, is_leaf=is_sparse)
+      return dense_fun(*args_dense)
 
     def sparse_fun_flat(*args_flat):
       out = sparse_fun(*tree_util.tree_unflatten(tree, args_flat))

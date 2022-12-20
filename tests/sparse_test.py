@@ -2093,6 +2093,8 @@ class BCOOTest(sptu.SparseTestCase):
 
     self._CheckAgainstDense(dense_func, sparse_func, args_maker)
     self._CompileAndCheckSparse(sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
   def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
     # This test checks that BCOO shape metadata interacts correctly with vmap.
