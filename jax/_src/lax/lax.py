@@ -2566,7 +2566,8 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
   x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))  # type: ignore[arg-type]
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
-  return transpose(dot_general(g, y, dims, precision=precision, preferred_element_type=preferred_element_type),
+  return transpose(dot_general(g, y, dims, precision=precision,
+                               preferred_element_type=preferred_element_type),
                    tuple(out_axes))
 
 def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
@@ -2675,8 +2676,8 @@ def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
   return [dot_general(lhs_, rhs, dimension_numbers=dimension_numbers, **params)]
 
 def _dot_general_pp_rule(eqn, context, settings):
-  # suppress printing precision or preferred_element_type when None.
-  # print dimension_numbers as list-of-lists to be shorter.
+  # * suppress printing precision or preferred_element_type when None.
+  # * print dimension_numbers as list-of-lists to be shorter.
   printed_params = {k: v for k, v in eqn.params.items() if v is not None}
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
@@ -2696,8 +2697,7 @@ ad.defbilinear(dot_general_p,
                _dot_general_transpose_lhs, _dot_general_transpose_rhs)
 batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 pe.padding_rules[dot_general_p] = _dot_general_padding_rule
-# TODO(mattjj): un-comment the next line
-# core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
+core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 
 def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
   if precision is None:
