@@ -134,7 +134,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     logging.info("[%s] got TF HLO %s", self._testMethodName, tf_hlo)
     self._assert_sharding_annotations("TF before optimizations", tf_hlo, expected)
     tf_optimized_hlo = (
-        tf.function(f_tf, jit_compile=True)
+        tf.function(f_tf, jit_compile=True, autograph=False)
         .experimental_get_compiler_ir(*args)(stage="optimized_hlo",
                                              device_name=device_name))
     logging.info("[%s] got TF optimized HLO for %s: %s", self._testMethodName,

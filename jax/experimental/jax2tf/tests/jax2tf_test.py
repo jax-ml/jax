@@ -165,7 +165,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   @jtu.skip_on_devices("gpu")
   def test_bfloat16_passed_by_tf(self):
     f_jax = lambda a, b: a + b
-    f_tf = tf.function(jax2tf.convert(f_jax),
+    f_tf = tf.function(jax2tf.convert(f_jax), autograph=False,
                        input_signature=[tf.TensorSpec([512, 512], tf.bfloat16),
                                         tf.TensorSpec([512, 512], tf.bfloat16)])
     self.assertIsNotNone(f_tf.get_concrete_function())
@@ -186,7 +186,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         result = jax2tf.convert(f_jax)(a, b)
       return result, tape.gradient(result, a)
 
-    f_tf = tf.function(_tf_grad,
+    f_tf = tf.function(_tf_grad, autograph=False,
                        input_signature=[tf.TensorSpec([512, 512], tf.bfloat16),
                                         tf.TensorSpec([512, 512], tf.bfloat16)])
 
@@ -203,7 +203,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(jnp.sin, big_const)
     f_conv = jax2tf.convert(jnp.sin)
     if with_function:
-      f_conv = tf.function(f_conv)
+      f_conv = tf.function(f_conv, autograph=False)
     # We check also when we pass tf.Variable or tf.Tensor into the
     # converted function
     self.assertAllClose(jnp.sin(big_const),
@@ -223,10 +223,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # jax2tf.convert has the same behavior as JAX
     self.assertEqual(jax2tf.convert(jnp.sin)(3.14).dtype, tf.float64)
     # The following will compute `sin` in float64.
-    self.assertEqual(tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64)).dtype, tf.float64)
+    self.assertEqual(tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14, dtype=tf.float64)).dtype, tf.float64)
 
     # The following will compute `sin` in float32.
-    self.assertEqual(tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14)).dtype, tf.float32)
+    self.assertEqual(tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14)).dtype, tf.float32)
 
   def test_64bit_behavior_not_enable_x64_readme(self):
     # Tests some of the examples from the README
@@ -244,7 +244,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # jax2tf.convert has the same behavior as JAX
     self.assertEqual(jax2tf.convert(jnp.sin)(3.14).dtype, tf.float32)
     self.assertEqual(jax2tf.convert(jnp.sin)(np.float64(3.14)).dtype, tf.float32)
-    self.assertEqual(tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64)).dtype, tf.float32)
+    self.assertEqual(tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14, dtype=tf.float64)).dtype, tf.float32)
 
   def test_function(self):
     f_jax = jax.jit(lambda x: jnp.sin(jnp.cos(x)))
@@ -988,7 +988,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sum(x)
     f_tf = jax2tf.convert(f_jax)
     if with_function:
-      f_tf = tf.function(f_tf)
+      f_tf = tf.function(f_tf, autograph=False)
     self.assertAllClose(
       f_tf(x=np.zeros(3, dtype=np.float32)),  # Call with kwargs.
       np.zeros((), dtype=np.float32))
@@ -1002,7 +1002,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sum(x[0]) + 2. * jnp.sum(x[1])
     f_tf = jax2tf.convert(f_jax)
     if with_function:
-      f_tf = tf.function(f_tf)
+      f_tf = tf.function(f_tf, autograph=False)
     xv = tf.nest.map_structure(tf.Variable, x)
     with tf.GradientTape() as tape:
       res = f_tf(x=xv)
@@ -1257,7 +1257,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     with global_mesh:
       tf_func = tf.function(
           jax2tf.convert(jax_func, enable_xla=True),
-          jit_compile=True,
+          jit_compile=True, autograph=False
       )
       jax_out = jax_func(input_data=input_data)
       tf_out = tf_func(input_data=input_data)

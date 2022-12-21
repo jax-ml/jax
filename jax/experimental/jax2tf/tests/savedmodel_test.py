@@ -166,7 +166,7 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
 
     model = tf.Module()
     model._variables = tf.nest.flatten(params_vars)
-    model.f = tf.function(prediction_tf, jit_compile=True)
+    model.f = tf.function(prediction_tf, jit_compile=True, autograph=False)
 
     x = np.array(0.7, dtype=jnp.float32)
     self.assertAllClose(model.f(x), model_jax(params, x))
@@ -306,13 +306,13 @@ class SavedModelTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         Exception,
         "Detected unsupported operations when trying to compile graph"):
-      tf.function(tf_fn, jit_compile=True)(x_str)
+      tf.function(tf_fn, jit_compile=True, autograph=False)(x_str)
 
     # Plug in the TF-compiled JAX-converted `compute_jax_fn`.
     composed_fn = lambda x_str: tf_fn(
         x_str,
         compute_tf_fn=tf.function(jax2tf.convert(jnp.sin),
-                                  autograph=True,
+                                  autograph=False,
                                   jit_compile=True))
     res_tf = composed_fn(x_str)
     self.assertAllClose(res_tf.numpy(),

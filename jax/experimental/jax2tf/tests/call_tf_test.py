@@ -544,7 +544,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       begin = 0
       return x[begin:5]  # x must be a compile-time constant
 
-    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
     self.assertIn("(arg0.1: s32[10]) -> s32[5]", hlo)
 
     # Non-constant slice, but compile-time constant depending only on values.
@@ -554,10 +554,10 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       begin = x[0]
       return x[begin:5]  # x must be a compile-time constant
 
-    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
     self.assertIn("() -> s32[5]", hlo)
     x = np.ones((10,), dtype=np.int32)
-    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
     self.assertIn("() -> s32[4]", hlo)
 
     # Non-constant slice, but compile-time constant depending only on shapes.
@@ -567,7 +567,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       begin = tf.shape(x)[0] - 2  # begin is a compile-time constant, even if x is not
       return x[begin:]
 
-    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
     self.assertIn("(arg0.1: s32[10]) -> s32[2]", hlo)
 
     # Capture a variable
@@ -577,7 +577,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     def fun_tf(x):
       return x * tf.broadcast_to(outer_var, x.shape) + 1.
 
-    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
     self.assertIn("(arg0.1: f32[3], arg1.2: f32[1]) -> f32[3]", hlo)
 
     # Capture a constant
@@ -587,7 +587,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     def fun_tf(x):
       return x * tf.broadcast_to(outer_ct, x.shape) + 1.
 
-    hlo = tf.function(fun_tf, jit_compile=True).experimental_get_compiler_ir(x)()
+    hlo = tf.function(fun_tf, jit_compile=True, autograph=False).experimental_get_compiler_ir(x)()
     self.assertIn("(arg0.1: f32[3]) -> f32[3]", hlo)
 
     # Call get_compiler_ir in a function context
@@ -596,7 +596,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     def fun_tf_outer(x):
       x_const = tf.constant(0, shape=x.shape, dtype=x.dtype)
-      _ = tf.function(tf.math.sin, jit_compile=True).experimental_get_compiler_ir(x_const)()
+      _ = tf.function(tf.math.sin, jit_compile=True, autograph=False).experimental_get_compiler_ir(x_const)()
 
     # TODO(b/193754660)
     # with self.assertRaisesRegex(
