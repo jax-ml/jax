@@ -384,14 +384,13 @@ def log_elapsed_time(fmt: str, event: Optional[str] = None):
 
 
 def should_tuple_args(num_args: int, platform: str):
-  # CPU does not need a tuple as it uses a buffer table
+  # CPU and GPU do not need tuples as they use host-side data structures that
+  # do not have small bounds.
   # TPU only needs a tuple for very long lists
-  if platform == "cpu":
-    return False
-  elif platform == "tpu":
+  if platform == "tpu":
     return num_args > 2000
   else:
-    return num_args > 100
+    return False
 
 
 def raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, name, jaxpr):
