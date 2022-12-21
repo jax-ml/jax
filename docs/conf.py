@@ -84,6 +84,7 @@ intersphinx_mapping = {
 suppress_warnings = [
     'ref.citation',  # Many duplicated citations in numpy/scipy docstrings.
     'ref.footnote',  # Many unreferenced footnotes in numpy/scipy docstrings
+    'myst.header',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -206,6 +207,7 @@ nb_execution_excludepatterns = [
     'jax-101/*',
     'notebooks/xmap_tutorial.*',
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
+    'notebooks/autodiff_remat.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
