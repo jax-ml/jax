@@ -2172,7 +2172,8 @@ class BCSRTest(sptu.SparseTestCase):
     self.assertEqual(indptr.dtype, jnp.int32)
     self.assertEqual(indptr.shape, shape[:n_batch] + (shape[n_batch] + 1,))
 
-    todense = partial(sparse_bcsr._bcsr_todense, shape=shape)
+    todense = partial(sparse_bcsr._bcsr_todense,
+                      spinfo=sparse_util.SparseInfo(shape=shape))
     self.assertArraysEqual(M, todense(data, indices, indptr))
     args_maker_todense = lambda: [data, indices, indptr]
     self._CompileAndCheck(todense, args_maker_todense)
@@ -2195,7 +2196,8 @@ class BCSRTest(sptu.SparseTestCase):
 
     fromdense = partial(sparse_bcsr._bcsr_fromdense, nse=nse, n_batch=0,
                         n_dense=n_dense)
-    todense = partial(sparse_bcsr._bcsr_todense, shape=shape)
+    todense = partial(sparse_bcsr._bcsr_todense,
+                      spinfo=sparse_util.SparseInfo(shape))
 
     for _ in range(n_batch):
       fromdense = jax.vmap(fromdense)
