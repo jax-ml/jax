@@ -170,7 +170,7 @@ LAX_GRAD_SPECIAL_VALUE_TESTS = [
     grad_special_values_test_spec(
       lax.cosh, [0.],
       tol={np.float32: 1e-2} if jtu.device_under_test() == "tpu" else None),
-    grad_special_values_test_spec(lax.tanh, [0., 1000.]),
+    grad_special_values_test_spec(lax.tanh, [0., 1000.], tol=5e-3),
     grad_special_values_test_spec(lax.sin, [0., np.pi, np.pi/2., np.pi/4.]),
     grad_special_values_test_spec(lax.cos, [0., np.pi, np.pi/2., np.pi/4.]),
     grad_special_values_test_spec(lax.tan, [0.]),
