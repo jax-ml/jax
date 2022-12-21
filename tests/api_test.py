@@ -3777,7 +3777,8 @@ class APITest(jtu.JaxTestCase):
     with jax.default_matmul_precision(None):
       jnp.dot(x, x)  # doesn't crash
       jaxpr = jax.make_jaxpr(jnp.dot)(x, x)
-    self.assertIn('precision=None', str(jaxpr))
+    # self.assertIn('precision=None', str(jaxpr))
+    self.assertIs(jaxpr.jaxpr.eqns[0].params['precision'], None)
 
     with jax.default_matmul_precision("bfloat16"):
       x @ x  # doesn't crash
