@@ -58,6 +58,11 @@ def int_env(varname: str, default: int) -> int:
   return int(os.getenv(varname, str(default)))
 
 
+def str_env(varname: str, default: str) -> str:
+  """Read an environment variable and interpret it as a string."""
+  return os.getenv(varname, default)
+
+
 UPGRADE_BOOL_HELP = (
     " This will be enabled by default in future versions of JAX, at which "
     "point all uses of the flag will be considered deprecated (following "
@@ -692,7 +697,7 @@ jax2tf_use_stablehlo = config.define_bool_state(
 
 jax_platforms = config.define_string_state(
     name='jax_platforms',
-    default=None,
+    default=str_env('JAX_PLATFORMS', ''),
     help=(
         'Comma-separated list of platform names specifying which platforms jax '
         'should initialize. If any of the platforms in this list are not successfully '
