@@ -87,7 +87,8 @@ f_tf_graph = tf.function(f_tf, autograph=False)
 
 The Autograph feature of `tf.function` cannot be expected to work on
 functions lowered from JAX as above, so it is recommended to
-set `autograph=False` in order to avoid warnings or outright errors.
+set `autograph=False` in order to speed up the execution
+and to avoid warnings and outright errors.
 
 It is a good idea to use XLA to compile the lowered function; that is
 the scenario for which we are optimizing for numerical and performance
@@ -186,7 +187,7 @@ prediction_tf = lambda inputs: jax2tf.convert(model_jax)(params_vars, inputs)
 my_model = tf.Module()
 # Tell the model saver what are the variables.
 my_model._variables = tf.nest.flatten(params_vars)
-my_model.f = tf.function(prediction_tf, jit_compile=True)
+my_model.f = tf.function(prediction_tf, jit_compile=True, autograph=False)
 tf.saved_model.save(my_model)
 ```
 
@@ -685,7 +686,7 @@ jax2tf.convert(jnp.sin)(3.14)  # Has type float32
 jax2tf.convert(jnp.sin)(np.float64(3.14))  # Has type float32
 
 # The following will still compute `sin` in float32 (with a tf.cast on the argument).
-tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64))
+tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14, dtype=tf.float64))
 ```
 
 When the `JAX_ENABLE_X64` flas is set, JAX uses 64-bit types
@@ -700,10 +701,10 @@ tf.math.sin(3.14)  # Has type float32
 jax2tf.convert(jnp.sin)(3.14)  # Has type float64
 
 # The following will compute `sin` in float64.
-tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14, dtype=tf.float64))
+tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14, dtype=tf.float64))
 
 # The following will compute `sin` in float32.
-tf.function(jax2tf.convert(jnp.sin))(tf.Variable(3.14))
+tf.function(jax2tf.convert(jnp.sin), autograph=False)(tf.Variable(3.14))
 ```
 
 This is achieved by inserting `tf.cast` operations
@@ -1087,7 +1088,8 @@ jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
 # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
 f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+        jax2tf.convert(f_jax, polymorphic_shapes=["b"]), autograph=False
+       ).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
 self.assertEqual(1, f_tf(x0))
 ```
 
@@ -1110,7 +1112,8 @@ jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
 # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
 f_tf = tf.function(
-    jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+    jax2tf.convert(f_jax, polymorphic_shapes=["b, b"]),
+    autograph=False).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
 self.assertEqual(1, f_tf(x45))
 ```
 
