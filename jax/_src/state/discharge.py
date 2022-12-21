@@ -22,7 +22,7 @@ import numpy as np
 
 from jax import core
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax._src.util import safe_map, safe_zip, split_list
 

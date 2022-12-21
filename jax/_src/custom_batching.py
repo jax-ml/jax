@@ -17,7 +17,7 @@ import operator
 from typing import Callable, Optional
 
 import jax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax import tree_util
 from jax.interpreters import ad
 from jax.interpreters import batching

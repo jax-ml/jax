@@ -27,7 +27,7 @@ from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
     treedef_children, treedef_is_leaf)
 from jax._src.tree_util import _replace_nones
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
 
 from jax._src import traceback_util

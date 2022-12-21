@@ -29,7 +29,7 @@ import warnings
 
 import numpy as np
 
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.config import config
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe

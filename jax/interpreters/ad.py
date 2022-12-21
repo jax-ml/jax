@@ -19,7 +19,7 @@ from functools import partial
 from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional, Union
 
 import jax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.interpreters import partial_eval as pe
 from jax.config import config
 from jax.tree_util import (tree_flatten, tree_unflatten,

@@ -15,7 +15,7 @@
 import functools
 from typing import Any, Callable, Optional, Tuple
 
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe

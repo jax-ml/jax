@@ -38,7 +38,7 @@ from jax._src.numpy.util import _promote_dtypes_inexact
 from jax._src.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
 from jax.tree_util import tree_leaves, tree_map
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 
 map = safe_map
 zip = safe_zip

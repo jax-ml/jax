@@ -19,7 +19,7 @@ import operator
 import jax
 from jax import core
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.core import raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching

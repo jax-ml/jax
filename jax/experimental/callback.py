@@ -24,7 +24,7 @@ from jax.core import Trace, Tracer, jaxpr_as_fun
 from jax import lax
 from jax import custom_derivatives as cd
 from jax.interpreters import partial_eval as pe
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src.util import safe_map, wraps, split_list
 from jax._src.lax import control_flow as lcf
 

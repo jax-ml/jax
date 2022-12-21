@@ -20,7 +20,7 @@ from typing import Union, Optional, Callable, Dict, Tuple, TypeVar, FrozenSet, I
 
 import jax
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src import core
 from jax._src import prng
 from jax._src import source_info_util

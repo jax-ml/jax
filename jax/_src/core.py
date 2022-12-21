@@ -40,7 +40,7 @@ from jax._src import config as jax_config
 from jax._src.config import FLAGS, config
 from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
                         TracerIntegerConversionError, UnexpectedTracerError)
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,

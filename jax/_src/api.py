@@ -34,7 +34,7 @@ import numpy as np
 from contextlib import contextmanager, ExitStack
 
 import jax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax import stages
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,

@@ -25,7 +25,7 @@ import jax
 from jax import lax
 from jax import config
 from jax import core, custom_derivatives
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax import random, tree_util
 from jax import numpy as jnp
 from jax.experimental import maps

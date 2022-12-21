@@ -66,7 +66,7 @@ from jax._src import prng
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax import tree_util
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 import jax._src.util as jax_util
 from jax._src.ad_checkpoint import saved_residuals
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_name
@@ -4750,7 +4750,7 @@ class RematTest(jtu.JaxTestCase):
     @jax_util.curry
     def call(f, *args):
       return jax.core.call(
-          jax.linear_util.wrap_init(lambda *args: [f(*args)]),
+          lu.wrap_init(lambda *args: [f(*args)]),
           *args, name='foo')[0]
 
     f = call(add_one)

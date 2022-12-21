@@ -29,7 +29,7 @@ from jax._src.sharding import (
     NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
     XLADeviceAssignment, SingleDeviceSharding)
 from jax import core
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax import stages
 from jax._src import array
 from jax._src.api import (_check_callable, _check_arg, FLAGS, _resolve_argnums,

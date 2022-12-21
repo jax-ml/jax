@@ -17,7 +17,7 @@ from typing import Any, Callable, Tuple
 import jax
 from jax import core
 from jax import tree_util
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.experimental import pjit
 
 from jax._src.lib.mlir.dialects import hlo

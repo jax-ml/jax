@@ -17,7 +17,7 @@ import inspect
 from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Set,
                     Any)
 
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                            treedef_is_leaf, treedef_tuple,

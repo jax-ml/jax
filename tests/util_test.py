@@ -14,7 +14,7 @@
 
 from absl.testing import absltest
 
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 
 from jax.config import config

@@ -22,7 +22,7 @@ from typing import Any, Dict, Callable, Optional, Sequence, Set, Tuple, Union
 
 from jax import tree_util
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.config import config
 from jax.experimental import pjit
 from jax.interpreters import ad

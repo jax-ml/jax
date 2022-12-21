@@ -62,7 +62,6 @@ import jax
 from jax import core
 from jax import lax
 from jax.interpreters import xla
-import jax.linear_util as lu
 import jax.numpy as jnp
 from jax.tree_util import (register_pytree_node, tree_structure,
                            treedef_is_leaf, tree_flatten, tree_unflatten)
@@ -70,6 +69,7 @@ from jax.tree_util import (register_pytree_node, tree_structure,
 from jax._src import ad_util
 from jax._src import dispatch
 from jax._src.lax import lax as lax_internal
+from jax._src import linear_util as lu
 from jax._src.util import unzip2
 
 

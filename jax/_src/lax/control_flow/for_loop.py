@@ -19,7 +19,7 @@ from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple,
 
 from jax import core
 from jax import lax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import batching

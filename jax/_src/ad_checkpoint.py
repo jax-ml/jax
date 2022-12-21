@@ -18,7 +18,7 @@ from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
 import types
 
 import jax
-from jax import linear_util as lu
+from jax._src import linear_util as lu
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
