@@ -90,13 +90,15 @@ class SparseTestCase(jtu.JaxTestCase):
                                       atol=atol, rtol=rtol)
 
   def _CheckGradsSparse(self, dense_fun, sparse_fun, args_maker, *,
-                        modes=('fwd', 'rev'), atol=None, rtol=None):
+                        argnums=None, modes=('fwd', 'rev'), atol=None, rtol=None):
     assert [mode in ['fwd', 'rev'] for mode in modes]
 
     args = args_maker()
     args_flat, tree = tree_util.tree_flatten(args)
     num_bufs = [len(tree_util.tree_flatten(arg)[0]) for arg in args]
-    argnums = np.cumsum([0, *num_bufs[:-1]]).tolist()
+    argnums_flat = np.cumsum([0, *num_bufs[:-1]]).tolist()
+    if argnums is not None:
+      argnums_flat = [argnums_flat[n] for n in argnums]
 
     def dense_fun_flat(*args_flat):
       args = tree_util.tree_unflatten(tree, args_flat)
@@ -108,13 +110,13 @@ class SparseTestCase(jtu.JaxTestCase):
       return tree_util.tree_map(sparse.todense, out, is_leaf=is_sparse)
 
     if 'rev' in modes:
-      result_de = jax.jacrev(dense_fun_flat, argnums=argnums)(*args_flat)
-      result_sp = jax.jacrev(sparse_fun_flat, argnums=argnums)(*args_flat)
+      result_de = jax.jacrev(dense_fun_flat, argnums=argnums_flat)(*args_flat)
+      result_sp = jax.jacrev(sparse_fun_flat, argnums=argnums_flat)(*args_flat)
       self.assertAllClose(result_de, result_sp, atol=atol, rtol=rtol)
 
     if 'fwd' in modes:
-      result_de = jax.jacfwd(dense_fun_flat, argnums=argnums)(*args_flat)
-      result_sp = jax.jacfwd(sparse_fun_flat, argnums=argnums)(*args_flat)
+      result_de = jax.jacfwd(dense_fun_flat, argnums=argnums_flat)(*args_flat)
+      result_sp = jax.jacfwd(sparse_fun_flat, argnums=argnums_flat)(*args_flat)
       self.assertAllClose(result_de, result_sp, atol=atol, rtol=rtol)
 
 def _rand_sparse(shape: Sequence[int], dtype: DTypeLike, *,
