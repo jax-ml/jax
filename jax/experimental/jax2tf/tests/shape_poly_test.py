@@ -1150,7 +1150,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(g_tf[1], np.zeros_like(zb))
 
   def test_prng(self):
-    raise unittest.SkipTest("TODO(necula): investigate")
     # The PRNG implementation uses opaque types, test shape polymorphism
     try:
       prev_custom_prng = config.jax_enable_custom_prng
