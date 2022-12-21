@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Type, Union
+from typing import Any, Callable, Dict, TypeVar, Union, cast
 
 from jax.tree_util import register_pytree_node
 
@@ -21,17 +21,18 @@ from jax._src import core
 from jax._src.core import (lattice_join, Primitive, valid_jaxtype,
                            raise_to_shaped, get_aval)
 from jax._src.util import safe_map
+from jax._src.typing import Array, ArrayLike
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
-Array = Any
+T = TypeVar('T')
 
 map = safe_map
 
-jaxval_adders: Dict[type, Callable] = {}
+jaxval_adders: Dict[type, Callable[[ArrayLike, ArrayLike], Array]] = {}
 
-def add_jaxvals(x, y):
+def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
   return add_jaxvals_p.bind(x, y)
 
 add_jaxvals_p: Primitive = Primitive('add_any')
@@ -45,19 +46,19 @@ def add_impl(xs, ys):
 def add_abstract(xs, ys):
   return lattice_join(xs, ys)
 
-jaxval_zeros_likers: Dict[type, Array] = {}
+jaxval_zeros_likers: Dict[type, Callable[[Any], Array]] = {}
 
 def instantiate(z: Union[Zero, Array]) -> Array:
   if type(z) is Zero:
     return zeros_like_aval(z.aval)
-  return z
+  return cast(Array, z)
 
-def zeros_like_aval(aval):
+def zeros_like_aval(aval: core.AbstractValue) -> Array:
   return aval_zeros_likers[type(aval)](aval)
 
-aval_zeros_likers: Dict[Type[core.AbstractValue], Array] = {}
+aval_zeros_likers: Dict[type, Callable[[Any], Array]] = {}
 
-def zeros_like_jaxval(val):
+def zeros_like_jaxval(val: ArrayLike) -> Array:
   return zeros_like_p.bind(val)
 
 zeros_like_p: Primitive = Primitive('zeros_like')
@@ -70,18 +71,18 @@ zeros_like_p.def_abstract_eval(lambda x: x)
 
 class Zero:
   __slots__ = ['aval']
-  def __init__(self, aval):
+  def __init__(self, aval: core.AbstractValue):
     self.aval = aval
-  def __repr__(self):
+  def __repr__(self) -> str:
     return f'Zero({self.aval})'
   @staticmethod
-  def from_value(val):
+  def from_value(val: Any) -> Zero:
     return Zero(raise_to_shaped(get_aval(val)))
 
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
 
 
-def _stop_gradient_impl(x):
+def _stop_gradient_impl(x: T) -> T:
   if not valid_jaxtype(x):
     raise TypeError("stop_gradient only works on valid JAX arrays, but "
                     f"input argument is: {x}")
