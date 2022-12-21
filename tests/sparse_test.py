@@ -134,6 +134,32 @@ def _generate_batched_dot_general_properties(
           )
 
 
+def _generate_bcoo_dot_general_sampled_properties(shapes=((5,), (2, 3), (2, 3, 4), (2, 3, 4, 4))) -> BatchedDotGeneralProperties:
+  """Generator of properties for bcoo_dot_general_sampled tests."""
+  rng = random.Random(0)
+
+  for shape in shapes:
+    for batch_dims in _iter_subsets(range(len(shape))):
+      for contracting_dims in _iter_subsets(remaining(range(len(shape)), batch_dims)):
+        # We want coverage of permutations without generating hundreds of thousands of test cases;
+        # we do this by deterministic pseudo-random sampling instead of iterating.
+        lhs_permute = rng.sample(range(len(shape)), len(shape))
+        rhs_permute = rng.sample(range(len(shape)), len(shape))
+        lhs_shape = tuple(shape[p] for p in lhs_permute)
+        rhs_shape = tuple(shape[p] for p in rhs_permute)
+        dimension_numbers = (
+          ([lhs_permute.index(d) for d in contracting_dims], [rhs_permute.index(d) for d in contracting_dims]),
+          ([lhs_permute.index(d) for d in batch_dims], [rhs_permute.index(d) for d in batch_dims])
+        )
+        out = jax.eval_shape(partial(lax.dot_general, dimension_numbers=dimension_numbers),
+                             jax.ShapeDtypeStruct(lhs_shape, 'float32'), jax.ShapeDtypeStruct(rhs_shape, 'float32'))
+        for layout in iter_sparse_layouts(out.shape):
+          yield BatchedDotGeneralProperties(
+            lhs_shape=lhs_shape, rhs_shape=rhs_shape,
+            n_batch=layout.n_batch, n_dense=layout.n_dense,
+            dimension_numbers=dimension_numbers)
+
+
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 
 
@@ -1278,40 +1304,32 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertAllClose(f_dense(X, Y), f_sparse(data, indices, Y))
 
   @jtu.sample_product(
-    [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
-          rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
-      for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 0, 0),
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 1, 0),
-          ((3, 3, 2), (3, 2, 4), (([2], [1]), ([0], [0])), 0, 1),
-          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 0, 0),
-          ((3, 3, 2), (2, 3, 4), (([2], [0]), ([0], [1])), 1, 1),
-          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 0, 0),
-          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 1, 2),
-          ((3, 4, 2, 4), (3, 4, 3, 2), (([2], [3]), ([0, 1], [0, 1])), 2, 1),
-      ]
-    ],
+    props=_generate_bcoo_dot_general_sampled_properties(),
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  def test_bcoo_dot_general_sampled(self, lhs_shape, rhs_shape, dtype, dimension_numbers, n_batch, n_dense):
+  def test_bcoo_dot_general_sampled(self, props, dtype):
     rng = jtu.rand_default(self.rng())
-    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
-    out_shape = lax.dot_general(
-      jnp.zeros(lhs_shape), jnp.zeros(rhs_shape),
-      dimension_numbers=dimension_numbers).shape
-    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype),
-                          sprng(out_shape, dtype).indices]
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
+    out = jax.eval_shape(partial(lax.dot_general, dimension_numbers=props.dimension_numbers),
+                         jax.ShapeDtypeStruct(props.lhs_shape, dtype),
+                         jax.ShapeDtypeStruct(props.rhs_shape, dtype))
+    args_maker = lambda: [rng(props.lhs_shape, dtype), rng(props.rhs_shape, dtype),
+                          sprng(out.shape, dtype).indices]
 
     def dense_fun(lhs, rhs, indices):
-      AB = lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
+      AB = lax.dot_general(lhs, rhs, dimension_numbers=props.dimension_numbers)
       return sparse.bcoo_extract(indices, AB)
     def sparse_fun(lhs, rhs, indices):
       return sparse.bcoo_dot_general_sampled(
-                lhs, rhs, indices, dimension_numbers=dimension_numbers)
+          lhs, rhs, indices, dimension_numbers=props.dimension_numbers)
 
     self._CheckAgainstNumpy(dense_fun, sparse_fun, args_maker)
     self._CompileAndCheckSparse(sparse_fun, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      # Note: forward mode fails for some sparse layouts.
+      # TODO(jakevdp) fix forward-mode autodiff & enable tests here.
+      self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=['rev'], argnums=[0, 1])
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
