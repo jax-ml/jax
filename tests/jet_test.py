@@ -281,7 +281,8 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_cosh(self):       self.unary_check(jnp.cosh)
   @jtu.skip_on_devices("tpu")
-  def test_tanh(self):       self.unary_check(jnp.tanh, lims=[-500, 500], order=5)
+  def test_tanh(self):       self.unary_check(jnp.tanh, lims=[-500, 500], order=5,
+                                              atol=5e-3)
   @jtu.skip_on_devices("tpu")
   def test_logistic(self):   self.unary_check(lax.logistic, lims=[-100, 100], order=5)
   @jtu.skip_on_devices("tpu")
