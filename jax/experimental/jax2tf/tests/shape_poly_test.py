@@ -1368,6 +1368,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      expected_output_signature=tf.TensorSpec([4]))
 
   def test_dimension_used_as_value(self):
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
     def f_jax(x):
       poly = x.shape[0]
       x1 = jnp.array(poly)  # Try explicit jnp.array on poly
@@ -1384,6 +1386,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_dimension_used_as_result(self):
     if config.jax_enable_x64:
       raise unittest.SkipTest("TODO(necula): dim_as_value in x64 mode")
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
     def f_jax(x):
       return 2 * x.shape[0]
 
@@ -2258,8 +2262,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu", "vmap_qr:cpu", "vmap_qr:gpu",
-          "random_gamma:gpu", "random_categorical:gpu",
-          "random_randint:gpu", "random_uniform:gpu", "random_split:gpu",
+          "random_gamma:gpu", "vmap_random_gamma:gpu",
+          "random_categorical:gpu", "vmap_random_categorical:gpu",
+          "random_randint:gpu", "random_uniform:gpu", "vmap_random_split:gpu",
           "vmap_svd:cpu", "vmap_svd:gpu"}
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for custom calls; b/261671778")
@@ -2269,7 +2274,8 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "vmap_approx_top_k:cpu", "vmap_bessel_i0e", "vmap_eigh:tpu",
           "vmap_erf_inv", "vmap_igamma", "vmap_igammac", "vmap_lu",
           "vmap_regularized_incomplete_beta", "vmap_qr:tpu",
-          "vmap_random_gamma:cpu", "vmap_random_gamma:tpu", "vmap_svd:tpu"}
+          "vmap_random_gamma:cpu", "random_gamma:tpu",
+          "vmap_random_gamma:tpu", "vmap_svd:tpu"}
       if (harness.group_name in fallback_lowering_harnesses or
           f"{harness.group_name}:{jtu.device_under_test()}" in fallback_lowering_harnesses):
         raise unittest.SkipTest(
