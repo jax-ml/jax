@@ -2311,10 +2311,12 @@ class SparseObjectTest(sptu.SparseTestCase):
       self.assertIsInstance(x, cls)
       self.assertEqual(x.n_batch, 1)
       self.assertEqual(x.shape, Msp.shape)
+      self.assertEqual(x._info, Msp._info)
 
       self.assertIsInstance(y, cls)
       self.assertEqual(y.n_batch, 1)
       self.assertEqual(y.shape, Msp.shape)
+      self.assertEqual(y._info, Msp._info)
 
   @parameterized.named_parameters(
     {"testcase_name": f"_{cls.__name__}", "cls": cls}

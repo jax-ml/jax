@@ -2624,7 +2624,8 @@ def _bcoo_to_elt(cont, _, val, axis):
     raise ValueError(f"Cannot map in_axis={axis} for BCOO array with n_batch={val.n_batch}. "
                      "in_axes for batched BCOO operations must correspond to a batch dimension.")
   return BCOO((cont(val.data, axis), cont(val.indices, axis)),
-              shape=val.shape[:axis] + val.shape[axis + 1:])
+              shape=val.shape[:axis] + val.shape[axis + 1:],
+              indices_sorted=val.indices_sorted, unique_indices=val.unique_indices)
 
 def _bcoo_from_elt(cont, axis_size, elt, axis):
   if axis is None:
@@ -2633,6 +2634,7 @@ def _bcoo_from_elt(cont, axis_size, elt, axis):
     raise ValueError(f"BCOO: cannot add out_axis={axis} for BCOO array with n_batch={elt.n_batch}. "
                      "BCOO batch axes must be a contiguous block of leading dimensions.")
   return BCOO((cont(axis_size, elt.data, axis), cont(axis_size, elt.indices, axis)),
-              shape=elt.shape[:axis] + (axis_size,) + elt.shape[axis:])
+              shape=elt.shape[:axis] + (axis_size,) + elt.shape[axis:],
+              indices_sorted=elt.indices_sorted, unique_indices=elt.unique_indices)
 
 batching.register_vmappable(BCOO, int, int, _bcoo_to_elt, _bcoo_from_elt, None)
