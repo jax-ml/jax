@@ -23,7 +23,6 @@ from functools import partial, lru_cache
 import threading
 import warnings
 
-from jax.experimental import maps
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax._src.sharding import (
     NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
@@ -441,13 +440,13 @@ def pjit(
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
     if _global_avals or config.jax_array:
-      in_positional_semantics = (maps._PositionalSemantics.GLOBAL,) * len(args_flat)
+      in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
     out_positional_semantics = (
-        maps._PositionalSemantics.GLOBAL
+        pxla._PositionalSemantics.GLOBAL
         if config.jax_parallel_functions_output_gda or config.jax_array else
-        maps._positional_semantics.val)
+        pxla._positional_semantics.val)
 
     global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
         hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
@@ -664,7 +663,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   if all(
       (not _is_from_gda(p) and not _is_auto(p) and
        CanonicalizedParsedPartitionSpec(p).partitions == ()) or
-      ips == maps._PositionalSemantics.GLOBAL
+      ips == pxla._PositionalSemantics.GLOBAL
       for p, ips in safe_zip(in_axis_resources_flat, in_positional_semantics)):
     # Shapes should be checked against non canonicalized in_axis_resources.
     # For example, partitions of () and ((),) are not equivalent, since the
@@ -693,15 +692,15 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
 
 @lu.cache
 def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
-  prev_positional_val = maps._positional_semantics.val
+  prev_positional_val = pxla._positional_semantics.val
   try:
-    maps._positional_semantics.val = maps._PositionalSemantics.GLOBAL
+    pxla._positional_semantics.val = pxla._PositionalSemantics.GLOBAL
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                    "for pjit in {elapsed_time} sec",
                                     event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
   finally:
-    maps._positional_semantics.val = prev_positional_val
+    pxla._positional_semantics.val = prev_positional_val
   jaxpr = core.ClosedJaxpr(jaxpr, consts)
 
   out_shardings_flat = flatten_axis_resources(
@@ -1652,12 +1651,12 @@ def get_unconstrained_dims(sharding: NamedSharding):
 def global_to_local(positional_semantics, avals, shardings, mesh):
   if config.jax_array:
     return avals
-  if isinstance(positional_semantics, maps._PositionalSemantics):
+  if isinstance(positional_semantics, pxla._PositionalSemantics):
     positional_semantics = [positional_semantics] * len(shardings)
 
   out = []
   for aval, s, ps in safe_zip(avals, shardings, positional_semantics):
-    if (ps == maps._PositionalSemantics.GLOBAL or
+    if (ps == pxla._PositionalSemantics.GLOBAL or
         pxla.is_op_sharding_replicated(s._op_sharding)):
       out.append(aval)
     else:
@@ -1674,7 +1673,7 @@ def local_to_global(positional_semantics, avals, shardings, mesh):
     return avals
   out = []
   for aval, s, ps in safe_zip(avals, shardings, positional_semantics):
-    if (ps == maps._PositionalSemantics.GLOBAL or
+    if (ps == pxla._PositionalSemantics.GLOBAL or
         pxla.is_op_sharding_replicated(s._op_sharding)):
       out.append(aval)
     else:
@@ -1689,14 +1688,14 @@ def local_to_global(positional_semantics, avals, shardings, mesh):
 def _calc_is_global_sequence(in_positional_semantics, in_shardings):
   if config.jax_array:
     return (True,) * len(in_positional_semantics)
-  return tuple((ips == maps._PositionalSemantics.GLOBAL or
+  return tuple((ips == pxla._PositionalSemantics.GLOBAL or
                 pxla.is_op_sharding_replicated(i._op_sharding))
                for ips, i in safe_zip(in_positional_semantics, in_shardings))
 
-def _get_in_positional_semantics(arg) -> maps._PositionalSemantics:
+def _get_in_positional_semantics(arg) -> pxla._PositionalSemantics:
   if isinstance(arg, GDA):
-    return maps._PositionalSemantics.GLOBAL
-  return maps._positional_semantics.val
+    return pxla._PositionalSemantics.GLOBAL
+  return pxla._positional_semantics.val
 
 
 def _fast_path_get_device_assignment(

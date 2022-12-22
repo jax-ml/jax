@@ -48,6 +48,7 @@ from jax._src import array
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import pjit
 from jax._src.core import eval_jaxpr
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
@@ -595,7 +596,6 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   # all the other arguments stored as attributes.
 
   def arg_spec(x):
-    from jax.experimental import pjit
     # like xla.arg_spec but duck-types on x.shape and x.dtype
     aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
     if jax.config.jax_array:

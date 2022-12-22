@@ -23,7 +23,7 @@ from unittest import SkipTest
 from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
-from jax.experimental import pjit
+from jax.experimental import pjit, maps
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -123,13 +123,13 @@ class DebugNaNsTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message=".*is an experimental.*")
   def testXmap(self):
 
-    f = jax.experimental.maps.xmap(
+    f = maps.xmap(
         lambda x: 0. / x,
-        in_axes=['i'],
-        out_axes=['i'],
-        axis_resources={'i': 'x'})
+        in_axes=["i"],
+        out_axes=["i"],
+        axis_resources={"i": "x"})
 
-    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
+    with jax.sharding.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
       with self.assertRaisesRegex(
           FloatingPointError,
           r"invalid value \(nan\) encountered in xmap"):
@@ -137,7 +137,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
     if jax.device_count() >= 2:
-      with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+      with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
         with self.assertRaises(FloatingPointError):
           ans = f(jnp.array([1., 0.]))
           ans.block_until_ready()
@@ -152,7 +152,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
                   in_axis_resources=p,
                   out_axis_resources=p)
 
-    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
@@ -181,7 +181,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
                   out_axis_resources=p,
                   donate_argnums=(0,))
 
-    with jax.experimental.maps.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
+    with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
@@ -241,8 +241,8 @@ class DebugInfsTest(jtu.JaxTestCase):
 
     for _ in range(2):
       try:
-       with jax.debug_nans(True):
-         jax.grad(f)(0.)
+        with jax.debug_nans(True):
+          jax.grad(f)(0.)
       except FloatingPointError:
         pass
 
