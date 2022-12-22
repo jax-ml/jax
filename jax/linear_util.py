@@ -18,25 +18,11 @@
 # TODO(jakevdp): deprecate these and remove this module.
 
 from jax._src.linear_util import (
-  EmptyStoreValue as EmptyStoreValue,
-  Store as Store,
   StoreException as StoreException,
   WrappedFun as WrappedFun,
-  _EMPTY_STORE_VALUE as _EMPTY_STORE_VALUE,
-  _check_input_type as _check_input_type,
-  _copy_main_traces as _copy_main_traces,
-  annotate as annotate,
-  annotations as annotations,
   cache as cache,
-  config as config,
-  core as core,
-  curry as curry,
-  fun_name as fun_name,
-  hashable_partial as hashable_partial,
   merge_linear_aux as merge_linear_aux,
-  traceback_util as traceback_util,
   transformation as transformation,
   transformation_with_aux as transformation_with_aux,
-  tree_map as tree_map,
   wrap_init as wrap_init,
 )
