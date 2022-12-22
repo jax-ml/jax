@@ -614,7 +614,7 @@ def id_tap(tap_func,
   if result is not None:
     flat_results, result_treedef = pytree.flatten(result)
     for r in flat_results:
-      api._check_arg(r)
+      dispatch.check_arg(r)
 
   call_res = _call(
       tap_func,
@@ -763,10 +763,10 @@ def _call(callback_func: Callable,
   # Lazy initialization
   _initialize_outfeed_receiver(
       max_callback_queue_size_bytes=FLAGS.jax_host_callback_max_queue_byte_size)
-  api._check_callable(callback_func)
+  api.check_callable(callback_func)
   flat_args, arg_treedef = pytree.flatten(arg)
   for arg in flat_args:
-    api._check_arg(arg)
+    dispatch.check_arg(arg)
   # See definition of outside_call_p for what parameters it takes
   params: Dict[str, Any] = {}
   # TODO: wrap function

@@ -27,14 +27,13 @@ from jax import numpy as jnp
 from jax import core
 from jax._src import linear_util as lu
 from jax import stages
-from jax._src.api import _check_callable, _check_arg
 from jax._src import dispatch
 from jax.tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
                            tree_leaves, treedef_tuple)
 from jax._src.tree_util import _replace_nones
 from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
                                _ensure_index_tuple, donation_vector,
-                               shaped_abstractify)
+                               shaped_abstractify, check_callable)
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
@@ -459,7 +458,7 @@ def xmap(fun: Callable,
     specified. This is in line with the current multi-host :py:func:`pmap`
     programming model.
   """
-  _check_callable(fun)
+  check_callable(fun)
 
   if isinstance(in_axes, list) and not _is_axes_leaf(in_axes):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -622,7 +621,7 @@ def xmap(fun: Callable,
   @wraps(fun)
   @decorate_serial
   def fun_mapped(*args):
-    tree_map(_check_arg, args)
+    tree_map(dispatch.check_arg, args)
     fun_flat, args_flat, params, _, out_tree = infer_params(*args)
     out_flat = xmap_p.bind(fun_flat, *args_flat, **params)
     return verify_outputs(out_flat, out_tree, params)

@@ -32,14 +32,14 @@ from jax import core
 from jax._src import linear_util as lu
 from jax import stages
 from jax._src import array
-from jax._src.api import (_check_callable, _check_arg, FLAGS, _resolve_argnums,
-                          argnames_partial_except)
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
 from jax._src.api_util import (argnums_partial_except, flatten_axes,
                                flatten_fun, flatten_fun_nokwargs,
-                               donation_vector, shaped_abstractify)
+                               donation_vector, shaped_abstractify,
+                               check_callable, argnames_partial_except,
+                               resolve_argnums, FLAGS)
 from jax.errors import JAXTypeError
 from jax.interpreters import ad
 from jax.interpreters import mlir
@@ -109,7 +109,7 @@ def _check_all_or_none_unspecified(axis_resources, name):
 def _python_pjit_helper(infer_params, *args, **kwargs):
   args_flat, _, params, _, out_tree, _ = infer_params(*args, **kwargs)
   for arg in args_flat:
-    _check_arg(arg)
+    dispatch.check_arg(arg)
   out_flat = pjit_p.bind(*args_flat, **params)
   outs = tree_unflatten(out_tree, out_flat)
   return outs, out_flat, out_tree, args_flat
@@ -309,8 +309,8 @@ def pjit(
   >>> import jax
   >>> import jax.numpy as jnp
   >>> import numpy as np
-  >>> from jax.experimental.maps import Mesh
-  >>> from jax.experimental.pjit import PartitionSpec, pjit
+  >>> from jax.sharding import Mesh, PartitionSpec
+  >>> from jax.experimental.pjit import pjit
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
   >>> f = pjit(lambda x: jax.numpy.convolve(x, jnp.asarray([0.5, 1.0, 0.5]), 'same'),
@@ -319,7 +319,7 @@ def pjit(
   ...   print(f(x))  # doctest: +SKIP
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
-  _check_callable(fun)
+  check_callable(fun)
 
   if not config.jax_array and (_is_unspecified(in_axis_resources) or
                                _is_unspecified(out_axis_resources)):
@@ -360,7 +360,7 @@ def pjit(
   out_axis_resources, _, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
 
-  donate_argnums, static_argnums, static_argnames = _resolve_argnums(
+  donate_argnums, static_argnums, static_argnames = resolve_argnums(
       fun, donate_argnums, static_argnums, static_argnames)
 
   def infer_params(*args, _global_avals=False, **kwargs):

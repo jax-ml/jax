@@ -46,7 +46,7 @@ import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax import core, lax
 from jax import custom_batching
-from jax._src import api, dtypes, dispatch, lib
+from jax._src import api, dtypes, dispatch, lib, api_util
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
@@ -805,28 +805,28 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     actual = jit_add(x, 1)
     self.assertArraysEqual(expected, actual)
 
-  def test__infer_argnums_and_argnames(self):
+  def test_infer_argnums_and_argnames(self):
     def f(x, y=1):
       pass
 
     sig = inspect.signature(f)
 
-    argnums, argnames = api._infer_argnums_and_argnames(
+    argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=None, argnames=None)
     assert argnums == ()
     assert argnames == ()
 
-    argnums, argnames = api._infer_argnums_and_argnames(
+    argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=0, argnames=None)
     assert argnums == (0,)
     assert argnames == ('x',)
 
-    argnums, argnames = api._infer_argnums_and_argnames(
+    argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=None, argnames='y')
     assert argnums == (1,)
     assert argnames == ('y',)
 
-    argnums, argnames = api._infer_argnums_and_argnames(
+    argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=0, argnames='y')  # no validation
     assert argnums == (0,)
     assert argnames == ('y',)
@@ -836,7 +836,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     sig = inspect.signature(g)
 
-    argnums, argnames = api._infer_argnums_and_argnames(
+    argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=(1, 2), argnames=None)
     assert argnums == (1, 2)
     assert argnames == ('y',)
@@ -846,7 +846,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     sig = inspect.signature(h)
 
-    argnums, argnames = api._infer_argnums_and_argnames(
+    argnums, argnames = api_util.infer_argnums_and_argnames(
         sig, argnums=None, argnames=('foo', 'bar'))
     assert argnums == ()
     assert argnames == ('foo', 'bar')

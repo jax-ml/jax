@@ -27,7 +27,6 @@ from jax._src.lib import xla_client as xc
 from jax._src.config import config
 from jax.interpreters import pxla, xla, mlir
 from jax._src.util import prod, safe_zip
-from jax._src.api import device_put
 from jax.interpreters.pxla import PartitionSpec
 
 Shape = Tuple[int, ...]
@@ -520,7 +519,7 @@ class GlobalDeviceArray:
         global_shape, global_mesh, mesh_axes)
     local_devices = global_mesh.local_devices
     dbs = [
-        device_put(data_callback(global_indices_rid[device][0]), device)
+        jax.device_put(data_callback(global_indices_rid[device][0]), device)
         for device in local_devices
     ]
     return cls(global_shape, global_mesh, mesh_axes, dbs,

@@ -29,9 +29,27 @@ from jax._src.tree_util import (
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
 from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
-
+from jax._src.config import flags, bool_env
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_bool(
+    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
+    "A flag enabling the C++ jax.jit fast path."
+    "Set this to `False` only if it crashes otherwise and report "
+    "the error to the jax-team.")
+flags.DEFINE_bool(
+    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
+    "A flag enabling the C++ jax.pmap fast path. Until the default "
+    "is switched to True, the feature is not supported and possibly broken "
+    "(e.g. it may use unreleased code from jaxlib.")
+flags.DEFINE_bool(
+    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", True),
+    "A flag enabling the C++ pjit fast path. Until the default "
+    "is switched to True, the feature is not supported and possibly broken "
+    "(e.g. it may use unreleased code from jaxlib.")
 
 map = safe_map
 
@@ -421,6 +439,93 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   axes = [None if a is proxy else a for a in axes]
   assert len(axes) == treedef.num_leaves
   return axes
+
+
+def _isgeneratorfunction(fun):
+  # TODO 3.9+: remove
+  # re-implemented here because of https://bugs.python.org/issue33261
+  while inspect.ismethod(fun):
+    fun = fun.__func__
+  while isinstance(fun, partial):
+    fun = fun.func
+  return inspect.isfunction(fun) and bool(fun.__code__.co_flags & inspect.CO_GENERATOR)
+
+
+def check_callable(fun):
+  # In Python 3.10+, the only thing stopping us from supporting staticmethods
+  # is that we can't take weak references to them, which the C++ JIT requires.
+  if isinstance(fun, staticmethod):
+    raise TypeError(f"staticmethod arguments are not supported, got {fun}")
+  if not callable(fun):
+    raise TypeError(f"Expected a callable value, got {fun}")
+  if _isgeneratorfunction(fun):
+    raise TypeError(f"Expected a function, got a generator function: {fun}")
+
+_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
+
+def infer_argnums_and_argnames(
+    sig: inspect.Signature,
+    argnums: Union[int, Iterable[int], None],
+    argnames: Union[str, Iterable[str], None],
+  ) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
+  """Infer missing argnums and argnames for a function with inspect."""
+  if argnums is None and argnames is None:
+    return (), ()
+
+  if argnums is not None and argnames is not None:
+    argnums = _ensure_index_tuple(argnums)
+    argnames = _ensure_str_tuple(argnames)
+
+    return argnums, argnames
+
+  parameters = sig.parameters
+  if argnums is None:
+    assert argnames is not None
+    argnames = _ensure_str_tuple(argnames)
+    argnums = tuple(
+        i for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
+    )
+  else:
+    argnums = _ensure_index_tuple(argnums)
+    argnames = tuple(
+        k for i, (k, param) in enumerate(parameters.items())
+        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
+    )
+
+  return argnums, argnames
+
+
+def resolve_argnums(
+    fun, donate_argnums, static_argnums, static_argnames
+) -> Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[str, ...]]:
+  # Coerce input
+  donate_argnums = _ensure_index_tuple(donate_argnums)
+
+  try:
+    sig = inspect.signature(fun)
+  except ValueError:
+    # Some built-in functions don't support signature.
+    # See: https://github.com/python/cpython/issues/73485
+    # In this case no validation is done
+    static_argnums = () if static_argnums is None else _ensure_index_tuple(
+        static_argnums)
+    static_argnames = () if static_argnames is None else _ensure_str_tuple(
+        static_argnames)
+  else:
+    # Infer argnums and argnames according to docstring
+    static_argnums, static_argnames = infer_argnums_and_argnames(
+        sig, static_argnums, static_argnames)
+
+    # Validation
+    validate_argnums(sig, static_argnums, "static_argnums")
+    validate_argnums(sig, donate_argnums, "donate_argnums")
+    validate_argnames(sig, static_argnames, "static_argnames")
+
+  # Compensate for static argnums absorbing args
+  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
+  return donate_argnums, static_argnums, static_argnames
+
 
 def _dtype(x):
   try:

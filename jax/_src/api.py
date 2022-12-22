@@ -54,7 +54,8 @@ from jax._src.api_util import (
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, argnames_partial_except,
-    validate_argnames, validate_argnums)
+    validate_argnames, validate_argnums, check_callable, resolve_argnums,
+    FLAGS)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
@@ -86,7 +87,7 @@ from jax.interpreters import ad
 from jax.interpreters import batching
 
 from jax._src.config import (
-    flags, config, bool_env,
+    config,
     disable_jit as _disable_jit,
     debug_nans as config_debug_nans,
     debug_infs as config_debug_infs,
@@ -109,24 +110,6 @@ U = TypeVar("U")
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_bool(
-    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
-    "A flag enabling the C++ jax.jit fast path."
-    "Set this to `False` only if it crashes otherwise and report "
-    "the error to the jax-team.")
-flags.DEFINE_bool(
-    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
-    "A flag enabling the C++ jax.pmap fast path. Until the default "
-    "is switched to True, the feature is not supported and possibly broken "
-    "(e.g. it may use unreleased code from jaxlib.")
-flags.DEFINE_bool(
-    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", True),
-    "A flag enabling the C++ pjit fast path. Until the default "
-    "is switched to True, the feature is not supported and possibly broken "
-    "(e.g. it may use unreleased code from jaxlib.")
 
 
 def _nan_check_posthook(fun, args, kwargs, output):
@@ -171,90 +154,6 @@ config_debug_infs._add_hooks(_update_debug_special_global,
 
 
 float0 = dtypes.float0
-
-def _check_callable(fun):
-  # In Python 3.10+, the only thing stopping us from supporting staticmethods
-  # is that we can't take weak references to them, which the C++ JIT requires.
-  if isinstance(fun, staticmethod):
-    raise TypeError(f"staticmethod arguments are not supported, got {fun}")
-  if not callable(fun):
-    raise TypeError(f"Expected a callable value, got {fun}")
-  if _isgeneratorfunction(fun):
-    raise TypeError(f"Expected a function, got a generator function: {fun}")
-
-def _isgeneratorfunction(fun):
-  # TODO 3.9+: remove
-  # re-implemented here because of https://bugs.python.org/issue33261
-  while inspect.ismethod(fun):
-    fun = fun.__func__
-  while isinstance(fun, functools.partial):
-    fun = fun.func
-  return inspect.isfunction(fun) and bool(fun.__code__.co_flags & inspect.CO_GENERATOR)
-
-_POSITIONAL_OR_KEYWORD = inspect.Parameter.POSITIONAL_OR_KEYWORD
-
-def _infer_argnums_and_argnames(
-    sig: inspect.Signature,
-    argnums: Union[int, Iterable[int], None],
-    argnames: Union[str, Iterable[str], None],
-  ) -> Tuple[Tuple[int, ...], Tuple[str, ...]]:
-  """Infer missing argnums and argnames for a function with inspect."""
-  if argnums is None and argnames is None:
-    return (), ()
-
-  if argnums is not None and argnames is not None:
-    argnums = _ensure_index_tuple(argnums)
-    argnames = _ensure_str_tuple(argnames)
-
-    return argnums, argnames
-
-  parameters = sig.parameters
-  if argnums is None:
-    assert argnames is not None
-    argnames = _ensure_str_tuple(argnames)
-    argnums = tuple(
-        i for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and k in argnames
-    )
-  else:
-    argnums = _ensure_index_tuple(argnums)
-    argnames = tuple(
-        k for i, (k, param) in enumerate(parameters.items())
-        if param.kind == _POSITIONAL_OR_KEYWORD and i in argnums
-    )
-
-  return argnums, argnames
-
-
-def _resolve_argnums(
-    fun, donate_argnums, static_argnums, static_argnames
-) -> Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[str, ...]]:
-  # Coerce input
-  donate_argnums = _ensure_index_tuple(donate_argnums)
-
-  try:
-    sig = inspect.signature(fun)
-  except ValueError:
-    # Some built-in functions don't support signature.
-    # See: https://github.com/python/cpython/issues/73485
-    # In this case no validation is done
-    static_argnums = () if static_argnums is None else _ensure_index_tuple(
-        static_argnums)
-    static_argnames = () if static_argnames is None else _ensure_str_tuple(
-        static_argnames)
-  else:
-    # Infer argnums and argnames according to docstring
-    static_argnums, static_argnames = _infer_argnums_and_argnames(
-        sig, static_argnums, static_argnames)
-
-    # Validation
-    validate_argnums(sig, static_argnums, "static_argnums")
-    validate_argnums(sig, donate_argnums, "donate_argnums")
-    validate_argnames(sig, static_argnames, "static_argnames")
-
-  # Compensate for static argnums absorbing args
-  donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
-  return donate_argnums, static_argnums, static_argnames
 
 
 def jit(
@@ -395,9 +294,9 @@ def _jit(
     abstracted_axes: Optional[Any] = None,
   ) -> stages.Wrapped:
   # Implemements common logic between CPP and Python backends
-  _check_callable(fun)
+  check_callable(fun)
 
-  donate_argnums, static_argnums, static_argnames = _resolve_argnums(
+  donate_argnums, static_argnums, static_argnames = resolve_argnums(
       fun, donate_argnums, static_argnums, static_argnames)
 
   if use_cpp_jit:
@@ -456,7 +355,7 @@ def _python_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     for arg in args_flat:
-      _check_arg(arg)
+      dispatch.check_arg(arg)
     if jax.config.jax_dynamic_shapes:
       axes_specs = (None if abstracted_axes is None else
                     _flat_axes_specs(abstracted_axes, *args, **kwargs))
@@ -610,7 +509,7 @@ def _cpp_jit(
     closed_fun, in_tree, args_flat, donated_invars = _prepare_jit(
         fun, static_argnums, static_argnames, donate_argnums, args, kwargs)
     for arg in args_flat:
-      _check_arg(arg)
+      dispatch.check_arg(arg)
     flat_fun, out_tree = flatten_fun(closed_fun, in_tree)
     if jax.config.jax_dynamic_shapes:
       in_type = pe.infer_lambda_input_type(None, args_flat)
@@ -949,7 +848,7 @@ def xla_computation(fun: Callable,
   """
   del instantiate_const_outputs  # Unused
 
-  _check_callable(fun)
+  check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
@@ -1158,7 +1057,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
             "of {fun} and the second element is the gradient, which has the "
             "same shape as the arguments at positions {argnums}.")
 
-  _check_callable(fun)
+  check_callable(fun)
   argnums = core.concrete_or_error(_ensure_index, argnums)
   reduce_axes = _ensure_str_tuple(reduce_axes)
 
@@ -1206,7 +1105,7 @@ def _check_scalar(x):
       raise TypeError(msg(f"had abstract value {aval}"))
 
 def _check_input_dtype_revderiv(name, holomorphic, allow_int, x):
-  _check_arg(x)
+  dispatch.check_arg(x)
   aval = core.get_aval(x)
   if core.is_opaque_dtype(aval.dtype):
     raise TypeError(
@@ -1282,7 +1181,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
    [ 0.      16.      -2.     ]
    [ 1.6209   0.       0.84147]]
   """
-  _check_callable(fun)
+  check_callable(fun)
   argnums = _ensure_index(argnums)
 
   docstr = ("Jacobian of {fun} with respect to positional argument(s) "
@@ -1313,7 +1212,7 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
   return jacfun
 
 def _check_input_dtype_jacfwd(holomorphic: bool, x: Any) -> None:
-  _check_arg(x)
+  dispatch.check_arg(x)
   aval = core.get_aval(x)
   if core.is_opaque_dtype(aval.dtype):
     raise TypeError(
@@ -1371,7 +1270,7 @@ def jacrev(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
    [ 0.      16.      -2.     ]
    [ 1.6209   0.       0.84147]]
   """
-  _check_callable(fun)
+  check_callable(fun)
 
   docstr = ("Jacobian of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -1657,7 +1556,7 @@ def vmap(fun: F,
 
   See the :py:func:`jax.pmap` docstring for more examples involving collectives.
   """
-  _check_callable(fun)
+  check_callable(fun)
   docstr = ("Vectorized version of {fun}. Takes similar arguments as {fun} "
             "but with additional array axes over which {fun} is mapped.")
   if fun.__doc__:
@@ -2127,7 +2026,7 @@ def _get_f_mapped(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         global_arg_shapes, devices, args, kwargs)
     for arg in p.flat_args:
-      _check_arg(arg)
+      dispatch.check_arg(arg)
     out = pxla.xla_pmap(
         p.flat_fun, *p.flat_args, backend=backend, axis_name=axis_name,
         axis_size=p.local_axis_size, global_axis_size=axis_size,
@@ -2145,7 +2044,7 @@ def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
   # axis_size is an optional integer representing the global axis size.  The
   # aggregate size (across all processes) size of the mapped axis must match the
   # given value.
-  _check_callable(fun)
+  check_callable(fun)
   axis_name = core._TempAxisName(fun) if axis_name is None else axis_name
   static_broadcasted_tuple = _ensure_index_tuple(static_broadcasted_argnums)
   donate_tuple = rebase_donate_argnums(
@@ -2246,7 +2145,7 @@ def _cpp_pmap(
     p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       donate_tuple, global_arg_shapes, devices, args, kwargs)
     for arg in p.flat_args:
-      _check_arg(arg)
+      dispatch.check_arg(arg)
 
     params = dict(
         backend=backend,
@@ -2416,7 +2315,7 @@ def jvp(
   >>> print(tangents)
   0.19900084
   """
-  _check_callable(fun)
+  check_callable(fun)
   return _jvp(lu.wrap_init(fun), primals, tangents, has_aux=has_aux)
 
 def _jvp(fun: lu.WrappedFun, primals, tangents, has_aux=False):
@@ -2520,7 +2419,7 @@ def linearize(fun: Callable, *primals) -> Tuple[Any, Callable]:
   >>> print(f_jvp(4.))
   -6.676704
   """
-  _check_callable(fun)
+  check_callable(fun)
   f = lu.wrap_init(fun)
   primals_flat, in_tree = tree_flatten((primals, {}))
   jaxtree_fun, out_tree = flatten_fun(f, in_tree)
@@ -2654,7 +2553,7 @@ def vjp(  # type: ignore
   >>> print(ybar)
   -0.2524413
   """
-  _check_callable(fun)
+  check_callable(fun)
   reduce_axes = _ensure_str_tuple(reduce_axes)
   return _vjp(
       lu.wrap_init(fun), *primals, has_aux=has_aux, reduce_axes=reduce_axes)
@@ -2662,7 +2561,7 @@ def vjp(  # type: ignore
 def _vjp(fun: lu.WrappedFun, *primals, has_aux=False, reduce_axes=()):
   """Variant of vjp() that takes an lu.WrappedFun."""
   primals_flat, in_tree = tree_flatten(primals)
-  for arg in primals_flat: _check_arg(arg)
+  for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
     out_primal, out_vjp = ad.vjp(
@@ -2830,7 +2729,7 @@ def make_jaxpr(fun: Callable,
       g:f32[] = mul f c
     in (g,) }
   """
-  _check_callable(fun)
+  check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
 
   def abstractify(args, kwargs):
@@ -3088,20 +2987,6 @@ def device_get(x: Any):
       except AttributeError:
         pass
     return tree_map(_device_get, x)
-
-def _check_arg(arg):
-  if not (isinstance(arg, core.Tracer) or _valid_jaxtype(arg)):
-    raise TypeError(f"Argument '{arg}' of type {type(arg)} is not a valid JAX type.")
-
-# TODO(mattjj,necula): this duplicates code in core.valid_jaxtype, but one
-# internal user relies on it for duck-typing. must fix downstream user!
-def _valid_jaxtype(arg):
-  try:
-    xla.abstractify(arg)  # faster than core.get_aval
-  except TypeError:
-    return core.valid_jaxtype(arg)
-  else:
-    return True
 
 
 class ShapeDtypeStruct:

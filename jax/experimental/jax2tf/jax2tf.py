@@ -282,7 +282,7 @@ def convert(fun_jax: Callable,
   if experimental_native_lowering and not enable_xla:
     raise ValueError(
         "experimental_native_lowering is not supported with enable_xla=False")
-  api._check_callable(fun_jax)
+  api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
   name_stack = util.wrap_name(fun_name, "jax2tf")
   def converted_fun_tf(*args_tf: TfVal, **kwargs_tf: TfVal) -> TfVal:
