@@ -55,6 +55,18 @@ from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
 
 
+def _bcoo_batch_dims_to_front(batched_args, batch_dims):
+  _, indices = batched_args
+  _, indices_bdim = batch_dims
+  n_batch = indices.ndim - 2 + bool(indices_bdim is None)
+
+  if not all(b is None or 0 <= b < n_batch for b in batch_dims):
+    raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
+                              f"Got {batch_dims=} for {n_batch=}.")
+  return [lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
+          for arg, bdim in safe_zip(batched_args, batch_dims)]
+
+
 #----------------------------------------------------------------------
 # BCOO primitives: batched extension of COO.
 
@@ -225,13 +237,7 @@ def _bcoo_todense_transpose(ct, data, indices, *, spinfo):
   return bcoo_extract(indices, ct), indices
 
 def _bcoo_todense_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
+  data, indices = _bcoo_batch_dims_to_front(batched_args, batch_dims)
   new_spinfo = SparseInfo(
       shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape),
       indices_sorted=spinfo.indices_sorted,
@@ -362,9 +368,10 @@ def _bcoo_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
 
 def _bcoo_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch, n_dense, index_dtype):
   M, = batched_args
-  if batch_dims != (0,):
-    raise NotImplementedError(f"{batch_dims=}")
-  return _bcoo_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (0, 0)
+  bdim, = batch_dims
+  if not (0 <= bdim <= n_batch):
+    raise ValueError(f"Expected 0 < bdim <= n_batch; got {bdim=}, {n_batch=}")
+  return _bcoo_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (bdim, bdim)
 
 ad.primitive_jvps[bcoo_fromdense_p] = _bcoo_fromdense_jvp
 ad.primitive_transposes[bcoo_fromdense_p] = _bcoo_fromdense_transpose
