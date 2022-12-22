@@ -701,10 +701,6 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   x = array.make_array_from_callback(inp_data.shape, s, lambda idx: inp_data[idx])
 
   x = [x for _ in range(num_args)]
-
-  prev_state = jax_config.FLAGS.experimental_cpp_pjit
-  jax_config.FLAGS.experimental_cpp_pjit = cpp_jit
-
   in_axis_resources = sharding.NamedSharding(mesh, spec)
   out_axis_resources = sharding.NamedSharding(mesh, spec)
 
@@ -720,8 +716,6 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
 
   while state:
     x = f(x)
-
-  jax_config.FLAGS.experimental_cpp_pjit = prev_state
 
 
 @google_benchmark.register

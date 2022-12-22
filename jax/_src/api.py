@@ -275,11 +275,8 @@ def jit(
   """
   if abstracted_axes and not config.jax_dynamic_shapes:
     raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
-  if FLAGS.experimental_cpp_jit and not config.jax_dynamic_shapes:
-    return _jit(True, fun, static_argnums, static_argnames, device, backend,
-                    donate_argnums, inline, keep_unused)
-  return _jit(False, fun, static_argnums, static_argnames, device, backend,
-                      donate_argnums, inline, keep_unused, abstracted_axes)
+  return _jit(not config.jax_dynamic_shapes, fun, static_argnums, static_argnames, device, backend,
+              donate_argnums, inline, keep_unused)
 
 def _jit(
     use_cpp_jit: bool,
@@ -1901,12 +1898,7 @@ def pmap(
   >>> print(f2(jnp.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
-  if FLAGS.experimental_cpp_pmap:
-    func = _cpp_pmap
-  else:
-    func = _python_pmap
-
-  return func(
+  return _cpp_pmap(
       fun,
       axis_name,
       in_axes=in_axes,
@@ -2008,37 +2000,6 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       devices=None if in_devices is None else tuple(in_devices))
 
 
-def _get_f_mapped(
-    *,
-    fun: Callable,
-    axis_name: Optional[AxisName],
-    in_axes=0,
-    out_axes=0,
-    static_broadcasted_tuple: Tuple[int, ...],
-    devices: Optional[Sequence[xc.Device]],  # noqa: F811
-    backend: Optional[str],
-    axis_size: Optional[int],
-    donate_tuple: Tuple[int, ...],
-    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
-  ):
-  def pmap_f(*args, **kwargs):
-    p = _prepare_pmap(
-        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        global_arg_shapes, devices, args, kwargs)
-    for arg in p.flat_args:
-      dispatch.check_arg(arg)
-    out = pxla.xla_pmap(
-        p.flat_fun, *p.flat_args, backend=backend, axis_name=axis_name,
-        axis_size=p.local_axis_size, global_axis_size=axis_size,
-        devices=p.devices,
-        in_axes=p.in_axes_flat, out_axes_thunk=p.out_axes_thunk,
-        name=p.flat_fun.__name__, donated_invars=p.donated_invars,
-        global_arg_shapes=p.global_arg_shapes_flat)
-    return p.out_tree, out
-
-  return pmap_f
-
-
 def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
                       donate_argnums, in_axes, out_axes):
   # axis_size is an optional integer representing the global axis size.  The
@@ -2058,49 +2019,6 @@ def _shared_code_pmap(fun, axis_name, static_broadcasted_argnums,
                     f"with those types as leaves, but got {out_axes}.")
 
   return axis_name, static_broadcasted_tuple, donate_tuple
-
-
-def _python_pmap(
-    fun: Callable,
-    axis_name: Optional[AxisName] = None,
-    *,
-    in_axes=0,
-    out_axes=0,
-    static_broadcasted_argnums: Union[int, Iterable[int]] = (),
-    devices: Optional[Sequence[xc.Device]] = None,  # noqa: F811
-    backend: Optional[str] = None,
-    axis_size: Optional[int] = None,
-    donate_argnums: Union[int, Iterable[int]] = (),
-    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
-  ) -> stages.Wrapped:
-  """The Python only implementation."""
-  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
-      fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
-      out_axes)
-
-  @wraps(fun)
-  @api_boundary
-  def pmap_f(*args, **kwargs):
-    f_pmapped_ = _get_f_mapped(
-        fun=fun,
-        axis_name=axis_name,
-        in_axes=in_axes,
-        out_axes=out_axes,
-        static_broadcasted_tuple=static_broadcasted_tuple,
-        devices=devices,
-        backend=backend,
-        axis_size=axis_size,
-        global_arg_shapes=global_arg_shapes,
-        donate_tuple=donate_tuple)
-
-    out_tree, out_flat = f_pmapped_(*args, **kwargs)
-    return tree_unflatten(out_tree(), out_flat)
-
-  pmap_f.lower = _pmap_lower(
-      fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
-      backend, axis_size, global_arg_shapes, donate_tuple)
-
-  return pmap_f
 
 
 class _PmapFastpathData(NamedTuple):

@@ -477,7 +477,7 @@ def pjit(
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
-  if FLAGS.experimental_cpp_pjit and xla_extension_version >= 111:
+  if xla_extension_version >= 111:
     wrapped = _cpp_pjit(fun, infer_params, static_argnums)
   else:
     wrapped = _python_pjit(fun, infer_params)

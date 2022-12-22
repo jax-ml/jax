@@ -7,6 +7,9 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## jax 0.4.2
+* Changes
+  * The flags experimental_cpp_jit, experimental_cpp_pmap, and
+    experimental_cpp_pjit have been removed. They are now always on.
 
 ## jaxlib 0.4.2
 

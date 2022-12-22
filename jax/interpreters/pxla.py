@@ -3549,7 +3549,7 @@ class MeshExecutable(stages.XlaExecutable):
             not self.unsafe_call.has_host_callbacks):
       return None
 
-    if not flags.FLAGS.experimental_cpp_pjit or xla_extension_version < 111:
+    if xla_extension_version < 111:
       return None
 
     def aot_cache_miss(*args, **kwargs):
