@@ -91,7 +91,7 @@ class SparseTestCase(jtu.JaxTestCase):
 
   def _CheckGradsSparse(self, dense_fun, sparse_fun, args_maker, *,
                         argnums=None, modes=('fwd', 'rev'), atol=None, rtol=None):
-    assert [mode in ['fwd', 'rev'] for mode in modes]
+    assert all(mode in ['fwd', 'rev'] for mode in modes)
 
     args = args_maker()
     args_flat, tree = tree_util.tree_flatten(args)

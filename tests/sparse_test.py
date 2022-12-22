@@ -764,22 +764,33 @@ class BCOOTest(sptu.SparseTestCase):
   def test_bcoo_dense_round_trip(self, shape, dtype, n_batch, n_dense):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    n_sparse = M.ndim - n_batch - n_dense
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-    data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
-    data_jit, indices_jit = jit(partial(sparse_bcoo._bcoo_fromdense, nse=nse, n_batch=n_batch, n_dense=n_dense))(M)
-    self.assertArraysEqual(data, data_jit)
-    self.assertArraysEqual(indices, indices_jit)
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch, n_dense=n_dense)
+    def round_trip(M):
+      return sparse.BCOO.fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense).todense()
+    args_maker = lambda: [M]
 
-    assert data.dtype == dtype
-    assert data.shape == shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:]
-    assert indices.dtype == jnp.int32  # TODO: test passing this arg
-    assert indices.shape == shape[:n_batch] + (nse, n_sparse)
+    self._CheckAgainstNumpy(lambda x: x, round_trip, args_maker)
+    self._CompileAndCheck(round_trip, args_maker)
 
-    todense = partial(sparse_bcoo._bcoo_todense, spinfo=sparse_util.SparseInfo(shape))
-    self.assertArraysEqual(M, todense(data, indices))
-    self.assertArraysEqual(M, jit(todense)(data, indices))
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
+    dtype=all_dtypes,
+  )
+  def test_bcoo_dense_round_trip_batched(self, shape, dtype, n_batch, n_dense):
+    rng = rand_sparse(self.rng())
+    M = rng(shape, dtype)
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch, n_dense=n_dense)
+    def round_trip(M):
+      # Note: n_batch=0 here because it will be vmapped n_batch times.
+      return sparse.BCOO.fromdense(M, nse=nse, n_batch=0, n_dense=n_dense).todense()
+    for bdim in range(n_batch):
+      round_trip = vmap(round_trip, in_axes=bdim, out_axes=bdim)
+    args_maker = lambda: [M]
+
+    self._CheckAgainstNumpy(lambda x: x, round_trip, args_maker)
+    self._CompileAndCheck(round_trip, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
@@ -842,35 +853,6 @@ class BCOOTest(sptu.SparseTestCase):
       self.assertTrue(mat.unique_indices)
       self.assertTrue(mat_unsorted.unique_indices)
       self.assertTrue(mat_resorted.unique_indices)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
-  )
-  def test_bcoo_dense_round_trip_batched(self, shape, dtype, n_batch, n_dense):
-    rng = rand_sparse(self.rng())
-    M = rng(shape, dtype)
-    n_sparse = M.ndim - n_batch - n_dense
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-
-    fromdense = partial(sparse_bcoo._bcoo_fromdense, nse=nse, n_dense=n_dense)
-    todense = partial(sparse_bcoo._bcoo_todense, spinfo=sparse_util.SparseInfo(shape[n_batch:]))
-    for i in range(n_batch):
-      fromdense = jax.vmap(fromdense)
-      todense = jax.vmap(todense)
-
-    data, indices = fromdense(M)
-
-    assert data.dtype == dtype
-    assert data.shape == shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:]
-    assert indices.dtype == jnp.int32  # TODO: test passing this arg
-    assert indices.shape == shape[:n_batch] + (nse, n_sparse)
-
-    self.assertArraysEqual(M, todense(data, indices))
-    self.assertArraysEqual(M, jit(todense)(data, indices))
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
