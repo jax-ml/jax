@@ -857,12 +857,12 @@ def custom_gradient(fun):
 
   >>> @jax.custom_gradient
   ... def f(x, y):
-  ...   return x * y, lambda g: (y, x)
+  ...   return x * y, lambda g: (g * y, g * x)
   ...
   >>> print(f(3., 4.))
   12.0
   >>> print(jax.grad(f, argnums=(0, 1))(3., 4.))
-  (4.0, 3.0)
+  (Array(4., dtype=float32, weak_type=True), Array(3., dtype=float32, weak_type=True))
   """
   @custom_vjp
   def wrapped_fun(*args, **kwargs):
