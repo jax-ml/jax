@@ -269,9 +269,6 @@ class NamedSharding(XLACompatibleSharding):
     self._parsed_pspec = _parsed_pspec
     self._preprocess()
 
-  def __reduce__(self):
-    return type(self), (self.mesh, self.spec)
-
   def _preprocess(self):
     # This split exists because you can pass `_parsed_pspec` that has been
     # modified from the original. For example: Adding extra dimension to
@@ -375,9 +372,6 @@ class SingleDeviceSharding(XLACompatibleSharding):
   def __init__(self, device: Device):
     self._device = device
 
-  def __reduce__(self):
-    return type(self), (self._device,)
-
   def __repr__(self):
     return f"SingleDeviceSharding(device={repr(self._device)})"
 
@@ -414,9 +408,6 @@ class PmapSharding(XLACompatibleSharding):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
-
-  def __reduce__(self):
-    return type(self), (self.devices, self.sharding_spec)
 
   def __eq__(self, other):
     if not isinstance(other, PmapSharding):
@@ -622,9 +613,6 @@ class OpShardingSharding(XLACompatibleSharding):
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
     self._devices = tuple(devices)
     self._op_sharding = op_sharding
-
-  def __reduce__(self):
-    return type(self), (self._devices, self._op_sharding)
 
   @functools.cached_property
   def _op_sharding_hash(self):
