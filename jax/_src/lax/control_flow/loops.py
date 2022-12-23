@@ -1701,7 +1701,7 @@ def fori_loop(lower, upper, body_fun, init_val):
                               (lower, upper, init_val))
   return result
 
-### map and miscellanous rules
+### map and miscellaneous rules
 
 @api_boundary
 def map(f, xs):
