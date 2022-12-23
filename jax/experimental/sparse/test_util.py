@@ -18,12 +18,13 @@ from typing import Any, Callable, Sequence, Union
 import numpy as np
 
 import jax
+from jax import lax
 from jax._src import api
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.typing import DTypeLike
 from jax import tree_util
-from jax.util import split_list
+from jax.util import safe_zip, split_list
 from jax.experimental import sparse
 from jax.experimental.sparse import bcoo as sparse_bcoo
 import jax.numpy as jnp
@@ -118,6 +119,28 @@ class SparseTestCase(jtu.JaxTestCase):
       result_de = jax.jacfwd(dense_fun_flat, argnums=argnums_flat)(*args_flat)
       result_sp = jax.jacfwd(sparse_fun_flat, argnums=argnums_flat)(*args_flat)
       self.assertAllClose(result_de, result_sp, atol=atol, rtol=rtol)
+
+  def _random_bdims(self, *args):
+    rng = self.rng()
+    return [rng.randint(0, arg + 1) for arg in args]
+
+  def _CheckBatchingSparse(self, dense_fun, sparse_fun, args_maker, *, batch_size=3, bdims=None,
+                           check_dtypes=True, tol=None, atol=None, rtol=None,
+                           canonicalize_dtypes=True):
+    if bdims is None:
+      bdims = self._random_bdims([arg.n_batch if is_sparse(arg) else arg.ndim
+                                  for arg in args_maker()])
+    def concat(args, bdim):
+      return sparse.sparsify(functools.partial(lax.concatenate, dimension=bdim))(args)
+    def expand(arg, bdim):
+      return sparse.sparsify(functools.partial(lax.expand_dims, dimensions=[bdim]))(arg)
+    def batched_args_maker():
+      args = list(zip(*(args_maker() for _ in range(batch_size))))
+      return [arg[0] if bdim is None else concat([expand(x, bdim) for x in arg], bdim)
+              for arg, bdim in safe_zip(args, bdims)]
+    self._CheckAgainstDense(jax.vmap(dense_fun, bdims), jax.vmap(sparse_fun, bdims), batched_args_maker,
+                            check_dtypes=check_dtypes, tol=tol, atol=atol, rtol=rtol,
+                            canonicalize_dtypes=canonicalize_dtypes)
 
 def _rand_sparse(shape: Sequence[int], dtype: DTypeLike, *,
                  rng: np.random.RandomState, rand_method: Callable[..., Any],

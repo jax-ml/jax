@@ -768,29 +768,11 @@ class BCOOTest(sptu.SparseTestCase):
     def round_trip(M):
       return sparse.BCOO.fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense).todense()
     args_maker = lambda: [M]
+    ident = lambda x: x
 
-    self._CheckAgainstNumpy(lambda x: x, round_trip, args_maker)
+    self._CheckAgainstNumpy(ident, round_trip, args_maker)
     self._CompileAndCheck(round_trip, args_maker)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
-    dtype=all_dtypes,
-  )
-  def test_bcoo_dense_round_trip_batched(self, shape, dtype, n_batch, n_dense):
-    rng = rand_sparse(self.rng())
-    M = rng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch, n_dense=n_dense)
-    def round_trip(M):
-      # Note: n_batch=0 here because it will be vmapped n_batch times.
-      return sparse.BCOO.fromdense(M, nse=nse, n_batch=0, n_dense=n_dense).todense()
-    for bdim in range(n_batch):
-      round_trip = vmap(round_trip, in_axes=bdim, out_axes=bdim)
-    args_maker = lambda: [M]
-
-    self._CheckAgainstNumpy(lambda x: x, round_trip, args_maker)
-    self._CompileAndCheck(round_trip, args_maker)
+    self._CheckBatchingSparse(ident, round_trip, args_maker, bdims=self._random_bdims(n_batch))
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
