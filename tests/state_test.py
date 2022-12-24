@@ -648,6 +648,17 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertEqual(discharged_jaxpr.effects,
         {state.WriteEffect(discharged_jaxpr.invars[0].aval)})
 
+  def test_ellipsis_index(self):
+    def f(ref):
+      state.ref_set(ref, ..., jnp.array(0., dtype=jnp.float32))
+      state.ref_get(ref, ...)
+      ref[...] = jnp.array(0., dtype=jnp.float32)
+      ref[...]
+      return []
+
+    in_avals = [state.ShapedArrayRef((), jnp.float32)]
+    pe.trace_to_jaxpr_dynamic(lu.wrap_init(f), in_avals)
+
 
 if CAN_USE_HYPOTHESIS:
 

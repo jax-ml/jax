@@ -65,9 +65,12 @@ def _get_impl(ref: Ref, *idx: int, **_):
 get_p.def_impl(_get_impl)
 
 Indexer = Tuple[Union[int, slice, Array], ...]
+# or Ellipsis, but that can't be annotated until Python 3.10? (types.EllipsisType)
 
 def _unpack_idx(idx: Indexer, ndim: int
                ) -> Tuple[Tuple[Array, ...], Tuple[bool, ...]]:
+  if idx is ... or (type(idx) is tuple and len(idx) == 1 and idx[0] is ...):
+    idx = tuple(slice(None) for _ in range(ndim))
   indexed_dims_ = [type(i) != slice for i in idx]
   _, non_slice_idx = partition_list(indexed_dims_, idx)
   indexed_dims = indexed_dims_ + [False] * (ndim - len(indexed_dims_))
@@ -83,7 +86,7 @@ def _get_slice_output_shape(in_shape: Tuple[int, ...],
   shape = (*shape_prefix, *shape_suffix)
   return shape
 
-def ref_get(ref: Ref, idx: Tuple[Union[int, slice], ...]) -> Array:
+def ref_get(ref: Ref, idx: Indexer) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
   non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
   return get_p.bind(ref, *non_slice_idx, indexed_dims=indexed_dims)
@@ -111,12 +114,12 @@ def _swap_impl(ref: Ref, value: Array, *idx: int, **_):
   raise ValueError("Cannot run stateful primitive.")
 swap_p.def_impl(_swap_impl)
 
-def ref_swap(ref: Ref, idx: Tuple[int, ...], value: Array) -> Array:
+def ref_swap(ref: Ref, idx: Indexer, value: Array) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
   non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
   return swap_p.bind(ref, value, *non_slice_idx, indexed_dims=indexed_dims)
 
-def ref_set(ref: Ref, idx: Tuple[int, ...], value: Array) -> None:
+def ref_set(ref: Ref, idx: Indexer, value: Array) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
   ref_swap(ref, idx, value)
 
@@ -139,7 +142,7 @@ def _addupdate_impl(ref: Ref, value: Array, *idx: int):
   raise ValueError("Can't evaluate `addupdate` outside a stateful context.")
 addupdate_p.def_impl(_addupdate_impl)
 
-def ref_addupdate(ref: Ref, idx: Tuple[int, ...], x: Array) -> None:
+def ref_addupdate(ref: Ref, idx: Indexer, x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
   non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
   return addupdate_p.bind(ref, x, *non_slice_idx, indexed_dims=indexed_dims)
