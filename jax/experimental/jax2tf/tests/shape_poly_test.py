@@ -1363,8 +1363,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           (jnp.array, "array"),
           (jnp.sin, "sin"),
           (lambda x: x, "id"),
+          (core.dimension_as_value, "dimension_as_value"),
       ]
-
   ])
   def test_poly_unary_op(self, *, op=jnp.array):
     if config.jax_enable_x64:
@@ -1425,7 +1425,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_mean0(self):
     def f_jax(x):  # x: f32[b, 4]
       return jnp.sum(x, axis=0) / x.shape[0]
-
     check_shape_poly(self,
                      f_jax,
                      arg_descriptors=[RandArg((3, 4), _f32)],
