@@ -966,11 +966,16 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
       f"Argument shape should be a valid JAX shape but got {shape}")
   if dtype is not None:
     shape = _jax_physical_aval(core.ShapedArray(shape, dtype)).shape
+  if core.is_constant_shape(shape):
+    return tuple(int(d) for d in shape)
+
   dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
   eval_shape_jax, dim_avals = shape_poly.get_shape_evaluator(dim_vars, shape)
   shape_values_tf, _ = _interpret_fun_jax(eval_shape_jax,
                                           dim_values, dim_avals, "")  # type: ignore
-  return shape_values_tf
+  # Keep only the non-constant dimensions
+  return tuple(int(d) if core.is_constant_dim(d) else d_tf
+               for d, d_tf in zip(shape, shape_values_tf))
 
 def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
   """Asserts that shape matches x.shape in the known dimensions and has
