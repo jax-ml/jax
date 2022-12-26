@@ -550,10 +550,10 @@ def _batch_inner(axis_size, out_dim_dests, main, in_dims, *in_vals):
   trace = main.with_cur_sublevel()
   idx = memoize(lambda: BatchTracer(trace, make_iota(axis_size), 0,
                                     source_info_util.current()))
-  in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
+  in_tracers = unsafe_map(partial(to_elt, trace, idx), in_vals, in_dims)
   outs = yield in_tracers, {}
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
-  out_vals = map(partial(from_elt, trace, axis_size), outs, out_dim_dests)
+  out_vals = unsafe_map(partial(from_elt, trace, axis_size), outs, out_dim_dests)
   yield out_vals
 
 # NOTE: This divides the in_axes by the tile_size and multiplies the out_axes by it.
@@ -580,11 +580,12 @@ def vtile(f_flat: lu.WrappedFun,
 
   @lu.transformation
   def _map_to_tile(*args_flat):
-    sizes = (x.shape[i] for x, i in safe_zip(args_flat, in_axes_flat) if i is not None)
+    sizes = (x.shape[i] for x, i in unsafe_zip(args_flat, in_axes_flat) if i is not None)
     tile_size_ = tile_size or next(sizes, None)
     assert tile_size_ is not None, "No mapped arguments?"
-    outputs_flat = yield map(tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
-    yield map(untile_axis, outputs_flat, out_axes_flat)
+    outputs_flat = yield unsafe_map(
+        tile_axis(tile_size=tile_size_), args_flat, in_axes_flat), {}
+    yield unsafe_map(untile_axis, outputs_flat, out_axes_flat)
 
   return _map_to_tile(batch(
       f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat, main_type=main_type))

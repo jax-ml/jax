@@ -2976,6 +2976,66 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('pjit', str(jaxpr))
 
+  def test_xmap_in_pjit_keep_unused_true(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    def pjit_all(f):
+      return pjit(f, in_axis_resources=P(('x', 'y')),
+                  out_axis_resources=P(('x', 'y')), keep_unused=True)
+
+    def check_shape(x, y, z, a, b, c):  # pylint: disable=unused-argument
+      assert c.named_shape == {"i": 16}
+      return c
+
+    def xmap_all(f):
+      return maps.xmap(f, in_axes=["i"], out_axes=["i"],
+                       axis_resources={"i": ('x', 'y')})
+
+    g = pjit_all(xmap_all(check_shape))
+
+    inp = jnp.arange(16)
+    with mesh:
+      out = g(inp, inp, inp, inp, inp, inp)
+      # Run it again to take the C++ dispatch.
+      out_again = g(inp, inp, inp, inp, inp, inp)
+
+      self.assertArraysEqual(out, inp)
+      self.assertArraysEqual(out_again, inp)
+
+      compiled = g.lower(inp, inp, inp, inp, inp, inp).compile()
+      self.assertEqual(compiled._executable._kept_var_idx, {0, 1, 2, 3, 4, 5})
+      self.assertLen(compiled._executable.in_avals, 6)
+
+  def test_xmap_in_pjit_keep_unused_default_false(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    def pjit_all(f):
+      return pjit(f, in_axis_resources=P(('x', 'y')),
+                  out_axis_resources=P(('x', 'y')))
+
+    def check_shape(x, y, z, a, b, c):  # pylint: disable=unused-argument
+      assert c.named_shape == {"i": 16}
+      return c
+
+    def xmap_all(f):
+      return maps.xmap(f, in_axes=["i"], out_axes=["i"],
+                       axis_resources={"i": ('x', 'y')})
+
+    g = pjit_all(xmap_all(check_shape))
+
+    inp = jnp.arange(16)
+    with mesh:
+      # out = g(inp, inp, inp, inp, inp, inp)
+      # # Run it again to take the C++ dispatch.
+      # out_again = g(inp, inp, inp, inp, inp, inp)
+
+      # self.assertArraysEqual(out, inp)
+      # self.assertArraysEqual(out_again, inp)
+
+      compiled = g.lower(inp, inp, inp, inp, inp, inp).compile()
+      self.assertEqual(compiled._executable._kept_var_idx, {5})
+      self.assertLen(compiled._executable.in_avals, 1)
+
 
 class TempSharding(Sharding):
 

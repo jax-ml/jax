@@ -1129,7 +1129,8 @@ def _pjit_lower_cached(
     return pxla.lower_mesh_computation(
       fun, 'pjit', name, mesh,
       in_shardings, out_shardings, donated_invars,
-      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
+      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global,
+      keep_unused=keep_unused)
   else:
     # Pass `in_is_global` here because this path is taken by both host local
     # avals and global avals.

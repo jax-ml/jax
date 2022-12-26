@@ -58,7 +58,7 @@ source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
 
 map, unsafe_map = safe_map, map
-zip = safe_zip
+zip, unsafe_zip = safe_zip, zip
 
 _PositionalSemantics = pxla._PositionalSemantics
 _positional_semantics = pxla._positional_semantics
@@ -706,7 +706,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tiling_method=tiling_method, in_is_global=in_is_global)
+        tiling_method=tiling_method, in_is_global=in_is_global, keep_unused=True)
   else:
     return dispatch.lower_xla_callable(
         f, None, backend, name, donated_invars, False, True,
@@ -859,6 +859,8 @@ def _process_xmap_default(self, call_primitive, f, tracers, params):
   raise NotImplementedError(f"{type(self)} must override process_xmap to handle xmap")
 core.Trace.process_xmap = _process_xmap_default  # type: ignore
 
+pe.dce_rules[xmap_p] = pe.dce_jaxpr_call_rule
+
 def _xmap_axis_subst(params, subst, traverse):
   if 'call_jaxpr' not in params:  # TODO(apaszke): This feels sketchy, but I'm not sure why
     return params
@@ -930,7 +932,7 @@ def _typecheck_xmap(
       for axis, global_size in global_axis_sizes.items()
   }
   binder_in_avals = [_insert_aval_axes(v.aval, a_in_axes, local_axis_sizes)
-                     for v, a_in_axes in zip(call_jaxpr.invars, in_axes)]
+                     for v, a_in_axes in unsafe_zip(call_jaxpr.invars, in_axes)]
   for binder_in_aval, in_aval in zip(binder_in_avals, in_avals):
     if not core.typecompat(binder_in_aval, in_aval):
       raise core.JaxprTypeError(
@@ -1425,9 +1427,11 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
 
   global_sharding_spec = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)
   sharded_global_in_nodes = [
-    [mlir.wrap_with_sharding_op(node, global_sharding_spec(aval, aval_axes).sharding_proto())]
+    [mlir.wrap_with_sharding_op(
+        node, global_sharding_spec(aval, aval_axes).sharding_proto())]
     if aval_axes else [node]
-    for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
+    for node, aval, aval_axes in unsafe_zip(global_in_nodes, global_in_avals,
+                                            mesh_in_axes)
   ]
   const_nodes = map(mlir.ir_constants, consts)
 
@@ -1698,7 +1702,7 @@ def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
                          f"positional dimensions, but it only has {out.ndim}")
       raise
 
-  squeezed_args = map(_squeeze_mapped_axes, flat_args, flat_in_axes)
+  squeezed_args = unsafe_map(_squeeze_mapped_axes, flat_args, flat_in_axes)
   flat_outputs = yield squeezed_args, {}
   yield map(_unsqueeze_mapped_axes, flat_outputs, flat_out_axes)
 

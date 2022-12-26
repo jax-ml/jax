@@ -2996,7 +2996,8 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_global: Sequence[bool]):
+    in_is_global: Sequence[bool],
+    keep_unused: bool):
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
@@ -3035,7 +3036,6 @@ def lower_mesh_computation(
       fun = tiling_transform(
           fun, mesh, [_get_array_mapping(i.spec) for i in in_shardings],  # type: ignore
           [_get_array_mapping(o.spec) for o in out_shardings])  # type: ignore
-    in_jaxpr_avals = global_in_avals
   else:
     assert isinstance(tiling_method, TileVectorize)
     assert not auto_spmd_lowering
@@ -3043,27 +3043,42 @@ def lower_mesh_computation(
     # why `.spec` can be accessed.
     in_tiled_avals = [tile_aval_nd(global_axis_sizes, _get_array_mapping(i.spec), aval)  # type: ignore
                       for aval, i in safe_zip(global_in_avals, in_shardings)]
-    in_jaxpr_avals = in_tiled_avals
+    global_in_avals = in_tiled_avals
+
   with core.extend_axis_env_nd(mesh.shape.items()):
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                    "in {elapsed_time} sec",
                                    event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, in_jaxpr_avals)
+      jaxpr, out_jaxpr_avals, consts = pe.trace_to_jaxpr_final(fun, global_in_avals)
+
+  if keep_unused:
+    kept_var_idx = set(range(len(global_in_avals)))
+  else:
+    jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
+    consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
+    global_in_avals = tuple(a for i, a in enumerate(global_in_avals) if i in kept_var_idx)
+    in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
+    in_is_global = tuple(g for i, g in enumerate(in_is_global) if i in kept_var_idx)
+    donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
+    del kept_const_idx
+
   assert len(out_shardings) == len(out_jaxpr_avals)
   if spmd_lowering:
     global_out_avals = out_jaxpr_avals
   else:
     # In non-spmd lowering path, there is no `AUTO` or `UNSPECIFIED`, which is
     # why `.spec` can be accessed.
-    global_out_avals = [untile_aval_nd(global_axis_sizes, _get_array_mapping(o.spec), aval)  # type: ignore
-                        for aval, o in safe_zip(out_jaxpr_avals, out_shardings)]
+    global_out_avals = [
+        untile_aval_nd(global_axis_sizes, _get_array_mapping(o.spec), aval)  # type: ignore
+        for aval, o in safe_zip(out_jaxpr_avals, out_shardings)]
+
   _sanitize_mesh_jaxpr(jaxpr)
   if mesh.is_multi_process:
     check_multihost_collective_allowlist(jaxpr)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   # 2. Build up the HLO
-  tuple_args = dispatch.should_tuple_args(len(in_jaxpr_avals), backend.platform)
+  tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
 
   in_partitions: Optional[List[Optional[xc.OpSharding]]]
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
@@ -3088,7 +3103,7 @@ def lower_mesh_computation(
         out_partitions.append(aval.dtype._rules.physical_op_sharding(aval, o))
       else:
         out_partitions.append(o._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
-    replicated_args = [False] * len(in_jaxpr_avals)
+    replicated_args = [False] * len(global_in_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh, manual_axes)
   else:
     replicated_args = [not _get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
@@ -3142,7 +3157,7 @@ def lower_mesh_computation(
       ordered_effects=ordered_effects,
       host_callbacks=host_callbacks,
       keepalive=keepalive,
-      kept_var_idx=set(range(len(global_in_avals))),
+      kept_var_idx=kept_var_idx,
       backend=backend,
       device_assignment=list(mesh.devices.flat),
       committed=True)
