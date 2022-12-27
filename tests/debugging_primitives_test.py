@@ -60,6 +60,7 @@ class DummyDevice:
     self.platform = platform
     self.id = id
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class DebugPrintTest(jtu.JaxTestCase):
 
   def tearDown(self):
@@ -223,6 +224,7 @@ class DebugPrintTest(jtu.JaxTestCase):
 
 
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class DebugPrintTransformationTest(jtu.JaxTestCase):
 
   def test_debug_print_batching(self):
@@ -500,6 +502,7 @@ class DebugPrintTransformationTest(jtu.JaxTestCase):
       jax.effects_barrier()
     self.assertEqual(output(), "hello bwd: 2.0 3.0\n")
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class DebugPrintControlFlowTest(jtu.JaxTestCase):
 
   def _assertLinesEqual(self, text1, text2):
@@ -736,6 +739,7 @@ class DebugPrintControlFlowTest(jtu.JaxTestCase):
       b3: 2
       """))
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class DebugPrintParallelTest(jtu.JaxTestCase):
 
   def _assertLinesEqual(self, text1, text2):
@@ -978,6 +982,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       f(jnp.arange(2))
       jax.effects_barrier()
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class VisualizeShardingTest(jtu.JaxTestCase):
 
   def _create_devices(self, shape):
@@ -1160,6 +1165,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     """)
     self.assertEqual(output(), expected)
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class InspectShardingTest(jtu.JaxTestCase):
 
   def test_inspect_sharding_is_called_in_pjit(self):

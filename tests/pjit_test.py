@@ -775,6 +775,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     self.assertAllClose(res0, res, check_dtypes=True)
 
+  @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # outfeed
   def testOutfeed(self):
     devices = np.array(jax.local_devices())
     nr_devices = len(devices)

@@ -332,6 +332,17 @@ def skip_on_flag(flag_name, skip_value):
   return skip
 
 
+def pytest_mark_if_available(marker: str):
+  """A decorator for test classes or methods to pytest.mark if installed."""
+  def wrap(func_or_class):
+    try:
+      import pytest
+    except ImportError:
+      return func_or_class
+    return getattr(pytest.mark, marker)(func_or_class)
+  return wrap
+
+
 def format_test_name_suffix(opname, shapes, dtypes):
   arg_descriptions = (format_shape_dtype_string(shape, dtype)
                       for shape, dtype in zip(shapes, dtypes))

@@ -27,6 +27,7 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # infeed
 class InfeedTest(jtu.JaxTestCase):
 
   @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.

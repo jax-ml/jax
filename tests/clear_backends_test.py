@@ -23,6 +23,7 @@ from jax._src.lib import xla_bridge as xb
 config.parse_flags_with_absl()
 
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # crashes runtime
 class ClearBackendsTest(jtu.JaxTestCase):
 
   def test_clear_backends(self):

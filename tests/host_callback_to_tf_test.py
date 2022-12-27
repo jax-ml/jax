@@ -157,6 +157,7 @@ CALL_TF_IMPLEMENTATIONS = {
 }
 
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # crashes runtime
 class CallToTFTest(jtu.JaxTestCase):
 
   def setUp(self):
