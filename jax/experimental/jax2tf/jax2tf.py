@@ -278,8 +278,8 @@ def convert(fun_jax: Callable,
     experimental_native_lowering_platforms: DO NOT USE, for experimental purposes only.
       In conjunction with `experimental_native_lowering`, specify the platform
       for which to lower the code. Must be a tuple with one element, one of
-      'cpu', 'gpu', 'tpu'. The default (empty tuple), specifies the JAX default
-      backend on the machine where the lowering is done.
+      'cpu', 'cuda', 'rocm', 'tpu'. The default (empty tuple), specifies the
+      JAX default backend on the machine where the lowering is done.
     experimental_native_lowering_strict_checks: DO NOT USE, for experimental purposes only.
       In conjunction with `experimental_native_lowering`, enable the following
       checks: the lowered computation is executed on a platform for which it
@@ -292,6 +292,9 @@ def convert(fun_jax: Callable,
   """
   if experimental_native_lowering == "default":
     experimental_native_lowering = config.jax2tf_default_experimental_native_lowering
+  else:
+    if experimental_native_lowering_platforms != ():
+      raise ValueError("Should only use experimental_native_lowering_platforms with experimental_native_lowering")
 
   if experimental_native_lowering and not enable_xla:
     raise ValueError(
@@ -306,15 +309,12 @@ def convert(fun_jax: Callable,
           "experimental_native_lowering_platforms is not supported without "
           "experimental_native_lowering")
     if (not isinstance(experimental_native_lowering_platforms, (list, tuple)) or
-        not all(p in ["tpu", "cpu", "gpu"] for p in experimental_native_lowering_platforms)):
+        not all(p in ["tpu", "cpu", "cuda", "rocm"] for p in experimental_native_lowering_platforms)):
       raise ValueError(
           "experimental_native_lowering_platforms must be a sequence "
-          "containing a subset of {'cpu', 'gpu', 'tpu'}. "
+          "containing a subset of {'cpu', 'cuda', 'rocm', 'tpu'}. "
           f"Got: {experimental_native_lowering_platforms}")
     experimental_native_lowering_platforms = tuple(experimental_native_lowering_platforms)
-    if len(experimental_native_lowering_platforms) > 1:
-      raise NotImplementedError(
-          "experimental_native_lowering_platforms is not implemented for multiple platforms")
 
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
@@ -679,9 +679,8 @@ def _lower_native_and_run(fun_jax: Callable,
                             abstracted_axes=abstracted_axes).lower
   else:
     fun_jax_lower = fun_jax.lower
-
-  with mlir.thread_local_state.lowering_platform(
-      experimental_native_lowering_platforms[0]):
+  with mlir.thread_local_state.lowering_platforms(
+      experimental_native_lowering_platforms):
     lowered = fun_jax_lower(*arg_specs_jax)._lowering
 
   if config.jax2tf_use_stablehlo:
@@ -786,8 +785,9 @@ def _lower_native_and_run(fun_jax: Callable,
       dim_args_spec=dim_args_spec)
   log_msg = f"version={xla_call_module_version} dim_args_spec=" + ", ".join(dim_args_spec)
   if xla_call_module_version == 3:
-    if experimental_native_lowering_strict_checks:
-      call_module_attrs["platforms"] = (jax.default_backend().upper(),)
+    if experimental_native_lowering_strict_checks or len(experimental_native_lowering_platforms) > 1:
+      call_module_attrs["platforms"] = (
+          tuple(p.upper() for p in experimental_native_lowering_platforms))
     else:
       call_module_attrs["platforms"] = ()  # No platform checking
     log_msg += " platforms=" + ", ".join(call_module_attrs["platforms"])  # type: ignore

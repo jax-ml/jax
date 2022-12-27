@@ -1379,7 +1379,7 @@ def _pjit_lower(
   in_shardings = SameDeviceAssignmentTuple(in_shardings, da)
   out_shardings = SameDeviceAssignmentTuple(out_shardings, da)
   return _pjit_lower_cached(jaxpr, in_shardings, out_shardings, *args, **kwargs,
-                            lowering_platform_override=mlir.thread_local_state.lowering_platform_override)
+                            lowering_platforms_override=mlir.thread_local_state.lowering_platforms_override)
 
 
 @weakref_lru_cache
@@ -1393,7 +1393,7 @@ def _pjit_lower_cached(
     in_is_global: Sequence[bool],
     keep_unused: bool,
     always_lower: bool,
-    lowering_platform_override: Optional[str] = None):
+    lowering_platforms_override: Sequence[str] = ()):
   in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
@@ -1440,7 +1440,7 @@ def _pjit_lower_cached(
       fun, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global,
-      lowering_platform_override=lowering_platform_override)
+      lowering_platforms_override=lowering_platforms_override)
   else:
     # Pass `in_is_global` here because this path is taken by both host local
     # avals and global avals.
@@ -1452,7 +1452,7 @@ def _pjit_lower_cached(
         always_lower=always_lower,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
-        lowering_platform_override=lowering_platform_override)
+        lowering_platforms_override=lowering_platforms_override)
 
 
 def pjit_staging_rule(trace, *args, **params):
