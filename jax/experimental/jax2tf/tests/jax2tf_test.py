@@ -1264,38 +1264,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
       np.array_equal(jax_out._value, np.array(tf_out))
 
-  @jtu.with_mesh([("x", 2)])
-  def test_pjit_basic1D(self):
-
-    def func_jax(x, y):
-      return x + y
-
-    shape = (8, 10)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    in_axis_resources = (P("x"), P("x"))
-    out_axis_resources = None
-    res_jax = pjit(
-        func_jax,
-        in_axis_resources=in_axis_resources,
-        out_axis_resources=out_axis_resources)(x, x)
-    module = get_serialized_computation(
-        func_jax,
-        x,
-        x,
-        use_pjit=True,
-        in_axis_resources=in_axis_resources,
-        out_axis_resources=out_axis_resources)
-
-    def f_tf(x_tf, y_tf):
-      return tfxla.call_module([x_tf, y_tf],
-                               version=2,
-                               module=module,
-                               Tout=[x.dtype],
-                               Sout=[x.shape])
-
-    res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
-    self.assertAllClose(res_tf.numpy(), res_jax)
-
   def assertAllOperationStartWith(self, g: tf.Graph, scope_name: str):
     """Assert all operations name start with ```scope_name```.
 
@@ -1504,6 +1472,38 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     res = tf.function(f_tf, jit_compile=True, autograph=False)(x1)
     self.assertAllClose(
         tf.nest.map_structure(lambda t: t.numpy(), res), jax_res)
+
+  @jtu.with_mesh([("x", 2)])
+  def test_pjit_basic1D(self):
+
+    def func_jax(x, y):
+      return x + y
+
+    shape = (8, 10)
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    in_axis_resources = (P("x"), P("x"))
+    out_axis_resources = None
+    res_jax = pjit(
+        func_jax,
+        in_axis_resources=in_axis_resources,
+        out_axis_resources=out_axis_resources)(x, x)
+    module = get_serialized_computation(
+        func_jax,
+        x,
+        x,
+        use_pjit=True,
+        in_axis_resources=in_axis_resources,
+        out_axis_resources=out_axis_resources)
+
+    def f_tf(x_tf, y_tf):
+      return tfxla.call_module([x_tf, y_tf],
+                               version=2,
+                               module=module,
+                               Tout=[x.dtype],
+                               Sout=[x.shape])
+
+    res_tf = tf.function(f_tf, jit_compile=True, autograph=False)(x, x)[0]
+    self.assertAllClose(res_tf.numpy(), res_jax)
 
 
 if __name__ == "__main__":
