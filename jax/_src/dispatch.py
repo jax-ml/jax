@@ -1275,6 +1275,10 @@ def device_put(x, device: Optional[Device] = None) -> Tuple[Any, ...]:
 # TODO(phawkins): update users.
 xla.device_put = device_put
 
+def _device_put_masked_array(x, device: Optional[Device]):
+  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy array.")
+
 def _device_put_array(x, device: Optional[Device]):
   backend = xb.get_device_backend(device)
   if x.dtype == dtypes.float0:
@@ -1293,6 +1297,7 @@ _scalar_types = dtypes.python_scalar_dtypes.keys()
 
 device_put_handlers: Dict[Any, Callable[[Any, Optional[Device]],
                                         Tuple[Any, ...]]] = {}
+device_put_handlers[np.ma.MaskedArray] = _device_put_masked_array
 device_put_handlers.update((t, _device_put_array) for t in array_types)
 device_put_handlers.update((t, _device_put_scalar) for t in _scalar_types)
 device_put_handlers[core.Token] = _device_put_token

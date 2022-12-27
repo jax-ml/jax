@@ -421,6 +421,11 @@ def _shard_token(x, devices, indices):
   return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
 shard_arg_handlers[core.Token] = _shard_token
 
+def _masked_array_error(*args, **kwargs):
+  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy array.")
+shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
+
 def _shard_array(x, devices, indices):
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))

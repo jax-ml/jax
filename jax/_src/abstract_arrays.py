@@ -51,6 +51,13 @@ def canonical_concrete_aval(val, weak_type=None):
   return ConcreteArray(dtypes.canonicalize_dtype(np.result_type(val)), val,
                        weak_type=weak_type)
 
+def masked_array_error(*args, **kwargs):
+  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy array.")
+
+core.pytype_aval_mappings[np.ma.MaskedArray] = masked_array_error
+ad_util.jaxval_zeros_likers[np.ma.MaskedArray] = masked_array_error
+
 for t in array_types:
   core.pytype_aval_mappings[t] = canonical_concrete_aval
   ad_util.jaxval_zeros_likers[t] = zeros_like_array

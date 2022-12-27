@@ -2904,6 +2904,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testArrayFromMasked(self):
+    args_maker = lambda: [np.ma.array([1, 2], mask=[True, False])]
+    # Like np.array, jnp.array strips the mask from masked array inputs.
+    self._CheckAgainstNumpy(np.array, jnp.array, args_maker)
+    # Under JIT, masked arrays are flagged as invalid.
+    with self.assertRaisesRegex(ValueError, "numpy masked arrays are not supported"):
+      jax.jit(jnp.asarray)(*args_maker())
+
   @jtu.sample_product(
     [dict(arg=arg, dtype=dtype, ndmin=ndmin)
       for arg, dtypes in [

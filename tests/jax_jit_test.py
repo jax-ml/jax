@@ -40,6 +40,16 @@ class JaxJitTest(jtu.JaxTestCase):
     self.assertFalse(jaxlib.jax_jit._is_float0(np.zeros((5, 5))))
 
   @parameterized.parameters([jax.device_put, _cpp_device_put])
+  def test_device_put_on_numpy_masked_array(self, device_put_function):
+    # TODO(jakevdp): add appropriate logic to jaxlib device_put and update this test.
+    if device_put_function is _cpp_device_put:
+      self.skipTest("cpp device_put does not yet reject masked arrays.")
+    device = jax.devices()[0]
+    value = np.ma.array([1, 2, 3], mask=[True, False, True])
+    with self.assertRaisesRegex(ValueError, "numpy masked arrays are not supported"):
+      device_put_function(value, device=device)
+
+  @parameterized.parameters([jax.device_put, _cpp_device_put])
   def test_device_put_on_numpy_scalars(self, device_put_function):
 
     device = jax.devices()[0]

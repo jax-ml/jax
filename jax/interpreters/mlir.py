@@ -241,6 +241,11 @@ def _numpy_array_constant(x: np.ndarray, canonicalize_types
   return (hlo.ConstantOp(attr).result,)
 
 
+def _masked_array_constant_handler(*args, **kwargs):
+  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy array.")
+
+register_constant_handler(np.ma.MaskedArray, _masked_array_constant_handler)
 
 def _ndarray_constant_handler(val: np.ndarray, canonicalize_types
                              ) -> Sequence[ir.Value]:
