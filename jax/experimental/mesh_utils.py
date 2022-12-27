@@ -209,13 +209,21 @@ def _transpose_trick(physical_mesh: np.ndarray,
         f"create_device_mesh cannot create contiguous submeshes for "
         f"physical mesh topology {topology}")
 
-  if mesh_shape not in _TRANSPOSE_TRICKS[topology]:
+  mesh_shape_copy = tuple(mesh_shape)
+  while mesh_shape_copy and mesh_shape_copy not in _TRANSPOSE_TRICKS[topology]:
+    # Leading 1s should not matter.
+    if mesh_shape_copy[0] == 1:
+      mesh_shape_copy = mesh_shape_copy[1:]
+    else:
+      break
+
+  if mesh_shape_copy not in _TRANSPOSE_TRICKS[topology]:
     raise ValueError(
         f"create_device_mesh cannot create contiguous submeshes for "
         f"mesh_shape {mesh_shape} and physical mesh topology {topology}. "
         f"Available mesh_shapes: {list(_TRANSPOSE_TRICKS[topology].keys())}")
 
-  return physical_mesh.transpose(*_TRANSPOSE_TRICKS[topology][mesh_shape])
+  return physical_mesh.transpose(*_TRANSPOSE_TRICKS[topology][mesh_shape_copy])
 
 
 def create_device_mesh(
