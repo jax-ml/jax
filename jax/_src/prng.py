@@ -44,7 +44,7 @@ from jax._src.lax import utils as lax_utils
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
 from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
-from jax._src.lib import gpu_prng
+from jax._src.lib import gpu_prng, xla_extension_version
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -940,7 +940,7 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-def _threefry2x32_gpu_lowering(threefry2x32_lowering, ctx, k1, k2, x1, x2):
+def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
   aval_out, _ = ctx.avals_out
   k1_aval, k2_aval, x1_aval, x2_aval = ctx.avals_in
   rank = len(aval_out.shape)
@@ -950,10 +950,24 @@ def _threefry2x32_gpu_lowering(threefry2x32_lowering, ctx, k1, k2, x1, x2):
   def _broadcast(x, aval):
     return mlir.broadcast_in_dim(ctx, x, aval_out,
                                  broadcast_dimensions=range(rank - len(aval.shape), rank))
-  return threefry2x32_lowering(
-          (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)))
 
+  if xla_extension_version >= 113:
+    out_len = reduce(op.mul, aval_out.shape, 1)
+    if not core.is_constant_dim(out_len):
+      length = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, [out_len]))
+      length = mlir.hlo.ConvertOp(
+          mlir.ir.RankedTensorType.get((1,), mlir.ir.IntegerType.get_signless(64)),
+          length).result
+    else:
+      length = int(out_len)  # will be passed statically
+
+    return lowering_func(
+            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length)
+  else:
+    return lowering_func(
+            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)))
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

@@ -26,7 +26,7 @@ namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 struct ThreeFry2x32Descriptor {
-  std::int64_t n;
+  std::int64_t n;  // If -1 then the length is passed as a 5th operand
 };
 
 void LaunchThreeFry2x32Kernel(gpuStream_t stream, void** buffers,

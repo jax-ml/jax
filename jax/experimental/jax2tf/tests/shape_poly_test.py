@@ -1873,8 +1873,16 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[None, 0]),
     PolyHarness("random_categorical", "axis=1",
                 lambda key, a: jax.random.categorical(key, a, axis=1),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 8), _f32)],
-                poly_axes=[None, 0]),
+                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 8), _f32)],
+                poly_axes=[None, (0, 1)]),
+    PolyHarness("random_categorical", "axis=1_then_reshape",
+                lambda key, a: jax.random.categorical(key, a, axis=1).reshape((-1)),
+                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 8), _f32)],
+                poly_axes=[None, (0, 1)]),
+    PolyHarness("random_categorical", "0_dim",  # One axis has 0 size
+                lambda key, a: jax.random.categorical(key, a, axis=1),
+                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5, 0), _f32)],
+                poly_axes=[None, (0, 1)]),
     # Works when the known dimensions are known to be even or odd.
     PolyHarness("random_uniform", "even_1",
                 lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
@@ -2262,9 +2270,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu", "vmap_qr:cpu", "vmap_qr:gpu",
-          "random_gamma:gpu", "vmap_random_gamma:gpu",
-          "random_categorical:gpu", "vmap_random_categorical:gpu",
-          "random_randint:gpu", "random_uniform:gpu", "vmap_random_split:gpu",
           "vmap_svd:cpu", "vmap_svd:gpu"}
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for custom calls; b/261671778")
