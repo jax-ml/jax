@@ -503,7 +503,7 @@ def device_put_key_array(x: PRNGKeyArray, device):
   return dispatch.device_put(x.unsafe_raw_array(), device)
 dispatch.device_put_handlers[PRNGKeyArray] = device_put_key_array
 
-def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices, mode):
+def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices):
   # TODO(frostig): Remove the need for `core.get_aval`.
   key_shape = core.get_aval(x).dtype.impl.key_shape
   arr = x.unsafe_raw_array()
@@ -512,7 +512,7 @@ def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices, mode):
   # sharded. This is only true when enable_custom_prng is True.
   trailing_inds = [slice(None)] * len(key_shape)
   phys_indices = [(*inds, *trailing_inds) for inds in indices]
-  return pxla.shard_arg_handlers[type(arr)](arr, devices, phys_indices, mode)
+  return pxla.shard_arg_handlers[type(arr)](arr, devices, phys_indices)
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
 
 

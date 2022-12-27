@@ -1398,8 +1398,7 @@ def _device_put_impl(
     arg_handler = pxla.shard_arg_handlers[type(x)]
     result_handler = pxla.global_aval_to_result_handler(a, s, True, False)
     map_ = s.devices_indices_map(x.shape)  # type: ignore
-    return result_handler(arg_handler(x, list(map_), list(map_.values()),
-                                      pxla.InputsHandlerMode.pjit_or_xmap))
+    return result_handler(arg_handler(x, list(map_), list(map_.values())))
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):

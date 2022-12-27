@@ -369,7 +369,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def identity(x): return x
 
-def _shard_arg(arg, devices, arg_indices, mode):
+def _shard_arg(arg, devices, arg_indices):
   """Returns a list of size len(devices) containing per-device buffers.
 
   For the C++ pmap path, we fallback to Python (this function) to shard
@@ -379,7 +379,6 @@ def _shard_arg(arg, devices, arg_indices, mode):
     arg: The Python argument.
     devices: The list of devices to shard over.
     arg_indices: A list of `len(devices)` indices to use to shard the argument.
-    mode: An enum telling whether shard_arg is executed via pmap or pjit/xmap.
   """
   if isinstance(arg, ShardedDeviceArray) and arg_indices == arg.indices:
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
@@ -392,13 +391,12 @@ def _shard_arg(arg, devices, arg_indices, mode):
     ]
   else:
     arg = xla.canonicalize_dtype(arg)
-    return shard_arg_handlers[type(arg)](arg, devices, arg_indices, mode)
+    return shard_arg_handlers[type(arg)](arg, devices, arg_indices)
 
 
 @profiler.annotate_function
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
-               mode: InputsHandlerMode,
                args) -> Sequence[Union[xb.ShardedBuffer, Sequence[xb.xla_client.Buffer]]]:
   """Shard each argument data array along its leading axis.
 
@@ -414,23 +412,23 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-  return [_shard_arg(arg, devices, indices[i], mode) for i, arg in enumerate(args)]
+  return [_shard_arg(arg, devices, indices[i]) for i, arg in enumerate(args)]
 
 
-shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, InputsHandlerMode], Sequence[Any]]] = {}
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
 
-def _shard_token(x, devices, indices, mode):
+def _shard_token(x, devices, indices):
   return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
 shard_arg_handlers[core.Token] = _shard_token
 
-def _shard_array(x, devices, indices, mode):
+def _shard_array(x, devices, indices):
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, devices, indices, mode):
+def _shard_device_array(x, devices, indices):
   start_indices, limit_indices, removed_dims = unzip3(
       _as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
@@ -894,7 +892,7 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(yashkatariya): Move this to array.py when SDA is deleted. The local
 # import of Array should go away at that time.
-def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
+def _shard_sharded_device_array_slow_path(x, devices, indices):
   from jax._src.array import ArrayImpl
 
   candidates = defaultdict(list)
@@ -914,7 +912,7 @@ def _shard_sharded_device_array_slow_path(x, devices, indices, mode):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return shard_arg_handlers[type(x._value)](x._value, devices, indices, mode)
+      return shard_arg_handlers[type(x._value)](x._value, devices, indices)
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1697,8 +1695,7 @@ class UnloadedPmapExecutable:
     handle_outs = local_avals_to_results_handler(self.local_output_avals,
                                                  self.output_shardings)
     handle_args = InputsHandler(self.compiled.local_devices(),
-                                self.input_shardings, input_indices,
-                                InputsHandlerMode.pmap)
+                                self.input_shardings, input_indices)
     execute_fun = ExecuteReplicated(self.compiled, "parallel computation",
                                     self.backend, handle_args, handle_outs,
                                     self.unordered_effects,
@@ -1877,21 +1874,14 @@ def _safe_div(x, y):
   return result
 
 
-class InputsHandlerMode(enum.Enum):
-  pmap = 0
-  pjit_or_xmap = 1
-
-
 class InputsHandler:
-  __slots__ = ("handler", "local_devices", "in_shardings", "input_indices",
-               "mode")
+  __slots__ = ("handler", "local_devices", "in_shardings", "input_indices")
 
-  def __init__(self, local_devices, in_shardings, input_indices, mode):
-    self.handler = partial(shard_args, local_devices, input_indices, mode)
+  def __init__(self, local_devices, in_shardings, input_indices):
+    self.handler = partial(shard_args, local_devices, input_indices)
     self.local_devices = local_devices
     self.in_shardings = in_shardings
     self.input_indices = input_indices
-    self.mode = mode
 
   def __call__(self, input_buffers):
     return self.handler(input_buffers)
@@ -1900,8 +1890,7 @@ class InputsHandler:
     return ("InputsHandler(\n"
             f"local_devices={self.local_devices},\n"
             f"in_shardings={self.in_shardings},\n"
-            f"input_indices={self.input_indices})\n"
-            f"mode={self.mode}")
+            f"input_indices={self.input_indices})")
 
 
 class ResultsHandler:
@@ -3348,8 +3337,7 @@ class UnloadedMeshExecutable:
   def load(self) -> MeshExecutable:
     input_indices = _get_input_indices(self.input_avals, self.input_shardings)
     handle_args = InputsHandler(self.xla_executable.local_devices(),
-                                self.input_shardings, input_indices,
-                                InputsHandlerMode.pjit_or_xmap)
+                                self.input_shardings, input_indices)
     handle_outs = global_avals_to_results_handler(
         self.output_avals, self.output_shardings, self.committed,
         self.are_out_shardings_from_xla)  # type: ignore  # arg-type
@@ -3555,8 +3543,7 @@ class MeshExecutable(stages.XlaExecutable):
                                         are_global)
     local_device_assignment = [d for d in device_assignment
                                if d.process_index == d.client.process_index()]
-    handle_ins = InputsHandler(local_device_assignment, out_shardings, indices,
-                               InputsHandlerMode.pjit_or_xmap)
+    handle_ins = InputsHandler(local_device_assignment, out_shardings, indices)
     handle_outs = global_avals_to_results_handler(
           global_out_avals, out_shardings, committed,
           [False] * len(global_out_avals))
@@ -3657,8 +3644,7 @@ def _compile_replicated_pmap_executable_from_hlo(
       has_unordered_effects=has_unordered_effects,
       ordered_effects=ordered_effects, in_avals=pci.avals,
       in_indices=input_indices, in_shardings=in_shardings,
-      kept_var_idx=set(range(len(pci.avals))), mode=InputsHandlerMode.pmap,
-      out_handler=handle_outs)
+      kept_var_idx=set(range(len(pci.avals))), out_handler=handle_outs)
   # TODO(frostig): need `compile_replicated` to give us the XLA executable
   return PmapExecutable(None, execute_fun, None, pci.avals)
 
@@ -3684,7 +3670,7 @@ def _compile_replicated_mesh_executable_from_hlo(
       has_unordered_effects=has_unordered_effects,
       ordered_effects=ordered_effects, in_avals=input_avals,
       in_indices=input_indices, in_shardings=in_shardings,
-      kept_var_idx=kept_var_idx, mode=InputsHandlerMode.pjit_or_xmap,
+      kept_var_idx=kept_var_idx,
       out_avals=global_out_avals, out_shardings=out_shardings,
       committed=committed)
   xla_executable = None
@@ -3713,8 +3699,8 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
       is_trivial=True, jaxpr=jaxpr, consts=consts,
       device_assignment=device_assignment, in_avals=input_avals,
       in_indices=input_indices, in_shardings=in_shardings,
-      kept_var_idx=kept_var_idx, mode=InputsHandlerMode.pjit_or_xmap,
-      out_handler=handle_outs, out_shardings=out_shardings)
+      kept_var_idx=kept_var_idx, out_handler=handle_outs,
+      out_shardings=out_shardings)
   return MeshExecutable(None, unsafe_call, global_in_avals, in_shardings,
                         out_shardings, False, kept_var_idx,
                         device_assignment)

@@ -652,10 +652,8 @@ def _gda_mlir_constant_handler(val, canonicalize_types=True):
 mlir.register_constant_handler(GlobalDeviceArray, _gda_mlir_constant_handler)
 
 
-def _gda_shard_arg(x, devices, indices, mode):
+def _gda_shard_arg(x, devices, indices):
   x._check_if_deleted()
-  if mode == pxla.InputsHandlerMode.pmap:
-    raise RuntimeError('GDA is not supported with pmap.')
   # self._sharded_buffer can be None if _DeviceArray is used.
   if x._sharded_buffer is None:
     return x._device_buffers

@@ -2225,8 +2225,7 @@ def _cpp_pmap(
     return out, fastpath_data
 
   cpp_mapped_f = pmap_lib.pmap(
-      fun, cache_miss, static_broadcasted_tuple,
-      partial(pxla._shard_arg, mode=pxla.InputsHandlerMode.pmap))
+      fun, cache_miss, static_broadcasted_tuple, pxla._shard_arg)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
 
