@@ -15,7 +15,7 @@
 from typing import List
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as hlo
+import jaxlib.mlir.dialects.stablehlo as hlo
 
 
 from .hlo_helpers import custom_call

@@ -77,7 +77,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo, use_stablehlo
 from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
@@ -1520,7 +1520,16 @@ class PmapComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
-    return self._hlo
+    if use_stablehlo:
+      return super().mhlo()
+    else:
+      return self._hlo
+
+  def stablehlo(self) -> ir.Module:
+    if use_stablehlo:
+      return self._hlo
+    else:
+      return super().stablehlo()
 
   @profiler.annotate_function
   def compile(self) -> PmapExecutable:
@@ -3187,9 +3196,20 @@ class MeshComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
-    if self.is_trivial:
-      raise ValueError("A trivial computation has no MHLO")
-    return self._hlo
+    if use_stablehlo:
+      return super().mhlo()
+    else:
+      if self.is_trivial:
+        raise ValueError("A trivial computation has no MHLO")
+      return self._hlo
+
+  def stablehlo(self) -> ir.Module:
+    if use_stablehlo:
+      if self.is_trivial:
+        raise ValueError("A trivial computation has no StableHLO")
+      return self._hlo
+    else:
+      return super().stablehlo()
 
   def compile(self,
               _allow_propagation_to_outputs : bool = False,

@@ -44,6 +44,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import use_stablehlo
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
@@ -169,7 +170,8 @@ class Lowering(Protocol):
     compiler.
 
     Args:
-      dialect: Optional string specifying a representation dialect (e.g. "mhlo")
+      dialect: Optional string specifying a representation dialect
+      (e.g. "stablehlo")
     """
     raise NotImplementedError
 
@@ -264,20 +266,31 @@ class XlaLowering(Lowering):
 
   def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""
-    raise NotImplementedError("must override")
+    if use_stablehlo:
+      module_str = xla_extension.mlir.stablehlo_to_mhlo(
+          mlir.module_to_bytecode(self.stablehlo()))
+      with self.stablehlo().context:
+        return ir.Module.parse(module_str)
+    else:
+      raise NotImplementedError("must override")
 
   def stablehlo(self) -> ir.Module:
     """Return a StableHLO representation of this computation."""
-    module_str = xla_extension.mlir.mhlo_to_stablehlo(
-        mlir.module_to_string(self.mhlo()))
-    with mlir.make_ir_context():
-      return ir.Module.parse(module_str)
+    if use_stablehlo:
+      raise NotImplementedError("must override")
+    else:
+      module_str = xla_extension.mlir.mhlo_to_stablehlo(
+          mlir.module_to_bytecode(self.mhlo()))
+      with self.mhlo().context:
+        return ir.Module.parse(module_str)
 
   def compile(self) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
-    if dialect is None or dialect == "mhlo":
+    if dialect is None:
+      dialect = "stablehlo" if use_stablehlo else "mhlo"
+    if dialect == "mhlo":
       return str(self.mhlo())
     elif dialect == "stablehlo":
       return str(self.stablehlo())
@@ -287,7 +300,9 @@ class XlaLowering(Lowering):
       raise ValueError(f"unknown dialect: {dialect}")
 
   def compiler_ir(self, dialect: Optional[str] = None) -> Any:
-    if dialect is None or dialect == "mhlo":
+    if dialect is None:
+      dialect = "stablehlo" if use_stablehlo else "mhlo"
+    if dialect == "mhlo":
       return self.mhlo()
     elif dialect == "stablehlo":
       return self.stablehlo()
@@ -579,7 +594,7 @@ class Lowered(Stage):
     nor reliable serialization. It is relayed directly to external callers.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
     """
     return self._lowering.as_text(dialect)
 
@@ -594,7 +609,7 @@ class Lowered(Stage):
     runtime.
 
     Args:
-      dialect: Optional string specifying a lowering dialect (e.g. "mhlo")
+      dialect: Optional string specifying a lowering dialect (e.g. "stablehlo")
     """
     try:
       return self._lowering.compiler_ir(dialect)

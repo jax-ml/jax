@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.mhlo as hlo
+import jaxlib.mlir.dialects.stablehlo as hlo
 
 import numpy as np
 

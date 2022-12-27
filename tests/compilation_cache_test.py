@@ -209,10 +209,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       computation1 = str(jax.jit(lambda x, y: x + y)
                          .lower(1, 1)
-                         .compiler_ir(dialect="mhlo"))
+                         .compiler_ir())
       computation2 = str(jax.jit(lambda x, y: x * y)
                          .lower(2, 2)
-                         .compiler_ir(dialect="mhlo"))
+                         .compiler_ir())
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()
@@ -230,7 +230,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       cc.initialize_cache(tmpdir)
       computation = str(jax.jit(lambda x, y: x + y)
                         .lower(np.int32(1), np.int32(1))
-                        .compiler_ir(dialect="mhlo"))
+                        .compiler_ir())
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()

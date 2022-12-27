@@ -38,7 +38,7 @@ from jax._src.numpy import lax_numpy
 import jax._src.util as util
 from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import hlo, use_stablehlo
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -984,7 +984,7 @@ def _all_to_all_lowering(ctx, x, *,
     else:
       other_args = {}
     return hlo.AllToAllOp(
-        [x],
+        x if use_stablehlo else [x],
         split_dimension=mlir.i64_attr(split_axis),
         concat_dimension=mlir.i64_attr(concat_axis),
         split_count=mlir.i64_attr(split_count),

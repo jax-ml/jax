@@ -24,6 +24,8 @@ from jax.lib import xla_client
 import jaxlib.mlir.dialects.stablehlo as stablehlo
 
 # Alias that is set up to abstract away the transition from MHLO to StableHLO.
-# At the moment, it points to MHLO, but in the future it will start to
-# conditionally and then unconditionally point to StableHLO.
-import jaxlib.mlir.dialects.mhlo as hlo
+use_stablehlo = xla_client.mlir_api_version >= 42
+if use_stablehlo:
+  import jaxlib.mlir.dialects.stablehlo as hlo
+else:
+  import jaxlib.mlir.dialects.mhlo as hlo

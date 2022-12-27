@@ -53,6 +53,7 @@ from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import use_stablehlo
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 import jax._src.util as util
@@ -982,9 +983,20 @@ class XlaComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
-    if self.is_trivial():
-      raise ValueError("A trivial computation has no MHLO")
-    return self._hlo
+    if use_stablehlo:
+      return super().mhlo()
+    else:
+      if self.is_trivial():
+        raise ValueError("A trivial computation has no MHLO")
+      return self._hlo
+
+  def stablehlo(self) -> ir.Module:
+    if use_stablehlo:
+      if self.is_trivial():
+        raise ValueError("A trivial computation has no StableHLO")
+      return self._hlo
+    else:
+      return super().stablehlo()
 
   def compile(self) -> XlaCompiledComputation:
     if self._executable is None:
