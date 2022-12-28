@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Tuple
-
 import jax
 from jax import core
 from jax import tree_util
@@ -24,7 +22,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import ir
 import jax.interpreters.pxla as pxla
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax.interpreters import partial_eval as pe
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc

@@ -34,7 +34,6 @@ import jax.numpy as jnp
 from jax._src import api_util
 from jax._src.lax.lax import DotDimensionNumbers
 from jax.util import split_list, safe_zip
-from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike

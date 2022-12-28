@@ -25,10 +25,8 @@ import collections
 import functools
 from functools import partial
 import inspect
-import itertools as it
 from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
                     NamedTuple, Optional, Sequence, Tuple, TypeVar, Union, overload)
-from warnings import warn
 
 import numpy as np
 from contextlib import contextmanager, ExitStack
@@ -38,8 +36,7 @@ from jax._src import linear_util as lu
 from jax import stages
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
-                           treedef_is_leaf, treedef_children,
-                           Partial, PyTreeDef, all_leaves, treedef_tuple)
+                           Partial, PyTreeDef, all_leaves)
 from jax._src import callback as jcb
 from jax._src import core
 from jax._src import device_array

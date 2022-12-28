@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
 import contextlib
 import numpy as np
 import itertools as it
 from collections import OrderedDict, abc
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
                     NamedTuple, Union, Sequence)
-from warnings import warn
 from functools import wraps, partial, partialmethod, lru_cache
 
 from jax import numpy as jnp
@@ -28,8 +26,7 @@ from jax._src import linear_util as lu
 from jax import stages
 from jax._src import dispatch
 from jax.tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
-                           tree_leaves, treedef_tuple)
-from jax._src.tree_util import _replace_nones
+                           treedef_tuple)
 from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
                                _ensure_index_tuple, donation_vector,
                                shaped_abstractify, check_callable)
@@ -46,8 +43,6 @@ from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import ad
-from jax._src.lib import xla_bridge as xb
-from jax._src.lib import xla_client as xc
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
                            as_hashable_function, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name,

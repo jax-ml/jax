@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
-from functools import partial, reduce
+from functools import partial
 import contextlib
 import operator
 import os

@@ -24,7 +24,6 @@ https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#callin
 """
 import enum
 import functools
-import re
 from typing import Any, Callable, Optional, Sequence, Tuple
 
 from absl import logging
