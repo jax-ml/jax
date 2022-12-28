@@ -2751,7 +2751,12 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
 
   body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts,
                                    extra_name_stack="while/body")
-  return tf.while_loop(cond_tf_func, body_tf_func, init_carry)
+  # Sometimes TF infers more specific shapes for the init_carry, and this has
+  # led to errors: "enters the loop with shape (1,), but has shape (None,) after one iteration"
+  shape_invariants = [tf.TensorShape(_aval_to_tf_shape(_out_aval))
+                      for _out_aval in body_jaxpr.out_avals]
+  return tf.while_loop(cond_tf_func, body_tf_func, init_carry,
+                       shape_invariants=shape_invariants)
 
 
 def _batched_cond_while(*args: TfVal, cond_nconsts: int,
