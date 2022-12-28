@@ -1871,7 +1871,10 @@ def stride_shape(s: Shape, window_size: Shape, window_stride: Shape) -> Shape:
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX value that we can compute with.
-     This is the identity function for constant dimensions."""
+     This is the identity function for constant dimensions.
+
+     Has the same abstract value as Python constants.
+     """
   if isinstance(d, Tracer): return d
   handler, ds = _dim_handler_and_canonical(d)
   return handler.as_value(*ds)
