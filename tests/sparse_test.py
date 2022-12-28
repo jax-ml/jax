@@ -2224,7 +2224,8 @@ class BCSRTest(sptu.SparseTestCase):
     self._CompileAndCheckSparse(sparse_fun, args_maker, atol=tol, rtol=tol)
 
 class SparseGradTest(sptu.SparseTestCase):
-  def test_sparse_grad(self):
+  @jtu.sample_product(has_aux=[True, False])
+  def test_sparse_value_and_grad(self, has_aux):
     rng_sparse = rand_sparse(self.rng())
     rng = jtu.rand_default(self.rng())
 
@@ -2233,16 +2234,83 @@ class SparseGradTest(sptu.SparseTestCase):
     Xsp = sparse.BCOO.fromdense(X)
 
     def f(X, y):
+      if has_aux:
+        return jnp.sum(X @ y), {'X': X.shape, 'y': y.shape}
       return jnp.sum(X @ y)
 
-    grad_dense = jax.grad(f, argnums=0)(X, y)
-    grad_sparse = sparse.grad(f, argnums=0)(Xsp, y)
+    with self.subTest("wrt sparse"):
+      val_de, grad_de = jax.value_and_grad(f, argnums=0, has_aux=has_aux)(X, y)
+      val_sp, grad_sp = sparse.value_and_grad(f, argnums=0, has_aux=has_aux)(Xsp, y)
+      self.assertIsInstance(grad_sp, sparse.BCOO)
+      self.assertAllClose(val_de, val_sp)
+      self.assertAllClose(grad_sp.data, sparse.bcoo_extract(grad_sp.indices, grad_de))
 
-    # extract sparse gradient from dense gradient
-    indices = tuple(Xsp.indices.T)
-    grad_sparse_from_dense = jnp.zeros_like(grad_dense).at[indices].set(grad_dense[indices])
+    with self.subTest("wrt dense"):
+      self.assertAllClose(jax.value_and_grad(f, argnums=1, has_aux=has_aux)(X, y),
+                          sparse.value_and_grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
 
-    self.assertArraysEqual(grad_sparse.todense(), grad_sparse_from_dense)
+  @jtu.sample_product(has_aux=[True, False])
+  def test_sparse_grad(self, has_aux):
+    rng_sparse = rand_sparse(self.rng())
+    rng = jtu.rand_default(self.rng())
+
+    y = rng(5, "float32")
+    X = rng_sparse((10, 5), "float32")
+    Xsp = sparse.BCOO.fromdense(X)
+
+    def f(X, y):
+      if has_aux:
+        return jnp.sum(X @ y), {'X': X.shape, 'y': y.shape}
+      return jnp.sum(X @ y)
+
+    with self.subTest("wrt sparse"):
+      grad_de = jax.grad(f, argnums=0, has_aux=has_aux)(X, y)
+      grad_sp = sparse.grad(f, argnums=0, has_aux=has_aux)(Xsp, y)
+      if has_aux:
+        grad_de, aux_de = grad_de
+        grad_sp, aux_sp = grad_sp
+        self.assertAllClose(aux_de, aux_sp)
+      self.assertIsInstance(grad_sp, sparse.BCOO)
+      self.assertAllClose(grad_sp.data, sparse.bcoo_extract(grad_sp.indices, grad_de))
+
+    with self.subTest("wrt dense"):
+      self.assertAllClose(jax.grad(f, argnums=1, has_aux=has_aux)(X, y),
+                          sparse.grad(f, argnums=1, has_aux=has_aux)(Xsp, y))
+
+  @jtu.sample_product(
+    has_aux=[True, False],
+    transform=['jacrev', 'jacfwd', 'jacobian']
+  )
+  def test_sparse_jacobian(self, has_aux, transform):
+    jac_dense = getattr(jax, transform)
+    jac_sparse = getattr(sparse, transform)
+
+    rng_sparse = rand_sparse(self.rng())
+    rng = jtu.rand_default(self.rng())
+
+    y = rng(5, "float32")
+    X = rng_sparse((10, 5), "float32")
+    Xsp = sparse.BCOO.fromdense(X)
+
+    def f(X, y):
+      if has_aux:
+        return X @ y, {'X': X.shape, 'y': y.shape}
+      return X @ y
+
+    with self.subTest("wrt sparse"):
+      grad_de = jac_dense(f, argnums=0, has_aux=has_aux)(X, y)
+      grad_sp = jac_sparse(f, argnums=0, has_aux=has_aux)(Xsp, y)
+      if has_aux:
+        grad_de, aux_de = grad_de
+        grad_sp, aux_sp = grad_sp
+        self.assertAllClose(aux_de, aux_sp)
+      self.assertIsInstance(grad_sp, sparse.BCOO)
+      self.assertAllClose(grad_sp.data, sparse.bcoo_extract(grad_sp.indices, grad_de))
+
+    with self.subTest("wrt dense"):
+      rtol = 0.01 if jtu.device_under_test() == 'tpu' else None
+      self.assertAllClose(jac_dense(f, argnums=1, has_aux=has_aux)(X, y),
+                          jac_sparse(f, argnums=1, has_aux=has_aux)(Xsp, y), rtol=rtol)
 
 
 class SparseObjectTest(sptu.SparseTestCase):
