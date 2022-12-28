@@ -589,6 +589,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type",
         lambda: self.jit(f)(jnp.int32))
 
+  def test_jit_masked_array(self):
+    x = np.ma.array([1, 2, 3], mask=[True, False, True])
+    f = self.jit(lambda x: x)
+    with self.assertRaisesRegex(ValueError, "numpy masked arrays are not supported"):
+      f(x)
+
   def test_jit_on_all_devices(self):
     # Verifies we can run the same computation on every device present, even
     # if they are, for example, different models of GPU.
