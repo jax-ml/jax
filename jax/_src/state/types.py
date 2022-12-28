@@ -20,6 +20,7 @@ from jax import core
 from jax._src.lib import xla_bridge, xla_client
 from jax._src.util import safe_map, safe_zip, tuple_insert, tuple_delete, prod
 from jax._src.lax.control_flow import common
+from jax._src import custom_derivatives
 
 xc = xla_client
 xb = xla_bridge
@@ -35,6 +36,7 @@ class RefEffect:
   def __init__(self, ref_aval: ShapedArrayRef):
     self.ref_aval = ref_aval
     common.allowed_effects.add(self)
+    custom_derivatives.allowed_effects.add(self)
 
   def __eq__(self, other):
     if not isinstance(other, self.__class__):

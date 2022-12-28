@@ -659,6 +659,72 @@ class StateDischargeTest(jtu.JaxTestCase):
     in_avals = [state.ShapedArrayRef((), jnp.float32)]
     pe.trace_to_jaxpr_dynamic(lu.wrap_init(f), in_avals)
 
+  def test_discharge_xla_call(self):
+    y = np.array([0, 1], dtype=jnp.int32)
+
+    @lu.wrap_init
+    @jax.jit
+    def diff_from_previous(x, ref):
+      prev_x = ref[()]
+      ref[()] = x
+      return [x - prev_x + y]
+
+    in_avals = [jax.core.ShapedArray((), jnp.int32),
+                state.ShapedArrayRef((), jnp.int32)]
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(diff_from_previous, in_avals)
+    self.assertEqual(consts, [y])
+    discharged_jaxpr, discharged_consts = state.discharge_state(jaxpr, consts)
+    f = jax.core.jaxpr_as_fun(jax.core.ClosedJaxpr(discharged_jaxpr,
+                                                   discharged_consts))
+    self.assertEqual(discharged_consts, [y])
+    buffer0 = jnp.array(0, dtype=jnp.int32)
+    x1 = jnp.array(1, dtype=jnp.int32)
+    x2 = jnp.array(5, dtype=jnp.int32)
+    x3 = jnp.array(6, dtype=jnp.int32)
+    y1, buffer1 = f(x1, buffer0)
+    y2, buffer2 = f(x2, buffer1)
+    y3, buffer3 = f(x3, buffer2)
+    self.assertArraysEqual(y1, np.array([1, 2], dtype=jnp.int32))
+    self.assertArraysEqual(y2, np.array([4, 5], dtype=jnp.int32))
+    self.assertArraysEqual(y3, np.array([1, 2], dtype=jnp.int32))
+    self.assertEqual(buffer1, 1)
+    self.assertEqual(buffer2, 5)
+    self.assertEqual(buffer3, 6)
+
+  def test_discharge_custom_jvp(self):
+    y = np.array([0., 1.], dtype=jnp.float32)
+
+    @jax.custom_jvp
+    def f(x, ref):
+      prev_x = ref[()]
+      ref[()] = x
+      return [x - prev_x + y]
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      x, ref = primals
+      tx, tref = tangents
+      tf = [ref[()] - tref[()] + tx + y]
+      return f(x, ref), tf
+
+    in_avals = [jax.core.ShapedArray((), jnp.float32),
+                state.ShapedArrayRef((), jnp.float32)]
+    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(lu.wrap_init(f), in_avals)
+    self.assertEqual(consts, [y])
+    discharged_jaxpr, discharged_consts = state.discharge_state(jaxpr, consts)
+    g = jax.core.jaxpr_as_fun(jax.core.ClosedJaxpr(discharged_jaxpr,
+                                                   discharged_consts))
+    self.assertEqual(discharged_consts, [y])
+    buffer0 = jnp.array(1., dtype=jnp.float32)
+    tbuffer0 = jnp.array(5., dtype=jnp.float32)
+    x = jnp.array(25., dtype=jnp.float32)
+    tx = jnp.array(99., dtype=jnp.float32)
+    (y1, buffer1), (ty1, tbuffer1) = jax.jvp(g, (x, buffer0), (tx, tbuffer0))
+    self.assertArraysEqual(y1, jnp.array([24., 25.], dtype=jnp.float32))
+    self.assertArraysEqual(buffer1, jnp.array(25., dtype=jnp.float32))
+    self.assertArraysEqual(ty1, jnp.array([95., 96.], dtype=jnp.float32))
+    self.assertArraysEqual(tbuffer1, jnp.array(5., dtype=jnp.float32))
+
 
 if CAN_USE_HYPOTHESIS:
 
