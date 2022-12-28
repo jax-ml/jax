@@ -212,6 +212,24 @@ class _DimPolynomial():
       acc.update(mon.get_vars())
     return acc
 
+  def eq(self, other: DimSize) -> bool:
+    lb, ub = _ensure_poly(self - other, "eq").bounds()
+    if lb == ub == 0:
+      return True
+    if lb is not None and lb > 0:
+      return False
+    if ub is not None and ub < 0:
+      return False
+    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive")
+
+  def ge(self, other: DimSize) -> bool:
+    lb, ub = _ensure_poly(self - other, "ge").bounds()
+    if lb is not None and lb >= 0:
+      return True
+    if ub is not None and ub < 0:
+      return False
+    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive")
+
   def __hash__(self):
     return hash(tuple(sorted(self.monomials())))
 
@@ -229,25 +247,48 @@ class _DimPolynomial():
     return str(self)
 
   # We overload , -, *, because they are fully defined for _DimPolynomial.
-  def __add__(self, other: DimSize) -> DimSize:
+  def __add__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__add__(other)
+
+    other = _ensure_poly(other, "add")
     coeffs = self._coeffs.copy()
-    for mon, coeff in _ensure_poly(other).monomials():
+    for mon, coeff in other.monomials():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
     return _DimPolynomial.from_coeffs(coeffs)
 
-  def __sub__(self, other: DimSize) -> DimSize:
-    return self + -other
+  def __radd__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__radd__(other)
+    return _ensure_poly(other, "add").__add__(self)
+
+  def __sub__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__sub__(other)
+    return self + -_ensure_poly(other, "sub")
+
+  def __rsub__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__rsub__(other)
+    return _ensure_poly(other, "sub").__sub__(self)
 
   def __neg__(self) -> '_DimPolynomial':
     return _DimPolynomial({mon: -coeff for mon, coeff in self.monomials()})
 
-  def __mul__(self, other: DimSize) -> DimSize:
-    other = _ensure_poly(other)
+  def __mul__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__mul__(other)
+    other = _ensure_poly(other, "mul")
     coeffs: Dict[_DimMon, int] = {}
     for (mon1, coeff1), (mon2, coeff2) in itertools.product(self.monomials(), other.monomials()):
       mon = mon1.mul(mon2)
       coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
     return _DimPolynomial.from_coeffs(coeffs)
+
+  def __rmul__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__rmul__(other)
+    return _ensure_poly(other, "mul").__mul__(self)
 
   def __pow__(self, power, modulo=None):
     assert modulo is None
@@ -257,44 +298,72 @@ class _DimPolynomial():
       raise InconclusiveDimensionOperation(f"Dimension polynomial cannot be raised to non-integer power '{self}' ^ '{power}'")
     return functools.reduce(op.mul, [self] * power)
 
-  def __rmul__(self, other: DimSize) -> DimSize:
-    return self * other  # multiplication commutes
+  def __floordiv__(self, divisor):
+    if isinstance(divisor, core.Tracer):
+      return self.__jax_array__().__floordiv__(divisor)
+    return self.divmod(_ensure_poly(divisor, "floordiv"))[0]
 
-  def __radd__(self, other: DimSize) -> DimSize:
-    return self + other  # addition commutes
+  def __rfloordiv__(self, other):
+    if isinstance(other, core.Tracer):
+      return self.__jax_array__().__rfloordiv__(other)
+    return _ensure_poly(other, "floordiv").__floordiv__(self)
 
-  def __rsub__(self, other: DimSize) -> DimSize:
-    return _ensure_poly(other) - self
+  def __truediv__(self, divisor):
+    # Used for "/"
+    if isinstance(divisor, core.Tracer):
+      return self.__jax_array__().__truediv__(divisor)
+    q, r = self.divmod(_ensure_poly(divisor, "truediv"))
+    if r != 0:
+      raise InconclusiveDimensionOperation(
+          self._division_error_msg(self, divisor,
+                                   f"Remainder is not zero: {r}"))
+    return q
 
-  def eq(self, other: DimSize) -> bool:
-    lb, ub = _ensure_poly(self - other).bounds()
-    if lb == ub == 0:
-      return True
-    if lb is not None and lb > 0:
-      return False
-    if ub is not None and ub < 0:
-      return False
-    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive")
+  def __rtruediv__(self, dividend):
+    # Used for "/", when dividend is not a _DimPolynomial
+    if isinstance(dividend, core.Tracer):
+      return self.__jax_array__().__rtruediv__(dividend)
+    raise InconclusiveDimensionOperation(
+        self._division_error_msg(dividend, self, "Dividend must be a polynomial"))
+
+  def __mod__(self, divisor):
+    if isinstance(divisor, core.Tracer):
+      return self.__jax_array__().__mod__(divisor)
+    return self.divmod(_ensure_poly(divisor, "mod"))[1]
+
+  def __rmod__(self, dividend):
+    if isinstance(dividend, core.Tracer):
+      return self.__jax_array__().__rmod__(dividend)
+    return _ensure_poly(dividend, "mod").__mod__(self)
+
+  def __divmod__(self, divisor):
+    if isinstance(divisor, core.Tracer):
+      return self.__jax_array__().__divmod__(divisor)
+    return self.divmod(_ensure_poly(divisor, "divmod"))
+
+  def __rdivmod__(self, dividend):
+    if isinstance(dividend, core.Tracer):
+      return self.__jax_array__().__rdivmod__(dividend)
+    return _ensure_poly(dividend, "divmod").__divmod__(self)
+
+  def __int__(self):
+    if self.is_constant:
+      return op.index(next(iter(self._coeffs.values())))
+    else:
+      raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' used in a context that requires a constant")
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   __eq__ = eq
   def __ne__(self, other: DimSize) -> bool:
     return not self.eq(other)
 
-  def ge(self, other: DimSize) -> bool:
-    lb, ub = _ensure_poly(self - other).bounds()
-    if lb is not None and lb >= 0:
-      return True
-    if ub is not None and ub < 0:
-      return False
-    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive")
   __ge__ = ge
 
   def __le__(self, other: DimSize):
-    return _ensure_poly(other).__ge__(self)
+    return _ensure_poly(other, "le").__ge__(self)
 
   def __gt__(self, other: DimSize):
-    return not _ensure_poly(other).__ge__(self)
+    return not _ensure_poly(other, "gt").__ge__(self)
 
   def __lt__(self, other: DimSize):
     return not self.__ge__(other)
@@ -306,7 +375,7 @@ class _DimPolynomial():
     msg += "\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported."
     return msg
 
-  def divmod(self, divisor: DimSize) -> Tuple[DimSize, int]:
+  def divmod(self, divisor: "_DimPolynomial") -> Tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
     If the `divisor` is not a constant, the remainder must be 0.
@@ -315,7 +384,7 @@ class _DimPolynomial():
 
     :return: Quotient resulting from polynomial division and integer remainder.
     """
-    divisor = _ensure_poly(divisor)
+    assert isinstance(divisor, _DimPolynomial)
     dmon, dcount = divisor.leading_term
     dividend, quotient = self, 0
     # invariant: self = dividend + divisor * quotient
@@ -350,40 +419,6 @@ class _DimPolynomial():
     if config.jax_enable_checks:
       assert self == divisor * quotient + remainder
     return quotient, remainder
-
-  def __floordiv__(self, divisor: DimSize) -> DimSize:
-    return self.divmod(divisor)[0]
-
-  def __rfloordiv__(self, other):
-    return _ensure_poly(other).__floordiv__(self)
-
-  def __truediv__(self, divisor: DimSize):
-    # Used for "/"
-    q, r = self.divmod(divisor)
-    if r != 0:
-      raise InconclusiveDimensionOperation(
-          self._division_error_msg(self, divisor,
-                                   f"Remainder is not zero: {r}"))
-    return q
-
-  def __rtruediv__(self, dividend: DimSize):
-    # Used for "/", when dividend is not a _DimPolynomial
-    raise InconclusiveDimensionOperation(
-        self._division_error_msg(dividend, self, "Dividend must be a polynomial"))
-
-  def __mod__(self, divisor: DimSize) -> int:
-    return self.divmod(divisor)[1]
-
-  __divmod__ = divmod
-
-  def __rdivmod__(self, other: DimSize) -> Tuple[DimSize, int]:
-    return _ensure_poly(other).divmod(self)
-
-  def __int__(self):
-    if self.is_constant:
-      return op.index(next(iter(self._coeffs.values())))
-    else:
-      raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' used in a context that requires a constant")
 
   def bounds(self) -> Tuple[Optional[int], Optional[int]]:
     """Returns the lower and upper bounds, if defined."""
@@ -424,9 +459,14 @@ class _DimPolynomial():
 core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
 xla.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
 
-def _ensure_poly(p: DimSize) -> _DimPolynomial:
+def _ensure_poly(p: DimSize,
+                 operation_name: str) -> _DimPolynomial:
   if isinstance(p, _DimPolynomial): return p
-  return _DimPolynomial({_DimMon(): p})
+  try:
+    p = op.index(p)
+    return _DimPolynomial({_DimMon(): p})
+  except:
+    raise TypeError(f"Dimension polynomial {operation_name} not supported for {p}")
 
 def is_poly_dim(p: DimSize) -> bool:
   return isinstance(p, _DimPolynomial)
@@ -444,12 +484,12 @@ class DimensionHandlerPoly(core.DimensionHandler):
 
   def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
     try:
-      return _ensure_poly(d1) == d2
+      return _ensure_poly(d1, "equal") == d2
     except InconclusiveDimensionOperation:
       return False
 
   def greater_equal(self, d1: DimSize, d2: DimSize):
-    return _ensure_poly(d1) >= d2
+    return _ensure_poly(d1, "ge") >= d2
 
   def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
     sz1 = np.prod(s1)
@@ -458,7 +498,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
       return 1
     err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"
     try:
-      q, r = _ensure_poly(sz1).divmod(sz2)
+      q, r = _ensure_poly(sz1, "divide_shape").divmod(_ensure_poly(sz2, "divide_shape"))
     except InconclusiveDimensionOperation as e:
       raise InconclusiveDimensionOperation(err_msg + f"\nDetails: {e}")
     if r != 0:
@@ -469,7 +509,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
     """Implements `(d - window_size) // window_stride + 1`"""
     try:
       # TODO(necula): check for d == 0 or window_size > d and return 0.
-      q, r = _ensure_poly(d - window_size).divmod(window_stride)
+      q, r = _ensure_poly(d - window_size, "stride").divmod(_ensure_poly(window_stride, "stride"))
       return q + 1
     except InconclusiveDimensionOperation as e:
       raise InconclusiveDimensionOperation(
