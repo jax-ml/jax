@@ -595,9 +595,7 @@ def id_tap(tap_func,
   Tapping works even for code executed on accelerators and even for code under
   JAX transformations.
 
-  For more details see the
-  `module documentation
-  <jax.experimental.host_callback.html>`_.
+  For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
   if kwargs:
     msg = (
@@ -667,6 +665,8 @@ def id_print(arg,
      built-in ``print``. The string will be passed as
      ``output_stream.write(s)``.
    * ``threshold`` is passed to ``numpy.array2string``.
+
+  For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
   printer = functools.partial(_print_tap_func,
                               output_stream=output_stream,
@@ -712,9 +712,7 @@ def call(callback_func: Callable, arg, *,
   Returns:
     the result of the ``callback_func`` invocation.
 
-  For more details see the
-  `module documentation
-  <jax.experimental.host_callback.html>`_.
+  For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
   return _call(callback_func, arg, result_shape=result_shape,
                call_with_device=call_with_device, identity=False)
@@ -1856,8 +1854,8 @@ dispatch.outfeed_rewriter = lambda j: _rewrite_jaxpr(j, False, False)
 class CallbackException(Exception):
   """Signals that some callback function had exceptions.
 
-  Raised by :func:`barrier_wait`.
-  See module documentation for details.
+  Raised by :func:`barrier_wait`. See the :mod:`jax.experimental.host_callback`
+  module documentation for details.
   """
   pass
 
@@ -2002,6 +2000,8 @@ def barrier_wait(logging_name: Optional[str] = None):
   Args:
     logging_name: an optional string that will be used in the logging statements
       for this invocation. See `Debugging` in the module documentation.
+
+  For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
   logging_name = logging_name or ""
   logger.debug("barrier_wait[%s]: start", logging_name)
