@@ -244,6 +244,20 @@ class MeshUtilsTest(test_util.JaxTestCase):
             mesh_shape, devices=devices, contiguous_submeshes=True)
         self._assert_contiguous_submeshes(mesh)
 
+  def test_create_contiguous_submeshes_for_tpu_v4_leading_1_dims(self):
+    v4 = mesh_utils._TPU_V4
+    for topology, mesh_shapes in mesh_utils._TRANSPOSE_TRICKS.items():
+      logging.vlog(1, "topology: %s", topology)
+      devices = mock_tpu_devices(topology[0], topology[1], topology[2], v4,
+                             one_device_per_chip=True)
+      for mesh_shape in mesh_shapes:
+        logging.vlog(1, '  mesh_shape: %s', (1, 1) + mesh_shape + (1, 1))
+        mesh = mesh_utils.create_device_mesh(
+            (1, 1) + mesh_shape + (1, 1),
+            devices=devices,
+            contiguous_submeshes=True)
+        self._assert_contiguous_submeshes(mesh)
+
   def test_create_contiguous_submeshes_errors(self):
     v4 = mesh_utils._TPU_V4
 
@@ -266,7 +280,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
         ValueError,
         "create_device_mesh cannot create contiguous submeshes for mesh_shape "
         "(1, 128, 2) and physical mesh topology (4, 8, 8). "
-        "Available mesh_shapes: [(1, 64, 4), (1, 4, 64), (64, 4), (4, 64)]"):
+        'Available mesh_shapes: [(64, 4), (4, 64)]'):
       mesh_utils.create_device_mesh(
           mesh_shape, devices=devices, contiguous_submeshes=True)
 

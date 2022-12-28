@@ -30,36 +30,27 @@ _TPU_V4 = 'TPU v4'
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
 #
-# The trick only works for certain topologies and mesh shapes, which are chosen
-# to be representative of large language model workloads (the three axes are
-# [replica, data, model]).
+# The trick only works for certain topologies and mesh shapes. Trivial dims of
+# size 1 can be added to the shapes listed, and they are also supported.
 _TRANSPOSE_TRICKS: Dict[Tuple[int, ...],
                         Dict[Tuple[int, ...], Tuple[int, ...]]] = {
     (2, 2, 1): {
-        (1, 2, 2): (0, 1, 2),
         (2, 2): (0, 1, 2),
     },
     (2, 2, 4): {
-        (1, 4, 4): (0, 1, 2),
         (4, 4): (0, 1, 2),
     },
     (4, 4, 4): {
-        (1, 16, 4): (0, 2, 1),
         (16, 4): (0, 2, 1),
     },
     (4, 8, 8): {
-        (1, 64, 4): (0, 2, 1),
-        (1, 4, 64): (0, 2, 1),
         (64, 4): (0, 2, 1),
         (4, 64): (0, 2, 1),
     },
     (8, 8, 8): {
-        (1, 64, 8): (0, 2, 1),
         (64, 8): (0, 2, 1),
     },
     (8, 16, 16): {
-        (1, 256, 8): (0, 2, 1),
-        (1, 8, 256): (0, 2, 1),
         (256, 8): (0, 2, 1),
         (8, 256): (0, 2, 1),
     },
@@ -209,13 +200,19 @@ def _transpose_trick(physical_mesh: np.ndarray,
         f"create_device_mesh cannot create contiguous submeshes for "
         f"physical mesh topology {topology}")
 
-  if mesh_shape not in _TRANSPOSE_TRICKS[topology]:
+  mesh_shape_no_trivial_dims: Tuple[int, ...] = ()
+  for dim_size in mesh_shape:
+    if dim_size != 1:
+      mesh_shape_no_trivial_dims += (dim_size,)
+
+  if mesh_shape_no_trivial_dims not in _TRANSPOSE_TRICKS[topology]:
     raise ValueError(
         f"create_device_mesh cannot create contiguous submeshes for "
         f"mesh_shape {mesh_shape} and physical mesh topology {topology}. "
         f"Available mesh_shapes: {list(_TRANSPOSE_TRICKS[topology].keys())}")
 
-  return physical_mesh.transpose(*_TRANSPOSE_TRICKS[topology][mesh_shape])
+  return physical_mesh.transpose(
+      *_TRANSPOSE_TRICKS[topology][mesh_shape_no_trivial_dims])
 
 
 def create_device_mesh(
