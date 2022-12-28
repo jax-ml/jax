@@ -518,11 +518,16 @@ def reshape_tf(x):
   return tf.reshape(x, [tf.math.multiply(4, b)])
 ```
 
-While operations among dimension polynomials and constants are handled
-by the overloading described above, a different mechanism is used
-for operations between JAX arrays and dimension polynomials.
-In these cases,
-`jax2tf` will try to convert dimension polynomials implicitly.
+The following is the behavior of arithmetic operations involving
+dimension polynomials depending on the type of the other operand:
+
+  * with another dimension polynomial or a constant convertible
+    by `operator.index` will produce dimension polynomials or constants
+    and can be used as dimension parameters, e.g., for `jnp.reshape`.
+  * with a JAX array will involve an implicit cast to `jnp.array`
+    and will produce JAX arrays, which cannot be used as dimension parameters.
+  * with another type, e.g, `float`, will raise an error.
+
 In the function below the two occurrences of `x.shape[0]`
 are converted implicitly to `jnp.array(x.shape[0])` because
 they are involved in JAX array operations:

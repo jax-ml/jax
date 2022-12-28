@@ -1356,9 +1356,74 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                  polymorphic_shapes=["b1, b2, ..."])(xv)
     self.assertAllClose(res_iter, res_vmap_tf.numpy())
 
-  def test_mean0(self):
+  @parameterized.named_parameters([
+      dict(testcase_name=f"_{op_name}",
+           op=op)
+      for op, op_name in [
+          (jnp.array, "array"),
+          (jnp.sin, "sin"),
+          (lambda x: x, "id"),
+      ]
 
-    def f_jax(x):
+  ])
+  def test_poly_unary_op(self, *, op=jnp.array):
+    if config.jax_enable_x64:
+      raise unittest.SkipTest("TODO(necula): dim_as_value in x64 mode")
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
+    def f_jax(x):  # x: f32[b]
+      poly = 2 * x.shape[0]
+      return op(poly)
+
+    check_shape_poly(self,
+                     f_jax,
+                     arg_descriptors=[RandArg((3,), _f32)],
+                     poly_axes=[0],
+                     expected_output_signature=tf.TensorSpec([]))
+
+  @parameterized.named_parameters([
+      dict(testcase_name=f"_{op.__name__}_order={order}",
+           op=op, order=order)
+      for order in ["poly_array", "array_poly", "poly_float", "float_poly"]
+      for op in [operator.add, operator.mul, operator.sub,
+                 operator.mod, operator.floordiv, operator.truediv]
+  ])
+  def test_poly_binary_op(self, *, op=operator.truediv, order="float_poly"):
+    # Test arithmetic operations with poly
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
+
+    def f_jax(x):  # x: f32[b]
+      poly = 2 * x.shape[0]
+      if order == "poly_array":
+        return op(poly, jnp.array(3, dtype=np.int32))
+      elif order == "array_poly":
+        return op(jnp.array(3, dtype=np.int32), poly)
+      elif order == "poly_float":
+        return op(poly, 5.)
+      elif order == "float_poly":
+        return op(5., poly)
+      else:
+        assert False, order
+
+    with contextlib.ExitStack() as stack:
+      if order in ["poly_float", "float_poly"]:
+        if op.__name__ == "truediv" and order == "float_poly":
+          stack.enter_context(
+              self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation,
+                                     "Dividend must be a polynomial"))
+        else:
+          stack.enter_context(
+              self.assertRaisesRegex(TypeError,
+                                     f"Dimension polynomial {op.__name__} not supported for"))
+      check_shape_poly(self,
+                       f_jax,
+                       arg_descriptors=[RandArg((3,), np.int32)],
+                       poly_axes=[0],
+                       expected_output_signature=tf.TensorSpec([]))
+
+  def test_mean0(self):
+    def f_jax(x):  # x: f32[b, 4]
       return jnp.sum(x, axis=0) / x.shape[0]
 
     check_shape_poly(self,
@@ -1367,35 +1432,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      poly_axes=[0],
                      expected_output_signature=tf.TensorSpec([4]))
 
-  def test_dimension_used_as_value(self):
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
-    def f_jax(x):
-      poly = x.shape[0]
-      x1 = jnp.array(poly)  # Try explicit jnp.array on poly
-      x2 = x1 + poly  # And implicit in binary operation
-      x3 = x2 + jnp.sin(poly)  # In jnp operations # A list or tuple of poly in jnp operations
-      return x3.astype(np.float32)
-
-    check_shape_poly(self,
-                     f_jax,
-                     arg_descriptors=[RandArg((3,), np.int32)],
-                     poly_axes=[0],
-                     expected_output_signature=tf.TensorSpec([]))
-
-  def test_dimension_used_as_result(self):
-    if config.jax_enable_x64:
-      raise unittest.SkipTest("TODO(necula): dim_as_value in x64 mode")
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
-    def f_jax(x):
-      return 2 * x.shape[0]
-
-    check_shape_poly(self,
-                     f_jax,
-                     arg_descriptors=[RandArg((3,), np.int32)],
-                     poly_axes=[0],
-                     expected_output_signature=tf.TensorSpec([]))
 
   def test_shape_as_array(self):
     def f_jax(x):
@@ -1406,6 +1442,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      f_jax,
                      arg_descriptors=[RandArg((3, 4), _f32)],
                      poly_axes=[0])
+
   def test_vmap_while(self):
     def cond_func(x):  # x: f32[3]
       return jnp.sum(x) >= 0.
