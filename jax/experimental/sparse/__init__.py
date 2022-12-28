@@ -187,6 +187,9 @@ To fit the same model on sparse data, we can apply the :func:`sparsify` transfor
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax.experimental.sparse.ad import (
+    jacfwd as jacfwd,
+    jacobian as jacobian,
+    jacrev as jacrev,
     grad as grad,
     value_and_grad as value_and_grad,
 )
