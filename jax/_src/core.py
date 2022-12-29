@@ -1745,7 +1745,9 @@ class DimensionHandler:
     return (d - window_size) // window_stride + 1
 
   def dilate(self, d: DimSize, dilation: int) -> DimSize:
-    """Implements `0 if d == 0 else 1 + dilation * (d - 1))`"""
+    """Implements `d if dilation == 1 else (0 if d == 0 else 1 + dilation * (d - 1)))`"""
+    if symbolic_equal_dim(dilation, 1):
+      return d
     return 0 if d == 0 else 1 + dilation * (d - 1)
 
   def as_value(self, d: DimSize):
@@ -1793,12 +1795,15 @@ def is_special_dim_size(v: Any) -> bool:
   return (handler is not None)
 
 def is_constant_dim(d: DimSize) -> bool:
-  # Whether the dimension is a static constant.
+  # Whether the dimension is a static integer constant.
   try:
-    int(d)
+    operator.index(d)
     return True
   except:
     return False
+
+def is_dim(v: Any) -> bool:
+  return is_special_dim_size(v) or is_constant_dim(v)
 
 def is_constant_shape(s: Shape) -> bool:
   # Whether the shape is a static constant.

@@ -1398,27 +1398,41 @@ PadStatFunc = Callable[..., Array]
 
 
 def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
-  nvals = np.asarray(tree_map(
-    lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
-    nvals))
-  if nvals.dtype.kind == 'O':
-    raise TypeError(f'`{name}` entries must be the same shape.')
+  try:
+    nvals = np.asarray(tree_map(
+      lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
+      nvals))
+  except ValueError as e:
+    # In numpy 1.24
+    if "array has an inhomogeneous shape" in str(e):
+      raise TypeError(f'`{name}` entries must be the same shape: {nvals}') from e
+    raise
+
+  def as_scalar_dim(v):
+    if core.is_special_dim_size(v) or not np.shape(v):
+      return v
+    else:
+      raise TypeError(f'`{name}` entries must be the same shape: {nvals}')
 
   if nvals.shape == (nd, 2):
     # ((before_1, after_1), ..., (before_N, after_N))
-    return tuple((nval[0], nval[1]) for nval in nvals)
+    return tuple((as_scalar_dim(nval[0]), as_scalar_dim(nval[1])) for nval in nvals)
   elif nvals.shape == (1, 2):
     # ((before, after),)
-    return tuple((nvals[0, 0], nvals[0, 1]) for i in range(nd))
+    v1_2 = as_scalar_dim(nvals[0, 0]), as_scalar_dim(nvals[0, 1])
+    return tuple(v1_2 for i in range(nd))
   elif nvals.shape == (2,):
     # (before, after)  (not in the numpy docstring but works anyway)
-    return tuple((nvals[0], nvals[1]) for i in range(nd))
+    v1_2 = as_scalar_dim(nvals[0]), as_scalar_dim(nvals[1])
+    return tuple(v1_2 for i in range(nd))
   elif nvals.shape == (1,):
     # (pad,)
-    return tuple((nvals[0], nvals[0]) for i in range(nd))
+    v = as_scalar_dim(nvals[0])
+    return tuple((v, v) for i in range(nd))
   elif nvals.shape == ():
     # pad
-    return tuple((nvals.flat[0], nvals.flat[0]) for i in range(nd))
+    v = as_scalar_dim(nvals.flat[0])
+    return tuple((v, v) for i in range(nd))
   else:
     raise ValueError(f"jnp.pad: {name} with {nd=} has unsupported shape {nvals.shape}. "
                      f"Valid shapes are ({nd}, 2), (1, 2), (2,), (1,), or ().")
@@ -1686,7 +1700,8 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int],
         mode: Union[str, Callable[..., Any]] = "constant", **kwargs) -> Array:
   _check_arraylike("pad", array)
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
-  if pad_width and np.array(pad_width).dtype.kind != 'i':
+  if pad_width and not _all(core.is_dim(p[0]) and core.is_dim(p[1])
+                            for p in pad_width):
     raise TypeError('`pad_width` must be of integral type.')
 
   if callable(mode):
