@@ -894,15 +894,31 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(j1.shape, data.shape + M.shape)
     self.assertEqual(hess.shape, data.shape + 2 * M.shape)
 
-  def test_bcoo_extract_zero_nse(self):
+  def test_bcoo_extract_zero_sparse_dims(self):
     # Regression test for https://github.com/google/jax/issues/13653
 
     # (n_batch, n_sparse, n_dense) = (1, 0, 0), nse = 2
-    args_maker = lambda: (jnp.zeros((3, 2, 0), dtype='int32'), jnp.arange(3))
+    args_maker = lambda: (jnp.zeros((3, 2, 0), dtype='int32'), jnp.arange(3.))
+    expected = lambda _, x: jnp.column_stack((x, jnp.zeros_like(x)))
+    self._CheckAgainstNumpy(sparse.bcoo_extract, expected, args_maker)
+    self._CompileAndCheck(sparse.bcoo_extract, args_maker)
+
+    # (n_batch, n_sparse, n_dense) = (1, 0, 0), nse = 0
+    args_maker = lambda: (jnp.zeros((3, 0, 0), dtype='int32'), jnp.arange(3.))
+    expected = lambda _, x: jnp.zeros_like(x, shape=(3, 0))
+    self._CheckAgainstNumpy(sparse.bcoo_extract, expected, args_maker)
     self._CompileAndCheck(sparse.bcoo_extract, args_maker)
 
     # (n_batch, n_sparse, n_dense) = (0, 0, 1), nse = 2
-    args_maker = lambda: (jnp.zeros((2, 0), dtype='int32'), jnp.arange(3))
+    args_maker = lambda: (jnp.zeros((2, 0), dtype='int32'), jnp.arange(3.))
+    expected = lambda _, x: jnp.vstack((x, jnp.zeros_like(x)))
+    self._CheckAgainstNumpy(sparse.bcoo_extract, expected, args_maker)
+    self._CompileAndCheck(sparse.bcoo_extract, args_maker)
+
+    # (n_batch, n_sparse, n_dense) = (0, 0, 1), nse = 0
+    args_maker = lambda: (jnp.zeros((0, 0), dtype='int32'), jnp.arange(3.))
+    expected = lambda _, x: jnp.zeros_like(x, shape=(0, 3))
+    self._CheckAgainstNumpy(sparse.bcoo_extract, expected, args_maker)
     self._CompileAndCheck(sparse.bcoo_extract, args_maker)
 
   @jtu.sample_product(

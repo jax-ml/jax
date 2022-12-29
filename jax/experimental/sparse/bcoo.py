@@ -417,8 +417,9 @@ def _bcoo_extract_impl(indices, mat):
   else:
     result = mat.at[batch_ind + sparse_ind].get(mode='fill', fill_value=0)
   if n_sparse == 0 and nse != 1:
-    result = lax.broadcast_in_dim(
-      result, _tuple_replace(result.shape, n_batch, nse), range(result.ndim))
+    out_shape = _tuple_replace(result.shape, n_batch, nse)
+    ind = n_batch * (slice(None),) + (slice(1),)
+    result = jnp.zeros_like(result, shape=out_shape).at[ind].set(result)
   return result
 
 @bcoo_extract_p.def_abstract_eval
