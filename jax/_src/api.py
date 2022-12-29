@@ -2988,7 +2988,9 @@ def device_get(x: Any):
 class ShapeDtypeStruct:
   __slots__ = ["shape", "dtype", "named_shape", "sharding"]
   def __init__(self, shape, dtype, named_shape=None, sharding=None):
-    self.shape = shape
+    self.shape = tuple(shape)
+    if dtype is None:
+      raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
     if sharding is not None:
       self.sharding = sharding

@@ -2252,6 +2252,14 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(hash(s1), hash(s2))
     self.assertNotEqual(hash(s1), hash(s3))
 
+  def test_shape_dtype_struct_invalid_shape(self):
+    with self.assertRaisesRegex(TypeError, "'int' object is not iterable"):
+      api.ShapeDtypeStruct(shape=4, dtype='float32')
+
+  def test_shape_dtype_struct_dtype_none(self):
+    with self.assertRaisesRegex(ValueError, "dtype must be specified"):
+      api.ShapeDtypeStruct(shape=(), dtype=None)
+
   def test_eval_shape(self):
     def fun(x, y):
       return jnp.tanh(jnp.dot(x, y) + 3.)
