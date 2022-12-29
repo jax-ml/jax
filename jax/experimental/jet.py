@@ -58,7 +58,6 @@ from functools import partial
 
 import numpy as np
 
-import jax
 from jax import core
 from jax import lax
 from jax.interpreters import xla
