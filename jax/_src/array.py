@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import operator as op
 import numpy as np
-import functools
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
 
 from jax._src import abstract_arrays
@@ -109,7 +108,6 @@ def _single_device_array_from_buf(buf, committed):
 
 @use_cpp_class(xc.ArrayImpl)
 class ArrayImpl(basearray.Array):
-  # TODO(yashkatariya): Add __slots__ here.
 
   aval: core.ShapedArray
   _sharding: Sharding
@@ -122,7 +120,9 @@ class ArrayImpl(basearray.Array):
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Union[Sequence[DeviceArray], Sequence[ArrayImpl]],
                committed: bool, _skip_checks: bool = False):
+    ##########################################################################
     # NOTE: the actual implementation of the constructor is moved to C++.
+    ##########################################################################
 
     self.aval = aval
     self._sharding = sharding
@@ -135,6 +135,7 @@ class ArrayImpl(basearray.Array):
     # for what committed means.
     self._committed = committed
     self._npy_value = None
+    self._cached_addressable_shards = None
 
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
@@ -341,7 +342,7 @@ class ArrayImpl(basearray.Array):
     else:
       return f"{prefix}{self.shape}, {dtype_str}"
 
-  @functools.cached_property
+  @property
   def is_fully_addressable(self) -> bool:
     return self.sharding.is_fully_addressable
 
@@ -412,16 +413,19 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
     return _single_device_array_from_buf(self._arrays[index], self._committed)
 
-  @functools.cached_property
-  def addressable_shards(self) -> Sequence[Shard]:
+  @property
+  def addressable_shards(self):
     self._check_if_deleted()
-    out = []
-    for db in self._arrays:
-      # Wrap the device arrays in `Array` until C++ returns an Array instead
-      # of a DA.
-      array = _single_device_array_from_buf(db, self._committed)
-      out.append(Shard(db.device(), self.sharding, self.shape, array))
-    return out
+
+    if getattr(self, '_cached_addressable_shards', None) is None:
+      out = []
+      for db in self._arrays:
+        # Wrap the device arrays in `Array` until C++ returns an Array instead
+        # of a DA.
+        array = _single_device_array_from_buf(db, self._committed)
+        out.append(Shard(db.device(), self.sharding, self.shape, array))
+      self._cached_addressable_shards = out
+    return self._cached_addressable_shards
 
   @property
   def global_shards(self) -> Sequence[Shard]:

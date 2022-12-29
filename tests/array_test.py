@@ -26,6 +26,7 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_extension_version
 from jax._src.util import prod, safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
@@ -642,6 +643,14 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertGreaterEqual(shard_size, 4 * 2)
     self.assertEqual(shard_size * len(a.global_shards),
                      a.on_device_size_in_bytes())
+
+  def test_disallow_setting_attr(self):
+    if xla_extension_version < 116:
+      self.skipTest("This test requires xla_extension_version >= 116")
+    x = jnp.arange(4)
+    with self.assertRaises(AttributeError):
+      x.custom_attr = 5
+
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
