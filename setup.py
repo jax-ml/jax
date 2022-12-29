@@ -34,7 +34,7 @@ with open('jax/version.py') as f:
 __version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
-with open('README.md') as f:
+with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
 
 if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
