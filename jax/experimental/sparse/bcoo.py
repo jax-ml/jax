@@ -55,16 +55,22 @@ from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
 
 
-def _bcoo_batch_dims_to_front(batched_args, batch_dims):
-  _, indices = batched_args
-  _, indices_bdim = batch_dims
+def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo):
+  data, indices = batched_args
+  data_bdim, indices_bdim = batch_dims
   n_batch = indices.ndim - 2 + bool(indices_bdim is None)
-
   if not all(b is None or 0 <= b < n_batch for b in batch_dims):
     raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
                               f"Got {batch_dims=} for {n_batch=}.")
-  return [lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
-          for arg, bdim in safe_zip(batched_args, batch_dims)]
+  batched_data, batched_indices = [
+      lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
+      for arg, bdim in [(data, data_bdim), (indices, indices_bdim)]]
+  batch_size = max(0 if dim is None else arg.shape[dim]
+                   for arg, dim in zip((data, indices), batch_dims))
+  batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
+                              indices_sorted=spinfo.indices_sorted,
+                              unique_indices=spinfo.unique_indices)
+  return batched_data, batched_indices, batched_spinfo
 
 
 #----------------------------------------------------------------------
@@ -237,12 +243,8 @@ def _bcoo_todense_transpose(ct, data, indices, *, spinfo):
   return bcoo_extract(indices, ct), indices
 
 def _bcoo_todense_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices = _bcoo_batch_dims_to_front(batched_args, batch_dims)
-  new_spinfo = SparseInfo(
-      shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape),
-      indices_sorted=spinfo.indices_sorted,
-      unique_indices=spinfo.unique_indices)
-  return _bcoo_todense(data, indices, spinfo=new_spinfo), 0
+  data, indices, spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
+  return _bcoo_todense(data, indices, spinfo=spinfo), 0
 
 ad.defjvp(bcoo_todense_p, _bcoo_todense_jvp, None)
 ad.primitive_transposes[bcoo_todense_p] = _bcoo_todense_transpose
@@ -553,26 +555,13 @@ def _bcoo_transpose_transpose(ct, data, indices, *, permutation: Sequence[int], 
   return data_trans, indices_ct
 
 def _bcoo_transpose_batch_rule(batched_args, batch_dims, *, permutation: Sequence[int], spinfo: SparseInfo):
-  data, indices = batched_args
-  batch_dims = list(batch_dims)
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip(batched_args, batch_dims))
-  if batch_dims[0] is None:
-    data = data[None]
-  else:
-    assert batch_dims[0] == 0
-  if batch_dims[1] is None:
-    indices = indices[None]
-  else:
-    assert batch_dims[1] == 0
-  batched_spinfo = SparseInfo((batch_size, *spinfo.shape))
+  data, indices, spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
   batched_permutation = (0, *(p + 1 for p in permutation))
-  data, indices = _bcoo_transpose(data, indices, permutation=batched_permutation, spinfo=batched_spinfo)
-  if batch_dims[0] is None:
-    data = data[0]
-  if batch_dims[1] is None:
-    indices = indices[0]
-  return (data, indices), batch_dims
+  data, indices = _bcoo_transpose(data, indices, permutation=batched_permutation, spinfo=spinfo)
+  batch_dims_out = [None if bdim is None else 0 for bdim in batch_dims]
+  args_out = [lax.squeeze(arg, [0]) if bdim is None else arg
+              for arg, bdim in zip((data, indices), batch_dims_out)]
+  return args_out, batch_dims_out
 
 ad.primitive_jvps[bcoo_transpose_p] = _bcoo_transpose_jvp
 ad.primitive_transposes[bcoo_transpose_p] = _bcoo_transpose_transpose
@@ -1380,15 +1369,8 @@ def _bcoo_sort_indices_abstract_eval(data, indices, *, spinfo):
   return data_out, indices
 
 def _bcoo_sort_indices_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  new_spinfo = SparseInfo(shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape))
-  data_out, indices_out = bcoo_sort_indices_p.bind(data, indices, spinfo=new_spinfo)
+  data, indices, spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
+  data_out, indices_out = bcoo_sort_indices_p.bind(data, indices, spinfo=spinfo)
   out_axes = (0, 0)
   # Note: if data is unbatched on input, it will be batched on output.
   # However, if indices are unbatched on input, they will be unbatched on output.

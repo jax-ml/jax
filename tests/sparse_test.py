@@ -929,32 +929,7 @@ class BCOOTest(sptu.SparseTestCase):
     self._CompileAndCheckSparse(sparse_func, args_maker)
     if jnp.issubdtype(dtype, jnp.floating):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
-      for shape in [(), (5,), (5, 8), (3, 4, 5), (3, 4, 3, 2)]
-      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
-    dtype=jtu.dtypes.numeric,
-  )
-  def test_bcoo_transpose_batched(self, shape, dtype, n_batch, n_dense):
-    n_sparse = len(shape) - n_batch - n_dense
-    rng = self.rng()
-    sprng = sptu.rand_bcoo(rng, n_batch=n_batch, n_dense=n_dense)
-
-    permutation = np.concatenate([
-      rng.permutation(range(n_sparse)),
-      rng.permutation(range(n_sparse, n_sparse + n_dense))]).astype(int)
-
-    args_maker = lambda: [sprng(shape, dtype)]
-    dense_func = partial(lax.transpose, permutation=permutation)
-    sparse_func = partial(sparse.bcoo_transpose, permutation=permutation)
-
-    for _ in range(n_batch):
-      dense_func = vmap(dense_func)
-      sparse_func = vmap(sparse_func)
-
-    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
-    self._CompileAndCheckSparse(sparse_func, args_maker)
+    self._CheckBatchingSparse(dense_func, sparse_func, args_maker, bdims=self._random_bdims(n_batch))
 
   def test_bcoo_transpose_indices_sorted(self):
     rng = self.rng()
@@ -1687,16 +1662,41 @@ class BCOOTest(sptu.SparseTestCase):
     rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
     M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
     M.indices = M.indices[..., ::-1, :]
+    M.indices_sorted = False
 
     M_sorted = M.sort_indices()
     self.assertArraysEqual(M.todense(), M_sorted.todense())
     self.assertEqual(M.unique_indices, M_sorted.unique_indices)
+    self.assertEqual(True, M_sorted.indices_sorted)
 
     indices = M_sorted.indices
     if indices.size > 0:
       flatind = indices.reshape(-1, *indices.shape[-2:]).transpose(0, 2, 1)
       sorted = jax.vmap(jnp.lexsort)(flatind[:, ::-1])
       self.assertArraysEqual(sorted, lax.broadcasted_iota(sorted.dtype, sorted.shape, sorted.ndim - 1))
+
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for layout in iter_sparse_layouts(shape, min_n_batch=1)],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_bcoo_sort_indices_batching(self, shape, dtype, n_batch, n_dense):
+    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
+    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
+    M.indices = M.indices[..., ::-1, :]
+    M.indices_sorted = False
+
+    identity = lambda M: M
+    sort_ind = lambda M: M.sort_indices()
+    for b in range(n_batch):
+      identity = jax.vmap(identity, in_axes=b)
+      sort_ind = jax.vmap(sort_ind, in_axes=b)
+    M_sorted = sort_ind(M)
+    M_expected = identity(M)
+    self.assertArraysEqual(M_expected.todense(), M_sorted.todense())
+    self.assertEqual(M.unique_indices, M_sorted.unique_indices)
+    self.assertEqual(True, M_sorted.indices_sorted)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
