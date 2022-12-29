@@ -1800,6 +1800,9 @@ def is_constant_dim(d: DimSize) -> bool:
   except:
     return False
 
+def is_dim(v: Any) -> bool:
+  return is_special_dim_size(v) or is_constant_dim(v)
+
 def is_constant_shape(s: Shape) -> bool:
   # Whether the shape is a static constant.
   return all(is_constant_dim(d) for d in s)

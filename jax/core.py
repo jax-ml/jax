@@ -173,6 +173,7 @@ from jax._src.core import (
   inspect as inspect,
   is_constant_dim as is_constant_dim,
   is_constant_shape as is_constant_shape,
+  is_dim as is_dim,
   is_empty_shape as is_empty_shape,
   is_opaque_dtype as is_opaque_dtype,
   is_special_dim_size as is_special_dim_size,

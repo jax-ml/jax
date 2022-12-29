@@ -1976,8 +1976,10 @@ tf_impl_with_avals[lax.squeeze_p] = _squeeze
 def _pad(operand, padding_value, *, padding_config,
          _in_avals: Sequence[core.ShapedArray],
          _out_aval: core.ShapedArray):
-  low, high, interior = util.unzip3(padding_config)
+  low, high, interior = util.unzip3(map(_eval_shape, padding_config))  # type: ignore
   out = tfxla.pad(operand, padding_value, low, high, interior)
+  # TODO: implement shape inference for XlaPad (when some padding_config is constant)
+  out.set_shape(_aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     out = tf.stop_gradient(out)  # See #7839
   return out

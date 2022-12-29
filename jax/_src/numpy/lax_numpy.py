@@ -1401,8 +1401,6 @@ def _broadcast_to_pairs(nvals: PadValueLike, nd: int, name: str) -> PadValue:
   nvals = np.asarray(tree_map(
     lambda x: core.concrete_or_error(None, x, context=f"{name} argument of jnp.pad"),
     nvals))
-  if nvals.dtype.kind == 'O':
-    raise TypeError(f'`{name}` entries must be the same shape.')
 
   if nvals.shape == (nd, 2):
     # ((before_1, after_1), ..., (before_N, after_N))
@@ -1686,7 +1684,8 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int],
         mode: Union[str, Callable[..., Any]] = "constant", **kwargs) -> Array:
   _check_arraylike("pad", array)
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
-  if pad_width and np.array(pad_width).dtype.kind != 'i':
+  if pad_width and not _all(core.is_dim(p[0]) and core.is_dim(p[1])
+                            for p in pad_width):
     raise TypeError('`pad_width` must be of integral type.')
 
   if callable(mode):
