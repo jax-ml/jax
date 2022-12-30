@@ -1,7 +1,7 @@
 absl-py
 # TODO(sharadmv,jakevdp): fix IPython3 issue and remove pinned version
 ipython<=8.6.0
-sphinx >=3
+sphinx>=4
 sphinx-autodoc-typehints
 sphinx-book-theme>=0.3.3
 sphinx-copybutton>=0.5.0
