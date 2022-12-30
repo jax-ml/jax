@@ -1705,16 +1705,36 @@ def _emit_tpu_python_callback(
 
   recv_channels = []
   outputs = []
-  for result_aval in result_avals:
-    if any(s == 0 for s in result_aval.shape):
-      raise NotImplementedError(
-          "Callbacks with zero-dimensional values not supported on TPU.")
-    channel = ctx.module_context.new_channel()
-    assert isinstance(result_aval, core.ShapedArray)
-    token, out = receive_from_host(channel, token, result_aval,
-                                   callback.__name__, sharding=sharding)
-    outputs.append(out)
-    recv_channels.append(channel)
+  # `send-to-host`s can be interleaved by the transfer manager so we add in a
+  # dummy recv to sequence them (the recv can only happen after all the sends
+  # are done). We'd like to send back a 0-shaped array to avoid unnecessary
+  # copies but that currently doesn't work with the transfer
+  # manager as well.
+  # TODO(b/238239458): enable sending back a 0-dim array
+  # TODO(b/238239928): avoid interleaving sends in the transfer manager
+  if not result_avals:
+    callback_without_return_values = _wrapped_callback
+    def _wrapped_callback(*args):  # pylint: disable=function-redefined
+      callback_without_return_values(*args)
+      return (np.zeros(1, np.float32),)
+    recv_channel = ctx.module_context.new_channel()
+    dummy_recv_aval = core.ShapedArray((1,), np.float32)
+    result_shapes = [*result_shapes,
+                     xla.aval_to_xla_shapes(dummy_recv_aval)[0]]
+    token, _ = receive_from_host(recv_channel, token, dummy_recv_aval,
+                                 callback.__name__, sharding=sharding)
+    recv_channels.append(recv_channel)
+  else:
+    for result_aval in result_avals:
+      if any(s == 0 for s in result_aval.shape):
+        raise NotImplementedError(
+            "Callbacks with zero-dimensional values not supported on TPU.")
+      channel = ctx.module_context.new_channel()
+      assert isinstance(result_aval, core.ShapedArray)
+      token, out = receive_from_host(channel, token, result_aval,
+                                     callback.__name__, sharding=sharding)
+      outputs.append(out)
+      recv_channels.append(channel)
   opaque = backend.make_python_callback_from_host_send_and_recv(
       _wrapped_callback, operand_shapes, result_shapes, send_channels,
       recv_channels)
