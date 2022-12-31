@@ -513,6 +513,29 @@ class HashableWrapper:
     return self.x == other.x if self.hash is not None else self.x is other.x
 
 
+class HashableArrayWrapper:
+  x: np.ndarray
+  _hash: Optional[int]
+
+  def __init__(self, x):
+    self.x = x
+    self._hash = None
+
+  def __hash__(self):
+    if self._hash is None:
+      # This is a simple choice of hash function, that also works for very
+      # large arrays.
+      # A more sophisticated choice here would to:
+      # (a) for small arrays, hash the underlying buffer;
+      # (b) for large arrays, randomly subsample elements.
+      # TODO(kidger): do the above if necessary.
+      self._hash = hash(str(self.x))
+    return self._hash
+
+  def __eq__(self, other):
+    return isinstance(other, HashableArrayWrapper) and np.all(self.x == other.x)
+
+
 def _original_func(f):
   if isinstance(f, property):
     return cast(property, f).fget
