@@ -729,6 +729,7 @@ jax_test(
         ],
         "tpu": ["optonly"],
     },
+    enable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 40,
         "gpu": 40,
