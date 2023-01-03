@@ -1715,10 +1715,10 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 eqn.params,
                 jaxpr=_rewrite_closed_jaxpr(jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False, False),
-                in_axis_resources=(eqn.params["in_axis_resources"] +
-                                   (pjit.REPLICATED, pjit.REPLICATED)),
-                out_axis_resources=(eqn.params["out_axis_resources"] +
-                                    (pjit.REPLICATED, pjit.REPLICATED)),
+                in_shardings=(eqn.params["in_shardings"] +
+                              (pjit.REPLICATED, pjit.REPLICATED)),
+                out_shardings=(eqn.params["out_shardings"] +
+                               (pjit.REPLICATED, pjit.REPLICATED)),
             )))
   elif eqn.primitive is ad_checkpoint.remat_p:
     jaxpr_ = cast(core.Jaxpr, eqn.params["jaxpr"])
