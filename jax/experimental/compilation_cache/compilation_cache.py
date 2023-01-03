@@ -128,7 +128,7 @@ def _hash_computation(hash_obj, xla_computation):
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 35
+  expected_num_compile_options = 37 if xla.xc._version >= 114 else 35
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
