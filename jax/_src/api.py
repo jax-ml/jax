@@ -279,6 +279,12 @@ def jit(
   return _jit(False, fun, static_argnums, static_argnames, device, backend,
                       donate_argnums, inline, keep_unused, abstracted_axes)
 
+# TODO(yashkatariya): Remove the above jit function after
+# `jax_jit_pjit_api_merge` defaults to True.
+if jax.config.jax_jit_pjit_api_merge:
+  jit = pjit.pjit  # type: ignore  # noqa: F811
+
+
 def _jit(
     use_cpp_jit: bool,
     fun: Callable,

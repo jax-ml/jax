@@ -778,6 +778,13 @@ jax_array = config.define_bool_state(
           'used.'))
 
 
+jit_pjit_api_merge = config.define_bool_state(
+    name='jax_jit_pjit_api_merge',
+    default=False,
+    upgrade=True,
+    help=('If True, jit and pjit API will be merged.'))
+
+
 spmd_mode = config.define_enum_state(
     name='jax_spmd_mode',
     enum_values=['allow_all', 'allow_jit', 'allow_pjit'],
