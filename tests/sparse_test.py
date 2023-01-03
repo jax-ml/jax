@@ -762,6 +762,7 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=all_dtypes,
   )
   def test_bcoo_dense_round_trip(self, shape, dtype, n_batch, n_dense):
+    n_sparse = len(shape) - n_batch - n_dense
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     nse = sparse.util._count_stored_elements(M, n_batch=n_batch, n_dense=n_dense)
@@ -773,50 +774,14 @@ class BCOOTest(sptu.SparseTestCase):
     self._CheckAgainstNumpy(ident, round_trip, args_maker)
     self._CompileAndCheck(round_trip, args_maker)
     self._CheckBatchingSparse(ident, round_trip, args_maker, bdims=self._random_bdims(n_batch))
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for layout in iter_sparse_layouts(shape)],
-    dtype=jtu.dtypes.floating,
-  )
-  def test_bcoo_todense_ad(self, shape, dtype, n_batch, n_dense):
-    rng = rand_sparse(self.rng())
-    M = rng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-    data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
-
-    todense = partial(sparse_bcoo._bcoo_todense, indices=indices, spinfo=sparse_util.SparseInfo(shape))
-    j1 = jax.jacfwd(todense)(data)
-    j2 = jax.jacrev(todense)(data)
-    hess = jax.hessian(todense)(data)
-    self.assertArraysAllClose(j1, j2)
-    self.assertEqual(j1.shape, M.shape + data.shape)
-    self.assertEqual(hess.shape, M.shape + 2 * data.shape)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
-      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for layout in iter_sparse_layouts(shape)],
-    dtype=jtu.dtypes.floating,
-  )
-  def test_bcoo_fromdense_ad(self, shape, dtype, n_batch, n_dense):
-    rng = rand_sparse(self.rng())
-    M = rng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-
-    def fromdense(M):
-      return sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)[0]
-    data = fromdense(M)
-
-    j1 = jax.jacfwd(fromdense)(M)
-    j2 = jax.jacrev(fromdense)(M)
-    hess = jax.hessian(fromdense)(M)
-    self.assertArraysAllClose(j1, j2)
-    self.assertEqual(j1.shape, data.shape + M.shape)
-    self.assertEqual(hess.shape, data.shape + 2 * M.shape)
+    if jnp.issubdtype(dtype, jnp.floating):
+      # For n_sparse != 0, we can't use an identity because output zeros must not
+      # be dependent on input zeros. This mimics the code in count_stored_elements().
+      def expected(M):
+        if n_sparse == 0: return M
+        mask = (M != 0).any(range(M.ndim - n_dense, M.ndim), keepdims=True)
+        return jnp.where(mask, M, 0)
+      self._CheckGradsSparse(expected, round_trip, args_maker)
 
   def test_bcoo_fromdense_sorted_and_unique_indices(self):
     rng = self.rng()
