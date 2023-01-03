@@ -2542,8 +2542,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_single_device_pjit_cpp_dispatch(self):
-    if xla_extension_version < 111:
-      self.skipTest('Does not work for xla_extension_version < 111')
+    if xla_extension_version < 115:
+      self.skipTest('Does not work for xla_extension_version < 115')
 
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1,), ('x',))
@@ -2572,8 +2572,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_single_device_add_single_compile(self):
-    if xla_extension_version < 111:
-      self.skipTest('Does not work for xla_extension_version < 111')
+    if xla_extension_version < 115:
+      self.skipTest('Does not work for xla_extension_version < 115')
 
     f1 = pjit(lambda x, y: x + y)
     a = jax.device_put(jnp.array([1, 2, 3], dtype=jnp.float32),
@@ -2738,6 +2738,34 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f_names = pjit(f, static_argnames='x')
     assert f_names('foo') == 1
     assert f_names(x='foo') == 1
+
+  def test_pjit_with_static_argnames_cpp_dispatch(self):
+    if xla_extension_version < 115:
+      self.skipTest('Does not work for xla_extension_version < 115')
+
+    original_pjit_lower = pjit_lib._pjit_lower
+    count = 0
+
+    def pjit_lower_and_count(*args, **kwargs):
+      nonlocal count
+      count += 1
+      return original_pjit_lower(*args, **kwargs)
+
+    def f(y, **kwargs):
+      self.assertEqual(kwargs, {'x': 'foo'})
+      return y * y
+
+    try:
+      pjit_lib._pjit_lower = pjit_lower_and_count
+      y = jnp.arange(8.)
+
+      f_names = pjit(f, static_argnames='x')
+      f_names(y, x='foo')
+      f_names(y, x='foo')
+
+      self.assertEqual(count, 1)
+    finally:
+      pjit_lib._pjit_lower = original_pjit_lower
 
   def test_new_static_argnum_on_keyword_arguments(self):
     f = pjit(lambda x: x, static_argnums=0)

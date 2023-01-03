@@ -127,7 +127,8 @@ class _MostRecentPjitCallExecutable(threading.local):
 
 _most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
 
-def _cpp_pjit(fun: Callable, infer_params, static_argnums):
+
+def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
 
   def cache_miss(*args, **kwargs):
     global _most_recent_pjit_call_executable
@@ -163,7 +164,9 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums):
 
   cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
-      cache_miss, static_argnums)
+      cache_miss,
+      static_argnums,
+      static_argnames)
 
   return wraps(fun)(cpp_pjit_f)
 
@@ -476,8 +479,8 @@ def pjit(
     return (args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
-  if FLAGS.experimental_cpp_pjit and xla_extension_version >= 111:
-    wrapped = _cpp_pjit(fun, infer_params, static_argnums)
+  if FLAGS.experimental_cpp_pjit and xla_extension_version >= 115:
+    wrapped = _cpp_pjit(fun, infer_params, static_argnums, static_argnames)
   else:
     wrapped = _python_pjit(fun, infer_params)
 
