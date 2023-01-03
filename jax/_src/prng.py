@@ -1112,7 +1112,10 @@ def threefry_2x32(keypair, count):
   x = threefry2x32_p.bind(key1, key2, x[0], x[1])
   out = jnp.concatenate(x)
   assert out.dtype == np.uint32
-  return lax.reshape(out[:-1] if odd_size else out, count.shape)
+  return lax.reshape(
+      lax.dynamic_slice(out, (0,), (out.shape[0]-1,)) if odd_size else out,
+      count.shape,
+  )
 
 
 def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
