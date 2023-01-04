@@ -44,4 +44,5 @@ from jax._src.nn.functions import (
   softplus as softplus,
   silu as silu,
   swish as swish,
+  smelu as smelu,
 )

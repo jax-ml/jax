@@ -36,6 +36,7 @@ Activation functions
     selu
     gelu
     glu
+    smelu
 
 Other functions
 ---------------
