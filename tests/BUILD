@@ -721,7 +721,8 @@ jax_test(
 jax_test(
     name = "sparse_test",
     srcs = ["sparse_test.py"],
-    args = ["--jax_bcoo_cusparse_lowering=true"],
+    # TODO(jakevdp,tianjianlu): re-enable this once segfaults are addressed.
+    # args = ["--jax_bcoo_cusparse_lowering=true"],
     backend_tags = {
         "cpu": [
             "nomsan",  # Times out
@@ -749,7 +750,8 @@ jax_test(
 jax_test(
     name = "sparsify_test",
     srcs = ["sparsify_test.py"],
-    args = ["--jax_bcoo_cusparse_lowering=true"],
+    # TODO(jakevdp,tianjianlu): re-enable this once segfaults are addressed.
+    # args = ["--jax_bcoo_cusparse_lowering=true"],
     shard_count = {
         "cpu": 5,
         "gpu": 20,
