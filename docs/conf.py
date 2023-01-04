@@ -295,5 +295,12 @@ epub_exclude_files = ['search.html']
 always_document_param_types = True
 
 
+# Tell sphinx autodoc how to render type aliases.
+autodoc_type_aliases = {
+    'ArrayLike': 'ArrayLike',
+    'DTypeLike': 'DTypeLike',
+}
+
+
 # Remove auto-generated API docs from sidebars. They take too long to build.
 remove_from_toctrees = ["_autosummary/*"]
