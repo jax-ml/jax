@@ -1341,7 +1341,8 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
     return hlo.RealDynamicSliceOp(
         aval_to_ir_type(aval_out), x,
         shape_tensor(start_indices),
-        shape_tensor(slice_sizes),
+        hlo.AddOp(shape_tensor(start_indices),
+                  shape_tensor(slice_sizes)).result,
         shape_tensor([1] * len(slice_sizes))
     ).result
   else:
@@ -1360,6 +1361,23 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
         aval_to_ir_type(aval_out), x, update, start_indices).result
   else:
     return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
+
+def pad(ctx: LoweringRuleContext, aval_out,
+        x, padding_value,
+        padding_low, padding_high, padding_interior) -> ir.Value:
+  if all(core.is_constant_shape(s) for s in (padding_low,
+                                             padding_high, padding_interior)):
+    return hlo.PadOp(x, padding_value,
+                     dense_int_elements(padding_low),
+                     dense_int_elements(padding_high),
+                     dense_int_elements(padding_interior)).result
+  else:
+    padding_low = shape_tensor(eval_dynamic_shape(ctx, padding_low))
+    padding_high = shape_tensor(eval_dynamic_shape(ctx, padding_high))
+    padding_interior = shape_tensor(eval_dynamic_shape(ctx, padding_interior))
+    return hlo.DynamicPadOp(
+        aval_to_ir_type(aval_out),
+        x, padding_value, padding_low, padding_high, padding_interior).result
 
 def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> ir.Value:
   """Returns an IR constant shaped full of `value` shaped like `aval`."""
