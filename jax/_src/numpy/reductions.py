@@ -15,7 +15,7 @@
 import builtins
 from functools import partial
 import operator
-from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Optional, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
@@ -340,15 +340,6 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
       sum(a, axis, dtype=dtype, keepdims=keepdims, where=where),
       lax.convert_element_type(normalizer, dtype))
 
-@overload
-def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
-            returned: Literal[False] = False, keepdims: bool = False) -> Array: ...
-@overload
-def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None, *,
-            returned: Literal[True], keepdims: bool = False) -> Array: ...
-@overload
-def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
-            returned: bool = False, keepdims: bool = False) -> Union[Array, Tuple[Array, Array]]: ...
 @_wraps(np.average)
 def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
             returned: bool = False, keepdims: bool = False) -> Union[Array, Tuple[Array, Array]]:
