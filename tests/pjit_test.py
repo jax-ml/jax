@@ -3006,6 +3006,60 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('pjit', str(jaxpr))
 
+  def test_pmap_in_axis_resources_error(self):
+    pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"One of in_axis_resources.*got sharding.*which is not allowed."):
+      pjit(lambda x: x, in_axis_resources=pmap_out.sharding)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"One of out_axis_resources.*got sharding.*which is not allowed."):
+      pjit(lambda x: x, out_axis_resources=pmap_out.sharding)
+
+  def test_pmap_sharding_input_to_pjit_single_device(self):
+    pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+    self.assertLen(pmap_out.devices(), jax.device_count())
+
+    out = pjit(lambda x: x * 3)(pmap_out)
+    self.assertArraysEqual(out, pmap_out * 3)
+    # Even though pmap out is on jax.device_count() number of devices, the
+    # output will be 1 device since it will be resharded.
+    self.assertLen(out.devices(), 1)
+
+  def test_pmap_sharding_input_to_pjit_multi_device(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+
+    inp2 = jnp.arange(4)
+    with mesh:
+      out1, out2 = pjit(lambda x, y: (x * 2, y * 2))(pmap_out, inp2)
+
+    self.assertArraysEqual(out1, pmap_out * 2)
+    self.assertArraysEqual(out2, inp2 * 2)
+    self.assertLen(out1.devices(), 4)
+    self.assertLen(out2.devices(), 4)
+    self.assertTrue(pxla.is_op_sharding_replicated(
+        out1.sharding._to_xla_op_sharding(pmap_out.ndim)))
+    self.assertTrue(pxla.is_op_sharding_replicated(
+        out2.sharding._to_xla_op_sharding(inp2.ndim)))
+
+  def test_pmap_sharding_input_pjit_in_axis_resources(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
+    self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
+
+    out = pjit(lambda x: x * 2, in_axis_resources=NamedSharding(mesh, P('x')))(pmap_out)
+    self.assertArraysEqual(out, pmap_out * 2)
+    self.assertLen(out.devices(), 4)
+
 
 class TempSharding(Sharding):
 

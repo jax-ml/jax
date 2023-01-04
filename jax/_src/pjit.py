@@ -26,7 +26,7 @@ import warnings
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax._src.sharding import (
     NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
-    XLADeviceAssignment, SingleDeviceSharding)
+    XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
 from jax import core
 from jax._src import linear_util as lu
 from jax import stages
@@ -891,6 +891,9 @@ def _prepare_axis_resources(axis_resources,
     if _is_unspecified_or_from_gda_or_auto(entry):
       new_entries.append(entry)
     elif isinstance(entry, Sharding):
+      if isinstance(entry, PmapSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not '
+                         'allowed.')
       if not isinstance(entry, XLACompatibleSharding):
         raise ValueError(f'One of {what} got sharding {entry} which is not a '
                          'subclass of XLACompatibleSharding.')
@@ -946,6 +949,10 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
       if not isinstance(arg_s, XLACompatibleSharding):
         raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
                          'which is not a subclass of XLACompatibleSharding.')
+      # Don't consider PmapSharding inputs as committed. They will get resharded
+      # unconditionally.
+      if isinstance(arg_s, PmapSharding):
+        continue
       if getattr(a, '_committed', True):
         committed_arg_shardings.append(arg_s)
 
@@ -965,8 +972,12 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
         resolved_in_shardings.append(arg_s)
       else:
         if committed:
-          resolved_in_shardings.append(to_op_sharding_sharding(
-              cast(XLACompatibleSharding, arg_s), arg.ndim))
+          # If the arg has a PmapSharding, then reshard it unconditionally.
+          if isinstance(arg_s, PmapSharding):
+            resolved_in_shardings.append(_UNSPECIFIED)
+          else:
+            resolved_in_shardings.append(to_op_sharding_sharding(
+                cast(XLACompatibleSharding, arg_s), arg.ndim))
         else:
           if dispatch.is_single_device_sharding(arg_s):
             resolved_in_shardings.append(_UNSPECIFIED)
@@ -990,9 +1001,11 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
             'https://jax.readthedocs.io/en/latest/jax_array_migration.html#handling-of-host-local-inputs-to-pjit-like-batch-etc. '
             f'Got arg shape: {arg.shape}, arg value: {arg}')
       if not _is_unspecified(arg_s):
-        if committed and not pxla.are_op_shardings_equal(
-            pjit_in_s._to_xla_op_sharding(arg.ndim),
-            arg_s._to_xla_op_sharding(arg.ndim)):
+        if (committed and
+            not isinstance(arg_s, PmapSharding) and
+            not pxla.are_op_shardings_equal(
+                pjit_in_s._to_xla_op_sharding(arg.ndim),
+                arg_s._to_xla_op_sharding(arg.ndim))):
           op =  getattr(pjit_in_s, '_original_sharding', pjit_in_s)
           raise ValueError('Sharding passed to pjit does not match the sharding '
                            'on the respective arg. '

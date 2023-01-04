@@ -1591,28 +1591,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         1, 2).reshape(shape)
     self.assertAllClose(fn(x, w), expected, check_dtypes=False)
 
-  def testReshardInput(self):
-    if jax.device_count() < 6:
-      raise SkipTest("testReshardInput requires 6 devices")
-    # Manually construct a ShardedDeviceArray with the wrong sharding for the
-    # subsequent pmap
-    shard_shape = (3,2)
-    shard = jnp.arange(prod(shard_shape)).reshape(shard_shape)
-    bufs = pxla.device_put(shard, jax.devices()[:4], replicate=True)
-    aval = ShapedArray((6,4), shard.dtype)
-    sharding_spec = pxla.ShardingSpec(
-        sharding=map(pxla.Chunked, ([2], [2])),
-        mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
-    arr = pxla.make_sharded_device_array(aval, sharding_spec, bufs)
-
-    r = self.pmap(lambda x: x + 1)(arr)
-    self.assertAllClose(r, arr + 1)
-    if config.jax_array:
-      r_db = r._arrays
-    else:
-      r_db = r.device_buffers
-    self.assertEqual(len(r_db), 6)
-
   def testShardedDeviceArrayBlockUntilReady(self):
     x = np.arange(jax.device_count())
     x = self.pmap(lambda x: x)(x)
