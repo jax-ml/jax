@@ -804,17 +804,45 @@ class BCOOTest(sptu.SparseTestCase):
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    assume_unique=[True, False]
   )
-  def test_bcoo_extract(self, shape, dtype, n_batch, n_dense):
+  def test_bcoo_extract(self, shape, dtype, n_batch, n_dense, assume_unique):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
                                              n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse)
-    data2 = sparse.bcoo_extract(indices, M)
+    bcoo_extract = partial(sparse.bcoo_extract, assume_unique=assume_unique)
+
+    data2 = bcoo_extract(indices, M)
     self.assertArraysEqual(data, data2)
-    data3 = jit(sparse.bcoo_extract)(indices, M)
+
+    data3 = jit(bcoo_extract)(indices, M)
     self.assertArraysEqual(data, data3)
+
+  def test_bcoo_extract_duplicate_indices(self):
+    data = jnp.array([1, 3, 9, 27, 81, 243])
+    indices = jnp.array([[0], [5], [0], [3], [2], [3]])
+    shape = (6,)
+    mat = sparse.BCOO((data, indices), shape=shape).todense()
+
+    data1 = sparse.bcoo_extract(indices, mat, assume_unique=True)
+    self.assertArraysEqual(data1, jnp.array([10, 3, 10, 270, 81, 270]))
+
+    data2 = sparse.bcoo_extract(indices, mat, assume_unique=False)
+    self.assertArraysEqual(data2, jnp.array([10, 3, 0, 270, 81, 0]))
+
+  def test_bcoo_extract_duplicate_indices_n_sparse_0(self):
+    data = jnp.arange(6).reshape(3, 2)
+    indices = jnp.empty((3, 2, 0), dtype=int)
+    shape = (3,)
+    mat = sparse.BCOO((data, indices), shape=shape).todense()
+
+    data1 = sparse.bcoo_extract(indices, mat, assume_unique=True)
+    self.assertArraysEqual(data1, jnp.array([[1, 1], [5, 5], [9, 9]]))
+
+    data2 = sparse.bcoo_extract(indices, mat, assume_unique=False)
+    self.assertArraysEqual(data2, jnp.array([[1, 0], [5, 0], [9, 0]]))
 
   def test_bcoo_extract_batching(self):
     # https://github.com/google/jax/issues/9431
