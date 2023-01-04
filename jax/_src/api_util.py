@@ -25,7 +25,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
-    treedef_children, treedef_is_leaf)
+    treedef_children)
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
 from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
@@ -417,8 +417,7 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
     if kws:
       # if keyword arguments are included in the tree, we make adapt the error
       # message only to be about the positional arguments
-      treedef, leaf = treedef_children(treedef)
-      assert treedef_is_leaf(leaf)
+      treedef, _ = treedef_children(treedef)
       axis_tree, _ = axis_tree
     hint = ""
     if tupled_args:
