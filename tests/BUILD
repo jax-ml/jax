@@ -731,8 +731,8 @@ jax_test(
     },
     enable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
+        "cpu": 50,
+        "gpu": 50,
         "tpu": 50,
         "iree": 10,
     },
