@@ -282,7 +282,7 @@ class NamedSharding(XLACompatibleSharding):
     # representation of Parsed Pspec
     if self._parsed_pspec is None:
       from jax.experimental import pjit
-      self._parsed_pspec, _, _, _ = pjit._prepare_axis_resources(
+      self._parsed_pspec, _, _ = pjit._prepare_axis_resources(
           self.spec, "NamedSharding spec")
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)

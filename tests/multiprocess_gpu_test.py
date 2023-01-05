@@ -509,7 +509,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       inp_aval = jax.ShapedArray((8, 2), jnp.int32)
       # `ShapedArray` is considered global when lowered and compiled.
       # Hence it can bypass the contiguous mesh restriction.
-      compiled = f.lower(inp_aval, gda1, _global_avals=True).compile()
+      compiled = f.lower(inp_aval, gda1).compile()
       out1, out2 = compiled(gda1, gda1)
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8, 2))

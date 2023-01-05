@@ -1579,7 +1579,7 @@ class UnloadedPmapExecutable:
       # In the single host case, we want the default device order of pmap to
       # match jax.devices().
       # On multiple hosts, we create a default device assignment that ensures
-      # each host is responsible for a continguous set of replicas.
+      # each host is responsible for a contiguous set of replicas.
       if shards.num_global_shards > shards.num_local_shards:
         # TODO(skye): use a locality-aware assignment that satisfies the above
         # constraint.
@@ -3755,7 +3755,7 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
-  parsed_pspec, _, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
+  parsed_pspec, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
   return get_array_mapping(parsed_pspec)
 
 
