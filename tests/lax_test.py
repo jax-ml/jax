@@ -1899,7 +1899,6 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
     self._CheckAgainstNumpy(np_fun, fun, args_maker)
 
-  @unittest.skip("TODO(b/264432732) timeout due to LLVM update")
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
      for shape in [[10], [3, 4, 5]] for axis in range(len(shape))],
