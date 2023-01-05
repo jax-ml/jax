@@ -187,7 +187,7 @@ def f(x, i):
   checkify.check(i >= 0, "index needs to be non-negative!")
   return x[i]
 
-checked_f = checkify.checkify(f, errors=checkify.all_errors)
+checked_f = checkify.checkify(f, errors=checkify.all_checks)
 errs, out = jax.vmap(checked_f)(jnp.ones((3, 5)), jnp.array([-1, 2, 100]))
 errs.throw()
 """
@@ -205,7 +205,7 @@ def f(x, i):
   checkify.check(i >= 0, "index needs to be non-negative!")
   return x[i]
 
-checked_f = checkify.checkify(f, errors=checkify.all_errors)
+checked_f = checkify.checkify(f, errors=checkify.all_checks)
 err, out = checked_f(jnp.ones((3, 5)), jnp.array([-1, 2, 100]))
 err.throw()
 # ValueError: index needs to be non-negative! (check failed at <...>:2 (f))
