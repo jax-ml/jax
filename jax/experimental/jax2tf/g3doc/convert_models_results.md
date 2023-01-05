@@ -1,6 +1,6 @@
 # JAX Converters Evaluation Results
 
-*Last generated on: 2022-09-07* (YYYY-MM-DD)
+*Last generated on: 2023-01-03* (YYYY-MM-DD)
 
 This file contains the evaluation results for all converters in table format.
 
@@ -17,7 +17,7 @@ details on the different converters.
 | flax/actor_critic | YES | YES | YES | YES | YES |
 | flax/bilstm | YES | YES | YES | [NO](#example-flaxbilstm--converter-jax2tflite) |  [NO](#example-flaxbilstm--converter-jax2tfliteflex) | 
 | flax/resnet50 | YES | YES | YES | YES | YES |
-| flax/seq2seq | YES | YES | [NO](#example-flaxseq2seq--converter-jax2tfjs) |  [NO](#example-flaxseq2seq--converter-jax2tflite) |  YES |
+| flax/seq2seq_lstm | YES | YES | [NO](#example-flaxseq2seq_lstm--converter-jax2tfjs) |  [NO](#example-flaxseq2seq_lstm--converter-jax2tflite) |  YES |
 | flax/lm1b | YES | YES | YES | YES | YES |
 | flax/nlp_seq | YES | YES | YES | YES | YES |
 | flax/wmt | YES | YES | YES | YES | YES |
@@ -29,30 +29,27 @@ details on the different converters.
 ## `flax/bilstm`
 ### Example: `flax/bilstm` | Converter: `jax2tflite`
 ```
-Conversion error
-Some ops are not supported by the native TFLite runtime
-	tf.Abs(tensor<2xi32>) -> (tensor<2xi32>) : {device = ""}
-	tf.Sign(tensor<2xi32>) -> (tensor<2xi32>) : {device = ""}
+RuntimeError('third_party/tensorflow/lite/kernels/concatenation.cc:159 t->dims->data[d] != t0->dims->data[d] (3 != 1)Node number 11 (CONCATENATION) failed to prepare.Node number 32 (WHILE) failed to invoke.')
 ```
 [Back to top](#summary-table)
 
 ### Example: `flax/bilstm` | Converter: `jax2tflite+flex`
 ```
-RuntimeError('tensorflow/lite/kernels/concatenation.cc:158 t->dims->data[d] != t0->dims->data[d] (3 != 1)Node number 11 (CONCATENATION) failed to prepare.Node number 32 (WHILE) failed to invoke.')
+RuntimeError('third_party/tensorflow/lite/kernels/concatenation.cc:159 t->dims->data[d] != t0->dims->data[d] (3 != 1)Node number 11 (CONCATENATION) failed to prepare.Node number 32 (WHILE) failed to invoke.')
 ```
 [Back to top](#summary-table)
 
 ## `flax/resnet50`
-## `flax/seq2seq`
-### Example: `flax/seq2seq` | Converter: `jax2tfjs`
+## `flax/seq2seq_lstm`
+### Example: `flax/seq2seq_lstm` | Converter: `jax2tfjs`
 ```
 Conversion error
 ValueError('Unsupported Ops in the model before optimization
-BitwiseXor, RightShift, Bitcast, BitwiseOr, BitwiseAnd, LeftShift')
+BitwiseOr, BitwiseAnd, BitwiseXor, LeftShift, RightShift, Bitcast')
 ```
 [Back to top](#summary-table)
 
-### Example: `flax/seq2seq` | Converter: `jax2tflite`
+### Example: `flax/seq2seq_lstm` | Converter: `jax2tflite`
 ```
 Conversion error
 Some ops are not supported by the native TFLite runtime

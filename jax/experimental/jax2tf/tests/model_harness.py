@@ -53,14 +53,14 @@ class ModelHarness:
     return self.apply(self.variables, *args, **kwargs)
 
 
-def _actor_critic_harness():
+def _actor_critic_harness(name):
   model = actor_critic.ActorCritic(num_outputs=8)
   x = np.zeros((1, 84, 84, 4), np.float32)
   variables = model.init(random.PRNGKey(0), x)
-  return ModelHarness('flax/actor_critic', model.apply, variables, [x])
+  return ModelHarness(name, model.apply, variables, [x])
 
 
-def _bilstm_harness():
+def _bilstm_harness(name):
   model = bilstm_classifier.TextClassifier(
       # TODO(marcvanzee): This fails when
       # `embedding_size != hidden_size`. I suppose some arrays are
@@ -76,7 +76,7 @@ def _bilstm_harness():
   lengths = np.array([2, 3], np.int32)
   variables = model.init(random.PRNGKey(0), x, lengths, deterministic=True)
   apply = functools.partial(model.apply, deterministic=True)
-  return ModelHarness('flax/bilstm', apply, variables, [x, lengths])
+  return ModelHarness(name, apply, variables, [x, lengths])
 
 
 def _cnn_harness():
@@ -138,15 +138,15 @@ def _gcn_harness():
   return ModelHarness('flax/gnn_conv', model.apply, variables, [graphs])
 
 
-def _resnet50_harness():
+def _resnet50_harness(name):
   model = resnet.ResNet50(num_classes=2, dtype=np.float32)
   x = np.zeros((8, 244, 244, 3), np.float32)
   variables = model.init(random.PRNGKey(0), x)
   apply = functools.partial(model.apply, train=False, mutable=False)
-  return ModelHarness('flax/resnet50', apply, variables, [x])
+  return ModelHarness(name, apply, variables, [x])
 
 
-def _seq2seq_lstm_harness():
+def _seq2seq_lstm_harness(name):
   model = seq2seq_lstm.Seq2seq(teacher_force=True, hidden_size=2, vocab_size=4)
   x = np.zeros((1, 2, 4), np.float32)
   rngs = {
@@ -155,7 +155,7 @@ def _seq2seq_lstm_harness():
   }
   variables = model.init(rngs, x, x)
   apply = functools.partial(model.apply, rngs={'lstm': random.PRNGKey(2)})
-  return ModelHarness('flax/seq2seq', apply, variables, [x, x])
+  return ModelHarness(name, apply, variables, [x, x])
 
 
 def _min_transformer_kwargs():
@@ -181,7 +181,7 @@ def _full_transformer_kwargs():
   return {**kwargs, **_min_transformer_kwargs()}
 
 
-def _transformer_lm1b_harness():
+def _transformer_lm1b_harness(name):
   config = lm1b.TransformerConfig(**_full_transformer_kwargs())
   model = lm1b.TransformerLM(config=config)
   x = np.zeros((2, 1), np.float32)
@@ -193,19 +193,19 @@ def _transformer_lm1b_harness():
     output, _ = model.apply(*args, rngs={'cache': rng2}, mutable=['cache'])
     return output
 
-  return ModelHarness('flax/lm1b', apply, variables, [x])
+  return ModelHarness(name, apply, variables, [x])
 
 
-def _transformer_nlp_seq_harness():
+def _transformer_nlp_seq_harness(name):
   config = nlp_seq.TransformerConfig(**_min_transformer_kwargs())
   model = nlp_seq.Transformer(config=config)
   x = np.zeros((2, 1), np.float32)
   variables = model.init(random.PRNGKey(0), x, train=False)
   apply = functools.partial(model.apply, train=False)
-  return ModelHarness('flax/nlp_seq', apply, variables, [x])
+  return ModelHarness(name, apply, variables, [x])
 
 
-def _transformer_wmt_harness():
+def _transformer_wmt_harness(name):
   config = wmt.TransformerConfig(**_full_transformer_kwargs())
   model = wmt.Transformer(config=config)
   x = np.zeros((2, 1), np.float32)
@@ -216,32 +216,32 @@ def _transformer_wmt_harness():
     output, _ = model.apply(*args, mutable=['cache'])
     return output
 
-  return ModelHarness('flax/wmt', apply, variables, [x, x])
+  return ModelHarness(name, apply, variables, [x, x])
 
 
-def _vae_harness():
+def _vae_harness(name):
   model = vae.VAE(latents=3)
   x = np.zeros((1, 8, 8, 3), np.float32)
   rng1, rng2 = random.split(random.PRNGKey(0))
   variables = model.init(rng1, x, rng2)
   generate = lambda v, x: model.apply(v, x, method=model.generate)
-  return ModelHarness('flax/vae', generate, variables, [x])
+  return ModelHarness(name, generate, variables, [x])
 
 
 ##### All harnesses in this file.
 # Note: we store the functions and not their instantiation to avoid creating all
 # parameters of all models at once.
-ALL_HARNESS_FNS: List[Callable[[], ModelHarness]] = [
-    _actor_critic_harness,
-    _bilstm_harness,
+ALL_HARNESSES: Dict[str, Callable[[str], ModelHarness]] = {
+    'flax/actor_critic': _actor_critic_harness,
+    'flax/bilstm': _bilstm_harness,
     # TODO(marcvanzee): GNNs currently do not work since their __call__
     # function takes a jraph.GraphsTuple as an argument, which we don't support.
     # 'flax/gnn': _gnn_harness,
     # 'flax/gnn_conv': _gnn_conv_harness,
-    _resnet50_harness,
-    _seq2seq_lstm_harness,
-    _transformer_lm1b_harness,
-    _transformer_nlp_seq_harness,
-    _transformer_wmt_harness,
-    _vae_harness
-]
+    'flax/resnet50': _resnet50_harness,
+    'flax/seq2seq_lstm': _seq2seq_lstm_harness,
+    'flax/lm1b': _transformer_lm1b_harness,
+    'flax/nlp_seq': _transformer_nlp_seq_harness,
+    'flax/wmt': _transformer_wmt_harness,
+    'flax/vae': _vae_harness,
+}

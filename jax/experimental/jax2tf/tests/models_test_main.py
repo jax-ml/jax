@@ -35,6 +35,7 @@ from absl import flags
 
 import functools
 import numpy as np
+import os
 import re
 import jax
 
@@ -46,10 +47,12 @@ from jax._src import dtypes
 import jax.numpy as jnp
 
 import datetime
-import os
 from typing import Dict, List, Sequence, Tuple
 
-from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESS_FNS
+from pyglib import gfile
+from pyglib import resources
+
+from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESSES
 from jax.experimental.jax2tf.tests.converters import ALL_CONVERTERS
 
 flags.DEFINE_list("converters", [x.name for x in ALL_CONVERTERS],
@@ -90,28 +93,38 @@ def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
     # Make sure the converters are in the right order.
     assert [c[0] for c in converter_results] == converters
     line = f"| {example_name} |"
-    error_lines.append(f"## `{example_name}`")
+    example_error_lines = []
     for converter_name, error_msg in converter_results:
       if not error_msg:
         line += " YES |"
       else:
         error_header = (f"Example: `{example_name}` | "
                         f"Converter: `{converter_name}`")
-        error_lines.append("### " + error_header)
-        error_lines.append(f"```\n{error_msg}\n```")
-        error_lines.append("[Back to top](#summary-table)\n")
+        example_error_lines.append("### " + error_header)
+        example_error_lines.append(f"```\n{error_msg}\n```")
+        example_error_lines.append("[Back to top](#summary-table)\n")
         line += f" [NO]({_header2anchor(error_header)}) | "
     table_lines.append(line)
 
-  output_path = os.path.join(
-      os.path.dirname(__file__), "../g3doc/convert_models_results.md")
-  with open(output_path + ".template") as f_in, open(output_path, "w") as f_out:
-    template = f_in.read()
-    template = template.replace("{{generation_date}}",
-                                str(datetime.date.today()))
-    template = template.replace("{{table}}", "\n".join(table_lines))
-    template = template.replace("{{errors}}", "\n".join(error_lines))
-    f_out.write(template)
+    if example_error_lines:
+      error_lines.append(f"## `{example_name}`")
+      error_lines.extend(example_error_lines)
+
+  # TODO(marcvanzee): This is somewhat brittle, consider rewriting it.
+  g3doc_path = "../g3doc"
+  output_path = os.path.join(g3doc_path, "convert_models_results.md")
+  template_path = output_path + ".template"
+
+  template = resources.GetResource(template_path).decode("utf-8")
+  template = template.replace("{{generation_date}}", str(datetime.date.today()))
+  template = template.replace("{{table}}", "\n".join(table_lines))
+  template = template.replace("{{errors}}", "\n".join(error_lines))
+
+  if (workdir := "BUILD_WORKING_DIRECTORY") in os.environ:
+    os.chdir(os.path.dirname(os.environ[workdir]))
+
+  with gfile.Open(output_path, "w") as f:
+    f.write(template)
 
   print("Written converter results to", output_path)
 
@@ -146,19 +159,28 @@ def _get_random_data(x: jnp.ndarray) -> np.ndarray:
 
 def test_converters():
   """Tests all converters and write output."""
-  results = {}
-  converters = list(
-      filter(lambda x: x.name in FLAGS.converters, ALL_CONVERTERS))
+  def _exit_if_empty(x, name):
+    if not x:
+      print(f"WARNING: No {name} found to test! Exiting")
+      exit()
 
   def _maybe_reraise(e):
     if FLAGS.fail_on_error:
       raise e
 
-  for harness_fn in ALL_HARNESS_FNS:
-    harness = harness_fn()  # This will create the variables.
-    if FLAGS.examples and harness.name not in FLAGS.examples:
-      print(f"==== Skipping example {harness.name}")
-      continue
+  converters = list(
+      filter(lambda x: x.name in FLAGS.converters, ALL_CONVERTERS))
+  _exit_if_empty(converters, "converters")
+
+  harnesses_to_test = {
+      name: fn for name, fn in ALL_HARNESSES.items()
+      if not FLAGS.examples or name in FLAGS.examples
+  }
+  _exit_if_empty(harnesses_to_test, "harness")
+
+  results = {}
+  for name, harness_fn in harnesses_to_test.items():
+    harness = harness_fn(name)  # This will create the variables.
     np_assert_allclose = functools.partial(
         np.testing.assert_allclose, rtol=harness.rtol)
     converter_results = []
