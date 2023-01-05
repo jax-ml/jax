@@ -291,7 +291,7 @@ def bcsr_extract(indices: ArrayLike, indptr: ArrayLike, mat: ArrayLike) -> Array
 def _bcsr_extract_impl(indices, indptr, mat):
   mat = jnp.asarray(mat)
   bcoo_indices = _bcsr_to_bcoo(indices, indptr, shape=mat.shape)
-  return bcoo.bcoo_extract(bcoo_indices, mat)
+  return bcoo._bcoo_extract(bcoo_indices, mat)
 
 
 @bcsr_extract_p.def_abstract_eval
