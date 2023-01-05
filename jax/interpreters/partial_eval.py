@@ -1777,7 +1777,7 @@ class DynamicJaxprTrace(core.Trace):
     reduced_in_avals = [core.mapped_aval(axis_size, in_axis, a)
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
-    with core.extend_axis_env(axis_name, axis_size, None):  # type: ignore
+    with core.extend_axis_env(axis_name, params["global_axis_size"], None):  # type: ignore
       with core.new_sublevel():
         jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
             f, self.main, reduced_in_avals, debug_info=debug_info_final(f, map_primitive.name))
