@@ -1135,11 +1135,15 @@ for indices, index_oob, indices_name in [
   for axis in [0, 1, 2]:
     for enable_xla in [True, False]:
       for mode in ["clip", "fill"]:
+        limitations = ()
+        if enable_xla == False and mode == "fill":
+          limitations = (Limitation("b/262580493"),)
         define(
             lax.gather_p,
             f"from_take_{indices_name=}_{axis=}_{enable_xla=}_{mode=!s}",
             lambda a, i, axis, mode: jnp.take(a, i, axis=axis, mode=mode),
             [_gather_input, indices, StaticArg(axis), StaticArg(mode)],
+            jax_unimplemented=limitations,
             dtype=_gather_input.dtype,
             enable_xla=enable_xla,
             index_oob=index_oob,
