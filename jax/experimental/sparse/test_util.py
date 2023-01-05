@@ -129,7 +129,7 @@ class SparseTestCase(jtu.JaxTestCase):
                            canonicalize_dtypes=True):
     if bdims is None:
       bdims = self._random_bdims(*(arg.n_batch if is_sparse(arg) else arg.ndim
-                                  for arg in args_maker()))
+                                   for arg in args_maker()))
     def concat(args, bdim):
       return sparse.sparsify(functools.partial(lax.concatenate, dimension=bdim))(args)
     def expand(arg, bdim):

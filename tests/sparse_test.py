@@ -1526,57 +1526,31 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     remove_zeros=[True, False],
   )
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_bcoo_sum_duplicates(self, shape, dtype, n_batch, n_dense, nse, remove_zeros):
-    # Create a matrix with duplicate indices
-    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
-    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
-    new_indices = jnp.concatenate([M.indices, M.indices], axis=n_batch)
-    new_data = jnp.concatenate([M.data, M.data], axis=n_batch)
-    M = sparse.BCOO((new_data, new_indices), shape=M.shape)
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
 
-    dedupe = partial(M.sum_duplicates, nse=nse, remove_zeros=remove_zeros)
-    jit_dedupe = jax.jit(dedupe)
+    def args_maker():
+      # Create a matrix with duplicate indices
+      M = sprng(shape, dtype)
+      new_indices = jnp.concatenate([M.indices, M.indices], axis=n_batch)
+      new_data = jnp.concatenate([M.data, M.data], axis=n_batch)
+      return [sparse.BCOO((new_data, new_indices), shape=M.shape)]
 
-    M_dedup = dedupe()
-    self.assertAllClose(M.todense(), M_dedup.todense())
-    if nse:
-      self.assertEqual(M_dedup.nse, nse)
+    dense_fun = lambda x: x
+    def sparse_fun(x):
+      out = x.sum_duplicates(nse=nse, remove_zeros=remove_zeros)
+      self.assertTrue(out.unique_indices)
+      if nse:
+        self.assertEqual(out.nse, nse)
+      return out
 
-    if not nse:
-      with self.assertRaisesRegex(ValueError, ".*nse must be specified.*"):
-        jit_dedupe()
-    else:
-      M_dedup = jit_dedupe()
-      self.assertAllClose(M.todense(), M_dedup.todense())
-      self.assertEqual(M_dedup.nse, nse)
-
-    self.assertTrue(M_dedup.unique_indices)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, nse=nse)
-      for shape in [(0,), (5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for layout in iter_sparse_layouts(shape)
-      for nse in [None, 5, max(0, np.prod(shape) - 1)]
-    ],
-    dtype=jtu.dtypes.floating,
-  )
-  def test_bcoo_sum_duplicates_ad(self, shape, dtype, n_batch, n_dense, nse):
-    # Create a matrix with duplicate indices
-    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
-    M = sparse.BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch, n_dense=n_dense)
-    new_indices = jnp.concatenate([M.indices, M.indices], axis=n_batch)
-    new_data = jnp.concatenate([M.data, M.data], axis=n_batch)
-    M = sparse.BCOO((new_data, new_indices), shape=M.shape)
-
-    def dedupe(data, nse=nse):
-      mat = sparse.BCOO((data, M.indices), shape=M.shape)
-      mat_dedup = mat.sum_duplicates(nse=nse, remove_zeros=False)
-      return mat_dedup.data
-
-    data_dot_fwd = jax.jacfwd(dedupe)(M.data)
-    data_dot_rev = jax.jacrev(dedupe)(M.data)
-
-    self.assertAllClose(data_dot_fwd, data_dot_rev)
+    self._CheckAgainstDense(dense_fun, sparse_fun, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_fun, sparse_fun, args_maker)
+    if nse is not None:
+      self._CompileAndCheckSparse(sparse_fun, args_maker)
+      self._CheckBatchingSparse(dense_fun, sparse_fun, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
