@@ -29,12 +29,12 @@ _default_cudnn_version = '86'
 _libtpu_version = '0.1.dev20221212'
 
 _dct = {}
-with open('jax/version.py') as f:
+with open('jax/version.py', encoding='utf-8') as f:
   exec(f.read(), _dct)
 __version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 
-with open('README.md') as f:
+with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
 
 if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
