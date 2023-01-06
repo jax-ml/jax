@@ -155,8 +155,13 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
           operand=_no_operand_sentinel, linear=None):
   """Conditionally apply ``true_fun`` or ``false_fun``.
 
+  Wraps XLA's `Conditional
+  <https://www.tensorflow.org/xla/operation_semantics#conditional>`_
+  operator.
+
   Provided arguments are correctly typed, ``cond()`` has equivalent
-  semantics to this Python implementation::
+  semantics to this Python implementation, where ``pred`` must be a
+  scalar type::
 
     def cond(pred, true_fun, false_fun, *operands):
       if pred:
@@ -164,7 +169,11 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
       else:
         return false_fun(*operands)
 
-  ``pred`` must be a scalar type.
+
+  In contrast with :func:`jax.lax.select`, using ``cond`` indicates that only one of
+  the two branches is executed (up to compiler rewrites and optimizations).
+  However, when transformed with :func:`~jax.vmap` to operate over a batch of
+  predicates, ``cond`` is converted to :func:`~jax.lax.select`.
 
   Args:
     pred: Boolean scalar type, indicating which branch function to apply.
