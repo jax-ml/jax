@@ -27,7 +27,7 @@ from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
-    _broadcasting_vmap, _count_stored_elements,
+    nfold_vmap, _count_stored_elements,
     _csr_to_coo, _dot_general_validated_shape,
     SparseInfo, Shape)
 import jax.numpy as jnp
@@ -90,9 +90,7 @@ def _bcsr_to_bcoo(indices: jnp.ndarray, indptr: jnp.ndarray, *,
                   shape: Sequence[int]) -> jnp.ndarray:
   """Given BCSR (indices, indptr), return BCOO (indices)."""
   n_batch, _, _ = _validate_bcsr_indices(indices, indptr, shape)
-  csr_to_coo = _csr_to_coo
-  for _ in range(n_batch):
-    csr_to_coo = _broadcasting_vmap(csr_to_coo)
+  csr_to_coo = nfold_vmap(_csr_to_coo, n_batch)
   return jnp.stack(csr_to_coo(indices, indptr), axis=indices.ndim)
 
 
