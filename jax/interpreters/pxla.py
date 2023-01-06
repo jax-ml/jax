@@ -1579,7 +1579,7 @@ class UnloadedPmapExecutable:
       # In the single host case, we want the default device order of pmap to
       # match jax.devices().
       # On multiple hosts, we create a default device assignment that ensures
-      # each host is responsible for a continguous set of replicas.
+      # each host is responsible for a contiguous set of replicas.
       if shards.num_global_shards > shards.num_local_shards:
         # TODO(skye): use a locality-aware assignment that satisfies the above
         # constraint.
@@ -2394,14 +2394,14 @@ class Mesh(ContextDecorator):
     super().__setattr__(name, value)
 
   def __enter__(self):
-    new_env = _old_env.stack[-1].with_mesh(self)
-    _old_env.stack.append(new_env)
+    new_env = thread_resources.stack[-1].with_mesh(self)
+    thread_resources.stack.append(new_env)
     thread_resources.env = new_env
     return self
 
   def __exit__(self, exc_type, exc_value, traceback):
-    _old_env.stack.pop()
-    thread_resources.env = _old_env.stack[-1]
+    thread_resources.stack.pop()
+    thread_resources.env = thread_resources.stack[-1]
     return False
 
   @property
@@ -2536,18 +2536,10 @@ EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
 class _ThreadResourcesLocalState(threading.local):
 
   def __init__(self):
-    self.env = EMPTY_ENV
+    self.stack = [EMPTY_ENV]
+    self.env = self.stack[-1]
 
 thread_resources = _ThreadResourcesLocalState()
-
-# TODO(yashkatariya): Merge this into `_ThreadResourcesLocalState` by
-# maintaining a stack there and pointing `self.env` to `self.stack[-1]`.
-# Do this after the old `mesh` context manager is deprecated.
-class _ThreadLocalOldEnv(threading.local):
-  def __init__(self):
-    self.stack = [EMPTY_ENV]
-
-_old_env = _ThreadLocalOldEnv()
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
@@ -3755,7 +3747,7 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
-  parsed_pspec, _, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
+  parsed_pspec, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
   return get_array_mapping(parsed_pspec)
 
 

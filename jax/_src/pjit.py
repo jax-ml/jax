@@ -357,15 +357,15 @@ def pjit(
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_axis_resources, _, _, in_any_auto = _prepare_axis_resources(
+  in_axis_resources, _, _ = _prepare_axis_resources(
       in_axis_resources, "in_axis_resources")
-  out_axis_resources, _, _, _ = _prepare_axis_resources(
+  out_axis_resources, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
 
   donate_argnums, static_argnums, static_argnames = resolve_argnums(
       fun, donate_argnums, static_argnums, static_argnames)
 
-  def infer_params(*args, _global_avals=False, **kwargs):
+  def infer_params(*args, **kwargs):
     if kwargs and not _is_unspecified(in_axis_resources):
       raise ValueError(
           "pjit does not support kwargs when in_axis_resources is specified.")
@@ -434,15 +434,10 @@ def pjit(
       if config.jax_enable_checks:
         _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
 
-    if not config.jax_array and in_any_auto and not _global_avals:
-      raise ValueError('Auto sharding is only enabled for global inputs. '
-                       'Please set `_global_avals=True` during `.lower()`. '
-                       'Use the compiled object to call the inputs.')
-
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
-    if _global_avals or config.jax_array:
+    if config.jax_array:
       in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
@@ -484,9 +479,9 @@ def pjit(
   else:
     wrapped = _python_pjit(fun, infer_params)
 
-  def lower(*args, _global_avals=False, **kwargs):
+  def lower(*args, **kwargs):
     (args_flat, flat_local_in_avals, params, in_tree, out_tree,
-     donate_argnums) = infer_params(*args, _global_avals=_global_avals, **kwargs)
+     donate_argnums) = infer_params(*args, **kwargs)
     if config.jax_array:
       in_shardings = _resolve_in_shardings(
           args_flat, params['in_shardings'], params['out_shardings'],
@@ -885,7 +880,7 @@ def _prepare_axis_resources(axis_resources,
   # All entries should be specified or if unspecified then there should only
   # be 1 entry for that since _UNSPECIFIED is a private API.
   _check_all_or_none_unspecified(entries, arg_name)
-  any_auto = pxla._check_if_any_auto(entries)
+
   new_entries = []
   for entry in entries:
     if _is_unspecified_or_from_gda_or_auto(entry):
@@ -903,7 +898,7 @@ def _prepare_axis_resources(axis_resources,
           entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
 
   _check_unique_resources(new_entries, arg_name)
-  return tree_unflatten(treedef, new_entries), new_entries, treedef, any_auto
+  return tree_unflatten(treedef, new_entries), new_entries, treedef
 
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gda):
@@ -1530,7 +1525,7 @@ pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
-  axis_resources, _, _, _ = _prepare_axis_resources(
+  axis_resources, _, _ = _prepare_axis_resources(
       axis_resources, "axis_resources", allow_unconstrained_dims=True)
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint sharding", tree, axis_resources))

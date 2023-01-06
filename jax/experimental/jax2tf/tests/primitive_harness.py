@@ -1122,7 +1122,7 @@ for dtype in set(jtu.dtypes.all):
 _gather_input = np.arange(1000, dtype=np.float32).reshape((10, 10, 10))
 for indices, index_oob, indices_name in [
     # Ensure each set of indices has a distinct name
-    (np.array(2, dtype=np.int32), False, "1"),
+    # (np.array(2, dtype=np.int32), False, "1"), # TODO(b/262580493): Re-enable the test.
     (np.array([2], dtype=np.int32), False, "2"),
     (np.array([2, 4], dtype=np.int32), False, "3"),
     (np.array([2, 4], dtype=np.uint32), False, "3_uint32"),  # uint32 indices

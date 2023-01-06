@@ -1032,7 +1032,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     shape = (8, 8)
     aval = jax.ShapedArray(shape, dtypes.canonicalize_dtype(jnp.int64))
     x = jnp.arange(np.prod(shape)).reshape(shape)
-    exe = f.lower(aval, x, _global_avals=True).compile()
+    exe = f.lower(aval, x).compile()
     self.assertIsInstance(exe, stages.Compiled)
     self.assertArraysEqual(exe(x, x), x @ x)
 
@@ -1512,6 +1512,15 @@ class GDAPjitTest(jtu.JaxTestCase):
 
 class AutoShardingPjitTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    super().setUp()
+    self.jax_array_enabled = jax.config.jax_array
+    jax.config.update('jax_array', True)
+
+  def tearDown(self):
+    config.update('jax_array', self.jax_array_enabled)
+    super().tearDown()
+
   @parameterized.named_parameters(
     ('2d_gda', (4, 2), (4, 2), ('x', 'y')),
     # TODO(b/226977360): Support 3D mesh shape for example (2, 2, 2).
@@ -1534,7 +1543,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                  out_axis_resources=AUTO)
 
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, _global_avals=True).compile()
+        compiled = f.lower(inp).compile()
         inputs = [create_gda(global_input_shape, global_mesh, ip, input_data)[0]
                   for ip in compiled.input_shardings[0]]
         out = compiled(*inputs)
@@ -1561,7 +1570,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                  out_axis_resources=AUTO)
 
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, _global_avals=True).compile()
+        compiled = f.lower(inp).compile()
         inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
                   for ip in compiled.input_shardings[0]]
         out = compiled(*inputs)
@@ -1585,7 +1594,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
       with global_mesh:
         f = pjit(lambda x: x, in_axis_resources=AUTO, out_axis_resources=AUTO)
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, _global_avals=True).compile()
+        compiled = f.lower(inp).compile()
 
         different_pspec = (P('y', 'x')
                            if compiled.input_shardings[0][0].spec == P(('x',), ('y',))
@@ -1609,7 +1618,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
       f = pjit(lambda x, y, z: (x, y, z), in_axis_resources=AUTO,
                out_axis_resources=AUTO)
       inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-      compiled = f.lower(inp, inp, inp, _global_avals=True).compile()
+      compiled = f.lower(inp, inp, inp).compile()
       self.assertLen(compiled.output_shardings, 3)
       self.assertLen(compiled.input_shardings[0], 3)
 
@@ -1637,7 +1646,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                  out_axis_resources=AUTO)
 
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, inp, _global_avals=True).compile()
+        compiled = f.lower(inp, inp).compile()
         inputs = [create_gda(global_input_shape, global_mesh, ip, input_data)[0]
                   for ip in compiled.input_shardings[0]]
         out1, out2 = compiled(*inputs)
@@ -1667,7 +1676,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                  out_axis_resources=AUTO)
 
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, inp, _global_avals=True).compile()
+        compiled = f.lower(inp, inp).compile()
         inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
                   for ip in compiled.input_shardings[0]]
         out1, out2 = compiled(*inputs)
@@ -1692,7 +1701,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                  out_axis_resources=AUTO)
 
         inp = jax.ShapedArray(input_data.shape, input_data.dtype)
-        compiled = f.lower(inp, _global_avals=True).compile()
+        compiled = f.lower(inp).compile()
         inputs = [create_array(global_input_shape, global_mesh, ip, input_data)[0]
                   for ip in compiled.input_shardings[0]]
         with self.assertRaisesRegex(
