@@ -991,22 +991,14 @@ def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_num
     return lhs_data, lhs_indices, lax.transpose(result, out_axes)
 
 def _bcoo_dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers, lhs_spinfo: SparseInfo):
-  lhs_data, lhs_indices, rhs = batched_args
-  batch_dims = list(batch_dims)
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip(batched_args, batch_dims))
-  if batch_dims[0] is None:
-    lhs_data = lhs_data[None]
-    batch_dims[0] = 0
-  if batch_dims[1] is None:
-    lhs_indices = lhs_indices[None]
-    batch_dims[1] = 0
-  # TODO: handle different batchings between lhs_data and lhs_indices?
-  assert batch_dims[0] == batch_dims[1] == 0
+  _, _, rhs = batched_args
+  _, _, rhs_bdim = batch_dims
+  new_lhs_data, new_lhs_indices, new_lhs_spinfo = _bcoo_batch_dims_to_front(
+    batched_args[:2], batch_dims[:2], lhs_spinfo,
+    batch_size=None if rhs_bdim is None else rhs.shape[rhs_bdim])
   new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
-      (len(lhs_spinfo.shape), rhs.ndim), (batch_dims[0], batch_dims[2]), dimension_numbers)
-  new_shape = (batch_size, *lhs_spinfo.shape)
-  batched_out = _bcoo_dot_general(lhs_data, lhs_indices, rhs, lhs_spinfo=SparseInfo(new_shape),
+      (len(lhs_spinfo.shape), rhs.ndim), (0, rhs_bdim), dimension_numbers)
+  batched_out = _bcoo_dot_general(new_lhs_data, new_lhs_indices, rhs, lhs_spinfo=new_lhs_spinfo,
                                   dimension_numbers=new_dimension_numbers)
   return batched_out, result_batch_dim
 
