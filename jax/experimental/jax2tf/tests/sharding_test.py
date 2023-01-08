@@ -13,7 +13,7 @@
 # limitations under the License.
 """Tests for the jax2tf conversion of pjit."""
 
-import functools
+from functools import partial
 import logging
 import os
 import re
@@ -28,7 +28,6 @@ from jax.config import config
 
 from jax.experimental import jax2tf
 from jax.experimental import pjit
-from jax.experimental.jax2tf.tests import tf_test_util
 from jax.interpreters.pxla import PartitionSpec as P
 import jax.numpy as jnp
 from jax._src.lib import xla_bridge
@@ -38,6 +37,14 @@ import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
 config.parse_flags_with_absl()
+
+# Must come after initializing the flags
+from jax.experimental.jax2tf.tests import tf_test_util
+from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
+
+skip_eager_for_partitioning = Jax2TfLimitation(
+    "pjit functions with partitioning must be under tf.function",
+    modes="eager", skip_tf_run=True)
 
 prev_xla_flags = None
 def setUpModule():
@@ -169,7 +176,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic1D(self):
 
-    @functools.partial(pjit.pjit,
+    @partial(pjit.pjit,
                        in_axis_resources=(P("x"), P("x")),
                        out_axis_resources=None)
     def jax_func(x, y):
@@ -195,7 +202,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic1D_variable(self):
     # The first argument is a tf.Variable
-    @functools.partial(pjit.pjit,
+    @partial(pjit.pjit,
                        in_axis_resources=(P("x"), P("x")),
                        out_axis_resources=None)
     def jax_func(x, y):
@@ -221,7 +228,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.with_mesh([("x", 2), ("y", 2)])
   def test_pjit_basic2D(self):
-    @functools.partial(pjit.pjit,
+    @partial(pjit.pjit,
                        in_axis_resources=(P(None, "x", "y"), P("y")),
                        out_axis_resources=P("x"))
     def jax_func(x, y):
@@ -250,7 +257,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.with_mesh([("x", 2), ("y", 2)])
   def test_pjit_TwoMeshAxisSharding(self):
-    @functools.partial(pjit.pjit,
+    @partial(pjit.pjit,
              in_axis_resources=P(("x", "y"),),
              out_axis_resources=P(("x", "y"),))
     def jax_func(x, y):
@@ -279,7 +286,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.with_mesh([("x", 2), ("y", 1)])
   def test_pjit_ShardingConstraint(self):
-    @functools.partial(pjit.pjit, in_axis_resources=None,
+    @partial(pjit.pjit, in_axis_resources=None,
                        out_axis_resources=None)
     def jax_func(x):  # x: f32[12, 8]
       y = jnp.tile(x, (2, 1))  # y: f32[24, 8]
@@ -306,6 +313,13 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
 
 
 class PjitTest(tf_test_util.JaxToTfTestCase):
+
+  def create_test_mesh(self, *axis_names):
+    """Creates a mesh with 2 axes"""
+    assert len(axis_names) == 2, axis_names
+    nr_devices = len(jax.devices())
+    mesh_shape = (2, 1) if nr_devices >= 2 else (1, 1)
+    return jtu.create_global_mesh(mesh_shape, axis_names)
 
   @jtu.with_mesh([("axis", 2)])
   def test_pjit_basic1D(self):
@@ -341,6 +355,51 @@ class PjitTest(tf_test_util.JaxToTfTestCase):
                                       out_axis_resources=None))(x)
     self.assertAllClose(res_tf.numpy(), res_jax)
 
+  @jtu.with_mesh([("x", 1)])
+  def test_pjit_closed_over_const(self):
+    const = jnp.full((4, 3), 7, dtype=np.float32)
+    @partial(pjit.pjit, in_axis_resources=(P("x"), None), out_axis_resources=None)
+    def func_jax(x, y):
+      return x + y * const
+
+    with self.create_test_mesh("x", "y"):
+      self.ConvertAndCompare(func_jax, jnp.ones((4, 3), dtype=np.float32),
+                             jnp.ones((1, 1), dtype=np.float32),
+                             limitations=[skip_eager_for_partitioning])
+
+  def test_pjit_closed_over_global_device_array(self):
+    global_mesh = self.create_test_mesh("x", "y")
+
+    input1 = np.arange(16).reshape(2, 8)
+    input2_raw = np.arange(16).reshape(8, 2)
+    input2_array = jax.make_array_from_callback(input2_raw.shape,
+                                                jax.sharding.NamedSharding(global_mesh, P("x", "y")),
+                                                lambda idx: input2_raw[idx])
+    @partial(pjit.pjit,
+             in_axis_resources=(P("y", "x"),),
+             out_axis_resources=None)
+    def jax_func(input_data):
+      return jnp.matmul(input_data, input2_array)
+
+    with global_mesh:
+      self.ConvertAndCompare(jax_func, input1,
+                             limitations=[skip_eager_for_partitioning])
+
+  def test_nested_pjit(self):
+    global_mesh = self.create_test_mesh("x", "y")
+    x = np.arange(16).reshape(2, 8)
+
+    def func_jax(x):
+      # We have a pjit nested inside the function to be converted
+      inner_func = pjit.pjit(
+          jnp.sin,
+          in_axis_resources=(P("y", "x"),),
+          out_axis_resources=None)
+      return inner_func(x)
+
+    with global_mesh:
+      self.ConvertAndCompare(func_jax, x,
+                             limitations=[skip_eager_for_partitioning])
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

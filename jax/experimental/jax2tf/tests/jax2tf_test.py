@@ -15,7 +15,6 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
-from functools import partial
 import os
 from typing import Callable, Dict, Optional, Tuple
 import unittest
@@ -33,12 +32,11 @@ from jax._src import test_util as jtu
 import jax._src.lib.xla_bridge
 from jax.config import config
 from jax.experimental import jax2tf
-from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.jax2tf.tests import tf_test_util
-from jax.experimental.pjit import FROM_GDA
-from jax.experimental.pjit import pjit
+from jax.experimental import pjit
 from jax.interpreters import mlir
 from jax.interpreters.pxla import PartitionSpec as P
+
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 # pylint: disable=g-direct-tensorflow-import
@@ -1231,59 +1229,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         include_xla_op_metadata=False
     )
 
-  @jtu.with_mesh([("x", 1)])
-  def test_pjit_simple(self):
-    @partial(pjit, in_axis_resources=(P("x"), None), out_axis_resources=None)
-    def func_jax(x, y):
-      return x + y
-
-    self.ConvertAndCompare(func_jax, jnp.ones((3, 4), dtype=np.float32),
-                           jnp.ones((1, 1), dtype=np.float32))
-
-  @jtu.with_mesh([("x", 1)])
-  def test_pjit_closed_over_const(self):
-    const = jnp.full((3, 4), 7, dtype=np.float32)
-    @partial(pjit, in_axis_resources=(P("x"), None), out_axis_resources=None)
-    def func_jax(x, y):
-      return x + y * const
-
-    self.ConvertAndCompare(func_jax, jnp.ones((3, 4), dtype=np.float32),
-                           jnp.ones((1, 1), dtype=np.float32))
-
-  # TODO(necula): figure out this failure
-  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
-  def test_global_device_array(self):
-
-    def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
-      if global_data is None:
-        global_data = np.arange(np.prod(global_shape)).reshape(global_shape)
-      return GlobalDeviceArray.from_callback(
-          global_shape, global_mesh, mesh_axes,
-          lambda idx: global_data[idx]), global_data
-
-    global_mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    mesh_axes = P(("x", "y"))
-    params, _ = create_gda((8, 2), global_mesh, mesh_axes)
-    input_data = np.arange(16).reshape(2, 8)
-
-    # Test 1: use GDA as constants
-    def jax_func(input_data):
-      handle = pjit(
-          jnp.matmul,
-          in_axis_resources=(P("y", "x"), FROM_GDA),
-          out_axis_resources=None)
-      return handle(input_data, params)
-
-    with global_mesh:
-      tf_func = tf.function(
-          jax2tf.convert(jax_func, enable_xla=True),
-          jit_compile=True, autograph=False
-      )
-      jax_out = jax_func(input_data=input_data)
-      tf_out = tf_func(input_data=input_data)
-      # TODO(b/243146552) We can switch to ConvertAndCompare after this bug fix.
-      np.array_equal(jax_out._value, np.array(tf_out))
-
   def assertAllOperationStartWith(self, g: tf.Graph, scope_name: str):
     """Assert all operations name start with ```scope_name```.
 
@@ -1400,7 +1345,7 @@ def get_serialized_computation(
     out_axis_resources = None) -> str:
   if use_pjit:
     assert not abstracted_axes
-    lowered = pjit(f_jax,
+    lowered = pjit.pjit(f_jax,
                    in_axis_resources=in_axis_resources,
                    out_axis_resources=out_axis_resources).lower(*args)
   else:
@@ -1503,7 +1448,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     in_axis_resources = (P("x"), P("x"))
     out_axis_resources = None
-    res_jax = pjit(
+    res_jax = pjit.pjit(
         func_jax,
         in_axis_resources=in_axis_resources,
         out_axis_resources=out_axis_resources)(x, x)
