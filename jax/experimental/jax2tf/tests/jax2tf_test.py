@@ -15,6 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
+from functools import partial
 import os
 from typing import Callable, Dict, Optional, Tuple
 import unittest
@@ -1229,6 +1230,25 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         [],
         include_xla_op_metadata=False
     )
+
+  @jtu.with_mesh([("x", 1)])
+  def test_pjit_simple(self):
+    @partial(pjit, in_axis_resources=(P("x"), None), out_axis_resources=None)
+    def func_jax(x, y):
+      return x + y
+
+    self.ConvertAndCompare(func_jax, jnp.ones((3, 4), dtype=np.float32),
+                           jnp.ones((1, 1), dtype=np.float32))
+
+  @jtu.with_mesh([("x", 1)])
+  def test_pjit_closed_over_const(self):
+    const = jnp.full((3, 4), 7, dtype=np.float32)
+    @partial(pjit, in_axis_resources=(P("x"), None), out_axis_resources=None)
+    def func_jax(x, y):
+      return x + y * const
+
+    self.ConvertAndCompare(func_jax, jnp.ones((3, 4), dtype=np.float32),
+                           jnp.ones((1, 1), dtype=np.float32))
 
   # TODO(necula): figure out this failure
   @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
