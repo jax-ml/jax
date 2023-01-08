@@ -159,14 +159,11 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
     else:
       fastpath_data = None
 
-
     return outs, fastpath_data
 
   cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
-      cache_miss,
-      static_argnums,
-      static_argnames)
+      cache_miss, static_argnums, static_argnames)
 
   return wraps(fun)(cpp_pjit_f)
 
@@ -450,7 +447,7 @@ def pjit(
         hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
         tuple(isinstance(a, GDA) for a in args_flat), resource_env)
 
-    jaxpr, canonicalized_out_shardings_flat = _pjit_jaxpr(
+    jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
         flat_fun, hashable_pytree(out_shardings), global_in_avals,
         HashableFunction(out_tree, closure=()))
 
@@ -458,6 +455,15 @@ def pjit(
         not config.jax_array):
       canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
           canonicalized_in_shardings_flat, args_flat)
+
+    assert len(args_flat) == len(canonicalized_in_shardings_flat)
+
+    canonicalized_in_shardings_flat = (
+        _UNSPECIFIED,) * len(consts) + canonicalized_in_shardings_flat
+    donated_invars = (False,) * len(consts) + donated_invars
+    in_positional_semantics = (
+        pxla._PositionalSemantics.GLOBAL,) * len(consts) + in_positional_semantics
+
     # in_shardings and out_shardings here are all OpShardingSharding.
     params = dict(
         jaxpr=jaxpr,
@@ -471,7 +477,7 @@ def pjit(
         keep_unused=keep_unused,
         inline=inline,
     )
-    return (args_flat, local_in_avals, params, in_tree, out_tree(),
+    return (consts + args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
   if FLAGS.experimental_cpp_pjit and xla_extension_version >= 115:
@@ -699,7 +705,14 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
   finally:
     pxla._positional_semantics.val = prev_positional_val
-  jaxpr = core.ClosedJaxpr(jaxpr, consts)
+
+  if any(isinstance(c, core.Tracer) for c in consts):
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr = pe.close_jaxpr(jaxpr)
+    final_consts = consts
+  else:
+    jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    final_consts = []
 
   out_shardings_flat = flatten_axis_resources(
       "pjit out_axis_resources", out_tree(), out_shardings_thunk(), tupled_args=False)
@@ -713,7 +726,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   )
 
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
-  return _ListWithW([jaxpr, canonicalized_out_shardings_flat])
+  return _ListWithW([jaxpr, final_consts, canonicalized_out_shardings_flat])
 
 
 def pjit_check_aval_sharding(
@@ -981,7 +994,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
                                       'multiple devices is not supported.')
     else:
       if isinstance(arg, np.ndarray) and not pxla.is_op_sharding_replicated(
-          pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:
+          pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:  # type: ignore
         raise ValueError(
             'When jax.Array is enabled, passing non-trivial shardings for numpy '
             'inputs is not allowed. To fix this error, either specify a '
@@ -999,7 +1012,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not pxla.are_op_shardings_equal(
-                pjit_in_s._to_xla_op_sharding(arg.ndim),
+                pjit_in_s._to_xla_op_sharding(arg.ndim),  # type: ignore
                 arg_s._to_xla_op_sharding(arg.ndim))):
           op =  getattr(pjit_in_s, '_original_sharding', pjit_in_s)
           raise ValueError('Sharding passed to pjit does not match the sharding '
@@ -1179,9 +1192,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics,
                    keep_unused, inline):
-  if not isinstance(ctx.module_context.axis_context,
-                    (mlir.SPMDAxisContext, mlir.ShardingContext)):
-    raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
+  if not config.jax_array:
+    if not isinstance(ctx.module_context.axis_context,
+                      (mlir.SPMDAxisContext, mlir.ShardingContext)):
+      raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
 
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   flat_output_types = util.flatten(output_types)

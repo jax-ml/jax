@@ -3069,6 +3069,66 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, pmap_out * 2)
     self.assertLen(out.devices(), 4)
 
+  def test_nested_pjit_closing_over_tracer(self):
+    @pjit
+    def f(x):
+      y = jnp.float32(2) * x
+
+      @pjit
+      def g(z):
+        return jax.pmap(lambda x: x[jnp.newaxis] * y)(z)
+
+      return g(x)
+
+    f(np.arange(1., dtype='float32').reshape((1, 1)))  # doesn't crash
+    # Second call is to trigger C++ dispatch.
+    f(np.arange(1., dtype='float32').reshape((1, 1)))  # doesn't crash
+
+  def test_aot_nested_pjit_closing_over_const_top_level(self):
+    const = jnp.arange(8.)
+
+    @pjit
+    def f(x):
+      return const * 2 + x
+
+    inp = jnp.arange(8.)
+    compiled = f.lower(inp).compile()
+    self.assertArraysEqual(compiled(inp), const * 2 + inp)
+
+  def test_nested_pjit_closing_over_const_top_level_and_tracer(self):
+    const = jnp.arange(8.)
+
+    @pjit
+    def f(x):
+      y = jnp.arange(8., 16.) * x + const
+
+      @pjit
+      def g(z):
+        return z + y * 2 + const
+
+      return g(x)
+
+    f(jnp.arange(8.))  # doesn't crash
+    # Second call is to trigger C++ dispatch.
+    f(jnp.arange(8.))  # doesn't crash
+
+  def test_nested_pjit_closing_over_top_level_const(self):
+    const = jnp.arange(8.)
+
+    @pjit
+    def f(x):
+
+      @pjit
+      def g(z):
+        return z + const
+
+      return g(x)
+
+    inp = jnp.arange(8., 16.)
+    f(inp)  # doesn't crash
+    # Second call is to trigger C++ dispatch.
+    f(inp)  # doesn't crash
+
 
 class TempSharding(Sharding):
 
