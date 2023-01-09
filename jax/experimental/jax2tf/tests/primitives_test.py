@@ -122,11 +122,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         device in ("tpu",)):
       raise unittest.SkipTest("b/262580493")
 
-    if ("dynamic_update_slice" in harness.fullname and
-        not enable_xla and
-        device == "tpu"):
-      raise unittest.SkipTest("b/264668139: error on tf.strided_slice")
-
     if ("eigh" == harness.group_name and
         np.complex64 == harness.dtype and
         device == "tpu"):
