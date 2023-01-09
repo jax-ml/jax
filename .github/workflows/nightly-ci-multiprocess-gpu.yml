@@ -38,7 +38,7 @@ jobs:
           if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
           if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
       - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@a3caf02865c0604ad3dc1ecfcc5cdec9c41b7936 # ratchet:EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           junit_files: "outputs/*.xml"
@@ -73,7 +73,7 @@ jobs:
           if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
           if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
       - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@a3caf02865c0604ad3dc1ecfcc5cdec9c41b7936 # ratchet:EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           junit_files: "outputs/*.xml"
