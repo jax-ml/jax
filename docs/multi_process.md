@@ -78,11 +78,12 @@ jax.distributed.initialize(coordinator_address="192.168.0.1:1234",
                            process_id=0)
 ```
 
-On Cloud TPU and Slurm environments, you can simply call {func}`jax.distributed.initialize()` with no
+On Cloud TPU, Slurm and Open MPI environments, you can simply call {func}`jax.distributed.initialize()` with no
 arguments. Default values for the arguments will be chosen automatically.
-When running on GPUs with Slurm, it is assumed that one process is started per GPU, i.e. each process will
+When running on GPUs with Slurm and Open MPI, it is assumed that one process is started per GPU, i.e. each process will
 be assigned only one visible local device. Otherwise it is assumed that one process is started per host,
 i.e. each process will be assigned all local devices.
+The Open MPI auto-initialization is only used when the JAX processes are launched via `mpirun`/`mpiexec`.
 
 ```python
 import jax
