@@ -52,6 +52,8 @@ from typing import Dict, List, Sequence, Tuple
 from pyglib import gfile
 from pyglib import resources
 
+import tensorflow as tf
+
 from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESSES
 from jax.experimental.jax2tf.tests.converters import ALL_CONVERTERS
 
@@ -168,6 +170,12 @@ def test_converters():
     if FLAGS.fail_on_error:
       raise e
 
+  def _format(e):
+    # InvalidArgumentError output is shown differently.
+    msg = str(e) if repr(e).strip() == "InvalidArgumentError()" else repr(e)
+    msg = msg.replace("\n\n", "\n")  # Output newlines correctly.
+    return msg
+
   converters = list(
       filter(lambda x: x.name in FLAGS.converters, ALL_CONVERTERS))
   _exit_if_empty(converters, "converters")
@@ -199,22 +207,22 @@ def test_converters():
         if not converter.compare_numerics:
           print("=== Skipping numerical comparison.")
         else:
-          xs = [_get_random_data(x) for x in harness.inputs]
+          xs = [jax.tree_util.tree_map(_get_random_data, x) for x in harness.inputs]
           jax_result = harness.apply_with_vars(*xs)
           try:
             tf_result = apply_tf(*xs)
             jax.tree_map(np_assert_allclose, jax_result, tf_result)
             print("=== Numerical comparison OK!")
           except AssertionError as e:
-            error_msg = repr(e).replace("\n\n", "\n")  # Output newlines.
-            error_msg = "Numerical comparison error:\n" + error_msg
-            print(f"=== {error_msg}")
+            error_msg = "Numerical comparison error:\n" + _format(e)
+            print("===", error_msg)
             _maybe_reraise(e)
-          except RuntimeError as e:
-            # TFLite sometimes throws a runtime error during inference.
-            error_msg = repr(e).replace("\n\n", "\n")  # Output newlines.
-            print(f"=== {error_msg}")
+          except (RuntimeError, tf.errors.InvalidArgumentError) as e:
+            # TF sometimes throws a runtime error during inference.
+            error_msg = _format(e)
+            print("=== ", error_msg)
             _maybe_reraise(e)
+
       converter_results.append((converter.name, error_msg))
     results[harness.name] = converter_results
 

@@ -16,6 +16,9 @@ details on the different converters.
 | --- | --- | --- | --- | --- | --- |
 | flax/actor_critic | YES | YES | YES | YES | YES |
 | flax/bilstm | YES | YES | YES | [NO](#example-flaxbilstm--converter-jax2tflite) |  [NO](#example-flaxbilstm--converter-jax2tfliteflex) | 
+| flax/cnn | YES | YES | YES | YES | YES |
+| flax/gnn | YES |  [NO](#example-flaxgnn--converter-jax2tf_noxla) |  [NO](#example-flaxgnn--converter-jax2tfjs) |  [NO](#example-flaxgnn--converter-jax2tflite) |  [NO](#example-flaxgnn--converter-jax2tfliteflex) | 
+| flax/gnn_conv | YES |  [NO](#example-flaxgnn_conv--converter-jax2tf_noxla) |  [NO](#example-flaxgnn_conv--converter-jax2tfjs) |  [NO](#example-flaxgnn_conv--converter-jax2tflite) |  [NO](#example-flaxgnn_conv--converter-jax2tfliteflex) | 
 | flax/resnet50 | YES | YES | YES | YES | YES |
 | flax/seq2seq_lstm | YES | YES | [NO](#example-flaxseq2seq_lstm--converter-jax2tfjs) |  [NO](#example-flaxseq2seq_lstm--converter-jax2tflite) |  YES |
 | flax/lm1b | YES | YES | YES | YES | YES |
@@ -25,7 +28,6 @@ details on the different converters.
 
 ## Errors
 
-## `flax/actor_critic`
 ## `flax/bilstm`
 ### Example: `flax/bilstm` | Converter: `jax2tflite`
 ```
@@ -39,13 +41,68 @@ RuntimeError('third_party/tensorflow/lite/kernels/concatenation.cc:159 t->dims->
 ```
 [Back to top](#summary-table)
 
-## `flax/resnet50`
+## `flax/gnn`
+### Example: `flax/gnn` | Converter: `jax2tf_noxla`
+```
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
+### Example: `flax/gnn` | Converter: `jax2tfjs`
+```
+Conversion error
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
+### Example: `flax/gnn` | Converter: `jax2tflite`
+```
+Conversion error
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
+### Example: `flax/gnn` | Converter: `jax2tflite+flex`
+```
+Conversion error
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
+## `flax/gnn_conv`
+### Example: `flax/gnn_conv` | Converter: `jax2tf_noxla`
+```
+{{function_node __wrapped__UnsortedSegmentSum_device_/job:localhost/replica:0/task:0/device:CPU:0}} segment_ids[0] = 78 is out of range [0, 52) [Op:UnsortedSegmentSum]
+```
+[Back to top](#summary-table)
+
+### Example: `flax/gnn_conv` | Converter: `jax2tfjs`
+```
+Conversion error
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
+### Example: `flax/gnn_conv` | Converter: `jax2tflite`
+```
+Conversion error
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
+### Example: `flax/gnn_conv` | Converter: `jax2tflite+flex`
+```
+Conversion error
+NotImplementedError("Call to reduce_window cannot be converted with enable_xla=False. Add pooling does not support operands of type <dtype: 'int32'> - See source code for the precise conditions under which it can be converted without XLA.")
+```
+[Back to top](#summary-table)
+
 ## `flax/seq2seq_lstm`
 ### Example: `flax/seq2seq_lstm` | Converter: `jax2tfjs`
 ```
 Conversion error
 ValueError('Unsupported Ops in the model before optimization
-BitwiseOr, BitwiseAnd, BitwiseXor, LeftShift, RightShift, Bitcast')
+Bitcast, BitwiseOr, BitwiseAnd, LeftShift, RightShift, BitwiseXor')
 ```
 [Back to top](#summary-table)
 

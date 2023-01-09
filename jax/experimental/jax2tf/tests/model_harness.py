@@ -14,7 +14,7 @@
 """All the models to convert."""
 import dataclasses
 import functools
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, Sequence
 
 import numpy as np
 import jraph
@@ -30,6 +30,7 @@ from jax.experimental.jax2tf.tests.flax_models import transformer_nlp_seq as nlp
 from jax.experimental.jax2tf.tests.flax_models import transformer_wmt as wmt
 from jax.experimental.jax2tf.tests.flax_models import vae
 
+import jax
 from jax import random
 
 import tensorflow as tf
@@ -45,9 +46,10 @@ class ModelHarness:
 
   @property
   def tf_input_signature(self):
-    return [
-        tf.TensorSpec(x.shape, tf.dtypes.as_dtype(x.dtype)) for x in self.inputs
-    ]
+    def _to_tensorspec(x):
+      return tf.TensorSpec(x.shape, tf.dtypes.as_dtype(x.dtype))
+
+    return [jax.tree_util.tree_map(_to_tensorspec, xs) for xs in self.inputs]
 
   def apply_with_vars(self, *args, **kwargs):
     return self.apply(self.variables, *args, **kwargs)
@@ -79,11 +81,11 @@ def _bilstm_harness(name):
   return ModelHarness(name, apply, variables, [x, lengths])
 
 
-def _cnn_harness():
+def _cnn_harness(name):
   model = cnn.CNN()
   x = np.zeros((1, 28, 28, 1), np.float32)
   variables = model.init(random.PRNGKey(0), x)
-  return ModelHarness('flax/cnn', model.apply, variables, [x])
+  return ModelHarness(name, model.apply, variables, [x])
 
 
 def _get_gnn_graphs():
@@ -105,7 +107,7 @@ def _get_gnn_graphs():
   return graphs
 
 
-def _gnn_harness():
+def _gnn_harness(name):
   # Setting taken from flax/examples/ogbg_molpcba/models_test.py.
   rngs = {
       'params': random.PRNGKey(0),
@@ -118,11 +120,11 @@ def _gnn_harness():
       message_passing_steps=2,
       output_globals_size=15,
       use_edge_model=True)
-  variables = lambda: model.init(rngs, graphs)
-  return ModelHarness('flax/gnn', model.apply, variables, [graphs])
+  variables = model.init(rngs, graphs)
+  return ModelHarness(name, model.apply, variables, [graphs], rtol=2e-4)
 
 
-def _gcn_harness():
+def _gnn_conv_harness(name):
   # Setting taken from flax/examples/ogbg_molpcba/models_test.py.
   rngs = {
       'params': random.PRNGKey(0),
@@ -135,7 +137,7 @@ def _gcn_harness():
       message_passing_steps=2,
       output_globals_size=5)
   variables = model.init(rngs, graphs)
-  return ModelHarness('flax/gnn_conv', model.apply, variables, [graphs])
+  return ModelHarness(name, model.apply, variables, [graphs])
 
 
 def _resnet50_harness(name):
@@ -234,10 +236,9 @@ def _vae_harness(name):
 ALL_HARNESSES: Dict[str, Callable[[str], ModelHarness]] = {
     'flax/actor_critic': _actor_critic_harness,
     'flax/bilstm': _bilstm_harness,
-    # TODO(marcvanzee): GNNs currently do not work since their __call__
-    # function takes a jraph.GraphsTuple as an argument, which we don't support.
-    # 'flax/gnn': _gnn_harness,
-    # 'flax/gnn_conv': _gnn_conv_harness,
+    'flax/cnn': _cnn_harness,
+    'flax/gnn': _gnn_harness,
+    'flax/gnn_conv': _gnn_conv_harness,
     'flax/resnet50': _resnet50_harness,
     'flax/seq2seq_lstm': _seq2seq_lstm_harness,
     'flax/lm1b': _transformer_lm1b_harness,
