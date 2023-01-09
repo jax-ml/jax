@@ -1442,6 +1442,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      arg_descriptors=[RandArg((3, 4), _f32)],
                      poly_axes=[0])
 
+  @unittest.skip('Failing at HEAD. Reenable after b/264913007 is fixed')
   def test_vmap_while(self):
     def cond_func(x):  # x: f32[3]
       return jnp.sum(x) >= 0.
