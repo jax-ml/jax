@@ -39,18 +39,11 @@ import os
 import re
 import jax
 
-from jax.config import config
-
-config.parse_flags_with_absl()
-
 from jax._src import dtypes
 import jax.numpy as jnp
 
 import datetime
 from typing import Dict, List, Sequence, Tuple
-
-from pyglib import gfile
-from pyglib import resources
 
 import tensorflow as tf
 
@@ -123,7 +116,7 @@ def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
   output_path = os.path.join(g3doc_path, "convert_models_results.md")
   template_path = output_path + ".template"
 
-  template = resources.GetResource(template_path).decode("utf-8")
+  template = "".join(open(template_path).readlines())
   template = template.replace("{{generation_date}}", str(datetime.date.today()))
   template = template.replace("{{table}}", "\n".join(table_lines))
   template = template.replace("{{errors}}", "\n".join(error_lines))
@@ -131,7 +124,7 @@ def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
   if (workdir := "BUILD_WORKING_DIRECTORY") in os.environ:
     os.chdir(os.path.dirname(os.environ[workdir]))
 
-  with gfile.Open(output_path, "w") as f:
+  with tf.io.gfile.GFile(output_path, "w") as f:
     f.write(template)
 
   print("Written converter results to", output_path)
