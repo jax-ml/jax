@@ -131,6 +131,8 @@ def initialize(coordinator_address: Optional[str] = None,
       port does not matter, so long as the port is available on the coordinator
       and all processes agree on the port.
       May be ``None`` only on supported environments, in which case it will be chosen automatically.
+      Note that special addresses like ``localhost`` or ``127.0.0.1`` usually mean that the program
+      will bind to a local interface and are not suited when running in a multi-node environment.
     num_processes: Number of processes. May be ``None`` only on supported environments, in
       which case it will be chosen automatically.
     process_id: The ID number of the current process. The ``process_id`` values across
