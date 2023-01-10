@@ -54,6 +54,7 @@ from pyglib import resources
 
 import tensorflow as tf
 
+from jax.experimental.jax2tf.shape_poly import InconclusiveDimensionOperation
 from jax.experimental.jax2tf.tests.model_harness import ALL_HARNESSES
 from jax.experimental.jax2tf.tests.converters import ALL_CONVERTERS
 
@@ -63,6 +64,11 @@ flags.DEFINE_list("converters", [x.name for x in ALL_CONVERTERS],
 flags.DEFINE_list("examples", [],
                   ("List of examples to test, e.g.: 'flax/mnist,flax/seq2seq'. "
                    "If empty, will test all examples."))
+
+flags.DEFINE_string("example_prefix", "",
+                    ("Prefix for filtering tests. For instance 'flax/mnist' "
+                     "will test all examples starting with 'flax/mnist' "
+                     "(including all polymorphic tests)."))
 
 flags.DEFINE_bool(
     "write_markdown", True,
@@ -94,7 +100,7 @@ def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
   for example_name, converter_results in results.items():
     # Make sure the converters are in the right order.
     assert [c[0] for c in converter_results] == converters
-    line = f"| {example_name} |"
+    line = f"| `{example_name}` |"
     example_error_lines = []
     for converter_name, error_msg in converter_results:
       if not error_msg:
@@ -105,7 +111,7 @@ def _write_markdown(results: Dict[str, List[Tuple[str, str,]]]) -> None:
         example_error_lines.append("### " + error_header)
         example_error_lines.append(f"```\n{error_msg}\n```")
         example_error_lines.append("[Back to top](#summary-table)\n")
-        line += f" [NO]({_header2anchor(error_header)}) | "
+        line += f" [NO]({_header2anchor(error_header)}) |"
     table_lines.append(line)
 
     if example_error_lines:
@@ -182,13 +188,14 @@ def test_converters():
 
   harnesses_to_test = {
       name: fn for name, fn in ALL_HARNESSES.items()
-      if not FLAGS.examples or name in FLAGS.examples
+      if (not FLAGS.examples or name in FLAGS.examples) and
+         (not FLAGS.example_prefix or name.startswith(FLAGS.example_prefix))
   }
   _exit_if_empty(harnesses_to_test, "harness")
 
   results = {}
   for name, harness_fn in harnesses_to_test.items():
-    harness = harness_fn(name)  # This will create the variables.
+    harness = harness_fn()  # This will create the variables.
     np_assert_allclose = functools.partial(
         np.testing.assert_allclose, rtol=harness.rtol)
     converter_results = []
@@ -217,8 +224,18 @@ def test_converters():
             error_msg = "Numerical comparison error:\n" + _format(e)
             print("===", error_msg)
             _maybe_reraise(e)
-          except (RuntimeError, tf.errors.InvalidArgumentError) as e:
-            # TF sometimes throws a runtime error during inference.
+          # Catch remaining but expected errors (we still want to fail on
+          # unexpected errors).
+          except (
+              # TFLite runtime error
+              RuntimeError,
+              # TF error
+              tf.errors.InvalidArgumentError,
+              # jax2tf poly shape errors.
+              InconclusiveDimensionOperation,
+              TypeError,
+              IndexError,
+              ValueError) as e:
             error_msg = _format(e)
             print("=== ", error_msg)
             _maybe_reraise(e)
