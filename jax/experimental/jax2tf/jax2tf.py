@@ -624,12 +624,11 @@ def _lower_native_and_run(fun_jax: Callable,
     for aval in args_avals
   ]
   # TODO: specify the backend for experimental_native_lowering
-  backend = jax.default_backend()
   if not hasattr(fun_jax, "lower") or abstracted_axes:
     # We support convert(pjit(f_jax, ...)) and convert(jit(f_jax)) but also
     # convert(f_jax), in which case a "jit" is implied. We also add a jit when
     # we need to pass the abstracted axes.
-    fun_jax_lower = jax.jit(fun_jax, backend=backend,
+    fun_jax_lower = jax.jit(fun_jax,
                             abstracted_axes=abstracted_axes).lower
   else:
     fun_jax_lower = fun_jax.lower
