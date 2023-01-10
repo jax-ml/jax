@@ -186,6 +186,8 @@ class _Bfloat16MachArLike:
   def __init__(self):
     smallest_normal = float.fromhex("0x1p-126")
     self.smallest_normal = bfloat16(smallest_normal)
+    smallest_subnormal = float.fromhex("0x1p-133")
+    self.smallest_subnormal = bfloat16(smallest_subnormal)
 
 
 class finfo(np.finfo):
@@ -215,11 +217,15 @@ class finfo(np.finfo):
     obj.nexp = 8
     obj.nmant = 7
     obj.iexp = obj.nexp
+    obj.maxexp = 128
     obj.precision = 2
     obj.resolution = bfloat16(resolution)
     obj._machar = _Bfloat16MachArLike()
     if not hasattr(obj, "tiny"):
       obj.tiny = bfloat16(tiny)
+    if not hasattr(obj, "smallest_normal"):
+      obj.smallest_normal = obj._machar.smallest_normal
+    obj.smallest_subnormal = obj._machar.smallest_subnormal
 
     obj._str_tiny = float_to_str(tiny)
     obj._str_smallest_normal = float_to_str(tiny)

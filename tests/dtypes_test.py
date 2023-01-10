@@ -294,6 +294,53 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(dtypes.float_, np.float32 if precision == '32' else np.float64)
     self.assertEqual(dtypes.complex_, np.complex64 if precision == '32' else np.complex128)
 
+  @parameterized.named_parameters(
+      {"testcase_name": f"_{dtype}", "dtype": dtype}
+      for dtype in float_dtypes)
+  def testFInfo(self, dtype):
+    # Check that finfo attributes are self-consistent & reflect observed behavior.
+    dtype = np.dtype(dtype)
+
+    if dtype == np.float64 and not config.x64_enabled:
+      self.skipTest("x64 not enabled")
+    info = dtypes.finfo(dtype)
+
+    def make_val(val):
+      return jnp.array(val, dtype=dtype)
+
+    def assertRepresentable(val):
+      self.assertEqual(make_val(val).item(), val)
+
+    @jtu.ignore_warning(category=RuntimeWarning, message="overflow")
+    def assertInfinite(val):
+      self.assertEqual(make_val(val), make_val(jnp.inf))
+
+    def assertZero(val):
+      self.assertEqual(make_val(val), make_val(0))
+
+    self.assertEqual(jnp.array(0, dtype).dtype, dtype)
+    self.assertIs(info.dtype, dtype)
+
+    self.assertEqual(info.bits, jnp.array(0, dtype).itemsize * 8)
+    self.assertEqual(info.nmant + info.nexp + 1, info.bits)
+
+    assertRepresentable(info.tiny)
+    assertRepresentable(info.smallest_subnormal)
+    assertRepresentable(info.max)
+    assertRepresentable(2.0 ** (info.maxexp - 1))
+
+    if dtype != np.float64:  # avoid Python float overflows
+      assertInfinite(info.max * 2)
+      assertInfinite(2. ** info.maxexp)
+    assertZero(info.smallest_subnormal * 0.5)
+
+    # Identities according to the documentation:
+    self.assertAllClose(info.resolution, make_val(10 ** -info.precision))
+    self.assertEqual(info.tiny, info.smallest_normal)
+    self.assertEqual(info.epsneg, make_val(2 ** info.negep))
+    self.assertEqual(info.eps, make_val(2 ** info.machep))
+    self.assertEqual(info.iexp, info.nexp)
+
 
 class TestPromotionTables(jtu.JaxTestCase):
 
