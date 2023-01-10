@@ -325,18 +325,21 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(info.nmant + info.nexp + 1, info.bits)
 
     assertRepresentable(info.tiny)
-    assertRepresentable(info.smallest_subnormal)
     assertRepresentable(info.max)
     assertRepresentable(2.0 ** (info.maxexp - 1))
 
     if dtype != np.float64:  # avoid Python float overflows
       assertInfinite(info.max * 2)
       assertInfinite(2. ** info.maxexp)
-    assertZero(info.smallest_subnormal * 0.5)
+
+    # smallest_normal & smallest_subnormal added in numpy 1.22
+    if jtu.numpy_version() >= (1, 22, 0):
+      assertRepresentable(info.smallest_subnormal)
+      assertZero(info.smallest_subnormal * 0.5)
+      self.assertEqual(info.tiny, info.smallest_normal)
 
     # Identities according to the documentation:
     self.assertAllClose(info.resolution, make_val(10 ** -info.precision))
-    self.assertEqual(info.tiny, info.smallest_normal)
     self.assertEqual(info.epsneg, make_val(2 ** info.negep))
     self.assertEqual(info.eps, make_val(2 ** info.machep))
     self.assertEqual(info.iexp, info.nexp)
