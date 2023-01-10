@@ -822,7 +822,9 @@ def _gather_for_scalar_indexing(args: GatherArgs):
   shrink_mask = sum(2**x for x in args.dnums.collapsed_slice_dims)
   res = tf.strided_slice(args.operand, begin, end, shrink_axis_mask=shrink_mask)
   # Shape inference doesn't work for tf.strided_slice.
-  res.set_shape(jax2tf._aval_to_tf_shape(args.out_aval))
+  res = jax2tf._ensure_tf_shape_if_dynamic(
+      res, jax2tf._aval_to_tf_shape(args.out_aval)
+  )
   return res
 
 

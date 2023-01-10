@@ -116,11 +116,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     enable_xla = harness.params.get("enable_xla", True)
     if config.jax2tf_default_experimental_native_lowering and not enable_xla:
       raise unittest.SkipTest("experimental_native_lowering not supported with enable_xla=False")
-    if ("gather_from_take_indices" in harness.fullname and
-        "fill" in harness.fullname and
-        not enable_xla and
-        device in ("tpu",)):
-      raise unittest.SkipTest("b/262580493")
 
     if ("eigh" == harness.group_name and
         np.complex64 == harness.dtype and
