@@ -1761,7 +1761,12 @@ ad.defjvp2(exp_p, lambda g, ans, x: mul(g, ans))
 mlir.register_lowering(exp_p, partial(_nary_lower_hlo, hlo.ExpOp))
 
 log_p = standard_unop(_float | _complex, 'log')
-ad.defjvp(log_p, lambda g, x: div(g, x))
+def _log_jvp(g, x):
+  result = div(g, x)
+  if dtypes.issubdtype(_dtype(x), np.complexfloating):
+    return result
+  return select(ge(x, _const(x, 0)), result, mul(g, _const(x, np.nan)))
+ad.defjvp(log_p, _log_jvp)
 mlir.register_lowering(log_p, partial(_nary_lower_hlo, hlo.LogOp))
 
 expm1_p = standard_unop(_float | _complex, 'expm1')
@@ -1769,7 +1774,7 @@ ad.defjvp2(expm1_p, lambda g, ans, x: mul(g, add(ans, _one(ans))))
 mlir.register_lowering(expm1_p, partial(_nary_lower_hlo, hlo.Expm1Op))
 
 log1p_p = standard_unop(_float | _complex, 'log1p')
-ad.defjvp(log1p_p, lambda g, x: div(g, add(x, _one(x))))
+ad.defjvp(log1p_p, lambda g, x: _log_jvp(g, add(x, _one(x))))
 mlir.register_lowering(log1p_p, partial(_nary_lower_hlo, hlo.Log1pOp))
 
 tanh_p = standard_unop(_float | _complex, 'tanh')
