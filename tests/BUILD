@@ -274,6 +274,7 @@ py_test(
 jax_test(
     name = "jaxpr_util_test",
     srcs = ["jaxpr_util_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 jax_test(

@@ -37,7 +37,12 @@ class JaxprStatsTest(jtu.JaxTestCase):
 
     hist = jaxpr_util.primitives(make_jaxpr(f)(1., 1.).jaxpr)
 
-    for k in ['add', 'sin', 'cos', 'xla_call']:
+    primitives = ['add', 'sin', 'cos']
+    if jax.config.jax_jit_pjit_api_merge:
+      primitives.append('pjit')
+    else:
+      primitives.append('xla_call')
+    for k in primitives:
       assert k in hist, k
     self.assertEqual(hist['sin'], 2)
     self.assertTrue(all(count == 1 for k, count in hist.items() if k != 'sin'))
@@ -71,8 +76,11 @@ class JaxprStatsTest(jtu.JaxTestCase):
         f'cos :: float{t}[]',
         f'reduce_sum :: float{t}[]',
         f'concatenate :: float{t}[2]',
-        f'xla_call :: float{t}[] *',
     ]
+    if jax.config.jax_jit_pjit_api_merge:
+      shapes.append(f'pjit :: float{t}[] *')
+    else:
+      shapes.append(f'xla_call :: float{t}[] *')
     for k in shapes:
       self.assertEqual(hist[k], 1)
 
