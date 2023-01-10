@@ -371,7 +371,7 @@ def xmap(fun: Callable,
       should not reuse buffers that you donate to a computation, JAX will raise
       an error if you try to.
 
-      For more details on buffer donation see the [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+      For more details on buffer donation see the `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
 
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend. 'cpu', 'gpu', or 'tpu'.
