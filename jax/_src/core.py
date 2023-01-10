@@ -368,7 +368,6 @@ def _effect_free_abstract_eval(abstract_eval):
 
 # TODO(mattjj): replace this approach with a primitive-keyed table of rules
 def traverse_jaxpr_params(f, params):
-  """Applies f to each jaxpr parameter and returns a tuple of returned values."""
   return {name: f(p)
           for name, param in params.items()
           for p in (param if isinstance(param, (tuple, list)) else [param])
