@@ -3454,11 +3454,20 @@ class UnloadedMeshExecutable:
         _, out_shardings_xla = _get_op_sharding_shardings_from_executable(
             xla_executable, device_assignment,
             len(global_in_avals), len(global_out_avals))
-        out_shardings_tuple = [
-            (x, True) if _is_unspecified(o) else (o, False)
-            for x, o in safe_zip(out_shardings_xla, out_shardings)
-        ]
-        out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
+        orig_out_shardings = out_shardings
+        out_shardings = []
+        are_out_shardings_from_xla = []
+        for x, o, aval in safe_zip(out_shardings_xla, orig_out_shardings, global_out_avals):
+          if _is_unspecified(o):
+            out_shardings.append(x)
+            are_out_shardings_from_xla.append(True)
+          else:
+            if not are_op_shardings_equal(x._to_xla_op_sharding(aval.ndim),  # type: ignore
+                                          o._to_xla_op_sharding(aval.ndim)):  # type: ignore
+              raise AssertionError(
+                  f"Unexpected XLA sharding override: (XLA) {x} != {o} (User sharding)")
+            out_shardings.append(o)
+            are_out_shardings_from_xla.append(False)
       else:
         are_out_shardings_from_xla = (False,) * len(global_out_avals)
 

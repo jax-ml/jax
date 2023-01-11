@@ -569,6 +569,20 @@ class PJitTest(jtu.BufferDonationTestCase):
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testAutodiffCache(self):
+    f = pjit(lambda x: jnp.sin(x).sum(),
+             in_axis_resources=P('x'), out_axis_resources=None)
+    x = jnp.arange(16, dtype=jnp.float32)
+    jax.grad(f)(x)  # Warm up the cache.
+    before = pjit_lib._pjit_lower_cached.cache_info()
+    jax.grad(f)(x)
+    after = pjit_lib._pjit_lower_cached.cache_info()
+
+    # One hit for the forward pass, one hit for backward.
+    self.assertEqual(after.hits, before.hits + 2)
+    self.assertEqual(after.misses, before.misses)
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testEvalJaxpr(self):
     x, y = jnp.arange(4.), jnp.arange(5.)
     f = pjit(lambda x, y: x.sum() + jnp.sin(y),

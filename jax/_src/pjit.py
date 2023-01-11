@@ -1041,7 +1041,7 @@ def _pjit_call_impl(*args, jaxpr,
                                          resource_env.physical_mesh)
 
   in_is_global = _calc_is_global_sequence(in_positional_semantics, in_shardings)
-  if config.jax_array and all(_is_unspecified(o) for o in out_shardings):
+  if config.jax_array and any(_is_unspecified(o) for o in out_shardings):
     _allow_propagation_to_outputs = True
   else:
     _allow_propagation_to_outputs = False
@@ -1378,32 +1378,33 @@ def _pjit_partial_eval(trace, *in_tracers,
       keep_unused=keep_unused,
       inline=inline)
 
-  if num_residuals:
-    in_is_global = _calc_is_global_sequence(
-        known_params['in_positional_semantics'], known_params['in_shardings'])
-    compiled = _pjit_lower(
-        known_params["jaxpr"], known_params["in_shardings"],
-        known_params["out_shardings"], known_params["resource_env"],
-        known_params["donated_invars"], known_params["name"],
-        in_is_global, known_params['keep_unused'], always_lower=False).compile(
-            _allow_propagation_to_outputs=True,
-            _allow_compile_replicated=False)
-    da = compiled._device_assignment
-    _, out_op_sharding_shardings = pxla._get_op_sharding_shardings_from_executable(
-        compiled.xla_executable, da, len(known_jaxpr.in_avals),
-        len(known_jaxpr.out_avals))
-    assert len(out_op_sharding_shardings) == len(known_jaxpr.out_avals), (
-        len(out_op_sharding_shardings), len(known_jaxpr.out_avals))
-    out_op_shardings = [o._to_xla_op_sharding(a.ndim) for o, a in
-                        safe_zip(out_op_sharding_shardings, known_jaxpr.out_avals)]
-    residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
-  else:
-    residual_op_shardings = ()
-  assert len(residual_shardings) == len(residual_op_shardings), (
-      len(residual_shardings), len(residual_op_shardings))
-  residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
-  known_params['out_shardings'] = (
-      keep_where(out_shardings, known_outs) + residual_shardings)
+  if not config.jax_array:
+    if num_residuals:
+      in_is_global = _calc_is_global_sequence(
+          known_params['in_positional_semantics'], known_params['in_shardings'])
+      compiled = _pjit_lower(
+          known_params["jaxpr"], known_params["in_shardings"],
+          known_params["out_shardings"], known_params["resource_env"],
+          known_params["donated_invars"], known_params["name"],
+          in_is_global, known_params['keep_unused'], always_lower=False).compile(
+              _allow_propagation_to_outputs=True,
+              _allow_compile_replicated=False)
+      da = compiled._device_assignment
+      _, out_op_sharding_shardings = pxla._get_op_sharding_shardings_from_executable(
+          compiled.xla_executable, da, len(known_jaxpr.in_avals),
+          len(known_jaxpr.out_avals))
+      assert len(out_op_sharding_shardings) == len(known_jaxpr.out_avals), (
+          len(out_op_sharding_shardings), len(known_jaxpr.out_avals))
+      out_op_shardings = [o._to_xla_op_sharding(a.ndim) for o, a in
+                          safe_zip(out_op_sharding_shardings, known_jaxpr.out_avals)]
+      residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
+    else:
+      residual_op_shardings = ()
+    assert len(residual_shardings) == len(residual_op_shardings), (
+        len(residual_shardings), len(residual_op_shardings))
+    residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
+    known_params['out_shardings'] = (
+        keep_where(out_shardings, known_outs) + residual_shardings)
 
   all_known_outs = pjit_p.bind(
       *(pv.get_known() for pv in in_pvals if pv.is_known()),
@@ -1454,6 +1455,13 @@ def _pjit_partial_eval(trace, *in_tracers,
 pe.custom_partial_eval_rules[pjit_p] = _pjit_partial_eval
 
 
+@lu.cache
+def _pjit_transpose_trace(fun, in_avals):
+  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      fun, in_avals, debug_info=pe.debug_info_final(fun, 'pjit'))
+  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
+  return transpose_jaxpr
+
 def _pjit_transpose(reduce_axes, cts_in, *primals_in,
                     jaxpr, in_shardings, out_shardings,
                     resource_env, donated_invars, name, in_positional_semantics,
@@ -1474,18 +1482,14 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
     *prune_type(ad.UndefinedPrimal, in_positional_semantics, primals_in),
     *prune_type(ad.Zero, (out_positional_semantics,) * len(cts_in), cts_in)
   )
-  global_cts_in_avals = [core.raise_to_shaped(core.get_aval(ct))
-                         for ct in primals_and_nz_cts_in]
+  global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
+                              for ct in primals_and_nz_cts_in)
   if not config.jax_array:
-    global_cts_in_avals = local_to_global(
+    global_cts_in_avals = tuple(local_to_global(
         transpose_in_positional_semantics, global_cts_in_avals,
-        transpose_in_shardings, resource_env.physical_mesh)
+        transpose_in_shardings, resource_env.physical_mesh))
 
-  transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-      body, global_cts_in_avals, debug_info=pe.debug_info_final(body, 'pjit'))
-  # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
-  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
-  del consts
+  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals)
   cts_out_treedef = cts_out_treedef_thunk()
   transpose_out_shardings = prune_type(
       ad.Zero,
