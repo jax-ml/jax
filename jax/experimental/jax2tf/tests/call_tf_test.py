@@ -884,6 +884,29 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     res = reloaded_f(x)
     self.assertAllClose(np.sin(x), res.numpy())
 
+  def test_saved_model_polymorphic_input_static_output(self):
+    x = np.array([.7, .8], dtype=np.float32)
+    def fun_tf(x):
+      return tf.math.reduce_sum(tf.math.sin(x))
+    def fun_jax(x):
+      return jax2tf.call_tf(fun_tf)(x)
+
+    # Now convert and save to SavedModel
+    fun_tf_rt = jax2tf.convert(fun_jax)
+    res = fun_tf_rt(x)
+    self.assertAllClose(fun_tf(x), res.numpy())
+
+    res = tf.function(fun_tf_rt, autograph=False)(x)
+    self.assertAllClose(fun_tf(x), res.numpy())
+
+    res = tf.function(fun_tf_rt, jit_compile=True, autograph=False)(x)
+    self.assertAllClose(fun_tf(x), res.numpy())
+
+    reloaded_f, _ = tf_test_util.SaveAndLoadFunction(
+        fun_tf_rt, input_args=[x])
+    res = reloaded_f(x)
+    self.assertAllClose(fun_tf(x), res.numpy())
+
   def test_function_dynamic_shape(self):
     # Call a function for which shape inference does not give an output
     # shape.
@@ -917,13 +940,24 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
     fun_jax = jax2tf.call_tf(fun_tf)
 
-    fun_tf_rt = jax2tf.convert(fun_jax,
-                               polymorphic_shapes=["b, ..."])
+    fun_tf_rt = jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])
     with self.assertRaisesRegex(
-        ValueError,
-        "call_tf cannot be applied to shape-polymorphic arguments"):
+        ValueError, "call_tf cannot be applied to shape-polymorphic arguments"
+    ):
       fun_tf_rt(x)
 
+  @_parameterized_jit
+  def test_shape_polymorphism_static_output_shape(self, with_jit=True):
+    x = np.array([0.7, 0.8], dtype=np.float32)
+
+    def fun_tf(x):
+      return tf.math.reduce_sum(tf.math.sin(x))
+
+    fun_jax = jax2tf.call_tf(fun_tf)
+    fun_tf_rt = jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])
+    if with_jit:
+      fun_tf_rt = tf.function(jit_compile=True, autograph=False)(fun_tf_rt)
+    self.assertAllClose(fun_tf(x), fun_tf_rt(x))
 
   @parameterized.named_parameters(
       _named_test(f2_function=f2_function, f2_saved_model=f2_saved_model,

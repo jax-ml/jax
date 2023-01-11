@@ -1301,9 +1301,9 @@ variables on some other devices. It is best to use ``call_tf``
 with TF functions that do not capture variables.
 
 A TF function wrapped with `call_tf` cannot be applied to inputs whose
-shapes are not constants. The may arise when you try to apply
-`jax2tf.convert` with polymorphic shapes on the result of
-`call_tf`:
+shapes are not constants, unless all the output shapes of the TF function
+are static. The may arise when you try to apply `jax2tf.convert` with
+polymorphic shapes on the result of `call_tf`:
 
 ```python
 def fun_jax(x):
@@ -1318,6 +1318,20 @@ could be simply `tf.math.sin`, which is batch polymorphic. But
 JAX cannot keep track of shapes through a `call_tf` call, and it
 cannot be sure that the shape-polymorphic conversion is safe.
 
+If all the output shapes of the TF function are static, JAX does not need to
+keep track of shapes after a `call_tf` call, hence allows shape-polymorphic
+inputs in such cases:
+
+```python
+def fun_tf(x):
+  return tf.math.reduce_sum(tf.math.sin(x))
+
+def fun_jax(x):
+  return jax2tf.call_tf(fun_tf)(x)
+
+# The following will not throw an error because the output shape of fun_tf is static.
+jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
+```
 
 # Misc notes
 
