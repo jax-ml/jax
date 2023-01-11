@@ -238,13 +238,6 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
     return function_flat_tf.get_concrete_function(*args_flat_sig_tf)
 
 
-CallTfEffect = enum.Enum('CallTfEffect', ['EFFECT'])
-
-mlir.lowerable_effects.add(CallTfEffect.EFFECT)
-lax_control_flow.allowed_effects.add(CallTfEffect.EFFECT)
-ad_checkpoint.remat_allowed_effects.add(CallTfEffect.EFFECT)
-custom_derivatives.allowed_effects.add(CallTfEffect.EFFECT)
-
 
 def _call_tf_abstract_eval(*_,
                            function_flat_tf,
@@ -264,8 +257,7 @@ def _call_tf_abstract_eval(*_,
             core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
             for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
                                     concrete_function_flat_tf.output_shapes)
-        ]),
-        {CallTfEffect.EFFECT})
+        ]))
 
   # There are some cases when TF shape inference is not powerful enough to
   # figure out the output shapes (e.g., b/128924522), even in situations where
@@ -276,11 +268,9 @@ def _call_tf_abstract_eval(*_,
   # it should not matter which platform we use.
   _, result_avals = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,
                                               "CPU")
-  # Add an effect to the abstract eval rule of call_tf so that JAX's DCE pass
-  # doesn't prune args passed to call_tf.
-  return tuple(result_avals), {CallTfEffect.EFFECT}
+  return tuple(result_avals)
 
-call_tf_p.def_effectful_abstract_eval(_call_tf_abstract_eval)
+call_tf_p.def_abstract_eval(_call_tf_abstract_eval)
 
 
 def _call_tf_lowering(ctx, *args_op, platform,
