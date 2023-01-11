@@ -704,7 +704,8 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                    "for pjit in {elapsed_time} sec",
                                     event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
+      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
+          fun, global_in_avals, debug_info=pe.debug_info_final(fun, 'pjit'))
   finally:
     pxla._positional_semantics.val = prev_positional_val
 
@@ -1481,7 +1482,7 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
         transpose_in_shardings, resource_env.physical_mesh)
 
   transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-      body, global_cts_in_avals)
+      body, global_cts_in_avals, debug_info=pe.debug_info_final(body, 'pjit'))
   # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
   del consts
