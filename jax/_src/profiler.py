@@ -30,6 +30,7 @@ traceback_util.register_exclusion(__file__)
 
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 
 _profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
 
@@ -123,32 +124,35 @@ def start_trace(log_dir, create_perfetto_link: bool = False,
     _profile_state.log_dir = log_dir
 
 
-def _write_perfetto_trace_file(log_dir):
+def _write_perfetto_trace_file(log_dir, trace_json=None):
   # Navigate to folder with the latest trace dump to find `trace.json.jz`
   curr_path = os.path.abspath(log_dir)
   root_trace_folder = os.path.join(curr_path, "plugins", "profile")
   trace_folders = [os.path.join(root_trace_folder, trace_folder) for
       trace_folder in os.listdir(root_trace_folder)]
   latest_folder = max(trace_folders, key=os.path.getmtime)
-  trace_jsons = glob.glob(os.path.join(latest_folder, "*.trace.json.gz"))
-  if len(trace_jsons) != 1:
-    raise ValueError(f"Invalid trace folder: {latest_folder}")
-  trace_json, = trace_jsons
+  if trace_json is None:
+    trace_jsons = glob.glob(os.path.join(latest_folder, "*.trace.json.gz"))
+    if len(trace_jsons) != 1:
+      raise ValueError(f"Invalid trace folder: {latest_folder}")
+    (trace_json,) = trace_jsons
 
-  logger.info("Loading trace.json.gz and removing its metadata...")
-  # Perfetto doesn't like the `metadata` field in `trace.json` so we remove
-  # it.
-  # TODO(sharadmv): speed this up by updating the generated `trace.json`
-  # to not include metadata if possible.
-  with gzip.open(trace_json, "rb") as fp:
-    trace = json.load(fp)
-    del trace["metadata"]
+    logger.info("Loading trace.json.gz and removing its metadata...")
+    # Perfetto doesn't like the `metadata` field in `trace.json` so we remove
+    # it.
+    # TODO(sharadmv): speed this up by updating the generated `trace.json`
+    # to not include metadata if possible.
+    with gzip.open(trace_json, "rb") as fp:
+      trace = json.load(fp)
+      del trace["metadata"]
+    trace_json = json.dumps(trace).encode("utf-8")
   filename = "perfetto_trace.json.gz"
   perfetto_trace = os.path.join(latest_folder, filename)
   logger.info("Writing perfetto_trace.json.gz...")
   with gzip.open(perfetto_trace, "w") as fp:
-    fp.write(json.dumps(trace).encode("utf-8"))
+    fp.write(trace_json)
   return perfetto_trace
+
 
 class _PerfettoServer(http.server.SimpleHTTPRequestHandler):
   """Handles requests from `ui.perfetto.dev` for the `trace.json`"""
@@ -193,9 +197,17 @@ def stop_trace():
   with _profile_state.lock:
     if _profile_state.profile_session is None:
       raise RuntimeError("No profile started")
-    _profile_state.profile_session.stop_and_export(_profile_state.log_dir)
+    trace_json = None
+    if xla_extension_version < 116:
+      _profile_state.profile_session.stop_and_export(_profile_state.log_dir)
+    else:
+      trace_json = _profile_state.profile_session.stop_and_export(
+          _profile_state.log_dir, _profile_state.create_perfetto_trace
+      )
     if _profile_state.create_perfetto_trace:
-      abs_filename = _write_perfetto_trace_file(_profile_state.log_dir)
+      abs_filename = _write_perfetto_trace_file(
+          _profile_state.log_dir, trace_json=trace_json
+      )
       if _profile_state.create_perfetto_link:
         _host_perfetto_trace_file(abs_filename)
     _profile_state.profile_session = None
@@ -314,7 +326,6 @@ def annotate_function(func: Callable, name: Optional[str] = None,
       return func(*args, **kwargs)
     return wrapper
   return wrapper
-
 
 
 def device_memory_profile(backend: Optional[str] = None) -> bytes:
