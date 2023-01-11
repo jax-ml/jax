@@ -146,6 +146,7 @@ class ClosedJaxpr:
 
   def __init__(self, jaxpr: Jaxpr, consts: Sequence):
     assert len(consts) == len(jaxpr.constvars)
+    # assert not any(isinstance(c, Tracer) for c in consts)  # TODO(mattjj): enable
     self.jaxpr = jaxpr
     self.consts = list(consts)
 

@@ -1979,3 +1979,41 @@ def _get_pspec_from_executable(
   out_partition_spec = _get_partition_spec(out_ppspec)
   in_partition_spec = _get_partition_spec(in_ppspec)
   return tuple(in_partition_spec), tuple(out_partition_spec)
+
+def _pjit_partial_eval_custom_params_updater(
+    unks_in: Sequence[bool], inst_in: Sequence[bool],
+    kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
+    num_res: int, params_known: dict, params_staged: dict
+  ) -> Tuple[dict, dict]:
+  # prune inputs to jaxpr_known according to unks_in
+  donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
+  in_shardings_known, _ = pe.partition_list(unks_in, params_known['in_shardings'])
+  if num_res == 0:
+    residual_shardings = []
+  else:
+    residual_shardings = [_UNSPECIFIED] * num_res
+  _, out_shardings_known = pe.partition_list(kept_outs_known, params_known['out_shardings'])
+  new_params_known = dict(params_known,
+                          in_shardings=tuple(in_shardings_known),
+                          out_shardings=(*out_shardings_known, *residual_shardings),
+                          donated_invars=tuple(donated_invars_known))
+  assert len(new_params_known['in_shardings']) == len(params_known['jaxpr'].in_avals)
+  assert len(new_params_known['out_shardings']) == len(params_known['jaxpr'].out_avals)
+
+  # added num_res new inputs to jaxpr_staged, and pruning according to inst_in
+  _, donated_invars_staged = pe.partition_list(inst_in, params_staged['donated_invars'])
+  donated_invars_staged = [False] * num_res + donated_invars_staged
+  _, in_shardings_staged = pe.partition_list(inst_in, params_staged['in_shardings'])
+  in_shardings_staged = [*residual_shardings, *in_shardings_staged]
+  _, out_shardings_staged = pe.partition_list(kept_outs_staged, params_staged['out_shardings'])
+  new_params_staged = dict(params_staged,
+                           in_shardings=tuple(in_shardings_staged),
+                           out_shardings=tuple(out_shardings_staged),
+                           donated_invars=tuple(donated_invars_staged))
+  assert len(new_params_staged['in_shardings']) == len(params_staged['jaxpr'].in_avals)
+  assert len(new_params_staged['out_shardings']) == len(params_staged['jaxpr'].out_avals)
+  return new_params_known, new_params_staged
+
+pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
+    partial(pe.closed_call_partial_eval_custom_rule, 'jaxpr',
+            _pjit_partial_eval_custom_params_updater)
