@@ -105,7 +105,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def my_function():
       return
     jitted = jit(my_function)
-    self.assertEqual(repr(jitted), f"<CompiledFunction of {repr(my_function)}>")
+    if jax.config.jax_jit_pjit_api_merge:
+      fun_name = 'PjitFunction'
+    else:
+      fun_name = 'CompiledFunction'
+    self.assertEqual(repr(jitted), f"<{fun_name} of {repr(my_function)}>")
 
   def test_jit_repr_errors(self):
     class Callable:
@@ -115,11 +119,15 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     # repr succeeds when underlying function repr fails.
     jitted = jit(Callable())
-    self.assertEqual(repr(jitted), "<CompiledFunction>")
+    if jax.config.jax_jit_pjit_api_merge:
+      fun_name = 'PjitFunction'
+    else:
+      fun_name = 'CompiledFunction'
+    self.assertEqual(repr(jitted), f"<{fun_name}>")
 
     # repr succeeds when object is malformed.
     del jitted.__wrapped__
-    self.assertEqual(repr(jitted), "<CompiledFunction>")
+    self.assertEqual(repr(jitted), f"<{fun_name}>")
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
@@ -580,7 +588,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       return x
 
     self.assertRaisesRegex(
-        TypeError, ".* 'foo' of type <.*'str'> is not a valid JAX type",
+        TypeError, r".* 'foo' of type <.*'str'> is not a valid JAX type",
         lambda: self.jit(f)("foo"))
 
     # Jax type objects aren't valid data arguments.
@@ -1219,32 +1227,22 @@ class PythonJitTest(CPPJitTest):
 
 class APITest(jtu.JaxTestCase):
 
-  @parameterized.named_parameters(
-      ('array', True),
-      ('no_array', False)
-  )
-  def test_grad_item(self, array_enabled):
-    with jax_config.jax_array(array_enabled):
-      def f(x):
-        if x.astype(bool).item():
-          return x ** 2
-        else:
-          return x
-      out = jax.grad(f)(2.0)
-      self.assertEqual(out, 4)
+  def test_grad_item(self):
+    def f(x):
+      if x.astype(bool).item():
+        return x ** 2
+      else:
+        return x
+    out = jax.grad(f)(2.0)
+    self.assertEqual(out, 4)
 
-  @parameterized.named_parameters(
-      ('array', True),
-      ('no_array', False)
-  )
-  def test_jit_item(self, array_enabled):
-    with jax_config.jax_array(array_enabled):
-      def f(x):
-        return x.item()
-      x = jnp.array(1.0)
-      self.assertEqual(f(x), x)
-      with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
-        jax.jit(f)(x)
+  def test_jit_item(self):
+    def f(x):
+      return x.item()
+    x = jnp.array(1.0)
+    self.assertEqual(f(x), x)
+    with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
+      jax.jit(f)(x)
 
 
   @parameterized.named_parameters(
@@ -3178,8 +3176,14 @@ class APITest(jtu.JaxTestCase):
     outer_jaxpr, inner_jaxpr = jaxprs
 
     self.assertLen(outer_jaxpr.eqns, 1)
-    self.assertEqual(outer_jaxpr.eqns[0].primitive.name, 'xla_call')
-    subjaxpr_1 = outer_jaxpr.eqns[0].params["call_jaxpr"]
+    if jax.config.jax_jit_pjit_api_merge:
+      prim_name = 'pjit'
+      jaxpr_param = 'jaxpr'
+    else:
+      prim_name = 'xla_call'
+      jaxpr_param = 'call_jaxpr'
+    self.assertEqual(outer_jaxpr.eqns[0].primitive.name, f'{prim_name}')
+    subjaxpr_1 = outer_jaxpr.eqns[0].params[f"{jaxpr_param}"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
     self.assertLen(inner_jaxpr.eqns, 2)
     self.assertEqual(inner_jaxpr.eqns[-2].primitive.name, 'mul')
@@ -3901,14 +3905,20 @@ class APITest(jtu.JaxTestCase):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    self.assertIn('xla_call', str(jaxpr))
+    if jax.config.jax_jit_pjit_api_merge:
+      self.assertIn('pjit', str(jaxpr))
+    else:
+      self.assertIn('xla_call', str(jaxpr))
 
     @partial(api.jit, inline=True)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    self.assertNotIn('xla_call', str(jaxpr))
+    if jax.config.jax_jit_pjit_api_merge:
+      self.assertNotIn('pjit', str(jaxpr))
+    else:
+      self.assertNotIn('xla_call', str(jaxpr))
 
   # Repro for https://github.com/google/jax/issues/7229.
   def test_compute_with_large_transfer(self):
@@ -4185,10 +4195,14 @@ class SubcallTraceCacheTest(jtu.JaxTestCase):
       return y + z
 
     jaxpr = api.make_jaxpr(g)(2)
-    self.assertIn("call_jaxpr", jaxpr.eqns[0].params)
-    self.assertIn("call_jaxpr", jaxpr.eqns[2].params)
-    subjaxpr1 = jaxpr.eqns[0].params["call_jaxpr"]
-    subjaxpr2 = jaxpr.eqns[2].params["call_jaxpr"]
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
+    self.assertIn(f"{jaxpr_param}", jaxpr.eqns[0].params)
+    self.assertIn(f"{jaxpr_param}", jaxpr.eqns[2].params)
+    subjaxpr1 = jaxpr.eqns[0].params[f"{jaxpr_param}"]
+    subjaxpr2 = jaxpr.eqns[2].params[f"{jaxpr_param}"]
     self.assertIs(subjaxpr1, subjaxpr2)
 
 

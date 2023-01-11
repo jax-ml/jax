@@ -544,7 +544,10 @@ def _shaped_abstractify_slow(x):
   if hasattr(x, 'dtype'):
     dtype = dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True)
   else:
-    dtype = dtypes.result_type(x)  # TODO(frostig,mattjj): why this case?
+    try:
+      dtype = dtypes.result_type(x)  # TODO(frostig,mattjj): why this case?
+    except TypeError as e:
+      raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type") from e
   return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
                           named_shape=named_shape)
 
@@ -555,6 +558,12 @@ def shaped_abstractify(x):
   except KeyError:
     return _shaped_abstractify_slow(x)
 _shaped_abstractify_handlers: Dict[Any, Callable[[Any], core.ShapedArray]] = {}
+
+
+def _str_abstractify(x):
+  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
+_shaped_abstractify_handlers[str] = _str_abstractify
+
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.
