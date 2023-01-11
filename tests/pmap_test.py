@@ -974,6 +974,8 @@ class PythonPmapTest(jtu.JaxTestCase):
   ))
   @ignore_slow_all_to_all_warning()
   def testGradOf(self, prim, tiled, use_axis_index_groups):
+    if jtu.device_under_test() == "gpu":
+      raise SkipTest("XLA:GPU with ReduceScatter deadlocks")  # b/264516146
     axis_index_groups = None
     devices = jax.devices()
 

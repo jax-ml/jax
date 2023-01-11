@@ -163,4 +163,11 @@ from jax import util as util
 
 import jax.lib  # TODO(phawkins): remove this export.
 
-del jax._src
+if hasattr(jax, '_src'):
+  del jax._src
+else:
+  from warnings import warn as _warn
+  _warn("The jax module appears to have been reloaded within the python process. "
+        "This is not well-supported and can cause unpredictable side-effects. "
+        "For information see https://github.com/google/jax/issues/13857.")
+  del _warn

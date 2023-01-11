@@ -597,6 +597,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
     jax.effects_barrier()
     self.assertListEqual(log, [2., 3.])
 
+  @jtu.skip_on_devices("tpu")
   def test_ordered_effect_remains_ordered_across_multiple_devices(self):
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported

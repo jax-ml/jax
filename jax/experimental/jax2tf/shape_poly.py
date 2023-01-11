@@ -451,6 +451,10 @@ class _DimPolynomial():
   def get_aval(dim: "_DimPolynomial"):
     return dim_as_value_abstract(dim)
 
+  def dimension_as_value(self):
+    """Turns a dimension size into a Jax value that we can compute with."""
+    return _dim_as_value(self)
+
   def __jax_array__(self):
     # Used for implicit coercions of polynomials as JAX arrays
     return _dim_as_value(self)

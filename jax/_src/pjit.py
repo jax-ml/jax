@@ -143,6 +143,8 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
         executable is not None and
         isinstance(executable, pxla.MeshExecutable) and
         isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+        # No effects in computation
+        not executable.unsafe_call.ordered_effects and
         not executable.unsafe_call.has_unordered_effects and
         not executable.unsafe_call.has_host_callbacks and
         all(isinstance(x, xc.ArrayImpl) for x in out_flat)
@@ -159,14 +161,11 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
     else:
       fastpath_data = None
 
-
     return outs, fastpath_data
 
   cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
-      cache_miss,
-      static_argnums,
-      static_argnames)
+      cache_miss, static_argnums, static_argnames)
 
   return wraps(fun)(cpp_pjit_f)
 
@@ -357,15 +356,15 @@ def pjit(
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_axis_resources = tuple(in_axis_resources)
 
-  in_axis_resources, _, _, in_any_auto = _prepare_axis_resources(
+  in_axis_resources, _, _ = _prepare_axis_resources(
       in_axis_resources, "in_axis_resources")
-  out_axis_resources, _, _, _ = _prepare_axis_resources(
+  out_axis_resources, _, _ = _prepare_axis_resources(
       out_axis_resources, "out_axis_resources")
 
   donate_argnums, static_argnums, static_argnames = resolve_argnums(
       fun, donate_argnums, static_argnums, static_argnames)
 
-  def infer_params(*args, _global_avals=False, **kwargs):
+  def infer_params(*args, **kwargs):
     if kwargs and not _is_unspecified(in_axis_resources):
       raise ValueError(
           "pjit does not support kwargs when in_axis_resources is specified.")
@@ -434,15 +433,10 @@ def pjit(
       if config.jax_enable_checks:
         _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
 
-    if not config.jax_array and in_any_auto and not _global_avals:
-      raise ValueError('Auto sharding is only enabled for global inputs. '
-                       'Please set `_global_avals=True` during `.lower()`. '
-                       'Use the compiled object to call the inputs.')
-
     local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
     # TODO(yashkatariya): This is a hack. This should go away when avals have
     # is_global attribute.
-    if _global_avals or config.jax_array:
+    if config.jax_array:
       in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
     else:
       in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
@@ -455,7 +449,7 @@ def pjit(
         hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
         tuple(isinstance(a, GDA) for a in args_flat), resource_env)
 
-    jaxpr, canonicalized_out_shardings_flat = _pjit_jaxpr(
+    jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
         flat_fun, hashable_pytree(out_shardings), global_in_avals,
         HashableFunction(out_tree, closure=()))
 
@@ -463,6 +457,15 @@ def pjit(
         not config.jax_array):
       canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
           canonicalized_in_shardings_flat, args_flat)
+
+    assert len(args_flat) == len(canonicalized_in_shardings_flat)
+
+    canonicalized_in_shardings_flat = (
+        _UNSPECIFIED,) * len(consts) + canonicalized_in_shardings_flat
+    donated_invars = (False,) * len(consts) + donated_invars
+    in_positional_semantics = (
+        pxla._PositionalSemantics.GLOBAL,) * len(consts) + in_positional_semantics
+
     # in_shardings and out_shardings here are all OpShardingSharding.
     params = dict(
         jaxpr=jaxpr,
@@ -476,7 +479,7 @@ def pjit(
         keep_unused=keep_unused,
         inline=inline,
     )
-    return (args_flat, local_in_avals, params, in_tree, out_tree(),
+    return (consts + args_flat, local_in_avals, params, in_tree, out_tree(),
             donate_argnums)
 
   if FLAGS.experimental_cpp_pjit and xla_extension_version >= 115:
@@ -484,9 +487,9 @@ def pjit(
   else:
     wrapped = _python_pjit(fun, infer_params)
 
-  def lower(*args, _global_avals=False, **kwargs):
+  def lower(*args, **kwargs):
     (args_flat, flat_local_in_avals, params, in_tree, out_tree,
-     donate_argnums) = infer_params(*args, _global_avals=_global_avals, **kwargs)
+     donate_argnums) = infer_params(*args, **kwargs)
     if config.jax_array:
       in_shardings = _resolve_in_shardings(
           args_flat, params['in_shardings'], params['out_shardings'],
@@ -701,10 +704,18 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                    "for pjit in {elapsed_time} sec",
                                     event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(fun, global_in_avals)
+      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
+          fun, global_in_avals, debug_info=pe.debug_info_final(fun, 'pjit'))
   finally:
     pxla._positional_semantics.val = prev_positional_val
-  jaxpr = core.ClosedJaxpr(jaxpr, consts)
+
+  if any(isinstance(c, core.Tracer) for c in consts):
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+    jaxpr = pe.close_jaxpr(jaxpr)
+    final_consts = consts
+  else:
+    jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    final_consts = []
 
   out_shardings_flat = flatten_axis_resources(
       "pjit out_axis_resources", out_tree(), out_shardings_thunk(), tupled_args=False)
@@ -718,7 +729,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
   )
 
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
-  return _ListWithW([jaxpr, canonicalized_out_shardings_flat])
+  return _ListWithW([jaxpr, final_consts, canonicalized_out_shardings_flat])
 
 
 def pjit_check_aval_sharding(
@@ -885,7 +896,7 @@ def _prepare_axis_resources(axis_resources,
   # All entries should be specified or if unspecified then there should only
   # be 1 entry for that since _UNSPECIFIED is a private API.
   _check_all_or_none_unspecified(entries, arg_name)
-  any_auto = pxla._check_if_any_auto(entries)
+
   new_entries = []
   for entry in entries:
     if _is_unspecified_or_from_gda_or_auto(entry):
@@ -903,7 +914,7 @@ def _prepare_axis_resources(axis_resources,
           entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
 
   _check_unique_resources(new_entries, arg_name)
-  return tree_unflatten(treedef, new_entries), new_entries, treedef, any_auto
+  return tree_unflatten(treedef, new_entries), new_entries, treedef
 
 
 def _check_resources_mismatch(in_axis_resources_flat, is_gda):
@@ -986,7 +997,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
                                       'multiple devices is not supported.')
     else:
       if isinstance(arg, np.ndarray) and not pxla.is_op_sharding_replicated(
-          pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:
+          pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:  # type: ignore
         raise ValueError(
             'When jax.Array is enabled, passing non-trivial shardings for numpy '
             'inputs is not allowed. To fix this error, either specify a '
@@ -1004,7 +1015,7 @@ def _resolve_in_shardings(args, pjit_in_shardings, out_shardings, pjit_mesh):
         if (committed and
             not isinstance(arg_s, PmapSharding) and
             not pxla.are_op_shardings_equal(
-                pjit_in_s._to_xla_op_sharding(arg.ndim),
+                pjit_in_s._to_xla_op_sharding(arg.ndim),  # type: ignore
                 arg_s._to_xla_op_sharding(arg.ndim))):
           op =  getattr(pjit_in_s, '_original_sharding', pjit_in_s)
           raise ValueError('Sharding passed to pjit does not match the sharding '
@@ -1056,7 +1067,28 @@ def _pjit_call_impl(*args, jaxpr,
                           ("out_shardings", out_shardings),
                           ("abstract args", list(map(xla.abstractify, args))),
                           ("fingerprint", fingerprint))
-  return compiled.unsafe_call(*args)
+  try:
+    return compiled.unsafe_call(*args)
+  except FloatingPointError:
+    assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
+    msg = ("An invalid value was encountered in the output of the "
+           f"`jit`-decorated function {name}. Because "
+           "config.jax_debug_nans and/or config.jax_debug_infs is set, the "
+           "de-optimized function (i.e., the function as if the `jit` "
+           "decorator were removed) was called in an attempt to get a more "
+           "precise error message. However, the de-optimized function did not "
+           "produce invalid values during its execution. This behavior can "
+           "result from `jit` optimizations causing the invalud value to be "
+           "produced. It may also arise from having nan/inf constants as "
+           "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+           "\n\n"
+           "It may be possible to avoid the invalid value by removing the "
+           "`jit` decorator, at the cost of losing optimizations. "
+           "\n\n"
+           "If you see this error, consider opening a bug report at "
+           "https://github.com/google/jax.")
+    raise FloatingPointError(msg)
+
 pjit_p.def_impl(_pjit_call_impl)
 
 
@@ -1184,9 +1216,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics,
                    keep_unused, inline):
-  if not isinstance(ctx.module_context.axis_context,
-                    (mlir.SPMDAxisContext, mlir.ShardingContext)):
-    raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
+  if not config.jax_array:
+    if not isinstance(ctx.module_context.axis_context,
+                      (mlir.SPMDAxisContext, mlir.ShardingContext)):
+      raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
 
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   flat_output_types = util.flatten(output_types)
@@ -1449,7 +1482,7 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
         transpose_in_shardings, resource_env.physical_mesh)
 
   transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-      body, global_cts_in_avals)
+      body, global_cts_in_avals, debug_info=pe.debug_info_final(body, 'pjit'))
   # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
   del consts
@@ -1530,7 +1563,7 @@ pxla.custom_resource_typing_rules[pjit_p] = _resource_typing_pjit
 
 def with_sharding_constraint(x, axis_resources):
   x_flat, tree = tree_flatten(x)
-  axis_resources, _, _, _ = _prepare_axis_resources(
+  axis_resources, _, _ = _prepare_axis_resources(
       axis_resources, "axis_resources", allow_unconstrained_dims=True)
   axis_resources_flat = tuple(
       flatten_axes("with_sharding_constraint sharding", tree, axis_resources))
@@ -1946,3 +1979,41 @@ def _get_pspec_from_executable(
   out_partition_spec = _get_partition_spec(out_ppspec)
   in_partition_spec = _get_partition_spec(in_ppspec)
   return tuple(in_partition_spec), tuple(out_partition_spec)
+
+def _pjit_partial_eval_custom_params_updater(
+    unks_in: Sequence[bool], inst_in: Sequence[bool],
+    kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
+    num_res: int, params_known: dict, params_staged: dict
+  ) -> Tuple[dict, dict]:
+  # prune inputs to jaxpr_known according to unks_in
+  donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
+  in_shardings_known, _ = pe.partition_list(unks_in, params_known['in_shardings'])
+  if num_res == 0:
+    residual_shardings = []
+  else:
+    residual_shardings = [_UNSPECIFIED] * num_res
+  _, out_shardings_known = pe.partition_list(kept_outs_known, params_known['out_shardings'])
+  new_params_known = dict(params_known,
+                          in_shardings=tuple(in_shardings_known),
+                          out_shardings=(*out_shardings_known, *residual_shardings),
+                          donated_invars=tuple(donated_invars_known))
+  assert len(new_params_known['in_shardings']) == len(params_known['jaxpr'].in_avals)
+  assert len(new_params_known['out_shardings']) == len(params_known['jaxpr'].out_avals)
+
+  # added num_res new inputs to jaxpr_staged, and pruning according to inst_in
+  _, donated_invars_staged = pe.partition_list(inst_in, params_staged['donated_invars'])
+  donated_invars_staged = [False] * num_res + donated_invars_staged
+  _, in_shardings_staged = pe.partition_list(inst_in, params_staged['in_shardings'])
+  in_shardings_staged = [*residual_shardings, *in_shardings_staged]
+  _, out_shardings_staged = pe.partition_list(kept_outs_staged, params_staged['out_shardings'])
+  new_params_staged = dict(params_staged,
+                           in_shardings=tuple(in_shardings_staged),
+                           out_shardings=tuple(out_shardings_staged),
+                           donated_invars=tuple(donated_invars_staged))
+  assert len(new_params_staged['in_shardings']) == len(params_staged['jaxpr'].in_avals)
+  assert len(new_params_staged['out_shardings']) == len(params_staged['jaxpr'].out_avals)
+  return new_params_known, new_params_staged
+
+pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
+    partial(pe.closed_call_partial_eval_custom_rule, 'jaxpr',
+            _pjit_partial_eval_custom_params_updater)

@@ -908,9 +908,25 @@ def rev(operand: ArrayLike, dimensions: Sequence[int]) -> Array:
   return rev_p.bind(operand, dimensions=tuple(dimensions))
 
 def select(pred: ArrayLike, on_true: ArrayLike, on_false: ArrayLike) -> Array:
-  """Wraps XLA's `Select
+  """Selects between two branches based on a boolean predicate.
+
+  Wraps XLA's `Select
   <https://www.tensorflow.org/xla/operation_semantics#select>`_
   operator.
+
+  In general :func:`~jax.lax.select` leads to evaluation of both branches, although
+  the compiler may elide computations if possible. For a similar function that
+  usually evaluates only a single branch, see :func:`~jax.lax.cond`.
+
+  Args:
+    pred: boolean array
+    on_true: array containing entries to return where ``pred`` is True. Must have
+      the same shape as ``pred``, and the same shape and dtype as ``on_false``.
+    on_false: array containing entries to return where ``pred`` is False. Must have
+      the same shape as ``pred``, and the same shape and dtype as ``on_true``.
+
+  Returns:
+    result: array with same shape and dtype as ``on_true`` and ``on_false``.
   """
   # Caution! The select_n_p primitive has the *opposite* order of arguments to
   # select(). This is because it implements `select_n`.
@@ -3156,11 +3172,10 @@ ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 def _pad_lower(ctx, x, padding_value, *, padding_config):
+  aval_out, = ctx.avals_out
   low, high, interior = util.unzip3(padding_config)
-  return hlo.PadOp(x, padding_value,
-                   mlir.dense_int_elements(low),
-                   mlir.dense_int_elements(high),
-                   mlir.dense_int_elements(interior)).results
+  return [mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)]
+
 mlir.register_lowering(pad_p, _pad_lower)
 
 
@@ -4416,13 +4431,16 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
     _identity_fn, None, (), (), sharded_dim, sharded_dim)
   p = api._prepare_pmap(
       _identity_fn, sharded_dim, sharded_dim, static_broadcasted_tuple,
-      donate_tuple, None, None, args, kwargs)
+      donate_tuple, None, None, None, None, args, kwargs)
   out_flat =  pxla.xla_pmap_impl(
       p.flat_fun, *p.flat_args, backend=None, axis_name=axis_name,
-      axis_size=p.local_axis_size, global_axis_size=None, devices=p.devices,
-      in_axes=p.in_axes_flat, out_axes_thunk=p.out_axes_thunk,
-      name=p.flat_fun.__name__, donated_invars=p.donated_invars,
-      global_arg_shapes=p.global_arg_shapes_flat)
+      axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+      devices=p.devices, in_axes=p.in_axes_flat,
+      out_axes_thunk=p.out_axes_thunk, name=p.flat_fun.__name__,
+      donated_invars=p.donated_invars,
+      global_arg_shapes=p.global_arg_shapes_flat,
+      is_explicit_global_axis_size=p.is_explicit_global_axis_size,
+  )
   return tree_util.tree_unflatten(p.out_tree(), out_flat)
 
 

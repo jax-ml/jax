@@ -955,30 +955,32 @@ def xla_pmap_impl_lazy(
     backend: Optional[str],
     axis_name: core.AxisName,
     axis_size: int,
-    global_axis_size: Optional[int],
+    global_axis_size: int,
     devices: Optional[Sequence[Any]],
     name: str,
     in_axes: Sequence[Optional[int]],
     out_axes_thunk: Callable[[], Sequence[Optional[int]]],
     donated_invars: Sequence[bool],
     global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+    is_explicit_global_axis_size: bool,
 ):
   if (config.jax_disable_jit and config.jax_eager_pmap and
-      global_axis_size is None and not any(d for d in donated_invars) and
-      not all(g is not None for g in global_arg_shapes)):
+      not is_explicit_global_axis_size and not any(d for d in donated_invars)
+      and not all(g is not None for g in global_arg_shapes)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
-                      axis_size=axis_size, global_axis_size=global_axis_size,
-                      devices=devices, name=name, in_axes=in_axes,
-                      out_axes_thunk=out_axes_thunk,
-                      donated_invars=donated_invars,
-                      global_arg_shapes=global_arg_shapes)
+                        axis_size=axis_size, global_axis_size=global_axis_size,
+                        devices=devices, name=name, in_axes=in_axes,
+                        out_axes_thunk=out_axes_thunk,
+                        donated_invars=donated_invars,
+                        global_arg_shapes=global_arg_shapes,
+                        is_explicit_global_axis_size=is_explicit_global_axis_size)
     return _emap_apply_fn
   abstract_args = unsafe_map(xla.abstractify, args)
   compiled_fun, fingerprint = parallel_callable(
       fun, backend, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
-      *abstract_args)
+      is_explicit_global_axis_size, *abstract_args)
 
   # Don't re-abstractify args unless logging is enabled for performance.
   if config.jax_distributed_debug:
@@ -1001,20 +1003,22 @@ def _emap_impl(fun: lu.WrappedFun, *args,
                backend: Optional[str],
                axis_name: core.AxisName,
                axis_size: int,
-               global_axis_size: Optional[int],
+               global_axis_size: int,
                devices: Optional[Sequence[Any]],
                name: str,
                in_axes: Sequence[Optional[int]],
                out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                donated_invars: Sequence[bool],
-               global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+               global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+               is_explicit_global_axis_size: bool,
+               ):
   from jax._src import array
   # TODO(sharadmv,mattjj): implement these cases
   if any(d for d in donated_invars):
     raise NotImplementedError("Buffer donation not supported in eager pmap.")
   if any(g is not None for g in global_arg_shapes):
     raise NotImplementedError("Global arg shapes not supported in eager pmap.")
-  if global_axis_size is not None:
+  if is_explicit_global_axis_size:
     raise NotImplementedError("Non-default global_axis_size not supported in "
                               "eager pmap.")
 
@@ -1238,17 +1242,19 @@ def parallel_callable(fun: lu.WrappedFun,
                       backend_name: Optional[str],
                       axis_name: core.AxisName,
                       axis_size: int,
-                      global_axis_size: Optional[int],
+                      global_axis_size: int,
                       devices: Optional[Sequence[Any]],
                       name: str,
                       in_axes: Sequence[Optional[int]],
                       out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                       donated_invars: Sequence[bool],
                       global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+                      is_explicit_global_axis_size: bool,
                       *avals):
   pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
-      in_axes, out_axes_thunk, donated_invars, global_arg_shapes, avals)
+      in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
+      is_explicit_global_axis_size, avals)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
@@ -1259,7 +1265,7 @@ class ParallelCallableInfo:
   backend: xla.Backend
   axis_name: core.AxisName
   axis_size: int
-  global_axis_size: Optional[int]
+  global_axis_size: int
   devices: Optional[Sequence[xla.Device]]
   in_axes: Iterable[Optional[int]]
   out_axes_thunk: Callable[[], Sequence[Optional[int]]]
@@ -1364,23 +1370,21 @@ def lower_parallel_callable(
     backend_name: Optional[str],
     axis_name: core.AxisName,
     axis_size: int,
-    global_axis_size: Optional[int],
+    global_axis_size: int,
     devices: Optional[Sequence[xla.Device]],
     name: str,
     in_axes: Iterable[Optional[int]],
     out_axes_thunk: Callable[[], Sequence[Optional[int]]],
     donated_invars: Sequence[bool],
     global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
+    is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue]):
-  if devices is not None and len(devices) == 0:
-    raise ValueError("'devices' argument to pmap must be non-empty, or None.")
-
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
   #   raise ValueError("'axis_size' must be specified for nested multi-host pmaps")
-  if (xb.process_count() == 1 and global_axis_size is not None and
-      global_axis_size != axis_size):
+  if (xb.process_count() == 1 and is_explicit_global_axis_size
+      and global_axis_size != axis_size):
     raise ValueError(
         f"Specified axis_size {global_axis_size} doesn't match received "
         f"axis_size {axis_size}.")
@@ -1390,27 +1394,21 @@ def lower_parallel_callable(
   else:
     backend = xb.get_backend(backend_name)
 
-  must_run_on_all_devices = False
   no_nested_sharding = False
-  if global_axis_size is None:
-    if xb.process_count(backend) == 1:
-      global_axis_size = axis_size
-    elif devices:
-      # This allows each host in a multi-host pmap to run on a different number
-      # of devices, but precludes nested sharding (i.e. inner pmaps or
-      # sharded_jits).
-      global_axis_size = len(devices)
-      no_nested_sharding = True
-    else:
-      # This assumes all hosts run on the same number of devices. We make sure
-      # this assumption is true by requiring that the pmap is run on all devices
-      # (and making the further assumption that each host has the same number of
-      # devices). Nested sharding is ok in this case.
-      global_axis_size = axis_size * xb.process_count(backend)
-      assert all(
-          len(xb.local_devices(process_index, backend)) == xb.local_device_count(backend)
-          for process_index in range(xb.process_count(backend)))
-      must_run_on_all_devices = True
+  must_run_on_all_devices = False
+  if not is_explicit_global_axis_size:
+    if xb.process_count(backend) > 1:
+      if devices:
+        # This allows each host in a multi-host pmap to run on a different number
+        # of devices, but precludes nested sharding (i.e. inner pmaps or
+        # sharded_jits).
+        no_nested_sharding = True
+      else:
+        # This assumes all hosts run on the same number of devices. We make sure
+        # this assumption is true by requiring that the pmap is run on all devices
+        # (and making the further assumption that each host has the same number of
+        # devices). Nested sharding is ok in this case.
+        must_run_on_all_devices = True
 
   pci = ParallelCallableInfo(
       name, backend, axis_name, axis_size, global_axis_size, devices,
@@ -1581,7 +1579,7 @@ class UnloadedPmapExecutable:
       # In the single host case, we want the default device order of pmap to
       # match jax.devices().
       # On multiple hosts, we create a default device assignment that ensures
-      # each host is responsible for a continguous set of replicas.
+      # each host is responsible for a contiguous set of replicas.
       if shards.num_global_shards > shards.num_local_shards:
         # TODO(skye): use a locality-aware assignment that satisfies the above
         # constraint.
@@ -2272,15 +2270,14 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, pl
 def _pmap_lowering(ctx, *in_nodes, axis_name,
                    axis_size, global_axis_size, devices, name,
                    call_jaxpr, backend=None, in_axes, out_axes,
-                   donated_invars, global_arg_shapes):
+                   donated_invars, global_arg_shapes,
+                   is_explicit_global_axis_size):
   del donated_invars  # Unused.
   xla.check_backend_matches(backend, ctx.module_context.platform)
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   if ctx.module_context.axis_env.names and devices is not None:
     raise ValueError("Nested pmap with explicit devices argument.")
-  if global_axis_size is None:
-    global_axis_size = axis_size
   new_env = xla.extend_axis_env(ctx.module_context.axis_env, axis_name,
                                 global_axis_size)
   # Shard the in_nodes that are mapped
@@ -2397,14 +2394,14 @@ class Mesh(ContextDecorator):
     super().__setattr__(name, value)
 
   def __enter__(self):
-    new_env = _old_env.stack[-1].with_mesh(self)
-    _old_env.stack.append(new_env)
+    new_env = thread_resources.stack[-1].with_mesh(self)
+    thread_resources.stack.append(new_env)
     thread_resources.env = new_env
     return self
 
   def __exit__(self, exc_type, exc_value, traceback):
-    _old_env.stack.pop()
-    thread_resources.env = _old_env.stack[-1]
+    thread_resources.stack.pop()
+    thread_resources.env = thread_resources.stack[-1]
     return False
 
   @property
@@ -2539,18 +2536,10 @@ EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
 class _ThreadResourcesLocalState(threading.local):
 
   def __init__(self):
-    self.env = EMPTY_ENV
+    self.stack = [EMPTY_ENV]
+    self.env = self.stack[-1]
 
 thread_resources = _ThreadResourcesLocalState()
-
-# TODO(yashkatariya): Merge this into `_ThreadResourcesLocalState` by
-# maintaining a stack there and pointing `self.env` to `self.stack[-1]`.
-# Do this after the old `mesh` context manager is deprecated.
-class _ThreadLocalOldEnv(threading.local):
-  def __init__(self):
-    self.stack = [EMPTY_ENV]
-
-_old_env = _ThreadLocalOldEnv()
 
 
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
@@ -3758,7 +3747,7 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   # Import here to avoid cyclic import error when importing gda in pjit.py.
   from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
 
-  parsed_pspec, _, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
+  parsed_pspec, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
   return get_array_mapping(parsed_pspec)
 
 

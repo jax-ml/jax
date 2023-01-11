@@ -1,9 +1,10 @@
 absl-py
-# TODO(sharadmv,jakevdp): fix IPython3 issue and remove pinned version
-ipython<=8.6.0
+ipython>=8.8.0  # 8.7.0 has ipython3 lexer error
 sphinx>=4
-sphinx-autodoc-typehints
-sphinx-book-theme>=0.3.3
+# TODO(jakevdp) unpin sphinx-autodoc-typehints when sphinx-book-theme
+# 0.4.0 is released and no longer requires sphinx<5
+sphinx-autodoc-typehints~=1.18.0
+sphinx-book-theme>=0.3.3 
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
 jupyter-sphinx>=0.3.2

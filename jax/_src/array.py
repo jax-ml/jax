@@ -55,10 +55,10 @@ class Shard:
 
   def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
                data: Optional[ArrayImpl] = None):
-    self.device = device
+    self._device = device
     self._sharding = sharding
     self._global_shape = global_shape
-    self.data = data
+    self._data = data
 
   def __repr__(self):
     try:
@@ -82,6 +82,14 @@ class Shard:
   @property
   def replica_id(self) -> int:
     return device_replica_id_map(self._sharding, self._global_shape)[self.device]
+
+  @property
+  def device(self):
+    return self._device
+
+  @property
+  def data(self):
+    return self._data
 
 
 def _reconstruct_array(fun, args, arr_state, aval_state):

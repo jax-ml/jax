@@ -1212,6 +1212,7 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_bcoo_dot_general_sampled(self, props, dtype):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=props.n_batch, n_dense=props.n_dense)
@@ -1315,6 +1316,7 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_bcoo_spdot_general(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, swap, dimension_numbers):
     if swap:
       dimension_numbers = tuple(d[::-1] for d in dimension_numbers)

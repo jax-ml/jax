@@ -972,8 +972,17 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                 np.uint8, np.int8, np.uint16, np.uint32, np.uint64, np.int8,
                 np.int16, np.int32, np.int64
             ],
+            skip_comparison=True,
             # Only the harnesses with "singularity" will have divide by 0
             enabled=("singularity" in harness.name)),
+        Jax2TfLimitation(
+            "TF division of inf by inf returns inf while in JAX returns nan",
+            dtypes=[
+                np.float32,
+            ],
+            devices="gpu",
+            skip_comparison=True,
+            enabled=("singularity_inf_by_inf" in harness.name)),
     ]
 
   @classmethod
@@ -1264,7 +1273,8 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         for arr_jax, arr_tf in zip(result_jax, result_tf):
           tst.assertArraysEqual(arr_jax, arr_tf, err_msg=err_msg)
       else:
-        mask_jax, mask_tf = np.isnan(first_arr_jax), np.isnan(first_arr_tf)
+        mask_jax = np.isnan(first_arr_jax) | np.isinf(first_arr_jax)
+        mask_tf = np.isnan(first_arr_tf) | np.isinf(first_arr_tf)
         tst.assertArraysEqual(
             first_arr_jax[~mask_jax], first_arr_tf[~mask_tf], err_msg=err_msg)
 

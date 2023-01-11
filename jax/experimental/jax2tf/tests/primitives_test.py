@@ -102,7 +102,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
   @primitive_harness.parameterized(
       primitive_harness.all_harnesses,
       include_jax_unimpl=False,
-      #one_containing="scatter_modes_out_of_bounds_shape=float32[1,5]",
+      #one_containing="",
   )
   @jtu.ignore_warning(
       category=UserWarning, message="Using reduced precision for gradient.*")
@@ -115,16 +115,29 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     args = harness.dyn_args_maker(self.rng())
     enable_xla = harness.params.get("enable_xla", True)
     if config.jax2tf_default_experimental_native_lowering and not enable_xla:
-      return
+      raise unittest.SkipTest("experimental_native_lowering not supported with enable_xla=False")
+
+    if ("eigh" == harness.group_name and
+        np.complex64 == harness.dtype and
+        device == "tpu"):
+      raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
+
+    if (not config.jax_array and
+        device == "cpu" and
+        "top_k_sort_inf_nan_inshape=float32[5]_k=5" in harness.fullname):
+      raise unittest.SkipTest("Unexplained failure, but in old no_jax_array")
+
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
       with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
         self.ConvertAndCompare(func_jax, *args, limitations=limitations,
                                enable_xla=enable_xla)
     except Exception as e:
+      # TODO(b/264596006): custom calls are not registered properly with TF in OSS
       if (config.jax2tf_default_experimental_native_lowering and
           "does not work with custom calls" in str(e)):
         logging.warning("Supressing error %s", e)
+        raise unittest.SkipTest("b/264596006: custom calls in native lowering fail in TF")
       else:
         raise e
 

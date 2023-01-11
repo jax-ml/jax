@@ -624,12 +624,11 @@ def _lower_native_and_run(fun_jax: Callable,
     for aval in args_avals
   ]
   # TODO: specify the backend for experimental_native_lowering
-  backend = jax.default_backend()
   if not hasattr(fun_jax, "lower") or abstracted_axes:
     # We support convert(pjit(f_jax, ...)) and convert(jit(f_jax)) but also
     # convert(f_jax), in which case a "jit" is implied. We also add a jit when
     # we need to pass the abstracted axes.
-    fun_jax_lower = jax.jit(fun_jax, backend=backend,
+    fun_jax_lower = jax.jit(fun_jax,
                             abstracted_axes=abstracted_axes).lower
   else:
     fun_jax_lower = fun_jax.lower
@@ -979,6 +978,14 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
   # Keep only the non-constant dimensions
   return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf
                for d, d_tf in zip(shape, shape_values_tf))
+
+
+def _ensure_tf_shape_if_dynamic(x: TfVal, shape):
+  # Update TF tensor `x` with shape `shape` if the shape of `x`` is dynamic.
+  if x.shape.is_fully_defined():
+    return x
+  return tf.ensure_shape(x, shape)
+
 
 def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
   """Asserts that shape matches x.shape in the known dimensions and has
@@ -1865,7 +1872,7 @@ def _conv_general_dilated(lhs, rhs, *,
           preferred_element_type=preferred_element_type,
           use_v2=True)
     # TODO: implement shape inference for XlaConv
-    out.set_shape(out_tf_shape)
+    out = _ensure_tf_shape_if_dynamic(out, out_tf_shape)
     if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
       out = tf.stop_gradient(out)  # See #7839
     return out
@@ -1979,7 +1986,7 @@ def _pad(operand, padding_value, *, padding_config,
   low, high, interior = util.unzip3(map(_eval_shape, padding_config))  # type: ignore
   out = tfxla.pad(operand, padding_value, low, high, interior)
   # TODO: implement shape inference for XlaPad (when some padding_config is constant)
-  out.set_shape(_aval_to_tf_shape(_out_aval))
+  out = _ensure_tf_shape_if_dynamic(out, _aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     out = tf.stop_gradient(out)  # See #7839
   return out
@@ -2172,7 +2179,7 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
       window_dilations=window_dilation,
       padding=padding)
   # TODO: implement shape inference for XlaReduceWindow
-  out.set_shape(_aval_to_tf_shape(_out_aval))
+  out = _ensure_tf_shape_if_dynamic(out, _aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     out = tf.stop_gradient(out)  # See #7839
   return out
@@ -2212,7 +2219,6 @@ def _reduce_window(*args, jaxpr, consts, window_dimensions,
                                 window_dimensions, window_strides, padding,
                                 base_dilation, window_dilation, _in_avals,
                                 _out_aval[0]),)
-
 
 
 def _specialized_reduce_window(reducer,
@@ -2394,7 +2400,7 @@ def _select_and_scatter_add(source, operand, *, select_prim, window_dimensions,
   out = tfxla.select_and_scatter(operand, window_dimensions, window_strides,
                                  padding, source, init_value, select_fn,
                                  scatter_fn)
-  out.set_shape(_aval_to_tf_shape(_out_aval))
+  out = _ensure_tf_shape_if_dynamic(out, _aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     out = tf.stop_gradient(out)  # See #7839
   return out
@@ -2476,7 +2482,6 @@ def _random_unwrap_impl(keys: TfVal, *, _in_avals, _out_aval):
   return keys
 
 tf_impl_with_avals[prng.random_unwrap_p] = _random_unwrap_impl
-
 
 
 def _threefry2x32_jax_impl(*args: TfVal, _in_avals, _out_aval):
@@ -2590,7 +2595,7 @@ def _gather(operand, start_indices, *, dimension_numbers, slice_sizes: core.Shap
   slice_sizes_tf = _eval_shape(slice_sizes)
   out = tfxla.gather(operand, start_indices, proto, slice_sizes_tf,
                      indices_are_sorted)
-  out.set_shape(_aval_to_tf_shape(_out_aval))
+  out = _ensure_tf_shape_if_dynamic(out, _aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
     out = tf.stop_gradient(out)  # See #7839
   return out
@@ -2609,7 +2614,7 @@ def _slice(operand, start_indices, limit_indices, strides, _in_avals,
   out = operand[slices]
   # TODO(b/184503314): improve shape inference for __getitem__
   # E.g., operand.shape=(b, 5, 3), start_indices=(0, 1, 1), limit_indices=(b, 5, 3), strides=(1, 2, 1)
-  out.set_shape(_aval_to_tf_shape(_out_aval))
+  out = _ensure_tf_shape_if_dynamic(out, _aval_to_tf_shape(_out_aval))
   return out
 
 

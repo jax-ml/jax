@@ -146,6 +146,7 @@ class ClosedJaxpr:
 
   def __init__(self, jaxpr: Jaxpr, consts: Sequence):
     assert len(consts) == len(jaxpr.constvars)
+    # assert not any(isinstance(c, Tracer) for c in consts)  # TODO(mattjj): enable
     self.jaxpr = jaxpr
     self.consts = list(consts)
 
@@ -415,6 +416,8 @@ class Trace:
     self.sublevel = sublevel
 
   def full_raise(self, val) -> Tracer:
+    if hasattr(val, "dimension_as_value"):  # Used for shape_poly._DimPolynomial
+      val = val.dimension_as_value()
     if not isinstance(val, Tracer):
       return self.pure(val)
     val._assert_live()
@@ -1880,9 +1883,10 @@ def dimension_as_value(d: DimSize):
 
      Has the same abstract value as Python constants.
      """
-  if isinstance(d, Tracer): return d
-  handler, ds = _dim_handler_and_canonical(d)
-  return handler.as_value(*ds)
+  if isinstance(d, (int, Tracer, np.int32, np.int64)): return d
+  # For shape_poly._DimPolynomial
+  if hasattr(d, "dimension_as_value"): return d.dimension_as_value()
+  return operator.index(d)
 
 def _canonicalize_dimension(dim: DimSize) -> DimSize:
   if isinstance(dim, Tracer) and config.jax_dynamic_shapes:

@@ -38,6 +38,10 @@ jax_test(
 jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
+    env = {
+        # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
+        "JAX_JIT_PJIT_API_MERGE": "0",
+    },
     shard_count = 2,
 )
 
@@ -79,11 +83,16 @@ jax_test(
 jax_test(
     name = "custom_object_test",
     srcs = ["custom_object_test.py"],
+    env = {
+        # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
+        "JAX_JIT_PJIT_API_MERGE": "0",
+    },
 )
 
 jax_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 py_test(
@@ -274,6 +283,7 @@ py_test(
 jax_test(
     name = "jaxpr_util_test",
     srcs = ["jaxpr_util_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 jax_test(
@@ -731,8 +741,8 @@ jax_test(
     },
     enable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
-        "cpu": 40,
-        "gpu": 40,
+        "cpu": 50,
+        "gpu": 50,
         "tpu": 50,
         "iree": 10,
     },
@@ -949,6 +959,7 @@ jax_test(
     enable_configs = [
         "gpu",
         "cpu",
+        "cpu_jit_pjit_api_merge",
     ],
 )
 

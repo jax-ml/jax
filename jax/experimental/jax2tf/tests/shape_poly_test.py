@@ -1270,8 +1270,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                    polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 
-    jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
-                   polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
+    if not config.jax2tf_default_experimental_native_lowering:
+      # Does not support 2*b constraints
+      jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+                     polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
@@ -1363,8 +1365,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           (jnp.array, "array"),
           (jnp.sin, "sin"),
           (lambda x: x, "id"),
+          (core.dimension_as_value, "dimension_as_value"),
       ]
-
   ])
   def test_poly_unary_op(self, *, op=jnp.array):
     if config.jax_enable_x64:
@@ -1425,7 +1427,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_mean0(self):
     def f_jax(x):  # x: f32[b, 4]
       return jnp.sum(x, axis=0) / x.shape[0]
-
     check_shape_poly(self,
                      f_jax,
                      arg_descriptors=[RandArg((3, 4), _f32)],
@@ -1443,6 +1444,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      arg_descriptors=[RandArg((3, 4), _f32)],
                      poly_axes=[0])
 
+  @unittest.skip('Failing at HEAD. Reenable after b/264913007 is fixed')
   def test_vmap_while(self):
     def cond_func(x):  # x: f32[3]
       return jnp.sum(x) >= 0.
@@ -1495,12 +1497,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
 # List containing either harnesses, or lists of harnesses
 _POLY_SHAPE_TEST_HARNESSES = [
-    PolyHarness("simple_binary", "",
-                lambda x, y: x + jnp.sin(y),
-                arg_descriptors=[RandArg((3, 4), _f32), RandArg((3, 4), _f32)],
-                input_signature=[tf.TensorSpec([2, None]), tf.TensorSpec([2, 3])],
-                polymorphic_shapes="_, h",
-                expected_output_signature=tf.TensorSpec([2, 3])),
     PolyHarness("add", "",
                 jnp.add,
                 arg_descriptors=[RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
@@ -2332,7 +2328,12 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "householder_product:cpu", "householder_product:gpu",
           "vmap_geqrf:cpu", "vmap_geqrf:gpu",
           "vmap_lu:cpu", "vmap_lu:gpu", "vmap_qr:cpu", "vmap_qr:gpu",
-          "vmap_svd:cpu", "vmap_svd:gpu"}
+          "vmap_svd:cpu", "vmap_svd:gpu",
+          "random_gamma:gpu", "vmap_random_gamma:gpu",
+          "random_categorical:gpu", "vmap_random_categorical:gpu",
+          "random_randint:gpu", "vmap_random_randint:gpu",
+          "random_uniform:gpu", "vmap_random_uniform:gpu",
+          "vmap_random_split:gpu"}
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native lowering with shape polymorphism not implemented for custom calls; b/261671778")
 

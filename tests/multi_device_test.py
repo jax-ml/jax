@@ -102,8 +102,13 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
     # A computation with inputs committed to multiple devices will result
     # in an error
-    with self.assertRaisesRegex(ValueError,
-                                "primitive arguments must be colocated on the same device"):
+
+    if jax.config.jax_jit_pjit_api_merge:
+      err_msg = "Devices of all `Array` inputs and outputs should be the same"
+    else:
+      err_msg = "primitive arguments must be colocated on the same device"
+
+    with self.assertRaisesRegex(ValueError, err_msg):
       jax.device_put(x, devices[2]) + jax.device_put(x, devices[3])
 
     # A jitted-computation without a device specification behave like any
@@ -112,8 +117,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assert_uncommitted_to_device(jit_add(1, 2), devices[0])
     self.assert_committed_to_device(jit_add(1, jax.device_put(2, devices[2])),
                                     devices[2])
-    with self.assertRaisesRegex(ValueError,
-                                "primitive arguments must be colocated on the same device"):
+    with self.assertRaisesRegex(ValueError, err_msg):
       jit_add(jax.device_put(x, devices[2]), jax.device_put(x, devices[3]))
 
     # Even jit of trivial computations leaves the result uncommitted

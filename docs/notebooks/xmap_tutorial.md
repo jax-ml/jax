@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "xgSYgIQhLJgx"}
 
-# Named axes and easy-to-revise parallelism
+# Named axes and easy-to-revise parallelism with `xmap`
 
 This tutorial introduces `jax.xmap` and the named-axis programming model that comes with it. By reading this, you'll learn how to write error-avoiding, self-documenting functions using named axes, then control how they're executed on hardware at any scale, from your laptop CPU to the largest TPU supercomputer.
 

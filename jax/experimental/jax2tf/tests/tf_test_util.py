@@ -244,7 +244,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         if expect_tf_error:
           # It is more ergonomic to print all successful modes once
           logging.warning(log_message(
-            f"Unexpected success with known limitations {expect_tf_error}"))
+            f"Unexpected execution success with known limitations {expect_tf_error}"))
           unexpected_successes.append(f"{mode}: {expect_tf_error}")
 
       if (jtu.device_under_test() == "gpu" and
