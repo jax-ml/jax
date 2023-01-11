@@ -1064,7 +1064,28 @@ def _pjit_call_impl(*args, jaxpr,
                           ("out_shardings", out_shardings),
                           ("abstract args", list(map(xla.abstractify, args))),
                           ("fingerprint", fingerprint))
-  return compiled.unsafe_call(*args)
+  try:
+    return compiled.unsafe_call(*args)
+  except FloatingPointError:
+    assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
+    msg = ("An invalid value was encountered in the output of the "
+           f"`jit`-decorated function {name}. Because "
+           "config.jax_debug_nans and/or config.jax_debug_infs is set, the "
+           "de-optimized function (i.e., the function as if the `jit` "
+           "decorator were removed) was called in an attempt to get a more "
+           "precise error message. However, the de-optimized function did not "
+           "produce invalid values during its execution. This behavior can "
+           "result from `jit` optimizations causing the invalud value to be "
+           "produced. It may also arise from having nan/inf constants as "
+           "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
+           "\n\n"
+           "It may be possible to avoid the invalid value by removing the "
+           "`jit` decorator, at the cost of losing optimizations. "
+           "\n\n"
+           "If you see this error, consider opening a bug report at "
+           "https://github.com/google/jax.")
+    raise FloatingPointError(msg)
+
 pjit_p.def_impl(_pjit_call_impl)
 
 

@@ -84,6 +84,7 @@ jax_test(
 jax_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 py_test(

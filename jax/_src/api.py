@@ -124,7 +124,10 @@ def _nan_check_posthook(fun, args, kwargs, output):
       buffers.append(da_or_sda.device_buffer)
 
   try:
-    dispatch.check_special(xla.xla_call_p, buffers)
+    if jax.config.jax_jit_pjit_api_merge:
+      dispatch.check_special(pjit.pjit_p, buffers)
+    else:
+      dispatch.check_special(xla.xla_call_p, buffers)
   except FloatingPointError:
     # compiled_fun can only raise in this case
     assert config.jax_debug_nans or config.jax_debug_infs
