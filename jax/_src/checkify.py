@@ -1066,12 +1066,10 @@ def checkify(f: Callable[..., Out],
     flat_fun, out_tree = flatten_fun(fun, in_tree)
     flat_avals = map(get_shaped_aval, flat_args)
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-    out_tree = out_tree()
+    jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     # checkify:
-    flat_args = jtu.tree_leaves((args, kwargs))
-    error, out_flat = checkify_jaxpr(core.ClosedJaxpr(jaxpr, consts), errors,
-                                     init_error, *flat_args)
-    return error, jtu.tree_unflatten(out_tree, out_flat)
+    error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts, *flat_args)
+    return error, jtu.tree_unflatten(out_tree(), out_flat)
   return checked_fun
 
 def check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:
