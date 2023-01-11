@@ -68,6 +68,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
+  def testSmeluGrad(self):
+    x = jnp.array([-6., -5., -4., -3., -2., -1.,  0.,  1.,  2.,  3.,  4.,  5.])
+    nn.smelu(x, beta=2.0)
+    self.assertNoWarnings()
+
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)

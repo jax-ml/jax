@@ -482,15 +482,14 @@ def smelu(x: Array, beta: float = 2.0) -> Array:
 
   .. math::
     \mathrm{smooth\_relu}(x)= \frac{(x+\beta)^2 }{4^\beta}
-  
   Args:
     x : input array of jnp
     beta : beta value for Smooth ReLU
   Return:
     output activation array
   """
-  assert beta >= 0., f"Beta must be equal or larger than zero, given {beta}"
-  return jnp.where(np.abs(x) <= beta, ((x + beta) ** 2) / (4 * beta), relu(x))
+
+  return jnp.where(jnp.abs(x) <= beta, ((x + beta) ** 2) / (4 * beta), relu(x))
 
 
 hard_swish = hard_silu
