@@ -3172,11 +3172,10 @@ ad.deflinear2(pad_p, _pad_transpose)
 batching.primitive_batchers[pad_p] = _pad_batch_rule
 
 def _pad_lower(ctx, x, padding_value, *, padding_config):
+  aval_out, = ctx.avals_out
   low, high, interior = util.unzip3(padding_config)
-  return hlo.PadOp(x, padding_value,
-                   mlir.dense_int_elements(low),
-                   mlir.dense_int_elements(high),
-                   mlir.dense_int_elements(interior)).results
+  return [mlir.pad(ctx, aval_out, x, padding_value, low, high, interior)]
+
 mlir.register_lowering(pad_p, _pad_lower)
 
 
