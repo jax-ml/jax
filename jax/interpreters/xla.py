@@ -307,6 +307,7 @@ pytype_aval_mappings.update((t, _make_shaped_array_for_numpy_scalar)
 pytype_aval_mappings[np.ndarray] = _make_shaped_array_for_numpy_array
 pytype_aval_mappings.update(
     (t, partial(_make_abstract_python_scalar, t)) for t in _scalar_types)
+pytype_aval_mappings[ad.SymbolicZero] = operator.attrgetter("aval")
 
 
 def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',

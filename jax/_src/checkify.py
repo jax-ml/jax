@@ -910,10 +910,11 @@ def custom_jvp_call_rule(in_err, enabled_errors, *in_vals, num_consts,
   @lu.wrap_init
   def jvp(*xs):
     # TODO(lenamartens, sharadmv): why not checkify here?
-    jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
     n, ragged = divmod(len(xs), 2)
     assert not ragged
     primals, tangents = xs[num_consts:n], xs[n+num_consts:]
+    avals = tuple(map(core.get_aval, primals) + map(core.get_aval, tangents))
+    jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk(*avals)
     return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
 
   jvp, jvp_out_tree = flatten_fun_output(jvp)

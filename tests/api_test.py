@@ -6186,6 +6186,21 @@ class DCETest(jtu.JaxTestCase):
     self.assert_dce_result(jaxpr, [True, False], [True, True], 5)
 
 
+def _pack(x):
+  return lax.broadcast(x, (1,))
+
+def _unpack(x):
+  (x,) = x
+  return x
+
+def _vmap(fun):
+  def _fun(*args):
+    args = tree_util.tree_map(_pack, args)
+    out = jax.vmap(fun)(*args)
+    out = tree_util.tree_map(_unpack, out)
+    return out
+  return _fun
+
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):
@@ -7258,6 +7273,58 @@ class CustomJVPTest(jtu.JaxTestCase):
     grad     = jax.grad(g    )(0.1)  # doesn't crash
     grad_ref = jax.grad(g_ref)(0.1)
     self.assertAllClose(grad, grad_ref, check_dtypes=False)
+
+  @parameterized.named_parameters(
+      ('jit_vmap', True, True),
+      ('jit', True, False),
+      ('vmap', False, True),
+      ('', False, False),
+  )
+  def test_symbolic_zero_custom_jvp(self, maybe_jit, maybe_vmap):
+    def f(static_scalar, static_array, dyn_scalar, dyn_array):
+      out1 = static_scalar + dyn_scalar
+      out2 = static_array + dyn_array
+      return out1, out2
+
+    f = api.custom_jvp(f, symbolic_zeros=True)
+
+    @f.defjvp
+    def f_jvp(primals, tangents):
+      static_scalar, *_ = primals
+      t_static_scalar, t_static_array, t_dyn_scalar, t_dyn_array = tangents
+      self.assertIsInstance(t_static_scalar.aval, ad.ZeroShapedArray)
+      self.assertIsInstance(t_static_array.aval, ad.ZeroShapedArray)
+      self.assertEqual(t_static_scalar.shape, ())
+      self.assertEqual(t_static_array.shape, (2,))
+      return f(*primals), (static_scalar + 90, t_dyn_array + 91)
+
+    def g(dyn_scalar, dyn_array):
+      if maybe_vmap:
+        f_ = _vmap(f)
+      else:
+        f_ = f
+      return f_(1., jnp.array([2., 3.]), dyn_scalar, dyn_array)
+
+    def run(primal_ins, tangent_ins):
+      return jax.jvp(g, primal_ins, tangent_ins)
+
+    if maybe_jit:
+      run = jax.jit(run)
+
+    primal_ins = (4., jnp.array([5., 6.]))
+    tangent_ins = (7., jnp.array([8., 9.]))
+    primal_outs, tangent_outs = run(primal_ins, tangent_ins)
+    primal_out1, primal_out2 = primal_outs
+    tangent_out1, tangent_out2 = tangent_outs
+    scalar_dtype = jax.Array if maybe_jit or maybe_vmap else float
+    self.assertIsInstance(primal_out1, scalar_dtype)
+    self.assertAllClose(primal_out1, 5.)
+    self.assertIsInstance(tangent_out1, scalar_dtype)
+    self.assertAllClose(tangent_out1, 91.)
+    self.assertIsInstance(primal_out2, jax.Array)
+    self.assertArraysAllClose(primal_out2, jnp.array([7., 9.]))
+    self.assertIsInstance(tangent_out2, jax.Array)
+    self.assertArraysAllClose(tangent_out2, jnp.array([99., 100.]))
 
 
 class CustomVJPTest(jtu.JaxTestCase):

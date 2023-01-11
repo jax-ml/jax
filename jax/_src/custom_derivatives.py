@@ -88,7 +88,6 @@ def _flatten_fun_nokwargs(in_tree, *args_flat):
   ans_avals = [core.raise_to_shaped(core.get_aval(x)) for x in ans_flat]
   yield ans_flat, (ans_tree, ans_avals)
 
-
 ### JVPs
 ReturnValue = TypeVar('ReturnValue')
 
@@ -133,10 +132,12 @@ class custom_jvp(Generic[ReturnValue]):
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: Tuple[int, ...] = ()):
+               nondiff_argnums: Tuple[int, ...] = (),
+               symbolic_zeros: bool = False):
     update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
+    self.symbolic_zeros = symbolic_zeros
     self.jvp: Optional[Callable[..., Tuple[ReturnValue, ReturnValue]]] = None
 
   __getattr__ = custom_api_util.forward_attr
@@ -234,7 +235,7 @@ class custom_jvp(Generic[ReturnValue]):
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_type1 = _flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_type2 = _flatten_jvp(jvp, primal_name, jvp_name, in_tree,
-                                       out_type1)
+                                       out_type1, self.symbolic_zeros)
     out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat)
     _, (out_tree, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
@@ -248,9 +249,21 @@ def _add_args_(extra_args, *args, **kwargs):
   all_args = (extra_args + args)
   yield (yield all_args, kwargs)
 
+def _resolve_symbolic_zero(primal, tangent):
+  if type(tangent) is ad.SymbolicZero or (
+      hasattr(tangent, "aval")
+      and type(tangent.aval) in ad.symbolic_zero_aval_mapping.values()
+  ):
+    return zeros_like_aval(tangent.aval)
+  else:
+    return tangent
+
 @lu.transformation_with_aux
-def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
+def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, symbolic_zeros, *args):
   primals_in, tangents_in = split_list(args, [len(args) // 2])
+  if not symbolic_zeros:
+    tangents_in = [_resolve_symbolic_zero(p, t)
+                   for p, t in zip(primals_in, tangents_in)]
   py_primals = tree_unflatten(in_tree, primals_in)
   py_tangents = tree_unflatten(in_tree, tangents_in)
   pair_out = yield (py_primals, py_tangents), {}
@@ -262,6 +275,11 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
   py_primals_out, py_tangents_out = pair_out
   primals_out, out_tree = tree_flatten(py_primals_out)
   tangents_out, out_tree2 = tree_flatten(py_tangents_out)
+  if any(type(t) is ad.SymbolicZero for t in tangents_out):
+    # Guard against a plausible user "error".
+    # TODO(kidger)
+    raise NotImplementedError(
+      "Symbolic zero outputs from custom_jvp are not yet supported.")
   primal_avals = [core.raise_to_shaped(core.get_aval(x)) for x in primals_out]
   if out_tree != out_tree2:
     msg = (f"Custom JVP rule {jvp_name} for function {primal_name} must "
@@ -355,10 +373,11 @@ class CustomJVPCallPrimitive(core.Primitive):
 
     @lu.wrap_init
     def jvp(*xs):
-      jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
       n, ragged = divmod(len(xs), 2)
       assert not ragged
       primals, tangents = xs[num_consts:n], xs[n+num_consts:]
+      avals = tuple(map(core.get_aval, primals) + map(core.get_aval, tangents))
+      jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk(*avals)
       return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
 
     return [fun, jvp], new_params

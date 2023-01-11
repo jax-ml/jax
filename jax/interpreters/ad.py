@@ -16,7 +16,7 @@ import contextlib
 import functools
 import itertools as it
 from functools import partial
-from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional, Union
+from typing import Any, Callable, Dict, List, Tuple, Sequence, Optional, Type, Union
 
 import jax
 from jax._src import linear_util as lu
@@ -26,15 +26,16 @@ from jax.tree_util import (tree_flatten, tree_unflatten,
                            register_pytree_node, Partial)
 from jax._src import core
 from jax._src import source_info_util
-from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
-                              zeros_like_aval, zeros_like_p, Zero)
+from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, aval_zeros_likers,
+                              zeros_like_jaxval, zeros_like_aval, zeros_like_p,
+                              Zero)
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                            raise_to_shaped)
 from jax._src.dtypes import dtype, float0
 from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
                            as_hashable_function, weakref_lru_cache,
-                           partition_list)
+                           partition_list, tuple_delete, tuple_insert)
 
 
 zip = safe_zip
@@ -370,7 +371,7 @@ class JVPTrace(Trace):
   def process_custom_jvp_call(self, _, __, f_jvp, tracers):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
-    tangents_in = map(instantiate_zeros, tangents_in)
+    tangents_in = map(to_symbolic_zeros, tangents_in)
     # Cast float0 to zeros with the primal dtype because custom jvp rules don't
     # currently handle float0s
     tangents_in = map(replace_float0s, primals_in, tangents_in)
@@ -573,6 +574,89 @@ def zero_jvp(primitive, primals, tangents, **params):
 
 deflinear2(zeros_like_p, lambda t, _: [Zero.from_value(t)])
 deflinear2(add_jaxvals_p, lambda t, *args: (t, t))
+
+
+class ZeroShapedArray(core.ShapedArray):
+  pass
+
+# Adapted from the equivalent `aval_mapping_handlers[ShapedArray]`
+def _map_zero_shaped_array(
+    size: int, axis: Optional[int], aval: ZeroShapedArray) -> ZeroShapedArray:
+  assert axis is None or aval.shape[axis] == size
+  # TODO: Extend the named shape
+  if axis is None:
+    return aval
+  return ZeroShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
+                         named_shape=aval.named_shape, weak_type=aval.weak_type)
+
+def _unmap_zero_shaped_array(
+    size: int, axis_name, axis: Optional[int], aval: ZeroShapedArray
+  ) -> ZeroShapedArray:
+  named_shape = dict(aval.named_shape)
+  named_shape.pop(axis_name, None)  # TODO: make this mandatory
+  if axis is None:
+    return aval.update(named_shape=named_shape)
+  elif type(axis) is int:
+    return ZeroShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
+                           named_shape=named_shape, weak_type=aval.weak_type)
+  else:
+    raise TypeError(axis)
+
+symbolic_zero_aval_mapping: Dict[Type[core.AbstractValue], Type[core.AbstractValue]] = {}
+symbolic_zero_aval_mapping[core.ShapedArray] = ZeroShapedArray
+aval_zeros_likers[ZeroShapedArray
+  ] = lambda *args, **kwargs: aval_zeros_likers[core.ShapedArray](*args, **kwargs)
+core.raise_to_shaped_mappings[ZeroShapedArray
+  ] = lambda aval, weak_type: ZeroShapedArray(aval.shape, aval.dtype, weak_type,
+                                              aval.named_shape)
+core.aval_mapping_handlers[ZeroShapedArray] = (_map_zero_shaped_array,
+                                               _unmap_zero_shaped_array)
+
+class SymbolicZero:
+  __slots__ = ['aval']
+
+  def __init__(self, aval):
+    self.aval = aval
+
+  def __repr__(self):
+    return f"SymbolicZero({self.aval})"
+
+  @property
+  def shape(self):
+    return self.aval.shape
+
+  @property
+  def dtype(self):
+    return self.aval.dtype
+
+core.pytype_aval_mappings[SymbolicZero] = lambda z: z.aval
+
+def to_symbolic_zeros(tangent):
+  # TODO(kidger): eventually deprecate `ad_util.Zero` in favour of
+  # `SymbolicZero` throughout?
+  # Right now `Zero` is only seen inside AD rules. It'd be nice to move the
+  # special symbolic-zero-handling from the AD rules to the impl rules, and make
+  # symbolic zeros something that can flow through user code.
+  if type(tangent) is Zero:
+    zero_aval_type = symbolic_zero_aval_mapping.get(type(tangent.aval))
+    if zero_aval_type is None:
+      # Symbolic zeros not supported for this aval, fall back to materialisation
+      # behaviour.
+      return zeros_like_aval(tangent.aval)
+    else:
+      zero_aval = zero_aval_type.__new__(zero_aval_type)
+      # This works because core.AbstractValue uses __slots__
+      for kls in type(tangent.aval).__mro__[:-1]:
+        for name in kls.__slots__:
+          try:
+            val = getattr(tangent.aval, name)
+          except AttributeError:  # unused slot
+            pass
+          else:
+            setattr(zero_aval, name, val)
+      return SymbolicZero(zero_aval)
+  else:
+    return tangent
 
 def instantiate_zeros(tangent):
   if type(tangent) is Zero:

@@ -1816,7 +1816,7 @@ class DynamicJaxprTrace(core.Trace):
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
     main_ = ref(self.main)
     jvp_jaxpr_thunk = _memoize(
-        lambda: trace_to_subjaxpr_dynamic(jvp, main_(), 2 * in_avals)[::2])
+        lambda *jvp_avals: trace_to_subjaxpr_dynamic(jvp, main_(), jvp_avals)[::2])
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
@@ -1899,17 +1899,20 @@ class DynamicJaxprTrace(core.Trace):
 custom_staging_rules: Dict[Primitive, Callable] = {}
 
 def _memoize(thunk):
-  cell = []
+  cell = {}
   saved_state = [core.thread_local_state.trace_state.copy()]
-  def memoized():
-    if not cell:
+  def memoized(*args: core.AbstractValue):
+    args = tuple(raise_to_shaped(x) for x in args)
+    try:
+      out = cell[args]
+    except KeyError:
       prev_state = core.thread_local_state.trace_state
-      core.thread_local_state.trace_state = saved_state.pop()
+      [core.thread_local_state.trace_state] = saved_state
       try:
-        cell.append(thunk())
+        cell[args] = out = thunk(*args)
       finally:
         core.thread_local_state.trace_state = prev_state
-    return cell[0]
+    return out
   return memoized
 
 
