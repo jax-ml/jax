@@ -2446,7 +2446,7 @@ class Mesh(ContextDecorator):
     # subcube that hull will contain non-local devices.
     if not is_local_device[subcube_indices].all():
       raise ValueError(
-          "When passing non-GlobalDeviceArray inputs to pjit or xmap, devices "
+          "When passing host local inputs to pjit or xmap, devices "
           "connected to a single host must form a contiguous subcube of the "
           "global device mesh")
     return Mesh(self.devices[subcube_indices], self.axis_names)
