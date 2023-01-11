@@ -61,6 +61,12 @@ MYPY = False
 
 lowerable_effects: Set[core.Effect] = set()
 
+# These effects are only needed internally in JAX, and they should not be
+# exposed externally.
+# TODO(necula): This was added to remove undesired visibility of CallTfEffect
+# (added in cl/496022997). We should not need to have that effect in the
+# first place.
+ignore_effects_when_lowering: Set[core.Effect] = set()
 
 # IR Helpers
 
@@ -668,8 +674,6 @@ def lower_jaxpr_to_module(
   if platform in _platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         in_avals, out_avals, donated_args)
-  if any(eff not in lowerable_effects for eff in jaxpr.effects):
-    raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
   if any(donated_args):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args)
@@ -705,7 +709,8 @@ def lower_jaxpr_to_module(
     ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
         module_name)
     unlowerable_effects = {eff for eff in jaxpr.effects
-                           if eff not in lowerable_effects}
+                           if (eff not in lowerable_effects and
+                               eff not in ignore_effects_when_lowering)}
     if unlowerable_effects:
       raise ValueError(
           f'Cannot lower jaxpr with unlowerable effects: {unlowerable_effects}')

@@ -2924,9 +2924,11 @@ def lower_sharding_computation(
     if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
       raise ValueError("Ordered effects are not supported for more than 1 device.")
   unordered_effects = [eff for eff in closed_jaxpr.effects
-                       if eff not in core.ordered_effects]
+                       if (eff not in mlir.ignore_effects_when_lowering and
+                           eff not in core.ordered_effects)]
   ordered_effects = [eff for eff in closed_jaxpr.effects
-                     if eff in core.ordered_effects]
+                     if (eff not in mlir.ignore_effects_when_lowering and
+                         eff in core.ordered_effects)]
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,

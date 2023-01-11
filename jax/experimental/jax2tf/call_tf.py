@@ -237,10 +237,12 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
   with jax2tf_internal.inside_call_tf():
     return function_flat_tf.get_concrete_function(*args_flat_sig_tf)
 
-
+# Added only to prevent DCE from removing arguments to call_tf
+# TODO(necula): there must be a better way of preventing DCE, or dealing with
+# it, rather than hijacking the unrelated effects mechanism.
 CallTfEffect = enum.Enum('CallTfEffect', ['EFFECT'])
 
-mlir.lowerable_effects.add(CallTfEffect.EFFECT)
+mlir.ignore_effects_when_lowering.add(CallTfEffect.EFFECT)
 lax_control_flow.allowed_effects.add(CallTfEffect.EFFECT)
 ad_checkpoint.remat_allowed_effects.add(CallTfEffect.EFFECT)
 custom_derivatives.allowed_effects.add(CallTfEffect.EFFECT)

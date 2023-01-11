@@ -624,6 +624,18 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = tf.function(f_tf2, autograph=False)(x)
     self.assertAllClose(res.numpy(), f_jax(x))
 
+  def test_no_effects(self):
+    # See b/242119183. This is checking that we do not create spurious
+    # CallTfEffects in lowered functions
+    if not config.jax_array:
+      raise unittest.SkipTest("Test does not work without jax.Array")
+    def f_jax(x):
+      return jnp.cos(jax2tf.call_tf(tf.math.sin)(x))
+
+    lowering = jax.jit(f_jax).lower(np.ones((3, 5), dtype=np.float32))
+    self.assertEmpty(lowering._lowering.compile_args["unordered_effects"])
+    self.assertEmpty(lowering._lowering.compile_args["ordered_effects"])
+
 
   def test_module_documentation(self):
     def cos_tf(x):

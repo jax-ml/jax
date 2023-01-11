@@ -665,7 +665,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
       effect_p.bind(effect='abc')
       return x
     with self.assertRaisesRegex(
-        ValueError, "Cannot lower jaxpr with effects: {'abc'}"):
+        ValueError, "Cannot lower jaxpr with unlowerable effects: {'abc'}"):
       jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
   def test_cannot_pmap_ordered_effect(self):
