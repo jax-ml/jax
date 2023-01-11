@@ -143,6 +143,8 @@ def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
         executable is not None and
         isinstance(executable, pxla.MeshExecutable) and
         isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+        # No effects in computation
+        not executable.unsafe_call.ordered_effects and
         not executable.unsafe_call.has_unordered_effects and
         not executable.unsafe_call.has_host_callbacks and
         all(isinstance(x, xc.ArrayImpl) for x in out_flat)
