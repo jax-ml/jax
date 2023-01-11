@@ -128,46 +128,230 @@ class _MostRecentPjitCallExecutable(threading.local):
 _most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
 
 
-def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
+def _pjit_cache_miss(
+    fun, infer_params, static_argnums, static_argnames, args, kwargs
+):
+  global _most_recent_pjit_call_executable
 
-  def cache_miss(*args, **kwargs):
-    global _most_recent_pjit_call_executable
+  outs, out_flat, out_tree, args_flat = _python_pjit_helper(
+      infer_params, *args, **kwargs
+  )
 
-    outs, out_flat, out_tree, args_flat = _python_pjit_helper(
-        infer_params, *args, **kwargs)
+  executable = _most_recent_pjit_call_executable.value
+  _most_recent_pjit_call_executable.value = None
 
-    executable = _most_recent_pjit_call_executable.value
-    _most_recent_pjit_call_executable.value = None
+  use_fastpath = (
+      executable is not None
+      and isinstance(executable, pxla.MeshExecutable)
+      and isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
+      and
+      # No effects in computation
+      not executable.unsafe_call.ordered_effects
+      and not executable.unsafe_call.has_unordered_effects
+      and not executable.unsafe_call.has_host_callbacks
+      and all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+  )
 
-    use_fastpath = (
-        executable is not None and
-        isinstance(executable, pxla.MeshExecutable) and
-        isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
-        # No effects in computation
-        not executable.unsafe_call.ordered_effects and
-        not executable.unsafe_call.has_unordered_effects and
-        not executable.unsafe_call.has_host_callbacks and
-        all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+  if use_fastpath:
+    out_avals = [o.aval for o in out_flat]
+    out_committed = [o._committed for o in out_flat]
+    kept_var_bitvec = [
+        i in executable._kept_var_idx for i in range(len(args_flat))
+    ]
+    fastpath_data = pxla._MeshExecutableFastpathData(
+        executable.xla_executable,
+        out_tree,
+        executable._in_shardings,
+        executable._out_shardings,
+        out_avals,
+        out_committed,
+        kept_var_bitvec,
     )
+  else:
+    fastpath_data = None
 
-    if use_fastpath:
-      out_avals = [o.aval for o in out_flat]
-      out_committed = [o._committed for o in out_flat]
-      kept_var_bitvec = [i in executable._kept_var_idx
-                         for i in range(len(args_flat))]
-      fastpath_data = pxla._MeshExecutableFastpathData(
-          executable.xla_executable, out_tree, executable._in_shardings,
-          executable._out_shardings, out_avals, out_committed, kept_var_bitvec)
-    else:
-      fastpath_data = None
+  return outs, fastpath_data
 
-    return outs, fastpath_data
+
+def _cpp_pjit(fun: Callable, infer_params, static_argnums, static_argnames):
+  def cache_miss(*args, **kwargs):
+    return _pjit_cache_miss(
+        fun, infer_params, static_argnums, static_argnames, args, kwargs
+    )
 
   cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
       cache_miss, static_argnums, static_argnames)
 
   return wraps(fun)(cpp_pjit_f)
+
+
+def _infer_pjit_params(
+    fun,
+    in_axis_resources,
+    out_axis_resources,
+    backend,
+    device,
+    keep_unused,
+    inline,
+    donate_argnums,
+    static_argnums,
+    static_argnames,
+    args,
+    kwargs,
+):
+  if kwargs and not _is_unspecified(in_axis_resources):
+    raise ValueError(
+        "pjit does not support kwargs when in_axis_resources is specified."
+    )
+
+  # Putting this outside of wrapped would make resources lexically scoped
+  resource_env = pxla.thread_resources.env
+  pjit_mesh = resource_env.physical_mesh
+  if pjit_mesh.empty:
+    if config.jax_array:
+      # Don't enforce requiring a mesh when `jax_array` flag is enabled. But
+      # if mesh is not empty then pjit will respect it.
+      pass
+    else:
+      raise RuntimeError(
+          "pjit requires a non-empty mesh! Are you sure that "
+          "it's defined at the call site?"
+      )
+
+  if (backend or device) and not pjit_mesh.empty:
+    raise ValueError(
+        "Mesh context manager should not be used with jit when backend or "
+        "device is also specified as an argument to jit."
+    )
+
+  f = lu.wrap_init(fun)
+  f, dyn_args = argnums_partial_except(
+      f, static_argnums, args, allow_invalid=True
+  )
+  del args
+
+  # TODO(yashkatariya): Merge the nokwargs and kwargs path. One blocker is
+  # flatten_axes which if kwargs are present in the treedef (even empty {}),
+  # leads to wrong expansion.
+  if kwargs:
+    f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
+    args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+    flat_fun, out_tree = flatten_fun(f, in_tree)
+  else:
+    args_flat, in_tree = tree_flatten(dyn_args)
+    flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
+    dyn_kwargs = ()
+  del kwargs
+
+  if donate_argnums and not config.jax_debug_nans:
+    donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
+  else:
+    donated_invars = (False,) * len(args_flat)
+
+  if config.jax_array:
+    # If backend or device is set as an arg on jit, then resolve them to
+    # in_shardings and out_shardings as if user passed in in_axis_resources
+    # and out_axis_resources.
+    if backend or device:
+      in_shardings = out_shardings = _create_sharding_with_device_backend(
+          device, backend
+      )
+    else:
+      in_shardings = tree_map(
+          lambda x: _create_sharding_for_array(pjit_mesh, x), in_axis_resources
+      )
+      out_shardings = tree_map(
+          lambda x: _create_sharding_for_array(pjit_mesh, x), out_axis_resources
+      )
+  else:
+    in_shardings = tree_map(
+        lambda x: _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x),
+        in_axis_resources,
+    )
+    out_shardings = tree_map(
+        lambda x: x
+        if _is_unspecified(x)
+        else _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x),
+        out_axis_resources,
+    )
+    # This check fails extremely rarely and has a huge cost in the dispatch
+    # path. So hide it behind the jax_enable_checks flag.
+    if config.jax_enable_checks:
+      _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
+
+  local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
+  # TODO(yashkatariya): This is a hack. This should go away when avals have
+  # is_global attribute.
+  if config.jax_array:
+    in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(
+        args_flat
+    )
+  else:
+    in_positional_semantics = tuple(
+        tree_map(_get_in_positional_semantics, args_flat)
+    )
+  out_positional_semantics = (
+      pxla._PositionalSemantics.GLOBAL
+      if config.jax_parallel_functions_output_gda or config.jax_array
+      else pxla._positional_semantics.val
+  )
+
+  global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
+      hashable_pytree(in_shardings),
+      local_in_avals,
+      in_tree,
+      in_positional_semantics,
+      tuple(isinstance(a, GDA) for a in args_flat),
+      resource_env,
+  )
+
+  jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
+      flat_fun,
+      hashable_pytree(out_shardings),
+      global_in_avals,
+      HashableFunction(out_tree, closure=()),
+  )
+
+  if (
+      any(_is_from_gda(i) for i in canonicalized_in_shardings_flat)
+      or not config.jax_array
+  ):
+    canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
+        canonicalized_in_shardings_flat, args_flat
+    )
+
+  assert len(args_flat) == len(canonicalized_in_shardings_flat)
+
+  canonicalized_in_shardings_flat = (_UNSPECIFIED,) * len(
+      consts
+  ) + canonicalized_in_shardings_flat
+  donated_invars = (False,) * len(consts) + donated_invars
+  in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(
+      consts
+  ) + in_positional_semantics
+
+  # in_shardings and out_shardings here are all OpShardingSharding.
+  params = dict(
+      jaxpr=jaxpr,
+      in_shardings=canonicalized_in_shardings_flat,
+      out_shardings=canonicalized_out_shardings_flat,
+      resource_env=resource_env,
+      donated_invars=donated_invars,
+      name=getattr(flat_fun, "__name__", "<unnamed function>"),
+      in_positional_semantics=in_positional_semantics,
+      out_positional_semantics=out_positional_semantics,
+      keep_unused=keep_unused,
+      inline=inline,
+  )
+  return (
+      consts + args_flat,
+      local_in_avals,
+      params,
+      in_tree,
+      out_tree(),
+      donate_argnums,
+  )
 
 
 # TODO(yashkatariya): Add pjit microbenchmarks.
@@ -365,122 +549,20 @@ def pjit(
       fun, donate_argnums, static_argnums, static_argnames)
 
   def infer_params(*args, **kwargs):
-    if kwargs and not _is_unspecified(in_axis_resources):
-      raise ValueError(
-          "pjit does not support kwargs when in_axis_resources is specified.")
-
-    # Putting this outside of wrapped would make resources lexically scoped
-    resource_env = pxla.thread_resources.env
-    pjit_mesh = resource_env.physical_mesh
-    if pjit_mesh.empty:
-      if config.jax_array:
-        # Don't enforce requiring a mesh when `jax_array` flag is enabled. But
-        # if mesh is not empty then pjit will respect it.
-        pass
-      else:
-        raise RuntimeError("pjit requires a non-empty mesh! Are you sure that "
-                           "it's defined at the call site?")
-
-    if (backend or device) and not pjit_mesh.empty:
-      raise ValueError(
-          "Mesh context manager should not be used with jit when backend or "
-          "device is also specified as an argument to jit.")
-
-    f = lu.wrap_init(fun)
-    f, dyn_args = argnums_partial_except(f, static_argnums, args,
-                                         allow_invalid=True)
-    del args
-
-    # TODO(yashkatariya): Merge the nokwargs and kwargs path. One blocker is
-    # flatten_axes which if kwargs are present in the treedef (even empty {}),
-    # leads to wrong expansion.
-    if kwargs:
-      f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-      args_flat, in_tree = tree_flatten((dyn_args, dyn_kwargs))
-      flat_fun, out_tree = flatten_fun(f, in_tree)
-    else:
-      args_flat, in_tree = tree_flatten(dyn_args)
-      flat_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-      dyn_kwargs = ()
-    del kwargs
-
-    if donate_argnums and not config.jax_debug_nans:
-      donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
-    else:
-      donated_invars = (False,) * len(args_flat)
-
-    if config.jax_array:
-      # If backend or device is set as an arg on jit, then resolve them to
-      # in_shardings and out_shardings as if user passed in in_axis_resources
-      # and out_axis_resources.
-      if backend or device:
-        in_shardings = out_shardings = _create_sharding_with_device_backend(
-            device, backend)
-      else:
-        in_shardings = tree_map(
-            lambda x: _create_sharding_for_array(pjit_mesh, x), in_axis_resources)
-        out_shardings = tree_map(
-            lambda x: _create_sharding_for_array(pjit_mesh, x), out_axis_resources)
-    else:
-      in_shardings = tree_map(
-          lambda x: _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x),
-          in_axis_resources)
-      out_shardings = tree_map(
-          lambda x: x if _is_unspecified(x) else
-          _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x), out_axis_resources)
-      # This check fails extremely rarely and has a huge cost in the dispatch
-      # path. So hide it behind the jax_enable_checks flag.
-      if config.jax_enable_checks:
-        _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
-
-    local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
-    # TODO(yashkatariya): This is a hack. This should go away when avals have
-    # is_global attribute.
-    if config.jax_array:
-      in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
-    else:
-      in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
-    out_positional_semantics = (
-        pxla._PositionalSemantics.GLOBAL
-        if config.jax_parallel_functions_output_gda or config.jax_array else
-        pxla._positional_semantics.val)
-
-    global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
-        hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
-        tuple(isinstance(a, GDA) for a in args_flat), resource_env)
-
-    jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
-        flat_fun, hashable_pytree(out_shardings), global_in_avals,
-        HashableFunction(out_tree, closure=()))
-
-    if (any(_is_from_gda(i) for i in canonicalized_in_shardings_flat) or
-        not config.jax_array):
-      canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
-          canonicalized_in_shardings_flat, args_flat)
-
-    assert len(args_flat) == len(canonicalized_in_shardings_flat)
-
-    canonicalized_in_shardings_flat = (
-        _UNSPECIFIED,) * len(consts) + canonicalized_in_shardings_flat
-    donated_invars = (False,) * len(consts) + donated_invars
-    in_positional_semantics = (
-        pxla._PositionalSemantics.GLOBAL,) * len(consts) + in_positional_semantics
-
-    # in_shardings and out_shardings here are all OpShardingSharding.
-    params = dict(
-        jaxpr=jaxpr,
-        in_shardings=canonicalized_in_shardings_flat,
-        out_shardings=canonicalized_out_shardings_flat,
-        resource_env=resource_env,
-        donated_invars=donated_invars,
-        name=getattr(flat_fun, '__name__', '<unnamed function>'),
-        in_positional_semantics=in_positional_semantics,
-        out_positional_semantics=out_positional_semantics,
-        keep_unused=keep_unused,
-        inline=inline,
+    return _infer_pjit_params(
+        fun,
+        in_axis_resources,
+        out_axis_resources,
+        backend,
+        device,
+        keep_unused,
+        inline,
+        donate_argnums,
+        static_argnums,
+        static_argnames,
+        args,
+        kwargs,
     )
-    return (consts + args_flat, local_in_avals, params, in_tree, out_tree(),
-            donate_argnums)
 
   if FLAGS.experimental_cpp_pjit and xla_extension_version >= 115:
     wrapped = _cpp_pjit(fun, infer_params, static_argnums, static_argnames)
