@@ -20,5 +20,6 @@ from .cluster import ClusterEnv
 # the user did not explicitly provide the arguments
 # to :func:`jax.distributed.initialize`, the first
 # available one from the list will be picked.
+from .ompi_cluster import OmpiCluster
 from .slurm_cluster import SlurmCluster
 from .cloud_tpu_cluster import TpuCluster
