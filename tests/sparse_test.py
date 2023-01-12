@@ -1336,20 +1336,16 @@ class BCOOTest(sptu.SparseTestCase):
       return lax.dot_general(x, y, dimension_numbers=dimension_numbers)
 
     def f_sparse(xsp, ysp):
-      shape = sparse_util._dot_general_validated_shape(xsp.shape, ysp.shape,
-                                                       dimension_numbers)
-      data, indices = sparse_bcoo._bcoo_spdot_general(
-          xsp.data, xsp.indices, ysp.data, ysp.indices, lhs_spinfo=xsp._info,
-          rhs_spinfo=ysp._info, dimension_numbers=dimension_numbers)
-      return sparse_bcoo._bcoo_todense(data, indices, spinfo=sparse_util.SparseInfo(shape))
+      return sparse.bcoo_dot_general(xsp, ysp, dimension_numbers=dimension_numbers)
 
-    tol = {"float64": 1E-14, "complex128": 1E-14}
     if should_error:
       with self.assertRaisesRegex(ValueError, ".*cannot have unused batch dims on rhs with unused sparse dims on lhs."):
         f_sparse(*args_maker())
     else:
+      tol = {"float32": 1E-5, "complex64": 1E-5, "float64": 1E-14, "complex128": 1E-14}
       self._CheckAgainstDense(f_dense, f_sparse, args_maker, tol=tol)
       self._CompileAndCheckSparse(f_sparse, args_maker)
+      self._CheckBatchingSparse(f_dense, f_sparse, args_maker, tol=tol)
       if jnp.issubdtype(dtype, jnp.floating):
         self._CheckGradsSparse(f_dense, f_sparse, args_maker, modes=['fwd'])
 
@@ -1397,43 +1393,6 @@ class BCOOTest(sptu.SparseTestCase):
 
     self.assertAllClose(sp_sp_jac, de_de_jac)
     self.assertAllClose(sp_de_jac, de_de_jac)
-
-  @jtu.sample_product(
-    [dict(lhs_n_batch=lhs_n_batch, rhs_n_batch=rhs_n_batch, lhs_shape=lhs_shape,
-          rhs_shape=rhs_shape, in_axes=in_axes)
-      for lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, in_axes in [
-        ((3, 5), 1, (3, 5), 1, 0),
-        ((3, 4, 5), 1, (3, 5), 1, 0),
-        ((3, 4, 5), 2, (3, 5), 1, 0),
-        # TODO(jakevdp): test these once unequal batches are implemented
-        # ((4, 5), 1, (5,), 0, (0, None)),
-        # ((3, 4, 5), 1, (5,), 0, (0, None)),
-        # ((4, 5), 0, (3, 5), 1, (None, 0)),
-      ]
-    ],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
-  )
-  @jax.default_matmul_precision("float32")
-  def test_bcoo_spmm_batched(self, lhs_shape, lhs_n_batch, rhs_shape, rhs_n_batch, dtype, in_axes):
-    sprng = rand_sparse(self.rng())
-    def args_maker():
-      x = sprng(lhs_shape, dtype)
-      y = sprng(rhs_shape, dtype)
-      xsp = sparse.BCOO.fromdense(x, n_batch=lhs_n_batch)
-      ysp = sparse.BCOO.fromdense(y, n_batch=rhs_n_batch)
-      return x, y, xsp, ysp
-
-    def f_dense(x, y, _, __):
-      return jax.vmap(operator.matmul, in_axes=in_axes)(x, y)
-    def f_sparse(_, __, x, y):
-      return jax.vmap(operator.matmul, in_axes=in_axes)(x, y)
-
-    args = args_maker()
-    result_dense = f_dense(*args)
-    result_sparse = f_sparse(*args)
-    self.assertAllClose(result_dense, result_sparse.todense())
-    result_sparse_jit = jax.jit(f_sparse)(*args)
-    self.assertAllClose(result_dense, result_sparse_jit.todense())
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)

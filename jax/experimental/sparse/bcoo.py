@@ -55,7 +55,7 @@ from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
 
 
-def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo):
+def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
   data, indices = batched_args
   data_bdim, indices_bdim = batch_dims
   n_batch = indices.ndim - 2 + bool(indices_bdim is None)
@@ -65,8 +65,8 @@ def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo):
   batched_data, batched_indices = [
       lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
       for arg, bdim in [(data, data_bdim), (indices, indices_bdim)]]
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip((data, indices), batch_dims))
+  if batch_size is None:
+    batch_size = max(arg.shape[dim] for arg, dim in zip((data, indices), batch_dims) if dim is not None)
   batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
                               indices_sorted=spinfo.indices_sorted,
                               unique_indices=spinfo.unique_indices)
@@ -1252,37 +1252,18 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
   return core.ShapedArray(data_shape, lhs_data.dtype), core.ShapedArray(indices_shape, lhs_indices.dtype)
 
 def _bcoo_spdot_general_batch_rule(batched_args, batch_dims, *, lhs_spinfo: SparseInfo, rhs_spinfo: SparseInfo, dimension_numbers):
-  lhs_shape = lhs_spinfo.shape
-  rhs_shape = rhs_spinfo.shape
-
-  lhs_data, lhs_indices, rhs_data, rhs_indices = batched_args
-  batch_dims = list(batch_dims)
-  batch_size = max(0 if dim is None else arg.shape[dim]
-                   for arg, dim in zip(batched_args, batch_dims))
-  if batch_dims[0] is None:
-    lhs_data = lhs_data[None]
-    batch_dims[0] = 0
-  if batch_dims[1] is None:
-    lhs_indices = lhs_indices[None]
-    batch_dims[1] = 0
-  assert batch_dims[0] == batch_dims[1] == 0
-  if batch_dims[2] is None:
-    rhs_data = rhs_data[None]
-    batch_dims[2] = 0
-  if batch_dims[3] is None:
-    rhs_indices = rhs_indices[None]
-    batch_dims[3] = 0
-  if any(dim != 0 for dim in batch_dims):
-    raise NotImplementedError("batching along non-leading dimension.")
-  assert all(dim == 0 for dim in batch_dims)
-  new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
-      (len(lhs_shape), len(rhs_shape)), (batch_dims[0], batch_dims[2]), dimension_numbers)
-  new_lhs_shape = (batch_size, *lhs_shape)
-  new_rhs_shape = (batch_size, *rhs_shape)
+  lhs_ndim = len(lhs_spinfo.shape)
+  rhs_ndim = len(rhs_spinfo.shape)
+  batch_size = max(arg.shape[dim] for arg, dim in zip(batched_args, batch_dims) if dim is not None)
+  lhs_data, lhs_indices, lhs_spinfo = _bcoo_batch_dims_to_front(
+    batched_args[:2], batch_dims[:2], lhs_spinfo, batch_size=batch_size)
+  rhs_data, rhs_indices, rhs_spinfo = _bcoo_batch_dims_to_front(
+    batched_args[2:], batch_dims[2:], rhs_spinfo, batch_size=batch_size)
+  dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
+      (lhs_ndim, rhs_ndim), (0, 0), dimension_numbers)
   batched_out = _bcoo_spdot_general(lhs_data, lhs_indices, rhs_data, rhs_indices,
-                                    dimension_numbers=new_dimension_numbers,
-                                    lhs_spinfo=SparseInfo(new_lhs_shape),
-                                    rhs_spinfo=SparseInfo(new_rhs_shape))
+                                    dimension_numbers=dimension_numbers,
+                                    lhs_spinfo=lhs_spinfo, rhs_spinfo=rhs_spinfo)
   return batched_out, (result_batch_dim, result_batch_dim)
 
 
