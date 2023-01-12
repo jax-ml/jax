@@ -107,13 +107,10 @@ def call_tf(callable_tf: Callable) -> Callable:
     args_flat_jax = tuple(map(canonical_arg, args_flat_jax))
     def make_tensorspec(a_jax):
       a_tf_dtype = jax2tf_internal._to_tf_dtype(a_jax.dtype)
-      if any(not core.is_constant_dim(d) for d in a_jax.shape):
-        msg = ("call_tf cannot be applied to shape-polymorphic arguments. "
-               f"Found argument shape: {a_jax.shape}. "
-               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
-        raise ValueError(msg)
-
-      return tf.TensorSpec(a_jax.shape, a_tf_dtype)
+      a_tf_shape = [
+          d if core.is_constant_dim(d) else None for d in a_jax.shape
+      ]
+      return tf.TensorSpec(a_tf_shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 
     res_treedef = None  # We'll store here the result treedef
@@ -131,6 +128,25 @@ def call_tf(callable_tf: Callable) -> Callable:
     # Prepare a tf.function ahead of time, to cache the concrete functions. This
     # won't be used in op-by-op execution mode.
     function_flat_tf = tf.function(callable_flat_tf, autograph=False, jit_compile=True)
+
+    input_shapes_tf = [s.shape for s in args_flat_sig_tf]
+    output_shapes_tf = _get_concrete_function_tf(
+        function_flat_tf, args_flat_sig_tf
+    ).output_shapes
+
+    if not all(s.is_fully_defined() for s in input_shapes_tf) and not all(
+        s.is_fully_defined() for s in output_shapes_tf
+    ):
+      for a_jax, a_tf_shape in zip(args_flat_jax, input_shapes_tf):
+        if not a_tf_shape.is_fully_defined():
+          msg = (
+              "call_tf cannot be applied to shape-polymorphic arguments unless"
+              " all the output shapes are static. Found argument shape:"
+              f" {a_jax.shape}. See"
+              " https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf"
+              " for a discussion."
+          )
+          raise ValueError(msg)
 
     res_jax_flat = call_tf_p.bind(
         *args_flat_jax,
