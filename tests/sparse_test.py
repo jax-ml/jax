@@ -734,10 +734,8 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(M.todense(), jnp.empty(shape, dtype))
 
   @jtu.sample_product(
-    [dict(n_batch=n_batch, n_dense=n_dense)
-      for n_batch in range(3)
-      for n_dense in range(3 - n_batch)
-    ],
+    [dict(n_batch=layout.n_batch, n_dense=layout.n_dense)
+     for layout in iter_sparse_layouts((3, 3))],
     N=[3, 5],
     M=[None, 4],
     k=[-3, -1, 0, 2, 4],
@@ -955,6 +953,8 @@ class BCOOTest(sptu.SparseTestCase):
       # Dense dimensions not yet fully supported in reverse mode.
       modes = ['fwd'] if props.n_dense != 0 else ['fwd', 'rev']
       self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=modes, atol=tol, rtol=tol)
+    self._CheckBatchingSparse(dense_fun, sparse_fun, args_maker, atol=tol, rtol=tol,
+                              bdims=self._random_bdims(props.n_batch, len(props.rhs_shape)))
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
