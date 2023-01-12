@@ -624,6 +624,16 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = tf.function(f_tf2, autograph=False)(x)
     self.assertAllClose(res.numpy(), f_jax(x))
 
+  def test_effectful(self):
+    if not config.jax_array:
+      raise unittest.SkipTest("Test not intended to work without jax.Array")
+
+    x = np.ones((3,), dtype=np.float32)
+    lower_effect = jax.jit(jax2tf.call_tf(tf.math.sin, has_side_effects=True)).lower(x)
+    self.assertNotEmpty(lower_effect._lowering.compile_args["unordered_effects"])
+
+    lower_no_effect = jax.jit(jax2tf.call_tf(tf.math.sin, has_side_effects=False)).lower(x)
+    self.assertEmpty(lower_no_effect._lowering.compile_args["unordered_effects"])
 
   def test_module_documentation(self):
     def cos_tf(x):
