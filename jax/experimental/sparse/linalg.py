@@ -14,19 +14,17 @@
 
 """Sparse linear algebra routines."""
 
-from typing import Union, Callable
 import functools
+from typing import Callable, Union
+
+import numpy as np
 
 import jax
 import jax.numpy as jnp
-
 from jax import core
-from jax.interpreters import mlir
-from jax.interpreters import xla
-
 from jax._src.lib import gpu_solver
+from jax.interpreters import mlir, xla
 
-import numpy as np
 
 def lobpcg_standard(
     A: Union[jnp.ndarray, Callable[[jnp.ndarray], jnp.ndarray]],
@@ -136,7 +134,7 @@ def _lobpcg_standard_callable(
   # R, our residuals, in a large joint array XPR, column-stacked, so (n, 3*k).
 
   AX = A(X)
-  theta = jnp.sum(X * AX, axis=0, keepdims=True)
+  theta = jnp.sum(X * AX, axis=0, keepdims=True).real
   R = AX - theta * X
 
   def cond(state):
