@@ -57,7 +57,14 @@ def _asarray_or_float0(arg) -> Union[np.ndarray, Array]:
     return arg
   return jnp.asarray(arg)
 
-def _broadcasting_vmap(fun, in_axes=0, out_axes=0):
+def nfold_vmap(fun, N, *, broadcasted=True, in_axes=0):
+  """Convenience function to apply (broadcasted) vmap N times."""
+  _vmap = broadcasting_vmap if broadcasted else vmap
+  for _ in range(N):
+    fun = _vmap(fun, in_axes=in_axes)
+  return fun
+
+def broadcasting_vmap(fun, in_axes=0, out_axes=0):
   @functools.wraps(fun)
   def batched_fun(*args):
     args_flat, in_tree  = tree_util.tree_flatten(args)
