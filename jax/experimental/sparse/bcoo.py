@@ -1456,22 +1456,16 @@ def _bcoo_sum_duplicates_abstract_eval(data, indices, *, spinfo, nse):
   return data_out, indices_out
 
 def _bcoo_sum_duplicates_batching_rule(batched_args, batch_dims, *, spinfo, nse):
-  data, indices = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  new_spinfo = SparseInfo(shape=(max(data.shape[0], indices.shape[0]), *spinfo.shape))
+  data, indices, new_spinfo = _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo)
   data_out, indices_out = bcoo_sum_duplicates_p.bind(data, indices, spinfo=new_spinfo, nse=nse)
-  out_axes = (0, 0)
   # Note: if data is unbatched on input, it will be batched on output.
   # However, if indices are unbatched on input, they will be unbatched on output.
   if batch_dims[1] is None:
-    indices_out = indices_out[0]
+    indices_out = lax.squeeze(indices_out, [0])
     out_axes = (0, None)
-  return (data_out, indices_out), tuple(out_axes)
+  else:
+    out_axes = (0, 0)
+  return (data_out, indices_out), out_axes
 
 def _bcoo_sum_duplicates_jvp(primals, tangents, *, spinfo, nse):
   props = _validate_bcoo(*primals, spinfo.shape)
