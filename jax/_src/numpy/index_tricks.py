@@ -54,7 +54,11 @@ class _IndexGrid(abc.ABC):
     with jax.numpy_dtype_promotion('standard'):
       output = _promote_dtypes(*output)
     output_arr = jnp.meshgrid(*output, indexing='ij', sparse=self.sparse)
-    return output_arr if self.sparse else jnp.stack(output_arr, 0)
+    if self.sparse:
+      return output_arr
+    if len(output_arr) == 0:
+      return jnp.arange(0)
+    return jnp.stack(output_arr, 0)
 
 
 class _Mgrid(_IndexGrid):

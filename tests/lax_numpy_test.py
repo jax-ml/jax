@@ -4353,6 +4353,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # wrap indexer for appropriate dtype defaults.
     np_mgrid = _indexer_with_default_outputs(np.mgrid)
     assertAllEqual = partial(self.assertAllClose, atol=0, rtol=0)
+    assertAllEqual(np_mgrid[()], jnp.mgrid[()])
     assertAllEqual(np_mgrid[:4], jnp.mgrid[:4])
     assertAllEqual(np_mgrid[:4,], jnp.mgrid[:4,])
     assertAllEqual(np_mgrid[:4], jax.jit(lambda: jnp.mgrid[:4])())
