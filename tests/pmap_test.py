@@ -14,7 +14,6 @@
 
 
 from concurrent.futures import ThreadPoolExecutor
-import contextlib
 from functools import partial
 import itertools as it
 import gc
@@ -55,11 +54,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
-
-
-with contextlib.suppress(ImportError):
-  import pytest
-  pytestmark = pytest.mark.multiaccelerator
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
@@ -137,6 +131,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
       input_shape, pmap_sharding, lambda idx: input_data[idx]), input_data
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PythonPmapTest(jtu.JaxTestCase):
 
   @property
@@ -2064,6 +2059,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
 
   @property
@@ -2107,6 +2103,7 @@ class CppPmapTest(PythonPmapTest):
     self.assertEqual(pmaped_f._cache_size, 1)
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class VmapOfPmapTest(jtu.JaxTestCase):
 
   # TODO(apaszke)
@@ -2149,6 +2146,7 @@ class VmapOfPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class VmapPmapCollectivesTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -2346,6 +2344,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PmapWithDevicesTest(jtu.JaxTestCase):
 
   def testAllDevices(self):
@@ -2602,6 +2601,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
                         jax.grad(mk_case(vmap))(x, y))
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ShardedDeviceArrayTest(jtu.JaxTestCase):
 
   def testThreadsafeIndexing(self):
@@ -2883,6 +2883,7 @@ def _spec_str(spec):
           f"{spec.mesh_mapping},)")
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ShardArgsTest(jtu.JaxTestCase):
 
   def numpy_array(x):
@@ -2949,6 +2950,7 @@ class ShardArgsTest(jtu.JaxTestCase):
       self.assertAllClose(np.asarray(buf), x[idx], check_dtypes=False)
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_input_array_output_array(self):
@@ -3136,6 +3138,7 @@ class EagerPmapMixin:
     config.update('jax_disable_jit', self.jit_disabled)
     super().tearDown()
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
 
   def test_custom_jvp(self):
@@ -3171,15 +3174,19 @@ class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
     self.assertAllClose(self.pmap(f)(x), jax.vmap(f)(x))
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class EagerCppPmapTest(EagerPmapMixin, CppPmapTest):
   pass
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class EagerPmapWithDevicesTest(EagerPmapMixin, PmapWithDevicesTest):
   pass
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class EagerVmapOfPmapTest(EagerPmapMixin, VmapOfPmapTest):
   pass
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class EagerArrayPmapTest(EagerPmapMixin, ArrayPmapTest):
   pass
 
