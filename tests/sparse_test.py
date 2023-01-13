@@ -804,21 +804,24 @@ class BCOOTest(sptu.SparseTestCase):
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for layout in iter_sparse_layouts(shape)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
-    assume_unique=[True, False]
+    assume_unique=[True, False, None]
   )
   def test_bcoo_extract(self, shape, dtype, n_batch, n_dense, assume_unique):
     rng = rand_sparse(self.rng())
-    M = rng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-    data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse)
-    bcoo_extract = partial(sparse.bcoo_extract, assume_unique=assume_unique)
 
-    data2 = bcoo_extract(indices, M)
-    self.assertArraysEqual(data, data2)
+    def args_maker():
+      x = rng(shape, dtype)
+      x_bcoo = sparse.bcoo_fromdense(x, n_batch=n_batch, n_dense=n_dense)
+      # Unique indices are required for this test when assume_unique == True.
+      self.assertTrue(x_bcoo.unique_indices)
+      return x_bcoo, x
 
-    data3 = jit(bcoo_extract)(indices, M)
-    self.assertArraysEqual(data, data3)
+    dense_op = lambda _, x: x
+    sparse_op = partial(sparse.bcoo_extract, assume_unique=assume_unique)
+
+    self._CheckAgainstDense(dense_op, sparse_op, args_maker)
+    self._CompileAndCheckSparse(sparse_op, args_maker)
+    self._CheckBatchingSparse(dense_op, sparse_op, args_maker, bdims=2 * self._random_bdims(n_batch))
 
   def test_bcoo_extract_duplicate_indices(self):
     data = jnp.array([1, 3, 9, 27, 81, 243])
@@ -826,10 +829,10 @@ class BCOOTest(sptu.SparseTestCase):
     shape = (6,)
     mat = sparse.BCOO((data, indices), shape=shape).todense()
 
-    data1 = sparse.bcoo_extract(indices, mat, assume_unique=True)
+    data1 = sparse_bcoo._bcoo_extract(indices, mat, assume_unique=True)
     self.assertArraysEqual(data1, jnp.array([10, 3, 10, 270, 81, 270]))
 
-    data2 = sparse.bcoo_extract(indices, mat, assume_unique=False)
+    data2 = sparse_bcoo._bcoo_extract(indices, mat, assume_unique=False)
     self.assertArraysEqual(data2, jnp.array([10, 3, 0, 270, 81, 0]))
 
   def test_bcoo_extract_duplicate_indices_n_sparse_0(self):
@@ -838,10 +841,10 @@ class BCOOTest(sptu.SparseTestCase):
     shape = (3,)
     mat = sparse.BCOO((data, indices), shape=shape).todense()
 
-    data1 = sparse.bcoo_extract(indices, mat, assume_unique=True)
+    data1 = sparse_bcoo._bcoo_extract(indices, mat, assume_unique=True)
     self.assertArraysEqual(data1, jnp.array([[1, 1], [5, 5], [9, 9]]))
 
-    data2 = sparse.bcoo_extract(indices, mat, assume_unique=False)
+    data2 = sparse_bcoo._bcoo_extract(indices, mat, assume_unique=False)
     self.assertArraysEqual(data2, jnp.array([[1, 0], [5, 0], [9, 0]]))
 
   def test_bcoo_extract_batching(self):
@@ -850,18 +853,18 @@ class BCOOTest(sptu.SparseTestCase):
     mat = jnp.arange(4.).reshape((4, 1))
 
     # in_axes = (0, None)
-    expected = jnp.vstack([sparse.bcoo_extract(i, mat[0]) for i in indices])
-    actual = vmap(sparse.bcoo_extract, in_axes=(0, None))(indices, mat[0])
+    expected = jnp.vstack([sparse_bcoo._bcoo_extract(i, mat[0]) for i in indices])
+    actual = vmap(sparse_bcoo._bcoo_extract, in_axes=(0, None))(indices, mat[0])
     self.assertArraysEqual(expected, actual)
 
     # in_axes = (None, 0)
-    expected = jnp.vstack([sparse.bcoo_extract(indices[0], m) for m in mat])
-    actual = vmap(sparse.bcoo_extract, in_axes=(None, 0))(indices[0], mat)
+    expected = jnp.vstack([sparse_bcoo._bcoo_extract(indices[0], m) for m in mat])
+    actual = vmap(sparse_bcoo._bcoo_extract, in_axes=(None, 0))(indices[0], mat)
     self.assertArraysEqual(expected, actual)
 
     # in_axes = (0, 0)
-    expected = jnp.vstack([sparse.bcoo_extract(i, m) for i, m in zip(indices, mat)])
-    actual = vmap(sparse.bcoo_extract, in_axes=0)(indices, mat)
+    expected = jnp.vstack([sparse_bcoo._bcoo_extract(i, m) for i, m in zip(indices, mat)])
+    actual = vmap(sparse_bcoo._bcoo_extract, in_axes=0)(indices, mat)
     self.assertArraysEqual(expected, actual)
 
   @jtu.sample_product(
@@ -877,7 +880,7 @@ class BCOOTest(sptu.SparseTestCase):
                                              n_dense=n_dense)
     data, indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense)
 
-    extract = partial(sparse.bcoo_extract, indices)
+    extract = partial(sparse_bcoo._bcoo_extract, indices)
     j1 = jax.jacfwd(extract)(M)
     j2 = jax.jacrev(extract)(M)
     hess = jax.hessian(extract)(M)
@@ -890,11 +893,11 @@ class BCOOTest(sptu.SparseTestCase):
 
     # (n_batch, n_sparse, n_dense) = (1, 0, 0), nse = 2
     args_maker = lambda: (jnp.zeros((3, 2, 0), dtype='int32'), jnp.arange(3))
-    self._CompileAndCheck(sparse.bcoo_extract, args_maker)
+    self._CompileAndCheck(sparse_bcoo._bcoo_extract, args_maker)
 
     # (n_batch, n_sparse, n_dense) = (0, 0, 1), nse = 2
     args_maker = lambda: (jnp.zeros((2, 0), dtype='int32'), jnp.arange(3))
-    self._CompileAndCheck(sparse.bcoo_extract, args_maker)
+    self._CompileAndCheck(sparse_bcoo._bcoo_extract, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
@@ -1252,7 +1255,7 @@ class BCOOTest(sptu.SparseTestCase):
 
     def dense_fun(lhs, rhs, indices):
       AB = lax.dot_general(lhs, rhs, dimension_numbers=props.dimension_numbers)
-      return sparse.bcoo_extract(indices, AB)
+      return sparse_bcoo._bcoo_extract(indices, AB)
     def sparse_fun(lhs, rhs, indices):
       return sparse.bcoo_dot_general_sampled(
           lhs, rhs, indices, dimension_numbers=props.dimension_numbers)
@@ -1295,7 +1298,7 @@ class BCOOTest(sptu.SparseTestCase):
 
     def dense_fun(lhs, rhs, indices):
       AB = lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
-      return sparse.bcoo_extract(indices, AB)
+      return sparse_bcoo._bcoo_extract(indices, AB)
     def sparse_fun(lhs, rhs, indices):
       return sparse.bcoo_dot_general_sampled(
                 lhs, rhs, indices, dimension_numbers=dimension_numbers)
@@ -2171,7 +2174,7 @@ class SparseGradTest(sptu.SparseTestCase):
       val_sp, grad_sp = sparse.value_and_grad(f, argnums=0, has_aux=has_aux)(Xsp, y)
       self.assertIsInstance(grad_sp, sparse.BCOO)
       self.assertAllClose(val_de, val_sp)
-      self.assertAllClose(grad_sp.data, sparse.bcoo_extract(grad_sp.indices, grad_de))
+      self.assertAllClose(grad_sp.data, sparse_bcoo._bcoo_extract(grad_sp.indices, grad_de))
 
     with self.subTest("wrt dense"):
       self.assertAllClose(jax.value_and_grad(f, argnums=1, has_aux=has_aux)(X, y),
@@ -2199,7 +2202,7 @@ class SparseGradTest(sptu.SparseTestCase):
         grad_sp, aux_sp = grad_sp
         self.assertAllClose(aux_de, aux_sp)
       self.assertIsInstance(grad_sp, sparse.BCOO)
-      self.assertAllClose(grad_sp.data, sparse.bcoo_extract(grad_sp.indices, grad_de))
+      self.assertAllClose(grad_sp.data, sparse_bcoo._bcoo_extract(grad_sp.indices, grad_de))
 
     with self.subTest("wrt dense"):
       self.assertAllClose(jax.grad(f, argnums=1, has_aux=has_aux)(X, y),
@@ -2233,7 +2236,7 @@ class SparseGradTest(sptu.SparseTestCase):
         grad_sp, aux_sp = grad_sp
         self.assertAllClose(aux_de, aux_sp)
       self.assertIsInstance(grad_sp, sparse.BCOO)
-      self.assertAllClose(grad_sp.data, sparse.bcoo_extract(grad_sp.indices, grad_de))
+      self.assertAllClose(grad_sp.data, sparse_bcoo._bcoo_extract(grad_sp.indices, grad_de))
 
     with self.subTest("wrt dense"):
       rtol = 0.01 if jtu.device_under_test() == 'tpu' else None
