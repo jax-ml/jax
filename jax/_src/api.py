@@ -231,7 +231,7 @@ def jit(
       arguments will not be donated.
 
       For more details on buffer donation see the
-      [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
 
     inline: Specify whether this function should be inlined into enclosing
       jaxprs (rather than being represented as an application of the xla_call
@@ -1777,7 +1777,7 @@ def pmap(
       arguments will not be donated.
 
       For more details on buffer donation see the
-      [FAQ](https://jax.readthedocs.io/en/latest/faq.html#buffer-donation).
+      `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
 
     global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
       the partitioned values span multiple processes. The global cross-process
