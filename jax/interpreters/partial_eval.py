@@ -1715,6 +1715,7 @@ class DynamicJaxprTrace(core.Trace):
       return self.new_const(val)
 
   def process_primitive(self, primitive, tracers, params):
+    if str(primitive) == 'transpose': breakpoint()
     if primitive in custom_staging_rules:
       return custom_staging_rules[primitive](self, *tracers, **params)
     return self.default_process_primitive(primitive, tracers, params)

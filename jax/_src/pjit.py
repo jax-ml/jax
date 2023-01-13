@@ -1254,12 +1254,10 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
                   resource_env, donated_invars, name, in_positional_semantics,
                   out_positional_semantics, keep_unused, inline):
   # batch_jaxpr expects all batching dimensions to be equal to 0
-  vals_in = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
-             else x for x, d in zip(vals_in, dims_in)]
-  is_mapped_in = [d is not batching.not_mapped for d in dims_in]
-  new_jaxpr, is_mapped_out = batching.batch_jaxpr(
-      jaxpr, axis_size, is_mapped_in,
-      instantiate=False, axis_name=axis_name, main_type=main_type)
+  new_jaxpr, axes_out = batching.batch_jaxpr2(
+      jaxpr, axis_size, dims_in,
+      axis_name=axis_name, main_type=main_type)
+  breakpoint()
 
   # `insert_axis` is set to True only for some `xmap` uses.
   new_parts = (axis_name,) if insert_axis else (

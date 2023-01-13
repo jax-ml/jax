@@ -627,6 +627,20 @@ def reassemble_concat_axes(vals, dims):
 
 ### API for batching jaxprs
 
+def batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
+                 axis_size: Optional[core.AxisSize],
+                 in_axes: Tuple[Union[int, NotMapped], ...],
+                 axis_name: core.AxisName,
+                 main_type: Type[BatchTrace],
+                 ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
+  f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
+  f, out_axes = _batch_jaxpr_inner(f, axis_size)
+  f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
+  avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
+              else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
+  jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
+  return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
+
 def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
                 main_type):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
@@ -654,7 +668,8 @@ def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
 def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
                       axis_name, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
-  f, out_batched = _batch_jaxpr_inner(f, axis_size, out_axes_dest)
+  f, out_axes = _batch_jaxpr_inner(f, axis_size)
+  f, out_batched = _match_axes_jaxpr(f, axis_size, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
@@ -662,14 +677,19 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
 @lu.transformation_with_aux
-def _batch_jaxpr_inner(axis_size, out_axes_dest, main, in_axes, *in_vals):
+def _batch_jaxpr_inner(axis_size, main, in_axes, *in_vals):
   trace = main.with_cur_sublevel()
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_axes)]
   outs = yield in_tracers, {}
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_axes = unzip2((t.val, t.batch_dim) for t in out_tracers)
+  yield out_vals, out_axes
 
+@lu.transformation_with_aux
+def _match_axes_jaxpr(axis_size, out_axes_dest, out_axes, main, in_axes, *in_vals):
+  out_vals = yield (main, in_axes, *in_vals), {}
+  out_axes = out_axes()
   out_axes_dest = [(None if src is not_mapped else 0)
                    if dst is zero_if_mapped else dst
                    for src, dst in unsafe_zip(out_axes, out_axes_dest)]
