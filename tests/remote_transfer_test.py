@@ -14,7 +14,6 @@
 """Tests for cross host device transfer."""
 
 from absl.testing import absltest
-import contextlib
 import unittest
 import numpy as np
 
@@ -25,11 +24,8 @@ from jax.config import config
 
 config.parse_flags_with_absl()
 
-with contextlib.suppress(ImportError):
-  import pytest
-  pytestmark = pytest.mark.multiaccelerator
 
-
+@jtu.pytest_mark_if_available('multiaccelerator')
 class RemoteTransferTest(jtu.JaxTestCase):
 
   # TODO(jheek): this test crashes on multi-GPU.

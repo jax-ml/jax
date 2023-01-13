@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import os
 import re
 from functools import partial, lru_cache
@@ -56,10 +55,6 @@ from jax.config import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None
-
-with contextlib.suppress(ImportError):
-  import pytest
-  pytestmark = pytest.mark.multiaccelerator
 
 
 def setUpModule():
@@ -136,6 +131,7 @@ def check_1d_2d_mesh(f, set_mesh):
 
 
 # TODO(skye): make the buffer donation utils part of JaxTestCase
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 1)])
@@ -1122,6 +1118,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertArraysEqual(result0, result1)
     self.assertArraysEqual(result1, result2)
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class GDAPjitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1514,6 +1511,7 @@ class GDAPjitTest(jtu.JaxTestCase):
       out.unsafe_raw_array()  # doesn't crash
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class AutoShardingPjitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1716,6 +1714,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
           f(*inputs)
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class ArrayPjitTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -3184,6 +3183,7 @@ def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class PJitErrorTest(jtu.JaxTestCase):
 
   @check_1d_2d_mesh(set_mesh=True)
@@ -3472,6 +3472,7 @@ class PJitErrorTest(jtu.JaxTestCase):
       _ = f(x)
 
 
+@jtu.pytest_mark_if_available('multiaccelerator')
 class UtilTest(jtu.JaxTestCase):
 
   def testOpShardingRoundTrip(self):

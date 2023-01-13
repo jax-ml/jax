@@ -41,11 +41,6 @@ try:
 except ImportError:
   portpicker = None
 
-try:
-  import pytest
-except ImportError:
-  pytest = None
-
 config.parse_flags_with_absl()
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
@@ -230,11 +225,8 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
 @unittest.skipIf(
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
     "Slurm environment with at least two nodes needed!")
-@unittest.skipIf(not pytest, "Test requires pytest markers")
+@jtu.pytest_mark_if_available('SlurmMultiNodeGpuTest')
 class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
-
-  if pytest is not None:
-    pytestmark = pytest.mark.SlurmMultiNodeGpuTest
 
   def sorted_devices(self):
     devices = sorted(jax.devices(), key=lambda d: (d.id, d.host_id))
