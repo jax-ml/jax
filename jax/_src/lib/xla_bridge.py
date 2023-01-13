@@ -247,6 +247,22 @@ if hasattr(xla_client, "make_tpu_client"):
   register_backend_factory(
     'tpu', partial(tpu_client_timer_callback, timer_secs=60.0), priority=300)
 
+
+if hasattr(xla_client, "make_c_api_client"):
+  loaded_pjrt_plugins = xla_client.maybe_load_pjrt_plugins()
+  for plugin_name in loaded_pjrt_plugins:
+    if plugin_name == "tpu":
+      continue
+    logger.debug("registering %s", plugin_name)
+    register_backend_factory(
+      plugin_name,
+      partial(
+          xla_client.make_c_api_client, platform_name=plugin_name
+      ),
+      priority=400,
+    )
+
+
 if hasattr(xla_client, "make_plugin_device_client"):
   # It is assumed that if jax has been built with a plugin client, then the
   # user wants to use the plugin client by default. Therefore, it gets the
@@ -328,8 +344,6 @@ def backends():
           (platform, priority) for platform, (_, priority)
           in _backend_factories.items())
     default_priority = -1000
-    if hasattr(xla_client, "maybe_load_pjrt_plugins"):
-      xla_client.maybe_load_pjrt_plugins()
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
