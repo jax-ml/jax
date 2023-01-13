@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
-copyright = '2020, The JAX Authors. NumPy and SciPy documentation are copyright the respective authors.'
+copyright = '2023, The JAX Authors. NumPy and SciPy documentation are copyright the respective authors.'
 author = 'The JAX authors'
 
 # The short X.Y version
@@ -72,6 +72,7 @@ extensions = [
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
     'jax_extensions',
+    'sphinx_design'
 ]
 
 intersphinx_mapping = {
@@ -173,6 +174,10 @@ html_favicon = '_static/favicon.png'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+html_css_files = [
+    'style.css',
+]
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.
