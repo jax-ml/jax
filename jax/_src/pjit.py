@@ -1321,13 +1321,8 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
                   jaxpr, in_shardings, out_shardings,
                   resource_env, donated_invars, name, in_positional_semantics,
                   out_positional_semantics, keep_unused, inline):
-  # batch_jaxpr expects all batching dimensions to be equal to 0
-  vals_in = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
-             else x for x, d in zip(vals_in, dims_in)]
-  is_mapped_in = [d is not batching.not_mapped for d in dims_in]
-  new_jaxpr, is_mapped_out = batching.batch_jaxpr(
-      jaxpr, axis_size, is_mapped_in,
-      instantiate=False, axis_name=axis_name, main_type=main_type)
+  new_jaxpr, axes_out = batching.batch_jaxpr2(
+      jaxpr, axis_size, dims_in, axis_name=axis_name, main_type=main_type)
 
   # `insert_axis` is set to True only for some `xmap` uses.
   new_parts = (axis_name,) if insert_axis else (
@@ -1339,11 +1334,13 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     mesh = None
 
   in_shardings = tuple(
-      _pjit_batcher_for_sharding(i, 0, new_parts, mesh, aval.ndim) if is_mapped else i
-      for is_mapped, i, aval in zip(is_mapped_in, in_shardings, new_jaxpr.in_avals))
+      _pjit_batcher_for_sharding(i, axis_in, new_parts, mesh, aval.ndim)
+      if axis_in is not None else i
+      for axis_in, i, aval in zip(dims_in, in_shardings, new_jaxpr.in_avals))
   out_shardings = tuple(
-      _pjit_batcher_for_sharding(o, 0, new_parts, mesh, aval.ndim) if is_mapped else o
-      for is_mapped, o, aval in zip(is_mapped_out, out_shardings, new_jaxpr.out_avals))
+      _pjit_batcher_for_sharding(o, axis_out, new_parts, mesh, aval.ndim)
+      if axis_out is not None else o
+      for axis_out, o, aval in zip(axes_out, out_shardings, new_jaxpr.out_avals))
   vals_out = pjit_p.bind(
     *vals_in,
     jaxpr=new_jaxpr,
@@ -1356,15 +1353,15 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     out_positional_semantics=out_positional_semantics,
     keep_unused=keep_unused,
     inline=inline)
-  dims_out = [0 if batched else batching.not_mapped for batched in is_mapped_out]
-  return vals_out, dims_out
+  return vals_out, axes_out
+
 batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
 batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
 pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
-    s: Union[OpShardingSharding, _UnspecifiedValue], dim: int,
-    val: Tuple[str, ...], mesh, ndim: int):
+    s: Union[OpShardingSharding, _UnspecifiedValue],
+    dim: int, val: Tuple[str, ...], mesh, ndim: int):
   if _is_unspecified(s):
     return s
   if not val:

@@ -60,6 +60,7 @@ jax_test(
 jax_test(
     name = "batching_test",
     srcs = ["batching_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "gpu": 5,
     },
