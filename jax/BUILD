@@ -187,13 +187,6 @@ pytype_library(
     deps = [":jax"],
 )
 
-pytype_library(
-    name = "callback",
-    srcs = ["experimental/callback.py"],
-    visibility = ["//visibility:public"],
-    deps = [":jax"],
-)
-
 # TODO(apaszke): Remove this target
 pytype_library(
     name = "maps",

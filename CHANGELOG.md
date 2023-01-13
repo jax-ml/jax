@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.2
 
+* Breaking changes
+  * Deleted `jax.experimental.callback`
+
 ## jaxlib 0.4.2
 
 ## jax 0.4.1 (Dec 13, 2022)

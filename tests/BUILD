@@ -67,12 +67,6 @@ jax_test(
 )
 
 jax_test(
-    name = "callback_test",
-    srcs = ["callback_test.py"],
-    deps = ["//jax:callback"],
-)
-
-jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
     shard_count = {
