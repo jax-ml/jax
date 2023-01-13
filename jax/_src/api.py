@@ -283,7 +283,7 @@ def jit(
                       donate_argnums, inline, keep_unused, abstracted_axes)
 
 
-if jax.config.jax_jit_pjit_api_merge:
+if jax.config.jax_jit_pjit_api_merge and jax.config.jax_array:
   def jit(  # type: ignore  # noqa: F811  # pylint: disable=function-redefined
     fun: Callable,
     in_axis_resources=pxla._UNSPECIFIED,
