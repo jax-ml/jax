@@ -855,8 +855,12 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
   # Update pjit params to account for extra error values.
   num_error_vals = len(err_vals)
   num_out_error_vals = out_tree.num_leaves - len(out_shardings)
-  sharding = OpShardingSharding.get_replicated(
-      list(resource_env.physical_mesh.devices.flat))
+  if jax.config.jax_array:
+    sharding = pjit._UNSPECIFIED
+  else:
+    sharding = OpShardingSharding.get_replicated(
+        list(resource_env.physical_mesh.devices.flat))
+
   new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)
   new_out_shardings = (*[sharding] * num_out_error_vals, *out_shardings)
 

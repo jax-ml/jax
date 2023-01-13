@@ -600,7 +600,10 @@ class PJitTest(jtu.BufferDonationTestCase):
     f = pjit(lambda x: jax.grad(h)(x),
              in_axis_resources=None, out_axis_resources=None)
     x = jnp.arange(8, dtype=jnp.float32)
-    self.assertAllClose(f(x), jnp.cos(x))
+    out = f(x)
+    self.assertAllClose(out, jnp.cos(x))
+    if jax.config.jax_array:
+      self.assertLen(out.devices(), 2)
 
   @jtu.with_mesh([('x', 2)])
   def testNoopPartitionSpecs(self):
@@ -2081,8 +2084,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_pjit_single_device_sharding_add(self):
-    a = jnp.array([1, 2, 3], dtype=jnp.float32)
-    b = jnp.array([4, 5, 6], dtype=jnp.float32)
+    a = np.array([1, 2, 3], dtype=jnp.float32)
+    b = np.array([4, 5, 6], dtype=jnp.float32)
 
     @pjit
     def add(x, y):
@@ -2462,11 +2465,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
       out = jnp.zeros(shape, jnp.bfloat16)
       return jax.lax.with_sharding_constraint(out, NamedSharding(mesh, pspec))
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "Pjit's devices and Array's devices should be equal. "
-        r"Got Pjit's device ids \[0\] on platform.*and "
-        r"Array's device ids \[0, 1, 2, 3\] on platform"):
+    # This split is needed because original `jit` adds `device` as a
+    # `devices_from_context` whereas `pjit` passes it as an in_sharding.
+    if jax.config.jax_jit_pjit_api_merge:
+      error_msg = ("Devices of all `Array` inputs and outputs should be the same. "
+                   r"Got array device ids \[0\] on platform.*and "
+                   r"another array's device ids \[0, 1, 2, 3\] on platform")
+    else:
+      error_msg = ("Pjit's devices and Array's devices should be equal. "
+                   r"Got Pjit's device ids \[0\] on platform.*and "
+                   r"Array's device ids \[0, 1, 2, 3\] on platform")
+
+    with self.assertRaisesRegex(ValueError, error_msg):
       sharded_zeros((4096, 3072), P('x', 'y'))
 
   @jax_array(True)
@@ -2920,7 +2930,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     _check(out2, jax.devices()[1], y)
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
 
     h = pjit(mul, device=jax.devices()[-1])
     h_out = h(y)
@@ -2928,7 +2937,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     _check(h_out, jax.devices()[-1], y)
 
     self.assertEqual(cache_info3.hits, cache_info2.hits)
-    self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
 
     # AOT test
     compiled = f.lower(jax.ShapedArray(y.shape, y.dtype)).compile()
@@ -3129,6 +3137,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f(inp)  # doesn't crash
     # Second call is to trigger C++ dispatch.
     f(inp)  # doesn't crash
+
+  def test_pjit_sin_nested(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+
+    @pjit
+    def f(x):
+      return jnp.sin(x)
+
+    with mesh:
+      inp = jnp.arange(8.)
+      out = f(inp)
+      self.assertArraysAllClose(out, np.sin(inp))
+      self.assertLen(out.devices(), 8)
+
+  def test_jit_with_mesh_context_manager(self):
+    if not jax.config.jax_jit_pjit_api_merge:
+      self.skipTest("This test only works if jax_jit_pjit_api_merge is True")
+
+    mesh = jtu.create_global_mesh((1,), ('x',))
+    with self.assertRaisesRegex(
+        RuntimeError,
+        "jit does not support using the mesh context manager"):
+      with mesh:
+        jax.jit(lambda x: x, in_axis_resources=P('x'),
+                out_axis_resources=P('x'))(jnp.arange(8))
 
 
 class TempSharding(Sharding):

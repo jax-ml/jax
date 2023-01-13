@@ -199,6 +199,7 @@ jax_test(
     backend_tags = {
         "tpu": ["notsan"],  # Times out under tsan.
     },
+    enable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 5,

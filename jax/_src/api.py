@@ -282,10 +282,36 @@ def jit(
   return _jit(False, fun, static_argnums, static_argnames, device, backend,
                       donate_argnums, inline, keep_unused, abstracted_axes)
 
-# TODO(yashkatariya): Remove the above jit function after
-# `jax_jit_pjit_api_merge` defaults to True.
+
 if jax.config.jax_jit_pjit_api_merge:
-  jit = pjit.pjit  # type: ignore  # noqa: F811
+  def jit(  # type: ignore  # noqa: F811  # pylint: disable=function-redefined
+    fun: Callable,
+    in_axis_resources=pxla._UNSPECIFIED,
+    out_axis_resources=pxla._UNSPECIFIED,
+    static_argnums: Union[int, Sequence[int], None] = None,
+    static_argnames: Union[str, Iterable[str], None] = None,
+    donate_argnums: Union[int, Sequence[int]] = (),
+    keep_unused: bool = False,
+    device: Optional[xc.Device] = None,
+    backend: Optional[str] = None,
+    inline: bool = False,
+  ) -> stages.Wrapped:
+    (in_axis_resources, out_axis_resources, donate_argnums, static_argnums,
+     static_argnames) = pjit.pre_infer_params(
+         fun, in_axis_resources, out_axis_resources, donate_argnums,
+         static_argnums, static_argnames, device, backend)
+
+    def infer_params(*args, **kwargs):
+      pjit_info_args = pjit.PjitInfo(
+          fun=fun, in_axis_resources=in_axis_resources,
+          out_axis_resources=out_axis_resources, static_argnums=static_argnums,
+          static_argnames=static_argnames, donate_argnums=donate_argnums,
+          device=device, backend=backend, keep_unused=keep_unused,
+          inline=inline, resource_env=None)
+      return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
+
+    return pjit.post_infer_params(fun, infer_params, static_argnums,
+                                  static_argnames)
 
 
 def _jit(

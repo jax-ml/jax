@@ -2710,8 +2710,10 @@ def _check_if_any_auto(
 
 
 def _get_and_check_device_assignment(
-    shardings: Iterable[sharding_internal.XLACompatibleSharding],
-    devices: Optional[Sequence[xc.Device]]) -> Tuple[xla.Backend, Sequence[xc.Device]]:
+    shardings: Iterable[Union[sharding_internal.XLACompatibleSharding,
+                              _UnspecifiedValue, _AUTOAxisResource]],
+    devices: Optional[Sequence[xc.Device]]
+) -> Tuple[xla.Backend, Sequence[xc.Device]]:
   from jax._src.api import local_devices
 
   first_device_assignment = None
