@@ -556,6 +556,7 @@ jax_test(
 jax_test(
     name = "pickle_test",
     srcs = ["pickle_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
     deps = [
         "//jax:experimental",
     ] + py_deps("cloudpickle") + py_deps("numpy"),
