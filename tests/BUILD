@@ -883,6 +883,7 @@ jax_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental",
@@ -899,6 +900,7 @@ jax_test(
         "gpu",
         "tpu",  # On TPU we always use outfeed
     ],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
     main = "host_callback_test.py",
     shard_count = {
         "gpu": 5,

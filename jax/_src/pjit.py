@@ -936,9 +936,6 @@ class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
             f"sync={self.sync})")
 
 
-REPLICATED = CanonicalizedParsedPartitionSpec(ParsedPartitionSpec(None, ()))
-
-
 def _prepare_axis_resources(axis_resources,
                             arg_name,
                             allow_unconstrained_dims=False):
@@ -1997,7 +1994,7 @@ def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out
   elif op_sharding.type == xc.OpSharding.Type.REPLICATED:
-    return [REPLICATED]
+    return [CanonicalizedParsedPartitionSpec(ParsedPartitionSpec(None, ()))]
   elif op_sharding.type == xc.OpSharding.Type.OTHER:
     mesh_shape = mesh.shape
     mesh_axis_order = unflatten_array(mesh.shape, op_sharding.tile_assignment_devices)
