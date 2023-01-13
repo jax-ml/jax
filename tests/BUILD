@@ -973,6 +973,7 @@ jax_test(
     enable_configs = [
         "gpu",
         "cpu",
+        "cpu_jit_pjit_api_merge",
     ],
 )
 

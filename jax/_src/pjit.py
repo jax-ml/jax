@@ -1284,7 +1284,9 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                       (mlir.SPMDAxisContext, mlir.ShardingContext)):
       raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
 
+  effects = ctx.tokens_in.effects()
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
+  output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = util.flatten(output_types)
 
   arg_shardings = [None if _is_unspecified(i) else i._to_xla_op_sharding(aval.ndim)
@@ -1298,14 +1300,20 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   # TODO(b/228598865): inlined calls cannot have shardings set directly on the
   # inputs or outputs because they are lost during MLIR->HLO conversion.
   # using_sharding_annotation=False means we add an identity operation instead.
-  func = mlir.lower_jaxpr_to_fun(sub_ctx, f"pjit_{name}", jaxpr, (),
+  func = mlir.lower_jaxpr_to_fun(sub_ctx, f"pjit_{name}", jaxpr,
+                                 effects,
                                  arg_shardings=arg_shardings,
                                  result_shardings=result_shardings,
                                  use_sharding_annotations=False)
+  args = (*ctx.tokens_in.tokens(), *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))
-  return util.unflatten(call.results, safe_map(len, output_types))
+  out_nodes = util.unflatten(call.results, safe_map(len, output_types))
+  tokens, out_nodes = split_list(out_nodes, [len(effects)])
+  tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
+  ctx.set_tokens_out(tokens_out)
+  return out_nodes
 
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
