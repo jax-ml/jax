@@ -88,6 +88,7 @@ parallelize, Just-In-Time compile to GPU/TPU, and more.
    deprecation
    concurrency
    gpu_memory_allocation
+   gpu_determinism
    profiling
    device_memory_profiling
    rank_promotion_warning
