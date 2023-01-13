@@ -42,8 +42,6 @@ import sys
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
-
-
 import numpy as np
 
 import jax
@@ -2772,7 +2770,8 @@ def lower_sharding_computation(
     in_is_global: Sequence[bool],
     keep_unused: bool,
     always_lower: bool,
-    devices_from_context: Optional[Sequence[xc.Device]] = None):
+    devices_from_context: Optional[Sequence[xc.Device]] = None
+) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
   The caller of this code can pass in a singleton _UNSPECIFIED because the
@@ -2990,7 +2989,7 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_global: Sequence[bool]):
+    in_is_global: Sequence[bool]) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
@@ -3270,7 +3269,10 @@ def _get_input_indices(
 
 
 def _get_op_sharding_shardings_from_executable(
-    xla_executable, device_assignment, num_in_avals, num_out_avals):
+    xla_executable, device_assignment: Sequence[xc.Device],
+    num_in_avals: int, num_out_avals: int
+) -> Tuple[Sequence[sharding_internal.XLACompatibleSharding],
+           Sequence[sharding_internal.XLACompatibleSharding]]:
   from jax.experimental import pjit
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
@@ -3302,7 +3304,10 @@ def _get_op_sharding_shardings_from_executable(
 
 # TODO(yashkatariya): Remove this function after `AUTO` can return shardings
 # without mesh.
-def _get_mesh_pspec_shardings_from_executable(xla_executable, mesh):
+def _get_mesh_pspec_shardings_from_executable(
+    xla_executable, mesh: Mesh
+) -> Tuple[Sequence[sharding_internal.NamedSharding],
+           Sequence[sharding_internal.NamedSharding]]:
   from jax.experimental import pjit
 
   in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
@@ -3453,7 +3458,7 @@ class UnloadedMeshExecutable:
         out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
       elif out_shardings and any(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
-        _, out_shardings_xla = _get_op_sharding_shardings_from_executable(
+        _, out_shardings_xla = _get_op_sharding_shardings_from_executable(  # type: ignore
             xla_executable, device_assignment,
             len(global_in_avals), len(global_out_avals))
         out_shardings_tuple = [
@@ -3491,9 +3496,9 @@ class UnloadedMeshExecutable:
 class _MeshExecutableFastpathData(NamedTuple):
   xla_executable: xla.XlaLoadedExecutable
   out_pytree_def: Any
-  in_shardings: Sequence[Any]
-  out_shardings: Sequence[Any]
-  out_avals: Sequence[Any]
+  in_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  out_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
 
@@ -3562,10 +3567,10 @@ class MeshExecutable(stages.XlaExecutable):
     _check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
 
-  def input_shardings(self):
+  def input_shardings(self) -> Sequence[sharding_internal.XLACompatibleSharding]:
     return self._in_shardings
 
-  def output_shardings(self):
+  def output_shardings(self) -> Sequence[sharding_internal.XLACompatibleSharding]:
     return self._out_shardings
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
@@ -3703,7 +3708,9 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 
 
 @lru_cache()
-def _create_mesh_pspec_sharding(mesh, pspec, parsed_pspec=None):
+def _create_mesh_pspec_sharding(
+    mesh: Mesh, pspec: PartitionSpec, parsed_pspec=None
+) -> sharding_internal.NamedSharding:
   return sharding_internal.NamedSharding(mesh, pspec, parsed_pspec)
 
 
@@ -3717,7 +3724,8 @@ def _check_device_backend_on_shardings(shardings) -> bool:
   return False
 
 
-def _check_gda_or_array_xla_sharding_match(args, in_xla_shardings):
+def _check_gda_or_array_xla_sharding_match(
+    args, in_xla_shardings: Sequence[sharding_internal.XLACompatibleSharding]) -> None:
   from jax.experimental.global_device_array import GlobalDeviceArray
   from jax._src.array import ArrayImpl
 
@@ -3753,7 +3761,7 @@ def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   return get_array_mapping(parsed_pspec)
 
 
-def are_op_shardings_equal(op1, op2) -> bool:
+def are_op_shardings_equal(op1: xc.OpSharding, op2: xc.OpSharding) -> bool:
   if id(op1) == id(op2):
     return True
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
