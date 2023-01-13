@@ -110,7 +110,13 @@ class NameStackTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(f)(2).jaxpr
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
-    self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
+    self.assertEqual(
+        str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
+        'bar')
 
     hlo_text = _get_hlo(f)(2)
     self.assertIn('foo/jit(_f)/bar', hlo_text)
@@ -157,8 +163,14 @@ class NameStackTransformationTest(jtu.JaxTestCase):
       return _f(x)
 
     jaxpr = jax.make_jaxpr(f)(jnp.ones(2)).jaxpr
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
-    self.assertEqual(str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
+    self.assertEqual(
+        str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
+        'bar')
 
     hlo_text = _get_hlo(f)(jnp.ones(2))
     self.assertIn('foo/vmap(jit(_f))/bar', hlo_text)
@@ -181,9 +193,13 @@ class NameStackTransformationTest(jtu.JaxTestCase):
           return jnp.square(x)
     g = jax.named_scope('foo')(lambda x, t: jax.jvp(f, (x,), (t,)))
     jaxpr = jax.make_jaxpr(g)(1., 1.).jaxpr
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'foo')
     self.assertEqual(
-        str(jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack),
+        str(jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack),
         'bar/baz')
 
     hlo_text = _get_hlo(g)(1., 1.)
@@ -214,19 +230,40 @@ class NameStackTransformationTest(jtu.JaxTestCase):
       with jax.named_scope('bar'):
         return jnp.sin(x)
     jaxpr = jax.make_jaxpr(f)(1.).jaxpr
+
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
+
     self.assertEqual(str(jaxpr.eqns[0].source_info.name_stack), 'jvp(foo)')
     self.assertEqual(str(jaxpr.eqns[1].source_info.name_stack), 'transpose(jvp(foo))')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
+      jaxpr.eqns[0].params[jaxpr_param].eqns[0].source_info.name_stack), 'bar')
     self.assertEqual(str(
-      jaxpr.eqns[0].params['call_jaxpr'].eqns[1].source_info.name_stack), 'bar')
+      jaxpr.eqns[0].params[jaxpr_param].eqns[1].source_info.name_stack), 'bar')
     self.assertEqual(str(
-      jaxpr.eqns[1].params['call_jaxpr'].eqns[0].source_info.name_stack), 'bar')
+      jaxpr.eqns[1].params[jaxpr_param].eqns[0].source_info.name_stack), 'bar')
 
     hlo_text = _get_hlo(f)(1.)
     self.assertIn('jvp(foo)/jit(f)/bar/sin', hlo_text)
     self.assertIn('jvp(foo)/jit(f)/bar/cos', hlo_text)
     self.assertIn('transpose(jvp(foo))/jit(f)/bar/mul', hlo_text)
+
+  def test_nested_jit_stack(self):
+
+    @jax.grad
+    @jax.jit
+    def f(x):
+      @jax.jit
+      def g(y):
+        return jnp.sin(y)
+      return g(x)
+
+    hlo_text = _get_hlo(f)(2.)
+    self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
+    self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
+    self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
 
 
 class NameStackControlFlowTest(jtu.JaxTestCase):
@@ -398,7 +435,11 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
     f_ = lambda x: jax.jit(f)(x, True)
     g = lambda x, t: jax.jvp(f_, (x,), (t,))
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
-    call_jaxpr = jaxpr.jaxpr.eqns[0].params['call_jaxpr']
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
+    call_jaxpr = jaxpr.jaxpr.eqns[0].params[jaxpr_param]
     self.assertEqual(str(call_jaxpr.eqns[1].source_info.name_stack), 'foo')
     self.assertEqual(str(
       call_jaxpr.eqns[1].params['branches'][0].eqns[0].source_info.name_stack),
@@ -425,7 +466,13 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
     f_ = lambda x: jax.jit(f)(x, True)
     g = jax.vmap(lambda x, t: jax.jvp(f_, (x,), (t,)))
     jaxpr = jax.make_jaxpr(g)(jnp.arange(2.), jnp.ones(2))
-    call_jaxpr = jaxpr.jaxpr.eqns[0].params['call_jaxpr']
+
+    if jax.config.jax_jit_pjit_api_merge:
+      jaxpr_param = 'jaxpr'
+    else:
+      jaxpr_param = 'call_jaxpr'
+
+    call_jaxpr = jaxpr.jaxpr.eqns[0].params[jaxpr_param]
     self.assertEqual(str(
       call_jaxpr.eqns[1].params['branches'][0].eqns[0].source_info.name_stack),
       'false')
@@ -599,6 +646,7 @@ class NameStackControlFlowTest(jtu.JaxTestCase):
     hlo_text = _get_hlo(f)(jnp.arange(2.))
     self.assertIn('vmap(jvp(foo))/while/body/scan_body/mul', hlo_text)
     self.assertIn('vmap(transpose(jvp(foo)))/while/body/scan_body/mul', hlo_text)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

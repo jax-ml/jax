@@ -517,6 +517,7 @@ jax_test(
         "gpu",
         "tpu",
     ],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 py_test(
@@ -953,6 +954,7 @@ jax_test(
 jax_test(
     name = "name_stack_test",
     srcs = ["name_stack_test.py"],
+    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 jax_test(

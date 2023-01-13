@@ -57,7 +57,7 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
 from jax._src.tree_util import prefix_errors
 from jax._src import util
 from jax._src.util import (
-    HashableFunction, safe_map, safe_zip, wrap_name, wraps,
+    HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
     merge_lists)
 
@@ -1208,8 +1208,11 @@ def _pjit_lower_cached(
 
   if resource_env is not None:
     mesh = resource_env.physical_mesh
+    api_name = 'pjit'
   else:
+    # resource_env is `None` in the jit wrapper around pjit.
     mesh = None
+    api_name = 'jit'
 
   # Convert to `NamedSharding` when `jax_array` is not enabled. This is
   # because GDA/SDA/DA are dependent on mesh for generating outputs.
@@ -1235,7 +1238,7 @@ def _pjit_lower_cached(
   # because `xmap` only supports SPMDAxisContext right now.
   if (any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
     return pxla.lower_mesh_computation(
-      fun, 'pjit', name, mesh,
+      fun, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
   else:
@@ -1244,7 +1247,7 @@ def _pjit_lower_cached(
     # TODO(yashkatariya): Don't set committed to True always. Infer that from
     # the arguments just like dispatch.py in `sharded_lowering`.
     return pxla.lower_sharding_computation(
-        fun, 'pjit', name, in_shardings, out_shardings, donated_invars,
+        fun, api_name, name, in_shardings, out_shardings, donated_invars,
         jaxpr.in_avals, in_is_global=in_is_global, keep_unused=keep_unused,
         always_lower=always_lower,
         devices_from_context=(
@@ -1294,14 +1297,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   result_shardings = [None if _is_unspecified(o) else o._to_xla_op_sharding(aval.ndim)
                       for aval, o in safe_zip(ctx.avals_out, out_shardings)]
 
-  sub_ctx = ctx.module_context.replace(
-      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       wrap_name(name, "pjit")))
   # TODO(b/228598865): inlined calls cannot have shardings set directly on the
   # inputs or outputs because they are lost during MLIR->HLO conversion.
   # using_sharding_annotation=False means we add an identity operation instead.
-  func = mlir.lower_jaxpr_to_fun(sub_ctx, f"pjit_{name}", jaxpr,
-                                 effects,
+  func = mlir.lower_jaxpr_to_fun(ctx.module_context, name, jaxpr, effects,
                                  arg_shardings=arg_shardings,
                                  result_shardings=result_shardings,
                                  use_sharding_annotations=False)
@@ -1401,7 +1400,7 @@ def _pjit_jvp(primals_in, tangents_in,
       out_shardings=(*out_shardings, *_filter_zeros_out(out_shardings)),
       resource_env=resource_env,
       donated_invars=(*donated_invars, *_filter_zeros_in(donated_invars)),
-      name=wrap_name(name, 'jvp'),
+      name=name,
       in_positional_semantics=(*in_positional_semantics, *_filter_zeros_in(in_positional_semantics)),
       out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
