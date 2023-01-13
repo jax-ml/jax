@@ -544,10 +544,8 @@ def _shaped_abstractify_slow(x):
   if hasattr(x, 'dtype'):
     dtype = dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True)
   else:
-    try:
-      dtype = dtypes.result_type(x)  # TODO(frostig,mattjj): why this case?
-    except TypeError as e:
-      raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type") from e
+    raise ValueError(f"Cannot interpret value of type {type(x)} as an abstract array; "
+                     "it does not have a dtype attribute")
   return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
                           named_shape=named_shape)
 
