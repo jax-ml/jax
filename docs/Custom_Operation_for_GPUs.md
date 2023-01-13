@@ -1,11 +1,12 @@
-# Custom operations for GPUs
+# Custom operations for GPUs with C++ and CUDA
 
 JAX ships with a large number of built-in operations, but users occasionally run into a situation where they need a new operation that is not supported by JAX.
+
 To accommodate such scenarios, JAX allows users to define custom operations and this tutorial is to explain how we can define one for GPUs and use it in single-GPU and multi-GPU environments.
 
 This tutorial contains information from [Extending JAX with custom C++ and CUDA code](https://github.com/dfm/extending-jax).
 
-## RMS Normalization
+## RMS normalization
 
 For this tutorial, we are going to add the RMS normalization as a custom operation in JAX.
 Note that the RMS normalization can be expressed with [`jax.numpy`](https://jax.readthedocs.io/en/latest/jax.numpy.html) directly. However, we are using it as an example to show the process of creating a custom operation for GPUs.
@@ -370,13 +371,13 @@ _rms_norm_bwd_p.def_abstract_eval(_rms_norm_bwd_abstract)
 
 ## Let's test it again
 
-### Test forward function
+### Test the forward function
 
 ```python
 out = rms_norm_fwd(x, weight)
 ```
 
-### Test backward function
+### Test the backward function
 
 Now let's test the backward operation using `jax.grad` and `jtu.check_grads`.
 
@@ -473,7 +474,7 @@ jtu.check_grads(loss, (x, weight), modes=["rev"], order=1)
 
 We are using [`jax.experimental.pjit.pjit`](https://jax.readthedocs.io/en/latest/jax.experimental.pjit.html#jax.experimental.pjit.pjit) for parallel execution on multiple devices, and we produce reference values with sequential execution on a single device.
 
-### Test forward function
+### Test the forward function
 
 Let's first test the forward operation on multiple devices.  We are creating a simple 1D mesh and sharding `x` on all devices.
 
@@ -594,7 +595,7 @@ True
 
 With this modification, the `all-gather` operation is eliminated and the custom call is made on each shard of `x`.
 
-### Test backward function
+### Test the backward function
 
 We are moving onto the backward operation using `jax.grad` on multiple devices.
 
