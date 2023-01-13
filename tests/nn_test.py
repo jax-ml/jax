@@ -314,6 +314,19 @@ class NNInitializersTest(jtu.JaxTestCase):
 
     self.assertEqual(shape, jnp.shape(val))
 
+  def testVarianceScalingError(self):
+    rng = random.PRNGKey(0)
+    shape = (5,)
+    initializer = nn.initializers.variance_scaling(
+      scale=1.0, mode='fan_avg', distribution='truncated_normal')
+
+    with self.assertRaisesRegex(
+      ValueError,
+      "Can't compute input and output sizes of a 1"
+      "-dimensional weights tensor. Must be at least 2D."
+    ):
+      initializer(rng, shape)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
