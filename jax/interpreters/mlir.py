@@ -838,6 +838,7 @@ def lower_jaxpr_to_fun(
     use_sharding_annotations: bool = True,
     input_output_aliases: Optional[Sequence[Optional[int]]] = None,
     num_output_tokens: int = 0,
+    api_name: str = 'jit',
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -864,6 +865,8 @@ def lower_jaxpr_to_fun(
       propagated on non-entry functions during MLIR->HLO conversion.
     input_output_aliases: optional sequence that maps argument numbers to the
       corresponding output that should alias them.
+    api_name: The name of the higher level primitive which should show up in the
+      name stack.
   Returns the name of the function.
   """
   def aval_to_types(aval):
@@ -994,7 +997,7 @@ def lower_jaxpr_to_fun(
       else:
         args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
-                                              util.wrap_name(name, 'jit'))
+                                              util.wrap_name(name, api_name))
     out_vals, tokens_out = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                                          jaxpr.jaxpr, tokens_in, map(ir_constants, jaxpr.consts),
                                          *args, dim_var_values=dim_var_values)

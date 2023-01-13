@@ -1300,10 +1300,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   # TODO(b/228598865): inlined calls cannot have shardings set directly on the
   # inputs or outputs because they are lost during MLIR->HLO conversion.
   # using_sharding_annotation=False means we add an identity operation instead.
-  func = mlir.lower_jaxpr_to_fun(ctx.module_context, name, jaxpr, effects,
-                                 arg_shardings=arg_shardings,
-                                 result_shardings=result_shardings,
-                                 use_sharding_annotations=False)
+  func = mlir.lower_jaxpr_to_fun(
+      ctx.module_context, name, jaxpr, effects, arg_shardings=arg_shardings,
+      result_shardings=result_shardings, use_sharding_annotations=False,
+      api_name=('jit' if resource_env is None else 'pjit'))
   args = (*ctx.tokens_in.tokens(), *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),

@@ -18,6 +18,7 @@ import jax
 import jax.numpy as jnp
 from jax import core
 from jax import lax
+from jax._src.pjit import pjit
 from jax._src import linear_util as lu
 from jax.config import config
 from jax._src import test_util as jtu
@@ -264,6 +265,23 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     self.assertIn('jvp(jit(f))/jit(g)/sin', hlo_text)
     self.assertIn('jvp(jit(f))/jit(g)/cos', hlo_text)
     self.assertIn('transpose(jvp(jit(f)))/jit(g)/mul', hlo_text)
+
+  def test_nested_pjit_stack(self):
+    if not jax.config.jax_jit_pjit_api_merge:
+      self.skipTest("This test only works with jit/pjit merge")
+
+    @jax.grad
+    @pjit
+    def f(x):
+      @pjit
+      def g(y):
+        return jnp.sin(y)
+      return g(x)
+
+    hlo_text = _get_hlo(f)(2.)
+    self.assertIn('jvp(pjit(f))/pjit(g)/sin', hlo_text)
+    self.assertIn('jvp(pjit(f))/pjit(g)/cos', hlo_text)
+    self.assertIn('transpose(jvp(pjit(f)))/pjit(g)/mul', hlo_text)
 
 
 class NameStackControlFlowTest(jtu.JaxTestCase):
