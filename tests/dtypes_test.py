@@ -29,11 +29,14 @@ from jax import numpy as jnp
 
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_client
 
 from jax._src.config import config
 config.parse_flags_with_absl()
 
 FLAGS = config.FLAGS
+
+_fp8_enabled = xla_client._version >= 117
 
 bool_dtypes = [np.dtype('bool')]
 
@@ -47,6 +50,9 @@ np_float_dtypes = [np.dtype('float16'), np.dtype('float32'),
                    np.dtype('float64')]
 
 float_dtypes = [np.dtype(dtypes.bfloat16)] + np_float_dtypes
+if _fp8_enabled:
+  fp8_dtypes = [np.dtype(dtypes.float8_e4m3fn), np.dtype(dtypes.float8_e5m2)]
+  float_dtypes += fp8_dtypes
 
 complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
 
@@ -187,10 +193,16 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertEqual(t1, dtypes.promote_types(t1, t1))
 
       self.assertEqual(t1, dtypes.promote_types(t1, np.bool_))
+      # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
+      if _fp8_enabled and t1 in fp8_dtypes:
+        continue
       self.assertEqual(np.dtype(np.complex128),
                        dtypes.promote_types(t1, np.complex128))
 
       for t2 in all_dtypes:
+        # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
+        if _fp8_enabled and t2 in fp8_dtypes:
+          continue
         # Symmetry
         self.assertEqual(dtypes.promote_types(t1, t2),
                          dtypes.promote_types(t2, t1))
@@ -202,6 +214,9 @@ class DtypesTest(jtu.JaxTestCase):
     # the inexact types.
     for t in float_dtypes + complex_dtypes:
       for i in bool_dtypes + signed_dtypes + unsigned_dtypes:
+        # TODO(zhangqiaorjc): Consider more dtype promotion rules for fp8.
+        if _fp8_enabled and t in fp8_dtypes:
+          continue
         self.assertEqual(t, dtypes.promote_types(t, i))
 
     # Promotions between exact types, or between inexact types, match NumPy.
@@ -298,6 +313,9 @@ class DtypesTest(jtu.JaxTestCase):
       {"testcase_name": f"_{dtype}", "dtype": dtype}
       for dtype in float_dtypes)
   def testFInfo(self, dtype):
+    if _fp8_enabled and dtype in fp8_dtypes:
+      self.skipTest("fp8 types do not yet have `compare` in HLO")
+
     # Check that finfo attributes are self-consistent & reflect observed behavior.
     dtype = np.dtype(dtype)
 
@@ -523,8 +541,12 @@ class TestPromotionTables(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     if weak_type:
-      expected = dtypes.canonicalize_dtype(
-        dtypes._default_types['f' if x.dtype == 'bfloat16' else x.dtype.kind])
+      if _fp8_enabled:
+        expected = dtypes.canonicalize_dtype(
+          dtypes._default_types['f' if x.dtype in ['float8_e4m3fn', 'float8_e5m2', 'bfloat16'] else x.dtype.kind])
+      else:
+        expected = dtypes.canonicalize_dtype(
+          dtypes._default_types['f' if x.dtype == 'bfloat16' else x.dtype.kind])
     else:
       expected = x.dtype
     self.assertEqual(dtypes.result_type(x), expected)
@@ -535,6 +557,8 @@ class TestPromotionTables(jtu.JaxTestCase):
     promotion=['standard', 'strict'],
   )
   def testBinaryNonPromotion(self, dtype, weak_type, promotion):
+    if _fp8_enabled and dtype in fp8_dtypes:
+      self.skipTest("XLA support for float8 is incomplete.")
     # Regression test for https://github.com/google/jax/issues/6051
     x = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     with jax.numpy_dtype_promotion(promotion):

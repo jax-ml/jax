@@ -124,6 +124,12 @@ _dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
 }
 
+if xc.mlir_api_version >= 43 and xc._version >= 113:
+  _dtype_to_ir_type.update({
+      np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
+      np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
+  })
+
 def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
   assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
   dtype = np.dtype(dtype)
