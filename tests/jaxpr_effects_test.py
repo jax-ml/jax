@@ -688,6 +688,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
     jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
   @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
+  @jtu.skip_on_devices("tpu") # TODO(b/264013537): flaky on TPUs.
   def test_can_pmap_unordered_callback(self):
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported
