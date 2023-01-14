@@ -257,6 +257,22 @@ if hasattr(xla_client, "make_plugin_device_client"):
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
 
+# Register PJRT C API plugins based on environment variables.
+def _initialize_plugin_backends():
+  def make_factory(name, path):
+    def factory():
+      xla_client._xla.load_pjrt_plugin(name, path)
+      return xla_client._xla.get_c_api_client(name)
+    return factory
+
+  pjrt_plugins = xla_client._get_pjrt_plugin_names_and_library_paths()
+  for plugin_name, library_path in pjrt_plugins.items():
+    register_backend_factory(
+      plugin_name, make_factory(plugin_name, library_path))
+
+if hasattr(xla_client, "_get_pjrt_plugin_names_and_library_paths"):
+  _initialize_plugin_backends()
+
 _platform_aliases = {
   "cuda": "gpu",
   "rocm": "gpu",
@@ -328,8 +344,7 @@ def backends():
           (platform, priority) for platform, (_, priority)
           in _backend_factories.items())
     default_priority = -1000
-    if hasattr(xla_client, "maybe_load_pjrt_plugins"):
-      xla_client.maybe_load_pjrt_plugins()
+
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
