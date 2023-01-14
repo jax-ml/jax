@@ -31,6 +31,7 @@ jax_generate_backend_suites()
 jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
+    disable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = 10,
 )
@@ -38,10 +39,8 @@ jax_test(
 jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
-    env = {
-        # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
-        "JAX_JIT_PJIT_API_MERGE": "0",
-    },
+    # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
+    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = 2,
 )
 
@@ -60,7 +59,6 @@ jax_test(
 jax_test(
     name = "batching_test",
     srcs = ["batching_test.py"],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "gpu": 5,
     },
@@ -69,6 +67,7 @@ jax_test(
 jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
+    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 5,
         "gpu": 10,
@@ -78,16 +77,13 @@ jax_test(
 jax_test(
     name = "custom_object_test",
     srcs = ["custom_object_test.py"],
-    env = {
-        # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
-        "JAX_JIT_PJIT_API_MERGE": "0",
-    },
+    # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
+    disable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 jax_test(
     name = "debug_nans_test",
     srcs = ["debug_nans_test.py"],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 py_test(
@@ -179,6 +175,7 @@ jax_test(
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
     },
+    disable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
@@ -197,7 +194,6 @@ jax_test(
     backend_tags = {
         "tpu": ["notsan"],  # Times out under tsan.
     },
-    enable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 5,
@@ -282,12 +278,12 @@ py_test(
 jax_test(
     name = "jaxpr_util_test",
     srcs = ["jaxpr_util_test.py"],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 jax_test(
     name = "jet_test",
     srcs = ["jet_test.py"],
+    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 10,
         "gpu": 10,
@@ -301,6 +297,7 @@ jax_test(
 jax_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
+    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 30,
         "gpu": 40,
@@ -520,7 +517,6 @@ jax_test(
         "gpu",
         "tpu",
     ],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 py_test(
@@ -560,7 +556,6 @@ jax_test(
 jax_test(
     name = "pickle_test",
     srcs = ["pickle_test.py"],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
     deps = [
         "//jax:experimental",
     ] + py_deps("cloudpickle") + py_deps("numpy"),
@@ -740,7 +735,6 @@ jax_test(
         ],
         "tpu": ["optonly"],
     },
-    enable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -883,7 +877,6 @@ jax_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental",
@@ -900,7 +893,6 @@ jax_test(
         "gpu",
         "tpu",  # On TPU we always use outfeed
     ],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
     main = "host_callback_test.py",
     shard_count = {
         "gpu": 5,
@@ -957,7 +949,6 @@ jax_test(
 jax_test(
     name = "name_stack_test",
     srcs = ["name_stack_test.py"],
-    enable_configs = ["cpu_jit_pjit_api_merge"],
 )
 
 jax_test(
@@ -966,7 +957,6 @@ jax_test(
     enable_configs = [
         "gpu",
         "cpu",
-        "cpu_jit_pjit_api_merge",
     ],
 )
 
@@ -976,7 +966,6 @@ jax_test(
     enable_configs = [
         "gpu",
         "cpu",
-        "cpu_jit_pjit_api_merge",
     ],
 )
 
