@@ -380,7 +380,8 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), global_in_avals,
-      HashableFunction(out_tree, closure=()))
+      HashableFunction(out_tree, closure=()),
+      ('jit' if resource_env is None else 'pjit'))
 
   if (any(_is_from_gda(i) for i in canonicalized_in_shardings_flat) or
       not config.jax_array):
@@ -762,7 +763,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
 
 
 @lu.cache
-def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
+def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
   prev_positional_val = pxla._positional_semantics.val
   try:
     pxla._positional_semantics.val = pxla._PositionalSemantics.GLOBAL
@@ -770,7 +771,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree):
                                    "for pjit in {elapsed_time} sec",
                                     event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-          fun, global_in_avals, debug_info=pe.debug_info_final(fun, 'pjit'))
+          fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
   finally:
     pxla._positional_semantics.val = prev_positional_val
 
@@ -1622,8 +1623,9 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
         transpose_in_positional_semantics, global_cts_in_avals,
         transpose_in_shardings, resource_env.physical_mesh)
 
+  api_name = 'jit' if resource_env is None else 'pjit'
   transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-      body, global_cts_in_avals, debug_info=pe.debug_info_final(body, 'pjit'))
+      body, global_cts_in_avals, debug_info=pe.debug_info_final(body, api_name))
   # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
   del consts
