@@ -352,24 +352,13 @@ def _code_generator_and_avals(
       else:
         captured_inputs.append(inp)
 
-  # TODO(b/265073174): Currently TensorSpec get_compiler_ir does not support
-  # tf.function captured variables. We can elminate this after it is fixed.
-  if tf.executing_eagerly():
-    args_tf_flat = [
-        tf.constant(
-            (0 if a.dtype != tf.bool else False), shape=a.shape, dtype=a.dtype
-        )
-        for a in args_flat_sig_tf
-    ]
-  else:
+  def maybe_convert_to_spec(x):
+    if isinstance(x, tf.TensorSpec):
+      return x
+    else:
+      return tf.TensorSpec.from_tensor(x)
 
-    def maybe_convert_to_spec(x):
-      if isinstance(x, tf.TensorSpec):
-        return x
-      else:
-        return tf.TensorSpec.from_tensor(x)
-
-    args_tf_flat = [maybe_convert_to_spec(a) for a in args_flat_sig_tf]
+  args_tf_flat = [maybe_convert_to_spec(a) for a in args_flat_sig_tf]
 
   with jax2tf_internal.inside_call_tf():
     # When the TF computation uses variables on a particular device, we must

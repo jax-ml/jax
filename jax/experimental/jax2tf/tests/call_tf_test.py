@@ -528,8 +528,9 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x[0:x[1]], res1)
 
     # Now under jit, should fail because the function is not compileable
-    with self.assertRaisesRegex(ValueError,
-                                "Compiled TensorFlow function has unexpected parameter types"):
+    with self.assertRaisesRegex(
+        ValueError, "Compiled TensorFlow function has dynamic output shape"
+    ):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
       fun_jax(x)
 
@@ -582,7 +583,6 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     # Call get_compiler_ir in a function context
     x = np.array([2., 3., 4.], dtype=np.float32)
-
 
     def fun_tf_outer(x):
       x_const = tf.constant(0, shape=x.shape, dtype=x.dtype)
