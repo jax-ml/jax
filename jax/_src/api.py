@@ -295,11 +295,12 @@ if jax.config.jax_jit_pjit_api_merge:
     device: Optional[xc.Device] = None,
     backend: Optional[str] = None,
     inline: bool = False,
+    abstracted_axes: Optional[Any] = None,
   ) -> stages.Wrapped:
     (in_axis_resources, out_axis_resources, donate_argnums, static_argnums,
      static_argnames) = pjit.pre_infer_params(
          fun, in_axis_resources, out_axis_resources, donate_argnums,
-         static_argnums, static_argnames, device, backend)
+         static_argnums, static_argnames, device, backend, abstracted_axes)
 
     def infer_params(*args, **kwargs):
       pjit_info_args = pjit.PjitInfo(
@@ -311,7 +312,7 @@ if jax.config.jax_jit_pjit_api_merge:
       return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
     return pjit.post_infer_params(fun, infer_params, static_argnums,
-                                  static_argnames)
+                                  static_argnames, abstracted_axes)
 
 
 def _jit(
