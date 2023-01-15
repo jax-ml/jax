@@ -90,7 +90,7 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
 
   h1 = jnp.where((d1 <= 1e-15) & (d2 <= 1e-15),
                 jnp.maximum(1e-6, h0 * 1e-3),
-                (0.01 / jnp.max(d1 + d2)) ** (1. / (order + 1.)))
+                (0.01 / jnp.maximum(d1, d2)) ** (1. / (order + 1.)))
 
   return jnp.minimum(100. * h0, h1)
 
