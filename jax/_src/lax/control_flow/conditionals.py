@@ -687,7 +687,9 @@ def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
 def _cond_transpose(reduce_axes, cts, *args, branches, linear):
+  del linear  # could use for error checking, but see #14026
   index, *ops = args
+  linear = [type(x) is ad.UndefinedPrimal for x in ops]
   in_avals = map(raise_to_shaped, branches[0].in_avals)
   num_res = len(ops) - sum(linear)
   if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
