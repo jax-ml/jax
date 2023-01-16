@@ -703,9 +703,14 @@ def make_xmap_callable(fun: lu.WrappedFun,
         use_spmd_lowering, global_in_avals,
         tiling_method=tiling_method, in_is_global=in_is_global)
   else:
-    return dispatch.lower_xla_callable(
-        f, None, backend, name, donated_invars, False, True,
-        *[(a, None) for a in in_avals])
+    if config.jax_array:
+      return dispatch.sharded_lowering(
+          f, None, backend, name, donated_invars, False, True,
+          *[(a, None) for a in in_avals])
+    else:
+      return dispatch.lower_xla_callable(
+          f, None, backend, name, donated_invars, False, True,
+          *[(a, None) for a in in_avals])
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
@@ -1297,10 +1302,13 @@ def _xmap_lowering_rule(ctx, *args, **kwargs):
       return _xmap_lowering_rule_spmd_manual(ctx, *args, **kwargs)
     else:
       return _xmap_lowering_rule_spmd(ctx, *args, **kwargs)
-  elif isinstance(ctx.module_context.axis_context, mlir.ReplicaAxisContext):
+  # Here ShardingContext is used in place of ReplicaAxisContext because when
+  # axis_resources and mesh is not used with xmap, `make_xmap_callable` will
+  # go via `dispatch.sharded_lowering` path which sets the context to
+  # ShardingContext. mlir.ShardingContext is not used for SPMD.
+  elif isinstance(ctx.module_context.axis_context,
+                  (mlir.ReplicaAxisContext, mlir.ShardingContext)):
     return _xmap_lowering_rule_replica(ctx, *args, **kwargs)
-  elif isinstance(ctx.module_context.axis_context, mlir.ShardingContext):
-    raise ValueError('ShardingContext cannot be used with xmap.')
   else:
     raise AssertionError("Unrecognized axis context type!")
 mlir.register_lowering(xmap_p, _xmap_lowering_rule)
