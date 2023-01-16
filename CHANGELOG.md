@@ -11,6 +11,11 @@ Remember to align the itemized text with the first line of an item within a list
 * Breaking changes
   * Deleted `jax.experimental.callback`
 
+* Changes
+  * {func}`jax2tf.call_tf` has a new parameter `has_side_effects` (default `True`)
+    that can be used to declare whether an instance can be removed or replicated
+    by JAX optimizations such as dead-code elimination ({jax-issue}`#13980`).
+
 ## jaxlib 0.4.2
 
 ## jax 0.4.1 (Dec 13, 2022)
