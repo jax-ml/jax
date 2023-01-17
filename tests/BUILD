@@ -976,6 +976,9 @@ jax_test(
 jax_test(
     name = "python_callback_test",
     srcs = ["python_callback_test.py"],
+    deps = [
+        "//jax:experimental",
+    ],
 )
 
 jax_test(

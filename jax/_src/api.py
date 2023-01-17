@@ -3361,7 +3361,7 @@ def block_until_ready(x):
   return jax.tree_util.tree_map(try_to_block, x)
 
 def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
-                  *args: Any, **kwargs: Any):
+                  *args: Any, vectorized: bool = False, **kwargs: Any):
   """Applies a functionally pure Python callable. Works under :func:`jit`/:func:`~pmap`/etc.
 
   ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
@@ -3404,14 +3404,15 @@ def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
       via `jax.vmap`, it will be called directly on inputs with leading batch
       dimensions instead of executing ``callback`` on each mapped input
       individually. The callback should also return outputs batched across the
-      leading axis.
+      leading axis. By default, ``vectorized`` is ``False``.
     **kwargs: The keyword arguments to the callback. Must be PyTrees of JAX
       types.
 
   Returns:
     The value of ``callback(*args, **kwargs)``.
   """
-  return jcb.pure_callback(callback, result_shape_dtypes, *args, **kwargs)
+  return jcb.pure_callback(callback, result_shape_dtypes, *args,
+                           vectorized=vectorized, **kwargs)
 
 def clear_backends():
   """

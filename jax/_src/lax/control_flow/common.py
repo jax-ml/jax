@@ -15,21 +15,21 @@
 import os
 from functools import partial
 
-from typing import Callable, Optional, Sequence, Set
+from typing import Callable, Optional, Sequence
 
-from jax import core
+from jax._src import core
 from jax._src import linear_util as lu
-from jax.api_util import flatten_fun_nokwargs
-from jax.interpreters import partial_eval as pe
+from jax._src.core import control_flow_allowed_effects as allowed_effects
 from jax._src.lax import lax
 from jax._src import ad_util
 from jax._src import util
 from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
+from jax.api_util import flatten_fun_nokwargs
+from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_map, tree_unflatten
 
 map, unsafe_map = safe_map, map
 
-allowed_effects: Set[core.Effect] = set()
 allowed_effects.add(lax.InOutFeedEffect.Infeed)
 allowed_effects.add(lax.InOutFeedEffect.Outfeed)
 

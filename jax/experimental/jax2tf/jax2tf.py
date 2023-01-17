@@ -1309,6 +1309,7 @@ tf_not_yet_impl = [
     "pure_callback",
     "for",
     "inspect_sharding",
+    "io_callback",
 
     # Not high priority?
     "after_all",
