@@ -103,11 +103,6 @@ jobs:
           pip install -r "./.github/workflows/slurm_job_scripts/requirements.txt"
           python3 ./.github/workflows/slurm_job_scripts/oci_cluster_manager.py destroy_clusters &> ./oci_automation_destroy.log
 
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          junit_files: "outputs/*.xml"
       - name: Upload run results from all nodes
         uses: actions/upload-artifact@83fd05a356d7e2593de66fc9913b3002723633cb # ratchet:actions/upload-artifact@v3
         if: always()
