@@ -93,9 +93,9 @@ sharding = jax.sharding.NamedSharding(mesh, P('x'))
 
 sharded_x = jax.device_put(x, sharding)
 
-# `mul_sharded_x` and `sin_sharded_x` are sharded. `jit` is able to operate over a 
+# `matmul_sharded_x` and `sin_sharded_x` are sharded. `jit` is able to operate over a
 # sharded array without copying data to a single device.
-mul_sharded_x = sharded_x @ sharded_x.T
+matmul_sharded_x = sharded_x @ sharded_x.T
 sin_sharded_x = jnp.sin(sharded_x)
 
 # Even jnp.copy preserves the sharding on the output.
@@ -191,7 +191,7 @@ Running **multi-process pjit computation** and passing host-local inputs when
 
 Example:
 
-Mesh = `{'x': 2, 'y': 2, 'z': 3}` and host local input shape == `(4,)` and
+Mesh = `{'x': 2, 'y': 2, 'z': 2}` and host local input shape == `(4,)` and
 pspec = `P(('x', 'y', 'z'))`
 
 Since `pjit` doesn’t lift host local shapes to global shapes with `jax.Array`,
