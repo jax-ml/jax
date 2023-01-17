@@ -24,7 +24,7 @@ kernelspec:
 
 When walking about the countryside of Italy, the people will not hesitate to tell you that __JAX__ has [_"una anima di pura programmazione funzionale"_](https://www.sscardapane.it/iaml-backup/jax-intro/).
 
-__JAX__ is a language for __expressing__ and __composing__ __transformations__ of numerical programs. __JAX__ is also able to __compile__ numerical programs for CPU or accelerators (GPU/TPU). 
+__JAX__ is a language for __expressing__ and __composing__ __transformations__ of numerical programs. __JAX__ is also able to __compile__ numerical programs for CPU or accelerators (GPU/TPU).
 JAX works great for many numerical and scientific programs, but __only if they are written with certain constraints__ that we describe below.
 
 ```{code-cell} ipython3
@@ -36,12 +36,6 @@ from jax import lax
 from jax import random
 import jax
 import jax.numpy as jnp
-import matplotlib as mpl
-from matplotlib import pyplot as plt
-from matplotlib import rcParams
-rcParams['image.interpolation'] = 'nearest'
-rcParams['image.cmap'] = 'viridis'
-rcParams['axes.grid'] = False
 ```
 
 +++ {"id": "gX8CZU1g2agP"}
@@ -50,7 +44,7 @@ rcParams['axes.grid'] = False
 
 +++ {"id": "2oHigBkW2dPT"}
 
-JAX transformation and compilation are designed to work only on Python functions that are functionally pure: all the input data is passed through the function parameters, all the results are output through the function results. A pure function will always return the same result if invoked with the same inputs. 
+JAX transformation and compilation are designed to work only on Python functions that are functionally pure: all the input data is passed through the function parameters, all the results are output through the function results. A pure function will always return the same result if invoked with the same inputs.
 
 Here are some examples of functions that are not functionally pure for which JAX behaves differently than the Python interpreter. Note that these behaviors are not guaranteed by the JAX system; the proper way to use JAX is to use it only on functionally pure Python functions.
 
@@ -62,10 +56,10 @@ id: A6R-pdcm4u3v
 outputId: 25dcb191-14d4-4620-bcb2-00492d2f24e1
 ---
 def impure_print_side_effect(x):
-  print("Executing function")  # This is a side-effect 
+  print("Executing function")  # This is a side-effect
   return x
 
-# The side-effects appear during the first run  
+# The side-effects appear during the first run
 print ("First call: ", jit(impure_print_side_effect)(4.))
 
 # Subsequent runs with parameters of same type and shape may not show the side-effect
@@ -160,11 +154,11 @@ print(lax.fori_loop(0, 10, lambda i,x: x+next(iterator), 0)) # unexpected result
 
 # lax.scan
 def func11(arr, extra):
-    ones = jnp.ones(arr.shape)  
+    ones = jnp.ones(arr.shape)
     def body(carry, aelems):
         ae1, ae2 = aelems
         return (carry + ae1 * ae2 + extra, carry)
-    return lax.scan(body, 0., (arr, ones))    
+    return lax.scan(body, 0., (arr, ones))
 make_jaxpr(func11)(jnp.arange(16), 5.)
 # make_jaxpr(func11)(iter(range(16)), 5.) # throws error
 
@@ -208,6 +202,16 @@ If we try to update a JAX device array in-place, however, we get an __error__!  
 ---
 colab:
   base_uri: https://localhost:8080/
+id: iOscaa_GecEK
+outputId: 26fdb703-a476-4b7f-97ba-d28997ef750c
+---
+%xmode Minimal
+```
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
 id: 2AxeCufq4wAp
 outputId: fa4a87ad-1a84-471a-a3c5-a1396c432c85
 tags: [raises-exception]
@@ -215,10 +219,7 @@ tags: [raises-exception]
 jax_array = jnp.zeros((3,3), dtype=jnp.float32)
 
 # In place update of JAX's array will yield an error!
-try:
-  jax_array[1, :] = 1.0
-except Exception as e:
-  print("Exception {}".format(e))
+jax_array[1, :] = 1.0
 ```
 
 +++ {"id": "7mo76sS25Wco"}
@@ -312,10 +313,7 @@ id: 5_ZM-BJUypdO
 outputId: c9c41ae8-2653-4219-e6dc-09b03faa3b95
 tags: [raises-exception]
 ---
-try:
-  np.arange(10)[11]
-except Exception as e:
-  print("Exception {}".format(e))
+np.arange(10)[11]
 ```
 
 +++ {"id": "eoXrGARWypdR"}
@@ -364,11 +362,9 @@ colab:
   base_uri: https://localhost:8080/
 id: DFEGcENSsmEc
 outputId: 08535679-6c1f-4dd9-a414-d8b59310d1ee
+tags: [raises-exception]
 ---
-try:
-  jnp.sum([1, 2, 3])
-except TypeError as e:
-  print(f"TypeError: {e}")
+jnp.sum([1, 2, 3])
 ```
 
 +++ {"id": "QPliLUZztxJt"}
@@ -427,8 +423,8 @@ jnp.sum(jnp.array(x))
 
 +++ {"id": "O8vvaVt3MRG2"}
 
-> _If all scientific papers whose results are in doubt because of bad 
-> `rand()`s were to disappear from library shelves, there would be a 
+> _If all scientific papers whose results are in doubt because of bad
+> `rand()`s were to disappear from library shelves, there would be a
 > gap on each shelf about as big as your fist._ - Numerical Recipes
 
 +++ {"id": "Qikt9pPW9L5K"}
@@ -457,9 +453,9 @@ Underneath the hood, numpy uses the [Mersenne Twister](https://en.wikipedia.org/
 
 np.random.seed(0)
 rng_state = np.random.get_state()
-#print(rng_state)
+# print(rng_state)
 # --> ('MT19937', array([0, 1, 1812433255, 1900727105, 1208447044,
-#       2481403966, 4042607538,  337614300, ... 614 more numbers..., 
+#       2481403966, 4042607538,  337614300, ... 614 more numbers...,
 #       3048484911, 1796872496], dtype=uint32), 624, 0, 0.0)
 ```
 
@@ -472,7 +468,7 @@ This pseudorandom state vector is automagically updated behind the scenes every 
 
 _ = np.random.uniform()
 rng_state = np.random.get_state()
-#print(rng_state) 
+#print(rng_state)
 # --> ('MT19937', array([2443250962, 1093594115, 1878467924,
 #       ..., 2648828502, 1678096082], dtype=uint32), 2, 0, 0.0)
 
@@ -480,15 +476,15 @@ rng_state = np.random.get_state()
 for i in range(311):
   _ = np.random.uniform()
 rng_state = np.random.get_state()
-#print(rng_state) 
+#print(rng_state)
 # --> ('MT19937', array([2443250962, 1093594115, 1878467924,
 #       ..., 2648828502, 1678096082], dtype=uint32), 624, 0, 0.0)
 
 # Next call iterates the RNG state for a new batch of fake "entropy".
 _ = np.random.uniform()
 rng_state = np.random.get_state()
-# print(rng_state) 
-# --> ('MT19937', array([1499117434, 2949980591, 2242547484, 
+# print(rng_state)
+# --> ('MT19937', array([1499117434, 2949980591, 2242547484,
 #      4162027047, 3277342478], dtype=uint32), 2, 0, 0.0)
 ```
 
@@ -522,7 +518,7 @@ key
 
 +++ {"id": "XjYyWYNfq0hW"}
 
-JAX's random functions produce pseudorandom numbers from the PRNG state, but __do not__ change the state!  
+JAX's random functions produce pseudorandom numbers from the PRNG state, but __do not__ change the state!
 
 Reusing the same state will cause __sadness__ and __monotony__, depriving the end user of __lifegiving chaos__:
 
@@ -674,6 +670,7 @@ colab:
   base_uri: https://localhost:8080/
 id: 9z38AIKclRNM
 outputId: 38dd2075-92fc-4b81-fee0-b9dff8da1fac
+tags: [raises-exception]
 ---
 @jit
 def f(x):
@@ -683,10 +680,7 @@ def f(x):
     return -4 * x
 
 # This will fail!
-try:
-  f(2)
-except Exception as e:
-  print("Exception {}".format(e))
+f(2)
 ```
 
 +++ {"id": "pIbr4TVPqtDN"}
@@ -766,13 +760,28 @@ def example_fun(length, val):
   return jnp.ones((length,)) * val
 # un-jit'd works fine
 print(example_fun(5, 4))
+```
 
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+id: fOlR54XRgHpd
+outputId: cf31d798-a4ce-4069-8e3e-8f9631ff4b71
+tags: [raises-exception]
+---
 bad_example_jit = jit(example_fun)
 # this will fail:
-try:
-  print(bad_example_jit(10, 4))
-except Exception as e:
-  print("Exception {}".format(e))
+bad_example_jit(10, 4)
+```
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+id: kH0lOD4GgFyI
+outputId: d009fcf5-c9f9-4ce6-fc60-22dc2cf21ade
+---
 # static_argnums tells JAX to recompile on changes at these argument positions:
 good_example_jit = jit(example_fun, static_argnums=(0,))
 # first compile
@@ -783,7 +792,7 @@ print(good_example_jit(5, 4))
 
 +++ {"id": "MStx_r2oKxpp"}
 
-`static_argnums` can be handy if `length` in our example rarely changes, but it would be disastrous if it changed a lot!  
+`static_argnums` can be handy if `length` in our example rarely changes, but it would be disastrous if it changed a lot!
 
 Lastly, if your function has global side-effects, JAX's tracer can cause weird things to happen. A common gotcha is trying to print arrays inside __jit__'d functions:
 
@@ -902,10 +911,10 @@ lax.fori_loop(start, stop, body_fun, init_val)
 #### Summary
 
 $$
-\begin{array} {r|rr} 
+\begin{array} {r|rr}
 \hline \
-\textrm{construct} 
-& \textrm{jit} 
+\textrm{construct}
+& \textrm{jit}
 & \textrm{grad} \\
 \hline \
 \textrm{if} & ❌ & ✔ \\
@@ -1079,7 +1088,7 @@ x.dtype
 
 +++ {"id": "VcvqzobxNPbd"}
 
-To use double-precision numbers, you need to set the `jax_enable_x64` configuration variable __at startup__.  
+To use double-precision numbers, you need to set the `jax_enable_x64` configuration variable __at startup__.
 
 There are a few ways to do this:
 
@@ -1143,10 +1152,10 @@ Many such cases are discussed in detail in the sections above; here we list seve
 
   Here is an example of an unsafe cast with differing results between NumPy and JAX:
   ```python
-  >>> np.arange(254.0, 258.0).astype('uint8')                                                
+  >>> np.arange(254.0, 258.0).astype('uint8')
   array([254, 255,   0,   1], dtype=uint8)
 
-  >>> jnp.arange(254.0, 258.0).astype('uint8')                                               
+  >>> jnp.arange(254.0, 258.0).astype('uint8')
   DeviceArray([254, 255, 255, 255], dtype=uint8)
   ```
   This sort of mismatch would typically arise when casting extreme values from floating to integer types or vice versa.
