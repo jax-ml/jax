@@ -4153,6 +4153,13 @@ class APITest(jtu.JaxTestCase):
                             check=True, capture_output=True)
     assert expected in result.stderr.decode()
 
+  def test_shapedtypestruct_sharding_error(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "sharding should be an instance of `jax.sharding.Sharding`."):
+      jax.ShapeDtypeStruct((8, 2), np.float32,
+                           sharding=jax.sharding.PartitionSpec('x'))
+
 
 @jtu.with_config(jax_experimental_subjaxpr_lowering_cache=True)
 class SubcallTraceCacheTest(jtu.JaxTestCase):
