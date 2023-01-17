@@ -1461,6 +1461,21 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      expected_output_signature=tf.TensorSpec((None, 3), dtype=tf.float32)
                      )
 
+  def test_vmap_error(self):
+    # vmap is careful to give nice error messages when mapped axes have
+    # different sizes, but this can be foiled by InconsistentDimensionOperation
+    x = y = np.ones((3, 5), dtype=np.float32)
+    with self.assertRaisesRegex(ValueError,
+                                "vmap got inconsistent sizes for array axes to be mapped"):
+      jax2tf.convert(jax.vmap(lambda x, y: x + y),
+                     polymorphic_shapes=["b, ...", None])(x, y)
+
+    z = x
+    with self.assertRaisesRegex(ValueError,
+                                "vmap got inconsistent sizes for array axes to be mapped"):
+      jax2tf.convert(jax.vmap(lambda x, y, z: x + y + z),
+                     polymorphic_shapes=["b, ...", "c, ...", None])(x, y, z)
+
   def test_reshape_compiled(self):
     # We compile the result of conversion for two shapes, hence we need to
     # involve the TF compiler twice, but we trace only once with shape polymorphism

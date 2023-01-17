@@ -1685,8 +1685,13 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
                for x, d in zip(vals, dims)]
   size_counts = collections.Counter(s for s in all_sizes if s is not None)
   (sz, ct), *other_counts = counts = size_counts.most_common()
-  ex, *examples = [key_paths[all_sizes.index(sz)] for sz, _ in counts]
-  ax, *axs = [dims[all_sizes.index(sz)] for sz, _ in counts]
+  def _all_sizes_index(sz):
+    for i, isz in enumerate(all_sizes):
+      if core.symbolic_equal_dim(isz, sz): return i
+    assert False, (sz, all_sizes)
+
+  ex, *examples = [key_paths[_all_sizes_index(sz)] for sz, _ in counts]
+  ax, *axs = [dims[_all_sizes_index(sz)] for sz, _ in counts]
   if ct == 1:
     msg.append(f"  * one axis had size {sz}: axis {ax} of {ex};\n")
   else:
