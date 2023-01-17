@@ -233,15 +233,14 @@ subsequent method call may return an incorrect result::
     >>> print(c.calc(3))  # Should print 3
     6
 
-What's happening here? The issue is that ``static_argnums`` relies on the hash of the object
-to determine whether it has changed between calls, and the default ``__hash__`` method
-for a user-defined class will not take into account the values of class attributes. That means
-that on the second function call, JAX has no way of knowing that the class attributes have
-changed, and uses the cached static value from the previous compilation.
+Why is this? When you mark an object as static, it will effectively be used as a dictionary
+key in JIT's internal compilation cache, meaning its hash (i.e. ``hash(obj)``) equality
+(i.e. ``obj1 == obj2``) and object identity (i.e. ``obj1 is obj2``) will be assumed to have
+consistent behavior. The default ``__hash__`` for a custom object is its object ID, and so
+JAX has no way of knowing that a mutated object should trigger a re-compilation.
 
-For this reason, if you are marking ``self`` arguments as static, it is important that you
-define an appropriate ``__hash__`` method for your class.
-For example, you might proceed like this::
+You can partially address this by defining an appropriate ``__hash__`` and ``__eq__`` methods
+for your object; for example::
 
     >>> class CustomClass:
     ...   def __init__(self, x: jnp.ndarray, mul: bool):
@@ -261,32 +260,17 @@ For example, you might proceed like this::
     ...     return (isinstance(other, CustomClass) and
     ...             (self.x, self.mul) == (other.x, other.mul))
 
-Note that we've defined the ``__hash__`` method so that it depends on the hash of
-relevant class attributes, and we've also defined the ``__eq__`` method because it's
-good practice to do so any time you override ``__hash__`` (see
-`Python Data Model: __hash__ <https://docs.python.org/3/reference/datamodel.html#object.__hash__>`_
-for more information on this). With this addition, the example works correctly::
+(see the :meth:`object.__hash__` documentation for more discussion of the requirements
+when overriding ``__hash__``).
 
-    >>> c = CustomClass(2, True)
-    >>> print(c.calc(3))
-    6
-    >>> c.mul = False
-    >>> print(c.calc(3))
-    3
+This should work correctly with JIT and other transforms **so long as you never mutate
+your object**. Mutations of objects used as hash keys lead to several subtle problems,
+which is why for example mutable Python containers (e.g. :class:`dict`, :class:`list`)
+don't define ``__hash__``, while their immutable counterparts (e.g. :class:`tuple`) do.
 
-A downside of marking ``self`` as static is that it does not allow ``self`` to contain
-array-like attributes, since arrays are not hashable. For example, this will break because
-JAX arrays are not hashable::
-  
-    >>> c = CustomClass(jnp.array(2), True)
-    >>> c.calc(3)  # doctest: +SKIP
-    ---------------------------------------------------------------------------
-    ValueError                                Traceback (most recent call last)
-      File "<stdin>", line 1, in <module
-    ValueError: Non-hashable static arguments are not supported. An error occurred during a call to 'calc' while trying to hash an object of type <class '__main__.CustomClass'>
-  
-Additionally, this also has the downside that ``calc`` will be re-compiled any time the values
-within ``myfunc`` change, which could be costly depending on your program.
+If your class relies on in-place mutations (such as setting ```self.attr = ...`` within its
+methods), then your object is not really "static" and marking it as such may lead to problems.
+Fortunately, there's another option for this case.
 
 Strategy 3: Making ``CustomClass`` a PyTree
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
