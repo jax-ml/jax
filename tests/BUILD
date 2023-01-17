@@ -40,7 +40,9 @@ jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
     # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
-    disable_configs = ["cpu_jit_pjit_api_merge"],
+    env = {
+        "JAX_JIT_PJIT_API_MERGE": "0",
+    },
     shard_count = 2,
 )
 
@@ -78,7 +80,9 @@ jax_test(
     name = "custom_object_test",
     srcs = ["custom_object_test.py"],
     # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
-    disable_configs = ["cpu_jit_pjit_api_merge"],
+    env = {
+        "JAX_JIT_PJIT_API_MERGE": "0",
+    },
 )
 
 jax_test(
