@@ -374,9 +374,9 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     return tf_function.experimental_get_compiler_ir(*args)(stage="hlo",
                                                            device_name=device_name)
 
-  def CountLargeTfConstants(self, tf_fun: Callable, *args,
-                            at_least=256):
-    # A hacky way to count how many "large" constants are embedded in the
+  def FindLargeTfConstants(self, tf_fun: Callable, *args,
+                           at_least=256):
+    # A hacky way to find the "large" constants that are embedded in the
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
@@ -387,8 +387,8 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     else:
       # We cannot find the constants just with string matching because their
       # representation may contain escaped "
-      large_consts = [n for n in f_tf_graph.node if n.op == "Const" and len(str(n)) >= at_least]
-    return len(large_consts)
+      large_consts = [str(n) for n in f_tf_graph.node if n.op == "Const" and len(str(n)) >= at_least]
+    return large_consts
 
   def CheckOpMetadata(self, jax_fun, x,
                       expected: Sequence[OpMetadataGraph],

@@ -761,16 +761,18 @@ def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
                                           ) -> Sequence[Tuple[TfVal, core.ShapedArray]]:
   try:
     prev_constant_cache = _thread_local_state.constant_cache
-    prev_constant_cache_keys = set(prev_constant_cache.keys()) if prev_constant_cache is not None else set()
     # Start a new cache, so that we don't share constants across tf.function
     # boundaries.
     if fresh_constant_cache:
       _thread_local_state.constant_cache = {}
-
+    else:
+      prev_constant_cache_keys = set(prev_constant_cache.keys()) if prev_constant_cache is not None else set()
     out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
         fun.call_wrapped(*in_vals)
   finally:
-    if prev_constant_cache is not None and not fresh_constant_cache:
+    if (not fresh_constant_cache and
+        prev_constant_cache is not None and
+        _WRAP_JAX_JIT_WITH_TF_FUNCTION):
       newly_added_keys = set(prev_constant_cache.keys()) - prev_constant_cache_keys
       # Delete the newly added keys
       for k in newly_added_keys:
@@ -940,10 +942,14 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     # JAX has the same problem when generating HLO.
     const_key = (id(val), jax_dtype)
     # Since we use id(val) as a cache key, we have to make sure that we keep
-    # the previous `val` alive. Otherwise, for an ndarray, it can get garbage
+    # the previous `val` alive. Otherwise, for a ndarray, it can get garbage
     # collected and reused for a different value, which would create correctness
     # issues. We keep the `val` alive by storing in the cache the pair
     # `(val, tf_val)`.
+    # Only memoize non-scalars. JAX will lift all non-scalar constants as
+    # Jaxpr consts, to the top level of the Jaxpr. This ensures that we see them
+    # early, when entering the Jaxpr, so we create the tf.const early and its
+    # scope is the entire Jaxpr.
     do_memoize = (memoize_constants and np.shape(val) and _thread_local_state.constant_cache is not None)
     if do_memoize:
       _, tf_val = _thread_local_state.constant_cache.get(const_key, (None, None))
