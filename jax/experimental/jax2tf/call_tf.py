@@ -352,14 +352,24 @@ def _code_generator_and_avals(
       else:
         captured_inputs.append(inp)
 
-  # TODO(necula): It seems that we need concrete tensors for get_compiler_ir?
-  # We know of one case when TF is sensitive to the values of the tensors that
-  # affect shapes in the computation. In those cases, however, those tensors
-  # are inlined in the computation, which we detect below.
-  args_tf_flat = [
-      tf.constant((0 if a.dtype != tf.bool else False),
-                  shape=a.shape,
-                  dtype=a.dtype) for a in args_flat_sig_tf]
+  # TODO(b/265073174): Currently TensorSpec get_compiler_ir does not support
+  # tf.function captured variables. We can elminate this after it is fixed.
+  if tf.executing_eagerly():
+    args_tf_flat = [
+        tf.constant(
+            (0 if a.dtype != tf.bool else False), shape=a.shape, dtype=a.dtype
+        )
+        for a in args_flat_sig_tf
+    ]
+  else:
+
+    def maybe_convert_to_spec(x):
+      if isinstance(x, tf.TensorSpec):
+        return x
+      else:
+        return tf.TensorSpec.from_tensor(x)
+
+    args_tf_flat = [maybe_convert_to_spec(a) for a in args_flat_sig_tf]
 
   with jax2tf_internal.inside_call_tf():
     # When the TF computation uses variables on a particular device, we must

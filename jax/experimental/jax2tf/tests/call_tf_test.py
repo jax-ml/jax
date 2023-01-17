@@ -817,6 +817,21 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaises(TypeError):
       _ = jax.grad(f_rt)(x)
 
+  def test_call_tf_under_function_context(self):
+    def fun_jax(x, y):
+      z = jax2tf.call_tf(tf.math.sin)(x) + jnp.cos(y)
+      return z
+
+    x = np.array([-1.0, 0.0, 1.0], dtype=np.float32)
+    y = np.array([-0.5, 0.0, 0.5], dtype=np.float32)
+
+    converted_fun = tf.function(
+        jax2tf.convert(fun_jax, experimental_native_lowering=True)
+    )
+    expected = np.sin(x) + np.cos(y)
+    res = tf.function(converted_fun, jit_compile=True, autograph=False)(x, y)
+    self.assertAllClose(expected, res.numpy(), atol=1e-5, rtol=1e-5)
+
 
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of call_tf into TF with jax2tf."
