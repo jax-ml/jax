@@ -498,7 +498,7 @@ def make_custom_gradient_fn_tf(
           "This should not happen for first-order differentiation. "
           f"{variables=}")
 
-    out_cts_flat_polymorphic_shapes = tuple(str(out_aval.shape)  # Note: may be polynomials, not just DimVar
+    out_cts_flat_polymorphic_shapes = tuple(str(out_aval.shape)  # Note: may be _DimExpr, not just DimVar
                                             for out_aval in out_avals)  # type: ignore
     vjp_polymorphic_shapes = [
         polymorphic_shapes_flat, out_cts_flat_polymorphic_shapes
@@ -996,12 +996,12 @@ def _ensure_tf_shape_if_dynamic(x: TfVal, shape):
 def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
   """Asserts that shape matches x.shape in the known dimensions and has
   dimension polynomials elsewhere."""
-  # Ensures that the shape does not contain None; it should contain polynomials
+  # Ensures that the shape does not contain None; it should contain symbolic expressions.
   def check_one(xd: Optional[int], sd: Any):
     if core.is_constant_dim(sd):
       return xd == sd
     else:
-      assert isinstance(sd, shape_poly._DimPolynomial)
+      assert isinstance(sd, shape_poly._DimExpr)
       return True
   assert (len(x.shape) == len(shape) and
           all(check_one(xd, sd)
@@ -1858,8 +1858,9 @@ def _conv_general_dilated(lhs, rhs, *,
     if tf_version >= (2, 8):
       # TODO(necula): remove when 2.8.0 is the stable TF version (and supports
       # batch_group_count.
+      padding_tf = [_eval_shape(p) for p in padding]
       out = tfxla.conv(
-          lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+          lhs, rhs, window_strides, padding_tf, lhs_dilation, rhs_dilation,
           dnums_proto,
           feature_group_count=feature_group_count,
           batch_group_count=batch_group_count,
@@ -1871,8 +1872,9 @@ def _conv_general_dilated(lhs, rhs, *,
         raise ValueError(
             "The batch_group_count parameter for conv requires TF version "
             "at least 2.8.0. You may want to use tf-nightly.")
+      padding_tf = [_eval_shape(p) for p in padding]
       out = tfxla.conv(
-          lhs, rhs, window_strides, padding, lhs_dilation, rhs_dilation,
+          lhs, rhs, window_strides, padding_tf, lhs_dilation, rhs_dilation,
           dnums_proto,
           feature_group_count=feature_group_count,
           precision_config=precision_config_proto,

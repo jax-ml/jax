@@ -26,6 +26,9 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax2tf.call_tf` has a new parameter `has_side_effects` (default `True`)
     that can be used to declare whether an instance can be removed or replicated
     by JAX optimizations such as dead-code elimination ({jax-issue}`#13980`).
+  * Added more support for floordiv and mod for jax2tf shape polymorphism. Previously,
+    certain division operations resulted in errors in presence of symbolic dimensions
+    ({jax-issue}`#14108`).
 
 ## jaxlib 0.4.2 (Jan 20, 2023)
 

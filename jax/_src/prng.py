@@ -1097,12 +1097,11 @@ def threefry_2x32(keypair, count):
     msg = "threefry_2x32 requires uint32 arguments, got {}"
     raise TypeError(msg.format([lax.dtype(x) for x in [key1, key2, count]]))
 
-  try:
-    odd_size = count.size % 2
-  except core.InconclusiveDimensionOperation as e:
+  odd_size = count.size % 2
+  if not isinstance(odd_size, int):
     msg = ("jax.random functions have limited support for shape polymorphism. "
            "In particular, the product of the known dimensions must be even.")
-    raise core.InconclusiveDimensionOperation(msg) from e
+    raise core.InconclusiveDimensionOperation(msg)
 
   if odd_size:
     x = list(jnp.split(jnp.concatenate([count.ravel(), np.uint32([0])]), 2))

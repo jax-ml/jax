@@ -288,7 +288,7 @@ therefore outside of the `XlaSharding` wrapper.
 ## Shape-polymorphic conversion
 
 **The shape polymorphism support is work in progress. It is meant to be sound,
-but it may fail to lower some programs. Please report any bugs you encounter.**
+but it may raise errors on some programs. Please report any bugs you encounter.**
 
 We described above how to include in the SavedModel several specializations
 of a lowered function for a few specific input shapes. `jax2tf` can
@@ -311,13 +311,12 @@ f_tf = tf.function(jax2tf.convert(f_jax,
 f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
 ```
 
-The `polymorphic_shapes` parameter, in the form of a sequence of strings corresponding
-to the sequence of positional
+The `polymorphic_shapes` parameter, in the form of a pytree of strings corresponding
+to the pytree of positional
 arguments, introduces one or more dimension variables, e.g., `b`, to stand for shape
-dimensions that are assumed to be unknown at JAX tracing time, even if the actual
-parameter value (here `tf.TensorSpec(...)`) happens to have fully known shape.
+dimensions that are assumed to be unknown at JAX tracing time.
 Dimension variables are assumed to range
-over all strictly positive integers.
+over all integers that are greater or equal to 1.
 In this particular example, we can
 also abbreviate `polymorphic_shapes=["(b, _, _)"]`,
 because the `_` placeholders take their value
@@ -363,7 +362,7 @@ known `tf.TensorSpec`, and any concrete input `x` whose shape matches `abs_sig`:
 It is crucial to understand that `f_jax(x)` has the freedom to re-invoke the JAX tracing machinery,
 and in fact it does so for each distinct concrete input shape, while the generation of `f_tf`
 uses JAX tracing only once, and invoking `f_tf(x)` does not use JAX tracing anymore. In fact,
-invoking the latter invocation may happen after the `f_tf` has been serialized
+the latter invocation may happen after the `f_tf` has been serialized
 to a SavedModel and reloaded in an environment where `f_jax` and the JAX
 tracing machinery are not available anymore.
 
@@ -383,22 +382,22 @@ lowered with the batch dimension polymorphic and the remaining dimensions concre
 It is reasonable to expect that there will be JAX programs for which there is a
 shape-polymorphic TensorFlow graph, but which will give an error when lowering with jax2tf.
 In general, you should expect that shape polymorphism can handle those programs for which
-all the intermediate shapes can be expressed as polynomials in the dimension variables
-appearing in the input shapes. In particular, this does not include programs whose
+all the intermediate shapes can be expressed as simple expressions in the dimension variables
+appearing in the input shapes. In particular, this does not apply to programs whose
 intermediate shapes depend on the data.
 
 ### Details
 
 In order to be able to use shape polymorphism effectively with jax2tf, it
 is worth considering what happens under the hood. When the lowered function
-is invoked with a `TensorSpec`, `jax2tf` will combine the
-`TensorSpec` from the actual argument with the `polymorphic_shapes` parameter to
-obtain a shape abstraction to be used to specialize the lowered function.
+is invoked with a `TensorSpec`, `jax2tf` will use the `polymorphic_shapes` parameter
+to  obtain a shape abstraction for the inputs. The dimension sizes from the
+`TensorSpec` are used to fill in the `_` and `...` placeholders from `polymorphic_shapes`.
 Normally, the shape abstraction contains the dimension sizes, but in the
 presence of shape polymorphism, some dimensions may be dimension variables.
 
 The `polymorphic_shapes` parameter must be either `None`,
-or a sequence (one per argument) of shape specifiers.
+or a pytree of shape specifiers corresponding to the pytree of arguments.
 (A value `None` for `polymorphic_shapes` is equivalent to a list of `None`.
 See [how optional parameters are matched to arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).)
 A shape specifier is combined with a `TensorSpec` as follows:
@@ -421,7 +420,7 @@ A shape specifier is combined with a `TensorSpec` as follows:
          for any argument are assumed to be equal.
 
 Note that `polymorphic_shapes` controls the shape abstraction used by JAX when tracing
-the function (with `_` placeholders given by the `TensorSpec`). The `TensorSpec`
+the function. The `TensorSpec`
 gives the shape abstraction that TensorFlow will associate with the produced
 graph, and can be more specific.
 
@@ -437,7 +436,7 @@ A few examples of shape specifications and uses:
     `polymorphic_shapes=["(b, 28, 28)", "(28, 16)"]`.
 
   * `polymorphic_shapes=["(batch, _)", "(batch,)"]`: the leading dimensions of the two arguments
-     must match, and are assumed to be greater than 0.
+     must match, and are assumed to be greater than 1.
      The second dimension of the first argument is taken from the
      actual `TensorSpec`. This can be used with a `TensorSpec` pair `[None, 16]`
      and `[None]`. It can also be used with a pair of shapes `[8, 16]` and `[8]`.
@@ -447,14 +446,14 @@ A few examples of shape specifications and uses:
 JAX keeps track of the shape of all intermediate results. When those shapes depend
 on dimension variables JAX computes them as symbolic expressions
 involving dimension variables. The symbolic expressions can represent the result
-of applying arithmetic operators (add, sub, mul,
+of applying arithmetic operators (add, sub, mul, floordiv, mod,
 including the NumPy variants `np.sum`, `np.prod`, etc.) **on dimension
 variables and integers** (`int`, `np.int`, or anything convertible by `operator.index`).
 These symbolic dimensions can then be used in shape-parameters of JAX primitives
 and APIs, e.g., in `jnp.reshape`, `jnp.arange`, slicing indices, etc.
 
 For example, in the following code to flatten a 2D array, the computation
-`x.shape[0] * x.shape[1]` computes the dimension polynomial `4 * b` as the
+`x.shape[0] * x.shape[1]` computes the symbolic dimension `4 * b` as the
 new shape:
 
 ```python
@@ -541,7 +540,7 @@ The solution is to avoid `np.array`, `float`, or JAX arrays in operations whose
 results are used as shapes, e.g., instead of `np.arange(n) * x.shape[0]` write
 `[i * x.shape[0] for i in range(n)]`.
 
-### Comparison of shape polynomials is partially supported
+### Comparison of symbolic dimensions is partially supported
 
 Inside JAX there are a number of equality and inequality comparisons
 involving shapes, e.g., for doing shape checking or even for choosing
@@ -576,10 +575,11 @@ as `False` and produce a lowered function that returns `1` just because the dime
 are not identical: there are some concrete input shapes for which the function
 should return `0`.
 
-### Division of shape polynomials is partially supported
+### Division of symbolic dimensions is partially supported
 
-Unlike addition and multiplication, which are fully supported on
-shape polynomials, division is only supported when either (a) there
+JAX will attempt to simplify division and modulo operations,
+e.g., `(a * b + a) // (b + 1) == a` and `6*a + 4 % 3 == 1`.
+In particular, JAX will handle the cases when either (a) there
 is no remainder, or (b) the divisor is a constant
 in which case there may be a constant remainder.
 For example, the code below results in a division error when trying to
@@ -609,7 +609,11 @@ jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
 You may also encounter division errors when working with strides, such as
 when computing the padding in a strided convolution.
 
-In some cases you may know that one of the dimension variables
+When JAX cannot simplify the result of symbolic dimension division it
+will construct symbolic expressions of the form `floordiv(E, N)` and
+`mod(E, N)` and it will use a number of heuristics to evaluate comparisons
+involving these. If you encounter `InconclusiveDimensionOperation` exceptions
+you can specify that a dimension variable
 is a multiple of the divisor,
 e.g., `b` in the above example of dividing `35*b` by `-2` may
 be known to be a multiple of `2`. You can specify that by replacing
@@ -623,7 +627,7 @@ jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
 ### Dimension variables must be solvable from the input shapes
 
 `jax2tf` will generate code to derive the values of the dimension variables
-from the input shapes. This works only if dimension polynomials in the input shapes are linear.
+from the input shapes. This works only if the symbolic dimensions in the input shapes are linear.
 For example, the following `polymorphic_shapes` will result in errors:
 
 ```python
