@@ -1,91 +1,140 @@
+# Copyright 2022 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 name: Nightly JAX CI on NVIDIA GPUs
-# This configures running JAX tests (especially multi-node multi-gpu) against nightly GPU jaxlib builds.
-# This is expected to fail frequently, and so we don't run it against every commit and PR in the repository.
-# Portions of this adapted from https://github.com/google/jax/blob/main/.github/workflows/upstream-nightly.yaml
 
 # Controls when the workflow will run
 on:
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
-  pull_request: # Automatically trigger on pull requests affecting this file
-    branches:
-      - main
-    paths:
-      - '**workflows/nightly-ci-multiprocess-gpu.yml'
 jobs:
-  jaxlib-nightly:
-    runs-on: self-hosted
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Secrets to connect and authenticate with the Cluster manager web API
+      WEB_API_TOKEN: ${{ secrets.NV_CLUSTER_API_TOKEN }}
+      WEB_API_URL:   ${{ secrets.NV_CLUSTER_API_URL }}
+      
+      GITHUB_WORKSPACE_REMOTE: "~/jax_ci_${{ github.run_id }}_${{ github.run_attempt }}/"
+      CONFIG: "-F ${{ github.workspace }}/.ssh/config -o UserKnownHostsFile=${{ github.workspace }}/.ssh/known_hosts"
     steps:
       - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
-      - name: Launch slurm job and hook output to this shell
-        run: |
-          export JOBSCRIPTSDIR=${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts
-          source $JOBSCRIPTSDIR/slurm_utils_common.sh
-          sbatch -N 2 $JOBSCRIPTSDIR/multinode_pytest_jaxlib_nightly.sub | tee output.log
-          sleep 2m
-          export SLURM_JOBID=$(grep 'Submitted batch job' "output.log" | awk '{ print $4 }')
-          export SLURM_OUTPUT=$(scontrol show job "${SLURM_JOBID}" | grep 'StdOut' | awk -F '=' '{ print $2 }')
-          job_wait "${SLURM_JOBID}" & PID=$!
-          touch "${SLURM_OUTPUT}"
-          echo -e " ---------------------------------------------------\n" \
-               "----------WAITING FOR SLURM JOB TO BEGIN-----------\n" \
-               "---------------------------------------------------\n"
-          tail --pid="${PID}" -f "${SLURM_OUTPUT}"
-          export SLURM_STATE=$(job_state "${SLURM_JOBID}"); echo "SLURM_JOBID=${SLURM_JOBID} SLURM_STATE='${SLURM_STATE}'"
-          export SLURM_WALLTIME=$(job_time "${SLURM_JOBID}"); echo "SLURM_WALLTIME=${SLURM_WALLTIME} secs"
-          export SLURM_EXITCODE=$(job_exit_code "${SLURM_JOBID}" || echo $?); echo "SLURM_EXITCODE='${SLURM_EXITCODE}'"
-          if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
-          if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
-        if: always()
+      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
         with:
-          junit_files: "outputs/*.xml"
+          python-version: "3.x"
+
+      - name: Create credentials
+        run: |
+
+          # Create SSH keys
+          mkdir -p ./.ssh && chmod 700 ./.ssh
+          ssh-keygen -N '' -f ./.ssh/id_rsa
+
+      - name: Create cluster
+        run: |
+
+          # Setup cluster, get username and IP address
+          pip install -r "./.github/workflows/slurm_job_scripts/requirements.txt"
+          python3 ./.github/workflows/slurm_job_scripts/oci_cluster_manager.py create_cluster --pubkey "$(cat ./.ssh/id_rsa.pub)" &> oci_automation_create.log
+          USER=$(tail -n 2 oci_automation_create.log | head -n 1)
+          IP=$(tail -n 1 oci_automation_create.log)
+
+          # Hide IP address from logs
+          echo "::add-mask::${IP}"
+
+          # Create SSH config
+          grep "^${IP} " oci_automation_create.log >> ./.ssh/known_hosts
+          echo "Host headnode
+            User ${USER}
+            HostName ${IP}
+            IdentityFile ${GITHUB_WORKSPACE}/.ssh/id_rsa" > ./.ssh/config
+
+      - name: Check SLURM is working
+        run: |
+
+          # SSH into the cluser & check SLURM
+          ssh ${CONFIG} headnode sinfo
+
+          # Run dummy job
+          SRUN="srun --container-name=nvidia --container-image=docker://nvcr.io#nvidia/tensorflow:22.11-tf2-py3 -N 2 -t 15:00 --gpus-per-node=8 --cpus-per-task=8 --ntasks-per-node=8"
+          CMD="bash -c 'hostname && nvidia-smi --query-gpu=gpu_name,driver_version --format=csv'"
+          ssh ${CONFIG} headnode "${SRUN} ${CMD}"
+
+      - name: Copy workspace
+        run: |
+
+          ssh ${CONFIG} headnode "rm -rf ${GITHUB_WORKSPACE_REMOTE} && mkdir -p ${GITHUB_WORKSPACE_REMOTE}"
+          scp ${CONFIG} -r ./.github     headnode:${GITHUB_WORKSPACE_REMOTE}/.github
+          scp ${CONFIG} -r ./tests       headnode:${GITHUB_WORKSPACE_REMOTE}/tests
+          scp ${CONFIG} -r ./pytest*     headnode:${GITHUB_WORKSPACE_REMOTE}/
+
+      - name: T5X end-to-end tests
+        timeout-minutes: 25
+        run: |
+
+          ENV="GITHUB_WORKSPACE_REMOTE=${GITHUB_WORKSPACE_REMOTE}"
+          SALLOC="salloc -N 2 --gpus-per-node=8 --exclusive -t 0:20:00 -p compute"
+          CMD="bash ${GITHUB_WORKSPACE_REMOTE}/.github/workflows/slurm_job_scripts/run_e2e_t5x_tests.sub"
+          ssh ${CONFIG} headnode "${ENV} ${SALLOC} ${CMD}"
+
+      - name: Gather results
+        if: always()
+        run: |
+
+          scp ${CONFIG} -r headnode:${GITHUB_WORKSPACE_REMOTE}/outputs ./
+
+      - name: Destroy cluster
+        if: always()
+        run: |
+
+          pip install -r "./.github/workflows/slurm_job_scripts/requirements.txt"
+          python3 ./.github/workflows/slurm_job_scripts/oci_cluster_manager.py destroy_clusters &> ./oci_automation_destroy.log
+
       - name: Upload run results from all nodes
         uses: actions/upload-artifact@83fd05a356d7e2593de66fc9913b3002723633cb # ratchet:actions/upload-artifact@v3
         if: always()
         with:
           name: output-from-nodes
           path: "outputs/*.txt"
-  jaxlib-release:
-    runs-on: self-hosted
-    needs: jaxlib-nightly
+
+  report-metrics:
+    name: e2e-tests-metrics
+    needs: tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@93ea575cb5d8a053eaa0ac8fa3b40d7e05a33cc8 # ratchet:actions/checkout@v3
-      - name: Launch slurm job and hook output to this shell
+      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984 # ratchet:actions/setup-python@v4
+        with:
+          python-version: "3.x"
+      - uses: actions/download-artifact@9782bd6a9848b53b110e712e20e42d89988822b7 # ratchet:actions/download-artifact@v3
+        with:
+          path: /tmp/workspace/logs
+      - name: Parse log output
         run: |
-          export JOBSCRIPTSDIR=${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts
-          source $JOBSCRIPTSDIR/slurm_utils_common.sh
-          sbatch -N 2 $JOBSCRIPTSDIR/multinode_pytest_jaxlib_release.sub | tee output.log
-          sleep 2m
-          export SLURM_JOBID=$(grep 'Submitted batch job' "output.log" | awk '{ print $4 }')
-          export SLURM_OUTPUT=$(scontrol show job "${SLURM_JOBID}" | grep 'StdOut' | awk -F '=' '{ print $2 }')
-          job_wait "${SLURM_JOBID}" & PID=$!
-          touch "${SLURM_OUTPUT}"
-          echo -e " ---------------------------------------------------\n" \
-               "----------WAITING FOR SLURM JOB TO BEGIN-----------\n" \
-               "---------------------------------------------------\n"
-          tail --pid="${PID}" -f "${SLURM_OUTPUT}"
-          export SLURM_STATE=$(job_state "${SLURM_JOBID}"); echo "SLURM_JOBID=${SLURM_JOBID} SLURM_STATE='${SLURM_STATE}'"
-          export SLURM_WALLTIME=$(job_time "${SLURM_JOBID}"); echo "SLURM_WALLTIME=${SLURM_WALLTIME} secs"
-          export SLURM_EXITCODE=$(job_exit_code "${SLURM_JOBID}" || echo $?); echo "SLURM_EXITCODE='${SLURM_EXITCODE}'"
-          if [ "${SLURM_EXITCODE}" != "0" ];      then exit ${SLURM_EXITCODE:-999}; fi
-          if [ "${SLURM_STATE}" != "COMPLETED" ]; then exit 1; fi
-      - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@46ab8d49369d898e381a607119161771bc65c2a6 # ratchet:EnricoMi/publish-unit-test-result-action@v2
-        if: always()
-        with:
-          junit_files: "outputs/*.xml"
-      - name: Upload run results from all nodes
-        uses: actions/upload-artifact@83fd05a356d7e2593de66fc9913b3002723633cb # ratchet:actions/upload-artifact@v3
-        if: always()
-        with:
-          name: output-from-nodes
-          path: "outputs/*.txt"
+          ls /tmp/workspace/logs/output-from-nodes/ && mv /tmp/workspace/logs/output-from-nodes/output*t5x*1-0-0.txt ${GITHUB_WORKSPACE}/output.log
+          pip install -r "${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts/requirements.txt"
+          python ${GITHUB_WORKSPACE}/.github/workflows/slurm_job_scripts/extract_e2e_tests_metrics.py --logfile ${GITHUB_WORKSPACE}/output.log --outmd ${GITHUB_WORKSPACE}/report.md --outjson ${GITHUB_WORKSPACE}/report.json --name end-to-end-t5x
+          cat report.md >> $GITHUB_STEP_SUMMARY
+
   report:
     name: report
-    needs: [jaxlib-nightly, jaxlib-release]
+    needs: tests
     if: |
       failure()
       && github.event_name == 'schedule'
