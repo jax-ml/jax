@@ -32,6 +32,7 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
+from jax._src.core import replace_jaxpr_effects
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
@@ -255,10 +256,8 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     # Raise index in case of effects to allow data-dependence-based discharging
     # of those effects (even if they don't have an explicit data dependence).
     index = core.raise_as_much_as_possible(index)
-  false_jaxpr = false_jaxpr.replace(
-      jaxpr=false_jaxpr.jaxpr.replace(effects=joined_effects))
-  true_jaxpr = true_jaxpr.replace(
-      jaxpr=true_jaxpr.jaxpr.replace(effects=joined_effects))
+  false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
+  true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
   linear = [False] * len(consts) + linear_ops
   out = cond_p.bind(
