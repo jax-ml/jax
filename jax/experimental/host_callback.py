@@ -681,7 +681,8 @@ def id_print(arg,
 
 def call(callback_func: Callable, arg, *,
          result_shape=None,
-         call_with_device=False):
+         call_with_device=False,
+         device_index=0):
   """Make a call to the host, and expect a result.
 
   **Experimental: please give feedback, and expect changes!**
@@ -709,13 +710,16 @@ def call(callback_func: Callable, arg, *,
     call_with_device: if True then the callback function is invoked with the
       device from which the call originates as a keyword argument.
 
+    device_index: specifies from which device the callback function is invoked
+      in a SPMD program.
   Returns:
     the result of the ``callback_func`` invocation.
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
   return _call(callback_func, arg, result_shape=result_shape,
-               call_with_device=call_with_device, identity=False)
+               call_with_device=call_with_device, device_index=device_index,
+               identity=False)
 
 
 # We need the wrapper function to have hash and equality defined since it is
