@@ -16,6 +16,26 @@ import os
 
 running_in_cloud_tpu_vm = False
 
+
+def has_libtpu() -> bool:
+  try:
+    # pylint: disable=import-outside-toplevel
+    # pytype: disable=import-error
+    import libtpu
+
+    libtpu.configure_library_path()
+    # pytype: enable=import-error
+    # pylint: enable=import-outside-toplevel
+  except ImportError:
+    return False
+  else:
+    return True
+
+
+def force_tpu_init() -> bool:
+  return 'FORCE_TPU_INIT' in os.environ
+
+
 def cloud_tpu_init():
   """Automatically sets Cloud TPU topology and other env vars.
 
@@ -33,20 +53,14 @@ def cloud_tpu_init():
   set.
   """
   global running_in_cloud_tpu_vm
-  try:
-    # pylint: disable=import-outside-toplevel
-    # pytype: disable=import-error
-    import libtpu
-    # pytype: enable=import-error
-    # pylint: enable=import-outside-toplevel
-  except ImportError:
-    # We assume libtpu is installed iff we're in a correctly-configured Cloud
-    # TPU environment. Exit early if we're not running on Cloud TPU.
+
+  # We assume if libtpu is installed, we're in a correctly-configured
+  # Cloud TPU environment. Exit early if we're not running on Cloud TPU.
+  if not has_libtpu() and not force_tpu_init():
     return
 
   running_in_cloud_tpu_vm = True
 
-  libtpu.configure_library_path()
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
   os.environ.setdefault('JAX_PLATFORMS', 'tpu,cpu')
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
