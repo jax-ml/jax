@@ -35,7 +35,7 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
    guide for more information.
 
 
-.. grid:: 3
+.. grid:: 1 3
 
     .. grid-item::
 
@@ -44,14 +44,12 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
          :link-type: ref
          :class-card: getting-started
 
-    .. grid-item::
 
       .. card:: :material-regular:`library_books;2em` User Guides
          :link: user-guides
          :link-type: ref
          :class-card: user-guides
 
-    .. grid-item::
 
       .. card:: :material-regular:`laptop_chromebook;2em` Developer Docs
          :link: contributor-guide
