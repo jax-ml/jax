@@ -582,7 +582,8 @@ def id_tap(tap_func,
     tap_with_device: if True then the tap function is invoked with the
       device from which the tap originates as a keyword argument.
     device_index: specifies from which device the tap function is invoked in a
-      SPMD program.
+      SPMD program. Works only when using the outfeed implementation mechanism,
+      i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -681,7 +682,8 @@ def id_print(arg,
 
 def call(callback_func: Callable, arg, *,
          result_shape=None,
-         call_with_device=False):
+         call_with_device=False,
+         device_index=0):
   """Make a call to the host, and expect a result.
 
   **Experimental: please give feedback, and expect changes!**
@@ -709,13 +711,17 @@ def call(callback_func: Callable, arg, *,
     call_with_device: if True then the callback function is invoked with the
       device from which the call originates as a keyword argument.
 
+    device_index: specifies from which device the tap function is invoked in a
+      SPMD program. Works only when using the outfeed implementation mechanism,
+      i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
   Returns:
     the result of the ``callback_func`` invocation.
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
   return _call(callback_func, arg, result_shape=result_shape,
-               call_with_device=call_with_device, identity=False)
+               call_with_device=call_with_device, identity=False,
+               device_index=device_index)
 
 
 # We need the wrapper function to have hash and equality defined since it is
@@ -960,6 +966,8 @@ It takes the following parameters:
     token. The tokens and this parameter are added after all the JAX
     transformations, just before staging XLA.
   * device_index: an integer, denotes from which device the invocation is from.
+    Works only when using the outfeed implementation mechanism, i.e., does
+    not work on CPU unless --jax_host_callback_outfeed=True.
 """
 outside_call_p = core.Primitive("outside_call")
 outside_call_p.multiple_results = True
@@ -1112,6 +1120,9 @@ def _outside_call_translation_rule(ctx,
         next_itoken = current_itoken
 
   else:  # !use_outfeed : CustomCall implementation
+    if device_index != 0:
+      raise ValueError("The device_index feature works only when using outfeed.")
+
     # TODO(necula): this is a weak attempt to get the device. This works
     # inside pmap, but does not work when we just execute on a single device,
     # because in such executions we always get replica_id == 0.
@@ -1190,6 +1201,9 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
         flat_results_aval=flat_results_aval,
         device_index=device_index,
         **params)
+  else:
+    if device_index != 0:
+      raise ValueError("The device_index feature works only when using outfeed.")
   # We expect the current tokens at the end, inserted by _rewrite_jaxpr.
   assert has_token
   current_token = args[-2]
@@ -1227,7 +1241,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
 
   if isinstance(ctx.module_context.axis_context,
                 (mlir.SPMDAxisContext, mlir.ShardingContext)):
-    # Apply maximal sharding so pjit only executes the callback on device 0.
+    # Apply maximal sharding so pjit only executes the callback on device device_index.
     sharding = xla_client.OpSharding()
     sharding.type = xla_client.OpSharding.Type.MAXIMAL
     sharding.tile_assignment_dimensions = [1]
