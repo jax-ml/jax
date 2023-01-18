@@ -1508,7 +1508,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(c, a):
       assert a.shape == (3,)
       assert c.shape == (4,)
-      b = jnp.cos(jnp.sum(jnp.sin(a)) + jnp.sum(jnp.cos(c)) + jnp.sum(jnp.tan(d)))
+      b = jnp.cos(jnp.sum(jnp.sin(a)) + jnp.sum(jnp.cos(c)) + jnp.sum(d))
       c = jnp.sin(c * b)
       assert b.shape == ()
       return c, b
