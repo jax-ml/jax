@@ -106,9 +106,6 @@ py_test(
 jax_test(
     name = "dtypes_test",
     srcs = ["dtypes_test.py"],
-    disable_backends = [
-        "tpu",
-    ],
 )
 
 jax_test(

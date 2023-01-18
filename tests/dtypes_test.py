@@ -36,7 +36,7 @@ config.parse_flags_with_absl()
 
 FLAGS = config.FLAGS
 
-_fp8_enabled = xla_client._version >= 117
+_fp8_enabled = xla_client._version >= 117 and jtu.device_under_test() == 'gpu'
 
 bool_dtypes = [np.dtype('bool')]
 
