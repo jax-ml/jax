@@ -704,8 +704,15 @@ class PytreeLeaf:
 def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
                                in_tree, in_positional_semantics, is_gda,
                                resource_env):
-  in_shardings_flat = flatten_axis_resources(
-        "pjit in_axis_resources", in_tree, in_shardings_thunk(), tupled_args=True)
+  orig_in_shardings = in_shardings_thunk()
+  # Only do this if original in_shardings are unspecified. If they are
+  # FROM_GDA or AUTO, go via flatten_axis_resources.
+  if _is_unspecified(orig_in_shardings):
+    in_shardings_flat = (orig_in_shardings,) * len(local_in_avals)
+  else:
+    in_shardings_flat = flatten_axis_resources(
+          "pjit in_axis_resources", in_tree, orig_in_shardings,
+          tupled_args=True)
 
   # Fork here because the `Array` path is very simple and doesn't need all the
   # complexity below.
@@ -790,8 +797,13 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
     jaxpr = core.ClosedJaxpr(jaxpr, consts)
     final_consts = []
 
-  out_shardings_flat = flatten_axis_resources(
-      "pjit out_axis_resources", out_tree(), out_shardings_thunk(), tupled_args=False)
+  orig_out_shardings = out_shardings_thunk()
+  if _is_unspecified(orig_out_shardings):
+    out_shardings_flat = (orig_out_shardings,) * len(global_out_avals)
+  else:
+    out_shardings_flat = flatten_axis_resources(
+        "pjit out_axis_resources", out_tree(), orig_out_shardings,
+        tupled_args=False)
 
   pjit_check_aval_sharding(out_shardings_flat, global_out_avals, "pjit outputs",
                            allow_uneven_sharding=False)

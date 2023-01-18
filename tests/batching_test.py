@@ -1309,8 +1309,7 @@ class NamedArray:
   data: Array
 
   def __init__(self, names, data):
-    # TODO(mattjj): Enable it back after NamedArray is not a pytree.
-    # assert len(names) == data.ndim
+    assert len(names) == data.ndim
     self.names = names
     self.data = data
 
