@@ -1,5 +1,5 @@
-jax.image package
-=================
+``jax.image`` module
+====================
 
 .. currentmodule:: jax.image
 

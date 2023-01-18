@@ -7,31 +7,51 @@ Subpackages
 -----------
 
 .. toctree::
-    :maxdepth: 1
+   :maxdepth: 1
 
-    jax.numpy
-    jax.scipy
-    jax.sharding
-    jax.config
-    jax.debug
-    jax.dlpack
-    jax.distributed
-    jax.example_libraries
-    jax.experimental
-    jax.flatten_util
-    jax.image
-    jax.lax
-    jax.nn
-    jax.ops
-    jax.profiler
-    jax.random
-    jax.stages
-    jax.tree_util
+   jax.numpy
+   jax.scipy
+   jax.lax
+   jax.random
+   jax.sharding
+   jax.debug
+   jax.dlpack
+   jax.distributed
+   jax.flatten_util
+   jax.image
+   jax.nn
+   jax.ops
+   jax.profiler
+   jax.stages
+   jax.tree_util
+   jax.example_libraries
+   jax.experimental
 
 .. toctree::
    :hidden:
 
    jax.lib
+
+Configuration
+-------------
+
+.. autosummary::
+   :toctree: _autosummary
+
+   config
+   check_tracer_leaks
+   checking_leaks
+   debug_nans
+   debug_infs
+   default_device
+   default_matmul_precision
+   default_prng_impl
+   enable_checks
+   enable_custom_prng
+   enable_custom_vjp_by_custom_transpose
+   log_compiles
+   numpy_rank_promotion
+   transfer_guard
 
 .. _jax-jit:
 

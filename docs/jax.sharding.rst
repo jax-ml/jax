@@ -1,5 +1,5 @@
-jax.sharding package
-====================
+``jax.sharding`` module
+=======================
 
 .. automodule:: jax.sharding
 

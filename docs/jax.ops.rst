@@ -1,6 +1,5 @@
-
-jax.ops package
-===============
+``jax.ops`` module
+==================
 
 .. currentmodule:: jax.ops
 

@@ -1,5 +1,5 @@
-jax.random package
-==================
+``jax.random`` module
+=====================
 
 .. automodule:: jax.random
 

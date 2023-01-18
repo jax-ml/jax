@@ -1,5 +1,5 @@
-jax.tree_util package
-=====================
+``jax.tree_util`` module
+========================
 
 .. currentmodule:: jax.tree_util
 

@@ -1,5 +1,5 @@
-jax.flatten_util package
-========================
+``jax.flatten_util`` module
+===========================
 
 .. currentmodule:: jax.flatten_util
 

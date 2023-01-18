@@ -1,7 +1,7 @@
 .. currentmodule:: jax.experimental
 
-jax.experimental package
-========================
+``jax.experimental`` module
+===========================
 
 ``jax.experimental.optix`` has been moved into its own Python package
 (https://github.com/deepmind/optax).

@@ -1,5 +1,5 @@
-jax.stages package
-==================
+``jax.stages`` module
+=====================
 
 .. automodule:: jax.stages
 
