@@ -26,7 +26,7 @@ import operator
 from operator import attrgetter
 import threading
 import types
-from typing import (Any, Callable, ClassVar, DefaultDict, Dict,
+from typing import (Any, Callable, ClassVar, DefaultDict, Dict, FrozenSet,
                     Generator, Hashable, Iterable, Iterator, List,
                     NamedTuple, Optional, Sequence, Set, Tuple, Type,
                     Union, cast)
@@ -2443,6 +2443,13 @@ def subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst):
     subst.axis_names |= used_axis_names_jaxpr(jaxpr)
     return jaxpr
   return do_subst_axis_names_jaxpr(jaxpr, subst)
+
+def replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: Effects):
+  return _replace_jaxpr_effects(jaxpr, frozenset(effects))
+
+@weakref_lru_cache
+def _replace_jaxpr_effects(jaxpr: ClosedJaxpr, effects: FrozenSet[Effect]):
+  return jaxpr.replace(jaxpr=jaxpr.jaxpr.replace(effects=set(effects)))
 
 
 axis_substitution_rules: Dict[Primitive, Callable[[ParamDict, AxisSubst, bool], ParamDict]] = {}

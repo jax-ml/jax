@@ -2400,6 +2400,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     x = np.arange(3, dtype='float32')
     jax.jvp(g, (x,), (x,))  # doesn't crash
 
+  def test_cond_excessive_compilation(self):
+    # Regression test for https://github.com/google/jax/issues/14058
+    def f(x):
+      return x + 1
+
+    def g(x):
+      return x + 2
+
+    with jtu.count_jit_and_pmap_compiles() as count:
+      for x in range(10):
+        lax.cond(x, f, g, x)
+    # Should observe a maximum of 4 compiles: convert_element_type, f, g, cond
+    # In #14058, this was observed to be 31 compiles.
+    self.assertLess(count[0], 5)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_dtype={dtype.__name__}", "dtype": dtype}
       for dtype in jtu.dtypes.all_integer)
