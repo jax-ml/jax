@@ -889,8 +889,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     if config.jax2tf_default_experimental_native_lowering:
       self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
-      self.assertIn("my_test_function_jax/jit_fn_/Mul",
-                    str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def()))
+      graph_def = str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def())
+      if "my_test_function_jax/pjit_fn_/Mul" not in graph_def:
+        self.assertIn("my_test_function_jax/jit_fn_/Mul", graph_def)
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/google/jax/issues/3942
@@ -921,41 +922,44 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     def f(x):
       return x + const + const + const + const
 
-    f_tf_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f), const)
-    self.assertEqual(f_tf_nr_consts, 1)
+    f_tf_consts = self.FindLargeTfConstants(jax2tf.convert(f), const)
+    self.assertLen(f_tf_consts, 1)
 
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
     if config.jax2tf_default_experimental_native_lowering:
       raise unittest.SkipTest("shared constants tests not interesting for native lowering")
-    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
-    x = np.ones((256,), dtype=np.float32)
+    const_size = 512
+    const = np.random.uniform(size=const_size).astype(np.float32)  # A shared constant
+    x = np.ones((const_size,), dtype=np.float32)
     def f1(x):
+      # Ensure that we first see the constants in the inside jaxpr
       return lax.cond(x[0] >= 0., lambda x: x + const, lambda x: x * const, x) + const
     def f2(x):
       return f1(x) + const  # The extra const should not cost anything
-    f1_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f1), x)
-    f2_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f2), x)
-    self.assertEqual(f1_nr_consts, f2_nr_consts)
+    f1_consts = self.FindLargeTfConstants(jax2tf.convert(f1), x, at_least=const_size)
+    f2_consts = self.FindLargeTfConstants(jax2tf.convert(f2), x, at_least=const_size)
+    self.assertLen(f2_consts, len(f1_consts))
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
     if config.jax2tf_default_experimental_native_lowering:
       raise unittest.SkipTest("shared constants tests not interesting for native lowering")
-    const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
-    xs = np.ones((8, 256), dtype=np.float32)
+    const_size = 512
+    const = np.random.uniform(size=const_size).astype(np.float32)  # A shared constant
+    xs = np.ones((8, const_size), dtype=np.float32)
     def f1(xs):
       res, _ = lax.scan(lambda carry, x: (carry + x + const, None),
-                        np.zeros((256,), dtype=np.float32), xs)
+                        jnp.zeros((const_size,), dtype=np.float32), xs)
       return res
 
     def f2(xs):
       return f1(xs) + const  # The extra const should not be saved
 
-    f1_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f1), xs)
-    f2_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f2), xs)
-    self.assertEqual(f1_nr_consts, f2_nr_consts)
+    f1_consts = self.FindLargeTfConstants(jax2tf.convert(f1), xs, at_least=const_size)
+    f2_consts = self.FindLargeTfConstants(jax2tf.convert(f2), xs, at_least=const_size)
+    self.assertLen(f2_consts, len(f1_consts))
 
   def test_shared_constants_under_jit(self):
     # We do not share constants under jit.
@@ -968,9 +972,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     def f(x):
       return g_jit(x) + const + const
 
-    f_tf_graph_nr_consts = self.CountLargeTfConstants(jax2tf.convert(f), const)
-    # TODO(b/207464757): TF compilation is disabled
-    self.assertEqual(f_tf_graph_nr_consts, 1)
+    f_tf_graph_consts = self.FindLargeTfConstants(jax2tf.convert(f), const)
+    self.assertLen(f_tf_graph_consts, 1)
 
   def test_weak_types(self):
     mul = jax.jit(jnp.multiply)
