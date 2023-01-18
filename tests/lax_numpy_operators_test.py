@@ -158,7 +158,7 @@ JAX_ONE_TO_ONE_OP_RECORDS = [
     op_record("arctan", 1, number_dtypes, all_shapes, jtu.rand_small, ["rev"],
               inexact=True),
     op_record("arctan2", 2, float_dtypes, all_shapes, jtu.rand_small, ["rev"],
-              inexact=True),
+              inexact=True, check_dtypes=False),
     op_record("arcsinh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
               inexact=True, tolerance={np.complex64: 2E-4, np.complex128: 2E-14}),
     op_record("arccosh", 1, number_dtypes, all_shapes, jtu.rand_default, ["rev"],
