@@ -461,6 +461,7 @@ class _DimPolynomial():
 
 core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
 xla.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
+dtypes._weak_types.append(_DimPolynomial)
 
 def _ensure_poly(p: DimSize,
                  operation_name: str) -> _DimPolynomial:
