@@ -299,7 +299,6 @@ jax_test(
 jax_test(
     name = "lax_control_flow_test",
     srcs = ["lax_control_flow_test.py"],
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 30,
         "gpu": 40,

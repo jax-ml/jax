@@ -1022,7 +1022,7 @@ def _check_unique_resources(axis_resources, arg_name):
 
 # -------------------- pjit rules --------------------
 
-pjit_p = core.Primitive("pjit")
+pjit_p = core.AxisPrimitive("pjit")
 pjit_p.multiple_results = True
 
 
@@ -1230,7 +1230,8 @@ def _pjit_lower_cached(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
 
-  pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
+  if resource_env is not None:
+    pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
 
   f = core.jaxpr_as_fun(jaxpr)
   f.__name__ = name
