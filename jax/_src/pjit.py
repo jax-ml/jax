@@ -34,6 +34,8 @@ from jax._src import array
 from jax._src.config import config
 from jax._src import dispatch
 from jax._src import source_info_util
+from jax._src import traceback_util
+from jax._src.traceback_util import api_boundary
 from jax._src.api_util import (argnums_partial_except, flatten_axes,
                                flatten_fun, flatten_fun_nokwargs,
                                donation_vector, shaped_abstractify,
@@ -60,6 +62,8 @@ from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
     merge_lists)
+
+traceback_util.register_exclusion(__file__)
 
 class _FromGdaSingleton:
   pass
@@ -116,6 +120,7 @@ def _python_pjit_helper(infer_params_fn, *args, **kwargs):
 def _python_pjit(fun: Callable, infer_params_fn):
 
   @wraps(fun)
+  @api_boundary
   def wrapped(*args, **kwargs):
     return _python_pjit_helper(infer_params_fn, *args, **kwargs)[0]
 
@@ -136,6 +141,7 @@ def _read_most_recent_pjit_call_executable():
 
 def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames):
 
+  @api_boundary
   def cache_miss(*args, **kwargs):
     outs, out_flat, out_tree, args_flat = _python_pjit_helper(
         infer_params_fn, *args, **kwargs)
@@ -238,6 +244,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
   else:
     wrapped = _python_pjit(fun, infer_params_fn)
 
+  @api_boundary
   def lower(*args, **kwargs):
     (args_flat, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params_fn(*args, **kwargs)

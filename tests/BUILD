@@ -111,12 +111,13 @@ jax_test(
     ],
 )
 
-py_test(
+jax_test(
     name = "errors_test",
     srcs = ["errors_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
+    # No need to test all other configs.
+    enable_configs = [
+        "cpu",
+        "cpu_jit_pjit_api_merge",
     ],
 )
 

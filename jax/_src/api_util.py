@@ -544,8 +544,9 @@ def _shaped_abstractify_slow(x):
   if hasattr(x, 'dtype'):
     dtype = dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True)
   else:
-    raise ValueError(f"Cannot interpret value of type {type(x)} as an abstract array; "
-                     "it does not have a dtype attribute")
+    raise TypeError(
+        f"Cannot interpret value of type {type(x)} as an abstract array; it "
+        "does not have a dtype attribute")
   return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
                           named_shape=named_shape)
 
