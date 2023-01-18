@@ -4,30 +4,30 @@ JAX: High-Performance Array Computing
 JAX is Autograd_ and XLA_, brought together for high-performance numerical computing.
 
 .. grid:: 3
+   :margin: 0
+   :padding: 0
+   :gutter: 0
 
-   .. grid-item::
+   .. grid-item-card:: Familiar API
+      :columns: 12 6 6 4
+      :class-card: key-ideas
+      :shadow: None
 
-      .. card:: Familiar API
-         :class-card: key-ideas
-         :shadow: None
+      JAX provides a familiar NumPy-style API for ease of adoption by researchers and engineers. 
 
-         JAX provides a familiar NumPy-style API for ease of adoption by researchers and engineers. 
+   .. grid-item-card:: Transformations
+      :columns: 12 6 6 4
+      :class-card: key-ideas
+      :shadow: None
 
-   .. grid-item::
+      JAX includes composable function transformations for compilation, batching, automatic differentiation, and parallelization.
 
-      .. card:: Transformations
-         :class-card: key-ideas
-         :shadow: None
+   .. grid-item-card:: Run Anywhere
+      :columns: 12 6 6 4
+      :class-card: key-ideas
+      :shadow: None
 
-         JAX includes composable function transformations for compilation, batching, automatic differentiation, and parallelization.
-
-   .. grid-item::
-
-      .. card:: Run Anywhere
-         :class-card: key-ideas
-         :shadow: None
-
-         The same code executes on multiple backends, including CPU, GPU, & TPU
+      The same code executes on multiple backends, including CPU, GPU, & TPU
 
 .. note::
    JAX 0.4.1 introduces new parallelism APIs, including breaking changes to :func:`jax.experimental.pjit` and a new unified ``jax.Array`` type.
@@ -37,26 +37,24 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
 
 .. grid:: 3
 
-    .. grid-item::
+    .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting Started
+      :columns: 12 6 6 4
+      :link: beginner-guide
+      :link-type: ref
+      :class-card: getting-started
 
-      .. card:: :material-regular:`rocket_launch;2em` Getting Started
-         :link: beginner-guide
-         :link-type: ref
-         :class-card: getting-started
+    .. grid-item-card:: :material-regular:`library_books;2em` User Guides
+      :columns: 12 6 6 4
+      :link: user-guides
+      :link-type: ref
+      :class-card: user-guides
 
-    .. grid-item::
+    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Developer Docs
+      :columns: 12 6 6 4
+      :link: contributor-guide
+      :link-type: ref
+      :class-card: developer-docs
 
-      .. card:: :material-regular:`library_books;2em` User Guides
-         :link: user-guides
-         :link-type: ref
-         :class-card: user-guides
-
-    .. grid-item::
-
-      .. card:: :material-regular:`laptop_chromebook;2em` Developer Docs
-         :link: contributor-guide
-         :link-type: ref
-         :class-card: developer-docs
 
 Installation
 ------------
