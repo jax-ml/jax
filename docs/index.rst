@@ -60,14 +60,28 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
 
 Installation
 ------------
+.. tab-set::
 
-.. code-block:: bash
+    .. tab-item:: CPU
 
-   pip install "jax[cpu]"
+       .. code-block:: bash
 
-For installation on accelerators (GPU, TPU) and other installation options,
-see the `Install Guide`_ in the project README.
+          pip install "jax[cpu]"
 
+    .. tab-item:: GPU (CUDA)
+
+       .. code-block:: bash
+
+          pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+
+    .. tab-item:: TPU (Google Cloud)
+
+       .. code-block:: bash
+
+          pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+For more information about supported accelerators and platforms, and for other
+installation options, see the `Install Guide`_ in the project README.
 
 .. toctree::
    :hidden:
