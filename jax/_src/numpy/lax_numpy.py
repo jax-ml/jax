@@ -1197,13 +1197,13 @@ def _split(op: str, ary: ArrayLike, indices_or_sections: Union[int, ArrayLike],
                                                  f"in jax.numpy.{op} argument 1")
     part_size, r = _divmod(size, indices_or_sections)  # type: ignore[misc]
     if r == 0:
-      split_indices = np.arange(indices_or_sections + 1,
-                                dtype=np.int64) * part_size
+      split_indices = [np.int64(i) * part_size  # type: ignore
+                       for i in range(indices_or_sections + 1)]  # type: ignore
     elif op == "array_split":
-      split_indices = np.concatenate(
-          [np.arange(r + 1, dtype=np.int64) * (part_size + 1),
-           np.arange(indices_or_sections - r, dtype=np.int64) * part_size
-           + ((r + 1) * (part_size + 1) - 1)])
+      split_indices = (
+        [np.int64(i) * (part_size + 1) for i in range(r + 1)] +  # type: ignore
+        [np.int64(i) * part_size + ((r + 1) * (part_size + 1) - 1)
+         for i in range(indices_or_sections - r)])
     else:
       raise ValueError("array split does not result in an equal division")
   starts, ends = [0] * ndim(ary), shape(ary)

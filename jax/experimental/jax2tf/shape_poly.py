@@ -164,7 +164,7 @@ class _DimPolynomial():
   free integer coefficient of the polynomial. The constant result of arithmetic
   operations is represented as a Python constant.
   """
-
+  __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
   def __init__(self, coeffs: Dict[_DimMon, int]):
     # Makes sure Polynomials are always in canonical form
     coeffs = {mon: op.index(coeff)
@@ -220,7 +220,9 @@ class _DimPolynomial():
       return False
     if ub is not None and ub < 0:
       return False
-    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive")
+    raise InconclusiveDimensionOperation(
+        f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive.\n"
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-dimension-polynomials-is-partially-supported.")
 
   def ge(self, other: DimSize) -> bool:
     lb, ub = _ensure_poly(self - other, "ge").bounds()
@@ -228,7 +230,9 @@ class _DimPolynomial():
       return True
     if ub is not None and ub < 0:
       return False
-    raise InconclusiveDimensionOperation(f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive")
+    raise InconclusiveDimensionOperation(
+        f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive.\n"
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-dimension-polynomials-is-partially-supported.")
 
   def __hash__(self):
     return hash(tuple(sorted(self.monomials())))
@@ -246,9 +250,9 @@ class _DimPolynomial():
   def __repr__(self):
     return str(self)
 
-  # We overload , -, *, because they are fully defined for _DimPolynomial.
+  # We overload +, -, *, because they are fully defined for _DimPolynomial.
   def __add__(self, other):
-    if isinstance(other, core.Tracer):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__add__(other)
 
     other = _ensure_poly(other, "add")
@@ -258,17 +262,17 @@ class _DimPolynomial():
     return _DimPolynomial.from_coeffs(coeffs)
 
   def __radd__(self, other):
-    if isinstance(other, core.Tracer):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__radd__(other)
     return _ensure_poly(other, "add").__add__(self)
 
   def __sub__(self, other):
-    if isinstance(other, core.Tracer):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__sub__(other)
     return self + -_ensure_poly(other, "sub")
 
   def __rsub__(self, other):
-    if isinstance(other, core.Tracer):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rsub__(other)
     return _ensure_poly(other, "sub").__sub__(self)
 
@@ -276,7 +280,7 @@ class _DimPolynomial():
     return _DimPolynomial({mon: -coeff for mon, coeff in self.monomials()})
 
   def __mul__(self, other):
-    if isinstance(other, core.Tracer):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__mul__(other)
     other = _ensure_poly(other, "mul")
     coeffs: Dict[_DimMon, int] = {}
@@ -286,7 +290,7 @@ class _DimPolynomial():
     return _DimPolynomial.from_coeffs(coeffs)
 
   def __rmul__(self, other):
-    if isinstance(other, core.Tracer):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rmul__(other)
     return _ensure_poly(other, "mul").__mul__(self)
 
@@ -299,50 +303,42 @@ class _DimPolynomial():
     return functools.reduce(op.mul, [self] * power)
 
   def __floordiv__(self, divisor):
-    if isinstance(divisor, core.Tracer):
+    if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__floordiv__(divisor)
     return self.divmod(_ensure_poly(divisor, "floordiv"))[0]
 
   def __rfloordiv__(self, other):
-    if isinstance(other, core.Tracer):
+    # A special case for int // poly: we use the __jax_array__ path
+    if isinstance(other, core.Tracer) or _convertible_to_int(other) or not _convertible_to_poly(other):
       return self.__jax_array__().__rfloordiv__(other)
     return _ensure_poly(other, "floordiv").__floordiv__(self)
 
   def __truediv__(self, divisor):
-    # Used for "/"
-    if isinstance(divisor, core.Tracer):
-      return self.__jax_array__().__truediv__(divisor)
-    q, r = self.divmod(_ensure_poly(divisor, "truediv"))
-    if r != 0:
-      raise InconclusiveDimensionOperation(
-          self._division_error_msg(self, divisor,
-                                   f"Remainder is not zero: {r}"))
-    return q
+    # Used for "/", which always returns a float
+    return self.__jax_array__().__truediv__(divisor)
 
   def __rtruediv__(self, dividend):
     # Used for "/", when dividend is not a _DimPolynomial
-    if isinstance(dividend, core.Tracer):
-      return self.__jax_array__().__rtruediv__(dividend)
-    raise InconclusiveDimensionOperation(
-        self._division_error_msg(dividend, self, "Dividend must be a polynomial"))
+    return self.__jax_array__().__rtruediv__(dividend)
 
   def __mod__(self, divisor):
-    if isinstance(divisor, core.Tracer):
+    if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__mod__(divisor)
     return self.divmod(_ensure_poly(divisor, "mod"))[1]
 
   def __rmod__(self, dividend):
-    if isinstance(dividend, core.Tracer):
+    # A special case for int // poly: we use the __jax_array__ path
+    if isinstance(dividend, core.Tracer) or _convertible_to_int(dividend) or not _convertible_to_poly(dividend):
       return self.__jax_array__().__rmod__(dividend)
     return _ensure_poly(dividend, "mod").__mod__(self)
 
   def __divmod__(self, divisor):
-    if isinstance(divisor, core.Tracer):
+    if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__divmod__(divisor)
     return self.divmod(_ensure_poly(divisor, "divmod"))
 
   def __rdivmod__(self, dividend):
-    if isinstance(dividend, core.Tracer):
+    if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
       return self.__jax_array__().__rdivmod__(dividend)
     return _ensure_poly(dividend, "divmod").__divmod__(self)
 
@@ -463,18 +459,25 @@ core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
 xla.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
 dtypes._weak_types.append(_DimPolynomial)
 
+def _convertible_to_int(p: DimSize) -> bool:
+  try:
+    op.index(p)
+    return True
+  except:
+    return False
+
 def _ensure_poly(p: DimSize,
                  operation_name: str) -> _DimPolynomial:
   if isinstance(p, _DimPolynomial): return p
-  try:
-    p = op.index(p)
-    return _DimPolynomial({_DimMon(): p})
-  except:
-    raise TypeError(f"Dimension polynomial {operation_name} not supported for {p}")
+  if _convertible_to_int(p):
+    return _DimPolynomial({_DimMon(): op.index(p)})
+  raise TypeError(f"Dimension polynomial {operation_name} not supported for {p}.")
+
+def _convertible_to_poly(p: DimSize) -> bool:
+  return isinstance(p, _DimPolynomial) or _convertible_to_int(p)
 
 def is_poly_dim(p: DimSize) -> bool:
   return isinstance(p, _DimPolynomial)
-
 
 
 class DimensionHandlerPoly(core.DimensionHandler):
@@ -586,6 +589,12 @@ def dim_as_value_abstract(dim: DimSize) -> core.AbstractValue:
 
 dim_as_value_p.def_abstract_eval(dim_as_value_abstract)
 
+def dim_as_value_impl(dim: DimSize):
+  raise NotImplementedError(
+      "Evaluation rule for 'dim_as_value' is not implemented. "
+      "It seems that you are using shape polymorphism outside jax2tf.")
+
+dim_as_value_p.def_impl(dim_as_value_impl)
 def _dim_as_value(dim: DimSize):
   return dim_as_value_p.bind(dim=dim)
 

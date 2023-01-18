@@ -278,36 +278,6 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     else:
       self.assertEqual((quotient, remainder), divmod(dividend, divisor))
 
-  @parameterized.named_parameters(
-      dict(testcase_name=f"_D={dividend}_d={divisor}_q={quotient}",
-           dividend=dividend, divisor=divisor, quotient=quotient)
-      for dividend, divisor, quotient in [
-          (a, 1, a),
-          (3 * a, 3, a),
-          (3 * a + 3, 3, a + 1),
-          (3 * a + 2, 3, None),
-          (3 * a + 5, 3, None),
-          (3 * a - 2, 3, None),
-          (3 * a * a * b + 2 * b * b * a, a * b, 3 * a + 2 * b),
-          (a * a - b * b, a + b, a - b),
-          (a, b, None),
-          (3 * a, 2, None),
-          (2 * a * b + b * b, a + b, None),
-  ])
-  def test_poly_truediv(self, *, dividend, divisor, quotient):
-    if quotient is None:
-      with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                  "Cannot divide .* by .*"):
-        dividend / divisor
-    else:
-      self.assertEqual(quotient, dividend / divisor)
-
-  def test_poly_truediv_error(self):
-    a, = shape_poly._parse_spec("a,", (2,))
-    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Cannot divide .* by .*"):
-      3 / a
-
   def test_dilate_shape(self):
     """0 if d == 0 else 1 + dilation * (d - 1))"""
     a, = shape_poly._parse_spec("a,", (2,))
@@ -1223,8 +1193,15 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (np.prod(x.shape),)),
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
-    jax2tf.convert(lambda x: x + x.shape[0] + jnp.sin(x.shape[0]),
-                   polymorphic_shapes=["b"])(np.ones(3))
+    with self.assertRaisesRegex(TypeError,
+                                "Shapes must be 1D sequences of concrete values of integer type, got Traced"):
+      jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * np.array([x.shape[1]]))),
+                     polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
+
+    jax2tf.convert(lambda x: (x + x.shape[0] + jnp.sin(x.shape[0]),
+                              5. + x.shape[0],
+                              np.ones((5,), dtype=np.int32) - x.shape[0]),
+                   polymorphic_shapes = ["b"])(np.ones((3,)))
 
     jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
                    polymorphic_shapes=["(v, _)"])(np.ones((3, 4)))
@@ -1385,45 +1362,62 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      expected_output_signature=tf.TensorSpec([]))
 
   @parameterized.named_parameters([
-      dict(testcase_name=f"_{op.__name__}_order={order}",
-           op=op, order=order)
-      for order in ["poly_array", "array_poly", "poly_float", "float_poly"]
+      dict(testcase_name=f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
+           op=op, other=other,
+           other_jnp_array=other_jnp_array, swap=swap)
       for op in [operator.add, operator.mul, operator.sub,
                  operator.mod, operator.floordiv, operator.truediv]
+      for other in [
+          2, np.int32(2), 2., np.float32(2),
+          np.array(2, dtype=np.int32), np.arange(1, 5, dtype=np.int32),
+          np.array(2., dtype=np.float32), np.arange(1., 7., dtype=np.float32)
+      ]
+      for other_jnp_array in (
+          [True, False] if np.shape(other) == (7,) else [False])  # type: ignore
+      for swap in [False, True]  # The poly is the left op by default
   ])
-  def test_poly_binary_op(self, *, op=operator.truediv, order="float_poly"):
-    # Test arithmetic operations with poly
+  def test_poly_binary_op(self, *, op=operator.truediv,
+                          other=2,
+                          other_jnp_array=False,
+                          swap=False):
+    # Test arithmetic operations with poly and a variety of other operand types
     if config.jax2tf_default_experimental_native_lowering:
       raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
 
     def f_jax(x):  # x: f32[b]
-      poly = 2 * x.shape[0]
-      if order == "poly_array":
-        return op(poly, jnp.array(3, dtype=np.int32))
-      elif order == "array_poly":
-        return op(jnp.array(3, dtype=np.int32), poly)
-      elif order == "poly_float":
-        return op(poly, 5.)
-      elif order == "float_poly":
-        return op(5., poly)
-      else:
-        assert False, order
+      poly = 2 * x.shape[0]  # This will allow divisions with 2
+      other_wrapped = jnp.array(other) if other_jnp_array else other
+      ops = (poly, other_wrapped) if not swap else (other_wrapped, poly)
+      res = op(*ops)
 
-    with contextlib.ExitStack() as stack:
-      if order in ["poly_float", "float_poly"]:
-        if op.__name__ == "truediv" and order == "float_poly":
-          stack.enter_context(
-              self.assertRaisesRegex(shape_poly.InconclusiveDimensionOperation,
-                                     "Dividend must be a polynomial"))
-        else:
-          stack.enter_context(
-              self.assertRaisesRegex(TypeError,
-                                     f"Dimension polynomial {op.__name__} not supported for"))
-      check_shape_poly(self,
-                       f_jax,
-                       arg_descriptors=[RandArg((3,), np.int32)],
-                       poly_axes=[0],
-                       expected_output_signature=tf.TensorSpec([]))
+      # If the other op is an integer then the result is a symbolic dim
+      try:
+        operator.index(other)
+        other_isint = True
+      except Exception:
+        other_isint = False
+
+      if (hasattr(poly, "dimension_as_value") and
+          other_isint and
+          op.__name__ != "truediv" and
+          not (swap and op.__name__ in ["floordiv", "mod"])):
+        # If we running under jax2tf and "other" is an integer the result
+        # should be a symbolic dimension
+        self.assertTrue(isinstance(res, int) or hasattr(res, "dimension_as_value"))
+
+      if config.jax_enable_x64:
+        # Outside jax2tf, x.shape[0] is a Python (64-bit) integer and for most
+        # operations here JAX is not involved at all because the other operand
+        # is a Python or NumPy constant. So the result will be 64-bits. But under
+        # jax2tf, x.shape[0] is rewritten to jnp.array(x.shape[0]) which when
+        # used with int32 or float32 values will produce 32-bit values.
+        return lax.convert_element_type(res, np.float32)
+      return res
+
+    check_shape_poly(self,
+                     f_jax,
+                     arg_descriptors=[RandArg((3,), np.int32)],
+                     poly_axes=[0])
 
   def test_mean0(self):
     def f_jax(x):  # x: f32[b, 4]
@@ -2136,6 +2130,21 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: lax.slice_in_dim(x, 0, -1, stride=1, axis=0),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 poly_axes=[0]),
+    PolyHarness("jnp.split", "",
+                lambda x: jnp.split(x, 2, axis=0),
+                arg_descriptors=[RandArg((8, 5), _f32)],
+                polymorphic_shapes=["2*b, ..."],
+                input_signature=[tf.TensorSpec([None, 5], dtype=_f32)]),
+    PolyHarness("jnp.array_split", "even",
+                lambda x: jnp.array_split(x, 2, axis=0),
+                arg_descriptors=[RandArg((8, 5), _f32)],
+                polymorphic_shapes=["2*b, ..."],
+                input_signature=[tf.TensorSpec([None, 5], dtype=_f32)]),
+    PolyHarness("jnp.array_split", "odd",
+                lambda x: jnp.array_split(x, 2, axis=0),
+                arg_descriptors=[RandArg((9, 5), _f32)],
+                polymorphic_shapes=["2*b + 1, ..."],
+                input_signature=[tf.TensorSpec([None, 5], dtype=_f32)]),
     PolyHarness("squeeze", "axis=empty",
                 jnp.squeeze,
                 arg_descriptors=[RandArg((5,), _f32), StaticArg(())],

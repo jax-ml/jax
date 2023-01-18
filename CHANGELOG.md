@@ -14,6 +14,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Breaking changes
   * Deleted `jax.experimental.callback`
+  * Operations with dimensions in presence of jax2tf shape polymorphism have
+    been generalized to work in more scenarios, by converting the symbolic
+    dimension to JAX arrays. Operations involving symbolic dimensions and
+    `np.ndarray` now can raise errors when the result is used as a shape value
+    ({jax-issue}`#14106`).
 
 * Changes
   * {func}`jax2tf.call_tf` has a new parameter `has_side_effects` (default `True`)
