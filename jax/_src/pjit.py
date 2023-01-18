@@ -168,7 +168,7 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames):
 
   cpp_pjit_f = xc._xla.pjit(  # type: ignore
       getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
-      cache_miss, static_argnums, static_argnames)
+      fun, cache_miss, static_argnums, static_argnames)  # type:ignore
 
   return wraps(fun)(cpp_pjit_f)
 
@@ -232,7 +232,7 @@ def pre_infer_params(fun, in_axis_resources, out_axis_resources,
 
 def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
                       abstracted_axes):
-  if (FLAGS.experimental_cpp_pjit and xla_extension_version >= 115 and
+  if (FLAGS.experimental_cpp_pjit and xla_extension_version >= 118 and
       abstracted_axes is None):
     wrapped = _cpp_pjit(fun, infer_params_fn, static_argnums, static_argnames)
   else:

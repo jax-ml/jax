@@ -2561,8 +2561,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_single_device_pjit_cpp_dispatch(self):
-    if xla_extension_version < 115:
-      self.skipTest('Does not work for xla_extension_version < 115')
+    if xla_extension_version < 118:
+      self.skipTest('Does not work for xla_extension_version < 118')
 
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1,), ('x',))
@@ -2591,8 +2591,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_single_device_add_single_compile(self):
-    if xla_extension_version < 115:
-      self.skipTest('Does not work for xla_extension_version < 115')
+    if xla_extension_version < 118:
+      self.skipTest('Does not work for xla_extension_version < 118')
 
     f1 = pjit(lambda x, y: x + y)
     a = jax.device_put(jnp.array([1, 2, 3], dtype=jnp.float32),
@@ -2759,8 +2759,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     assert f_names(x='foo') == 1
 
   def test_pjit_with_static_argnames_cpp_dispatch(self):
-    if xla_extension_version < 115:
-      self.skipTest('Does not work for xla_extension_version < 115')
+    if xla_extension_version < 118:
+      self.skipTest('Does not work for xla_extension_version < 118')
 
     original_pjit_lower = pjit_lib._pjit_lower
     count = 0

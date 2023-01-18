@@ -3579,7 +3579,7 @@ class MeshExecutable(stages.XlaExecutable):
             not self.unsafe_call.has_host_callbacks):
       return None
 
-    if not flags.FLAGS.experimental_cpp_pjit or xla_extension_version < 115:
+    if not flags.FLAGS.experimental_cpp_pjit or xla_extension_version < 118:
       return None
 
     def aot_cache_miss(*args, **kwargs):
@@ -3599,7 +3599,7 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    return xc._xla.pjit(self.unsafe_call.name, aot_cache_miss, [], [])  # type: ignore
+    return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [])  # type: ignore
 
 
 def _out_shardings_for_trivial(
