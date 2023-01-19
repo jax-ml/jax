@@ -104,6 +104,7 @@ installation options, see the `Install Guide`_ in the project README.
    :maxdepth: 2
    :caption: Further Resources
 
+   changelog
    user_guides
    advanced_guide
    contributor_guide

@@ -17,5 +17,4 @@ User Guides
    errors
    transfer_guard
    glossary
-   changelog
    debugging/index
