@@ -16,5 +16,6 @@ Advanced Tutorials
    notebooks/Writing_custom_interpreters_in_Jax
    notebooks/Neural_Network_and_Data_Loading
    notebooks/xmap_tutorial
+   notebooks/convolutions
    notebooks/external_callbacks
    Custom_Operation_for_GPUs
