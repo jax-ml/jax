@@ -13,5 +13,7 @@ User Guides
    pytrees
    type_promotion
    errors
-   transfer_guard
    debugging/index
+   profiling
+   device_memory_profiling
+   transfer_guard
