@@ -1060,11 +1060,9 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
 
   # Persistent compilation cache only implemented on TPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu"]
+  supported_platforms = ["tpu", "gpu"]
   # GPU caching can be enabled if JitRt is enabled.
   # TODO(b/232263664): Remove check when JitRt is enabled by default.
-  if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
-    supported_platforms.append("gpu")
   # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
   if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("cpu")

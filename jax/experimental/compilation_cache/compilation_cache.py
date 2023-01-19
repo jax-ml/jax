@@ -56,6 +56,7 @@ def get_executable(xla_computation, compile_options,
   xla_executable_serialized = _cache.get(cache_key)
   if not xla_executable_serialized:
     return None
+  print(xla_executable_serialized)
   xla_executable_deserialized = backend.deserialize_executable(
       xla_executable_serialized,
       compile_options)
