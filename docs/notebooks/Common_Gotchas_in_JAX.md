@@ -825,7 +825,7 @@ There are more options for control flow in JAX. Say you want to avoid re-compila
 
 +++ {"id": "Sd9xrLMXeK3A"}
 
-#### cond
+#### `cond`
 python equivalent:
 
 ```python
@@ -854,7 +854,7 @@ lax.cond(False, lambda x: x+1, lambda x: x-1, operand)
 
 +++ {"id": "xkOFAw24eOMg"}
 
-#### while_loop
+#### `while_loop`
 
 python equivalent:
 ```
@@ -881,7 +881,7 @@ lax.while_loop(cond_fun, body_fun, init_val)
 
 +++ {"id": "apo3n3HAeQY_"}
 
-#### fori_loop
+#### `fori_loop`
 python equivalent:
 ```
 def fori_loop(start, stop, body_fun, init_val):
@@ -933,6 +933,81 @@ $$
 $\ast$ = argument-<b>value</b>-independent loop condition - unrolls the loop
 
 </center>
+
++++ {"id": "OxLsZUyRt_kF"}
+
+## 🔪 Dynamic Shapes
+
++++ {"id": "1tKXcAMduDR1"}
+
+JAX code used within transforms like `jax.jit`, `jax.vmap`, `jax.grad`, etc. requires all output arrays and intermediate arrays to have static shape: that is, the shape cannot depend on values within other arrays.
+
+For example, if you were implementing your own version of `jnp.nansum`, you might start with something like this:
+
+```{code-cell} ipython3
+:id: 9GIwgvfLujiD
+
+def nansum(x):
+  mask = ~jnp.isnan(x)  # boolean mask selecting non-nan values
+  x_without_nans = x[mask]
+  return x_without_nans.sum()
+```
+
++++ {"id": "43S7wYAiupGe"}
+
+Outside JIT and other transforms, this works as expected:
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+id: ITYoNQEZur4s
+outputId: a9a03d25-9c54-43b6-d35e-aea6c448d680
+---
+x = jnp.array([1, 2, jnp.nan, 3, 4])
+print(nansum(x))
+```
+
++++ {"id": "guup5n8xvGI-"}
+
+If you attempt to apply `jax.jit` or another transform to this function, it will error:
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 114
+id: nms9KjQEvNTz
+outputId: d8ae982f-111d-45b6-99f8-37715e2eaab3
+tags: [raises-exception]
+---
+jax.jit(nansum)(x)
+```
+
++++ {"id": "r2aGyHDkvauu"}
+
+The problem is that the size of `x_without_nans` is dependent on the values within `x`, which is another way of saying its size is *dynamic*.
+Often in JAX it is possible to work-around the need for dynamically-sized arrays via other means.
+For example, here it is possible to use the three-argument form of  `jnp.where` to replace the NaN values with zeros, thus computing the same result while avoiding dynamic shapes:
+
+```{code-cell} ipython3
+---
+colab:
+  base_uri: https://localhost:8080/
+id: Zbuj7Dg1wnSg
+outputId: 81a5e356-cd28-4709-b307-07c6254c82de
+---
+@jax.jit
+def nansum_2(x):
+  mask = ~jnp.isnan(x)  # boolean mask selecting non-nan values
+  return jnp.where(mask, x, 0).sum()
+
+print(nansum_2(x))
+```
+
++++ {"id": "uGH-jqK7wxTl"}
+
+Similar tricks can be played in other situations where dynamically-shaped arrays occur.
 
 +++ {"id": "DKTMw6tRZyK2"}
 
