@@ -1450,6 +1450,13 @@ def _pjit_partial_eval(trace, *in_tracers,
   unknown_ins = tuple(not k for k in known_ins)
   known_jaxpr, unknown_jaxpr, unknown_outs, res_avals = pe.partial_eval_jaxpr_nounits(
       jaxpr, unknown_ins, instantiate=False)
+  fwds_known = pe._jaxpr_forwarding(known_jaxpr.jaxpr)
+  # TODO cache this
+  known_jaxpr_ = known_jaxpr.jaxpr
+  known_jaxpr_.outvars = [x for x, i in safe_zip(known_jaxpr_.outvars, fwds_known)
+                          if i is None]
+  known_jaxpr = core.ClosedJaxpr(known_jaxpr_, known_jaxpr.consts)
+
   unknown_outs = tuple(unknown_outs)
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)
@@ -1508,9 +1515,16 @@ def _pjit_partial_eval(trace, *in_tracers,
     known_params['out_shardings'] = (
         keep_where(out_shardings, known_outs) + residual_shardings)
 
-  all_known_outs = pjit_p.bind(
-      *(pv.get_known() for pv in in_pvals if pv.is_known()),
-      **known_params)
+  # TODO BEFORE HERE we need to prune out_shardings and out_position_semantics,
+  # only keep the ones corresponding to fwds_known entries of None.
+  # But maybe we should only include fwds which have _UNSPECIFIED sharding, ie
+  # dont forward an input if the in/out shardings are different.
+  known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
+  all_known_outs = pjit_p.bind(*known_inputs, **known_params)
+  known_outs_iter = iter(all_known_outs)
+  all_known_outs = [next(known_outs_iter) if fwd_idx is None
+                    else known_inputs[fwd_idx] for fwd_idx in fwds_known]
+
   if num_residuals:
     known_out_vals, residual_vals = \
         split_list(all_known_outs, [len(all_known_outs) - num_residuals])
