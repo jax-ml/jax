@@ -130,7 +130,11 @@ def _default_propagate_user_shardings(sharding, shape):
 class custom_partitioning:
   """Inserts a CustomCallOp into the XLA graph with custom SPMD lowering rules.
 
-  Usage:
+  The CustomCallOp is expanded by the SPMD partitioning pass. Because of this,
+  we need three callbacks to be registered. Two to help the spmd partitioner
+  infer the proper partitioning from the users and arguments, and a final
+  partition callback to generate the final code.
+
   ```
   @custom_partitioning
   def f(*args):

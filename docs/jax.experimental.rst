@@ -21,6 +21,7 @@ Experimental Modules
     jax.experimental.pjit
     jax.experimental.sparse
     jax.experimental.jet
+    jax.experimental.custom_partitioning
 
 Experimental APIs
 -----------------
