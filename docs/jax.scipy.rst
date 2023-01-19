@@ -1,5 +1,5 @@
-jax.scipy package
-=================
+``jax.scipy`` module
+====================
 
 jax.scipy.fft
 -------------

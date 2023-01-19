@@ -1,5 +1,5 @@
-jax.experimental.maps module
-============================
+``jax.experimental.maps`` module
+================================
 
 .. automodule:: jax.experimental.maps
 

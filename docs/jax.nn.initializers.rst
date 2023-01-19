@@ -1,6 +1,5 @@
-
-jax.nn.initializers package
-===========================
+``jax.nn.initializers`` module
+==============================
 
 .. currentmodule:: jax.nn.initializers
 

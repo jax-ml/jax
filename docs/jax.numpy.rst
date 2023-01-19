@@ -1,5 +1,5 @@
-jax.numpy package
-=================
+``jax.numpy`` module
+====================
 
 .. currentmodule:: jax.numpy
 

@@ -1,5 +1,5 @@
-jax.lib package
-===============
+``jax.lib`` module
+==================
 The `jax.lib` package is a set of internal tools and types for bridging between
 JAX's Python frontend and its XLA backend.
 

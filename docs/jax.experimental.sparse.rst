@@ -1,5 +1,5 @@
-jax.experimental.sparse module
-==============================
+``jax.experimental.sparse`` module
+==================================
 
 .. automodule:: jax.experimental.sparse
 

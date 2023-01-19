@@ -1,5 +1,5 @@
-jax.distributed module
-======================
+``jax.distributed`` module
+==========================
 
 .. currentmodule:: jax.distributed
 
