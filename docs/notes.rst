@@ -13,3 +13,4 @@ Notes
    profiling
    device_memory_profiling
    rank_promotion_warning
+   jax_array_migration

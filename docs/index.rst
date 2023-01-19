@@ -111,6 +111,14 @@ installation options, see the `Install Guide`_ in the project README.
    jax
 
 
+.. toctree::
+   :hidden:
+   :maxdepth: 1
+
+   changelog
+   glossary
+
+
 .. _Autograd: https://github.com/hips/autograd
 .. _XLA: https://www.tensorflow.org/xla
 .. _Install Guide: https://github.com/google/jax#installation
