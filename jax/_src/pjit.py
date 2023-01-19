@@ -270,12 +270,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
       local_in_avals = args_kwargs_in_tree.unflatten(flat_local_in_avals)
 
     return stages.Lowered.from_flat_info(
-        lowering,
-        args_kwargs_in_tree,
-        local_in_avals,
-        donate_argnums,
-        out_tree,
-        no_kwargs=True)
+        lowering, args_kwargs_in_tree, local_in_avals, donate_argnums, out_tree)
 
   wrapped.lower = lower
   return wrapped

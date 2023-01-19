@@ -851,26 +851,23 @@ class PJitTest(jtu.BufferDonationTestCase):
                         check_dtypes=False)
 
     for obj in [lowered, compiled]:
-      self.assertTrue(obj._no_kwargs, True)
+      self.assertFalse(obj._no_kwargs)
       self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0, 0), {}))[1])
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileWithKwargs(self):
-    @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+    if not config.jax_array:
+      self.skipTest('This test only works when jax.Array is enabled.')
+
+    @pjit
     def f(x, y, **kwargs):
       return x @ y
 
     shape = (8, 8)
     x = jnp.arange(np.prod(shape)).reshape(shape)
-    exe = f.lower(x, x + 1).compile()
-
-    self.assertRaisesRegex(
-        NotImplementedError,
-        "function was compiled by a transformation that does not support "
-        "keyword arguments, but called with keyword arguments: a, b",
-        lambda: exe(x, x + 1, a=1, b=2))
+    exe = f.lower(x, x + 1, a=1, b=2).compile()
+    out = exe(x, x + 1, a=1, b=2)
+    self.assertArraysEqual(out, x @ (x + 1))
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileInTreeMismatch(self):
