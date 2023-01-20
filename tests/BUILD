@@ -777,6 +777,7 @@ jax_test(
     pjrt_c_api_bypass = True,
     shard_count = {
         "gpu": 2,
+        "tpu": 2,
     },
 )
 
