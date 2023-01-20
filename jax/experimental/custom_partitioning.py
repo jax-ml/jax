@@ -256,7 +256,7 @@ class custom_partitioning:
       ROOT fusion = c64[16384,1024]{1,0} fusion(fft.1, partition-id), kind=kLoop, calls=fused_computation, metadata={op_name="pjit(fft)/jit(main)/jit(fft)/fft[fft_type=FftType.FFT fft_lengths=(1024,)]" source_file="doc.py" source_line=42}
     }
 
-  Where the ``all-gather`` before the FFT and the dynamic-slice after are both clearly visible. 
+  Where the ``all-gather`` before the FFT and the dynamic-slice after are both clearly visible.
   This means that the input is gathered on all devices prior to the FFT, and sliced after.
 
   ``pjit_my_fft``, on the other hand, simply compiles to
