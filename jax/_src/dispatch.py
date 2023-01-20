@@ -286,7 +286,7 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
            "decorator were removed) was called in an attempt to get a more "
            "precise error message. However, the de-optimized function did not "
            "produce invalid values during its execution. This behavior can "
-           "result from `jit` optimizations causing the invalud value to be "
+           "result from `jit` optimizations causing the invalid value to be "
            "produced. It may also arise from having nan/inf constants as "
            "outputs, like `jax.jit(lambda ...: jax.numpy.nan)(...)`. "
            "\n\n"
