@@ -492,33 +492,49 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
       f"    {type(full_tree)}.".format(name=name))
     return  # don't look for more errors in this subtree
 
-  # Or they may disagree if their roots have different numbers of children (note
-  # that because both prefix_tree and full_tree have the same type at this
-  # point, and because prefix_tree is not a leaf, each can be flattened once):
+  # Or they may disagree if their roots have different numbers or keys of
+  # children. Because both prefix_tree and full_tree have the same type at this
+  # point, and because prefix_tree is not a leaf, each can be flattened once:
   prefix_tree_children, prefix_tree_meta = flatten_one_level(prefix_tree)
   full_tree_children, full_tree_meta = flatten_one_level(full_tree)
   prefix_tree_keys = _child_keys(prefix_tree)
   full_tree_keys = _child_keys(full_tree)
-  try:
-    diff = set(prefix_tree_keys).symmetric_difference(set(full_tree_keys))
-  except:
-    diff = None
-  if len(prefix_tree_children) != len(full_tree_children):
-    yield lambda name: ValueError(
-      "pytree structure error: different numbers of pytree children at key path\n"
-      f"    {{name}}{key_path.pprint()}\n"
-      f"At that key path, the prefix pytree {{name}} has a subtree of type\n"
-      f"    {type(prefix_tree)}\n"
-      f"with {len(prefix_tree_children)} child keys\n"
-      f"    {' '.join(str(k.key) for k in prefix_tree_keys)}\n"
-      f"but at the same key path the full pytree has a subtree of the same "
-      f"type but with {len(full_tree_children)} child keys\n"
-      f"    {' '.join(str(k.key) for k in full_tree_keys)}\n"
-      .format(name=name)
-      + ("" if diff is None else
-         f"so the symmetric difference on key sets is\n"
-         f"    {' '.join(str(k.key) for k in diff)}"))
-    return  # don't look for more errors in this subtree
+  # First we check special case types (list and tuple, though if they were
+  # pytrees we could check strings and sets here, basically Sequences) so that
+  # we can report length disagreement rather than integer keys:
+  if isinstance(prefix_tree, (list, tuple)):
+    if len(prefix_tree) != len(full_tree):
+      ty = type(prefix_tree)
+      yield lambda name: ValueError(
+          f"pytree structure error: different lengths of {ty.__name__} at key path\n"
+          f"    {{name}}{key_path.pprint()}\n"
+          f"At that key path, the prefix pytree {{name}} has a subtree of type "
+          f"{ty.__name__} of length {len(prefix_tree)}, but the full pytree "
+          f"has a subtree of the same type but of length {len(full_tree)}."
+          .format(name=name))
+      return  # don't look for more errors in this subtree
+  else:
+    # Next we handle the general case of checking child keys.
+    try:
+      diff = set(prefix_tree_keys).symmetric_difference(set(full_tree_keys))
+    except:
+      diff = None
+    if len(prefix_tree_children) != len(full_tree_children):
+      yield lambda name: ValueError(
+        "pytree structure error: different numbers of pytree children at key path\n"
+        f"    {{name}}{key_path.pprint()}\n"
+        f"At that key path, the prefix pytree {{name}} has a subtree of type\n"
+        f"    {type(prefix_tree)}\n"
+        f"with {len(prefix_tree_children)} child keys\n"
+        f"    {' '.join(str(k.key) for k in prefix_tree_keys)}\n"
+        f"but at the same key path the full pytree has a subtree of the same "
+        f"type but with {len(full_tree_children)} child keys\n"
+        f"    {' '.join(str(k.key) for k in full_tree_keys)}\n"
+        .format(name=name)
+        + ("" if diff is None else
+           f"so the symmetric difference on key sets is\n"
+           f"    {' '.join(str(k.key) for k in diff)}"))
+      return  # don't look for more errors in this subtree
 
   # Or they may disagree if their roots have different pytree metadata:
   if prefix_tree_meta != full_tree_meta:

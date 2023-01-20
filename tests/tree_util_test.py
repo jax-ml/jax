@@ -507,8 +507,25 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, expected):
       raise e2('in_axes')
 
-  def test_different_num_children(self):
+  def test_different_num_children_tuple(self):
     e, = prefix_errors((1,), (2, 3))
+    expected = ("pytree structure error: different lengths of tuple "
+                "at key path\n"
+                "    in_axes tree root")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+  def test_different_num_children_list(self):
+    e, = prefix_errors([1], [2, 3])
+    expected = ("pytree structure error: different lengths of list "
+                "at key path\n"
+                "    in_axes tree root")
+    with self.assertRaisesRegex(ValueError, expected):
+      raise e('in_axes')
+
+
+  def test_different_num_children_generic(self):
+    e, = prefix_errors({'hi': 1}, {'hi': 2, 'bye': 3})
     expected = ("pytree structure error: different numbers of pytree children "
                 "at key path\n"
                 "    in_axes tree root")
@@ -517,7 +534,7 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
 
   def test_different_num_children_nested(self):
     e, = prefix_errors([[1]], [[2, 3]])
-    expected = ("pytree structure error: different numbers of pytree children "
+    expected = ("pytree structure error: different lengths of list "
                 "at key path\n"
                 r"    in_axes\[0\]")
     with self.assertRaisesRegex(ValueError, expected):
@@ -525,12 +542,12 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
 
   def test_different_num_children_multiple(self):
     e1, e2 = prefix_errors([[1], [2]], [[3, 4], [5, 6]])
-    expected = ("pytree structure error: different numbers of pytree children "
+    expected = ("pytree structure error: different lengths of list "
                 "at key path\n"
                 r"    in_axes\[0\]")
     with self.assertRaisesRegex(ValueError, expected):
       raise e1('in_axes')
-    expected = ("pytree structure error: different numbers of pytree children "
+    expected = ("pytree structure error: different lengths of list "
                 "at key path\n"
                 r"    in_axes\[1\]")
     with self.assertRaisesRegex(ValueError, expected):
