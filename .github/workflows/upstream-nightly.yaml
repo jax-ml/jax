@@ -23,6 +23,9 @@ on:
 jobs:
   upstream-dev:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write  # for upload-artifact
     defaults:
       run:
         shell: bash -l {0}
@@ -86,6 +89,9 @@ jobs:
   report:
     name: report
     needs: upstream-dev
+    permissions:
+      contents: read
+      issues: write
     if: |
       failure()
       && github.event_name == 'schedule'
