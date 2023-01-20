@@ -53,6 +53,7 @@ from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_client
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.reductions import (  # noqa: F401
   _ensure_optional_axes, _reduction_dims,
@@ -189,6 +190,9 @@ int8 = _make_scalar_type(np.int8)
 int16 = _make_scalar_type(np.int16)
 int32 = _make_scalar_type(np.int32)
 int64 = _make_scalar_type(np.int64)
+if xla_client._version >= 117:
+  float8_e4m3fn = _make_scalar_type(dtypes.float8_e4m3fn)
+  float8_e5m2 = _make_scalar_type(dtypes.float8_e5m2)
 bfloat16 = _make_scalar_type(dtypes.bfloat16)
 float16 = _make_scalar_type(np.float16)
 float32 = single = _make_scalar_type(np.float32)
