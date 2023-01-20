@@ -744,8 +744,9 @@ jax_test(
     },
     tags = [
         "noasan",
+        "nomsan",
         "notsan",
-    ],  # Test times out under asan/tsan.
+    ],  # Test times out under asan/msan/tsan.
     deps = [
         "//jax:experimental_sparse",
         "//jax:sparse_test_util",
