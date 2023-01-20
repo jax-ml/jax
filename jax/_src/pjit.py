@@ -122,6 +122,8 @@ def _python_pjit(fun: Callable, infer_params_fn):
   @wraps(fun)
   @api_boundary
   def wrapped(*args, **kwargs):
+    if config.jax_disable_jit:
+      return fun(*args, **kwargs)
     return _python_pjit_helper(infer_params_fn, *args, **kwargs)[0]
 
   return wrapped
