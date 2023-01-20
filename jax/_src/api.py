@@ -2599,9 +2599,9 @@ def vjp(  # type: ignore
       or standard Python containers of arrays or scalars. It should return an
       array, scalar, or standard Python container of arrays or scalars.
     primals: A sequence of primal values at which the Jacobian of ``fun``
-      should be evaluated. The length of ``primals`` should be equal to the
-      number of positional parameters to ``fun``. Each primal value should be a
-      tuple of arrays, scalar, or standard Python containers thereof.
+      should be evaluated. The number of ``primals`` should be equal to the
+      number of positional parameters of ``fun``. Each primal value should be
+      an array, a scalar, or a pytree (standard Python containers) thereof.
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
@@ -2615,13 +2615,14 @@ def vjp(  # type: ignore
 
   Returns:
     If ``has_aux`` is ``False``, returns a ``(primals_out, vjpfun)`` pair, where
-    ``primals_out`` is ``fun(*primals)``.
-    ``vjpfun`` is a function from a cotangent vector with the same shape as
-    ``primals_out`` to a tuple of cotangent vectors with the same shape as
-    ``primals``, representing the vector-Jacobian product of ``fun`` evaluated at
-    ``primals``. If ``has_aux`` is ``True``, returns a
+    ``primals_out`` is ``fun(*primals)``. If ``has_aux`` is ``True``, returns a
     ``(primals_out, vjpfun, aux)`` tuple where ``aux`` is the auxiliary data
     returned by ``fun``.
+
+    ``vjpfun`` is a function from a cotangent vector with the same shape as
+    ``primals_out`` to a tuple of cotangent vectors with the same number and
+    shapes as ``primals``, representing the vector-Jacobian product of ``fun``
+    evaluated at ``primals``.
 
   >>> import jax
   >>>
