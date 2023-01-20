@@ -19,6 +19,7 @@ from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
 from jax._src.device_array import DeviceArray as DeviceArray
+from jax._src.lib import xla_extension_version
 
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
@@ -258,6 +259,12 @@ from jax._src.numpy.lax_numpy import (
     _NOT_IMPLEMENTED,
 )
 
+if xla_extension_version >= 117:
+  from jax._src.numpy.lax_numpy import (
+    float8_e4m3fn,
+    float8_e5m2,
+  )
+
 from jax._src.numpy.index_tricks import (
   c_ as c_,
   index_exp as index_exp,
@@ -429,3 +436,4 @@ def _init():
 
 _init()
 del _init
+del xla_extension_version
