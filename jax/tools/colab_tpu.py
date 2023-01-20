@@ -22,7 +22,7 @@ from jax.config import config
 TPU_DRIVER_MODE = 0
 
 
-def setup_tpu(tpu_driver_version='tpu_driver_20221212'):
+def setup_tpu(tpu_driver_version='tpu_driver_20230120'):
   """Sets up Colab to run on TPU.
 
   Note: make sure the Colab Runtime is set to Accelerator: TPU.
