@@ -69,7 +69,7 @@ jobs:
               --report-log output-${{ matrix.python-version }}-log.jsonl \
               tests \
               || (
-                echo '::set-output name=ARTIFACTS_AVAILABLE::true' && false
+                echo 'ARTIFACTS_AVAILABLE=true' >> $GITHUB_OUTPUT && false
               )
       - name: Upload artifacts
         if: |
