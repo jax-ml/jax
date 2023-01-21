@@ -243,7 +243,8 @@ class NamedSharding(XLACompatibleSharding):
   is sharded across ``x`` axis of the mesh, and the second dimension is sharded
   across ``y`` axis of the mesh.
 
-  The pjit tutorial (https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html#more-information-on-partitionspec)
+  The Distributed arrays and automatic parallelization
+  (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html#namedsharding-gives-a-way-to-express-shardings-with-names)
   goes into more details and has diagrams to help explain the concept about
   ``Mesh`` and ``PartitionSpec``.
 

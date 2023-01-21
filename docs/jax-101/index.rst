@@ -19,7 +19,6 @@ This is a tutorial developed by engineers and researchers at DeepMind_.
   05.1-pytrees
   06-parallelism
   07-state
-  08-pjit
 
 
 .. _Deepmind: http://deepmind.com

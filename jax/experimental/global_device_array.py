@@ -189,7 +189,7 @@ class GlobalDeviceArray:
         partitioned.
 
       For more information, please see:
-      https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html#more-information-on-partitionspec
+      https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
     device_buffers: DeviceArrays that are on the local devices of ``global_mesh``.
 
   Attributes:

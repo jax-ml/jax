@@ -472,7 +472,7 @@ jtu.check_grads(loss, (x, weight), modes=["rev"], order=1)
 
 ## Let's test it on multiple devices
 
-We are using [`jax.experimental.pjit.pjit`](https://jax.readthedocs.io/en/latest/jax.experimental.pjit.html#jax.experimental.pjit.pjit) for parallel execution on multiple devices, and we produce reference values with sequential execution on a single device.
+We are using `jax.experimental.pjit.pjit` for parallel execution on multiple devices, and we produce reference values with sequential execution on a single device.
 
 ### Test the forward function
 

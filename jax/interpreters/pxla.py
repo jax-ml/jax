@@ -2309,8 +2309,10 @@ class Mesh(ContextDecorator):
 
   In particular, all ``axis_names`` become valid resource names inside the
   managed block and can be used e.g. in the ``in_axis_resources`` argument of
-  :py:func:`jax.experimental.pjit.pjit`. Also see JAX's multi-process programming model (https://jax.readthedocs.io/en/latest/multi_process.html)
-  and pjit tutorial (https://jax.readthedocs.io/en/latest/jax-101/08-pjit.html).
+  :py:func:`jax.experimental.pjit.pjit`. Also see JAX's multi-process programming
+  model (https://jax.readthedocs.io/en/latest/multi_process.html)
+  and the Distributed arrays and automatic parallelization tutorial
+  (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
 
   If you are compiling in multiple threads, make sure that the
   ``with Mesh`` context manager is inside the function that the threads will

@@ -229,11 +229,8 @@ def create_device_mesh(
       jax.devices().
     contiguous_submeshes: if True, this function will attempt to create a mesh
       where each process's local devices form a contiguous submesh. This is
-      required when passing host local inputs to `pjit` (see the
-      "Multi-process platforms" note of the [pjit
-      documentation](https://jax.readthedocs.io/en/latest/jax.experimental.pjit.html)
-      for more information on this constraint). A ValueError will be raised if
-      this function can't produce a suitable mesh.
+      required when passing host local inputs to `pjit`. A ValueError will be
+      raised if this function can't produce a suitable mesh.
 
   Returns:
     A np.ndarray of JAX devices with mesh_shape as its shape that can be fed
