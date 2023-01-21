@@ -1442,6 +1442,15 @@ def _pjit_jvp(primals_in, tangents_in,
 ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 
+@weakref_lru_cache
+def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
+                     fwds_known: Tuple[Optional[int]]) -> core.ClosedJaxpr:
+  updated_jaxpr = known_jaxpr.jaxpr.replace(
+      outvars=[x for x, i in safe_zip(known_jaxpr.jaxpr.outvars, fwds_known)
+               if i is None])
+  return known_jaxpr.replace(jaxpr=updated_jaxpr)
+
+
 def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        resource_env, donated_invars, name, in_positional_semantics,
@@ -1510,9 +1519,37 @@ def _pjit_partial_eval(trace, *in_tracers,
     known_params['out_shardings'] = (
         keep_where(out_shardings, known_outs) + residual_shardings)
 
-  all_known_outs = pjit_p.bind(
-      *(pv.get_known() for pv in in_pvals if pv.is_known()),
-      **known_params)
+  fwds_known = pe._jaxpr_forwarding(known_params['jaxpr'].jaxpr)
+
+  # Only forward the outvars where the out_sharding is UNSPECIFIED.
+  known_user_out_shardings = keep_where(known_params['out_shardings'], known_outs)
+  fwds_known_user = [
+      fwd if _is_unspecified(os) else None
+      for os, fwd in safe_zip(known_user_out_shardings,
+                              fwds_known[:len(known_user_out_shardings)])]
+  fwds_known = fwds_known_user + fwds_known[len(known_user_out_shardings):]
+  del fwds_known_user
+
+  # Remove forwarded outvars and out_shardings
+  known_params['jaxpr'] = _known_jaxpr_fwd(known_params['jaxpr'], tuple(fwds_known))
+  known_out_shardings = tuple(
+      s for s, i in safe_zip(known_params['out_shardings'], fwds_known) if i is None)
+  known_params['out_shardings'] = known_out_shardings
+  del known_out_shardings
+
+  assert len(known_params['out_shardings']) == len(known_params['jaxpr'].out_avals)
+
+  # Bind known things to pjit_p.
+  known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
+  all_known_outs = pjit_p.bind(*known_inputs, **known_params)
+
+  known_outs_iter = iter(all_known_outs)
+  all_known_outs = [next(known_outs_iter)
+                    if fwd_idx is None else known_inputs[fwd_idx]
+                    for fwd_idx in fwds_known]
+  assert next(known_outs_iter, None) is None
+  del known_outs_iter, known_inputs
+
   if num_residuals:
     known_out_vals, residual_vals = \
         split_list(all_known_outs, [len(all_known_outs) - num_residuals])

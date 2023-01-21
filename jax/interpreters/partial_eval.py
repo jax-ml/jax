@@ -1305,7 +1305,8 @@ def _jaxpr_forwarding(jaxpr: Jaxpr) -> List[Optional[int]]:
   fwds: Dict[Var, Var] = dict(zip(jaxpr.invars, jaxpr.invars))
   for eqn in jaxpr.eqns:
     if eqn.primitive in forwarding_rules:
-      eqn = eqn.replace(invars=[fwds.get(v, v) for v in eqn.invars])  # type: ignore
+      eqn = eqn.replace(invars=[a if type(a) is Literal else fwds.get(a, a)  # type: ignore
+                                for a in eqn.invars])
       fwd_vars, _ = forwarding_rules[eqn.primitive](eqn)
       for v_orig, v_new in zip(eqn.outvars, fwd_vars):
         if v_new is not None:
