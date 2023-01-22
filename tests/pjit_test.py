@@ -3159,6 +3159,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
         jax.jit(lambda x: x, in_axis_resources=P('x'),
                 out_axis_resources=P('x'))(jnp.arange(8))
 
+  def test_pjit_nested_uncommitted_output(self):
+    @pjit
+    def f(x):
+      @pjit
+      def g(y):
+        return y * 2
+      return g(x)
+
+    out = f(jnp.arange(8))
+    self.assertFalse(out._committed)
+    self.assertArraysEqual(out, np.arange(8) * 2)
+
 
 class TempSharding(Sharding):
 

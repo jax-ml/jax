@@ -2810,7 +2810,7 @@ def lower_sharding_computation(
       devices_from_context or
       len(device_assignment) > 1 or
       any(not _is_unspecified(i) for i in in_shardings) or
-      jaxpr_sharding or
+      any(not _is_unspecified(js) for js in jaxpr_sharding) or
       any(not _is_unspecified(o) for o in out_shardings))  # type: ignore
 
   in_shardings = tuple(sharding_internal.OpShardingSharding.get_replicated(device_assignment)
