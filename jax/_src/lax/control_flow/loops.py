@@ -579,8 +579,8 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
   # Drop any extensive output we can instead get by forwarding an input.
   # TODO(mattjj): use pe.dce_jaxpr here, though need a fixpoint
   jaxpr_known_, () = jaxpr_known.jaxpr, jaxpr_known.consts
-  jaxpr_known_.outvars = [x for x, i in zip(jaxpr_known_.outvars, fwds_known)
-                          if i is None]
+  jaxpr_known_ = jaxpr_known_.replace(
+    outvars=[x for x, i in zip(jaxpr_known_.outvars, fwds_known) if i is None])
   jaxpr_known = core.ClosedJaxpr(jaxpr_known_, ())
   del jaxpr_known_
   # We use `fwds_known` below when forming the output of scanning jaxpr_known.
@@ -1327,7 +1327,9 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   body_nconsts_known = len(body_consts_uk) - sum(body_consts_uk)
   num_known_outs = len(carry_uk) - sum(carry_uk)
   # TODO(mattjj): use pe.dce_jaxpr to drop res computations and not just outputs
-  body_jaxpr_known.jaxpr.outvars = body_jaxpr_known.jaxpr.outvars[:num_known_outs]
+  body_jaxpr_known = body_jaxpr_known.replace(
+    jaxpr=body_jaxpr_known.jaxpr.replace(
+      outvars=body_jaxpr_known.jaxpr.outvars[:num_known_outs]))
   out_known = while_p.bind(
       *in_consts, cond_nconsts=cond_nconsts_known, cond_jaxpr=cond_jaxpr_known,
       body_nconsts=body_nconsts_known, body_jaxpr=body_jaxpr_known)
