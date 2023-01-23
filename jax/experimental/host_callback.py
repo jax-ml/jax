@@ -1641,13 +1641,13 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
     new_jaxpr_invars = (
         new_jaxpr_invars[0:nr_const_and_carry] + new_jaxpr_invars[-2:] +
         new_jaxpr_invars[nr_const_and_carry:-2])
-    new_jaxpr.jaxpr.invars = new_jaxpr_invars
+    new_jaxpr = new_jaxpr.replace(jaxpr=new_jaxpr.jaxpr.replace(invars=new_jaxpr_invars))
 
     new_jaxpr_outvars = new_jaxpr.jaxpr.outvars
     new_jaxpr_outvars = (
         new_jaxpr_outvars[0:num_carry] + new_jaxpr_outvars[-2:] +
         new_jaxpr_outvars[num_carry:-2])
-    new_jaxpr.jaxpr.outvars = new_jaxpr_outvars
+    new_jaxpr = new_jaxpr.replace(jaxpr=new_jaxpr.jaxpr.replace(outvars=new_jaxpr_outvars))
     eqns.append(
         eqn.replace(
             invars=new_invars,

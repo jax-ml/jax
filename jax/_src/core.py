@@ -67,11 +67,17 @@ control_flow_allowed_effects: Set[Effect] = set()
 
 
 class Jaxpr:
-  constvars: List[Var]
-  invars: List[Var]
-  outvars: List[Atom]
-  eqns: List[JaxprEqn]
-  effects: Effects
+  _constvars: List[Var]
+  _invars: List[Var]
+  _outvars: List[Atom]
+  _eqns: List[JaxprEqn]
+  _effects: Effects
+
+  constvars = property(lambda self: self._constvars)
+  invars = property(lambda self: self._invars)
+  outvars = property(lambda self: self._outvars)
+  eqns = property(lambda self: self._eqns)
+  effects = property(lambda self: self._effects)
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
@@ -87,11 +93,11 @@ class Jaxpr:
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
     """
-    self.constvars = list(constvars)
-    self.invars = list(invars)
-    self.outvars = list(outvars)
-    self.eqns = list(eqns)
-    self.effects = effects
+    self._constvars = list(constvars)
+    self._invars = list(invars)
+    self._outvars = list(outvars)
+    self._eqns = list(eqns)
+    self._effects = effects
 
   def __str__(self):
     return str(pp_jaxpr(self, JaxprPpContext(), JaxprPpSettings()))
@@ -142,14 +148,17 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
 
 
 class ClosedJaxpr:
-  jaxpr: Jaxpr
-  consts: List[Any]
+  _jaxpr: Jaxpr
+  _consts: List[Any]
+
+  jaxpr = property(lambda self: self._jaxpr)
+  consts = property(lambda self: self._consts)
 
   def __init__(self, jaxpr: Jaxpr, consts: Sequence):
     assert len(consts) == len(jaxpr.constvars)
     # assert not any(isinstance(c, Tracer) for c in consts)  # TODO(mattjj): enable
-    self.jaxpr = jaxpr
-    self.consts = list(consts)
+    self._jaxpr = jaxpr
+    self._consts = list(consts)
 
   @property
   def in_avals(self):
@@ -2423,10 +2432,10 @@ def do_subst_axis_names_jaxpr(jaxpr: Union[Jaxpr, ClosedJaxpr], subst: AxisSubst
     consts = jaxpr.consts
     jaxpr = jaxpr.jaxpr
   var_map: Dict[Var, Var] = {}
-  invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]
-  constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]
-  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
-  outvars: List[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]
+  invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]  # type: ignore[union-attr]
+  constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]  # type: ignore[union-attr]
+  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]  # type: ignore[union-attr]
+  outvars: List[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]  # type: ignore[union-attr]
   new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, jaxpr.effects)
   if consts is not None:
     return ClosedJaxpr(new_jaxpr, consts)

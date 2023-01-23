@@ -19,6 +19,8 @@ Remember to align the itemized text with the first line of an item within a list
     dimension to JAX arrays. Operations involving symbolic dimensions and
     `np.ndarray` now can raise errors when the result is used as a shape value
     ({jax-issue}`#14106`).
+  * jaxpr objects now raise an error on attribute setting in order to avoid
+    problematic mutations ({jax-issue}`14102`)
 
 * Changes
   * {func}`jax2tf.call_tf` has a new parameter `has_side_effects` (default `True`)
