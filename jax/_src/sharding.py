@@ -69,6 +69,18 @@ class Sharding(metaclass=abc.ABCMeta):
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
+  @abc.abstractmethod
+  def is_equivalent_to(self, other: Sharding, ndim: int) -> bool:
+    """Returns True if two shardings put the same logical array
+    (sharded/unsharded) on the same device(s).
+
+    For example, every XLACompatibleSharding lowers to OpShardingSharding which
+    is a general representation. So `jax.sharding.NamedSharding` is equivalent
+    to `jax.sharding.PositionalSharding` if both of them lower to the same
+    OpShardingSharding.
+    """
+    raise NotImplementedError('Subclasses should implement this method.')
+
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 
@@ -151,6 +163,18 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
             "the shape)")
       out.append(quotient)
     return tuple(out)
+
+  def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
+                       other: XLACompatibleSharding, ndim: int) -> bool:
+    try:
+      return (pxla.are_op_shardings_equal(self._to_xla_op_sharding(ndim),
+                                          other._to_xla_op_sharding(ndim)) and
+              self._device_assignment == other._device_assignment)
+    # NotImplementedError is raised by PmapSharding because it can't lower
+    # to OpSharding. So if `other` is a PmapSharding, default to a strict
+    # equality check.
+    except NotImplementedError:
+      return self == other
 
 
 @functools.lru_cache()
@@ -442,6 +466,10 @@ class PmapSharding(XLACompatibleSharding):
   def __repr__(self):
     return (f'PmapSharding(sharding_spec={self.sharding_spec}, '
             f'devices={self.devices})')
+
+  def is_equivalent_to(self: PmapSharding, other: PmapSharding,  # type: ignore
+                       ndim: int) -> bool:
+    return self == other
 
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
