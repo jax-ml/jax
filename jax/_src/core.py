@@ -67,6 +67,8 @@ control_flow_allowed_effects: Set[Effect] = set()
 
 
 class Jaxpr:
+  __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns', '_effects']
+
   _constvars: List[Var]
   _invars: List[Var]
   _outvars: List[Atom]
@@ -148,6 +150,8 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
 
 
 class ClosedJaxpr:
+  __slots__ = ['__weakref__', '_jaxpr', '_consts']
+
   _jaxpr: Jaxpr
   _consts: List[Any]
 
