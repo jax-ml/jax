@@ -28,4 +28,4 @@ use_stablehlo = xla_client.mlir_api_version >= 42
 if use_stablehlo:
   import jaxlib.mlir.dialects.stablehlo as hlo
 else:
-  import jaxlib.mlir.dialects.mhlo as hlo
+  import jaxlib.mlir.dialects.mhlo as hlo  # type: ignore[no-redef]
