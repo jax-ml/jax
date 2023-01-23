@@ -380,7 +380,7 @@ using [jupytext](https://jupytext.readthedocs.io/) by running `jupytext --sync` 
 notebooks; for example:
 
 ```
-pip install jupytext==1.13.8
+pip install jupytext==1.14.4
 jupytext --sync docs/notebooks/quickstart.ipynb
 ```
 
