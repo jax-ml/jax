@@ -81,6 +81,28 @@ Installation
 For more information about supported accelerators and platforms, and for other
 installation options, see the `Install Guide`_ in the project README.
 
+Ecosystem
+---------
+JAX's accelerated array operations form the foundation for a growing ecosystem of tools.
+
+For example, several Google Research groups have published domain specific tools including:
+
+- `Flax <https://github.com/google/flax>`__: fully-featured neural networks in JAX
+- `JAXopt <https://jaxopt.github.io>`__: differentiable optimization in JAX
+- `BRAX <https://github.com/google/brax>`__: differentiable physics engine in JAX
+
+In addition, DeepMind has open-sourced an `ecosystem of libraries around
+JAX <https://deepmind.com/blog/article/using-jax-to-accelerate-our-research>`__,
+including:
+
+- `Haiku <https://github.com/deepmind/dm-haiku>`__: a sonnet-inspired JAX library for neural networks
+- `Optax <https://github.com/deepmind/optax>`__: gradient processing and optimization in JAX
+- `RLax <https://github.com/deepmind/rlax>`__: reinforcement learning in JAX
+- `chex <https://github.com/deepmind/chex>`__: tools for working effectively with JAX
+   
+For many more examples, check out `Awesome JAX`_, a community-maintained census of the
+wider JAX ecosystem.
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -122,3 +144,4 @@ installation options, see the `Install Guide`_ in the project README.
 .. _Autograd: https://github.com/hips/autograd
 .. _XLA: https://www.tensorflow.org/xla
 .. _Install Guide: https://github.com/google/jax#installation
+.. _Awesome JAX: https://github.com/n2cholas/awesome-jax
