@@ -445,15 +445,13 @@ A few examples of shape specifications and uses:
 ### Computing with dimension variables
 
 JAX keeps track of the shape of all intermediate results. When those shapes depend
-on dimension variables JAX computes them as multi-variate polynomials
-involving dimension variables, which are assumed to range over strictly positive
-integers.
-The dimension polynomials have the following behavior for arithmetic operations:
-
-  * addition, subtraction, multiplication are supported without restrictions, and
-    are overloaded, such that `+`, `*`, `np.sum`, `np.prod` work directly on
-    dimension polynomials.
-    These arise, e.g., in `jax.numpy.concatenate` or `jax.numpy.reshape`.
+on dimension variables JAX computes them as symbolic expressions
+involving dimension variables. The symbolic expressions can represent the result
+of applying arithmetic operators (add, sub, mul,
+including the NumPy variants `np.sum`, `np.prod`, etc.) **on dimension
+variables and integers** (`int`, `np.int`, or anything convertible by `operator.index`).
+These symbolic dimensions can then be used in shape-parameters of JAX primitives
+and APIs, e.g., in `jnp.reshape`, `jnp.arange`, slicing indices, etc.
 
 For example, in the following code to flatten a 2D array, the computation
 `x.shape[0] * x.shape[1]` computes the dimension polynomial `4 * b` as the
@@ -464,21 +462,102 @@ jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
                 polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 ```
 
-Other operations are partially supported for dimension polynomials:
+When a symbolic dimension is used in **arithmetic operations with non-integers**,
+e.g., `float`, `np.float`, `np.ndarray`, or JAX arrays, it is automatically
+converted to a JAX array using `jnp.array`.
+For example, in the function below all occurrences of `x.shape[0]`
+are converted implicitly to `jnp.array(x.shape[0])` because
+they are involved in operations with non-integer scalars or with
+JAX arrays:
 
-  * division is a special case. It is also overloaded, but it is only partially
-    supported, when either (a) there is no remainder, or (b) the divisor is a constant
-    in which case there may be a constant remainder. The need for division in JAX core
-    arises in a couple of specific situations, e.g.,
-    `jax.numpy.reshape(-1)` and operations involving striding.
-    See [#division-of-shape-polynomials-is-partially-supported](below) for a discussion.
-  * equality and disequality are partially supported. They result in a boolean value only when
-    the same result would be obtained for any valuation of the dimension variables. In
-    other situations, an exception `core.InconclusiveDimensionOperation` is raised.
-    The latter would happen, e.g., when comparing `a == b` or `b == 1`.
-    The `==` and `!=` operations are overloaded for dimension polynomials, to prevent
-    an unsafe default behavior to be used.
-  * inequality is partially supported, in a similar way as equality. However, in this
+ ```python
+jax2tf.convert(lambda x: (x + x.shape[0] + jnp.sin(x.shape[0]),
+                          5. + x.shape[0],
+                          x.shape[0] - np.ones((5,), dtype=np.int32)),
+               polymorphic_shapes=["b"])(np.ones(3))
+```
+
+Another typical example is when computing averages:
+
+```python
+jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
+               polymorphic_shapes=["(v, _)"])(np.ones((3, 4)))
+```
+
+It is also possible to convert dimension polynomials explicitly
+to JAX arrays, with `jnp.array(x.shape[0])` or even `jnp.array(x.shape)`.
+The result of these operations
+cannot be used anymore as dimension parameters and will raise a JAX error.
+
+### Errors in presence of shape polymorphism
+
+If you write your program assuming that all shapes are tuples of integers,
+and then try to trace it with shape polymorphism you can run into a number
+of errors.
+
+The program:
+
+```python
+four_ones = np.ones((4,))
+jax2tf.convert(lambda x, y: x + y,
+               polymorphic_shapes=["(v,)", "(4,)"])(four_ones, four_ones)
+```
+
+with result in the error `'add got incompatible shapes for broadcasting: (v,), (4,)'`
+because the shape abstraction that JAX tracing uses is given by the
+`polymorphic_shapes`, even though the
+actual arguments are more specific and would actually work.
+
+Also,
+```python
+jax2tf.convert(lambda x: jnp.matmul(x, x),
+               polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
+```
+
+will result in the error `dot_general requires contracting dimensions to have the same shape, got [4] and [v]`. What is
+happening here is that in the process of type checking the `matmul` operation, JAX
+will want to ensure the size of the two axes is the same (`v == 4`).
+Note that `v` can stand for any integer greater than 0, so the value of the
+equality expression can be true or false. Since it is not always true
+that `v == 4`, the shape checking rules fail with the above error.
+Since the lowered function works only for square matrices, the correct
+`polymorphic_shapes` is `["(v, v)"]`.
+
+As explained above, if the dimension polynomials are used in operations with
+non-integers, the result will be a JAX array that cannot be used as a shape
+parameter. For example, if we modify the reshape example slightly,
+to use `np.array([x.shape[1]])` instead of `x.shape[1]`:
+
+```python
+jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * np.array([x.shape[1]]),)),
+                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
+```
+
+we get an error `Shapes must be 1D sequences of concrete values of integer type, got Traced<...>`.
+If you get this error on JAX code that works for static shapes, it means that one operation
+that computes shape parameters is using non-integer arguments, e.g., `np.ndarray`, that get
+implicitly converted to JAX arrays.
+The solution is to avoid `np.array`, `float`, or JAX arrays in operations whose
+results are used as shapes, e.g., instead of `np.arange(n) * x.shape[0]` write
+`[i * x.shape[0] for i in range(n)]`.
+
+### Comparison of shape polynomials is partially supported
+
+Inside JAX there are a number of equality and inequality comparisons
+involving shapes, e.g., for doing shape checking or even for choosing
+the implementation for some primitives. Comparisons are supported
+is as follows:
+
+  * equality is partially supported: if the two symbolic dimensions denote the same
+    value under all valuations for dimension variables, then equality evaluates to `True`,
+    e.g., for `b + b == 2*b`; if they denote different values under all valuations,
+    then equality evaluates to `False`, e.g., for `b + 1 == b` or `b == 0`.
+    Otherwise, equality raises an exception `core.InconclusiveDimensionOperation`,
+    e.g., when comparing `b == 1` or `a == b`.
+  * disequality is always the negation of equality (and results in an exception
+    if equality would result in an exception).
+  * inequality is partially supported, in a similar way as partial equality.
+    However, in this
     case we take into consideration that dimension variables range over strictly positive
     integers. E.g., `b >= 1`, `b >= 0`, `2 * a + b >= 3` are `True`, while `b >= 2`,
     `a >= b`, `a - b >= 0` are inconclusive and result in an exception.
@@ -497,92 +576,10 @@ as `False` and produce a lowered function that returns `1` just because the dime
 are not identical: there are some concrete input shapes for which the function
 should return `0`.
 
-It may be useful to understand how dimension polynomials are lowered to TensorFlow.
-When we start lowering a function we construct a shape environment,
-mapping the dimension variables in the `polymorphic_shapes` specification to TensorFlow expressions
-using `tf.shape` on the input parameters. When we emit TensorFlow ops that
-involve dimension polynomials, we convert the polynomial to a TensorFlow
-expression. Consider again the reshape example from above:
-
-```python
-jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
-                polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
-```
-
-The internal shape environment would map `b` to `tf.shape(x)[0]`, and
-the lowered function would be:
-
-```python
-def reshape_tf(x):
-  b = tf.shape(x)[0] # Compute the dynamic values for the dimension variable "b"
-  return tf.reshape(x, [tf.math.multiply(4, b)])
-```
-
-The following is the behavior of arithmetic operations involving
-dimension polynomials depending on the type of the other operand:
-
-  * with another dimension polynomial or a constant convertible
-    by `operator.index` will produce dimension polynomials or constants
-    and can be used as dimension parameters, e.g., for `jnp.reshape`.
-  * with a JAX array will involve an implicit cast to `jnp.array`
-    and will produce JAX arrays, which cannot be used as dimension parameters.
-  * with another type, e.g, `float`, will raise an error.
-
-In the function below the two occurrences of `x.shape[0]`
-are converted implicitly to `jnp.array(x.shape[0])` because
-they are involved in JAX array operations:
-
-```python
-jax2tf.convert(lambda x: x + x.shape[0] + jnp.sin(x.shape[0]),
-               polymorphic_shapes=["b"])(np.ones(3))
-```
-
-Another typical example is when computing averages:
-
-```python
-jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
-               polymorphic_shapes=["(v, _)"])(np.ones((3, 4)))
-```
-
-It is also possible to convert dimension polynomials explicitly
-to JAX arrays, with `jnp.array(x.shape[0])` or even `jnp.array(x.shape)`.
-
-### Errors in presence of shape polymorphism
-
-In addition to the `InconclusiveDimensionOperation` error discussed above,
-one may encounter other kinds of errors.
-
-When tracing with shape polymorphism we can encounter shape errors:
-
-```python
-four_ones = np.ones((4,))
-jax2tf.convert(lambda x, y: x + y,
-               polymorphic_shapes=["(v,)", "(4,)"])(four_ones, four_ones)
-```
-
-with result in the error `'add got incompatible shapes for broadcasting: (v,), (4,)'`
-because the shape abstraction is given by the `polymorphic_shapes`, even though the
-actual arguments are more specific and would actually work.
-
-Also,
-```python
-jax2tf.convert(lambda x: jnp.matmul(x, x),
-               polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
-```
-
-will result in the error `dot_general requires contracting dimensions to have the same shape, got [4] and [v]`. What is
-happening here is that in the process of type checking the `matmul` operation, JAX
-will want to ensure the size of the two axes is the same (`v == 4`).
-Note that `v` can stand for any integer greater than 0, so the value of the
-equality expression can be true or false. Since it is not always true
-that `v == 4`, the shape checking rules fail with the above error.
-Since the lowered function works only for square matrices, the correct
-`polymorphic_shapes` is `["(v, v)"]`.
-
 ### Division of shape polynomials is partially supported
 
 Unlike addition and multiplication, which are fully supported on
-shape polynomials, division is supported when either (a) there
+shape polynomials, division is only supported when either (a) there
 is no remainder, or (b) the divisor is a constant
 in which case there may be a constant remainder.
 For example, the code below results in a division error when trying to
