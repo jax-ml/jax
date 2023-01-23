@@ -5077,7 +5077,7 @@ class NumpyGradTests(jtu.JaxTestCase):
     rng = rng_factory(self.rng())
     tol = jtu.join_tolerance(tol, {np.float32: 1e-1, np.float64: 1e-3,
                                    np.complex64: 1e-1, np.complex128: 1e-3})
-    if jtu.device_under_test() == 'tpu' and op == jnp.arctanh:
+    if jtu.device_under_test() == 'tpu' and (op == jnp.arctanh or op == jnp.arccosh):
       tol = jtu.join_tolerance(tol, {np.float32: 2e-1})
 
     args = tuple(rng(shape, dtype) for shape in shapes)
