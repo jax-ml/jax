@@ -52,24 +52,28 @@ r"""Jet is an experimental module for higher-order automatic differentiation
     `outstanding primitive rules <https://github.com/google/jax/issues/2431>`__.
 """
 
-from typing import Callable
+from typing import Callable, Any, Tuple
 
 from functools import partial
 
 import numpy as np
 
+import jax
 from jax import core
 from jax import lax
 from jax.interpreters import xla
 import jax.numpy as jnp
+from jax.experimental import pjit
+from jax.interpreters import partial_eval as pe, pxla
+from jax._src.api_util import shaped_abstractify
 from jax.tree_util import (register_pytree_node, tree_structure,
-                           treedef_is_leaf, tree_flatten, tree_unflatten)
+                           treedef_is_leaf, tree_flatten, tree_unflatten,)
 
 from jax._src import ad_util
 from jax._src import dispatch
 from jax._src.lax import lax as lax_internal
 from jax._src import linear_util as lu
-from jax._src.util import unzip2
+from jax._src.util import unzip2, weakref_lru_cache
 
 
 def jet(fun, primals, series):
@@ -152,7 +156,7 @@ def jet_fun(order, primals, series):
     main.order = order
     out_primals, out_terms = yield (main, primals, series), {}
     del main
-  out_terms = [[np.zeros_like(p)] * order if s is zero_series else s
+  out_terms = [[jnp.zeros_like(p)] * order if s is zero_series else s
                for p, s in zip(out_primals, out_terms)]
   yield out_primals, out_terms
 
@@ -209,7 +213,7 @@ class JetTrace(core.Trace):
     series_in = [[zero_term] * order if s is zero_series else s
                  for s in series_in]
     # TODO(mattjj): avoid always instantiating zeros
-    series_in = [[np.zeros(np.shape(x), dtype=np.result_type(x))
+    series_in = [[jnp.zeros(np.shape(x), dtype=jnp.result_type(x))
                   if t is zero_term else t for t in series]
                  for x, series in zip(primals_in, series_in)]
     rule = jet_rules[primitive]
@@ -713,3 +717,42 @@ def _scatter_add_rule(primals_in, series_in, *, update_jaxpr, update_consts,
   series_out = [bind(d1, scatter_indices, d2) for d1, _, d2 in zip(*series_in)]
   return primal_out, series_out
 jet_rules[lax.scatter_add_p] = _scatter_add_rule
+
+
+@weakref_lru_cache
+def _jet_jaxpr(
+    jaxpr: core.ClosedJaxpr, order: int, primals_and_series_avals, in_tree_def
+) -> Tuple[core.ClosedJaxpr, Any]:
+  f = lu.wrap_init(core.jaxpr_as_fun(jaxpr))
+  f_jet, out_tree_def = traceable(jet_fun(jet_subtrace(f), order), in_tree_def)
+  jaxpr_jet, _, consts = pe.trace_to_jaxpr_dynamic(
+      f_jet, primals_and_series_avals)
+  return core.ClosedJaxpr(jaxpr_jet, consts), out_tree_def
+
+
+def _pjit_jet_rule(primals_in, series_in, **params):
+  if not jax.config.jax_array:
+    raise NotImplementedError('jet is not implemented for pjit when jax.Array '
+                              'is disabled. Please enable jax.Array')
+  primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
+  order = len(series_in[0])
+  primals_and_series_avals = tuple(shaped_abstractify(x) for x in primals_and_series)
+  jaxpr_jet, out_tree_def = _jet_jaxpr(params['jaxpr'], order,
+                                       primals_and_series_avals, in_tree_def)
+  num_series_in = len(primals_in) * order
+  num_series_out = len(params['out_shardings']) * order
+  new_params = {
+      **params,
+      'jaxpr': jaxpr_jet,
+      'in_shardings': (
+          params['in_shardings'] + (pjit._UNSPECIFIED,) * num_series_in),
+      'out_shardings': params['out_shardings'] + (pjit._UNSPECIFIED,) * num_series_out,
+      'in_positional_semantics': (
+          params['in_positional_semantics']
+          + (pxla._PositionalSemantics.GLOBAL,) * num_series_in),
+      'donated_invars': params['donated_invars'] + (False,) * num_series_in,
+  }
+  result = pjit.pjit_p.bind(*primals_and_series, **new_params)
+  return tree_unflatten(out_tree_def(), result)
+
+jet_rules[pjit.pjit_p] = _pjit_jet_rule

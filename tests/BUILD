@@ -285,7 +285,6 @@ jax_test(
 jax_test(
     name = "jet_test",
     srcs = ["jet_test.py"],
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 10,
         "gpu": 10,
