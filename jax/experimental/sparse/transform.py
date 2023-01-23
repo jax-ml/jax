@@ -827,6 +827,7 @@ _bcoo_methods = {
   "astype": _astype,
   "reshape": _reshape,
   "sum": _sum,
+  "__abs__": sparsify(jnp.abs),
   "__neg__": sparsify(jnp.negative),
   "__pos__": sparsify(jnp.positive),
   "__matmul__": sparsify(jnp.matmul),
@@ -839,6 +840,12 @@ _bcoo_methods = {
   "__rsub__": sparsify(_swap_args(jnp.subtract)),
   "__getitem__": _sparse_rewriting_take,
   "__iter__": _sparse_iter,
+  "__gt__": sparsify(jnp.greater),
+  "__ge__": sparsify(jnp.greater_equal),
+  "__lt__": sparsify(jnp.less),
+  "__le__": sparsify(jnp.less_equal),
+  "__eq__": sparsify(jnp.equal),
+  "__ne__": sparsify(jnp.not_equal),
 }
 
 for method, impl in _bcoo_methods.items():
