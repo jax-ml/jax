@@ -249,6 +249,8 @@ from jax.experimental.sparse.api import (
     eye as eye,
     todense as todense,
     todense_p as todense_p,
+    map_specified_elements as map_specified_elements,
+    map_specified_elements_p as map_specified_elements_p,
 )
 
 from jax.experimental.sparse.util import (

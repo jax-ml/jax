@@ -2378,7 +2378,73 @@ class SparseObjectTest(sptu.SparseTestCase):
     self.assertArraysEqual(jac, jac2)
 
   @parameterized.named_parameters(
-    {"testcase_name": f"_{Obj.__name__}", "Obj": Obj}
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    for Obj in [jnp.array, sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
+  def test_map_specified_elements(self, Obj, shape=(5, 8), dtype=np.float32):
+    def fun(x):
+      return 2 * x ** 2 - x + 1
+    rng = rand_sparse(self.rng())
+    M_dense = jnp.array(rng(shape, dtype))
+    map_fun = partial(sparse.map_specified_elements, fun)
+    if Obj is jnp.array:
+      M = M_dense
+      expected = fun(M_dense)
+    else:
+      M = Obj.fromdense(M_dense)
+      expected = jnp.where(M_dense == 0, M_dense, fun(M_dense))
+    self.assertArraysEqual(sparse.todense(map_fun(M)), expected)
+    self.assertArraysEqual(sparse.todense(jit(map_fun)(M)), expected)
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
+    for Obj in [jnp.array, sparse.BCOO])
+  def test_map_specified_elements_batching(self, Obj, shape=(5, 8), dtype=np.float32):
+    def fun(x):
+      return 2 * x ** 2 - x + 1
+    rng = rand_sparse(self.rng())
+    M_dense = jnp.array(rng(shape, dtype))
+    map_fun = vmap(partial(sparse.map_specified_elements, fun))
+    if Obj is jnp.array:
+      M = M_dense
+      expected = fun(M_dense)
+    else:
+      M = Obj.fromdense(M_dense, n_batch=1)
+      expected = jnp.where(M_dense == 0, M_dense, fun(M_dense))
+    self.assertArraysEqual(sparse.todense(map_fun(M)), expected)
+    self.assertArraysEqual(sparse.todense(jit(map_fun)(M)), expected)
+
+  def test_map_specified_elements_ad_array(self):
+    def fun(x):
+      return 2 * x ** 2 - x + 1
+    x = jnp.arange(4.0)
+    map_fun = partial(sparse.map_specified_elements, fun)
+
+    self.assertArraysEqual(fun(x), map_fun(x))
+    self.assertArraysEqual(jax.jacfwd(fun)(x), jax.jacfwd(map_fun)(x))
+    # TODO(jakevdp): implement transpose
+    # self.assertArraysEqual(jax.jacrev(fun)(x), jax.jacrev(map_fun)(x))
+
+  def test_map_specified_elements_ad_bcoo(self):
+    def fun(x):
+      return 2 * x ** 2 - x + 1
+    data, indices = sparse_bcoo._bcoo_fromdense(jnp.arange(4.0), nse=3)
+
+    def sparse_apply(data):
+      mat = sparse.BCOO((fun(data), indices), shape=(4,))
+      return mat.todense()
+    def apply_fun(data):
+      mat = sparse.BCOO((data, indices), shape=(4,))
+      return sparse.map_specified_elements(fun, mat).todense()
+
+    self.assertArraysEqual(sparse_apply(data), apply_fun(data))
+    self.assertArraysEqual(jax.jacfwd(sparse_apply)(data),
+                           jax.jacfwd(apply_fun)(data))
+    # TODO(jakevdp): implement transpose
+    # self.assertArraysEqual(jax.jacrev(sparse_apply)(data),
+    #                        jax.jacrev(apply_fun)(data))
+
+  @parameterized.named_parameters(
+    {"testcase_name": "_{}".format(Obj.__name__), "Obj": Obj}
     for Obj in [sparse.CSR, sparse.CSC, sparse.COO, sparse.BCOO])
   def test_attrs(self, Obj, shape=(5, 8), dtype=np.float16):
     rng = rand_sparse(self.rng(), post=Obj.fromdense)

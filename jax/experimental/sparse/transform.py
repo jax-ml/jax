@@ -790,6 +790,18 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
 
 sparse_rules[sparse.todense_p] = _todense_sparse_rule
 
+def _map_specified_elements_sparse_rule(spenv, *spvalues, jaxpr):
+  # TODO(jakevdp) ensure indices are shared.
+  num_consts = len(jaxpr.jaxpr.constvars)
+  num_args = len(jaxpr.jaxpr.invars)
+  consts, spvalues, bufs = split_list(spvalues, [num_consts, num_args])
+  assert not bufs
+  args = spvalues_to_arrays(spenv, spvalues)
+  bufs, tree = tree_flatten(args)
+  outs = sparse.map_specified_elements_p.bind(*consts, *bufs, jaxpr=jaxpr)
+  return arrays_to_spvalues(spenv, tree_unflatten(tree, outs))
+
+sparse_rules[sparse.map_specified_elements_p] = _map_specified_elements_sparse_rule
 
 #------------------------------------------------------------------------------
 # BCOO methods derived from sparsify

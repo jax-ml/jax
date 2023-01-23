@@ -24,7 +24,7 @@ import jax
 from jax import config, jit, lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
-from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
+from jax.experimental.sparse import BCOO, map_specified_elements, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
 from jax.experimental.sparse.util import CuSparseEfficiencyWarning
@@ -486,6 +486,21 @@ class SparsifyTest(jtu.JaxTestCase):
     self.assertArraysEqual(func(Msp).todense(), expected)
     self.assertArraysEqual(jit(func)(M), expected)
     self.assertArraysEqual(jit(func)(Msp).todense(), expected)
+
+  def testMapSpecifiedElements(self):
+    M = jnp.arange(4)
+    Msp = BCOO.fromdense(M)
+    def fun(x):
+      return 2 * x + 1
+    map_specified = self.sparsify(partial(map_specified_elements, fun))
+    expected_dense = fun(M)
+    expected_sparse = jnp.where(M == 0, M, fun(M))
+
+    self.assertArraysEqual(map_specified(M), expected_dense)
+    self.assertArraysEqual(jit(map_specified)(M), expected_dense)
+
+    self.assertArraysEqual(map_specified(Msp).todense(), expected_sparse)
+    self.assertArraysEqual(jit(map_specified)(Msp).todense(), expected_sparse)
 
   def testWeakTypes(self):
     # Regression test for https://github.com/google/jax/issues/8267
