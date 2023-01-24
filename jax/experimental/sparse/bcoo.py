@@ -1508,6 +1508,23 @@ def _unique_indices_unbatched(indices, *, shape, return_inverse=False,
     out = (*out[:-1], nse)
   return out
 
+def _fix_oob_indices_unbatched(data, indices, *, shape):
+  """Set out-of-bound (OOB) indices and the corresponding data to zero."""
+  n_batch, n_sparse, n_dense, _ = _validate_bcoo_indices(indices, shape)
+  assert n_dense == 0, "not implemented"
+  assert n_batch == 0
+  mask = indices >= jnp.array(shape[:n_sparse])[None, :]
+  new_indices = jnp.where(mask, 0, indices)
+  new_data = jnp.where(mask.any(-1), 0, data)
+  return new_data, new_indices
+
+def _fix_oob_indices(data, indices, *, spinfo):
+  """Set out-of-bound (OOB) indices and the corresponding data to zero."""
+  props = _validate_bcoo_indices(indices, spinfo.shape)
+  f = partial(_fix_oob_indices_unbatched, shape=spinfo.shape[props.n_batch:])
+  f = nfold_vmap(f, props.n_batch)
+  return f(data, indices)
+
 @bcoo_sum_duplicates_p.def_abstract_eval
 def _bcoo_sum_duplicates_abstract_eval(data, indices, *, spinfo, nse):
   if nse is None:

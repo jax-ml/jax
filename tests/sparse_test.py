@@ -1693,6 +1693,36 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(x.indices, y.indices)
     self.assertArraysEqual(x.data, y.data)
 
+  def test_bcoo_fix_oob_indices(self):
+    data = jnp.array([1, 2, 3, 4, 0, 0])
+    indices = jnp.array([1, 3, 0, 2, 2, 4])[:, None]
+    x1 = sparse.BCOO((data, indices), shape=(2,))
+    data_unbatched, indices_unbatched = sparse_bcoo._fix_oob_indices(
+        x1.data, x1.indices, spinfo=x1._info)
+    expected_data_unbatched = jnp.array([1, 0, 3, 0, 0, 0])
+    expected_indices_unbatched = jnp.array([[1], [0], [0], [0], [0], [0]])
+    with self.subTest('unbatched data'):
+      self.assertArraysEqual(data_unbatched, expected_data_unbatched)
+    with self.subTest('unbatched indices'):
+      self.assertArraysEqual(indices_unbatched, expected_indices_unbatched)
+
+    data = jnp.array([[0, 1, 2, 3],
+                      [4, 5, 6, 7]])
+    indices = jnp.array([[[0, 0], [1, 1], [3, 4], [4, 5]],
+                         [[2, 1], [1, 0], [2, 3], [1, 1]]])
+    x2 = sparse.BCOO((data, indices), shape=(2, 3, 2))
+    data_batched, indices_batched = sparse_bcoo._fix_oob_indices(
+        x2.data, x2.indices, spinfo=x2._info)
+    expected_data_batched = jnp.array([[0, 1, 0, 0],
+                                       [4, 5, 0, 7]])
+    expected_indices_batched = jnp.array(
+        [[[0, 0], [1, 1], [0, 0], [0, 0]],
+         [[2, 1], [1, 0], [2, 0], [1, 1]]])
+    with self.subTest('batched data'):
+      self.assertArraysEqual(data_batched, expected_data_batched)
+    with self.subTest('batched indices'):
+      self.assertArraysEqual(indices_batched, expected_indices_batched)
+
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, axes=axes)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
