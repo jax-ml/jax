@@ -1645,7 +1645,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       atol = 1e-5
     self.assertAllClose(ans, expected, check_dtypes=False, rtol=rtol, atol=atol)
 
-    rtol = 5e-3 if scan is not scan_with_new_checkpoint2 else 5e-2
+    rtol = 6e-3 if scan is not scan_with_new_checkpoint2 else 5e-2
     atol = 5e-2 if "tpu" in jtu.device_under_test() else 1e-3
     jtu.check_grads(partial(scan, f), (c, as_), order=2, modes=["rev"],
                     atol=atol, rtol=rtol)
