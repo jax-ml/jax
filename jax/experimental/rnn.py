@@ -97,7 +97,7 @@ import jax.numpy as jnp
 try:
   from jax._src.lib import gpu_rnn
 except ImportError:
-  gpu_rnn = None
+  gpu_rnn = None  # type: ignore[assignment]
 
 PRNGKeyArray = Any
 sigmoid = jax.nn.sigmoid
