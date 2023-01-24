@@ -1649,6 +1649,14 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
             _pjit_partial_eval_custom_params_updater)
 
 
+@lu.cache
+def _pjit_transpose_trace(fun, in_avals, api_name):
+  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+      fun, in_avals, debug_info=pe.debug_info_final(fun, api_name))
+  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
+  return transpose_jaxpr
+
+
 def _pjit_transpose(reduce_axes, cts_in, *primals_in,
                     jaxpr, in_shardings, out_shardings,
                     resource_env, donated_invars, name, in_positional_semantics,
@@ -1669,19 +1677,15 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
     *prune_type(ad.UndefinedPrimal, in_positional_semantics, primals_in),
     *prune_type(ad.Zero, (out_positional_semantics,) * len(cts_in), cts_in)
   )
-  global_cts_in_avals = [core.raise_to_shaped(core.get_aval(ct))
-                         for ct in primals_and_nz_cts_in]
+  global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
+                              for ct in primals_and_nz_cts_in)
   if not config.jax_array:
-    global_cts_in_avals = local_to_global(
+    global_cts_in_avals = tuple(local_to_global(
         transpose_in_positional_semantics, global_cts_in_avals,
-        transpose_in_shardings, resource_env.physical_mesh)
+        transpose_in_shardings, resource_env.physical_mesh))
 
   api_name = 'jit' if resource_env is None else 'pjit'
-  transpose_jaxpr, global_cts_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-      body, global_cts_in_avals, debug_info=pe.debug_info_final(body, api_name))
-  # TODO(apaszke): Creating ClosedJaxpr by hand will break compilation cache!
-  transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
-  del consts
+  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals, api_name)
   cts_out_treedef = cts_out_treedef_thunk()
   transpose_out_shardings = prune_type(
       ad.Zero,
