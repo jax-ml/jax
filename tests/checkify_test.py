@@ -1173,6 +1173,20 @@ class AssertPrimitiveTests(jtu.JaxTestCase):
     self.assertIsNotNone(err.get())
     self.assertStartsWith(err.get(), "1.0 cannot be 1.0")
 
+  def test_fmt_args_array_type_error(self):
+    args_error = lambda: checkify.check(False, "{} world", "hello")
+    with self.assertRaisesRegex(TypeError, "Formatting arguments"):
+      checkify.checkify(args_error)()
+
+    kwargs_error = lambda: checkify.check(False, "{hello} world", hello="hello")
+    with self.assertRaisesRegex(TypeError, "Formatting arguments"):
+      checkify.checkify(kwargs_error)()
+
+    np_arrays_ok = lambda: checkify.check(False, "{} world", np.array(1.))
+    checkify.checkify(np_arrays_ok)()
+
+    trees_ok = lambda: checkify.check(False, "{}", {"hello": jnp.array(1.)})
+    checkify.checkify(trees_ok)()
 
 class LowerableChecksTest(jtu.JaxTestCase):
   def setUp(self):
