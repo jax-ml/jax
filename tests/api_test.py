@@ -3258,12 +3258,14 @@ class APITest(jtu.JaxTestCase):
       # Use the tracer
       return x + self._saved_tracer
 
+    if jax.config.jax_jit_pjit_api_merge:
+      msg = "Encountered an unexpected tracer"
+    else:
+      msg = "Encountered an unexpected tracer.*Tracer not in input tracers"
+
     with self.assertRaisesRegex(
-        UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Tracer not in input tracers",
-          re.DOTALL)):
-      api.jit(func1)(2.)
+        UnexpectedTracerError, re.compile(msg, re.DOTALL)):
+      api.jit(func1)(2.0)
 
   def test_escaped_tracer_omnistaging(self):
     count = 1
@@ -3640,7 +3642,12 @@ class APITest(jtu.JaxTestCase):
         x = g(x)
         return x
 
-      with self.assertRaisesRegex(Exception, r"Leaked sublevel"):
+      if jax.config.jax_jit_pjit_api_merge:
+        msg = r'Leaked trace MainTrace\(2,DynamicJaxprTrace\)'
+      else:
+        msg = r'Leaked sublevel'
+
+      with self.assertRaisesRegex(Exception, f"{msg}"):
         f(3)
 
   def test_leak_checker_avoids_false_positive_custom_jvp(self):
