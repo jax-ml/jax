@@ -2,42 +2,27 @@
 
 .. _beginner-guide:
 
+Getting Started with JAX
+========================
+Welcome to JAX! The JAX documentation contains a number of useful resources for getting started.
+:doc:`notebooks/quickstart` is the easiest place to jump-in and get an overview of the JAX project.
 
-Beginner Guide
-==============
+If you're accustomed to writing NumPy code and are starting to explore JAX, you might find the following resources helpful:
 
-Welcome to the beginners guide for JAX. 
-On this page we will introduce you to the key ideas of JAX,
-show you how to get JAX running
-and provide you some tutorials to get started.
+- :doc:`notebooks/thinking_in_jax` is a conceptual walkthrough of JAX's execution model.
+- :doc:`notebooks/Common_Gotchas_in_JAX` lists some of JAX's sharp corners.
+- :doc:`faq` answers some frequent jax questions.
 
-If looking to jump straight in take a look at the JAX quickstart.
-
-.. toctree::
-   :maxdepth: 1
-
-   notebooks/quickstart
-
-For most users starting out the key functionalities of JAX to become familiar with are :code:`jax.jit`,
-:code:`jax.grad`, and :code:`jax.vmap`. 
-A good way to get familiar with this is with the Jax-101 tutorials.
+Tutorials
+---------
+If you're ready to explore JAX more deeply, the JAX 101 tutorial goes into much more detail:
 
 .. toctree::
    :maxdepth: 2
 
    jax-101/index
 
-If you're familiar with doing array-oriented computing with NumPy, you may find the following
-resources useful:
-
-.. toctree::
-   :maxdepth: 1
-
-   notebooks/thinking_in_jax
-   notebooks/Common_Gotchas_in_JAX
-   faq
-
-If you prefer a video introduction here is one from JAX contributor Jake Vanderplas:
+If you prefer a video introduction here is one from JAX contributor Jake VanderPlas:
 
 .. raw:: html
 
@@ -45,3 +30,26 @@ If you prefer a video introduction here is one from JAX contributor Jake Vanderp
 	 title="Intro to JAX: Accelerating Machine Learning research"
 	frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
 	allowfullscreen></iframe>
+
+Building on JAX
+---------------
+JAX provides the core numerical computing primitives for a number of tools developed by the
+larger community. For example, if you're interested in using JAX for training neural networks,
+two well-supported options are Flax_ and Haiku_.
+
+For a community-curated list of JAX-related projects across a wide set of domains,
+check out `Awesome JAX`_.
+
+Finding Help
+------------
+If you have questions about JAX, we'd love to answer them! Two good places to get your
+questions answered are:
+
+- `JAX GitHub discussions`_
+- `JAX on StackOverflow`_
+
+.. _Awesome JAX: https://github.com/n2cholas/awesome-jax
+.. _Flax: https://flax.readthedocs.io/
+.. _Haiku: https://dm-haiku.readthedocs.io/
+.. _JAX on StackOverflow: https://stackoverflow.com/questions/tagged/jax
+.. _JAX GitHub discussions: https://github.com/google/jax/discussions
