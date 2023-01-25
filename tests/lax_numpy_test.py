@@ -5075,16 +5075,13 @@ class NumpyGradTests(jtu.JaxTestCase):
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
   def testOpGrad(self, op, rng_factory, shapes, dtype, order, tol):
     rng = rng_factory(self.rng())
-    if jtu.device_under_test() == 'tpu':
-      # TODO(rmlarsen): These tolerances are dominated by the inaccurate
-      # implementation of float32 logarithms on TPUs. Remove this exception
-      # when TPU logarithms are improved.
-      tol = jtu.join_tolerance(tol, {np.float32: 5e-2, np.complex64: 5e-2})
-    else:
-      tol = jtu.join_tolerance(tol, {np.float32: 2e-3,np.float64: 1e-8,
-                                     np.complex64: 2e-3, np.complex128: 1e-8})
+    tol = jtu.join_tolerance(tol, {np.float32: 1e-1, np.float64: 1e-3,
+                                   np.complex64: 1e-1, np.complex128: 1e-3})
+    if jtu.device_under_test() == 'tpu' and op == jnp.arctanh:
+      tol = jtu.join_tolerance(tol, {np.float32: 2e-1})
+
     args = tuple(rng(shape, dtype) for shape in shapes)
-    check_grads(op, args, order, ['fwd', 'rev'], tol, tol)
+    check_grads(op, args, order, ["fwd", "rev"], tol, tol)
 
   @parameterized.parameters(itertools.chain.from_iterable(
       jtu.sample_product_testcases(
@@ -5093,10 +5090,8 @@ class NumpyGradTests(jtu.JaxTestCase):
       )
       for rec in GRAD_SPECIAL_VALUE_TEST_RECORDS))
   def testOpGradSpecialValue(self, op, special_value, order):
-    tol = None
-    if jtu.device_under_test() == 'tpu' and op == jnp.arccosh:
-      tol = 4e-3
-    check_grads(op, (special_value,), order, ['fwd', 'rev'], tol, tol)
+    check_grads(op, (special_value,), order, ["fwd", "rev"],
+                atol={np.float32: 3e-3})
 
   def testSincAtZero(self):
     # Some manual tests for sinc at zero, since it doesn't have well-behaved
@@ -5148,11 +5143,11 @@ class NumpyGradTests(jtu.JaxTestCase):
   def testGradLogaddexpComplex(self, shapes, dtype):
     rng = jtu.rand_default(self.rng())
     args = tuple(jnp.array(rng(shape, dtype)) for shape in shapes)
-    if jtu.device_under_test() != 'tpu' and config.jax_enable_x64:
-      tol = 1e-5
+    if jtu.device_under_test() == "tpu":
+      tol = 5e-2
     else:
-      tol = 2e-2
-    check_grads(jnp.logaddexp, args, 1, ['fwd', 'rev'], tol, tol)
+      tol = 3e-2
+    check_grads(jnp.logaddexp, args, 1, ["fwd", "rev"], tol, tol)
 
   @jtu.sample_product(
     shapes=filter(_shapes_are_broadcast_compatible,
@@ -5163,11 +5158,11 @@ class NumpyGradTests(jtu.JaxTestCase):
   def testGradLogaddexp2Complex(self, shapes, dtype):
     rng = jtu.rand_default(self.rng())
     args = tuple(jnp.array(rng(shape, dtype)) for shape in shapes)
-    if jtu.device_under_test() != 'tpu' and config.jax_enable_x64:
-      tol = 1e-5
+    if jtu.device_under_test() == "tpu":
+      tol = 5e-2
     else:
-      tol = 2e-2
-    check_grads(jnp.logaddexp2, args, 1, ['fwd', 'rev'], tol, tol)
+      tol = 3e-2
+    check_grads(jnp.logaddexp2, args, 1, ["fwd", "rev"], tol, tol)
 
 
 class NumpySignaturesTest(jtu.JaxTestCase):

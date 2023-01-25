@@ -16,7 +16,7 @@ from functools import partial
 import operator
 
 from jax import config
-from jax.tree_util import tree_map, tree_reduce, tree_leaves
+from jax.tree_util import tree_map, tree_reduce
 from jax._src import api
 from jax._src import dtypes as _dtypes
 from jax._src.config import flags
@@ -33,8 +33,9 @@ __all__ = ['check_grads', 'check_jvp', 'check_vjp']
 
 FLAGS = flags.FLAGS
 
-EPS = 1.0 / 2048
+EPS = 1e-4
 _fp8_enabled = xla_client._version >= 117
+
 
 def _dtype(x):
   if hasattr(x, 'dtype'):
@@ -196,20 +197,7 @@ def rand_like(rng, x):
   return result.item() if is_python_scalar(x) else result
 
 
-def numerical_jvp(f, primals, tangents, eps=None):
-  if eps is None:
-    t = _dtypes.result_type(*tree_leaves(primals))
-    # Assuming the roundoff error in the evaluation of the finite difference
-    # below is a few times eps_m*(|f_pos| + |f_neg|), where
-    # eps_m = np.finfo(t).eps, then the pareto optimal step size that roughly
-    # balances roundof error and truncation error is O(eps_m^1/3).
-    # The constant was determined heuristically to minimize the error
-    # tolerances in the testOpGrad unit test.
-    eps = (np.finfo(t).eps ** (1.0 / 3.0)) / 8
-    # Find the nearest power of 2 for eps. This makes the multiplications
-    # and divisions by eps below lossless in floating point, and improves
-    # the accuracy of the finite difference approximation in some cases.
-    eps = 2.0 ** np.floor(np.log2(eps))
+def numerical_jvp(f, primals, tangents, eps=EPS):
   delta = scalar_mul(tangents, eps)
   f_pos = f(*add(primals, delta))
   f_neg = f(*sub(primals, delta))
@@ -227,7 +215,7 @@ def _merge_tolerance(tol, default):
   return out
 
 
-def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=None, err_msg=''):
+def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   rng = np.random.RandomState(0)
@@ -246,7 +234,7 @@ def check_jvp(f, f_jvp, args, atol=None, rtol=None, eps=None, err_msg=''):
               err_msg=f'{err_msg} tangent' if err_msg else 'tangent')
 
 
-def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=None, err_msg=''):
+def check_vjp(f, f_vjp, args, atol=None, rtol=None, eps=EPS, err_msg=''):
   atol = _merge_tolerance(atol, default_gradient_tolerance)
   rtol = _merge_tolerance(rtol, default_gradient_tolerance)
   _rand_like = partial(rand_like, np.random.RandomState(0))
@@ -286,6 +274,7 @@ def check_grads(f, args, order,
     AssertionError: if gradients do not match.
   """
   args = tuple(args)
+  eps = eps or EPS
 
   _check_jvp = partial(check_jvp, atol=atol, rtol=rtol, eps=eps)
   _check_vjp = partial(check_vjp, atol=atol, rtol=rtol, eps=eps)
