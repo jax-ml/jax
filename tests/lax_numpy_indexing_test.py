@@ -62,7 +62,6 @@ def check_grads(f, args, order, atol=None, rtol=None, eps=None):
   default_tol = 1e-6 if config.x64_enabled else 1e-2
   atol = atol or default_tol
   rtol = rtol or default_tol
-  eps = eps or default_tol
   jtu.check_jvp(f, partial(jax.jvp, f), args, atol, rtol, eps)
   jtu.check_vjp(f, partial(jax.vjp, f), args, atol, rtol, eps)
 
