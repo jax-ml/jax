@@ -3197,8 +3197,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return jax.lax.axis_index('data')
 
     inputs = jnp.zeros(shape=[jax.device_count()])
-    pjit(_pmapped_fun)(inputs)  # doesn't crash
-    jax.jit(_pmapped_fun)(inputs)  # doesn't crash
+    with jtu.ignore_warning(
+        message=".*Using jit-of-pmap can lead to inefficient data movement"):
+      pjit(_pmapped_fun)(inputs)  # doesn't crash
+      jax.jit(_pmapped_fun)(inputs)  # doesn't crash
 
 
 class TempSharding(Sharding):
