@@ -36,7 +36,6 @@ jax.scipy.linalg
    lu_factor
    lu_solve
    polar
-   polar_unitary
    qr
    rsf2csf
    schur
