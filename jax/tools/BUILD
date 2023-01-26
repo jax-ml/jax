@@ -39,5 +39,5 @@ py_library(
     deps = [
         "//jax",
         "//jax/experimental/jax2tf",
-    ] + py_deps("tensorflow"),
+    ] + py_deps("tensorflow_core"),
 )
