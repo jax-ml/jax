@@ -470,7 +470,7 @@ are converted implicitly to `jnp.array(x.shape[0])` because
 they are involved in operations with non-integer scalars or with
 JAX arrays:
 
- ```python
+```python
 jax2tf.convert(lambda x: (x + x.shape[0] + jnp.sin(x.shape[0]),
                           5. + x.shape[0],
                           x.shape[0] - np.ones((5,), dtype=np.int32)),
