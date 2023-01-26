@@ -10,7 +10,7 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.3
 
-## jax 0.4.2 (Jan 20, 2023)
+## jax 0.4.2 (Jan 24, 2023)
 
 * Breaking changes
   * Deleted `jax.experimental.callback`
@@ -27,7 +27,7 @@ Remember to align the itemized text with the first line of an item within a list
     that can be used to declare whether an instance can be removed or replicated
     by JAX optimizations such as dead-code elimination ({jax-issue}`#13980`).
 
-## jaxlib 0.4.2 (Jan 20, 2023)
+## jaxlib 0.4.2 (Jan 24, 2023)
 
 * Changes
   * Set JAX_USE_PJRT_C_API_ON_TPU=1 to enable new Cloud TPU runtime, featuring
