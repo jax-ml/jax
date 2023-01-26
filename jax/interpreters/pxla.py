@@ -2156,7 +2156,9 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
-  new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
+  with maybe_extend_axis_env(eqn.params['axis_name'],
+                             eqn.params['global_axis_size'], None):
+    new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   _, donated_invars = partition_list(used_inputs, eqn.params['donated_invars'])
   # TODO(yashkatariya,mattjj): Handle global_arg_shapes here too.
   _, in_axes = partition_list(used_inputs, eqn.params['in_axes'])
@@ -2186,6 +2188,20 @@ ad.call_transpose_param_updaters[xla_pmap_p] = \
     ad.call_transpose_param_updaters[xla.xla_call_p]
 
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
+
+def _pmap_axis_subst(params, subst, traverse):
+  if 'call_jaxpr' not in params:
+    return params
+  if not traverse:
+    return params
+  def shadowed_subst(name):
+    return (name,) if name in params['axis_name'] else subst(name)
+  with maybe_extend_axis_env(params['axis_name'],
+                             params['global_axis_size'], None):
+    new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'],
+                                            shadowed_subst)
+  return dict(params, call_jaxpr=new_jaxpr)
+core.axis_substitution_rules[xla_pmap_p] = _pmap_axis_subst
 
 
 def _unravel_index_hlo(axis_env):
@@ -3801,15 +3817,16 @@ def resource_typecheck(jaxpr, resource_env, axis_resources, what_jaxpr_thunk):
       return
     resource_to_axis = {}
     for axis in aval.named_shape:
-      for resource in axis_resources[axis]:
-        if resource in resource_to_axis:
-          other_axis = resource_to_axis[resource]
-          axis, other_axis = sorted([str(axis), str(other_axis)])
-          raise JAXTypeError(
-              f"Axes `{axis}` and `{other_axis}` are both mapped to the "
-              f"resource `{resource}`, but they coincide in the named_shape "
-              f"of {what_thunk()}")
-        resource_to_axis[resource] = axis
+      if axis_resources:
+        for resource in axis_resources[axis]:
+          if resource in resource_to_axis:
+            other_axis = resource_to_axis[resource]
+            axis, other_axis = sorted([str(axis), str(other_axis)])
+            raise JAXTypeError(
+                f"Axes `{axis}` and `{other_axis}` are both mapped to the "
+                f"resource `{resource}`, but they coincide in the named_shape "
+                f"of {what_thunk()}")
+          resource_to_axis[resource] = axis
 
   what_thunk = lambda: (f"an input to {what_jaxpr_thunk()}")
   for v in jaxpr.constvars:

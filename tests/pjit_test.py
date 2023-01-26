@@ -3190,6 +3190,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
       f(1)
     self.assertLen(sideeffect, 2)
 
+  def test_pmap_pjit_axis_index(self):
+    @partial(jax.pmap, axis_name='data')
+    def _pmapped_fun(inputs):
+      del inputs
+      return jax.lax.axis_index('data')
+
+    inputs = jnp.zeros(shape=[jax.device_count()])
+    pjit(_pmapped_fun)(inputs)  # doesn't crash
+    jax.jit(_pmapped_fun)(inputs)  # doesn't crash
+
 
 class TempSharding(Sharding):
 
