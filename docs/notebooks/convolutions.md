@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"id": "TVT_MVvc02AA"}
 
-# Convolutions in JAX
+# Generalized Convolutions in JAX
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/convolutions.ipynb)
 

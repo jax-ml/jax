@@ -12,3 +12,4 @@ Notes
    gpu_memory_allocation
    rank_promotion_warning
    jax_array_migration
+   type_promotion
