@@ -880,6 +880,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     x = np.arange(6, dtype=np.int32).reshape((3, 2))
     np.testing.assert_allclose(g(x), x)
 
+@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class IOPythonCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
