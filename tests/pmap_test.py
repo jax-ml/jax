@@ -2651,83 +2651,71 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
       self.assertIsInstance(sharded_x[i], arr_type)
     self.assertIsNone(sharded_x._npy_value)
 
-  @parameterized.named_parameters(
-      ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.ArrayImpl, '_arrays')
-  )
-  def test_device_put_sharded(self, is_jax_array, array_type, buffer_attr):
+  def test_device_put_sharded(self):
+    if not jax.config.jax_array:
+      self.skipTest('This test only works with jax.Array')
     devices = jax.local_devices()
     n_devices = len(devices)
     x = [np.arange(i, i + 4) for i in range(n_devices)]
-    with jax_config.jax_array(is_jax_array):
-      y = jax.device_put_sharded(x, devices)
-    self.assertIsInstance(y, array_type)
+    y = jax.device_put_sharded(x, devices)
+    self.assertIsInstance(y, array.ArrayImpl)
     self.assertIsInstance(y.sharding, jax.sharding.PmapSharding)
     for s in y.addressable_shards:
       self.assertArraysEqual(s.data, y[s.index])
       self.assertEqual(s.replica_id, 0)
-    buffers = getattr(y, buffer_attr)
+    buffers = getattr(y, '_arrays')
     self.assertEqual(len(buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(buffers, devices)))
     self.assertArraysEqual(y, jnp.stack(x))
 
-  @parameterized.named_parameters(
-      ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.ArrayImpl, '_arrays')
-  )
-  def test_device_put_sharded_pytree(self, is_jax_array, array_type, buffer_attr):
+  def test_device_put_sharded_pytree(self):
+    if not jax.config.jax_array:
+      self.skipTest('This test only works with jax.Array')
     devices = jax.local_devices()
     n_devices = len(devices)
     x = [(i, np.arange(i, i + 4)) for i in range(n_devices)]
-    with jax_config.jax_array(is_jax_array):
-      y1, y2 = jax.device_put_sharded(x, devices)
+    y1, y2 = jax.device_put_sharded(x, devices)
 
-    self.assertIsInstance(y1, array_type)
+    self.assertIsInstance(y1, array.ArrayImpl)
     self.assertArraysEqual(y1, jnp.array([a for a, _ in x]))
-    y1_buffers = getattr(y1, buffer_attr)
+    y1_buffers = getattr(y1, '_arrays')
     self.assertTrue(all(b.device() == d for b, d in zip(y1_buffers, devices)))
 
-    self.assertIsInstance(y2, array_type)
+    self.assertIsInstance(y2, array.ArrayImpl)
     self.assertArraysEqual(y2, jnp.vstack([b for _, b in x]))
-    y2_buffers = getattr(y2, buffer_attr)
+    y2_buffers = getattr(y2, '_arrays')
     self.assertTrue(all(b.device() == d for b, d in zip(y2_buffers, devices)))
 
-  @parameterized.named_parameters(
-      ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.ArrayImpl, '_arrays')
-  )
-  def test_device_put_replicated(self, is_jax_array, array_type, buffer_attr):
+  def test_device_put_replicated(self):
+    if not jax.config.jax_array:
+      self.skipTest('This test only works with jax.Array')
     devices = jax.local_devices()
     x = np.arange(1, 5)
-    with jax_config.jax_array(is_jax_array):
-      y = jax.device_put_replicated(x, devices)
+    y = jax.device_put_replicated(x, devices)
 
-    self.assertIsInstance(y, array_type)
-    buffers = getattr(y, buffer_attr)
+    self.assertIsInstance(y, array.ArrayImpl)
+    buffers = getattr(y, '_arrays')
     self.assertEqual(len(buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(buffers, devices)))
     self.assertArraysEqual(y, np.stack([x for _ in devices]))
 
-  @parameterized.named_parameters(
-      ('sda', False, pxla.ShardedDeviceArray, 'device_buffers'),
-      ('array', True, array.ArrayImpl, '_arrays')
-  )
-  def test_device_put_replicated_pytree(self, is_jax_array, array_type, buffer_attr):
+  def test_device_put_replicated_pytree(self):
+    if not jax.config.jax_array:
+      self.skipTest('This test only works with jax.Array')
     devices = jax.local_devices()
     xs = {'a': np.arange(1, 5), 'b': np.arange(3)}
-    with jax_config.jax_array(is_jax_array):
-      ys = jax.device_put_replicated(xs, devices)
+    ys = jax.device_put_replicated(xs, devices)
     self.assertIsInstance(ys, dict)
     y1, y2 = ys['a'], ys['b']
 
-    self.assertIsInstance(y1, array_type)
-    y1_buffers = getattr(y1, buffer_attr)
+    self.assertIsInstance(y1, array.ArrayImpl)
+    y1_buffers = getattr(y1, '_arrays')
     self.assertEqual(len(y1_buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(y1_buffers, devices)))
     self.assertArraysEqual(y1, np.stack([xs['a'] for _ in devices]))
 
-    self.assertIsInstance(y2, array_type)
-    y2_buffers = getattr(y2, buffer_attr)
+    self.assertIsInstance(y2, array.ArrayImpl)
+    y2_buffers = getattr(y2, '_arrays')
     self.assertEqual(len(y2_buffers), len(devices))
     self.assertTrue(all(b.device() == d for b, d in zip(y2_buffers, devices)))
     self.assertArraysEqual(y2, np.stack([xs['b'] for _ in devices]))
@@ -2954,12 +2942,13 @@ class ShardArgsTest(jtu.JaxTestCase):
 class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_input_array_output_array(self):
+    if not jax.config.jax_array:
+      self.skipTest('This test only works with jax.Array')
     input_shape = (jax.device_count(), 2)
     input_array, input_data = create_input_array_for_pmap(input_shape)
 
     f = jax.pmap(lambda x, y: x * y)
-    with jax_config.jax_array(True):
-      out = f(input_array, input_array)
+    out = f(input_array, input_array)
 
     expected = input_data * input_data
 
@@ -3015,37 +3004,27 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
   def test_pmap_array_sharding_mismatch(self):
     input_shape = (jax.device_count(), 2)
-    a1, _ = create_input_array_for_pmap(input_shape, in_axes=None,
+    a1, inp_data = create_input_array_for_pmap(input_shape, in_axes=None,
                                         sharded_dim_size=input_shape[0])
 
     f = jax.pmap(lambda x: x, in_axes=0, out_axes=0)
     with jax_config.jax_array(True):
       out_array = f(a1)
 
-    with jax_config.jax_array(False):
-      out_sda = f(a1)
-
-    self.assertEqual(out_array.sharding.sharding_spec, out_sda.sharding_spec)
-    self.assertArraysEqual(out_array.sharding.devices,
-                           [d.device() for d in out_sda.device_buffers])
+    self.assertArraysEqual(out_array, inp_data)
 
   def test_pmap_array_devices_mismatch(self):
     if jax.device_count() <= 1:
       raise unittest.SkipTest('Skipping because this test needs more than '
                               '1 device.')
     input_shape = (jax.device_count(), 2)
-    a1, _ = create_input_array_for_pmap(input_shape)
+    a1, inp_data = create_input_array_for_pmap(input_shape)
 
     f = jax.pmap(lambda x: x, devices=jax.devices()[::-1])
     with jax_config.jax_array(True):
       out_array = f(a1)
 
-    with jax_config.jax_array(False):
-      out_sda = f(a1)
-
-    self.assertEqual(out_array.sharding.sharding_spec, out_sda.sharding_spec)
-    self.assertArraysEqual(out_array.sharding.devices,
-                           [d.device() for d in out_sda.device_buffers])
+    self.assertArraysEqual(out_array, inp_data)
 
   def test_amap(self):
     # Copied from an example mattjj@ posted in a chat thread.
