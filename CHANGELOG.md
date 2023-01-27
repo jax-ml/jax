@@ -7,6 +7,9 @@ Remember to align the itemized text with the first line of an item within a list
 -->
 
 ## jax 0.4.3
+  * Breaking changes
+    * Deleted {func}`jax.scipy.linalg.polar_unitary`, which was a deprecated JAX 
+      extension to the scipy API. Use {func}`jax.scipy.linalg.polar` instead.
 
 ## jaxlib 0.4.3
 
