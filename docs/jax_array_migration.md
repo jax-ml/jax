@@ -5,6 +5,10 @@
 
 ## TL;DR
 
+JAX switched its default array implementation to the new `jax.Array` as of version 0.4.1.
+This guide explains the reasoning behind this, the impact it might have on your code,
+and how to (temporarily) switch back to the old behavior.
+
 ### What’s going on?
 
 `jax.Array` is a unified array type that subsumes `DeviceArray`, `ShardedDeviceArray`,
