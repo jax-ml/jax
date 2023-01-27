@@ -36,6 +36,14 @@ jax_test(
     shard_count = 10,
 )
 
+py_test(
+    name = "autodidax_smoketest",
+    srcs = ["autodidax_smoketest.py"],
+    deps = [
+        "//jax:autodidax",
+    ] + py_deps("absl/testing"),
+)
+
 jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],

@@ -46,6 +46,13 @@ exports_files([
     "version.py",
 ])
 
+py_library(
+    name = "autodidax",
+    testonly = 1,
+    srcs = ["docs/autodidax.py"],
+    deps = [":jax"] + py_deps("numpy"),
+)
+
 # Packages that have access to JAX-internal implementation details.
 package_group(
     name = "internal",

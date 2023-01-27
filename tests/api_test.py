@@ -20,9 +20,7 @@ import copy
 import enum
 from functools import partial
 import inspect
-import importlib
 import operator
-import os
 import platform
 import re
 import subprocess
@@ -9511,17 +9509,6 @@ class EnvironmentInfoTest(jtu.JaxTestCase):
     assert f"jaxlib: {lib.version_str}" in result
     assert f"numpy:  {np.__version__}" in result
 
-class AutodidaxTest(jtu.JaxTestCase):
-  def test_autodidax_smoketest(self):
-    autodidax_file = os.path.join(
-      os.path.dirname(os.path.dirname(__file__)),
-      'docs',
-      'autodidax.py')
-    if not os.path.exists(autodidax_file):
-      self.skipTest("Cannot locate autodidax.py")
-    spec = importlib.util.spec_from_file_location('autodidax', 'docs/autodidax.py')
-    autodidax_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(autodidax_module)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
