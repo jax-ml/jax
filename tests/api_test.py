@@ -9519,7 +9519,7 @@ class AutodidaxTest(jtu.JaxTestCase):
       'autodidax.py')
     if not os.path.exists(autodidax_file):
       self.skipTest("Cannot locate autodidax.py")
-    spec = importlib.util.spec_from_file_location('autodidax', 'docs/autodidax.py')
+    spec = importlib.util.spec_from_file_location('autodidax', autodidax_file)
     autodidax_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(autodidax_module)
 
