@@ -2543,7 +2543,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
 
   if core.is_special_dim_size(repeats):
     if total_repeat_length is not None:
-      raise ValueError("jnp.repeat with a DimPolynomial `repeats` is supported only "
+      raise ValueError("jnp.repeat with a non-constant `repeats` is supported only "
                        "when `total_repeat_length` is None")
 
   # If total_repeat_length is not given, use a default.

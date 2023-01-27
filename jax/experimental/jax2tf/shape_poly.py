@@ -15,14 +15,14 @@
 
 We introduce a set of dimension variables at the top-level of a `jit` function.
 They are introduced implicitly by way of specifying for each dimension of each
-argument a dimension polynomial in terms of some dimension variables.
+argument a symbolic dimension expression in terms of some dimension variables.
 All dimension variables are assumed to range over integers greater or equal to 1.
 
-Dimension polynomials overload some integer operations, such as
-add, multiply, equality, etc. The JAX NumPy layer and the LAX layers have been
-touched up to be sensitive to handling shapes that contain dimension
-polynomials. This enables many JAX programs to be traced with dimension
-polynomials in some dimensions. A priority has been to enable the batch
+Symbolic dimensions overload some integer operations, such as
+add, multiply, divide, equality, etc. The JAX NumPy layer and the LAX layers have been
+touched up to be sensitive to handling shapes that contain symbolic dimensions.
+This enables many JAX programs to be traced with symbolic dimensions
+in some dimensions. A priority has been to enable the batch
 dimension in neural network examples to be polymorphic.
 
 This was built initially for jax2tf, but it is now customizeable to be
@@ -34,6 +34,7 @@ import collections
 import dataclasses
 import itertools
 import functools
+import math
 import operator as op
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
@@ -63,9 +64,9 @@ class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
 
   _help_msg = """
-This error arises for arithmetic or comparison operations with shapes that
+This error arises for comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
-a polynomial of dimension variables, or a boolean constant (for comparisons).
+a boolean value for all values of the symbolic dimensions involved.
 
 Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#computing-with-dimension-variables
 for more details.
@@ -76,13 +77,152 @@ for more details.
     # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)  # type: ignore
 
+class _DimAtom:
+  """Represents an atom in a symbolic dimension expression.
+
+  Atoms are either variables, or expressions of the form floordiv(E1, E2) or
+  mod(E1, E2). Atoms are multiplied to form monomials (see _DimMon), and
+  monomials are added to form symbolic expressions (see _DimExpr).
+
+  Args:
+    * var: if specified then the atom is a dimension variable. `operation`
+      must be `None`.
+    * operation: if specified then the atom is an operation applied to
+      `operands`. One of `FLOORDIR` or `MOD`. `var` must be `None`
+    * operands: the operands to which the operation is applied.
+  """
+  # The supported operations
+  FLOORDIV = "floordiv"
+  MOD = "mod"
+
+  def __init__(self, *operands: '_DimExpr',
+               var: Optional[str] = None,
+               operation: Optional[str] = None):
+    if var is not None:
+      assert operation is None
+      assert not operands
+    else:
+      assert operation is not None
+    self.var = var
+    self.operation = operation
+    self.operands = operands
+
+  @classmethod
+  def from_var(cls, v: str) -> '_DimAtom':
+    return _DimAtom(var=v)
+
+  def to_var(self) -> Optional[str]:
+    return self.var
+
+  def get_vars(self) -> Set[str]:
+    # All the vars that appear
+    if self.var is not None:
+      return {self.var}
+    else:
+      acc = set()
+      for opnd in self.operands:
+        acc.update(opnd.get_vars())
+      return acc
+
+  @classmethod
+  def from_operation(cls, operation: str, *operands: '_DimExpr') -> '_DimAtom':
+    return _DimAtom(*operands, operation=operation)
+
+  def __str__(self):
+    if self.var is not None:
+      return self.var
+    opnd_str = ", ".join([str(opnd) for opnd in self.operands])
+    return f"{self.operation}({opnd_str})"
+  __repr__ = __str__
+
+  def __hash__(self):
+    return hash((self.var, self.operation, *self.operands))
+
+  def __eq__(self, other: Any):
+    # Used only for hashing
+    if not isinstance(other, _DimAtom): return False
+    if (self.var is None) != (other.var is None): return False
+    if self.var is not None:
+      return self.var == other.var
+    else:
+      def symbolic_equal(e1: '_DimExpr', e2: '_DimExpr') -> bool:
+        try:
+          return e1 == e2
+        except InconclusiveDimensionOperation:
+          return False
+      return (self.operation == other.operation and
+              all(symbolic_equal(self_o, other_o)
+                  for self_o, other_o in zip(self.operands, other.operands)))
+
+  def __lt__(self, other: '_DimAtom'):
+    """
+    Comparison to another atom in graded reverse lexicographic order.
+    Used only for determining a sorting order, does not relate to the
+    comparison of the values of the atom.
+    """
+    if self.var is not None and other.var is not None:
+      return self.var < other.var
+    elif self.var is not None:
+      return True
+    elif other.var is not None:
+      return True
+    elif self.operation != other.operation:
+      return self.operation < other.operation  # type: ignore
+    else:
+      return id(self) < id(other)
+
+  def bounds(self) -> Tuple[float, float]:
+    """Returns the lower and upper bounds, or -+ inf."""
+    if self.var is not None:
+      return (1, np.PINF)  # variables are assumed to be >= 1
+    opnd_bounds = [opnd.bounds() for opnd in self.operands]
+    if self.operation == _DimAtom.FLOORDIV:  #  a // b
+      (a_l, a_u), (b_l, b_u) = opnd_bounds
+      def math_floor_with_inf(a: float, b: float):  # math.floor, but aware of inf
+        assert b != 0
+        if not np.isinf(b):  # divisor is finite
+          return math.floor(a / b) if not np.isinf(a) else np.NINF if (a >= 0) != (b >= 0) else np.PINF
+        elif not np.isinf(a):  # dividend is finite and divisor is infinite
+          return -1 if (a >= 0) != (b >= 0) else 0
+        else:  # both dividend and divisor are infinite
+          return np.NINF if (a >= 0) != (b >= 0) else np.PINF
+
+      # Same reasoning as for multiplication: the bounds are among the cross-product
+      # of the bounds.
+      bound_candidates = [math_floor_with_inf(a_l, b_l), math_floor_with_inf(a_l, b_u),
+                          math_floor_with_inf(a_u, b_l), math_floor_with_inf(a_u, b_u)]
+      return (min(*bound_candidates), max(*bound_candidates))
+
+    elif self.operation == _DimAtom.MOD:
+      _, (b_l, b_u) = opnd_bounds
+      if b_l > 0:  # positive divisor
+        return (0, b_u - 1)
+      elif b_u < 0:  # negative divisor
+        return (b_l + 1, 0)
+      else:
+        return (np.NINF, np.PINF)
+
+    else:
+      assert False
+
+  def evaluate(self, env: ShapeEnv):
+    if self.var is not None:
+      return env[self.var]
+    else:
+      operand_values = [opnd.evaluate(env) for opnd in self.operands]
+      div_mod = divmod(*operand_values)  # type: ignore
+      if self.operation == _DimAtom.FLOORDIV:
+        return div_mod[0]
+      elif self.operation == _DimAtom.MOD:
+        return div_mod[1]
+      else:
+        assert False, self.operation
 
 class _DimMon(dict):
-  """Represents a multivariate monomial, such as n^3 * m.
+  """Represents a multiplication of atoms.
 
-  The representation is a dictionary mapping var:exponent.
-  The `var` are strings and the exponents are integers >= 1.
-  The dimension variables are assumed to range over integers >= 1.
+  The representation is a dictionary mapping _DimAtom to exponent.
+  The exponents are integers >= 1.
   """
   def __hash__(self):
     return hash(frozenset(self.items()))
@@ -93,7 +233,7 @@ class _DimMon(dict):
 
   @classmethod
   def from_var(cls, v: str) -> '_DimMon':
-    return _DimMon({v: 1})
+    return _DimMon({_DimAtom.from_var(v): 1})
 
   def to_var(self) -> Optional[str]:
     """Extract the variable name "x", from a monomial "x".
@@ -101,13 +241,21 @@ class _DimMon(dict):
     items = self.items()
     if len(items) != 1:
       return None
-    (v, vexp), = items
-    if vexp != 1:
+    (a, aexp), = items
+    if aexp != 1:
       return None
-    return v
+    return a.to_var()
 
   def get_vars(self) -> Set[str]:
-    return set(self.keys())
+    # All the vars that appear in the monomial
+    acc = set()
+    for a in self.keys():
+      acc.update(a.get_vars())
+    return acc
+
+  @classmethod
+  def from_operation(cls, operation: str, *operands: '_DimExpr') -> '_DimMon':
+    return _DimMon({_DimAtom.from_operation(operation, *operands): 1})
 
   @property
   def degree(self):
@@ -116,7 +264,8 @@ class _DimMon(dict):
   def __lt__(self, other: '_DimMon'):
     """
     Comparison to another monomial in graded reverse lexicographic order.
-    Used for sorting.
+    Used only for determining a sorting order, does not relate to the
+    comparison of the values of the monomial.
     """
     self_key = -self.degree, tuple(sorted(self))
     other_key = -other.degree, tuple(sorted(other))
@@ -143,60 +292,114 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
+  def bounds(self) -> Tuple[float, float]:
+    """Returns the lower and upper bounds, or -+inf."""
+    # The bounds of a product are among the product of bounds.
+    bounds = []
+    for a, exp in self.items():
+      a_l, a_u = a.bounds()
+      assert a_l <= a_u
+      bounds.append((a_l ** exp, a_u ** exp))
+
+    candidates = [np.prod(atom_bounds) for atom_bounds in itertools.product(*bounds)]
+    return (min(*candidates), max(*candidates))  # type: ignore
+
+
   def evaluate(self, env: ShapeEnv):
     prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else dim_constant(1)
     def pow_opt(v, p: int):
       return v if p == 1 else prod([v] * p)
-    return prod([pow_opt(env[id], deg) for id, deg in self.items()])
+    return prod([pow_opt(a.evaluate(env), deg) for a, deg in self.items()])
 
 
-class _DimPolynomial():
-  """Polynomial with integer coefficients for polymorphic shapes.
+class _DimExpr():
+  """Symbolic expression in terms of dimension variables.
 
-  The dimension variables are assumed to range over integers >= 1.
+  A dimension expression is an addition of products (_DimMon)
+  f atoms (_DimAtom).
 
   We overload integer operations, but we do that soundly, raising
   :class:`InconclusiveDimensionOperation` when the result is not
-  representable as a polynomial.
+  representable as a _DimExpr.
 
-  The representation of a polynomial is as a dictionary mapping _DimMonomial to
-  integer coefficients. The special monomial `_DimMonomial()` is mapped to the
-  free integer coefficient of the polynomial. The constant result of arithmetic
-  operations is represented as a Python constant.
+  The representation of a _DimExpr is as a dictionary mapping _DimMon to
+  integer coefficients. The special monomial `_DimMon()` is mapped to the
+  free integer coefficient of the expression.
   """
+
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
   def __init__(self, coeffs: Dict[_DimMon, int]):
-    # Makes sure Polynomials are always in canonical form
-    coeffs = {mon: op.index(coeff)
-              for mon, coeff in coeffs.items() if coeff != 0}
-    self._coeffs = coeffs or {_DimMon(): 0}
+    # Do not construct _DimExpr directly, use _DimExpr.normalize
+    self._coeffs = coeffs.copy() or {_DimMon(): 0}
 
   def monomials(self) -> Iterable[Tuple[_DimMon, int]]:
     return self._coeffs.items()
 
   @classmethod
-  def from_coeffs(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
-    """Constructs _DimPolynomial or an int."""
+  def normalize(cls, coeffs: Dict[_DimMon, int]) -> DimSize:
+    """The main constructor for _DimExpr.
+
+    Ensures that the symbolic dimension is normalized, e.g.,
+    it is represented as a Python int if it is known to be a constant.
+    """
     has_non_zero_degree = False
-    zero_degree_const = 0
-    new_coeffs = {}
-    for mon, count in coeffs.items():
-      if count != 0:
-        if mon.degree == 0:
-          zero_degree_const = count
-        else:
-          has_non_zero_degree = True
-        new_coeffs[mon] = count
-    if not has_non_zero_degree:
-      return int(zero_degree_const)
-    return _DimPolynomial(new_coeffs)
+    free_const = 0
+    new_coeffs: Dict[_DimMon, int] = {}
+    for mon, coeff in coeffs.items():
+      if coeff == 0: continue
+      if mon.degree == 0:  # A constant, there can be a single one
+        free_const = coeff
+      else:
+        has_non_zero_degree = True
+
+      # Look for floordiv(E, M) * M and turn into E - mod(E, M). This comes
+      # up when handling strided convolution.
+      def normalize_floordiv_times(m: _DimMon, coeff: int) -> Optional['_DimExpr']:
+        floordivs = [(a, aexp) for a, aexp in m.items() if a.operation == _DimAtom.FLOORDIV]
+        # A single floordiv with exponent 1
+        if len(floordivs) != 1 or floordivs[0][1] != 1: return None
+        floordiv, _ = floordivs[0]
+        floordiv_dividend_monomials = list(floordiv.operands[1].monomials())
+        if len(floordiv_dividend_monomials) != 1: return None
+        floordiv_dividend_monomial, floordiv_dividend_coeff = floordiv_dividend_monomials[0]
+        if coeff % floordiv_dividend_coeff: return None
+        try:
+          m_trimmed = m.divide(floordiv_dividend_monomial)
+        except InconclusiveDimensionOperation:
+          return None
+        c = coeff // floordiv_dividend_coeff
+        m_trimmed = m_trimmed.divide(_DimMon({floordiv: 1}))  # Remove the floordiv
+        return (_DimExpr.from_monomial(m_trimmed, c) *
+                 (floordiv.operands[0] - _DimExpr.from_operation(_DimAtom.MOD, *floordiv.operands)))
+
+      mon_poly = normalize_floordiv_times(mon, coeff)
+      if mon_poly is not None:
+        monomials = mon_poly.monomials()
+      else:
+        monomials = [(mon, coeff)]
+      for m, c in monomials:
+        new_coeffs[m] = new_coeffs.get(m, 0) + c
+
+    if has_non_zero_degree:
+      return _DimExpr(new_coeffs)
+    else:
+      return int(free_const)
+
 
   @classmethod
-  def from_var(cls, v: str) -> '_DimPolynomial':
-    return _DimPolynomial({_DimMon.from_var(v): 1})
+  def from_monomial(cls, mon: _DimMon, exp: int):
+    return _DimExpr.normalize({mon: exp})
+
+  @classmethod
+  def from_var(cls, v: str) -> '_DimExpr':
+    return _DimExpr({_DimMon.from_var(v): 1})
+
+  @classmethod
+  def from_operation(cls, operation: str, *operands: '_DimExpr') -> '_DimExpr':
+    return _DimExpr.from_monomial(_DimMon.from_operation(operation, *operands), 1)
 
   def to_var(self) -> Optional[str]:
-    """Extract the variable name "x", from a polynomial "x" """
+    """Extract the variable name "x", from a symbolic expression."""
     items = self.monomials()
     if len(items) != 1:  # type: ignore
       return None
@@ -206,7 +409,7 @@ class _DimPolynomial():
     return mon.to_var()
 
   def get_vars(self) -> Set[str]:
-    """The variables that appear in a polynomial."""
+    """The variables that appear in a symbolic dimension."""
     acc = set()
     for mon, _ in self.monomials():
       acc.update(mon.get_vars())
@@ -216,23 +419,23 @@ class _DimPolynomial():
     lb, ub = _ensure_poly(self - other, "eq").bounds()
     if lb == ub == 0:
       return True
-    if lb is not None and lb > 0:
+    if lb > 0:
       return False
-    if ub is not None and ub < 0:
+    if ub < 0:
       return False
     raise InconclusiveDimensionOperation(
-        f"Dimension polynomial comparison '{self}' == '{other}' is inconclusive.\n"
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-dimension-polynomials-is-partially-supported.")
+        f"Symbolic dimension comparison '{self}' == '{other}' is inconclusive.\n"
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
 
   def ge(self, other: DimSize) -> bool:
     lb, ub = _ensure_poly(self - other, "ge").bounds()
-    if lb is not None and lb >= 0:
+    if lb >= 0:
       return True
-    if ub is not None and ub < 0:
+    if ub < 0:
       return False
     raise InconclusiveDimensionOperation(
-        f"Dimension polynomial comparison '{self}' >= '{other}' is inconclusive.\n"
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-dimension-polynomials-is-partially-supported.")
+        f"Symbolic dimension comparison '{self}' >= '{other}' is inconclusive.\n"
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic0dimensions-is-partially-supported.")
 
   def __hash__(self):
     return hash(tuple(sorted(self.monomials())))
@@ -250,7 +453,7 @@ class _DimPolynomial():
   def __repr__(self):
     return str(self)
 
-  # We overload +, -, *, because they are fully defined for _DimPolynomial.
+  # We overload +, -, *, because they are fully defined for _DimExpr.
   def __add__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__add__(other)
@@ -259,7 +462,7 @@ class _DimPolynomial():
     coeffs = self._coeffs.copy()
     for mon, coeff in other.monomials():
       coeffs[mon] = coeffs.get(mon, 0) + coeff
-    return _DimPolynomial.from_coeffs(coeffs)
+    return _DimExpr.normalize(coeffs)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -276,18 +479,19 @@ class _DimPolynomial():
       return self.__jax_array__().__rsub__(other)
     return _ensure_poly(other, "sub").__sub__(self)
 
-  def __neg__(self) -> '_DimPolynomial':
-    return _DimPolynomial({mon: -coeff for mon, coeff in self.monomials()})
+  def __neg__(self) -> '_DimExpr':
+    return _DimExpr({mon: -coeff for mon, coeff in self.monomials()})
 
   def __mul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__mul__(other)
     other = _ensure_poly(other, "mul")
     coeffs: Dict[_DimMon, int] = {}
-    for (mon1, coeff1), (mon2, coeff2) in itertools.product(self.monomials(), other.monomials()):
-      mon = mon1.mul(mon2)
-      coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
-    return _DimPolynomial.from_coeffs(coeffs)
+    for mon1, coeff1 in self.monomials():
+      for mon2, coeff2 in other.monomials():
+        mon = mon1.mul(mon2)
+        coeffs[mon] = coeffs.get(mon, 0) + coeff1 * coeff2
+    return _DimExpr.normalize(coeffs)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -299,7 +503,7 @@ class _DimPolynomial():
     try:
       power = int(power)
     except:
-      raise InconclusiveDimensionOperation(f"Dimension polynomial cannot be raised to non-integer power '{self}' ^ '{power}'")
+      raise InconclusiveDimensionOperation(f"Symblic dimension cannot be raised to non-integer power '{self}' ^ '{power}'")
     return functools.reduce(op.mul, [self] * power)
 
   def __floordiv__(self, divisor):
@@ -308,8 +512,7 @@ class _DimPolynomial():
     return self.divmod(_ensure_poly(divisor, "floordiv"))[0]
 
   def __rfloordiv__(self, other):
-    # A special case for int // poly: we use the __jax_array__ path
-    if isinstance(other, core.Tracer) or _convertible_to_int(other) or not _convertible_to_poly(other):
+    if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rfloordiv__(other)
     return _ensure_poly(other, "floordiv").__floordiv__(self)
 
@@ -318,7 +521,7 @@ class _DimPolynomial():
     return self.__jax_array__().__truediv__(divisor)
 
   def __rtruediv__(self, dividend):
-    # Used for "/", when dividend is not a _DimPolynomial
+    # Used for "/", when dividend is not a _DimExpr
     return self.__jax_array__().__rtruediv__(dividend)
 
   def __mod__(self, divisor):
@@ -327,8 +530,7 @@ class _DimPolynomial():
     return self.divmod(_ensure_poly(divisor, "mod"))[1]
 
   def __rmod__(self, dividend):
-    # A special case for int // poly: we use the __jax_array__ path
-    if isinstance(dividend, core.Tracer) or _convertible_to_int(dividend) or not _convertible_to_poly(dividend):
+    if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
       return self.__jax_array__().__rmod__(dividend)
     return _ensure_poly(dividend, "mod").__mod__(self)
 
@@ -346,7 +548,7 @@ class _DimPolynomial():
     if self.is_constant:
       return op.index(next(iter(self._coeffs.values())))
     else:
-      raise InconclusiveDimensionOperation(f"Dimension polynomial '{self}' used in a context that requires a constant")
+      raise InconclusiveDimensionOperation(f"Symbolic dimension '{self}' used in a context that requires a constant")
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   __eq__ = eq
@@ -364,14 +566,7 @@ class _DimPolynomial():
   def __lt__(self, other: DimSize):
     return not self.__ge__(other)
 
-  def _division_error_msg(self, dividend, divisor, details: str = "") -> str:
-    msg = f"Cannot divide '{dividend}' by '{divisor}'."
-    if details:
-      msg += f"\nDetails: {details}."
-    msg += "\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#division-of-shape-polynomials-is-partially-supported."
-    return msg
-
-  def divmod(self, divisor: "_DimPolynomial") -> Tuple[DimSize, int]:
+  def divmod(self, divisor: "_DimExpr") -> Tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
     If the `divisor` is not a constant, the remainder must be 0.
@@ -380,53 +575,55 @@ class _DimPolynomial():
 
     :return: Quotient resulting from polynomial division and integer remainder.
     """
-    assert isinstance(divisor, _DimPolynomial)
-    dmon, dcount = divisor.leading_term
-    dividend, quotient = self, 0
-    # invariant: self = dividend + divisor * quotient
-    # the leading term of dividend decreases through the loop.
-    while is_poly_dim(dividend) and not dividend.is_constant:
-      mon, count = dividend.leading_term
-      try:
-        qmon = mon.divide(dmon)
-      except InconclusiveDimensionOperation as e:
-        raise InconclusiveDimensionOperation(
-            self._division_error_msg(self, divisor, str(e)))
-      qcount, rcount = divmod(count, dcount)
-      if rcount != 0:
-        raise InconclusiveDimensionOperation(
-            self._division_error_msg(self, divisor))
+    assert isinstance(divisor, _DimExpr)
+    try:
+      dmon, dcount = divisor.leading_term
+      dividend, quotient = self, 0
+      # invariant: self = dividend + divisor * quotient
+      # quotient and dividend are changed in the loop; the leading term of
+      # dividend decreases at each iteration.
+      while is_poly_dim(dividend) and not dividend.is_constant:
+        mon, count = dividend.leading_term
+        try:
+          qmon = mon.divide(dmon)
+        except InconclusiveDimensionOperation:
+          raise InconclusiveDimensionOperation("")
+        qcount, rcount = divmod(count, dcount)
+        if rcount != 0:
+          raise InconclusiveDimensionOperation("")
 
-      q = _DimPolynomial.from_coeffs({qmon: qcount})
-      quotient += q
-      dividend -= q * divisor  # type: ignore[assignment]
+        q = _DimExpr.from_monomial(qmon, qcount)
+        quotient += q
+        dividend -= q * divisor  # type: ignore[assignment]
 
-    dividend = int(dividend)  # type: ignore[assignment]
-    if divisor.is_constant:
-      q, r = divmod(dividend, int(divisor))  # type: ignore
-      quotient += q
-      remainder = r
-    else:
-      if dividend != 0:
-        raise InconclusiveDimensionOperation(
-            self._division_error_msg(self, divisor))
-      remainder = 0
+      dividend = int(dividend)  # type: ignore[assignment]
+      if divisor.is_constant:
+        q, r = divmod(dividend, int(divisor))  # type: ignore
+        quotient += q
+        remainder = r
+      else:
+        if dividend != 0:
+          raise InconclusiveDimensionOperation("")
+        remainder = 0
 
-    if config.jax_enable_checks:
-      assert self == divisor * quotient + remainder
-    return quotient, remainder
+      if config.jax_enable_checks:
+        assert self == divisor * quotient + remainder
+      return quotient, remainder
+    except InconclusiveDimensionOperation:
+      return (_DimExpr.from_operation(_DimAtom.FLOORDIV, self, divisor),  # type: ignore
+              _DimExpr.from_operation(_DimAtom.MOD, self, divisor))
 
-  def bounds(self) -> Tuple[Optional[int], Optional[int]]:
-    """Returns the lower and upper bounds, if defined."""
+  def bounds(self) -> Tuple[float, float]:
+    """Returns the lower and upper bounds, or -+inf."""
     lb = ub = self._coeffs.get(_DimMon(), 0)  # The free coefficient
     for mon, coeff in self.monomials():
-      if mon.degree == 0: continue
-      if coeff > 0:
-        ub = None  # type: ignore
-        lb = None if lb is None else lb + coeff
-      else:
-        lb = None  # type: ignore
-        ub = None if ub is None else ub + coeff
+      if mon.degree == 0: continue  # We already included the free coefficient
+      m_l, m_u = mon.bounds()
+      assert m_l <= m_u and coeff != 0
+      item_l, item_u = coeff * m_l, coeff * m_u
+      lb = lb + min(item_l, item_u)  # type: ignore
+      ub = ub + max(item_l, item_u)  # type: ignore
+
     return lb, ub
 
   @property
@@ -444,7 +641,7 @@ class _DimPolynomial():
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   @staticmethod
-  def get_aval(dim: "_DimPolynomial"):
+  def get_aval(dim: "_DimExpr"):
     return dim_as_value_abstract(dim)
 
   def dimension_as_value(self):
@@ -455,9 +652,9 @@ class _DimPolynomial():
     # Used for implicit coercions of polynomials as JAX arrays
     return _dim_as_value(self)
 
-core.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
-xla.pytype_aval_mappings[_DimPolynomial] = _DimPolynomial.get_aval
-dtypes._weak_types.append(_DimPolynomial)
+core.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
+xla.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
+dtypes._weak_types.append(_DimExpr)
 
 def _convertible_to_int(p: DimSize) -> bool:
   try:
@@ -467,17 +664,17 @@ def _convertible_to_int(p: DimSize) -> bool:
     return False
 
 def _ensure_poly(p: DimSize,
-                 operation_name: str) -> _DimPolynomial:
-  if isinstance(p, _DimPolynomial): return p
+                 operation_name: str) -> _DimExpr:
+  if isinstance(p, _DimExpr): return p
   if _convertible_to_int(p):
-    return _DimPolynomial({_DimMon(): op.index(p)})
-  raise TypeError(f"Dimension polynomial {operation_name} not supported for {p}.")
+    return _DimExpr({_DimMon(): op.index(p)})
+  raise TypeError(f"Symnbolic dimension {operation_name} not supported for {p}.")
 
 def _convertible_to_poly(p: DimSize) -> bool:
-  return isinstance(p, _DimPolynomial) or _convertible_to_int(p)
+  return isinstance(p, _DimExpr) or _convertible_to_int(p)
 
 def is_poly_dim(p: DimSize) -> bool:
-  return isinstance(p, _DimPolynomial)
+  return isinstance(p, _DimExpr)
 
 
 class DimensionHandlerPoly(core.DimensionHandler):
@@ -486,7 +683,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
   Most methods are inherited.
   """
   def is_constant(self, d: DimSize) -> bool:
-    assert isinstance(d, _DimPolynomial)
+    assert isinstance(d, _DimExpr)
     return False
 
   def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
@@ -508,7 +705,7 @@ class DimensionHandlerPoly(core.DimensionHandler):
       q, r = _ensure_poly(sz1, "divide_shape").divmod(_ensure_poly(sz2, "divide_shape"))
     except InconclusiveDimensionOperation as e:
       raise InconclusiveDimensionOperation(err_msg + f"\nDetails: {e}")
-    if r != 0:
+    if not core.symbolic_equal_dim(r, 0):
       raise InconclusiveDimensionOperation(err_msg + f"\nRemainder is not zero: {r}")
     return q  # type: ignore[return-value]
 
@@ -528,11 +725,11 @@ class DimensionHandlerPoly(core.DimensionHandler):
     """Turns a dimension size into a Jax value that we can compute with."""
     return _dim_as_value(d)
 
-core._SPECIAL_DIMENSION_HANDLERS[_DimPolynomial] = DimensionHandlerPoly()
-dtypes.python_scalar_dtypes[_DimPolynomial] = dtypes.python_scalar_dtypes[int]
+core._SPECIAL_DIMENSION_HANDLERS[_DimExpr] = DimensionHandlerPoly()
+dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
 
 def _einsum_contract_path(*operands, **kwargs):
-  """Like opt_einsum.contract_path, with support for DimPolynomial shapes.
+  """Like opt_einsum.contract_path, with support for DimExpr shapes.
 
   We use opt_einsum.contract_path to compute the schedule, using a fixed
   constant for all dimension variables. This is safe because we throw an
@@ -554,7 +751,7 @@ def _einsum_contract_path(*operands, **kwargs):
         if core.is_constant_dim(d):
           return d
         else:
-          if not isinstance(d, _DimPolynomial):
+          if not isinstance(d, _DimExpr):
             raise TypeError(f"Encountered unexpected shape dimension {d}")
           # It is Ok to replace all polynomials with the same value. We may miss
           # here some errors due to non-equal dimensions, but we catch them
@@ -572,10 +769,10 @@ def _einsum_contract_path(*operands, **kwargs):
     contract_operands.append(operands[idx[0]])
   return contract_operands, contractions
 
-lax_numpy._poly_einsum_handlers[_DimPolynomial] = _einsum_contract_path
+lax_numpy._poly_einsum_handlers[_DimExpr] = _einsum_contract_path
 
 # A JAX primitive with no array arguments but with a dimension parameter
-# that is a DimPoly. The value of the primitive is the value of the dimension,
+# that is a DimExpr. The value of the primitive is the value of the dimension,
 # using int64 in x64 mode or int32 otherwise (dim_as_value_dtype())
 dim_as_value_p = core.Primitive("dim_as_value")
 def dim_as_value_dtype():
@@ -701,7 +898,7 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
         m = re.match(r"^([a-zA-Z]\w*)(\^(\d+))?$", factor_spec)
         if not m:
           raise ValueError(f"polymorphic shape {repr(spec)} has invalid syntax (unexpected term '{factor_spec}')")
-        var = _DimPolynomial.from_var(m.group(1))
+        var = _DimExpr.from_var(m.group(1))
         if m.group(3) is None:
           return var
         return var ** int(m.group(3))
@@ -793,7 +990,7 @@ _JaxValue = Any
 @dataclasses.dataclass
 class DimEquation:
   # Represents poly == _expr
-  poly: _DimPolynomial
+  poly: _DimExpr
   dim_expr: _JaxValue  # Of type dim_as_value_dtype()
 
 
@@ -810,7 +1007,7 @@ def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
     def eval_dim(d: DimSize):
       return d.evaluate(shape_env_jax)  # type: ignore[union-attr]
 
-    return tuple(eval_dim(d) if type(d) is _DimPolynomial else np.array(d, dtype=dim_as_value_dtype())  # type: ignore
+    return tuple(eval_dim(d) if type(d) is _DimExpr else np.array(d, dtype=dim_as_value_dtype())  # type: ignore
                  for d in shape)
   return eval_shape
 
@@ -941,7 +1138,7 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
 
   # We have some equations that we cannot solve further
   unsolved_vars: Set[str] = set()
-  unsolved_polys: List[_DimPolynomial] = []
+  unsolved_polys: List[_DimExpr] = []
   for eqn in eqns:
     unsolved_vars = unsolved_vars.union(eqn.poly.get_vars())
     unsolved_polys.append(eqn.poly)

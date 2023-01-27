@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import collections
 import functools
 from functools import partial
-import operator
+import operator as op
 import re
 
 import jax
@@ -54,7 +54,7 @@ from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 PS = jax2tf.PolyShape
 _f32 = np.float32
 
-class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
+class DimExprTest(tf_test_util.JaxToTfTestCase):
 
   def test_parse_poly_spec(self):
     self.assertEqual((2, 3), shape_poly._parse_spec(None, (2, 3)))
@@ -115,17 +115,17 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual(False, a != a)
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
-        "Dimension polynomial comparison 'a' == 'b' is inconclusive"):
+        "Symbolic dimension comparison 'a' == 'b' is inconclusive"):
       a.eq(b)
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
-        "Dimension polynomial comparison 'a' == 'b' is inconclusive"):
+        "Symbolic dimension comparison 'a' == 'b' is inconclusive"):
       a == b
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
-        "Dimension polynomial comparison 'a' == 'b' is inconclusive"):
+        "Symbolic dimension comparison 'a' == 'b' is inconclusive"):
       a != b
 
     self.assertLen({a, a}, 1)
@@ -134,7 +134,7 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertIn(b, {a, b})
     self.assertIn(a, [a, b])
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Dimension polynomial comparison .* is inconclusive"):
+                                "Symbolic dimension comparison .* is inconclusive"):
       b in [a, b]
 
   def test_get_vars(self):
@@ -147,7 +147,8 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
 
     self.assertEqual(1, (a * a - b).evaluate(dict(a=2, b=3)))
-    self.assertEqual(2, (a * a - b + 1).evaluate(dict(a=-2, b=3)))
+    self.assertEqual(1, ((a * a) // b).evaluate(dict(a=2, b=3)))
+    self.assertEqual(4, ((a * a) % b).evaluate(dict(a=5, b=7)))
 
   def test_dim_vars_symbolic_equal(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -170,14 +171,75 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
 
   def test_poly_bounds(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
-    self.assertEqual(a.bounds(), (1, None))
-    self.assertEqual((2 * a).bounds(), (2, None))
-    self.assertEqual((2 * a - 3).bounds(), (-1, None))
-    self.assertEqual((-2 * a - 3).bounds(), (None, -5))
-    self.assertEqual((3 * a * b * b + 5 * a - 7).bounds(), (1, None))
-    self.assertEqual((3 * a * b * b - 5 * a - 7).bounds(), (None, None))
-    self.assertEqual((a + b - a * b + a * b * a).bounds(), (None, None))
-    self.assertEqual((a + 2 * b - a).bounds(), (2, None))
+    bounded_le4 = 5 - a
+    bounded_ge2 = b + 1
+    bounded_ge0_le4 = a % 5
+    self.assertEqual(a.bounds(), (1, np.PINF))
+    self.assertEqual(bounded_le4.bounds(), (np.NINF, 4))
+    self.assertEqual(bounded_ge2.bounds(), (2, np.PINF))
+    self.assertEqual(bounded_ge0_le4.bounds(), (0, 4))
+
+    # Additions
+    self.assertEqual((bounded_ge0_le4 + bounded_le4).bounds(), (np.NINF, 8))
+    self.assertEqual((bounded_ge0_le4 + bounded_ge2).bounds(), (2, np.PINF))
+    self.assertEqual((bounded_le4 + bounded_ge2).bounds(), (np.NINF, np.PINF))
+
+    # Subtractions
+    self.assertEqual((bounded_ge0_le4 - bounded_le4).bounds(), (-4, np.PINF))
+    self.assertEqual((- bounded_ge0_le4 + bounded_le4).bounds(), (np.NINF, 4))
+    self.assertEqual((bounded_ge0_le4 - bounded_ge2).bounds(), (np.NINF, 2))
+    self.assertEqual((- bounded_ge0_le4 + bounded_ge2).bounds(), (-2, np.PINF))
+    self.assertEqual((bounded_le4 - bounded_ge2).bounds(), (np.NINF, 2))
+    self.assertEqual((- bounded_le4 + bounded_ge2).bounds(), (-2, np.PINF))
+
+    # Multiplications
+    self.assertEqual((2 * a - 3).bounds(), (-1, np.PINF))
+    self.assertEqual((-2 * a - 3).bounds(), (np.NINF, -5))
+    self.assertEqual((3 * a * b * b + 5 * a - 7).bounds(), (1, np.PINF))
+    self.assertEqual((3 * a * b * b - 5 * a - 7).bounds(), (np.NINF, np.PINF))
+    self.assertEqual((a + b - a * b + a * b * a).bounds(), (np.NINF, np.PINF))
+    self.assertEqual((a + 2 * b - a).bounds(), (2, np.PINF))
+    self.assertEqual((a + 2 * b - a).bounds(), (2, np.PINF))
+
+    # mod
+    self.assertEqual(((b + 1) % 2).bounds(), (0, 1))
+    self.assertEqual(((b + 1) % -2).bounds(), (-1, 0))
+    self.assertEqual(((b - 4) % 2).bounds(), (0, 1))
+    self.assertEqual(((b + 1) % a).bounds(), (0, np.PINF))
+    self.assertEqual((11 % (a + 1)).bounds(), (0, np.PINF))
+    self.assertEqual((-11 % (a + 1)).bounds(), (0, np.PINF))
+    self.assertEqual((b % (a - 2)).bounds(), (np.NINF, np.PINF))
+
+    # floordiv
+    self.assertEqual(((a + 4) // 2).bounds(), (2, np.PINF))
+    self.assertEqual(((a + 4) // -2).bounds(), (np.NINF, -3))
+    self.assertEqual(((a + 5) // 2).bounds(), (3, np.PINF))
+    self.assertEqual(((a + 5) // -2).bounds(), (np.NINF, -3))
+    self.assertEqual((11 // (a + 1)).bounds(), (0, 5))
+    self.assertEqual((-11 // (a + 1)).bounds(), (-6, -1))
+    self.assertEqual((-11 // (- a)).bounds(), (0, 11))  # finite negative dividend, infinite divisor
+    self.assertEqual(((b + 1) // (a + 1)).bounds(), (0, np.PINF))
+    self.assertEqual((-b // (a + 1)).bounds(), (np.NINF, -1))
+
+
+
+
+    # Generate test cases for floordiv and mod: (a + N) // +-2, (N - a) // +-2
+    # and then evaluate them for a = 1, 5, 10000
+    div_mod_atoms = [
+        operation(op1 + n, div)
+        for op1 in (a, a + 10, a + 11, -a, -a + 10, -a + 11)
+        for n in (-3, -1, 0, 1, 3)
+        for div in (-2, 2, a + 4, -4 - a)  # Either negative, or positive
+        for operation in (op.floordiv, op.mod)
+        ]
+    for atom in div_mod_atoms:
+      lb, ub = atom.bounds()
+      self.assertLessEqual(lb, ub)
+      for a_val in (1, 5, 10000):
+        atom_val = atom.evaluate(dict(a=a_val))
+        self.assertGreaterEqual(atom_val, lb)
+        self.assertLessEqual(atom_val, ub)
 
   def test_poly_equal(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -195,8 +257,26 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertFalse((2 * a * b * a + 1).eq(a * b * a))
     self.assertFalse((3 * a * b * a - 1).eq(a * b * a))
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.escape("Dimension polynomial comparison '3*a^2*b + -2' == 'a^2*b' is inconclusive")):
+                                re.escape("Symbolic dimension comparison '3*a^2*b + -2' == 'a^2*b' is inconclusive")):
       (3 * a * b * a - 2).eq(a * b * a)
+
+    self.assertTrue(a % b == a % b)
+    self.assertTrue(a % b - a % b == 0)
+    self.assertTrue(a // b == a // b)
+    self.assertTrue(a // b - a // b == 0)
+
+    self.assertTrue(a % b == (2 * a // 2) % (a + b - a))
+    self.assertTrue(a // b == (2 * a // 2) // (a + b - a))
+
+    self.assertTrue(a, a + (a + b) // b - (b + a) // b)
+
+    # Test the normaliation (a // b) * b == a - a % b
+    self.assertTrue((a // 2) * 2 == a - a % 2)
+    self.assertTrue((a // 2) + (a // 2) == a - a % 2)
+    self.assertTrue((a // 2) * 6 == 3 * a - 3 * (a % 2))
+    self.assertTrue((a // b) * b == a - a % b)
+    self.assertTrue(2 * (a // b) * b * b == 2 * b * a - 2 * b * (a % b))
+    self.assertTrue(a // (2 * b) * 2 * b == a - a % (2 * b))
 
   def test_poly_compare(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -236,14 +316,16 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertTrue(core.greater_equal_shape((a, 2), (1, 1)))
 
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Dimension polynomial comparison .* is inconclusive"):
+                                "Symbolic dimension comparison .* is inconclusive"):
       core.greater_equal_dim(a, 2)
 
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                "Dimension polynomial comparison .* is inconclusive"):
+                                "Symbolic dimension comparison .* is inconclusive"):
       core.greater_equal_dim(a, b)
 
   def test_poly_int_results(self):
+    # Whenever the result is an integer, it should be represented as an
+    # Python integer, not a symbolic dimension.
     a, b = shape_poly._parse_spec("a, b", (2, 3))
     self.assertEqual(a + 2 - a, 2)
     self.assertIsInstance(a + 2 - a, int)
@@ -265,16 +347,15 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
           (3 * a - 2, 3, a - 1, 1),
           (3 * a * a * b + 2 * b * b * a, a * b, 3 * a + 2 * b, 0),
           (a * a - b * b, a + b, a - b, 0),
-          (a, b, None, None),
-          (3 * a, 2, None, None),
-          (2 * a * b + b * b, a + b, None, None),
-          (3, a, None, None),
+          (a, b, "floordiv(a, b)", "mod(a, b)"),
+          (3 * a, 2, "floordiv(3*a, 2)", "mod(3*a, 2)"),
+          (2 * a * b + b * b, a + b, "floordiv(2*a*b + b^2, a + b)", "mod(2*a*b + b^2, a + b)"),
+          (3, a, "floordiv(3, a)", "mod(3, a)"),
   ])
   def test_poly_divmod(self, *, dividend, quotient, divisor, remainder):
-    if quotient is None:
-      with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                  "Cannot divide .* by .*"):
-        divmod(dividend, divisor)
+    if isinstance(quotient, str):
+      d1, d2 = divmod(dividend, divisor)
+      self.assertEqual((quotient, remainder), (str(d1), str(d2)))
     else:
       self.assertEqual((quotient, remainder), divmod(dividend, divisor))
 
@@ -297,11 +378,9 @@ class DimPolynomialTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((a - 1, 9), core.stride_shape((a, 20), (2, 3), (1, 2)))
     self.assertEqual((a + 1, 9), core.stride_shape((a * stride + 2, 20), (2, 3), (stride, 2)))
 
-    with self.assertRaisesRegex(
-        core.InconclusiveDimensionOperation,
-        re.escape(
-          "Cannot compute stride for dimension 'a', window_size '1', stride '2'.\nDetails: Cannot divide 'a + -1' by '2'")):
-      core.stride_shape((a, 20), (1, 3), (2, 2))
+    (stride0, stride1) = core.stride_shape((a, 20), (1, 3), (2, 2))
+    self.assertEqual("floordiv(a + -1, 2) + 1", str(stride0))
+    self.assertEqual(9, stride1)
 
 
 class PolyHarness(Harness):
@@ -859,7 +938,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
     def add_all_jax(x_pair_of_list, y_dict):
       x_list_0, x_list_1 = x_pair_of_list
-      return functools.reduce(operator.add,
+      return functools.reduce(op.add,
                               x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
     check_shape_poly(self,
@@ -1193,15 +1272,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (np.prod(x.shape),)),
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
-    with self.assertRaisesRegex(TypeError,
-                                "Shapes must be 1D sequences of concrete values of integer type, got Traced"):
-      jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * np.array([x.shape[1]]))),
-                     polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
-
-    jax2tf.convert(lambda x: (x + x.shape[0] + jnp.sin(x.shape[0]),
-                              5. + x.shape[0],
-                              np.ones((5,), dtype=np.int32) - x.shape[0]),
-                   polymorphic_shapes = ["b"])(np.ones((3,)))
+    jax2tf.convert(lambda x: x + x.shape[0] + jnp.sin(x.shape[0]),
+                   polymorphic_shapes=["b"])(np.ones(3))
 
     jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
                    polymorphic_shapes=["(v, _)"])(np.ones((3, 4)))
@@ -1238,7 +1310,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      polymorphic_shapes=["(v, 4)"])(np.ones((4, 4)))
 
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
-                                re.compile("Cannot divide evenly the sizes of shapes \\(b, 5, 7\\) and \\(2, -1\\).*Details: Cannot divide '35\\*b' by '-2'",
+                                re.compile("Cannot divide evenly the sizes of shapes \\(b, 5, 7\\) and \\(2, -1\\)",
                                            re.DOTALL)):
       jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
                      polymorphic_shapes=["(b, _, _)"])(np.ones((4, 5, 7)))
@@ -1255,7 +1327,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
-        re.escape("Dimension polynomial comparison 'a + 1' == 'b' is inconclusive")):
+        re.escape("Symbolic dimension comparison 'a + 1' == 'b' is inconclusive")):
       jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
                      polymorphic_shapes=["(a, b)"])(np.ones((4, 4)))
 
@@ -1365,8 +1437,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       dict(testcase_name=f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
            op=op, other=other,
            other_jnp_array=other_jnp_array, swap=swap)
-      for op in [operator.add, operator.mul, operator.sub,
-                 operator.mod, operator.floordiv, operator.truediv]
+      for op in [op.add, op.mul, op.sub,
+                 op.mod, op.floordiv, op.truediv]
       for other in [
           2, np.int32(2), 2., np.float32(2),
           np.array(2, dtype=np.int32), np.arange(1, 5, dtype=np.int32),
@@ -1376,10 +1448,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           [True, False] if np.shape(other) == (7,) else [False])  # type: ignore
       for swap in [False, True]  # The poly is the left op by default
   ])
-  def test_poly_binary_op(self, *, op=operator.truediv,
-                          other=2,
+  def test_poly_binary_op(self, *, op=op.add,
+                          other=np.arange(2, dtype=np.int32),
                           other_jnp_array=False,
-                          swap=False):
+                          swap=True):
     # Test arithmetic operations with poly and a variety of other operand types
     if config.jax2tf_default_experimental_native_lowering:
       raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
@@ -1392,15 +1464,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
       # If the other op is an integer then the result is a symbolic dim
       try:
-        operator.index(other)
+        op.index(other)
         other_isint = True
       except Exception:
         other_isint = False
 
       if (hasattr(poly, "dimension_as_value") and
           other_isint and
-          op.__name__ != "truediv" and
-          not (swap and op.__name__ in ["floordiv", "mod"])):
+          op.__name__ != "truediv"):
         # If we running under jax2tf and "other" is an integer the result
         # should be a symbolic dimension
         self.assertTrue(isinstance(res, int) or hasattr(res, "dimension_as_value"))
@@ -1625,26 +1696,19 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
                 poly_axes=[(0, 1)]),
 
-    # Issue #11402
-    # We play a trick here. Since the stride is 2, when we compute the padding
-    # for "SAME" we need to divide by 2. We cannot do this in general, so we
-    # write the test with the assumption that the dimension is a multiple of 2.
-    # We pass the lhs as (1, b, 2, 16) and then we
-    # reshape it as (1, 2*b, 16), so that we know that the lhs's dimension 1
-    # is a multiple of 2.
-    PolyHarness("conv_general_dilated", "1d_1",
+    PolyHarness("conv_general_dilated", "1d_stride=1",
                 lambda lhs, rhs: lax.conv_general_dilated(
-                    jnp.reshape(lhs, (1, -1, 16)), rhs,
-                    window_strides=(2,),
+                    lhs, rhs,
+                    window_strides=(1,),
                     padding="SAME",
                     rhs_dilation=None,
                     dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
                                                                rhs_spec=(2, 1, 0),
                                                                out_spec=(0, 2, 1))),
-                arg_descriptors=[RandArg((1, 6, 2, 16), _f32), RandArg((4, 16, 16), _f32)],
+                arg_descriptors=[RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
                 poly_axes=[1, None]).both_enable_and_disable_xla(),
-    # The same example from above, but without the reshape trick.
-    PolyHarness("conv_general_dilated", "1d_1err",
+    # The same example from above, but with stride=2.
+    PolyHarness("conv_general_dilated", "1d_stride=2_even",
                 lambda lhs, rhs: lax.conv_general_dilated(
                     lhs, rhs,
                     window_strides=(2,),
@@ -1655,9 +1719,20 @@ _POLY_SHAPE_TEST_HARNESSES = [
                                                                out_spec=(0, 2, 1))),
                 arg_descriptors=[RandArg((1, 12, 16), _f32), RandArg((4, 16, 16), _f32)],
                 poly_axes=[1, None],
-                expect_error=(core.InconclusiveDimensionOperation,
-                              "Cannot divide .* by '2'")
               ).both_enable_and_disable_xla(),
+    # The same example from above, but with stride=2 and odd input size.
+    PolyHarness("conv_general_dilated", "1d_stride=2_odd",
+                lambda lhs, rhs: lax.conv_general_dilated(
+                    lhs, rhs,
+                    window_strides=(2,),
+                    padding="SAME",
+                    rhs_dilation=None,
+                    dimension_numbers=lax.ConvDimensionNumbers(lhs_spec=(0, 2, 1),
+                                                               rhs_spec=(2, 1, 0),
+                                                               out_spec=(0, 2, 1))),
+                arg_descriptors=[RandArg((1, 13, 16), _f32), RandArg((4, 16, 16), _f32)],
+                poly_axes=[1, None],
+                ).both_enable_and_disable_xla(),
     # Issue #11402
     PolyHarness("conv_general_dilated", "1d_2",
                 lambda lhs, rhs: lax.conv_transpose(lhs, rhs,
@@ -1797,7 +1872,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 polymorphic_shapes=["(2, b0)", "(2, b1)"],
                 input_signature=[tf.TensorSpec((2, None)), tf.TensorSpec((2, None))],
                 expect_error=(core.InconclusiveDimensionOperation,
-                              "Dimension polynomial comparison 'b1' == 'b0' is inconclusive")),
+                              "Symbolic dimension comparison 'b1' == 'b0' is inconclusive")),
     PolyHarness("eye", "N=poly_M=None",
                 lambda x: jnp.eye(x.shape[0]),
                 arg_descriptors=[RandArg((3, 4), _f32)],
@@ -2045,7 +2120,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.repeat(x, repeats=x.shape[0], axis=None, total_repeat_length=8),
                 arg_descriptors=[RandArg((3, 2), _f32)],
                 poly_axes=[0],
-                expect_error=(ValueError, "jnp.repeat with a DimPolynomial `repeats` is supported only .*")),
+                expect_error=(ValueError, "jnp.repeat with a non-constant `repeats` is supported only .*")),
     PolyHarness("reshape", "0",
                 lambda x: x.reshape([x.shape[0], -1]),
                 arg_descriptors=[RandArg((3, 2, 3), _f32)],
@@ -2130,21 +2205,19 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: lax.slice_in_dim(x, 0, -1, stride=1, axis=0),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 poly_axes=[0]),
-    PolyHarness("jnp.split", "",
-                lambda x: jnp.split(x, 2, axis=0),
-                arg_descriptors=[RandArg((8, 5), _f32)],
-                polymorphic_shapes=["2*b, ..."],
-                input_signature=[tf.TensorSpec([None, 5], dtype=_f32)]),
-    PolyHarness("jnp.array_split", "even",
-                lambda x: jnp.array_split(x, 2, axis=0),
-                arg_descriptors=[RandArg((8, 5), _f32)],
-                polymorphic_shapes=["2*b, ..."],
-                input_signature=[tf.TensorSpec([None, 5], dtype=_f32)]),
-    PolyHarness("jnp.array_split", "odd",
-                lambda x: jnp.array_split(x, 2, axis=0),
-                arg_descriptors=[RandArg((9, 5), _f32)],
-                polymorphic_shapes=["2*b + 1, ..."],
-                input_signature=[tf.TensorSpec([None, 5], dtype=_f32)]),
+    PolyHarness("slice_in_dim", "stride=2_even",
+                lambda x: lax.slice_in_dim(x, 0, x.shape[0], stride=2, axis=0),
+                arg_descriptors=[RandArg((12, 4), _f32)],
+                poly_axes=[0]),
+    PolyHarness("slice_in_dim", "stride=2_odd",
+                lambda x: lax.slice_in_dim(x, 0, x.shape[0], stride=2, axis=0),
+                arg_descriptors=[RandArg((13, 4), _f32)],
+                poly_axes=[0]),
+    # Not yet, the slice_in_dim does int(stride)
+    # PolyHarness("slice_in_dim", "stride=sym",
+    #             lambda x: lax.slice_in_dim(x, 0, x.shape[0], stride=x.shape[0] // 4, axis=0),
+    #             arg_descriptors=[RandArg((13, 4), _f32)],
+    #             poly_axes=[0]),
     PolyHarness("squeeze", "axis=empty",
                 jnp.squeeze,
                 arg_descriptors=[RandArg((5,), _f32), StaticArg(())],
