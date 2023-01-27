@@ -288,11 +288,6 @@ class KeyTyRules:
                              jnp.dtype('uint32'))]
 
   @staticmethod
-  def aval_to_ir_types(aval: core.AbstractValue) -> Sequence[mlir.ir.Type]:
-    phys_aval, = KeyTyRules.physical_avals(aval)
-    return mlir.aval_to_ir_types(phys_aval)
-
-  @staticmethod
   def physical_op_sharding(aval, sharding):
     op_sharding = sharding._to_xla_op_sharding(aval.ndim)
     key_shape = aval.dtype.impl.key_shape

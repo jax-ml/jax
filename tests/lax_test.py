@@ -2832,11 +2832,6 @@ class FooTyRules:
     return [core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))]
 
   @staticmethod
-  def aval_to_ir_types(aval):
-    aval2, = FooTyRules.physical_avals(aval)
-    return mlir.aval_to_ir_types(aval2)
-
-  @staticmethod
   def physical_op_sharding(aval, sharding):
     return sharding._to_xla_op_sharding(aval.ndim)
 
