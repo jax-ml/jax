@@ -25,9 +25,10 @@ from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
 from jax.config import config
-
+from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
+from jax.experimental.maps import xmap, Mesh
 from jax.interpreters.pxla import PartitionSpec as P
 import jax.numpy as jnp
 from jax._src.lib import xla_bridge
@@ -75,33 +76,26 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   These tests can run on any device.
   """
 
-  def _check_sharding_annotations(self,
+  def _log_sharding_annotations(self,
                                   f_jax,
                                   args: Sequence[Any],
                                   *,
-                                  expected: Sequence[str],
-                                  expected_opt: Sequence[str],
                                   num_partitions=2,
                                   num_variables=0):
-    """Check expected patterns in the HLO generated from f_jax and its conversion.
+    """Log the HLO generated from f_jax and its conversion.
 
-    We run this check on CPU also, which is useful for debugging locally.
-    We currently check the unoptimized HLO against `expected` on CPU and TPU,
-    and we check the optimized HLO against `expected_opt` on TPU only and
-    only for JAX.
-
-    See `self.AssertShardingAnnotations` for documentation of `expected`
-    and `expected_opt`.
-
-    num_variables: the number of `args` to be wrapped with tf.Variable.
+    Ideally this would check the sharding of intermedia results in JAX and
+    TF, but this has turned out to be very brittle and broke down for
+    StableHLO lowering (the sharding annotation are now binary-encoded
+    attributes). We kept the logging aspect of this function, which should
+    help some debugging.
     """
     if jtu.device_under_test() == "gpu":
       raise unittest.SkipTest("Sharding HLO tests not useful for GPU")
 
-    jax_comp = f_jax.lower(*args).compiler_ir(dialect="hlo")
-    jax_hlo = jax_comp.as_hlo_text()
+    jax_comp = f_jax.lower(*args).compiler_ir(dialect="mhlo")
+    jax_hlo = str(jax_comp)
     logging.info("[%s] got JAX HLO %s", self._testMethodName, jax_hlo)
-    self._assert_sharding_annotations("JAX before optimizations", jax_hlo, expected)
 
     # We only dump JAX optimized code on the TPU
     if jtu.device_under_test() == "tpu":
@@ -117,11 +111,9 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
           use_spmd_partitioning=use_spmd_partitioning,
       )
       jax_optimized_hlo = backend.compile(
-          jax_comp, compile_options).hlo_modules()[0].to_string()
+          jax_hlo, compile_options).hlo_modules()[0].to_string()
       logging.info("[%s] got JAX optimized HLO for platform %s %s",
                      self._testMethodName, backend.platform, jax_optimized_hlo)
-      self._assert_sharding_annotations("JAX after optimizations",
-                                        jax_optimized_hlo, expected_opt)
 
     f_tf_base = jax2tf.convert(f_jax, with_gradient=False)
     if num_variables > 0:
@@ -139,7 +131,6 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
               .experimental_get_compiler_ir(*args)(stage="hlo",
                                                    device_name=device_name))
     logging.info("[%s] got TF HLO %s", self._testMethodName, tf_hlo)
-    self._assert_sharding_annotations("TF before optimizations", tf_hlo, expected)
     tf_optimized_hlo = (
         tf.function(f_tf, jit_compile=True, autograph=False)
         .experimental_get_compiler_ir(*args)(stage="optimized_hlo",
@@ -147,31 +138,6 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     logging.info("[%s] got TF optimized HLO for %s: %s", self._testMethodName,
                  device_name, tf_optimized_hlo)
 
-  def _assert_sharding_annotations(self, what: str, hlo: str,
-                                   expected: Sequence[str]):
-    """Args:
-
-      what: either 'JAX' or 'TF', used for messages only.
-      hlo: the text for the HLO module
-      expected: a sequence of regexps that must occur in the hlo text. Each
-      regexp must match a line, in order.
-    """
-    next_expected_idx = 0
-    failure_msg = [
-        f"Cannot find some expected sharding annotations in HLO from {what}:"
-    ]
-    for hlo_line in hlo.split("\n"):
-      failure_msg.append(hlo_line)
-      if re.search(expected[next_expected_idx], hlo_line):
-        failure_msg.append(
-            f">>> Found[{next_expected_idx}] {expected[next_expected_idx]}")
-        next_expected_idx += 1
-        if next_expected_idx >= len(expected):
-          break
-    else:
-      failure_msg.append(
-          f"!!! Not found[{next_expected_idx}] {expected[next_expected_idx]}")
-      raise self.failureException("\n".join(failure_msg))
 
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic1D(self):
@@ -187,16 +153,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     hlo = jax_func.lower(x, x).compiler_ir(dialect="hlo").as_hlo_text()
     logging.info("HLO is %s", hlo)
     logging.info("JAXPR is %s", jax.make_jaxpr(jax_func)(x, x))
-    self._check_sharding_annotations(
+    self._log_sharding_annotations(
         jax_func, [x, x],
-        expected=[
-            r"f32\[8,10\].*sharding={devices=\[2,1\]",  # x and y
-            # r"f32\[8,10\].*sharding={replicated",  # output  - OMITTED
-        ],
-        expected_opt=[
-            r"f32\[4,10\].*sharding={devices=\[2,1\]",  # x and y
-            r"f32\[8,10\]",  # output
-        ],
         num_partitions=2)
 
   @jtu.with_mesh([("x", 2)])
@@ -213,16 +171,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     hlo = jax_func.lower(x, x).compiler_ir(dialect="hlo").as_hlo_text()
     logging.info("HLO is %s", hlo)
     logging.info("JAXPR is %s", jax.make_jaxpr(jax_func)(x, x))
-    self._check_sharding_annotations(
+    self._log_sharding_annotations(
         jax_func, [x, x],
-        expected=[
-            r"f32\[8,10\].*sharding={devices=\[2,1\]",  # x and y
-            # r"f32\[8,10\].*sharding={replicated",  # output  - OMITTED
-        ],
-        expected_opt=[
-            r"f32\[4,10\].*sharding={devices=\[2,1\]",  # x and y
-            r"f32\[8,10\]",  # output
-        ],
         num_partitions=2,
         num_variables=1)
 
@@ -238,21 +188,9 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     y_shape = (4, 2)
     x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
-    self._check_sharding_annotations(
+    self._log_sharding_annotations(
         jax_func,
         [x, y],
-        expected=[
-            r"f32\[8,6,4\].*sharding={devices=\[1,2,2\]0,1,2,3",  # x
-            r"f32\[4,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate",  # y
-            r"f32\[8,6,2\].*sharding={devices=\[2,1,1,2\]0,1,2,3 last_tile_dim_replicate",  # output
-        ],
-        expected_opt=[
-            # TODO: relax ordering
-            r"f32\[2,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate|f32\[8,3,2\].*sharding={devices=\[1,2,2\]0,1,2,3",
-            r"f32\[2,2\].*sharding={devices=\[2,1,2\]0,2,1,3 last_tile_dim_replicate|f32\[8,3,2\].*sharding={devices=\[1,2,2\]0,1,2,3",
-            # TODO: why we cannot see sharding={devices=\[2,1,1,2\]0,1,2,3 last_tile_dim_replicate?
-            r"bf16\[4,6,2\]",  # output
-        ],
         num_partitions=4)
 
   @jtu.with_mesh([("x", 2), ("y", 2)])
@@ -267,21 +205,9 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     y_shape = (8, 2)
     x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
-    self._check_sharding_annotations(
+    self._log_sharding_annotations(
         jax_func,
         [x, y],
-        expected=[
-            r"f32\[24,8\].*sharding={devices=\[4,1\]0,1,2,3",  # x
-            r"f32\[8,2\].*sharding={devices=\[4,1\]0,1,2,3",  # y
-            r"f32\[24,2\].*sharding={devices=\[4,1\]0,1,2,3",  # output
-        ],
-        expected_opt=[
-            # TODO: relax ordering
-            r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3|f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",
-            r"f32\[2,2\].*sharding={devices=\[4,1\]0,1,2,3|f32\[6,8\].*sharding={devices=\[4,1\]0,1,2,3",
-            # TODO: why we cannot see .*sharding={devices=\[4,1\]0,1,2,3
-            r"f32\[6,2\]",  # output
-        ],
         num_partitions=4)
 
   @jtu.with_mesh([("x", 2), ("y", 1)])
@@ -295,20 +221,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
 
     shape = (12, 8)
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    self._check_sharding_annotations(
+    self._log_sharding_annotations(
         jax_func, [x],
-        expected=[
-            # r"f32\[12,8\].*sharding={replicated}",  # x  - OMITTED
-            r"f32\[24,8\].*sharding={devices=\[2,1\]0,1",  # y
-            # r"f32\[6,8\].*sharding={replicated}",  # output  - OMITTED
-        ],
-        expected_opt=[
-            # r"f32\[12,8\].*sharding={replicated}",  # x  - OMITTED
-            # TODO: why can't we see "sharding={devices=\[2,1\]0,1"
-            r"f32\[12,8\]",  # y
-            # TODO: why can't we see "sharding={replicated}" ?
-            r"f32\[6,8\]",  # output
-        ],
         num_partitions=2)
 
 
@@ -400,6 +314,51 @@ class PjitTest(tf_test_util.JaxToTfTestCase):
     with global_mesh:
       self.ConvertAndCompare(func_jax, x,
                              limitations=[skip_eager_for_partitioning])
+
+  def test_xmap_basic(self):
+    local_devices = list(jax.local_devices())
+    if len(local_devices) < 2:
+      raise unittest.SkipTest("Test requires at least 4 local devices")
+    def f(a, b):
+      return a * 2, b * 4
+    devices = np.array(local_devices[:1]).reshape((1, 2))
+    with Mesh(devices, ('x', 'y')):
+      fm = xmap(f,
+                in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
+                out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
+                axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
+      ashape = (16, 8, 5)
+      a = jnp.arange(np.prod(ashape)).reshape(ashape)
+      bshape = (2, 7)
+      b = jnp.arange(np.prod(bshape)).reshape(bshape)
+
+      res_jax = fm(a, b)
+      self.assertAllClose(res_jax, (a * 2, b * 4))
+
+      # xmap works only with native lowering
+      res_tf = tf.function(
+          jax2tf.convert(fm, experimental_native_lowering=True),
+          autograph=False, jit_compile=True)(a, b)
+      self.assertAllClose(res_tf, res_jax)
+
+  @jtu.with_mesh([('x', 1), ('y', 2)])
+  def test_xmap_collective_reduce(self):
+    fm = xmap(lambda a, b: (lax.psum(a * 2, 'a'), b * 4),
+              in_axes=(['a', 'b', ...], {0: 'c'}),
+              out_axes=(['b', ...], {0: 'c'}),
+              axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
+    ashape = (16, 8, 5)
+    a = jnp.arange(np.prod(ashape)).reshape(ashape)
+    bshape = (2, 7)
+    b = jnp.arange(np.prod(bshape)).reshape(bshape)
+    res_jax = fm(a, b)
+    self.assertAllClose(res_jax, ((a * 2).sum(0), b * 4))
+
+    res_tf = tf.function(
+          jax2tf.convert(fm, experimental_native_lowering=True),
+          autograph=False, jit_compile=True)(a, b)
+    self.assertAllClose(res_tf, res_jax)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
