@@ -21,6 +21,7 @@ from typing import List, Optional
 
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src import path as pathlib
+from jax._src.lib import xla_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax.interpreters import xla
 
@@ -169,7 +170,14 @@ def _hash_executable_build_options(hash_obj, executable_obj):
     if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
       hash_obj.update(
           executable_obj.auto_spmd_partitioning_mesh_ids.serialize())
-  _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
+  if xla_extension_version >= 123:
+    _hash_bool(
+        hash_obj, all(executable_obj.allow_spmd_sharding_propagation_to_output)
+    )
+  else:
+    _hash_bool(
+        hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output
+    )
 
 def _hash_debug_options(hash_obj, debug_obj):
   _hash_bool(hash_obj, debug_obj.xla_cpu_enable_fast_math)
