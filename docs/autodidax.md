@@ -1575,7 +1575,8 @@ def xla_callable(hashable_jaxpr: IDHashable,
   xla_params = _xla_params(c, in_avals)
   outs = jaxpr_subcomp(c, jaxpr, xla_consts + xla_params)
   out = xops.Tuple(c, outs)
-  compiled = xb.get_backend(None).compile(c.build(out))
+  compiled = xb.get_backend(None).compile(
+    xc._xla.mlir.xla_computation_to_mlir_module(c.build(out)))
   return partial(execute_compiled, compiled, [v.aval for v in jaxpr.outs])
 
 def _xla_consts(c: xe.XlaBuilder, consts: List[Any]) -> List[xe.XlaOp]:
