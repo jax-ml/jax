@@ -751,7 +751,7 @@ parallel_functions_output_gda = config.define_bool_state(
     help='If True, pjit will output GDAs.')
 
 def _update_jax_array_global(val):
-  if not val:
+  if val is not None and not val:
     warnings.warn(
         'DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been '
         'deprecated. Please use `jax.Array`. See '
@@ -760,7 +760,7 @@ def _update_jax_array_global(val):
   lib.jax_jit.global_state().jax_array = val
 
 def _update_jax_array_thread_local(val):
-  if not val:
+  if val is not None and not val:
     warnings.warn(
         'DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been '
         'deprecated. Please use `jax.Array`. See '

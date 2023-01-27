@@ -13,9 +13,11 @@
 # limitations under the License.
 
 from absl.testing import absltest
+import unittest
 
 import numpy as np
 
+import jax
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax import core, jit, lax, make_jaxpr
@@ -271,8 +273,7 @@ dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
-# TODO(https://github.com/google/jax/issues/12104): Enable this
-@jtu.with_config(jax_array=False)
+@unittest.skipIf(jax.config.jax_array, "Test does not work with jax.Array")
 class CustomObjectTest(jtu.JaxTestCase):
 
   @jtu.sample_product(

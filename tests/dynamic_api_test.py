@@ -36,10 +36,8 @@ FLAGS = config.FLAGS
 
 python_version = (sys.version_info[0], sys.version_info[1])
 
-
-# TODO(https://github.com/google/jax/issues/12291): Enable jax.Array
-@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
-                 jax_array=False)
+@unittest.skipIf(jax.config.jax_array, "Test does not work with jax.Array")
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeTest(jtu.JaxTestCase):
   def test_basic_staging(self):
     def f(x, _):
@@ -1438,9 +1436,8 @@ class DynamicShapeTest(jtu.JaxTestCase):
     y = jnp.arange(3.0) + 1
     jax.make_jaxpr(f)(x, y)  # doesn't crash
 
-# TODO(https://github.com/google/jax/issues/12291): Enable jax.Array
-@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow",
-                 jax_array=False)
+@unittest.skipIf(jax.config.jax_array, "Test does not work with jax.Array")
+@jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class PileTest(jtu.JaxTestCase):
 
   def test_internal_pile(self):
