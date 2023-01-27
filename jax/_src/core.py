@@ -1293,6 +1293,22 @@ def concrete_or_error(force: Any, val: Any, context=""):
     return force(val)
 
 
+### Opaque dtypes
+#
+# Opaque dtypes are JAX-specific dtypes that allow us to represent logical
+# arrays of element types that do not have an obvious direct correspondence
+# to ("physical") arrays of basic types in a compiler. In particular, their
+# element types differ from those of XLA and NumPy (e.g. int32). These dtypes
+# are only known to JAX. Their implementation is determined by:
+# a) an object representing the opaque dtype, accessible via the `dtype`
+#    attribute on corresponding JAX arrays and, internally, on avals such
+#    as ShapedArrays that correspond to such JAX arrays;
+# b) a set of rules, available via a private attribute on the opaque dtype
+#    object in (a).
+# The rules in (b) tell JAX internals how to ground out the element
+# type for interaction with the compiler and runtime, e.g. when lowering
+# to the compiler's language.
+
 # TODO(frostig,mattjj): achieve this w/ a protocol instead of registry?
 opaque_dtypes: Set[OpaqueDType] = set()
 

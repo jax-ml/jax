@@ -4846,9 +4846,9 @@ mlir.register_lowering(empty_p, _empty_lower)
 
 class BIntRules:
   @staticmethod
-  def aval_to_ir_types(aval):
+  def physical_avals(aval) -> Sequence[core.AbstractValue]:
     dtype = dtypes._scalar_type_to_dtype(int)
-    return (ir.RankedTensorType.get(aval.shape, mlir.dtype_to_ir_type(dtype)),)
+    return [core.ShapedArray(aval.shape, dtype)]
 
   @staticmethod
   def result_handler(sticky_device, aval):
