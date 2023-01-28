@@ -22,8 +22,10 @@ import numpy as np
 
 from jax import core
 from jax import lax
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
 from jax._src.util import safe_map, safe_zip, split_list
 
 from jax._src.state.types import ShapedArrayRef
@@ -225,7 +227,7 @@ def _dynamic_update_index(x, idx, val, indexed_dims):
 
 @register_discharge_rule(core.closed_call_p)
 def _closed_call_discharge_rule(
-    in_avals: Sequence[core.AbstractValue], _,*args,
+    in_avals: Sequence[core.AbstractValue], _, *args,
     call_jaxpr: core.ClosedJaxpr):
   jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   num_outs = len(jaxpr.outvars)
@@ -235,6 +237,64 @@ def _closed_call_discharge_rule(
   fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
   out_and_ref_vals = core.closed_call_p.bind(fun, *args,
                                              call_jaxpr=discharged_closed_jaxpr)
+  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+  ref_vals_iter = iter(ref_vals)
+  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, ShapedArrayRef)
+                     else None for aval in in_avals)
+  assert next(ref_vals_iter, None) is None
+  return new_invals, out_vals
+
+@register_discharge_rule(xla.xla_call_p)
+def _xla_call_discharge_rule(
+    in_avals: Sequence[core.AbstractValue], _, *args,
+    call_jaxpr: core.Jaxpr, **params):
+  num_outs = len(call_jaxpr.outvars)
+  discharged_jaxpr, discharged_consts = discharge_state(call_jaxpr, ())
+  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr,
+                                             discharged_consts)
+  fun = lu.wrap_init(core.jaxpr_as_fun(discharged_closed_jaxpr))
+  out_and_ref_vals = xla.xla_call_p.bind(fun, *args, **params)
+  out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
+  ref_vals_iter = iter(ref_vals)
+  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, ShapedArrayRef)
+                     else None for aval in in_avals)
+  assert next(ref_vals_iter, None) is None
+  return new_invals, out_vals
+
+@register_discharge_rule(custom_derivatives.custom_jvp_call_p)  # type: ignore
+def _custom_jvp_call_discharge_rule(
+    in_avals: Sequence[core.AbstractValue], _, *args,
+    call_jaxpr: core.ClosedJaxpr, jvp_jaxpr_thunk, num_consts):
+  consts: Sequence[Any]
+  jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
+  assert len(consts) == 0
+  jaxpr = pe.convert_envvars_to_constvars(jaxpr, num_consts)
+  consts = args[:num_consts]
+  discharged_jaxpr, discharged_consts = discharge_state(jaxpr, consts)
+  discharged_jaxpr = pe.convert_constvars_jaxpr(discharged_jaxpr)
+  discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, ())
+  num_outs = len(jaxpr.outvars)
+
+  def discharged_jvp_jaxpr_thunk():
+    jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
+    discharged_jvp_jaxpr, discharged_jvp_consts = discharge_state(jvp_jaxpr,
+                                                                  jvp_consts)
+    num_refs = sum(type(x.aval) is ShapedArrayRef for x in jvp_jaxpr.invars)
+    outs = discharged_jvp_jaxpr.outvars[:-num_refs]
+    out_refs = discharged_jvp_jaxpr.outvars[-num_refs:]
+    primals, tangents = split_list(outs, [len(outs) // 2])
+    primal_refs, tangent_refs = split_list(out_refs, [len(out_refs) // 2])
+    new_outvars = primals + primal_refs + tangents + tangent_refs
+    discharged_jvp_jaxpr = discharged_jvp_jaxpr.replace(outvars=new_outvars)
+    return discharged_jvp_jaxpr, discharged_jvp_consts
+
+  params = dict(call_jaxpr=discharged_closed_jaxpr,
+                jvp_jaxpr_thunk=discharged_jvp_jaxpr_thunk,
+                num_consts=len(discharged_consts))
+
+  subfuns, bind_params = custom_derivatives.custom_jvp_call_p.get_bind_params(params)
+  out_and_ref_vals = custom_derivatives.custom_jvp_call_p.bind(
+    *subfuns, *discharged_consts, *args[num_consts:], **bind_params)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, ShapedArrayRef)
