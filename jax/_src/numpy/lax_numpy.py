@@ -50,6 +50,7 @@ from jax.tree_util import tree_leaves, tree_flatten, tree_map
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
+from jax._src.core import hashable_shape
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
@@ -1704,9 +1705,13 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int],
         mode: Union[str, Callable[..., Any]] = "constant", **kwargs) -> Array:
   _check_arraylike("pad", array)
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
-  if pad_width and not _all(core.is_dim(p[0]) and core.is_dim(p[1])
-                            for p in pad_width):
-    raise TypeError('`pad_width` must be of integral type.')
+  if pad_width:
+    def canonical(p):
+      if not (core.is_dim(p[0]) and core.is_dim(p[1])):
+        raise TypeError('`pad_width` must be of integral type.')
+      else:
+        return hashable_shape(p)
+    pad_width = tuple(canonical(p) for p in pad_width)
 
   if callable(mode):
     return _pad_func(asarray(array), pad_width, mode, **kwargs)

@@ -334,7 +334,7 @@ class BatchTrace(Trace):
     if self.axis_name is core.no_axis_name:
       # If axis name is `no_axis_name` we can't find it via `core.axis_name` so
       # we reconstruct it from the information we have available
-      sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
+      sizes = (core.hashable_dim(x.shape[d]) if type(d) is int else len(d.segment_lengths)
                for x, d in zip(vals, dims) if d is not not_mapped)
       axis_size, = core.dedup_referents(sizes)
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
@@ -366,7 +366,7 @@ class BatchTrace(Trace):
     vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
     if all(bdim is not_mapped for bdim in dims):
       return call_primitive.bind(f, *vals, **params)
-    sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
+    sizes = (core.hashable_dim(x.shape[d]) if type(d) is int else len(d.segment_lengths)
              for x, d in zip(vals, dims) if d is not not_mapped)
     axis_size, = core.dedup_referents(sizes)
     segment_lens, dims = unpack_concat_axes(dims)

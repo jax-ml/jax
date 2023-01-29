@@ -51,6 +51,7 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import DimSize, OpaqueDType, Shape
 from jax._src import typing
+from jax._src import tree_util
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
@@ -231,6 +232,7 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
   if config.jax_enable_checks:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
+  params = tree_util.tree_map(hashable_dim, params)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
 @total_ordering
@@ -686,6 +688,12 @@ class Tracer(typing.Array):
         return attr.fget(self)
       elif t is aval_method:
         return types.MethodType(attr.fun, self)
+      elif name == "shape":
+        def external_dim(d: DimSize) -> DimSize:
+          # Get a variant of the dimension that is appropriate for use in the user program
+          handler = _get_special_dim_handler(d)
+          return d if handler is None else handler.external(d)
+        return tuple(external_dim(d) for d in attr)
       else:
         return attr
 
@@ -1728,6 +1736,14 @@ class DimensionHandler:
     """The dimension is a constant."""
     return True
 
+  def hashable(self, d: DimSize) -> bool:
+    """Return a hashable variant of `d`."""
+    return d
+
+  def external(self, d: DimSize) -> bool:
+    """Given a hashable variant, return the external one."""
+    return d
+
   def symbolic_equal(self, d1: DimSize, d2: DimSize) -> bool:
     """True iff the dimension sizes are equal in all contexts; False otherwise.
     Unlike `d1 == d2` this never raises InconclusiveDimensionOperation.
@@ -1838,6 +1854,14 @@ def is_constant_dim(d: DimSize) -> bool:
 def is_dim(v: Any) -> bool:
   return is_special_dim_size(v) or is_constant_dim(v)
 
+def hashable_dim(d: DimSize) -> DimSize:
+  # Get a hashable variant of the dimension
+  handler = _get_special_dim_handler(d)
+  return d if handler is None else handler.hashable(d)
+
+def hashable_shape(s: Shape) -> Shape:
+  return tuple(hashable_dim(d) for d in s)
+
 def is_constant_shape(s: Shape) -> bool:
   # Whether the shape is a static constant.
   return all(is_constant_dim(d) for d in s)
@@ -1914,7 +1938,7 @@ def dimension_as_value(d: DimSize):
      Has the same abstract value as Python constants.
      """
   if isinstance(d, (int, Tracer, np.int32, np.int64)): return d
-  # For shape_poly._DimPolynomial
+  # For shape_poly._DimExpr
   if hasattr(d, "dimension_as_value"): return d.dimension_as_value()
   return operator.index(d)
 
@@ -1924,10 +1948,12 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   elif (config.jax_dynamic_shapes and isinstance(dim, DArray) and
         type(dim._aval.dtype) is bint and not dim._aval.shape):
     return dim
-  elif is_special_dim_size(dim):
-    return dim
   else:
-    return operator.index(dim)
+    handler = _get_special_dim_handler(dim)
+    if handler is not None:
+      return handler.hashable(dim)
+    else:
+      return operator.index(dim)
 
 def canonicalize_shape(shape: Shape, context: str="") -> Shape:
   """Canonicalizes and checks for errors in a user-provided shape value.

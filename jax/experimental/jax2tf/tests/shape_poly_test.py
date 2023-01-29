@@ -28,6 +28,7 @@ import jax
 from jax import core
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import shape_poly
+from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
 from jax import random
@@ -128,14 +129,15 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
         "Symbolic dimension comparison 'a' == 'b' is inconclusive"):
       a != b
 
-    self.assertLen({a, a}, 1)
-    self.assertLen({a, b}, 2)
-    self.assertIn(a, {a, b})
-    self.assertIn(b, {a, b})
     self.assertIn(a, [a, b])
     with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
                                 "Symbolic dimension comparison .* is inconclusive"):
       b in [a, b]
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Hashing of symbolic dimension 'a' is not supported"):
+      {a, a}
 
   def test_get_vars(self):
     a, b = shape_poly._parse_spec("a, b", (2, 3))
@@ -270,7 +272,7 @@ class DimExprTest(tf_test_util.JaxToTfTestCase):
 
     self.assertTrue(a, a + (a + b) // b - (b + a) // b)
 
-    # Test the normaliation (a // b) * b == a - a % b
+    # Test the normalization (a // b) * b == a - a % b
     self.assertTrue((a // 2) * 2 == a - a % 2)
     self.assertTrue((a // 2) + (a // 2) == a - a % 2)
     self.assertTrue((a // 2) * 6 == 3 * a - 3 * (a % 2))
@@ -1331,6 +1333,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
                      polymorphic_shapes=["(a, b)"])(np.ones((4, 4)))
 
+    with self.assertRaisesRegex(ValueError,
+                                "Hashing of symbolic dimension 'a' is not supported"):
+      def works_with_square_arrays(x):
+        assert len({d for d in x.shape}) == 1  # Fails because dimensions are not hashable
+        return x
+      jax2tf.convert(works_with_square_arrays,
+                     polymorphic_shapes=["(a, a)"])(np.ones((3, 3)))
+
     # Unsoundness: not checking that the shape is 0
     def f_jax(x):
       return 0 if x.shape[0] == 0 else 1
@@ -1407,6 +1417,31 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     res_vmap_tf = jax2tf.convert(jax.vmap(f, in_axes=1),
                                  polymorphic_shapes=["b1, b2, ..."])(xv)
     self.assertAllClose(res_iter, res_vmap_tf.numpy())
+
+  def test_with_hash_collision_vmap(self):
+    # Batching caches based on Jaxpr, and Jaxpr include _DimExpr. If we have
+    # a collision for the hashing of a _DimExpr, then Python will call the
+    # equality, which will raise InconclusiveDimensionOperation.
+
+    def f_jax(x):
+      return jnp.reshape(x, (2, -1,))
+
+    try:
+      # Override the hashing to create collisions
+      orig_hash = getattr(shape_poly._DimExprHashable, "__hash__")
+
+      def collision_hash(obj):
+        return hash(5)
+      setattr(shape_poly._DimExprHashable, "__hash__", collision_hash)
+
+      xs = np.ones((3, 5, 6), dtype=np.float32)
+      f_toconvert = jax.vmap(pjit.pjit(f_jax))
+      res_1 = jax2tf.convert(f_toconvert)(xs)
+      res_2 = jax2tf.convert(f_toconvert,
+                             polymorphic_shapes="b1, b2, ...")(xs)
+      self.assertAllClose(res_1, res_2)
+    finally:
+      setattr(shape_poly._DimExprHashable, "__hash__", orig_hash)
 
   @parameterized.named_parameters([
       dict(testcase_name=f"_{op_name}",
@@ -1529,7 +1564,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                        arg_descriptors=[RandArg((3,), _f32)],
                        poly_axes=[0])
 
-  @unittest.skip('Failing at HEAD. Reenable after b/264913007 is fixed')
   def test_vmap_while(self):
     def cond_func(x):  # x: f32[3]
       return jnp.sum(x) >= 0.

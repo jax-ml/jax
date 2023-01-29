@@ -575,6 +575,17 @@ as `False` and produce a lowered function that returns `1` just because the dime
 are not identical: there are some concrete input shapes for which the function
 should return `0`.
 
+Symbolic dimensions are not hashable, since the equality comparison is partial.
+For example, constructing sets of dimension values will fail:
+
+```python
+def works_with_square_arrays(x):
+  assert len({d for d in x.shape}) == 1  # Fails because dimensions are not hashable
+  return x
+jax2tf.convert(works_with_square_arrays,
+               polymorphic_shapes=["(a, a)"])(np.ones((3, 3)))
+```
+
 ### Division of symbolic dimensions is partially supported
 
 JAX will attempt to simplify division and modulo operations,

@@ -1644,7 +1644,7 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
   def _get_axis_size(name: str, shape: Tuple[core.AxisSize, ...], axis: int
                      ) -> core.AxisSize:
     try:
-      return shape[axis]
+      return core.hashable_dim(shape[axis])
     except (IndexError, TypeError) as e:
       min_rank = axis + 1 if axis >= 0 else -axis
       # TODO(mattjj): better error message here

@@ -105,7 +105,7 @@ class _DimAtom:
       assert operation is not None
     self.var = var
     self.operation = operation
-    self.operands = operands
+    self.operands = tuple(_dim_handler_poly.hashable(o) for o in operands)
 
   @classmethod
   def from_var(cls, v: str) -> '_DimAtom':
@@ -435,10 +435,12 @@ class _DimExpr():
       return False
     raise InconclusiveDimensionOperation(
         f"Symbolic dimension comparison '{self}' >= '{other}' is inconclusive.\n"
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic0dimensions-is-partially-supported.")
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
 
   def __hash__(self):
-    return hash(tuple(sorted(self.monomials())))
+    raise ValueError(
+        f"Hashing of symbolic dimension '{self}' is not supported.\n"
+        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
 
   def __str__(self):
     def _one_monomial(mon, c):
@@ -652,9 +654,28 @@ class _DimExpr():
     # Used for implicit coercions of polynomials as JAX arrays
     return _dim_as_value(self)
 
+class _DimExprHashable(_DimExpr):
+  """Like a _DimExpr but with total __eq__ comparison and a __hash__.
+  """
+  def __init__(self, d: _DimExpr):
+    super().__init__(d._coeffs)
+    self.external = d
+
+  def __eq__(self, other) -> bool:  # type: ignore
+    try:
+      return super().__eq__(other)
+    except InconclusiveDimensionOperation:
+      return False
+
+  def __hash__(self):
+    return hash(tuple(sorted(self.external.monomials())))
+
 core.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
+core.pytype_aval_mappings[_DimExprHashable] = _DimExpr.get_aval
 xla.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
+xla.pytype_aval_mappings[_DimExprHashable] = _DimExpr.get_aval
 dtypes._weak_types.append(_DimExpr)
+dtypes._weak_types.append(_DimExprHashable)
 
 def _convertible_to_int(p: DimSize) -> bool:
   try:
@@ -685,6 +706,16 @@ class DimensionHandlerPoly(core.DimensionHandler):
   def is_constant(self, d: DimSize) -> bool:
     assert isinstance(d, _DimExpr)
     return False
+
+  def hashable(self, d: DimSize):
+    if type(d) is _DimExprHashable: return d
+    assert type(d) is _DimExpr
+    return _DimExprHashable(d)
+
+  def external(self, d: DimSize):
+    if type(d) is _DimExpr: return d
+    assert type(d) is _DimExprHashable
+    return d.external
 
   def symbolic_equal(self, d1: core.DimSize, d2: core.DimSize) -> bool:
     try:
@@ -725,8 +756,11 @@ class DimensionHandlerPoly(core.DimensionHandler):
     """Turns a dimension size into a Jax value that we can compute with."""
     return _dim_as_value(d)
 
-core._SPECIAL_DIMENSION_HANDLERS[_DimExpr] = DimensionHandlerPoly()
+_dim_handler_poly = DimensionHandlerPoly()
+core._SPECIAL_DIMENSION_HANDLERS[_DimExpr] = _dim_handler_poly
+core._SPECIAL_DIMENSION_HANDLERS[_DimExprHashable] = _dim_handler_poly
 dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
+dtypes.python_scalar_dtypes[_DimExprHashable] = dtypes.python_scalar_dtypes[int]
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimExpr shapes.
@@ -1007,7 +1041,7 @@ def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
     def eval_dim(d: DimSize):
       return d.evaluate(shape_env_jax)  # type: ignore[union-attr]
 
-    return tuple(eval_dim(d) if type(d) is _DimExpr else np.array(d, dtype=dim_as_value_dtype())  # type: ignore
+    return tuple(eval_dim(d) if isinstance(d, _DimExpr) else np.array(d, dtype=dim_as_value_dtype())  # type: ignore
                  for d in shape)
   return eval_shape
 
