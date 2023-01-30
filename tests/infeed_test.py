@@ -37,9 +37,9 @@ class InfeedTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       (y,), token = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 4), jnp.float32),))
+          token, shape=(jax.core.ShapedArray((3, 4), jnp.float32),))
       (z,), _ = lax.infeed(
-          token, shape=(jax.ShapedArray((3, 1, 1), jnp.float32),))
+          token, shape=(jax.core.ShapedArray((3, 1, 1), jnp.float32),))
       return x + y + z
 
     x = np.float32(1.5)
@@ -55,8 +55,8 @@ class InfeedTest(jtu.JaxTestCase):
     x = np.float32(1.5)
     y = np.reshape(np.arange(12, dtype=np.int16), (3, 4))
     to_infeed = dict(a=x, b=y)
-    to_infeed_shape = dict(a=jax.ShapedArray((), dtype=np.float32),
-                           b=jax.ShapedArray((3, 4), dtype=np.int16))
+    to_infeed_shape = dict(a=jax.core.ShapedArray((), dtype=np.float32),
+                           b=jax.core.ShapedArray((3, 4), dtype=np.int16))
     @jax.jit
     def f(x):
       token = lax.create_token(x)
@@ -77,7 +77,7 @@ class InfeedTest(jtu.JaxTestCase):
     def f(x):
       token = lax.create_token(x)
       y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), jnp.float32))
+          token, shape=jax.core.ShapedArray((3, 4), jnp.float32))
       token = lax.outfeed(token, y + np.float32(1))
       return x - 1
 
@@ -97,7 +97,7 @@ class InfeedTest(jtu.JaxTestCase):
 
     def doubler(_, token):
       y, token = lax.infeed(
-          token, shape=jax.ShapedArray((3, 4), jnp.float32))
+          token, shape=jax.core.ShapedArray((3, 4), jnp.float32))
       return lax.outfeed(token, y * np.float32(2))
 
     @jax.jit

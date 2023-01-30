@@ -111,7 +111,7 @@ from jax._src.api import (
   pure_callback as pure_callback,
   pxla,  # TODO(phawkins): update users to avoid this.
   remat as remat,
-  ShapedArray as ShapedArray,
+  ShapedArray,  # TODO(jakevdp): update users to avoid this.
   ShapeDtypeStruct as ShapeDtypeStruct,
   value_and_grad as value_and_grad,
   vjp as vjp,
