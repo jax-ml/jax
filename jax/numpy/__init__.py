@@ -189,6 +189,7 @@ from jax._src.numpy.lax_numpy import (
     outer as outer,
     packbits as packbits,
     pad as pad,
+    partition as partition,
     percentile as percentile,
     pi as pi,
     piecewise as piecewise,
