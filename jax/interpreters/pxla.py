@@ -1105,7 +1105,7 @@ class MapTrace(core.Trace):
     vals, shard_axes = unzip2([(t.val, t.shard_axes) for t in tracers])
     names = tuple(f.name for f in core.thread_local_state.trace_state.axis_env
                   if f.main_trace is self.main)
-    all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)
+    all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
     f = HashableFunction(lambda *args: primitive.bind(*args, **params),
                          (primitive, tuple(params.items())))
     f_mapped, out_shard_axes = _multi_pmap(f, info, names, all_axes)

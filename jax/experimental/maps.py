@@ -1811,7 +1811,7 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
           f"Got {arr_flavor} spec: {in_sharding.spec} and "
           f"xmap spec: {xmap_sharding.spec}")
 
-  mesh_in_axes = EvaluationPlan.from_axis_resources(
+  mesh_in_axes = EvaluationPlan.from_axis_resources(  # pytype: disable=wrong-arg-types  # always-use-return-annotations
       axis_resources, resource_env, global_axis_sizes,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
