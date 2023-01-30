@@ -151,25 +151,6 @@ def _validate_bcoo_indices(indices: Buffer, shape: Sequence[int]) -> BCOOPropert
   return BCOOProperties(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense, nse=nse)
 
 
-def _bcoo_to_bcsr(indices: Array, *, shape: Sequence[int],
-                  index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array]:
-  """Given BCOO (indices), return BCSR (indices, indptr)."""
-  n_batch, n_sparse, _, _ = _validate_bcoo_indices(indices, shape)
-
-  if n_sparse != 2:
-    raise ValueError("Must have 2 sparse dimensions to be converted to BCSR.")
-
-  n_rows = shape[n_batch]
-
-  @partial(nfold_vmap, N=n_batch, broadcasted=False)
-  def get_ptr(i):
-    indptr = jnp.zeros(n_rows + 1, index_dtype)
-    return indptr.at[1:].set(jnp.cumsum(
-        jnp.bincount(i, length=n_rows).astype(index_dtype)))
-
-  return indices[..., 1], get_ptr(indices[..., 0])
-
-
 #----------------------------------------------------------------------
 # bcoo_todense
 
