@@ -1298,6 +1298,8 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
   del copy
   _check_arraylike("nan_to_num", x)
   dtype = _dtype(x)
+  if not issubdtype(dtype, inexact):
+    return asarray(x)
   if issubdtype(dtype, complexfloating):
     return lax.complex(
       nan_to_num(lax.real(x), nan=nan, posinf=posinf, neginf=neginf),

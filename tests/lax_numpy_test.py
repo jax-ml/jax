@@ -3814,7 +3814,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=array_shapes,
-    dtype=inexact_dtypes,
+    dtype=all_dtypes,
   )
   def testNanToNum(self, shape, dtype):
     rng = jtu.rand_some_inf_and_nan(self.rng())
