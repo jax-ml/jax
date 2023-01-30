@@ -483,7 +483,7 @@ class PmapSharding(XLACompatibleSharding):
     """
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
-    aval = jax.ShapedArray(shape, np.int32)
+    aval = jax.core.ShapedArray(shape, np.int32)
     sharding_spec = pxla._create_pmap_sharding_spec(aval, sharded_dim)
 
     num_ways_sharded = None

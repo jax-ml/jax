@@ -626,7 +626,7 @@ def bench_pjit_check_aval_sharding(state):
   if mesh is None:
     return
   s = sharding.NamedSharding(mesh, pxla.PartitionSpec('x', 'y'))
-  aval = jax.ShapedArray((8, 2), np.int32)
+  aval = jax.core.ShapedArray((8, 2), np.int32)
 
   while state:
     pjit_lib.pjit_check_aval_sharding([s] * 100, [aval] * 100, 'benchmark', False)

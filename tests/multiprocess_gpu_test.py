@@ -538,7 +538,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       f = pjit.pjit(lambda x, y: (x, y),
                     in_axis_resources=experimental.PartitionSpec("x", "y"),
                     out_axis_resources=experimental.PartitionSpec("x", "y"))
-      inp_aval = jax.ShapedArray((8, 2), jnp.int32)
+      inp_aval = jax.core.ShapedArray((8, 2), jnp.int32)
       # `ShapedArray` is considered global when lowered and compiled.
       # Hence it can bypass the contiguous mesh restriction.
       compiled = f.lower(inp_aval, gda1).compile()

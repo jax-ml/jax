@@ -110,7 +110,7 @@ def _handle_array_process_allgather(inp, tiled):
     if host_np_arr.ndim == 0 or not tiled:
       host_np_arr = np.expand_dims(host_np_arr, axis=0)
 
-    aval = jax.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
+    aval = jax.core.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
     global_aval = global_mesh._local_to_global(
         pxla._get_array_mapping(pspec), aval)
 
@@ -322,7 +322,7 @@ def host_local_array_to_global_array(local_inputs: Any,
       ))
 
     global_aval = _local_to_global_aval(
-        jax.ShapedArray(arr.shape, arrays[0].dtype), global_mesh, pspec)
+        jax.core.ShapedArray(arr.shape, arrays[0].dtype), global_mesh, pspec)
 
     return array.ArrayImpl(
         global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
