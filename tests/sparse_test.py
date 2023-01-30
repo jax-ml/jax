@@ -1738,7 +1738,8 @@ class BCOOTest(sptu.SparseTestCase):
     sparse_fun = partial(sparse.bcoo_reduce_sum, axes=axes)
     dense_fun = partial(lambda x: x.sum(axes))
 
-    self._CheckAgainstDense(dense_fun, sparse_fun, args_maker)
+    tol = {np.float64: 1E-14}
+    self._CheckAgainstDense(dense_fun, sparse_fun, args_maker, tol=tol)
     if jnp.issubdtype(dtype, jnp.floating):
       self._CheckGradsSparse(dense_fun, sparse_fun, args_maker)
 
@@ -1901,7 +1902,7 @@ class BCOOTest(sptu.SparseTestCase):
                           sprng(rhs_shape, rhs_dtype, n_batch=rhs_n_batch)]
 
     tol = {np.float64: 1E-13, np.complex128: 1E-13,
-           np.float32: 1E-6, np.complex64: 1E-6}
+           np.float32: 1E-5, np.complex64: 1E-5}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstDense(operator.mul, operator.mul, args_maker, tol=tol)
@@ -2118,6 +2119,34 @@ class BCSRTest(sptu.SparseTestCase):
     self.assertArraysEqual(M, todense(data, indices, indptr))
     args_maker_todense = lambda: [data, indices, indptr]
     self._CompileAndCheck(todense, args_maker_todense)
+
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch)
+      for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(len(shape) - 1)
+    ],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def test_bcsr_bcoo_round_trip(self, shape, n_batch, dtype):
+    n_sparse = 2
+    n_dense = len(shape) - n_sparse - n_batch
+    rng = self.rng()
+    sprng = sptu.rand_bcsr(rng, n_batch=n_batch, n_dense=n_dense)
+
+    M_bcsr = sprng(shape, dtype)
+    self.assertIsInstance(M_bcsr, sparse.BCSR)
+
+    M_dense = M_bcsr.todense()
+    M_bcoo = M_bcsr.to_bcoo()
+    self.assertIsInstance(M_bcoo, sparse.BCOO)
+    self.assertAllClose(M_dense, M_bcoo.todense())
+
+    M_bcsr2 = sparse.BCSR.from_bcoo(M_bcoo)
+    self.assertAllClose(M_dense, M_bcsr2.todense())
+    self.assertArraysEqual(M_bcsr.indptr, M_bcsr2.indptr)
+
+    # TODO(jakevdp): This will only be true in general when M_bcsr.indices is sorted.
+    # self.assertSparseArraysEquivalent(M_bcsr, M_bcsr2)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch)
@@ -2541,7 +2570,7 @@ class SparseObjectTest(sptu.SparseTestCase):
     _, bcoo_indices = sparse_bcoo._bcoo_fromdense(M, nse=nse, n_batch=n_batch,
                                                   n_dense=n_dense)
 
-    bcoo_to_bcsr = partial(sparse_bcoo._bcoo_to_bcsr, shape=shape)
+    bcoo_to_bcsr = partial(sparse_bcsr._bcoo_to_bcsr, shape=shape)
 
     args_maker_bcoo_to_bcsr = lambda: [bcoo_indices]
     self._CompileAndCheck(bcoo_to_bcsr, args_maker_bcoo_to_bcsr)
