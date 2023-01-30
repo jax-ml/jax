@@ -3514,6 +3514,26 @@ def msort(a):
   return sort(a, axis=0)
 
 
+@_wraps(np.partition, lax_description="""
+The jax version requires the ``kth`` argument to be a static integer rather than
+a general array. This is implemented via two calls to :func:`jax.lax.top_k`.
+""")
+@partial(jit, static_argnames=['kth', 'axis'])
+def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
+  _check_arraylike("partition", a)
+  arr = asarray(a)
+  if issubdtype(arr.dtype, np.complexfloating):
+    raise NotImplementedError("jnp.partition for complex dtype is not implemented.")
+  axis = _canonicalize_axis(axis, arr.ndim)
+  kth = _canonicalize_axis(kth, arr.shape[axis])
+
+  arr = swapaxes(arr, axis, -1)
+  bottom = -lax.top_k(-arr, kth + 1)[0]
+  top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
+  out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
+  return swapaxes(out, -1, axis)
+
+
 @partial(jit, static_argnums=(2,))
 def _roll(a, shift, axis):
   a_shape = shape(a)

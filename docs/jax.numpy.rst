@@ -300,6 +300,7 @@ namespace; they are listed below.
     outer
     packbits
     pad
+    partition
     percentile
     piecewise
     place

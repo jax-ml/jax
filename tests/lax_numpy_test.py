@@ -3604,6 +3604,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CompileAndCheck(jnp.msort, args_maker)
 
   @jtu.sample_product(
+    [{'shape': shape, 'axis': axis, 'kth': kth}
+     for shape in nonzerodim_shapes
+     for axis in range(-len(shape), len(shape))
+     for kth in range(-shape[axis], shape[axis])],
+    dtype=default_dtypes,
+  )
+  def testPartition(self, shape, dtype, axis, kth):
+    rng = jtu.rand_default(self.rng())
+    arg = rng(shape, dtype)
+    jnp_output = jnp.partition(arg, axis=axis, kth=kth)
+    np_output = np.partition(arg, axis=axis, kth=kth)
+
+    # Assert that pivot point is equal
+    self.assertArraysEqual(
+      lax.index_in_dim(jnp_output, axis=axis, index=kth),
+      lax.index_in_dim(np_output, axis=axis, index=kth))
+    self.assertArraysEqual(
+      lax.sort(lax.slice_in_dim(jnp_output, start_index=0, limit_index=kth, axis=axis), dimension=axis),
+      lax.sort(lax.slice_in_dim(np_output, start_index=0, limit_index=kth, axis=axis), dimension=axis))
+    self.assertArraysEqual(
+      lax.sort(lax.slice_in_dim(jnp_output, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis),
+      lax.sort(lax.slice_in_dim(np_output, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis))
+
+  @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)
       for shifts, axis in [
         (3, None),
@@ -5198,6 +5222,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogramdd': ['normed'],
       'ones': ['order', 'like'],
       'ones_like': ['subok', 'order'],
+      'partition': ['kind', 'order'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'tri': ['like'],
