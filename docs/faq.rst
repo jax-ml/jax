@@ -398,7 +398,7 @@ speed of code using JAX:
 
 1. **JAX code is Just-In-Time (JIT) compiled.** Most code written in JAX can be
    written in such a way that it supports JIT compilation, which can make it run
-   *much faster* (see `To JIT or not to JIT`_). To get maximium performance from
+   *much faster* (see `To JIT or not to JIT`_). To get maximum performance from
    JAX, you should apply :func:`jax.jit` on your outer-most function calls.
 
    Keep in mind that the first time you run JAX code, it will be slower because
