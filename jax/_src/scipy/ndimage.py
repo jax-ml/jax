@@ -23,7 +23,7 @@ import scipy.ndimage
 
 from jax._src import api
 from jax._src import util
-from jax import lax
+from jax import lax, vmap
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax._src.typing import ArrayLike, Array
@@ -71,6 +71,79 @@ def _linear_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLik
   return [(index, lower_weight), (index + 1, upper_weight)]
 
 
+def _cubic_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
+  return [(coordinate, np.zeros(coordinate.shape))]
+
+
+def _build_matrix(n: int, diag: float=4) -> Array:
+    A = diag*jnp.eye(n)
+    for i in range(n-1):
+        A = A.at[i, i+1].set(1)
+        A = A.at[i+1, i].set(1)
+    return A
+
+def _construct_vector(data: Array, c2: Array, cnp2: Array) -> Array:
+    yvec = data[1 :-1]
+    first = data[1] - c2
+    last = data[-2] - cnp2
+    yvec = yvec.at[0].set(first)
+    yvec = yvec.at[-1].set(last)
+    return yvec
+
+def _solve_coefficients(data: Array, A_inv: Array, h=1) -> Array:
+    # Calcualte second and second last coefficients
+    c2   = 1/6 * data[0]
+    cnp2 = 1/6 * data[-1]
+
+    # Solve for internal cofficients
+    yvec = _construct_vector(data, c2, cnp2)
+    cs = jnp.dot(A_inv, yvec)
+
+    # Calculate first and last coefficients
+    c1   = 2*c2   - cs[0]
+    cnp3 = 2*cnp2 - cs[-1]
+    return jnp.concatenate([jnp.array([c1, c2]), cs, jnp.array([cnp2, cnp3])])
+
+def _spline_coefficients(data: Array) -> Array:
+    ndim = data.ndim
+    for i in range(ndim):
+        axis = ndim-i-1
+        A_inv = jnp.linalg.inv(_build_matrix(data.shape[axis]-2))
+        fn = lambda x: _solve_coefficients(x, A_inv)
+        for j in range(ndim-2, -1, -1):
+            ax = int(j >= axis)
+            fn = vmap(fn, ax, ax)
+        data = fn(data)
+    return data
+
+def _spline_basis(t: Array) -> Array:
+    at = jnp.abs(t)
+    fn1 = lambda t: (2 - t)**3
+    fn2 = lambda t: 4 - 6*t**2 + 3*t**3
+    return jnp.where(at >= 1, 
+           jnp.where(at <= 2, fn1(at), 0), 
+           jnp.where(at <= 1, fn2(at), 0))
+
+def _spline_value(coefficients: Array, coordinate: Array, indexes: Array) -> Array:
+    coefficient = jnp.squeeze(lax.dynamic_slice(coefficients, indexes, \
+        [1]*coefficients.ndim))
+    fn = vmap(lambda x, i: _spline_basis(x - i + 1), (0, 0))
+    return coefficient * fn(coordinate, indexes).prod()
+
+def _spline_point(coefficients: Array, coordinate: Array) -> Array:
+    index_fn = lambda x: (jnp.arange(0, 4) + jnp.floor(x)).astype(int)
+    index_vals = vmap(index_fn)(coordinate)
+    indexes = jnp.array(jnp.meshgrid(*index_vals, indexing='ij'))
+    fn = lambda index: _spline_value(coefficients, coordinate, index)
+    return vmap(fn)(indexes.reshape(coefficients.ndim, -1).T).sum()
+
+def _cubic_spline(input: Array, coordinates: Array) -> Array:
+    coefficients = _spline_coefficients(input)
+    points = coordinates.reshape(input.ndim, -1).T
+    fn = lambda coord: _spline_point(coefficients, coord)
+    return vmap(fn)(points).reshape(coordinates.shape[1:])
+
+
 @functools.partial(api.jit, static_argnums=(2, 3, 4))
 def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
                      order: int, mode: str, cval: ArrayLike) -> Array:
@@ -97,6 +170,8 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
     interp_fun = _nearest_indices_and_weights
   elif order == 1:
     interp_fun = _linear_indices_and_weights
+  elif order == 3:
+    interp_fun = _cubic_indices_and_weights
   else:
     raise NotImplementedError(
         'jax.scipy.ndimage.map_coordinates currently requires order<=1')
@@ -114,13 +189,24 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
   outputs = []
   for items in itertools.product(*valid_1d_interpolations):
     indices, validities, weights = util.unzip3(items)
-    if all(valid is True for valid in validities):
-      # fast path
-      contribution = input_arr[indices]
+    if order == 3:
+      if mode == 'reflect':
+        raise NotImplementedError(
+          "Cubic interpolation with mode='reflect' is not implemented.")
+      interpolated = _cubic_spline(input_arr, np.array(indices))
+      if all(valid is True for valid in validities):
+        outputs.append(interpolated)
+      else:
+        all_valid = functools.reduce(operator.and_, validities)
+        outputs.append(jnp.where(all_valid, interpolated, cval))
     else:
-      all_valid = functools.reduce(operator.and_, validities)
-      contribution = jnp.where(all_valid, input_arr[indices], cval)
-    outputs.append(_nonempty_prod(weights) * contribution)
+      if all(valid is True for valid in validities):
+        # fast path
+        contribution = input_arr[indices]
+      else:
+        all_valid = functools.reduce(operator.and_, validities)
+        contribution = jnp.where(all_valid, input_arr[indices], cval)
+      outputs.append(_nonempty_prod(weights) * contribution)
   result = _nonempty_sum(outputs)
   if jnp.issubdtype(input_arr.dtype, jnp.integer):
     result = _round_half_away_from_zero(result)
@@ -128,8 +214,10 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
 
 
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
-    Only nearest neighbor (``order=0``), linear interpolation (``order=1``) and
-    modes ``'constant'``, ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently supported.
+    Only nearest neighbor (``order=0``), linear interpolation (``order=1``), 
+    cubic spline interpolation (``order=3``) and modes ``'constant'``, 
+    ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently 
+    supported, however, cubic does not support the mode ``'reflect'``.
     Note that interpolation near boundaries differs from the scipy function,
     because we fixed an outstanding bug (https://github.com/scipy/scipy/issues/2640);
     this function interprets the ``mode`` argument as documented by SciPy, but
