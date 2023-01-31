@@ -195,11 +195,15 @@ def _reduce_window_logaddexp(
       window_dilation=tuple(window_dilation))
   return out
 
-def _select_and_scatter(operand: Array, select: Callable,
+def select_and_scatter(operand: Array, select: Callable,
                         window_dimensions: core.Shape,
                         window_strides: Sequence[int],
                         padding: Sequence[Tuple[int, int]], source: Array,
                         init_value: Array, scatter: Callable) -> Array:
+  """Wraps XLA's `SelectAndScatter
+  <https://www.tensorflow.org/xla/operation_semantics#selectandscatter>`_
+  operator.
+  """
   select_jaxpr, select_consts = lax._reduction_jaxpr(
     select, lax._abstractify(init_value))
   scatter_jaxpr, scatter_consts = lax._reduction_jaxpr(
@@ -619,7 +623,7 @@ def _select_and_scatter_add_impl(source, operand, *,
     pads = [(lo, hi, 0) for (lo, hi) in padding]
     operand = lax.pad(operand, identity(dtype), pads)
     padding = [(0, 0) for _ in padding]
-  out = _select_and_scatter(
+  out = select_and_scatter(
       operand, select, window_dimensions, window_strides, padding, source,
       lax._zero(operand), scatter)
   if expand_padding:
