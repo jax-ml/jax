@@ -1248,12 +1248,12 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # Test that 'ans' was properly replicated across devices.
     if config.jax_array:
-      bufs = ans._arrays
+      ans_devices = ans.sharding._device_assignment
     else:
-      bufs = ans.device_buffers
+      ans_devices = [b.device() for b in ans.device_buffers]
     # TODO(mattjj,sharadmv): fix physical layout with eager pmap, remove 'if'
     if not config.jax_disable_jit:
-      self.assertEqual([b.device() for b in bufs], devices)
+      self.assertEqual(ans_devices, devices)
 
   def testPmapConstantError(self):
     device_count = jax.device_count()
@@ -1288,25 +1288,25 @@ class PythonPmapTest(jtu.JaxTestCase):
     # Test that 'ans' was properly replicated across devices.
     expected_sharded = self.pmap(self.pmap(lambda x: x))(expected)
     if config.jax_array:
-      ans_db = ans._arrays
-      expected_db = expected_sharded._arrays
+      self.assertTrue(ans.sharding._device_assignment,
+                      expected_sharded.sharding._device_assignment)
     else:
       ans_db = ans.device_buffers
       expected_db = expected_sharded.device_buffers
-    self.assertEqual([b.device() for b in ans_db],
-                     [b.device() for b in expected_db])
+      self.assertEqual([b.device() for b in ans_db],
+                      [b.device() for b in expected_db])
 
     f = self.pmap(self.pmap(lambda x: (x, 3)))
     x_sharded, ans = f(x)
     if config.jax_array:
-      ans_db = ans._arrays
-      x_sharded_db = x_sharded._arrays
+      self.assertEqual(ans.sharding._device_assignment,
+                       x_sharded.sharding._device_assignment)
     else:
       ans_db = ans.device_buffers
       x_sharded_db = x_sharded.device_buffers
-    self.assertAllClose(ans, expected, check_dtypes=False)
-    self.assertEqual([b.device() for b in ans_db],
-                     [b.device() for b in x_sharded_db])
+      self.assertAllClose(ans, expected, check_dtypes=False)
+      self.assertEqual([b.device() for b in ans_db],
+                      [b.device() for b in x_sharded_db])
 
   @unittest.skip("Nested pmaps with devices not yet implemented")
   def testNestedPmapConstantDevices(self):
@@ -1327,13 +1327,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     # Test that 'ans' was properly replicated across devices.
     expected_sharded = self.pmap(self.pmap(lambda x: x), devices=devices)(expected)
     if config.jax_array:
-      ans_bufs = ans._arrays
-      expected_sharded_bufs = expected_sharded._arrays
+      self.assertTrue(ans.sharding == expected_sharded.sharding)
     else:
       ans_bufs = ans.device_buffers
       expected_sharded_bufs = expected_sharded.device_buffers
-    self.assertEqual([b.device() for b in ans_bufs],
-                     [b.device() for b in expected_sharded_bufs])
+      self.assertEqual([b.device() for b in ans_bufs],
+                      [b.device() for b in expected_sharded_bufs])
 
   def testNestedPmapConstantError(self):
     if config.jax_disable_jit:
@@ -2954,7 +2953,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     self.assertIsInstance(out, array.ArrayImpl)
     for s in out.addressable_shards:
-      self.assertArraysEqual(s.data._arrays[0], expected[s.index])
+      self.assertArraysEqual(s.data, expected[s.index])
     self.assertArraysEqual(out, expected)
 
   def test_pmap_double_input_array_output_array(self):
@@ -2973,8 +2972,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertIsInstance(out1, array.ArrayImpl)
     self.assertIsInstance(out2, array.ArrayImpl)
     for s1, s2 in safe_zip(out1.addressable_shards, out2.addressable_shards):
-      self.assertArraysEqual(s1.data._arrays[0], input_data[s1.index])
-      self.assertArraysEqual(s2.data._arrays[0], input_data[s2.index])
+      self.assertArraysEqual(s1.data, input_data[s1.index])
+      self.assertArraysEqual(s2.data, input_data[s2.index])
     self.assertArraysEqual(out1, input_data)
     self.assertArraysEqual(out2, input_data)
 
@@ -2999,8 +2998,8 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertEqual(out1.shape, (2,))
     self.assertEqual(out2.shape, (dc, dc, 2))
     for i, (s1, s2) in enumerate(safe_zip(out1.addressable_shards, out2.addressable_shards)):
-      self.assertArraysEqual(s1.data._arrays[0], input_data[i])
-      self.assertArraysEqual(s2.data._arrays[0], input_data)
+      self.assertArraysEqual(s1.data, input_data[i])
+      self.assertArraysEqual(s2.data, input_data)
 
   def test_pmap_array_sharding_mismatch(self):
     input_shape = (jax.device_count(), 2)

@@ -94,8 +94,8 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr, global_data = create_array(
         input_shape, sharding.NamedSharding(global_mesh, mesh_axes))
     for s in arr.addressable_shards:
-      self.assertLen(s.data._arrays, 1)
-      self.assertArraysEqual(s.data._arrays[0], global_data[s.index])
+      self.assertTrue(dispatch.is_single_device_sharding(s.data.sharding))
+      self.assertArraysEqual(s.data, global_data[s.index])
     self.assertArraysEqual(arr._value, global_data)
     self.assertArraysEqual(arr._npy_value, global_data)
 
@@ -418,7 +418,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.array([[1., 0., 0.], [0., 2., 3.]])
     y = jax.pmap(jnp.sin)(x)
     self.assertArraysEqual([a.device() for a in y],
-                           [a.device() for a in y._arrays])
+                           y.sharding._device_assignment)
 
     sin_x = iter(np.sin(x))
     for i, j in zip(iter(y), sin_x):

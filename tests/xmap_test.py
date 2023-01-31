@@ -1277,7 +1277,7 @@ class XMapArrayTest(XMapTestCase):
         self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
         self.assertDictEqual(out.sharding.mesh.shape, {'x': 4, 'y': 2})
         for s in out.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], input_data[s.index])
+          self.assertArraysEqual(s.data, input_data[s.index])
 
   def test_xmap_array_double_input(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -1301,14 +1301,14 @@ class XMapArrayTest(XMapTestCase):
         self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
         self.assertDictEqual(out1.sharding.mesh.shape, {'x': 4, 'y': 2})
         for s in out1.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+          self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
         self.assertIsInstance(out2, array.ArrayImpl)
         self.assertEqual(out2.shape, (8,))
         self.assertEqual(out2.addressable_shards[0].data.shape, (4,))
         self.assertDictEqual(out2.sharding.mesh.shape, {'x': 4, 'y': 2})
         for s in out2.addressable_shards:
-          self.assertArraysEqual(s.data._arrays[0], expected_matrix_mul[s.index])
+          self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
   def test_xmap_array_sharding_mismatch(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))

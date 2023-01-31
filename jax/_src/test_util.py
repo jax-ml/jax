@@ -982,8 +982,7 @@ class BufferDonationTestCase(JaxTestCase):
 
   def _assertDeleted(self, x, deleted):
     if hasattr(x, "_arrays"):
-      for buffer in x._arrays:
-        self.assertEqual(buffer.is_deleted(), deleted)
+      self.assertEqual(x.is_deleted(), deleted)
     elif hasattr(x, "device_buffer"):
       self.assertEqual(x.device_buffer.is_deleted(), deleted)
     else:

@@ -89,10 +89,7 @@ def _get_metadata(arr):
     dtype = 'bfloat16'
   else:
     dtype = np.dtype(arr.dtype).str
-  if isinstance(arr, array.ArrayImpl):
-    local_shape = arr._arrays[0].shape
-  else:
-    local_shape = arr.addressable_data(0).shape
+  local_shape = arr.addressable_data(0).shape
   return {
       'compressor': {
           'id': 'gzip'

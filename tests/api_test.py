@@ -721,7 +721,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     if config.jax_array:
       out = jitted_f(2)
       self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
-      self.assertIsInstance(out._arrays[0], device_array.Buffer)
+      self.assertIsInstance(out, array.ArrayImpl)
     else:
       self.assertIsInstance(jitted_f(2), device_array.Buffer)
 

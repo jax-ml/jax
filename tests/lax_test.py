@@ -2704,8 +2704,8 @@ class LazyConstantTest(jtu.JaxTestCase):
     y = lax.convert_element_type(x, dtype_out)
     self.assertEqual(y.dtype, dtype_out)
     if config.jax_array:
-      x_buf = x._arrays[0]
-      y_buf = y._arrays[0]
+      x_buf = x
+      y_buf = y
     else:
       x_buf = x.device_buffer
       y_buf = y.device_buffer
