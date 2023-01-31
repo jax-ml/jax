@@ -294,6 +294,7 @@ from jax._src.lax.convolution import (
 )
 from jax._src.lax.windowed_reductions import (
   reduce_window as reduce_window,
+  select_and_scatter as select_and_scatter,
   reduce_window_max_p as reduce_window_max_p,
   reduce_window_min_p as reduce_window_min_p,
   reduce_window_p as reduce_window_p,
