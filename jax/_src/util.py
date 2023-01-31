@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import namedtuple
 import functools
 from functools import partial, cached_property
 import itertools as it
@@ -259,8 +258,6 @@ def cache(max_size=4096):
   return wrap
 
 memoize = cache(max_size=None)
-
-CacheInfo = namedtuple("CacheInfo", ["hits", "misses", "maxsize", "currsize"])
 
 def weakref_lru_cache(call: Callable, maxsize=2048):
   """
