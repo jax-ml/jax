@@ -17,6 +17,7 @@ from functools import partial, cached_property
 import itertools as it
 import logging
 import operator
+import sys
 import types
 from typing import (Any, Callable, Generic, Iterable, Iterator, List,
                     Optional, Sequence, Set, Tuple, TypeVar, overload,
@@ -48,12 +49,16 @@ def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -
 @overload
 def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[Tuple[Any, ...]]: ...
 
-def safe_zip(*args):
-  args = list(map(list, args))
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-  return list(zip(*args))
+if sys.version_info >= (3, 10):
+  def safe_zip(*args):
+    return list(zip(*args, strict=True))
+else:
+  def safe_zip(*args):
+    args = list(map(list, args))
+    n = len(args[0])
+    for arg in args[1:]:
+      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+    return list(zip(*args))
 
 # safe_map cannot yet be fully annotated, so we use a strategy similar
 # to that used for builtins.map in python/typeshed. This supports
