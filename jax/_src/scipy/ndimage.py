@@ -28,6 +28,7 @@ from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.util import _wraps
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import safe_zip as zip
+from jax._src.numpy.linalg import inv
 
 
 def _nonempty_prod(arrs: Sequence[Array]) -> Array:
@@ -72,7 +73,7 @@ def _linear_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLik
 
 
 def _cubic_indices_and_weights(coordinate: Array) -> List[Tuple[Array, ArrayLike]]:
-  return [(coordinate, np.zeros(coordinate.shape))]
+  return [(coordinate, jnp.zeros(coordinate.shape))]
 
 
 def _build_matrix(n: int, diag: float=4) -> Array:
@@ -108,7 +109,7 @@ def _spline_coefficients(data: Array) -> Array:
     ndim = data.ndim
     for i in range(ndim):
         axis = ndim-i-1
-        A_inv = jnp.linalg.inv(_build_matrix(data.shape[axis]-2))
+        A_inv = inv(_build_matrix(data.shape[axis]-2))
         fn = lambda x: _solve_coefficients(x, A_inv)
         for j in range(ndim-2, -1, -1):
             ax = int(j >= axis)
@@ -193,7 +194,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
       if mode == 'reflect':
         raise NotImplementedError(
           "Cubic interpolation with mode='reflect' is not implemented.")
-      interpolated = _cubic_spline(input_arr, np.array(indices))
+      interpolated = _cubic_spline(input_arr, jnp.array(indices))
       if all(valid is True for valid in validities):
         outputs.append(interpolated)
       else:
