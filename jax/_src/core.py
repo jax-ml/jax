@@ -605,6 +605,10 @@ class Tracer(typing.Array):
     raise ConcretizationTypeError(self,
       f"The 'addressable_shards' attribute is not available on the JAX Tracer object {self}")
 
+  def addressable_data(self, index: int):
+    raise ConcretizationTypeError(self,
+      f"The 'addressable_data' method is not available on the JAX Tracer object {self}")
+
   @property
   def at(self):
     return self.aval.at.fget(self)
@@ -731,19 +735,15 @@ class Tracer(typing.Array):
     return ""
 
   # Methods that are only valid for materialized arrays
-  def addressable_data(self, index):
-    raise ConcretizationTypeError(self,
-      f"The addressable_data() method was called on the JAX Tracer object {self}")
-
   @property
   def block_until_ready(self):
-    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
       f"The 'block_until_ready' method is not available on the JAX Tracer object {self}")
 
   @property
   def copy_to_host_async(self):
-    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
       f"The 'copy_to_host_async' method is not available on the JAX Tracer object {self}")
 
