@@ -121,8 +121,8 @@ def _spline_basis(t: Array) -> Array:
     at = jnp.abs(t)
     fn1 = lambda t: (2 - t)**3
     fn2 = lambda t: 4 - 6*t**2 + 3*t**3
-    return jnp.where(at >= 1, 
-           jnp.where(at <= 2, fn1(at), 0), 
+    return jnp.where(at >= 1,
+           jnp.where(at <= 2, fn1(at), 0),
            jnp.where(at <= 1, fn2(at), 0))
 
 def _spline_value(coefficients: Array, coordinate: Array, indexes: Array) -> Array:
@@ -215,9 +215,9 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
 
 
 @_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
-    Only nearest neighbor (``order=0``), linear interpolation (``order=1``), 
-    cubic spline interpolation (``order=3``) and modes ``'constant'``, 
-    ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently 
+    Only nearest neighbor (``order=0``), linear interpolation (``order=1``),
+    cubic spline interpolation (``order=3``) and modes ``'constant'``,
+    ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently
     supported, however, cubic does not support the mode ``'reflect'``.
     Note that interpolation near boundaries differs from the scipy function,
     because we fixed an outstanding bug (https://github.com/scipy/scipy/issues/2640);
