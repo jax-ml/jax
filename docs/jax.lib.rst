@@ -12,11 +12,8 @@ jax.lib.xla_bridge
   :toctree: _autosummary
 
   default_backend
-  device_count
   get_backend
   get_compile_options
-  local_device_count
-  process_index
 
 jax.lib.xla_client
 ------------------
