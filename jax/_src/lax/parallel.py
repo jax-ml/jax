@@ -1686,15 +1686,15 @@ mlir.register_lowering(
     pdot_p,
     mlir.lower_fun(_pdot_lowering, multiple_results=False))
 
-def _pdot_transpose_lhs(g, y, *, axis_name, pos_contract, pos_batch, precision):
+def _pdot_transpose_lhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO: avals with names, call pbroadcast with axis_name
   return lax._dot_general_transpose_lhs(
-      g, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
+      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
       preferred_element_type=None)
-def _pdot_transpose_rhs(g, x, *, axis_name, pos_contract, pos_batch, precision):
+def _pdot_transpose_rhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO: avals with names, call pbroadcast with axis_name
   return lax._dot_general_transpose_rhs(
-      g, x, dimension_numbers=[pos_contract, pos_batch], precision=precision,
+      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
       preferred_element_type=None)
 ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
 

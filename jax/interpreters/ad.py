@@ -542,7 +542,6 @@ def add_tangents(x, y):
   else:
     return add_jaxvals(x, y)
 
-
 def defbilinear(prim, lhs_rule, rhs_rule):
   assert isinstance(prim, Primitive)
   lhs_jvp = lambda g, x, y, **kwargs: prim.bind(g, y, **kwargs)
@@ -555,10 +554,10 @@ def bilinear_transpose(lhs_rule, rhs_rule, cotangent, x, y, **kwargs):
   if type(cotangent) is Zero:
     return Zero
   if is_undefined_primal(x):
-    out = lhs_rule(cotangent, y, **kwargs)
+    out = lhs_rule(cotangent, x, y, **kwargs)
     return Zero if out is Zero else (out, None)
   else:
-    out = rhs_rule(cotangent, x, **kwargs)
+    out = rhs_rule(cotangent, x, y, **kwargs)
     return Zero if out is Zero else (None, out)
 
 
