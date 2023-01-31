@@ -243,14 +243,14 @@ def _validate_conv_features(
 def _conv_general_dilated(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: lax.ConvDimensionNumbers, feature_group_count: int,
-    batch_group_count: int, lhs_shape: Sequence[int], rhs_shape: Sequence[int],
+    batch_group_count: int,
     precision: Optional[Tuple[PrecisionType, PrecisionType]],
     preferred_element_type: Optional[DType],
     _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   # In presence of shape polymorphism, lhs.shape and rhs.shape may contain
   # None. The actual dimension polynomial shapes are in _in_avals.
-  del lhs_shape, rhs_shape, precision  # Unused arguments.
+  del precision  # Unused arguments.
   lhs_shape, rhs_shape = _in_avals[0].shape, _in_avals[1].shape
   out_shape = _out_aval.shape
   _validate_spatial_dimensions(lhs, lhs_shape, rhs, rhs_shape)

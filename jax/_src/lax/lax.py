@@ -2568,11 +2568,11 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   _validate_preferred_element_type(input_dtype, preferred_element_type)
   return preferred_element_type
 
-def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
+def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: Optional[DTypeLike],
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
-  x_ndim = g.ndim - y.ndim + len(x_batch) + 2 * len(x_contract)
+  x_ndim = x.aval.ndim
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
   y_kept = remaining(range(y.ndim), y_contract, y_batch)
   if swap_ans:
@@ -2586,12 +2586,12 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
                                preferred_element_type=preferred_element_type),
                    tuple(out_axes))
 
-def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
+def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: Optional[DTypeLike]):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
-    g, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
+    g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
     preferred_element_type=preferred_element_type,
     swap_ans=True)
 
