@@ -23,7 +23,7 @@ from jax._src.core import control_flow_allowed_effects as allowed_effects
 from jax._src.lax import lax
 from jax._src import ad_util
 from jax._src import util
-from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
+from jax._src.util import weakref_lru_cache, safe_map, unzip3
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_map, tree_unflatten
@@ -62,9 +62,9 @@ def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
   closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
   return closed_jaxpr, consts, out_tree
 
-@cache()
+@weakref_lru_cache
 def _initial_style_jaxprs_with_common_consts(
-    funs: Sequence[Callable], in_tree, in_avals, primitive_name: str):
+    *funs: Callable, in_tree, in_avals, primitive_name: str):
   # When staging the branches of a conditional into jaxprs, constants are
   # extracted from each branch and converted to jaxpr arguments. To use the
   # staged jaxprs as the branches to a conditional *primitive*, we need for

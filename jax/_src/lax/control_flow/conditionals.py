@@ -131,7 +131,7 @@ def switch(index, branches: Sequence[Callable], *operands,
   ops_avals = tuple(map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      branches, ops_tree, ops_avals, primitive_name='switch')
+      *branches, in_tree=ops_tree, in_avals=ops_avals, primitive_name='switch')
   for i, (out_tree, jaxpr) in enumerate(zip(out_trees[1:], jaxprs[1:])):
     _check_tree_and_avals(f"branch 0 and {i + 1} outputs",
                           out_trees[0], jaxprs[0].out_avals,
@@ -236,7 +236,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   ops_avals = tuple(map(_abstractify, ops))
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
-      (true_fun, false_fun), ops_tree, ops_avals, 'cond')
+      true_fun, false_fun, in_tree=ops_tree, in_avals=ops_avals, primitive_name='cond')
   if any(isinstance(op_aval, state.ShapedArrayRef) for op_aval in ops_avals):
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
