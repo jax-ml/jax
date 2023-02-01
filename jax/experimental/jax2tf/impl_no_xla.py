@@ -210,13 +210,6 @@ def _normalize_window_strides(window_strides):
   return window_strides
 
 
-def _normalize_output_perm(output_perm, is_conv1d):
-  """Ensure that output_perm has length 4."""
-  if is_conv1d:
-    output_perm = list(output_perm) + [1]
-  return output_perm
-
-
 def _validate_conv_features(
       is_transpose, is_atrous, is_depthwise, feature_group_count,
       batch_group_count, preferred_element_type, lhs_dtype):

@@ -531,10 +531,6 @@ def lower_xla_callable(
       keepalive=keepalive, host_callbacks=host_callbacks)
 
 
-def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
-  return backend.platform == 'iree'
-
-
 def prefetch(x):
   if isinstance(x, device_array.DeviceArray):
     x.copy_to_host_async()
@@ -1136,25 +1132,6 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
     warnings.warn(
         f"Error writing persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
-
-
-def _instruction_count(module: ir.Module, max_count: Optional[int] = None):
-
-  def _blocks_count(blocks, count):
-    for block in blocks:
-      for op in block.operations:
-        count += 1
-        # Untested premature performance optimization
-        if max_count is not None and count >= max_count:
-          return max_count
-        for region in op.regions:
-          count = _blocks_count(region.blocks, count)
-    return count
-
-  count = 0
-  for func in module.body.operations:
-    count = _blocks_count(func.body.blocks, count)
-  return count
 
 
 def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):

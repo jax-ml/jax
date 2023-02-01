@@ -15,7 +15,6 @@
 import dataclasses
 import functools
 import itertools as it
-import types
 from typing import Union, Optional, Callable, Dict, Tuple, TypeVar, FrozenSet, Iterable, Type, Set, List, Sequence, Any
 
 import jax
@@ -532,20 +531,6 @@ ad.primitive_jvps[check_p] = check_jvp_rule
 ErrorCheckRule = Callable  # (Error, FrozenSet[ErrorCategory], *in_vals, **params) -> (Any, Error)
 error_checks: Dict[core.Primitive, ErrorCheckRule] = {}
 
-
-def _get_current_traceback(skip_frames = 0) -> Optional[types.TracebackType]:
-  # TODO(lenamartens): use c++ version from XLA?
-  tb = None
-  import inspect
-  for frame_info in inspect.stack():
-    frame = frame_info.frame
-    if skip_frames:
-      skip_frames -= 1
-    elif not traceback_util.include_frame(frame):
-      continue
-    else:
-      tb = types.TracebackType(tb, frame, frame.f_lasti, frame.f_lineno)
-  return tb
 
 def summary() -> str:
   return str(source_info_util.summarize(source_info_util.current()))

@@ -2161,12 +2161,6 @@ def _select_and_gather_add(
 tf_impl_with_avals[lax.select_and_gather_add_p] = _select_and_gather_add
 
 
-def _get_shape_from_tensor_or_array(x):
-  if isinstance(x.shape, tf.TensorShape):
-    return tuple(x.shape.as_list())
-  return tuple(x.shape)
-
-
 def _common_reduce_window(operand, init_val, reducer, window_dimensions,
                           window_strides, padding, base_dilation,
                           window_dilation, _in_avals, _out_aval):
