@@ -2057,6 +2057,16 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
+  def test_jit_of_pmap_replica_calculation(self):
+    # https://github.com/google/jax/issues/13931
+    @jax.jit
+    def f():
+      a = jax.pmap(lambda x: x)(jnp.arange(2))
+      b = jax.pmap(lambda x: x)(jnp.arange(3))
+      return a, b
+
+    f()  # doesn't crash
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):

@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import atexit
 import contextlib
-from functools import partial
+from functools import partial, reduce
 import itertools
 import time
 from typing import (
     Any, Callable, Dict, Iterable, Iterator, Optional, Protocol,
     Sequence, Set, Tuple, List, Type, Union)
 import logging
+import math
 import os
 import re
 import threading
@@ -634,23 +635,29 @@ def jaxpr_replicas(jaxpr) -> int:
   For a eqn, multiply the `axis_size` with the `jaxpr_replicas` of the
   subjaxprs. For a list of eqns, take the maximum number of replicas.
   """
+  return reduce(lambda a, b: a * b // math.gcd(a, b), _jaxpr_replicas(jaxpr), 1)
+
+def _jaxpr_replicas(jaxpr: Union[core.Jaxpr, core.ClosedJaxpr]) -> Iterator[int]:
   if isinstance(jaxpr, core.ClosedJaxpr):
     jaxpr = jaxpr.jaxpr
-  return max(unsafe_map(eqn_replicas, jaxpr.eqns), default=1)
+  for e in jaxpr.eqns:
+    yield from _eqn_replicas(e)
 
 # TODO(mattjj): this function assumes that only pmap has a parameter named
 # axis_size, and that it corresponds to cross-replica mapping
-def eqn_replicas(eqn):
+def _eqn_replicas(eqn: core.JaxprEqn) -> Iterator[int]:
   call_jaxpr = eqn.params.get("call_jaxpr")
-  if call_jaxpr:
-    return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
+  axis_size = eqn.params.get("axis_size", 1)
+  if call_jaxpr and axis_size:
+    yield axis_size  # empty pmap still requires axis_size replicas
+    for n in _jaxpr_replicas(call_jaxpr):
+      yield axis_size * n
   elif eqn.primitive in xla._initial_style_primitives:
-    return initial_style_primitive_replicas(eqn.params)
-  else:
-    return 1
+    yield from _initial_style_primitive_replicas(eqn.params)
 
-def initial_style_primitive_replicas(params):
-  return max(core.traverse_jaxpr_params(jaxpr_replicas, params).values(), default=1)
+def _initial_style_primitive_replicas(params: core.ParamDict) -> Iterator[int]:
+  for jaxpr in core.traverse_jaxpr_params(lambda x: x, params).values():
+    yield from _jaxpr_replicas(jaxpr)
 
 
 def _xla_callable_device(nreps, backend, device,
