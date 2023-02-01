@@ -837,13 +837,17 @@ def _interpret_subtrace(main: core.MainTrace,
 
 
 def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
-                     extra_name_stack: Optional[str]) -> Sequence[TfVal]:
+                     extra_name_stack: Optional[str],
+                     fresh_constant_cache: bool = True) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
+  This is most often used as the body of a tf.function, or tf.switch_case,
+  in which case it should use a fresh constant cache.
   The output is a sequence of TfVal, suitable for use with TF.
   """
   outs_tf, _ = _interpret_fun_jax(core.jaxpr_as_fun(jaxpr),
-                                  args_tf, jaxpr.in_avals, extra_name_stack)
+                                  args_tf, jaxpr.in_avals, extra_name_stack,
+                                  fresh_constant_cache=fresh_constant_cache)
   return outs_tf
 
 
@@ -950,7 +954,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     # Jaxpr consts, to the top level of the Jaxpr. This ensures that we see them
     # early, when entering the Jaxpr, so we create the tf.const early and its
     # scope is the entire Jaxpr.
-    do_memoize = (memoize_constants and np.shape(val) and _thread_local_state.constant_cache is not None)
+    do_memoize = (memoize_constants and np.size(val) > 1 and _thread_local_state.constant_cache is not None)
     if do_memoize:
       _, tf_val = _thread_local_state.constant_cache.get(const_key, (None, None))
     else:
@@ -2733,7 +2737,6 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
       partial(_interpret_jaxpr, jaxpr, *operands,
               # Same name stack as the XLA translation of cond_p
               extra_name_stack=f"branch_{i}_fun")
-      for jaxpr in branches
       for i, jaxpr in enumerate(branches)
   ]
   # Same name stack as XLA translation of cond_p
@@ -2767,7 +2770,7 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
     return pred
 
   body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts,
-                                   extra_name_stack="while/body")
+                         extra_name_stack="while/body")
   # Sometimes TF infers more specific shapes for the init_carry, and this has
   # led to errors: "enters the loop with shape (1,), but has shape (None,) after one iteration"
   shape_invariants = [tf.TensorShape(_aval_to_tf_shape(_out_aval))
@@ -3080,7 +3083,8 @@ def _custom_jvp_call(*args: TfVal, call_jaxpr: core.ClosedJaxpr,
                            num_consts: int) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
   del jvp_jaxpr_thunk, num_consts
-  return _interpret_jaxpr(call_jaxpr, *args, extra_name_stack="custom_jvp")
+  return _interpret_jaxpr(call_jaxpr, *args, extra_name_stack="custom_jvp",
+                          fresh_constant_cache=False)
 
 
 tf_impl[custom_derivatives.custom_jvp_call_p] = _custom_jvp_call
@@ -3089,7 +3093,8 @@ tf_impl[custom_derivatives.custom_jvp_call_p] = _custom_jvp_call
 def _custom_vjp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
                            **_) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
-  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_vjp")
+  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_vjp",
+                          fresh_constant_cache=False)
 
 
 tf_impl[custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr
@@ -3181,7 +3186,8 @@ def _pjit(*args: TfVal,
   sharded_args: Sequence[TfVal] = tuple(
       map(_shard_value, args, _in_avals, in_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
-                             extra_name_stack=util.wrap_name(name, "pjit"))
+                             extra_name_stack=util.wrap_name(name, "pjit"),
+                             fresh_constant_cache=False)
   sharded_results: Sequence[TfVal] = tuple(
       map(_shard_value, results, _out_aval, out_shardings))
   return tuple(sharded_results)
