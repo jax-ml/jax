@@ -431,7 +431,7 @@ def _init():
   from jax._src import util
   # Builds a set of all unimplemented NumPy functions.
   for name, func in util.get_module_functions(np).items():
-    if name not in globals():
+    if name not in globals() and not name.startswith('_'):
       _NOT_IMPLEMENTED.append(name)
       globals()[name] = lax_numpy._not_implemented(func, module='numpy')
 
