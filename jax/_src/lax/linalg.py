@@ -1560,18 +1560,6 @@ def _svd_impl(operand, *, full_matrices, compute_uv):
   return xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
                              compute_uv=compute_uv)
 
-
-def _zeros_like_xla(c, aval):
-  zero = xops.Constant(c, np.array(0, aval.dtype))
-  return xops.Broadcast(zero, aval.shape)
-
-def _eye_like_xla(c, aval):
-  iota_shape = xla_client.Shape.array_shape(
-      xla.dtype_to_primitive_type(np.dtype(np.int32)), aval.shape)
-  x = xops.Eq(xops.Iota(c, iota_shape, len(aval.shape) - 1),
-              xops.Iota(c, iota_shape, len(aval.shape) - 2))
-  return xops.ConvertElementType(x, xla.dtype_to_primitive_type(aval.dtype))
-
 def _svd_abstract_eval(operand, *, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
     if operand.ndim < 2:

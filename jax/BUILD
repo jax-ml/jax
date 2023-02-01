@@ -25,9 +25,9 @@ load(
     "pytype_library",
 )
 
-licenses(["notice"])
-
 package(default_visibility = [":internal"])
+
+licenses(["notice"])
 
 bool_flag(
     name = "build_jaxlib",

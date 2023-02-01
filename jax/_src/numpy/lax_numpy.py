@@ -256,12 +256,6 @@ _DEFAULT_TYPEMAP: Dict[type, _ScalarMeta] = {
 _lax_const = lax_internal._const
 
 
-def _result_dtype(op: Callable[..., ArrayLike], *args: Any) -> DType:
-  """Compute result dtype of applying op to arguments with given dtypes."""
-  np_args = [np.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
-  return _dtype(op(*np_args))
-
-
 def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
   """
   Convert integer-typed val to specified integer dtype, clipping to dtype
@@ -3249,14 +3243,6 @@ def _einsum(operands: Sequence,
     operands.append(operand)  # used in next iteration
 
   return operands[0]
-
-
-def _movechars(s, src, dst):
-  """Helper for einsum string munging, like moveaxis on identifier strings."""
-  chars = [c for i, c in enumerate(s) if i not in src]
-  for i, j in sorted(zip(dst, src)):
-    chars.insert(i, s[j])
-  return ''.join(chars)
 
 
 @_wraps(np.inner, lax_description=_PRECISION_DOC)

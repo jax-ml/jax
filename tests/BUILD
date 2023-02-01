@@ -69,7 +69,6 @@ jax_test(
 jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 5,
         "gpu": 10,
@@ -177,7 +176,6 @@ jax_test(
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
     },
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,

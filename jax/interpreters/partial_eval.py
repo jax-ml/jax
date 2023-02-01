@@ -2262,20 +2262,6 @@ def _extract_implicit_args(
   tracers_validated = cast(List[DynamicJaxprTracer], tracers)  # remove Optional annotation.
   return [t for t, (_, e) in zip(tracers_validated, in_type) if not e]
 
-def _in_avals_from_tracers(
-    tracers: List[DynamicJaxprTracer]
-  ) -> List[AbstractValue]:
-  # Returned AbstractValues contain DBIdx indices. Uses Tracer obj id as name.
-  dbidxs: Dict[TracerId, DBIdx] = {id(t): DBIdx(i) for i, t in enumerate(tracers)}
-  in_avals: List[AbstractValue] = []
-  for t in tracers:
-    a = t.aval
-    if isinstance(a, DShapedArray) and any(isinstance(d, Tracer) for d in a.shape):
-      shape = [dbidxs[id(d)] if isinstance(d, Tracer) else d for d in a.shape]
-      a = a.update(shape=tuple(shape))
-    in_avals.append(a)
-  return in_avals
-
 def _input_type_to_tracers(
     new_arg: Callable[[AbstractValue], Tracer],
     in_avals: Sequence[AbstractValue]

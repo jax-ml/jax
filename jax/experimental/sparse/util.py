@@ -52,11 +52,6 @@ class SparseInfo(NamedTuple):
 # TODO: possibly make these primitives, targeting cusparse rountines
 #       csr2coo/coo2csr/SPDDMM
 
-def _asarray_or_float0(arg) -> Union[np.ndarray, Array]:
-  if isinstance(arg, np.ndarray) and arg.dtype == dtypes.float0:
-    return arg
-  return jnp.asarray(arg)
-
 def nfold_vmap(fun, N, *, broadcasted=True, in_axes=0):
   """Convenience function to apply (broadcasted) vmap N times."""
   _vmap = broadcasting_vmap if broadcasted else vmap
@@ -109,17 +104,6 @@ def _count_stored_elements_per_batch(mat: Array, n_batch: int = 0, n_dense: int 
 def _count_stored_elements(mat: Array, n_batch: int = 0, n_dense: int = 0) -> int:
   """Return the number of stored elements (nse) of the given dense matrix."""
   return int(_count_stored_elements_per_batch(mat, n_batch, n_dense).max(initial=0))
-
-def _is_pytree_placeholder(*args: Any) -> bool:
-  # Returns True if the arguments are consistent with being a placeholder within
-  # pytree validation.
-  return all(type(arg) is object for arg in args) or all(arg is None for arg in args)
-
-def _is_aval(*args: Any) -> bool:
-  return all(isinstance(arg, core.AbstractValue) for arg in args)
-
-def _is_arginfo(*args: Any) -> bool:
-  return all(isinstance(arg, stages.ArgInfo) for arg in args)
 
 def _dot_general_validated_shape(
     lhs_shape: Tuple[int, ...], rhs_shape: Tuple[int, ...],

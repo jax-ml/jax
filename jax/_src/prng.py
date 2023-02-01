@@ -841,11 +841,6 @@ def _make_rotate_left(dtype):
   return _rotate_left
 
 
-def _bit_stats(bits):
-  """This is a debugging function to compute the statistics of bit fields."""
-  return np.array([list(map(int, np.binary_repr(x, 64))) for x in bits]).mean(0)
-
-
 ### hash function and split
 
 def _threefry2x32_abstract_eval(*args):

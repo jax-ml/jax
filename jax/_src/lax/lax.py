@@ -18,7 +18,7 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import (Any, Callable, Optional, Sequence, Tuple, List, Dict,
+from typing import (Any, Callable, Optional, Sequence, Tuple, List,
                     TypeVar, Union, cast as type_cast, overload)
 import warnings
 
@@ -1691,12 +1691,6 @@ def _nary_lower_hlo(op: Callable, ctx,
   else:
     return op(*broadcasted_args).results
 
-def _substitute_axis_sizes_in_aval(
-    env: Dict[core.Var, ir.Value], a: core.AbstractValue) -> core.AbstractValue:
-  if isinstance(a, core.DShapedArray):
-    return a.update(shape=tuple(env.get(d, d) for d in a.shape))  # type: ignore
-  return a
-
 
 _float = {np.floating}
 _complex = {np.complexfloating}
@@ -2468,21 +2462,6 @@ def _precision_config(precision):
     return config
   return None
 
-def _masked(padded_value, logical_shape, dimensions, value=0):
-  """
-  Sets all padding to the given value (default is 0) in the given dimensions.
-  All values outside the logical shape are considered padding.
-  """
-  if len(dimensions) == 0:
-    return padded_value
-
-  masks = [broadcasted_iota(np.int32, padded_value.shape, d) < logical_shape[d]
-           for d in dimensions]
-  mask_intersection = masks[0]
-  for mask in masks[1:]:
-    mask_intersection &= mask
-  return select(mask_intersection, padded_value, full_like(padded_value, value))
-
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
                             preferred_element_type: Optional[DTypeLike]):
@@ -3242,26 +3221,6 @@ def shape_as_value(shape: core.Shape):
       for d in shape
   ]
   return concatenate(dims, dimension=0)
-
-def _is_singleton_reshape(old, new):
-  # A singleton reshape is one where only singleton dimensions are added. We
-  # want to detect them because they can be expressed as (lazy) broadcasts.
-  old, new = iter(old), iter(new)
-  d1, d2 = next(old, None), next(new, None)
-  bcast_dims = []
-  i = 0
-  while True:
-    if d1 is d2 is None:
-      return bcast_dims
-    elif d1 == d2:
-      bcast_dims.append(i)
-      i += 1
-      d1, d2 = next(old, None), next(new, None)
-    elif d2 == 1:
-      i += 1
-      d2 = next(new, None)
-    else:
-      return None
 
 def _reshape_shape_rule(operand, *, new_sizes, dimensions):
   if not all(core.greater_equal_dim(d, 0) for d in new_sizes):

@@ -48,9 +48,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    supported_platforms = ["tpu"]
-    if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
-      supported_platforms.append("gpu")
+    supported_platforms = ["tpu", "gpu"]
     if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
       supported_platforms.append("cpu")
     if jtu.device_under_test() not in supported_platforms:

@@ -795,7 +795,12 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
     final_consts = []
 
   orig_out_shardings = out_shardings_thunk()
-  if _is_unspecified(orig_out_shardings):
+  # TODO(yashkatariya): Remove the if branch and fix flatten_axis_resources
+  # instead. This condition exists because flatten_axis_resources passes in an
+  # `object()` while unflattening which breaks assertion is user defined
+  # pytrees (which shouldn't exist but they do).
+  if (_is_unspecified(orig_out_shardings) or
+      isinstance(orig_out_shardings, XLACompatibleSharding)):
     out_shardings_flat = (orig_out_shardings,) * len(global_out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
@@ -1332,7 +1337,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
       ctx.module_context, name, jaxpr, effects, arg_shardings=arg_shardings,
       result_shardings=result_shardings, use_sharding_annotations=False,
       api_name=('jit' if resource_env is None else 'pjit'))
-  args = (*ctx.tokens_in.tokens(), *args)
+  args = (*ctx.dim_var_values, *ctx.tokens_in.tokens(), *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))

@@ -26,7 +26,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax
-from jax._src.lib import xla_client
 from jax._src.lib.mlir.dialects import hlo
 
 _max = builtins.max
@@ -747,27 +746,6 @@ def _reshape_axis_out_of(src, size1, x):
   return lax.reshape(x, shape)
 
 
-def _check_conv_shapes(name, lhs_shape, rhs_shape, window_strides):
-  """Check that conv shapes are valid and are consistent with window_strides."""
-  if len(lhs_shape) != len(rhs_shape):
-    msg = "Arguments to {} must have same rank, got {} and {}."
-    raise TypeError(msg.format(name, len(lhs_shape), len(rhs_shape)))
-  if len(lhs_shape) < 2:
-    msg = "Arguments to {} must have rank at least 2, got {} and {}."
-    raise TypeError(msg.format(name, len(lhs_shape), len(rhs_shape)))
-  if lhs_shape[1] != rhs_shape[1]:
-    msg = "Arguments to {} must agree on input feature size, got {} and {}."
-    raise TypeError(msg.format(name, lhs_shape[1], rhs_shape[1]))
-  lax._check_shapelike(name, "window_strides", window_strides)
-  if not np.all(np.greater(window_strides, 0)):
-    msg = "All elements of window_strides must be positive, got {}."
-    raise TypeError(msg.format(window_strides))
-  if len(window_strides) != len(lhs_shape) - 2:
-    msg = "{} window_strides has wrong length: expected {}, got {}."
-    expected_length = len(lhs_shape) - 2
-    raise TypeError(msg.format(name, expected_length, len(window_strides)))
-
-
 def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
   """Compute the shape tuple of a conv given input shapes in canonical order."""
   if isinstance(pads, str):
@@ -890,22 +868,6 @@ def conv_general_permutations(dimension_numbers):
 
   lhs_perm, rhs_perm, out_perm = map(getperm, dimension_numbers, charpairs)
   return lhs_perm, rhs_perm, out_perm
-
-
-def _conv_general_proto(dimension_numbers):
-  assert type(dimension_numbers) is ConvDimensionNumbers
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
-  proto = xla_client.ConvolutionDimensionNumbers()
-  proto.input_batch_dimension = lhs_spec[0]
-  proto.input_feature_dimension = lhs_spec[1]
-  proto.output_batch_dimension = out_spec[0]
-  proto.output_feature_dimension = out_spec[1]
-  proto.kernel_output_feature_dimension = rhs_spec[0]
-  proto.kernel_input_feature_dimension = rhs_spec[1]
-  proto.input_spatial_dimensions.extend(lhs_spec[2:])
-  proto.kernel_spatial_dimensions.extend(rhs_spec[2:])
-  proto.output_spatial_dimensions.extend(out_spec[2:])
-  return proto
 
 
 def _conv_general_vjp_lhs_padding(

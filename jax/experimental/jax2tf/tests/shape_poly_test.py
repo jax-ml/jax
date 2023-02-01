@@ -2466,20 +2466,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
 
-      # Disable these tests because they crash in MHLO
-      _dynamic_gather_failures = [
-          # In mlir::mhlo::simplifyDynamicGatherToGather(): LLVM ERROR: Failed to infer result type(s)
-          "getitem_op=poly_idx=slice-ct-2",
-          "image_resize_nearest_0",
-          "take__enable_xla=True",
-          "vmap_gather_from_slicing",
-          "vmap_random_randint",
-          "vmap_random_uniform",
-      ]
-      for s in _dynamic_gather_failures:
-        if harness.fullname.find(s) != -1:
-          raise unittest.SkipTest("TODO(necula): crashes in simplifyDynamicGatherToGather")
-
     harness.run_test(self)
 
 

@@ -531,10 +531,6 @@ def lower_xla_callable(
       keepalive=keepalive, host_callbacks=host_callbacks)
 
 
-def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
-  return backend.platform == 'iree'
-
-
 def prefetch(x):
   if isinstance(x, device_array.DeviceArray):
     x.copy_to_host_async()
@@ -1058,13 +1054,9 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   else:
     serialized_computation = computation
 
-  # Persistent compilation cache only implemented on TPU.
+  # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu"]
-  # GPU caching can be enabled if JitRt is enabled.
-  # TODO(b/232263664): Remove check when JitRt is enabled by default.
-  if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
-    supported_platforms.append("gpu")
+  supported_platforms = ["tpu", "gpu"]
   # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
   if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("cpu")
@@ -1136,25 +1128,6 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
     warnings.warn(
         f"Error writing persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
-
-
-def _instruction_count(module: ir.Module, max_count: Optional[int] = None):
-
-  def _blocks_count(blocks, count):
-    for block in blocks:
-      for op in block.operations:
-        count += 1
-        # Untested premature performance optimization
-        if max_count is not None and count >= max_count:
-          return max_count
-        for region in op.regions:
-          count = _blocks_count(region.blocks, count)
-    return count
-
-  count = 0
-  for func in module.body.operations:
-    count = _blocks_count(func.body.blocks, count)
-  return count
 
 
 def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):

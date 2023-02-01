@@ -250,9 +250,6 @@ def _canonicalize_masked_array_dtype(x):
 def _canonicalize_ndarray_dtype(x):
   return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
 
-def _canonicalize_numpy_scalar_dtype(x):
-  return np.asarray(x, dtypes.canonicalize_dtype(np.dtype(x)))
-
 def _canonicalize_python_scalar_dtype(typ, x):
   return np.asarray(
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
