@@ -773,6 +773,13 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     err, _ = checked_f(jnp.ones((2, 4)))
     self.assertIsNone(err.get())
 
+  def test_retracing(self):
+    f = checkify.checkify(jax.jit(lambda x: jnp.sin(x) ** 2))
+    _ = f(3.)
+    with jtu.count_primitive_compiles() as count:
+      _ = f(3.)
+    self.assertEqual(count[0], 0)
+
 
 @jtu.with_config(jax_check_tracer_leaks=True)
 class AssertPrimitiveTests(jtu.JaxTestCase):
