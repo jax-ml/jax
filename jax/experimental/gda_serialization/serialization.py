@@ -412,7 +412,10 @@ class AsyncManager:
 
       if current_process == 0:
         self._on_commit_callback()
+        logger.info('on_commit_callback successfully ran!')
         self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
+        logger.info('Process 0 successfully set key %s in the kv store',
+                    key_for_barrier)
 
     except Exception as e:
       self._exception = e
@@ -435,14 +438,18 @@ class AsyncManager:
     if self._thread is not None:
       self._thread.join()
       self._thread = None
+      logger.info('Thread joined successfully')
 
     self.check_for_errors()
+    logger.info('Error check finished successfully')
 
     if self._count is not None:
       # Block until process 0 writes success value to the key value store.
       # If it fails to write it, then `blocking_key_value_get` will time out.
-      self._client.blocking_key_value_get(
-          _get_key(self._count), self._timeout_in_ms)
+      get_key = _get_key(self._count)
+      self._client.blocking_key_value_get(get_key, self._timeout_in_ms)
+      logger.info('blocking_key_value_get on key %s was successfully '
+                  'completed.', get_key)
 
   def _add_futures(self, futures: Sequence[asyncio.Future]):
     self._commit_futures = futures
