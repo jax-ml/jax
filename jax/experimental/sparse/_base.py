@@ -32,6 +32,9 @@ class JAXSparse(abc.ABC):
   # Ignore type because of https://github.com/python/mypy/issues/4266.
   __hash__ = None  # type: ignore
 
+  def __len__(self):
+    return self.shape[0]
+
   @property
   def size(self) -> int:
     return util.prod(self.shape)
