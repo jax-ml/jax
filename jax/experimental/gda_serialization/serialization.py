@@ -27,6 +27,7 @@ from jax._src import distributed
 from jax._src.config import config
 from jax.experimental import global_device_array as gda
 from jax._src import array
+from jax.experimental import multihost_utils
 from jax._src import sharding
 from jax._src import typing
 from jax.experimental.maps import Mesh
@@ -412,7 +413,6 @@ class AsyncManager:
 
       if current_process == 0:
         self._on_commit_callback()
-        self._client.key_value_set(key_for_barrier, _CHECKPOINT_SUCCESS)
 
     except Exception as e:
       self._exception = e
@@ -439,10 +439,7 @@ class AsyncManager:
     self.check_for_errors()
 
     if self._count is not None:
-      # Block until process 0 writes success value to the key value store.
-      # If it fails to write it, then `blocking_key_value_get` will time out.
-      self._client.blocking_key_value_get(
-          _get_key(self._count), self._timeout_in_ms)
+      multihost_utils.sync_global_devices(_get_key(self._count))
 
   def _add_futures(self, futures: Sequence[asyncio.Future]):
     self._commit_futures = futures
