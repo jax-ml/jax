@@ -1332,7 +1332,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
       ctx.module_context, name, jaxpr, effects, arg_shardings=arg_shardings,
       result_shardings=result_shardings, use_sharding_annotations=False,
       api_name=('jit' if resource_env is None else 'pjit'))
-  args = (*ctx.tokens_in.tokens(), *args)
+  args = (*ctx.dim_var_values, *ctx.tokens_in.tokens(), *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))
