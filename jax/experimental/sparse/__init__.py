@@ -214,6 +214,7 @@ from jax.experimental.sparse.bcoo import (
     bcoo_update_layout as bcoo_update_layout,
     bcoo_reduce_sum as bcoo_reduce_sum,
     bcoo_reshape as bcoo_reshape,
+    bcoo_rev as bcoo_rev,
     bcoo_slice as bcoo_slice,
     bcoo_sort_indices as bcoo_sort_indices,
     bcoo_sort_indices_p as bcoo_sort_indices_p,

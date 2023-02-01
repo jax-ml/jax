@@ -1757,7 +1757,6 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.numeric,
   )
   def test_bcoo_squeeze(self, shape, dtype, dimensions, n_batch, n_dense):
-    # more comprehensive tests in sparsify_test:testSparseSqueeze
     sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
     args_maker = lambda: [sprng(shape, dtype)]
     dense_func = partial(lax.squeeze, dimensions=dimensions)
@@ -1810,6 +1809,24 @@ class BCOOTest(sptu.SparseTestCase):
     y = sparse.BCOO((x.data[:1], x.indices), shape=x.shape)
     with self.assertRaisesRegex(NotImplementedError, "reshape of arrays with broadacsted batch dimensions."):
       y.reshape(2, 3, 2)
+
+  @jtu.sample_product(
+    [dict(shape=shape, dimensions=dimensions, n_batch=layout.n_batch, n_dense=layout.n_dense)
+     for shape in [(3,), (3, 4), (3, 4, 5)]
+     for dimensions in _iter_subsets(range(len(shape)))
+     for layout in iter_sparse_layouts(shape)],
+    dtype=jtu.dtypes.numeric,
+  )
+  def test_bcoo_rev(self, shape, dtype, n_batch, n_dense, dimensions):
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [sprng(shape, dtype)]
+    dense_func = partial(lax.rev, dimensions=dimensions)
+    sparse_func = partial(sparse.bcoo_rev, dimensions=dimensions)
+
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
+
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
