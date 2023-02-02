@@ -19,14 +19,16 @@ from absl.testing import absltest
 import numpy as np
 import scipy.sparse.linalg
 
-from jax import jit
+import jax
 import jax.numpy as jnp
+import jax.scipy.sparse.linalg
+from jax import jit
 from jax import lax
+from jax.tree_util import register_pytree_node_class
+
+import jax._src.scipy.sparse.linalg as sp_linalg
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax.tree_util import register_pytree_node_class
-import jax.scipy.sparse.linalg
-import jax._src.scipy.sparse.linalg as sp_linalg
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -465,6 +467,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   def test_gmres_weak_types(self):
     x, _ = jax.scipy.sparse.linalg.gmres(lambda x: x, 1.0)
     self.assertTrue(dtypes.is_weakly_typed(x))
+
+  def test_linear_solve_batching_via_jacrev(self):
+    # See https://github.com/google/jax/issues/14249
+    rng = np.random.RandomState(0)
+    M = rng.randn(5, 5)
+    A = np.dot(M, M.T)
+    matvec = lambda x: (jnp.dot(A, x[0]), jnp.dot(A, x[1]))
+
+    def f(b):
+      return jax.scipy.sparse.linalg.cg(matvec, (b, b))[0]
+
+    b = rng.randn(5)
+    jax.jacrev(f)(b)  # doesn't crash
 
 
 if __name__ == "__main__":
