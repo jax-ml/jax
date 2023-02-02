@@ -101,6 +101,8 @@ _dtype = partial(dtypes.dtype, canonicalize=True)
 
 AxisName = Any
 
+Device = xc.Device
+
 # These TypeVars are used below to express the fact that function types
 # (i.e. call signatures) are invariant under the vmap transformation.
 F = TypeVar("F", bound=Callable)

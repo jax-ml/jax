@@ -22,13 +22,3 @@ jax.lib.xla_client
 
 .. autosummary::
    :toctree: _autosummary
-
-jax.lib.xla_extension
----------------------
-
-.. currentmodule:: jaxlib.xla_extension
-
-.. autosummary::
-   :toctree: _autosummary
-
-   Device
