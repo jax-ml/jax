@@ -130,11 +130,13 @@ Support for :func:`sparsify` includes a large number of the most common primitiv
 - generalized (batched) matrix products & einstein summations (:obj:`~jax.lax.dot_general_p`)
 - zero-preserving elementwise binary operations (e.g. :obj:`~jax.lax.add_p`, :obj:`~jax.lax.mul_p`, etc.)
 - zero-preserving elementwise unary operations (e.g. :obj:`~jax.lax.abs_p`, :obj:`jax.lax.neg_p`, etc.)
-- summation reductions (:obj:`lax.reduce_sum_p`)
-- general indexing operations (:obj:`lax.slice_p`, `lax.dynamic_slice_p`, `lax.gather_p`)
-- concatenation and stacking (:obj:`lax.concatenate_p`)
-- transposition & reshaping ((:obj:`~jax.lax.transpose_p`, :obj:`lax.reshape_p`, :obj:`lax.squeeze_p`)
-- some higher-order functions (:obj:`lax.cond_p`, :obj:`lax.while_p`, :obj:`lax.scan_p`)
+- summation reductions (:obj:`~jax.lax.reduce_sum_p`)
+- general indexing operations (:obj:`~jax.lax.slice_p`, `lax.dynamic_slice_p`, `lax.gather_p`)
+- concatenation and stacking (:obj:`~jax.lax.concatenate_p`)
+- transposition & reshaping ((:obj:`~jax.lax.transpose_p`, :obj:`~jax.lax.reshape_p`,
+  :obj:`~jax.lax.squeeze_p`, :obj:`~jax.lax.broadcast_in_dim_p`)
+- some higher-order functions (:obj:`~jax.lax.cond_p`, :obj:`~jax.lax.while_p`, :obj:`~jax.lax.scan_p`)
+- some simple 1D convolutions (:obj:`~jax.lax.conv_general_dilated_p`)
 
 Nearly any :mod:`jax.numpy` function that lowers to these supported primitives can be used
 within a sparsify transform to operate on sparse arrays. This set of primitives is enough
@@ -199,6 +201,7 @@ from jax.experimental.sparse.ad import (
 from jax.experimental.sparse.bcoo import (
     bcoo_broadcast_in_dim as bcoo_broadcast_in_dim,
     bcoo_concatenate as bcoo_concatenate,
+    bcoo_conv_general_dilated as bcoo_conv_general_dilated,
     bcoo_dot_general as bcoo_dot_general,
     bcoo_dot_general_p as bcoo_dot_general_p,
     bcoo_dot_general_sampled as bcoo_dot_general_sampled,
