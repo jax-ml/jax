@@ -31,6 +31,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
@@ -136,7 +137,7 @@ def switch(index, branches: Sequence[Callable], *operands,
                           out_trees[0], jaxprs[0].out_avals,
                           out_tree, jaxpr.out_avals)
   joined_effects = core.join_effects(*(jaxpr.effects for jaxpr in jaxprs))
-  disallowed_effects = joined_effects - allowed_effects
+  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
@@ -245,7 +246,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
   joined_effects = core.join_effects(true_jaxpr.effects, false_jaxpr.effects)
-  disallowed_effects = joined_effects - allowed_effects
+  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -304,7 +305,7 @@ def _cond_with_per_branch_args(pred,
 
 def _cond_abstract_eval(*avals, branches, **_):
   joined_effects = core.join_effects(*(b.effects for b in branches))
-  disallowed_effects = joined_effects - allowed_effects
+  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -751,7 +752,7 @@ def _cond_typecheck(*in_atoms, branches, linear):
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
   joined_effects = core.join_effects(*(b.effects for b in branches))
-  disallowed_effects = joined_effects - allowed_effects
+  disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
@@ -818,8 +819,7 @@ pe.dce_rules[cond_p] = _cond_dce_rule
 def _cond_lowering(ctx, index, *args, branches, linear):
   del linear  # Unused.
   joined_effects = core.join_effects(*(branch.effects for branch in branches))
-  ordered_effects = [eff for eff in joined_effects
-                     if eff in core.ordered_effects]
+  ordered_effects = list(effects.ordered_effects.filter_in(joined_effects))
   num_tokens = len(ordered_effects)
   tokens_in = ctx.tokens_in.subset(ordered_effects)
   output_token_types = [mlir.token_type() for _ in ordered_effects]

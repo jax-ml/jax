@@ -39,6 +39,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import effects as effects_lib
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.lib import xla_bridge as xb
@@ -58,7 +59,7 @@ Value = Any  # = ir.Value
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
 
-lowerable_effects: Set[core.Effect] = set()
+lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
 
 # IR Helpers
@@ -695,7 +696,8 @@ def lower_jaxpr_to_module(
   if platform in _platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         in_avals, out_avals, donated_args)
-  if any(eff not in lowerable_effects for eff in jaxpr.effects):
+  unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
+  if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
   if any(donated_args):
     # TODO(tomhennigan): At call time we should mark these buffers as deleted.
@@ -731,8 +733,7 @@ def lower_jaxpr_to_module(
     module_name = _module_name_regex.sub("_", module_name)
     ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
         module_name)
-    unlowerable_effects = {eff for eff in jaxpr.effects
-                           if eff not in lowerable_effects}
+    unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
     if unlowerable_effects:
       raise ValueError(
           f'Cannot lower jaxpr with unlowerable effects: {unlowerable_effects}')
@@ -1140,7 +1141,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
             f"found for platform {ctx.platform}")
 
       eqn_ctx = ctx.replace(name_stack=source_info.name_stack)
-      effects = [eff for eff in eqn.effects if eff in core.ordered_effects]
+      effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
       avals_in = map(aval, eqn.invars)
       rule_ctx = LoweringRuleContext(

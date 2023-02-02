@@ -19,8 +19,8 @@ from typing import Callable, Optional, Sequence
 
 from jax._src import core
 from jax._src import linear_util as lu
-from jax._src.core import control_flow_allowed_effects as allowed_effects
 from jax._src.lax import lax
+from jax._src.effects import control_flow_allowed_effects as allowed_effects
 from jax._src import ad_util
 from jax._src import util
 from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
@@ -30,8 +30,7 @@ from jax.tree_util import tree_map, tree_unflatten
 
 map, unsafe_map = safe_map, map
 
-allowed_effects.add(lax.InOutFeedEffect.Infeed)
-allowed_effects.add(lax.InOutFeedEffect.Outfeed)
+allowed_effects.add_type(lax.InOutFeedEffect)
 
 
 def _abstractify(x):

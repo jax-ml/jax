@@ -25,6 +25,7 @@ from jax._src import core
 from jax._src import linear_util as lu
 from jax import stages
 from jax._src import dispatch
+from jax._src import effects
 from jax.tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
                            treedef_tuple)
 from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
@@ -1375,7 +1376,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=extend_name_stack(ctx.module_context.name_stack,
                                    wrap_name(name, 'xmap')))
-  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+  if any(effects.ordered_effects.contains(eff) for eff
+         in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(),
                                      const_nodes, *tiled_ins,
@@ -1442,7 +1444,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   sub_ctx = ctx.module_context.replace(
       name_stack=extend_name_stack(ctx.module_context.name_stack,
                                    wrap_name(name, 'xmap')))
-  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+  if any(effects.ordered_effects.contains(eff) for eff
+         in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
       mlir.TokenSet(), const_nodes, *sharded_global_in_nodes,
@@ -1494,7 +1497,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
       name_stack=extend_name_stack(ctx.module_context.name_stack,
                                    wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
-  if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
+  if any(effects.ordered_effects.contains(eff) for eff
+         in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
       mlir.TokenSet(), const_nodes, *([n] for n in global_in_nodes),

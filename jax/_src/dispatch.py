@@ -42,6 +42,7 @@ from jax._src import array
 from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import profiler
@@ -507,10 +508,10 @@ def lower_xla_callable(
                             if type(d) is pe.InDBIdx else d for d in a.shape))
        if type(a) is core.DShapedArray else a, b) for a, b in out_type]
   module_name = f"jit_{fun.__name__}"
-  unordered_effects = [eff for eff in closed_jaxpr.effects
-                       if eff not in core.ordered_effects]
-  ordered_effects = [eff for eff in closed_jaxpr.effects
-                     if eff in core.ordered_effects]
+  unordered_effects = list(
+    effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
+  ordered_effects = list(
+    effects.ordered_effects.filter_in(closed_jaxpr.effects))
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name, closed_jaxpr, unordered_effects,
       ordered_effects, backend, backend.platform,

@@ -43,6 +43,7 @@ from jax._src import callback as jcb
 from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
+from jax._src import effects
 from jax._src import array
 from jax._src import dtypes
 from jax._src import source_info_util
@@ -1071,10 +1072,10 @@ def xla_computation(fun: Callable,
       else:
         out_parts_flat = tuple(flatten_axes(
             "xla_computation out_parts", out_tree(), out_parts))
-      unordered_effects = [eff for eff in jaxpr.effects
-                           if eff not in core.ordered_effects]
-      ordered_effects = [eff for eff in jaxpr.effects
-                         if eff in core.ordered_effects]
+      unordered_effects = list(
+          effects.ordered_effects.filter_not_in(jaxpr.effects))
+      ordered_effects = list(
+          effects.ordered_effects.filter_in(jaxpr.effects))
       lowering_result = mlir.lower_jaxpr_to_module(
           f"xla_computation_{fun_name}",
           core.ClosedJaxpr(jaxpr, consts),

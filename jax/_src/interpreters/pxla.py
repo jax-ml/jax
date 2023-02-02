@@ -57,6 +57,7 @@ from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import profiler
 from jax._src import sharding as sharding_internal
@@ -1487,12 +1488,12 @@ def lower_parallel_callable(
                                           backend.platform)
   module_name = f"pmap_{fun.__name__}"
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
-    if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
+    ordered_effects = list(
+        effects.ordered_effects.filter_in(closed_jaxpr.effects))
+    if ordered_effects:
       raise ValueError("Ordered effects not supported in `pmap`.")
-    unordered_effects = [eff for eff in closed_jaxpr.effects
-                         if eff not in core.ordered_effects]
-    ordered_effects = [eff for eff in closed_jaxpr.effects
-                       if eff in core.ordered_effects]
+    unordered_effects = list(
+        effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -3007,12 +3008,12 @@ def lower_sharding_computation(
   module_name = f"{api_name}_{fun_name}"
 
   if len(device_assignment) > 1:
-    if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
+    if any(effects.ordered_effects.contains(eff) for eff
+           in closed_jaxpr.effects):
       raise ValueError("Ordered effects are not supported for more than 1 device.")
-  unordered_effects = [eff for eff in closed_jaxpr.effects
-                       if eff not in core.ordered_effects]
-  ordered_effects = [eff for eff in closed_jaxpr.effects
-                     if eff in core.ordered_effects]
+  unordered_effects = list(
+      effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
+  ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
@@ -3180,12 +3181,13 @@ def lower_mesh_computation(
   module: Union[str, xc.XlaComputation]
   module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):
-    if any(eff in core.ordered_effects for eff in closed_jaxpr.effects):
+    if any(effects.ordered_effects.contains(eff) for eff
+           in closed_jaxpr.effects):
       raise ValueError("Ordered effects not supported in mesh computations.")
-    unordered_effects = [eff for eff in closed_jaxpr.effects
-                         if eff not in core.ordered_effects]
-    ordered_effects = [eff for eff in closed_jaxpr.effects
-                       if eff in core.ordered_effects]
+    unordered_effects = list(effects.ordered_effects.filter_not_in(
+      closed_jaxpr.effects))
+    ordered_effects = list(effects.ordered_effects.filter_in(
+      closed_jaxpr.effects))
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,

@@ -24,6 +24,7 @@ from jax.interpreters import mlir
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import util
 from jax._src import dispatch
 from jax._src.interpreters import ad
@@ -158,17 +159,19 @@ def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
 io_callback_p = core.Primitive("io_callback")
 io_callback_p.multiple_results = True
 
-class IOEffect:
+class IOEffect(effects.Effect):
   __str__ = lambda _: "IO"
-class OrderedIOEffect:
+
+class OrderedIOEffect(effects.Effect):
   __str__ = lambda _: "OrderedIO"
+
 _IOEffect = IOEffect()
 _OrderedIOEffect = OrderedIOEffect()
-mlir.lowerable_effects.add(_IOEffect)
-mlir.lowerable_effects.add(_OrderedIOEffect)
-core.control_flow_allowed_effects.add(_IOEffect)
-core.control_flow_allowed_effects.add(_OrderedIOEffect)
-core.ordered_effects.add(_OrderedIOEffect)
+effects.lowerable_effects.add_type(IOEffect)
+effects.lowerable_effects.add_type(OrderedIOEffect)
+effects.control_flow_allowed_effects.add_type(IOEffect)
+effects.control_flow_allowed_effects.add_type(OrderedIOEffect)
+effects.ordered_effects.add_type(OrderedIOEffect)
 
 
 def io_callback_impl(*args, result_avals, callback: Callable[..., Any],

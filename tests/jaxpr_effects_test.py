@@ -21,6 +21,7 @@ import jax
 import jax.numpy as jnp
 from jax._src import core
 from jax import lax
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax.config import config
 from jax.interpreters import ad
@@ -32,7 +33,6 @@ from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_bridge
 import numpy as np
 
@@ -49,22 +49,34 @@ def effect_jvp_rule(primals, tangents, effect):
   return effect_p.bind(*primals, effect=effect), tangents
 ad.primitive_jvps[effect_p] = effect_jvp_rule
 
-mlir.lowerable_effects.add('foo')
-mlir.lowerable_effects.add('foo2')
-mlir.lowerable_effects.add('bar')
-mlir.lowerable_effects.add('while')
-mlir.lowerable_effects.add('while1')
-mlir.lowerable_effects.add('while2')
-core.ordered_effects.add('foo')
-core.ordered_effects.add('foo2')
-core.ordered_effects.add('while1')
-core.ordered_effects.add('while2')
+class BasicEffect(effects.Effect):
+  def __init__(self, name):
+    self.name = name
 
-lcf.allowed_effects.add('while')
-lcf.allowed_effects.add('while1')
-lcf.allowed_effects.add('while2')
+  __repr__ = lambda self: self.name
 
-ad_checkpoint.remat_allowed_effects.add('remat')
+class OrderedEffect(BasicEffect): pass
+class UnlowerableEffect(effects.Effect): pass
+class WhileEffect(effects.Effect): pass
+class RematEffect(effects.Effect): pass
+
+foo_effect = OrderedEffect("foo")
+foo2_effect = OrderedEffect("foo2")
+bar_effect = BasicEffect("bar")
+baz_effect = UnlowerableEffect()
+while_effect = WhileEffect()
+while1_effect = WhileEffect()
+while2_effect = WhileEffect()
+log_effect = OrderedEffect("log")
+unordered_log_effect = BasicEffect("unordered_log")
+
+effects.lowerable_effects.add_type(BasicEffect)
+effects.lowerable_effects.add_type(WhileEffect)
+effects.ordered_effects.add_type(OrderedEffect)
+effects.ordered_effects.add_type(WhileEffect)
+effects.control_flow_allowed_effects.add_type(WhileEffect)
+
+effects.remat_allowed_effects.add_type(RematEffect)
 
 
 def trivial_effect_lowering(ctx, *, effect):
@@ -92,10 +104,6 @@ def function_effect_lowering(ctx, *, effect):
 callback_p = core.Primitive('callback')
 callback_p.multiple_results = True
 
-mlir.lowerable_effects.add('log')
-mlir.lowerable_effects.add('unordered_log')
-core.ordered_effects.add('log')
-
 @callback_p.def_impl
 def _(*args, callback, out_avals, effect):
   del out_avals, effect
@@ -110,7 +118,7 @@ def _(*avals, callback, out_avals, effect):
 def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out_avals, effect):
   del out_avals
   token_in = None
-  if effect in core.ordered_effects:
+  if effects.ordered_effects.contains(effect):
     token_in = ctx.tokens_in.get(effect)[0]
 
   out_op, token_out, keep_alive = mlir.emit_python_callback(
@@ -149,31 +157,31 @@ class JaxprEffectsTest(jtu.JaxTestCase):
 
   def test_effectful_primitive_in_jaxpr_creates_effects(self):
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertEqual({'foo'}, jaxpr.jaxpr.eqns[0].effects)
-    self.assertEqual({'foo'}, jaxpr.effects)
+    self.assertEqual({foo_effect}, jaxpr.jaxpr.eqns[0].effects)
+    self.assertEqual({foo_effect}, jaxpr.effects)
 
   def test_different_effects_in_jaxpr(self):
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x + 1.
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertEqual({'foo'}, jaxpr.jaxpr.eqns[0].effects)
-    self.assertEqual({'bar'}, jaxpr.jaxpr.eqns[1].effects)
-    self.assertEqual({'foo', 'bar'}, jaxpr.effects)
+    self.assertEqual({foo_effect}, jaxpr.jaxpr.eqns[0].effects)
+    self.assertEqual({bar_effect}, jaxpr.jaxpr.eqns[1].effects)
+    self.assertEqual({foo_effect, bar_effect}, jaxpr.effects)
 
   def test_jaxpr_typecheck_should_verify_eqn_effects_are_subset(self):
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x + 1.
     jaxpr = jax.make_jaxpr(f)(2.).jaxpr
 
     # Edit jaxpr to make its type wrong
-    jaxpr = jaxpr.replace(effects={'foo'})
+    jaxpr = jaxpr.replace(effects={foo_effect})
 
     with self.assertRaisesRegex(core.JaxprTypeError,
         'Equation effects are not subset of Jaxpr effects.'):
@@ -186,48 +194,52 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     def f(x):
       @lu.wrap_init
       def f_(x):
-        effect_p.bind(effect='foo')
-        effect_p.bind(effect='bar')
+        effect_p.bind(effect=foo_effect)
+        effect_p.bind(effect=bar_effect)
         return [x]
       return core.call(f_, x)[0]
-    jax.make_jaxpr(f)(2.)
+    jaxpr = jax.make_jaxpr(f)(2.)
+    self.assertIn(foo_effect, jaxpr.jaxpr.effects)
+    self.assertIn(bar_effect, jaxpr.jaxpr.effects)
 
   def test_xla_call_primitive_inherits_effects(self):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x
     jax.make_jaxpr(f)(2.)
+    jaxpr = jax.make_jaxpr(f)(2.)
+    self.assertIn(foo_effect, jaxpr.jaxpr.effects)
+    self.assertIn(bar_effect, jaxpr.jaxpr.effects)
 
-  @jtu.sample_product(flavor=["old", "new"])
-  def test_remat_call_primitive_inherits_effects(self, flavor):
-    remat = jax.remat if flavor == "old" else ad_checkpoint.checkpoint
+  def test_remat_call_primitive_inherits_effects(self):
 
-    @remat
+    @jax.checkpoint
     def f(x):
-      x, = effect_p.bind(x, effect='foo')
-      x, = effect_p.bind(x, effect='bar')
+      x, = effect_p.bind(x, effect=foo_effect)
+      x, = effect_p.bind(x, effect=bar_effect)
       return x
     jax.make_jaxpr(f)(2.)
     with self.assertRaisesRegex(NotImplementedError, "Effects not supported"):
       jax.make_jaxpr(lambda x: jax.linearize(f, x)[1](x))(2.)
 
   def test_new_remat_allows_certain_effects(self):
+    remat_effect = RematEffect()
     @ad_checkpoint.checkpoint
     def f(x):
-      x, = effect_p.bind(x, effect='remat')
+      x, = effect_p.bind(x, effect=remat_effect)
       return x
     jaxpr = jax.make_jaxpr(f)(2.)
-    self.assertSetEqual(jaxpr.effects, {"remat"})
+    self.assertSetEqual(jaxpr.effects, {remat_effect})
 
   def test_custom_jvp_primitive_inherits_effects(self):
 
     @jax.custom_jvp
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x
     f.defjvp(lambda x, t: (x, t))
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
@@ -237,8 +249,8 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
     @jax.custom_vjp
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x
     f.defvjp(
         fwd=lambda x: (x, ()),
@@ -250,27 +262,27 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
 
     @jax.pmap
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x
     with self.assertRaisesRegex(
         ValueError,
-        "Ordered effects not supported for map primitives: {'foo'}"):
+        "Ordered effects not supported for map primitives: {.*}"):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_xmap_inherits_effects(self):
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'])
     jaxpr = jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
-    self.assertSetEqual(jaxpr.effects, {"foo", "bar"})
+    self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
   def test_pjit_inherits_effects(self):
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=bar_effect)
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['x'])
     if config.jax_array:
@@ -280,7 +292,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
     with mesh:
       jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
-    self.assertSetEqual(jaxpr.effects, {"foo", "bar"})
+    self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
 
 class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
@@ -291,7 +303,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     config.update('jax_enable_x64', False)
     self._old_lowering = mlir._lowerings[effect_p]
     def _effect_lowering(ctx, *, effect):
-      if effect in core.ordered_effects:
+      if effects.ordered_effects.contains(effect):
         expected_effects = [effect]
       else:
         expected_effects = []
@@ -308,12 +320,20 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     config.update('jax_enable_x64', self.old_x64)
     mlir.register_lowering(effect_p, self._old_lowering)
 
+  def test_can_lower_lowerable_effect(self):
+    @jax.jit
+    def f(x):
+      effect_p.bind(effect=foo_effect)
+      return x + 1.
+    f.lower(2.)
+
   def test_cannot_lower_unlowerable_effect(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=baz_effect)
       return x + 1.
-    f.lower(2.)
+    with self.assertRaisesRegex(ValueError, "Cannot lower jaxpr with effects"):
+      f.lower(2.)
 
   def test_should_not_pass_tokens_into_unordered_effect(self):
 
@@ -324,7 +344,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=bar_effect)
       return x + 1.
     f.lower(2.)
 
@@ -337,7 +357,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     with self.assertRaisesRegex(ValueError, 'Lowering rule for `effect` needs to '
         'set `tokens_out`'):
@@ -346,13 +366,13 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_lowering_that_sets_wrong_tokens_should_cause_error(self):
 
     def bad_effect_lowering(ctx, *, effect):
-      ctx.set_tokens_out(mlir.TokenSet(bar=ctx.tokens_in.get('foo')))
+      ctx.set_tokens_out(mlir.TokenSet(bar=ctx.tokens_in.get(foo_effect)))
       return []
     mlir.register_lowering(effect_p, bad_effect_lowering)
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     with self.assertRaisesRegex(ValueError, 'Lowering rule for `effect` returns '
         'incorrect set of output token.'):
@@ -367,7 +387,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
@@ -376,8 +396,8 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='foo2')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=foo2_effect)
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
@@ -388,7 +408,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
@@ -397,8 +417,8 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='foo2')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=foo2_effect)
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
@@ -413,7 +433,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
@@ -434,7 +454,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=bar_effect)
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
@@ -450,7 +470,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_lowered_jaxpr_without_ordered_effects_takes_no_dummy_inputs(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=bar_effect)
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
@@ -465,7 +485,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_lowered_jaxpr_with_ordered_effects_takes_in_dummy_inputs(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
@@ -481,8 +501,8 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_lowered_jaxpr_with_multiple_ordered_effects_takes_in_dummy_inputs(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='foo2')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=foo2_effect)
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
@@ -500,14 +520,14 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_can_lower_and_run_jaxpr_with_ordered_effects(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
     self.assertEqual(f(2.), 3.)
 
   def test_can_lower_and_run_jaxpr_with_unordered_effects(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=bar_effect)
       return x + 1.
     self.assertEqual(f(2.), 3.)
 
@@ -517,7 +537,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     @jax.jit
     @jax.pmap
     def f(x):
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=bar_effect)
       return x + 1
     with self.assertRaisesRegex(
         NotImplementedError,
@@ -530,48 +550,48 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     @jax.jit
     @jax.pmap
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1
     with self.assertRaisesRegex(
         ValueError,
-        "Ordered effects not supported for map primitives: {'foo'}"):
+        "Ordered effects not supported for map primitives: {foo}"):
       f(jnp.arange(jax.device_count()))
 
   def test_runtime_tokens_should_update_after_running_effectful_function(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
-    self.assertNotIn('foo', dispatch.runtime_tokens.tokens)
+    self.assertNotIn(foo_effect, dispatch.runtime_tokens.tokens)
     f(2.)
-    prev_token = dispatch.runtime_tokens.tokens['foo']
+    prev_token = dispatch.runtime_tokens.tokens[foo_effect]
     f(2.)
-    curr_token = dispatch.runtime_tokens.tokens['foo']
+    curr_token = dispatch.runtime_tokens.tokens[foo_effect]
     self.assertIsNot(prev_token, curr_token)
 
   def test_can_lower_multiple_effects(self):
     @jax.jit
     def f(x):
-      effect_p.bind(effect='foo')
-      effect_p.bind(effect='foo2')
+      effect_p.bind(effect=foo_effect)
+      effect_p.bind(effect=foo2_effect)
       return x + 1.
     @jax.jit
     def g(x):
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x + 1.
-    self.assertNotIn('foo', dispatch.runtime_tokens.tokens)
-    self.assertNotIn('foo2', dispatch.runtime_tokens.tokens)
+    self.assertNotIn(foo_effect, dispatch.runtime_tokens.tokens)
+    self.assertNotIn(foo2_effect, dispatch.runtime_tokens.tokens)
+    f(2.).block_until_ready()
+    foo_token = dispatch.runtime_tokens.tokens[foo_effect][0]
+    foo2_token = dispatch.runtime_tokens.tokens[foo2_effect][0]
     f(2.)
-    foo_token = dispatch.runtime_tokens.tokens['foo'][0]
-    foo2_token = dispatch.runtime_tokens.tokens['foo'][0]
-    f(2.)
-    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens['foo'][0])
-    self.assertIsNot(foo2_token, dispatch.runtime_tokens.tokens['foo2'][0])
-    foo_token = dispatch.runtime_tokens.tokens['foo'][0]
-    foo2_token = dispatch.runtime_tokens.tokens['foo2'][0]
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
+    self.assertIsNot(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
+    foo_token = dispatch.runtime_tokens.tokens[foo_effect][0]
+    foo2_token = dispatch.runtime_tokens.tokens[foo2_effect][0]
     g(2.)
-    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens['foo'][0])
-    self.assertIs(foo2_token, dispatch.runtime_tokens.tokens['foo2'][0])
+    self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
+    self.assertIs(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
 
 @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class EffectOrderingTest(jtu.JaxTestCase):
@@ -589,7 +609,7 @@ class EffectOrderingTest(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
     f(2.)
     jax.effects_barrier()
@@ -618,11 +638,11 @@ class EffectOrderingTest(jtu.JaxTestCase):
       # Expensive computation
       x = x.dot(x)
       x = jnp.log(x.sum())
-      return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
     @functools.partial(jax.jit, device=jax.devices()[1])
     def g(x):
-      return callback_p.bind(x, callback=log_value, effect='log', out_avals=[])
+      return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
     f(jnp.ones((500, 500)))
     g(3.)
@@ -641,12 +661,12 @@ class EffectOrderingTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices.")
     tokens = []
     def _noop(_):
-      tokens.append(dispatch.runtime_tokens.tokens['log'][0])
+      tokens.append(dispatch.runtime_tokens.tokens[log_effect][0])
       return ()
 
     @functools.partial(jax.jit, device=jax.devices()[0])
     def f(x):
-      return callback_p.bind(x, callback=_noop, effect='log', out_avals=[])
+      return callback_p.bind(x, callback=_noop, effect=log_effect, out_avals=[])
 
     t1 = threading.Thread(target=lambda: f(2.))
     t2 = threading.Thread(target=lambda: f(3.))
@@ -673,7 +693,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
 
     def f(x):
       # foo is lowerable and ordered
-      effect_p.bind(effect='foo')
+      effect_p.bind(effect=foo_effect)
       return x
     with self.assertRaisesRegex(
         ValueError, "Ordered effects not supported in `pmap`."):
@@ -683,7 +703,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
 
     def f(x):
       # bar is lowerable and unordered
-      effect_p.bind(effect='bar')
+      effect_p.bind(effect=bar_effect)
       return x
     jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
@@ -705,7 +725,7 @@ class ParallelEffectsTest(jtu.JaxTestCase):
     @jax.pmap
     def f(x):
       callback_p.bind(
-          x, callback=log_value, effect='unordered_log', out_avals=[])
+          x, callback=log_value, effect=unordered_log_effect, out_avals=[])
       return x + 1
     f(jnp.arange(2)).block_until_ready()
     jax.effects_barrier()
@@ -716,7 +736,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_effects_disallowed_in_cond(self):
     def f1(x):
       def true_fun(x):
-        effect_p.bind(effect='foo')
+        effect_p.bind(effect=foo_effect)
         return x
       def false_fun(x):
         return x
@@ -728,10 +748,10 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_allowed_effect_in_cond(self):
     def f(x):
       def true_fun(x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return x
       def false_fun(x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return x
       return lax.cond(x, true_fun, false_fun, x)
     f(2)
@@ -739,16 +759,16 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_allowed_effect_in_cond_jvp(self):
     def f(x):
       def true_fun(x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return x
       def false_fun(x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return x
       return lax.cond(True, true_fun, false_fun, x)
 
     # test primal side gets effect
     primal_jaxpr = jax.make_jaxpr(lambda x: jax.linearize(f, x)[0])(2.)
-    self.assertEqual(primal_jaxpr.effects, {'while'})
+    self.assertEqual(primal_jaxpr.effects, {while_effect})
     # and tangent side does not
     _, f_lin = jax.linearize(f, 2.)
     lin_jaxpr = f_lin.func.fun.args[0]
@@ -763,8 +783,8 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       x, = primals
       t, = tangents
       # TODO(mattjj,sharadmv): don't require data dependence for jax.linearize!
-      # effect_p.bind(t, effect='while')
-      t, = effect_p.bind(t, effect='while')  # data dep only on tangents
+      # effect_p.bind(t, effect=while_effect)
+      t, = effect_p.bind(t, effect=while_effect)  # data dep only on tangents
       return x, t
 
     def f(x):
@@ -780,15 +800,15 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
     # and tangent side does
     _, f_lin = jax.linearize(f, 2.)
     lin_jaxpr = f_lin.func.fun.args[0]
-    self.assertEqual(lin_jaxpr.effects, {'while'})
+    self.assertEqual(lin_jaxpr.effects, {while_effect})
 
   def test_allowed_ordered_effect_in_cond(self):
     def f(x):
       def true_fun(x):
-        effect_p.bind(effect='while1')
+        effect_p.bind(effect=while1_effect)
         return x
       def false_fun(x):
-        effect_p.bind(effect='while1')
+        effect_p.bind(effect=while1_effect)
         return x
       return lax.cond(x, true_fun, false_fun, x)
     f(2)
@@ -796,12 +816,12 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_multiple_allowed_ordered_effect_in_cond(self):
     def f(x):
       def true_fun(x):
-        effect_p.bind(effect='while1')
-        effect_p.bind(effect='while2')
+        effect_p.bind(effect=while1_effect)
+        effect_p.bind(effect=while2_effect)
         return x
       def false_fun(x):
-        effect_p.bind(effect='while1')
-        effect_p.bind(effect='while2')
+        effect_p.bind(effect=while1_effect)
+        effect_p.bind(effect=while2_effect)
         return x
       return lax.cond(x, true_fun, false_fun, x)
     f(2)
@@ -810,7 +830,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       def true_fun(x):
         return x
       def false_fun(x):
-        effect_p.bind(effect='foo')
+        effect_p.bind(effect=foo_effect)
         return x
       return lax.cond(True, true_fun, false_fun, x)
 
@@ -822,7 +842,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       def cond_fun(x):
         return False
       def body_fun(x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return x
       return lax.while_loop(cond_fun, body_fun, x)
     f(2)
@@ -830,7 +850,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_allowed_effect_in_cond_body(self):
     def f(x):
       def cond_fun(x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return False
       def body_fun(x):
         return x
@@ -842,7 +862,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       def cond_fun(x):
         return False
       def body_fun(x):
-        effect_p.bind(effect='while1')
+        effect_p.bind(effect=while1_effect)
         return x
       return lax.while_loop(cond_fun, body_fun, x)
     f(2)
@@ -852,8 +872,8 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       def cond_fun(x):
         return False
       def body_fun(x):
-        effect_p.bind(effect='while1')
-        effect_p.bind(effect='while2')
+        effect_p.bind(effect=while1_effect)
+        effect_p.bind(effect=while2_effect)
         return x
       return lax.while_loop(cond_fun, body_fun, x)
     f(2)
@@ -861,7 +881,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_effects_disallowed_in_while(self):
     def f1(x):
       def cond_fun(x):
-        effect_p.bind(effect='foo')
+        effect_p.bind(effect=foo_effect)
         return False
       def body_fun(x):
         return x
@@ -874,7 +894,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
       def cond_fun(x):
         return False
       def body_fun(x):
-        effect_p.bind(effect='foo')
+        effect_p.bind(effect=foo_effect)
         return x
       return lax.while_loop(cond_fun, body_fun, x)
 
@@ -884,7 +904,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_allowed_effect_in_scan(self):
     def f(x):
       def body_fun(carry, x):
-        effect_p.bind(effect='while')
+        effect_p.bind(effect=while_effect)
         return carry, x
       return lax.scan(body_fun, x, jnp.arange(5))
     f(2)
@@ -892,7 +912,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_allowed_ordered_effect_in_scan(self):
     def f(x):
       def body_fun(carry, x):
-        effect_p.bind(effect='while1')
+        effect_p.bind(effect=while1_effect)
         return carry, x
       return lax.scan(body_fun, x, jnp.arange(5))
     f(2)
@@ -900,8 +920,8 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
   def test_multiple_allowed_ordered_effect_in_scan(self):
     def f(x):
       def body_fun(carry, x):
-        effect_p.bind(effect='while1')
-        effect_p.bind(effect='while2')
+        effect_p.bind(effect=while1_effect)
+        effect_p.bind(effect=while2_effect)
         return carry, x
       return lax.scan(body_fun, x, jnp.arange(5))
     f(2)
@@ -910,7 +930,7 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
 
     def f(x):
       def body(carry, x):
-        effect_p.bind(effect='foo')
+        effect_p.bind(effect=foo_effect)
         return carry, x
       return lax.scan(body, x, jnp.arange(4))
 

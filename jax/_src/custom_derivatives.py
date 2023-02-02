@@ -14,8 +14,7 @@
 
 from functools import update_wrapper, reduce, partial
 import inspect
-from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Set,
-                    Any)
+from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Any)
 
 from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
@@ -29,6 +28,7 @@ from jax.config import config
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
 from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
@@ -47,6 +47,8 @@ traceback_util.register_exclusion(__file__)
 map = safe_map
 zip = safe_zip
 
+allowed_effects: effects.EffectTypeSet = (
+    effects.custom_derivatives_allowed_effects)
 
 ### util
 
@@ -380,18 +382,14 @@ def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
   yield outs, tuple(todo)  # Ensure the aux output is immutable
 
 
-allowed_effects: Set[core.Effect] = set()
-allowed_effects.add(lax.InOutFeedEffect.Infeed)
-allowed_effects.add(lax.InOutFeedEffect.Outfeed)
-
+allowed_effects.add_type(lax.InOutFeedEffect)
 
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
 def _custom_jvp_call_typecheck(*in_avals, call_jaxpr, jvp_jaxpr_thunk, num_consts):
   # TODO(mattjj): could do more checking here...
   del in_avals, jvp_jaxpr_thunk, num_consts
-  disallowed_effects = {eff for eff in call_jaxpr.effects if eff not in
-                        allowed_effects}
+  disallowed_effects = allowed_effects.filter_not_in(call_jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_jvp`: {disallowed_effects}')
@@ -714,8 +712,7 @@ def _custom_vjp_call_jaxpr_impl(*args, fun_jaxpr, **_):
   return core.jaxpr_as_fun(fun_jaxpr)(*args)
 
 def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
-  disallowed_effects = {eff for eff in fun_jaxpr.effects if eff not in
-                        allowed_effects}
+  disallowed_effects = allowed_effects.filter_not_in(fun_jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')

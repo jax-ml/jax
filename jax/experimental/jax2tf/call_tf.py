@@ -33,19 +33,20 @@ from jax import dlpack
 from jax import dtypes
 from jax import numpy as jnp
 from jax import tree_util
-from jax._src import util
-from jax._src import ad_util
-from jax._src.lax import control_flow as lax_control_flow
+from jax._src import core
 from jax._src import ad_checkpoint
 from jax._src import custom_derivatives
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax._src import core
+from jax._src import ad_util
+from jax._src import effects
+from jax._src import util
+from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
+from jax.interpreters import mlir
+from jax.interpreters import xla
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -296,13 +297,16 @@ def _get_concrete_function_tf(function_flat_tf, args_flat_sig_tf):  # -> tf.Conc
     return function_flat_tf.get_concrete_function(*args_flat_sig_tf)
 
 
-# Mark the effectful instancess of call_tf
-CallTfEffect = enum.Enum('CallTfEffect', ['EFFECT'])
+# Mark the effectful instances of call_tf
+class CallTfEffect(effects.Effect):
+  __str__ = lambda _: "CallTfEffect"
 
-mlir.lowerable_effects.add(CallTfEffect.EFFECT)
-lax_control_flow.allowed_effects.add(CallTfEffect.EFFECT)
-ad_checkpoint.remat_allowed_effects.add(CallTfEffect.EFFECT)
-custom_derivatives.allowed_effects.add(CallTfEffect.EFFECT)
+call_tf_effect = CallTfEffect()
+
+effects.lowerable_effects.add_type(CallTfEffect)
+effects.control_flow_allowed_effects.add_type(CallTfEffect)
+effects.remat_allowed_effects.add_type(CallTfEffect)
+effects.custom_derivatives_allowed_effects.add_type(CallTfEffect)
 
 
 def _call_tf_abstract_eval(*_,
@@ -316,7 +320,7 @@ def _call_tf_abstract_eval(*_,
 
   def is_fully_known_shape(s):
     return s.rank is not None and all([d is not None for d in s])
-  effects = {CallTfEffect.EFFECT} if has_side_effects else set()
+  effects = {call_tf_effect} if has_side_effects else set()
   if all([is_fully_known_shape(s)
           for s in concrete_function_flat_tf.output_shapes]):
     return (
