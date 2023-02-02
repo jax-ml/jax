@@ -46,6 +46,7 @@ Then create a pull request that adds a file named
   10657: Sequencing side-effects in JAX <10657-sequencing-effects>
   11830: `jax.remat` / `jax.checkpoint` new implementation <11830-new-remat-checkpoint>
   12049: Type Annotation Roadmap for JAX <12049-type-annotations>
+  13062: Bounded while loop <13062-bounded-while-loop>
 
 
 Several early JEPs were converted in hindsight from other documentation,
