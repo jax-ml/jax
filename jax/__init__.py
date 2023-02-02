@@ -65,6 +65,7 @@ from jax._src.config import (
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
 from jax._src.environment_info import print_environment_info as print_environment_info
 from jax._src.api import (
+  Device as Device,
   ad,  # TODO(phawkins): update users to avoid this.
   effects_barrier,
   block_until_ready as block_until_ready,

@@ -145,4 +145,5 @@ Miscellaneous
 .. autosummary::
   :toctree: _autosummary
 
+    Device
     print_environment_info
