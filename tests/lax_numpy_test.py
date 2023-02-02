@@ -151,12 +151,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  def testNotImplemented(self):
-    for name in jnp._NOT_IMPLEMENTED:
-      func = getattr(jnp, name)
-      with self.assertRaises(NotImplementedError):
-        func()
-
   @parameterized.parameters(
     [dtype for dtype in [jnp.bool_, jnp.uint8, jnp.uint16, jnp.uint32,
                          jnp.uint64, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
@@ -3228,17 +3222,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(jax.errors.ConcretizationTypeError, lambda: g(3.))
 
-  def testTracingPrimitiveWithNoTranslationErrorMessage(self):
-    # TODO(mattjj): update this for jax3
-    self.skipTest("test needs jax3 update")
-    foo = jnp._not_implemented(lambda x: x)
-
-    # No error if there's no tracing.
-    foo(np.arange(3))
-
-    cfoo = jax.jit(foo)
-    self.assertRaises(NotImplementedError, lambda: cfoo(np.arange(3)))
-
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in [(3,), (2, 3)]
@@ -5293,7 +5276,9 @@ def _all_numpy_ufuncs() -> Iterator[str]:
   for name in dir(np):
     f = getattr(np, name)
     if isinstance(f, np.ufunc):
-      yield name
+      # jnp.spacing is not implemented.
+      if f.__name__ != "spacing":
+        yield name
 
 
 def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:

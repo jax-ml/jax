@@ -35,7 +35,7 @@ namespace; they are listed below.
 
 .. Generate the list below as follows:
    >>> import jax.numpy, numpy
-   >>> fns = set(dir(numpy)) & set(dir(jax.numpy)) - set(jax.numpy._NOT_IMPLEMENTED)
+   >>> fns = set(dir(numpy)) & set(dir(jax.numpy))
    >>> print('\n'.join('    ' + x for x in fns if callable(getattr(jax.numpy, x))))  # doctest: +SKIP
 
    # Finally, sort the list using sort(1), which is different than Python's
