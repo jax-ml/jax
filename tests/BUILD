@@ -31,7 +31,6 @@ jax_generate_backend_suites()
 jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = 10,
 )
