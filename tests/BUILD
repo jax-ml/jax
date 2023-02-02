@@ -760,6 +760,7 @@ jax_test(
     },
     deps = [
         "//jax:experimental_sparse",
+        "//jax:sparse_test_util",
     ],
 )
 

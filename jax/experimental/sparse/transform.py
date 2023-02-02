@@ -504,6 +504,7 @@ def _standard_sparse_rule(prim, sparse_op):
 _BCOO_STANDARD_PRIMITIVES = {
   lax.broadcast_in_dim_p: sparse.bcoo_broadcast_in_dim,
   lax.concatenate_p: lambda *a, **k: sparse.bcoo_concatenate(a, **k),
+  lax.conv_general_dilated_p: sparse.bcoo_conv_general_dilated,
   lax.dot_general_p: sparse.bcoo_dot_general,
   lax.dynamic_slice_p: lambda *a, **k: sparse.bcoo_dynamic_slice(a[0], a[1:], **k),
   lax.reshape_p: sparse.bcoo_reshape,

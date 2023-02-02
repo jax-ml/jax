@@ -28,6 +28,7 @@ from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
 from jax.experimental.sparse.util import CuSparseEfficiencyWarning
+from jax.experimental.sparse import test_util as sptu
 
 config.parse_flags_with_absl()
 
@@ -333,6 +334,24 @@ class SparsifyTest(jtu.JaxTestCase):
     arrs = [rng(shape, 'int32') for shape in shapes]
     sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
     self.assertArraysEqual(f(arrs), f(sparrs).todense())
+
+  @jtu.sample_product(
+    lhs_shape=[(5,), (10,), (15,)],
+    rhs_shape=[(3,), (4,), (5,)],
+    mode=['same', 'valid', 'full'],
+    dtype=jtu.dtypes.numeric,
+  )
+  def testSparseConvolve(self, lhs_shape, rhs_shape, mode, dtype):
+    f = self.sparsify(partial(jnp.convolve, mode=mode, precision='highest'))
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=0, n_dense=0)
+    rng = jtu.rand_default(self.rng())
+
+    lhs_sp = sprng(lhs_shape, dtype)
+    lhs = lhs_sp.todense()
+    rhs = rng(rhs_shape, dtype)
+
+    tol = {np.float32: 1E-5, np.complex64: 1E-5, np.float64: 1E-14, np.complex128: 1E-14}
+    self.assertAllClose(f(lhs, rhs), f(lhs_sp, rhs).todense(), atol=tol, rtol=tol)
 
   def testSparseReshapeMethod(self):
     # Note: this is more fully tested in sparse_test.py:test_bcoo_reshape

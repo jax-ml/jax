@@ -2350,6 +2350,55 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
 
   return result.reshape(out_aval.shape).astype(out_aval.dtype)
 
+def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding, lhs_dilation,
+                              rhs_dilation, dimension_numbers, feature_group_count,
+                              batch_group_count, precision, preferred_element_type):
+  # So far, we support just simple padded convolutions.
+  if not (isinstance(lhs, BCOO) and isinstance(rhs, jax.Array)):
+    raise NotImplementedError("bcoo_conv_general_dilated only implemented for sparse lhs and dense rhs. "
+                              f"got {type(lhs)=} and {type(rhs)=}")
+  # Validate inputs using lax.conv_general_dilated abstract evaluation.
+  out_aval = jax.eval_shape(
+    functools.partial(lax.conv_general_dilated, window_strides=window_strides, padding=padding,
+                      lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
+                      feature_group_count=feature_group_count, batch_group_count=batch_group_count,
+                      precision=precision, preferred_element_type=preferred_element_type),
+    jax.ShapeDtypeStruct(lhs.shape, lhs.dtype), jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+  if lhs_dilation != (1,) * (lhs.ndim - 2) or rhs_dilation != (1,) * (rhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with non-unit dilation.")
+  if window_strides != (1,) * (lhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with non-unit window_strides.")
+  if batch_group_count != 1 or feature_group_count != 1:
+    raise NotImplementedError("bcoo convolution with non-unit group counts.")
+  if lhs.shape[:2] != rhs.shape[:2] != (1, 1):
+    raise NotImplementedError("bcoo convolution with leading dimensions other than (1, 1)")
+  del precision, preferred_element_type  # unused
+
+  lhs = bcoo_squeeze(lhs, dimensions=(0, 1))
+  rhs = lax.squeeze(rhs, dimensions=(0, 1))
+
+  if lhs.ndim != rhs.ndim != 1:
+    raise NotImplementedError("only 1-dimensional convoutions are implemented")
+  if lhs.n_batch != lhs.n_dense != 0:
+    raise NotImplementedError("bcoo convolution with batch or dense dimensions.")
+
+  padding, = padding
+  assert len(padding) == 2
+
+  new_data = (lhs.data[:, None] * rhs[None, :]).astype(out_aval.dtype)
+  new_data = new_data.ravel()
+
+  offset = jnp.arange(len(rhs), dtype=lhs.indices.dtype)[::-1] + 1 + padding[0] - len(rhs)
+  new_indices = lhs.indices[:, None, :] + offset[None, :, None]
+  new_indices = new_indices.reshape(lhs.indices.shape[0] * len(rhs), lhs.indices.shape[1])
+
+  mask = (new_indices < 0).any(1)
+  new_indices = jnp.where(mask[:, None], 0, new_indices)
+  new_data = jnp.where(mask, 0, new_data)
+
+  out = BCOO((new_data, new_indices), shape=(lhs.shape[0] + padding[0] + padding[1] - len(rhs) + 1,))
+  return bcoo_broadcast_in_dim(out, shape=(1, 1, *out.shape), broadcast_dimensions=range(2, 2 + out.ndim))
+
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
   """Experimental batched COO matrix implemented in JAX
