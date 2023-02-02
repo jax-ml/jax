@@ -291,6 +291,19 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse, result_dense)
 
+  def testSparseRev(self):
+    # Note: more comprehensive tests in sparse_test.py:test_bcoo_rev
+    rng = jtu.rand_default(self.rng())
+
+    M_dense = rng((2, 3, 4), np.float32)
+    M_sparse = BCOO.fromdense(M_dense)
+    func = self.sparsify(partial(lax.rev, dimensions=(1, 2)))
+
+    result_dense = func(M_dense)
+    result_sparse = func(M_sparse).todense()
+
+    self.assertAllClose(result_sparse, result_dense)
+
   @jtu.sample_product(
     [dict(shapes=shapes, func=func, n_batch=n_batch)
       for shapes, func, n_batch in [

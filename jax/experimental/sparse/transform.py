@@ -507,6 +507,7 @@ _BCOO_STANDARD_PRIMITIVES = {
   lax.dot_general_p: sparse.bcoo_dot_general,
   lax.dynamic_slice_p: lambda *a, **k: sparse.bcoo_dynamic_slice(a[0], a[1:], **k),
   lax.reshape_p: sparse.bcoo_reshape,
+  lax.rev_p: sparse.bcoo_rev,
   lax.slice_p: sparse.bcoo_slice,
   lax.squeeze_p: sparse.bcoo_squeeze,
 }
