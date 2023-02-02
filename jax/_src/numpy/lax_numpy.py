@@ -5062,7 +5062,6 @@ _diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
 # _not_implemented implementations of them here rather than in __init__.py.
 # TODO(phawkins): implement these.
 argpartition = _not_implemented(np.argpartition)
-_NOT_IMPLEMENTED = ['argpartition']
 
 
 # Experimental support for NumPy's module dispatch with NEP-37.

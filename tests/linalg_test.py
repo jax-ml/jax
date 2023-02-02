@@ -45,12 +45,6 @@ int_types = jtu.dtypes.all_integer
 
 class NumpyLinalgTest(jtu.JaxTestCase):
 
-  def testNotImplemented(self):
-    for name in jnp.linalg._NOT_IMPLEMENTED:
-      func = getattr(jnp.linalg, name)
-      with self.assertRaises(NotImplementedError):
-        func()
-
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)],
     dtype=float_types + complex_types,
