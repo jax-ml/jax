@@ -33,6 +33,7 @@ from jax._src.util import prod
 import jax._src.test_util as jtu
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 import numpy as np
 
 from jax.config import config
@@ -48,9 +49,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    supported_platforms = ["tpu", "gpu"]
+    supported_platforms = ["tpu"]
+
+    if xla_extension_version >= 122:
+      supported_platforms.append("gpu")
+
     if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
       supported_platforms.append("cpu")
+
     if jtu.device_under_test() not in supported_platforms:
       raise SkipTest("serialize executable only works on " +
                      ",".join(supported_platforms))
