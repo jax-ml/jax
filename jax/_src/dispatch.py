@@ -49,7 +49,8 @@ from jax._src import profiler
 from jax._src import stages
 from jax._src import traceback_util
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
-                               OpShardingSharding, Sharding)
+                               OpShardingSharding, NamedSharding, PartitionSpec,
+                               Sharding)
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
 from jax._src.lib.mlir import ir
@@ -559,7 +560,7 @@ def jaxpr_has_primitive(jaxpr, prim_name: str):
 
 
 def jaxpr_shardings(jaxpr) -> Iterator[jax.sharding.XLACompatibleSharding]:
-  from jax.experimental import pjit
+  from jax.experimental import pjit, shard_map
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
@@ -567,6 +568,12 @@ def jaxpr_shardings(jaxpr) -> Iterator[jax.sharding.XLACompatibleSharding]:
     elif eqn.primitive is pjit.pjit_p:
       yield from eqn.params['in_shardings']
       yield from eqn.params['out_shardings']
+    elif eqn.primitive is shard_map.shard_map_p:
+      def _names_to_pspec(names):
+        ndmin = max(names) + 1 if names else 0
+        return PartitionSpec(*(names.get(i) for i in range(ndmin)))
+      yield from (NamedSharding(eqn.params['mesh'], _names_to_pspec(names))
+                  for names in eqn.params['in_names'])
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)
 
