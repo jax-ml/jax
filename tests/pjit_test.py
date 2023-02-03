@@ -1067,6 +1067,7 @@ class PJitTest(jtu.BufferDonationTestCase):
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
+  @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # custom partitoner
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner(self):
