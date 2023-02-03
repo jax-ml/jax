@@ -52,6 +52,7 @@ from typing import (
 
 import numpy as np
 
+import jax
 from jax import core
 from jax import lax
 from jax._src import linear_util as lu

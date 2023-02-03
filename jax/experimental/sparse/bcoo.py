@@ -2350,54 +2350,77 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
 
   return result.reshape(out_aval.shape).astype(out_aval.dtype)
 
-def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding, lhs_dilation,
-                              rhs_dilation, dimension_numbers, feature_group_count,
-                              batch_group_count, precision, preferred_element_type):
-  # So far, we support just simple padded convolutions.
-  if not (isinstance(lhs, BCOO) and isinstance(rhs, jax.Array)):
-    raise NotImplementedError("bcoo_conv_general_dilated only implemented for sparse lhs and dense rhs. "
-                              f"got {type(lhs)=} and {type(rhs)=}")
-  # Validate inputs using lax.conv_general_dilated abstract evaluation.
-  out_aval = jax.eval_shape(
-    functools.partial(lax.conv_general_dilated, window_strides=window_strides, padding=padding,
-                      lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
-                      feature_group_count=feature_group_count, batch_group_count=batch_group_count,
-                      precision=precision, preferred_element_type=preferred_element_type),
-    jax.ShapeDtypeStruct(lhs.shape, lhs.dtype), jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
-  if lhs_dilation != (1,) * (lhs.ndim - 2) or rhs_dilation != (1,) * (rhs.ndim - 2):
-    raise NotImplementedError("bcoo convolution with non-unit dilation.")
-  if window_strides != (1,) * (lhs.ndim - 2):
+def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
+                              lhs_dilation=None, rhs_dilation=None, dimension_numbers=None,
+                              feature_group_count=1, batch_group_count=1, precision=None,
+                              preferred_element_type=None) -> BCOO:
+  # Validate and process parameters using lax.conv_general_dilated abstract evaluation.
+  func = functools.partial(
+      lax.conv_general_dilated,
+      window_strides=window_strides, padding=padding,
+      lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count, batch_group_count=batch_group_count,
+      precision=precision, preferred_element_type=preferred_element_type)
+  jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
+                               jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+  assert len(jaxpr.eqns) == 1
+  params = jaxpr.eqns[0].params
+
+  if params['lhs_dilation'] !=  (1,) * (lhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with lhs_dilation.")
+  if params['rhs_dilation'] != (1,) * (rhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with lhs_dilation.")
+  if params['window_strides'] != (1,) * (lhs.ndim - 2):
     raise NotImplementedError("bcoo convolution with non-unit window_strides.")
-  if batch_group_count != 1 or feature_group_count != 1:
+  if params['batch_group_count'] != params['feature_group_count'] != 1:
     raise NotImplementedError("bcoo convolution with non-unit group counts.")
+
   if lhs.shape[:2] != rhs.shape[:2] != (1, 1):
     raise NotImplementedError("bcoo convolution with leading dimensions other than (1, 1)")
-  del precision, preferred_element_type  # unused
 
-  lhs = bcoo_squeeze(lhs, dimensions=(0, 1))
-  rhs = lax.squeeze(rhs, dimensions=(0, 1))
+  index_dtype = (lhs.indices.dtype if hasattr(lhs, 'indices')
+                 else rhs.indices.dtype if hasattr(rhs, 'indices')
+                 else 'int32')
 
-  if lhs.ndim != rhs.ndim != 1:
-    raise NotImplementedError("only 1-dimensional convoutions are implemented")
-  if lhs.n_batch != lhs.n_dense != 0:
-    raise NotImplementedError("bcoo convolution with batch or dense dimensions.")
+  padding, = params['padding']
+  return _bcoo_conv_1d(_convert_to_1d_for_conv(lhs, index_dtype),
+                       _convert_to_1d_for_conv(rhs, index_dtype),
+                       padding=padding)
 
-  padding, = padding
+def _convert_to_1d_for_conv(mat, index_dtype):
+  if isinstance(mat, (jax.Array, np.ndarray)):
+    data = lax.squeeze(mat, (0, 1))
+    indices = lax.broadcasted_iota(index_dtype, (len(data), 1), 0)
+  elif isinstance(mat, BCOO):
+    mat = mat.update_layout(n_batch=2, n_dense=0)
+    data = lax.squeeze(mat.data, (0, 1))
+    indices = lax.squeeze(mat.indices, (0, 1))
+    # zero-out data at OOB indices, otherwise strange things happen.
+    data = jnp.where(lax.squeeze(indices, (1,)) < mat.shape[-1], data, 0)
+  else:
+    raise ValueError(f"bcoo_conv_general_dilated: input of type {type(mat)} not recognized.")
+  return BCOO((data, indices), shape=mat.shape[2:])
+
+def _bcoo_conv_1d(lhs: BCOO, rhs: BCOO, padding: Sequence[int]) -> BCOO:
+  assert lhs.ndim == lhs.n_sparse == rhs.ndim == rhs.n_sparse == 1
+  assert lhs.dtype == rhs.dtype
+  padding = tuple(map(int, padding))
   assert len(padding) == 2
 
-  new_data = (lhs.data[:, None] * rhs[None, :]).astype(out_aval.dtype)
-  new_data = new_data.ravel()
+  new_data = (lhs.data[:, None] * rhs.data[None, :]).ravel()
 
-  offset = jnp.arange(len(rhs), dtype=lhs.indices.dtype)[::-1] + 1 + padding[0] - len(rhs)
-  new_indices = lhs.indices[:, None, :] + offset[None, :, None]
-  new_indices = new_indices.reshape(lhs.indices.shape[0] * len(rhs), lhs.indices.shape[1])
+  offset = padding[0] - rhs.indices
+  new_indices = (lhs.indices[:, None] + offset[None, :]).ravel()
 
-  mask = (new_indices < 0).any(1)
-  new_indices = jnp.where(mask[:, None], 0, new_indices)
+  mask = (new_indices < 0)
+  new_indices = jnp.where(mask, 0, new_indices)
   new_data = jnp.where(mask, 0, new_data)
+  dimsize = max(0, lhs.shape[0] + padding[0] + padding[1] - rhs.shape[0] + 1)
 
-  out = BCOO((new_data, new_indices), shape=(lhs.shape[0] + padding[0] + padding[1] - len(rhs) + 1,))
-  return bcoo_broadcast_in_dim(out, shape=(1, 1, *out.shape), broadcast_dimensions=range(2, 2 + out.ndim))
+  new_data = lax.expand_dims(new_data, (0, 1))
+  new_indices = lax.expand_dims(new_indices, (0, 1, 3))
+  return BCOO((new_data, new_indices), shape=(1, 1, dimsize))
+
 
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
