@@ -3319,7 +3319,6 @@ def _get_op_sharding_shardings_from_executable(
   return in_shardings_xla, out_shardings_xla
 
 
-
 # TODO(yashkatariya): Remove this function after `AUTO` can return shardings
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(
@@ -3447,8 +3446,14 @@ class UnloadedMeshExecutable:
       compile_options.executable_build_options.auto_spmd_partitioning_mesh_ids = \
           _get_logical_mesh_ids(list(mesh.shape.values())).reshape(-1)
     compile_options.parameter_is_tupled_arguments = tuple_args
-    compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
-        _allow_propagation_to_outputs
+    if xla_extension_version >= 123:
+      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = [
+          _allow_propagation_to_outputs
+      ]
+    else:
+      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = (
+          _allow_propagation_to_outputs
+      )
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       return _compile_replicated_mesh_executable_from_hlo(
@@ -3666,7 +3671,6 @@ def _compile_replicated_pmap_executable_from_hlo(
       kept_var_idx=set(range(len(pci.avals))), out_handler=handle_outs)
   # TODO(frostig): need `compile_replicated` to give us the XLA executable
   return PmapExecutable(None, execute_fun, None, pci.avals)
-
 
 
 def _compile_replicated_mesh_executable_from_hlo(
