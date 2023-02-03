@@ -1073,7 +1073,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
 
-    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+    def partition(
+        precision, arg_shapes, arg_shardings, result_shape, result_sharding
+    ):
       self.assertEqual(arg_shardings[0], result_sharding)
       self.assertEqual(P(('x',)), result_sharding.spec)
       self.assertEqual(P(('y',)), arg_shardings[1].spec)
@@ -1086,7 +1088,9 @@ class PJitTest(jtu.BufferDonationTestCase):
 
       return lower_fn, result_sharding, arg_shardings
 
-    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
+    def infer_sharding_from_operands(
+        precision, arg_shapes, arg_shardings, shape
+    ):
       x_shard, y_shard = arg_shardings
       x_shape, y_shape = arg_shapes
       x_names = tuple(x_shard.spec) + tuple(
@@ -1095,9 +1099,9 @@ class PJitTest(jtu.BufferDonationTestCase):
           None for _ in range(len(y_shape.shape) - len(y_shard.spec)))
       return NamedSharding(y_shard.mesh, P(*(x_names[:-1] + y_names[1:])))
 
-    @custom_partitioning
-    def f(x, y):
-      return x @ y
+    @partial(custom_partitioning, static_argnums=(2,))
+    def f(x, y, precision=None):
+      return jnp.matmul(x, y, precision=precision)
 
     f.def_partition(
         infer_sharding_from_operands=infer_sharding_from_operands,
