@@ -38,7 +38,7 @@ from jax.experimental import global_device_array
 from jax._src import array
 from jax._src.sharding import NamedSharding
 from jax.experimental.pjit import pjit, with_sharding_constraint
-from jax.experimental.pjit import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax._src import config as jax_config
@@ -273,7 +273,7 @@ class XMapTest(XMapTestCase):
     def f(a, b):
       return a * 2, b * 4
     devices = np.array(local_devices[:4]).reshape((2, 2))
-    with maps.Mesh(devices, ('x', 'y')):
+    with jax.sharding.Mesh(devices, ('x', 'y')):
       fm = xmap(f,
                 in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
                 out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
@@ -382,14 +382,14 @@ class XMapTest(XMapTestCase):
     if devices.size < 2:
       raise SkipTest("Test requires 2 devices")
     x = np.arange(8).reshape((2, 2, 2))
-    with maps.Mesh(devices, ('x',)):
+    with jax.sharding.Mesh(devices, ('x',)):
       python_should_be_executing = True
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
       python_should_be_executing = False
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
-    with maps.Mesh(devices, ('x',)):
+    with jax.sharding.Mesh(devices, ('x',)):
       python_should_be_executing = False
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
@@ -1795,7 +1795,7 @@ class XMapErrorTest(jtu.JaxTestCase):
   def testNestedDifferentResources(self):
     @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
     def f(x):
-      with maps.Mesh(np.empty((), dtype=np.object_), ()):
+      with jax.sharding.Mesh(np.empty((), dtype=np.object_), ()):
         @partial(xmap, in_axes={0: 'b'}, out_axes={0: 'b'})
         def h(x):
           return x

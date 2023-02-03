@@ -219,7 +219,7 @@ def create_device_mesh(
     mesh_shape: Sequence[int],
     devices: Optional[Sequence[Any]] = None, *,
     contiguous_submeshes: bool = False) -> np.ndarray:
-  """Creates a performant device mesh for jax.experimental.maps.Mesh.
+  """Creates a performant device mesh for jax.sharding.Mesh.
 
   Args:
     mesh_shape: shape of logical mesh, ordered by increasing network-intensity
@@ -234,7 +234,7 @@ def create_device_mesh(
 
   Returns:
     A np.ndarray of JAX devices with mesh_shape as its shape that can be fed
-    into jax.experimental.maps.Mesh with good collective performance.
+    into jax.sharding.Mesh with good collective performance.
   """
   if devices is None:
     devices = jax.devices()
@@ -293,7 +293,7 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
 
   Returns:
     A np.ndarray of JAX devices with mesh_shape * dcn_mesh_shape as its shape
-    that can be fed into jax.experimental.maps.Mesh for hybrid parallelism.
+    that can be fed into jax.sharding.Mesh for hybrid parallelism.
   """
   if devices is None:
     devices = jax.devices()

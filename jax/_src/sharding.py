@@ -273,13 +273,13 @@ class NamedSharding(XLACompatibleSharding):
   ``Mesh`` and ``PartitionSpec``.
 
   Args:
-    mesh: A ``jax.experimental.maps.Mesh`` object.
-    spec: A ``jax.experimental.PartitionSpec`` object.
+    mesh: A ``jax.sharding.Mesh`` object.
+    spec: A ``jax.sharding.PartitionSpec`` object.
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> spec = P('x', 'y')
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)

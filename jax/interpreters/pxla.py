@@ -2343,9 +2343,9 @@ class Mesh(ContextDecorator):
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
     >>> from jax.experimental.pjit import pjit
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
     >>> inp = np.arange(16).reshape((8, 2))

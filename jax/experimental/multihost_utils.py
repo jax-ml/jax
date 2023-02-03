@@ -26,7 +26,6 @@ from jax._src import array
 from jax._src import sharding
 from jax.tree_util import PyTreeDef
 from jax.interpreters import pxla, xla
-from jax.experimental import maps
 from jax.experimental import pjit as pjit_lib
 from jax.experimental.pjit import pjit, FROM_GDA
 from jax.interpreters.pxla import PartitionSpec as P
@@ -102,7 +101,7 @@ def _handle_array_process_allgather(inp, tiled):
     # All inputs here will be fully addressable.
     devices = np.array(jax.devices()).reshape(jax.process_count(),
                                               jax.local_device_count())
-    global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
+    global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
     pspec = P('processes')
     s = jax.sharding.NamedSharding(global_mesh, pspec)
 
@@ -158,7 +157,7 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
         # Shape of local_mesh will always be (1, local_device_count())
         devices = np.array(jax.devices()).reshape(jax.process_count(),
                                                   jax.local_device_count())
-        global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
+        global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
         in_axis_resources = P('processes')
         if inp.ndim == 0 or not tiled:
           inp = np.expand_dims(inp, axis=0)

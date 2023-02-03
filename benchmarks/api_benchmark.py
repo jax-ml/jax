@@ -30,7 +30,6 @@ from jax.interpreters import pxla
 from jax._src import array
 from jax._src import sharding
 from jax.experimental import pjit as pjit_lib
-from jax.experimental import maps
 from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
@@ -62,7 +61,7 @@ def create_mesh(shape, axis_names, state):
     return None
   devices = sorted(jax.devices(), key=lambda d: d.id)
   mesh_devices = np.array(devices[:size]).reshape(shape)
-  global_mesh = maps.Mesh(mesh_devices, axis_names)
+  global_mesh = jax.sharding.Mesh(mesh_devices, axis_names)
   return global_mesh
 
 
@@ -692,7 +691,7 @@ def bench_repeated_static_slicing(state):
     jax.block_until_ready([x[i:i + 2] for i in range(0, 1000, 2)])
 
 def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
-  spec = pjit_lib.PartitionSpec('x')
+  spec = jax.sharding.PartitionSpec('x')
   mesh = create_mesh((num_devices,), ('x',), state)
   if mesh is None:
     return

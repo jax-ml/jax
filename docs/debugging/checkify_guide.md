@@ -226,7 +226,7 @@ f = pjit(
   in_axis_resources=PartitionSpec('x', None),
   out_axis_resources=(None, PartitionSpec('x', None)))
 
-with maps.Mesh(mesh.devices, mesh.axis_names):
+with jax.sharding.Mesh(mesh.devices, mesh.axis_names):
  err, data = f(input_data)
 err.throw()
 # ValueError: divided by zero at <...>:4 (f)

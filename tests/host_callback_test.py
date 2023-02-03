@@ -31,8 +31,7 @@ from jax import core
 from jax.config import config
 from jax import dtypes
 from jax.experimental import host_callback as hcb
-from jax.experimental import PartitionSpec as P
-from jax.experimental import maps
+from jax.sharding import PartitionSpec as P
 from jax.experimental import pjit
 from jax import lax
 from jax import numpy as jnp
@@ -1720,7 +1719,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         in_axis_resources=(P("d"),),
         out_axis_resources=P("d"))
 
-    with maps.Mesh(devices, ["d"]):
+    with jax.sharding.Mesh(devices, ["d"]):
       # Print the internal IR
       helper_log_ir(
           f"{self._testMethodName}.pjit",
@@ -2338,7 +2337,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
 
     pjit_fun = pjit.pjit(
         fun, in_axis_resources=(P("d"),), out_axis_resources=P("d"))
-    with maps.Mesh(devices, ["d"]):
+    with jax.sharding.Mesh(devices, ["d"]):
       # Print the internal IR
       helper_log_ir(
           f"{self._testMethodName}.pjit",

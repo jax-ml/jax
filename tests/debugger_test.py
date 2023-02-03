@@ -21,7 +21,6 @@ from typing import IO, Sequence, Tuple
 from absl.testing import absltest
 import jax
 from jax.config import config
-from jax.experimental import maps
 from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu
@@ -330,9 +329,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
     def g(x):
       y = f(x)
       return jnp.exp(y)
-    g = pjit.pjit(g, in_axis_resources=pjit.PartitionSpec("dev"),
-                  out_axis_resources=pjit.PartitionSpec("dev"))
-    with maps.Mesh(np.array(jax.devices()), ["dev"]):
+    g = pjit.pjit(g, in_axis_resources=jax.sharding.PartitionSpec("dev"),
+                  out_axis_resources=jax.sharding.PartitionSpec("dev"))
+    with jax.sharding.Mesh(np.array(jax.devices()), ["dev"]):
       arr = (1 + np.arange(8)).astype(np.int32)
       expected = _format_multiline(r"""
       Entering jdb:

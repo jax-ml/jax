@@ -33,10 +33,10 @@ from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import mlir
-from jax.experimental.maps import Mesh
 from jax.experimental.maps import xmap
 from jax.experimental import io_callback
 import jax.numpy as jnp
+from jax.sharding import Mesh
 import numpy as np
 
 
@@ -683,7 +683,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     try:
       mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
 
-      spec = pjit.PartitionSpec('x')
+      spec = jax.sharding.PartitionSpec('x')
 
       def f(x):
         axis_resources = {v: v for v in mesh.axis_names}
@@ -850,7 +850,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
                   axis_resources={'a': 'dev'})
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
       out = f(np.arange(40.))
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
@@ -866,7 +866,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
     f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
                   axis_resources={'a': 'dev'})
-    with maps.Mesh(np.array(jax.devices()), ['dev']):
+    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
       out = f(np.arange(40.))
     np.testing.assert_allclose(out, jnp.arange(1., 41.))
 
@@ -1020,13 +1020,13 @@ class IOPythonCallbackTest(jtu.JaxTestCase):
       io_callback(_cb, None, x)
       return x
 
-    mesh = maps.Mesh(np.array(jax.devices()), ['dev'])
+    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('dev'))
-      out_spec = sharding.NamedSharding(mesh, pjit.PartitionSpec())
+      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      out_spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     else:
-      spec = pjit.PartitionSpec('dev')
-      out_spec = pjit.PartitionSpec()
+      spec = jax.sharding.PartitionSpec('dev')
+      out_spec = jax.sharding.PartitionSpec()
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=out_spec)
     with mesh:
       f(jnp.arange(mesh.size))

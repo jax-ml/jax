@@ -272,11 +272,11 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect='foo')
       effect_p.bind(effect='bar')
       return x
-    mesh = maps.Mesh(np.array(jax.devices()), ['x'])
+    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['x'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, pjit.PartitionSpec('x'))
+      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     else:
-      spec = pjit.PartitionSpec('x')
+      spec = jax.sharding.PartitionSpec('x')
     f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
     with mesh:
       jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))

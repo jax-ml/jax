@@ -444,7 +444,7 @@ def pjit(
   propagation of the input partitioning specified in ``in_axis_resources`` and
   the output partitioning specified in ``out_axis_resources``. The resources
   specified in those two arguments must refer to mesh axes, as defined by
-  the :py:func:`jax.experimental.maps.Mesh` context manager. Note that the mesh
+  the :py:func:`jax.sharding.Mesh` context manager. Note that the mesh
   definition at :func:`~pjit` application time is ignored, and the returned function
   will use the mesh definition available at each call site.
 

@@ -37,7 +37,6 @@ from jax import lax
 from jax.lax import with_sharding_constraint
 from jax import prng
 from jax.sharding import PartitionSpec as P
-from jax.experimental import maps
 from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
@@ -284,7 +283,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       raise unittest.SkipTest(f"Test requires {size} global devices.")
     mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
 
-    @maps.Mesh(mesh_devices, ('x', 'y'))
+    @jax.sharding.Mesh(mesh_devices, ('x', 'y'))
     def dec():
       return pjit(lambda x: x, in_axis_resources=P('x'), out_axis_resources=None)(x)
     out = dec()
@@ -529,13 +528,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     if devices.size < 4:
       raise unittest.SkipTest("Test requires 4 devices")
     devices = devices.reshape((2, 2))
-    with maps.Mesh(devices, ('x', 'y')):
+    with jax.sharding.Mesh(devices, ('x', 'y')):
       should_be_tracing = True
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
       should_be_tracing = False
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
     # Re-create the mesh to make sure that has no influence on caching
-    with maps.Mesh(devices, ('x', 'y')):
+    with jax.sharding.Mesh(devices, ('x', 'y')):
       should_be_tracing = False
       pjit(f, in_axis_resources=P(('x', 'y')), out_axis_resources=None)(x)
 
@@ -764,7 +763,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       d.transfer_to_infeed(z[3 * didx:3 * didx + 3, :])
       d.transfer_to_infeed((w[:, 5 * didx:5 * didx + 5],))
 
-    with maps.Mesh(devices, ['d']):
+    with jax.sharding.Mesh(devices, ['d']):
       logging.info('Making pjit call')
       res = pjit(
           f_for_pjit, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(
@@ -788,7 +787,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
 
     def dispatch():
-      with maps.Mesh(devices, ['d']):
+      with jax.sharding.Mesh(devices, ['d']):
         logging.info('Making pjit call')
         pjit(f, in_axis_resources=(P('d'),), out_axis_resources=P('d'))(x)
     execution = threading.Thread(target=dispatch)
@@ -1417,7 +1416,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     # pickling in_axis_resources and sending to other processes). Make sure this
     # this doesn't cause an error to avoid user confusion.
     from_gda_dup = pjit_lib._FromGdaSingleton()
-    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
+    with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
       pjit(lambda x: x, in_axis_resources=from_gda_dup, out_axis_resources=None)(
           input_gda)
 
@@ -3457,7 +3456,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testNestedDifferentResources(self):
     @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
     def f(x):
-      with maps.Mesh(np.array([jax.local_devices()[0]]), ('x')):
+      with jax.sharding.Mesh(np.array([jax.local_devices()[0]]), ('x')):
         @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
         def h(x):
           return x
@@ -3801,12 +3800,12 @@ class UtilTest(jtu.JaxTestCase):
                      P(('x',), ('y',)))
 
   def test_mesh_with_list_devices(self):
-    mesh = maps.Mesh(jax.devices(), ('x',))
+    mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     self.assertIsInstance(mesh.devices, np.ndarray)
     self.assertEqual(mesh.size, jax.device_count())
 
   def test_mesh_with_string_axis_names(self):
-    mesh = maps.Mesh(jax.devices(), 'dp')
+    mesh = jax.sharding.Mesh(jax.devices(), 'dp')
     self.assertTupleEqual(mesh.axis_names, ('dp',))
 
 

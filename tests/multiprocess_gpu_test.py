@@ -33,7 +33,6 @@ import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import global_device_array
-from jax.experimental import maps
 from jax.experimental import pjit
 
 try:
@@ -256,7 +255,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     #   13 15
     assert [d.id for d in device_mesh.flat
            ] == [0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15]
-    return maps.Mesh(device_mesh, ("x", "y"))
+    return jax.sharding.Mesh(device_mesh, ("x", "y"))
 
   def setUp(self):
     super().setUp()
@@ -347,7 +346,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     gda3 = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes3, cb)
 
-    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
+    with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
 
       @functools.partial(
           pjit.pjit,
@@ -394,7 +393,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     #   The process-gpu mapping is random: @sudhakarsingh27 to figure out why so
     # and the data is:
     #   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
-    global_mesh = maps.Mesh(mesh_devices, ("x",))
+    global_mesh = jax.sharding.Mesh(mesh_devices, ("x",))
     global_input_shape = (16,)
     mesh_axes = experimental.PartitionSpec("x")
     global_input_data = np.arange(
@@ -426,7 +425,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         15: ((slice(15, 16),), 0),
     }
 
-    with maps.Mesh(global_mesh.devices, global_mesh.axis_names):
+    with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
       f = pjit.pjit(lambda x: x,
                     in_axis_resources=pjit.FROM_GDA,
                     out_axis_resources=mesh_axes)

@@ -60,7 +60,6 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters.pxla import PartitionSpec as P
 from jax._src import array, sharding
 from jax.experimental import pjit
-from jax.experimental import maps
 from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
@@ -1503,7 +1502,7 @@ class APITest(jtu.JaxTestCase):
 
   @jax_config.jax_array(True)
   def test_device_put_sharding(self):
-    mesh = maps.Mesh(jax.devices(), ('x',))
+    mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     s = sharding.NamedSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
 
@@ -1529,7 +1528,8 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)),
+                             ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
     s3 = sharding.NamedSharding(mesh, P("x", "y"))
@@ -1552,7 +1552,7 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
 
@@ -1574,7 +1574,7 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
 
@@ -1596,7 +1596,7 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
 

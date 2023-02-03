@@ -23,7 +23,7 @@ from unittest import mock, SkipTest
 import warnings
 
 from absl.testing import absltest
-from jax.experimental import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from jax.experimental.compilation_cache import compilation_cache as cc
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
