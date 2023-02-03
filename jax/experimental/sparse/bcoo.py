@@ -1749,18 +1749,22 @@ def _bcoo_broadcast_in_dim(data: Array, indices: Array, *, spinfo: SparseInfo, s
 
   if np.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != np.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
     raise NotImplementedError("Adding sparse dimensions with lengths != 1")
-  nse = props.nse
+  new_data, new_indices = data, indices
+
   # batch & dense dimensions
-  new_data = lax.broadcast_in_dim(data,
-      shape=(*shape[:new_n_batch], nse, *shape[new_n_batch + new_n_sparse:]),
-      broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
-  new_indices = lax.broadcast_in_dim(indices,
-      shape=(*shape[:new_n_batch], nse, props.n_sparse),
-      broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
+  if (new_n_batch, new_n_dense) != (props.n_batch, props.n_dense):
+    new_data = lax.broadcast_in_dim(new_data,
+        shape=(*shape[:new_n_batch], props.nse, *shape[new_n_batch + new_n_sparse:]),
+        broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
+    new_indices = lax.broadcast_in_dim(new_indices,
+        shape=(*shape[:new_n_batch], props.nse, props.n_sparse),
+        broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
 
   # sparse dimensions
-  new_indices = (jnp.zeros_like(new_indices, shape=(*shape[:new_n_batch], nse, new_n_sparse))
-                   .at[..., jnp.array(sparse_dims, int) - new_n_batch].set(new_indices))
+  if new_n_sparse != props.n_sparse:
+    shape = (*shape[:new_n_batch], props.nse, new_n_sparse)
+    ind = jnp.array(sparse_dims, int) - new_n_batch
+    new_indices = (jnp.zeros_like(new_indices, shape=shape).at[..., ind].set(new_indices))
 
   return new_data, new_indices
 
