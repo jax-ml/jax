@@ -239,6 +239,7 @@ from jax.experimental.sparse.bcsr import (
     bcsr_extract_p as bcsr_extract_p,
     bcsr_fromdense as bcsr_fromdense,
     bcsr_fromdense_p as bcsr_fromdense_p,
+    bcsr_sum_duplicates as bcsr_sum_duplicates,
     bcsr_todense as bcsr_todense,
     bcsr_todense_p as bcsr_todense_p,
     BCSR as BCSR,

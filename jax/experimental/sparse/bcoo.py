@@ -2495,8 +2495,6 @@ class BCOO(JAXSparse):
 
   def __init__(self, args: Tuple[Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
-    # JAX transforms will sometimes instantiate pytrees with null values, so we
-    # must catch that in the initialization of inputs.
     self.data, self.indices = map(jnp.asarray, args)
     self.indices_sorted = indices_sorted
     self.unique_indices = unique_indices

@@ -531,7 +531,9 @@ class SparsifyTest(jtu.JaxTestCase):
     )
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_{op.__name__}", "op": op, "dtype": dtype, "kwds": kwds}
+      {"testcase_name": f"_{op.__name__}_{fmt}", "op": op, "dtype": dtype,
+       "kwds": kwds, "fmt": fmt}
+      for fmt in ["BCSR", "BCOO"]
       for op, dtype, kwds in [
         (jnp.copy, jnp.float32, {}),
         (lax.abs, jnp.float32, {}),
@@ -552,17 +554,17 @@ class SparsifyTest(jtu.JaxTestCase):
         (lax.tan, jnp.float32, {}),
         (lax.tanh, jnp.float32, {}),
         (lax.convert_element_type, jnp.float32, {"new_dtype": np.dtype('complex64')})])
-  def testUnaryOperationsNonUniqueIndices(self, op, dtype, kwds):
-    shape = (10,)
-    nse = 5
+  def testUnaryOperationsNonUniqueIndices(self, fmt, op, dtype, kwds):
+    shape = (4, 5)
 
     # Note: we deliberately test non-unique indices here.
-    rng_idx = jtu.rand_int(self.rng(), low=0, high=10)
-    rng_data = jtu.rand_default(self.rng())
-
-    data = rng_data((nse,), dtype)
-    indices = rng_idx((nse, len(shape)), jnp.int32)
-    mat = BCOO((data, indices), shape=shape)
+    if fmt == "BCOO":
+      rng = sptu.rand_bcoo(self.rng())
+    elif fmt == "BCSR":
+      rng = sptu.rand_bcsr(self.rng())
+    else:
+      raise ValueError(f"Unrecognized {fmt=}")
+    mat = rng(shape, dtype)
 
     sparse_result = self.sparsify(partial(op, **kwds))(mat)
     dense_result = op(mat.todense(), **kwds)
@@ -571,7 +573,9 @@ class SparsifyTest(jtu.JaxTestCase):
 
     # Ops that commute with addition should not deduplicate indices.
     if op in [jnp.copy, lax.neg, lax.real, lax.imag]:
-      self.assertArraysAllClose(sparse_result.indices, indices)
+      self.assertArraysAllClose(sparse_result.indices, mat.indices)
+      if fmt == "BCSR":
+        self.assertArraysAllClose(sparse_result.indptr, mat.indptr)
 
 
 class SparsifyTracerTest(SparsifyTest):
