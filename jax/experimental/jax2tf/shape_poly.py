@@ -56,7 +56,7 @@ TfVal = Any
 # A dimension environment maps dimension variables to expressions that
 # compute the values of the dimension. An expression must support addition
 # and multiplication with other expressions or with int32/int64, e.g.,
-# by overloading __add__, __radd__, __mul__, __rmul__.
+# by overloading __add__, __radd__, __mul__, __rmul__, __divmod__, __rdivmod__.
 ShapeEnv = Dict[str, Any]
 DType = Any
 
@@ -942,20 +942,30 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
 
 
 def _evaluate_add(v1, v2):
-  if isinstance(v1, (int, np.int32, np.int64)) and v1 == 0:
-    return v2
-  elif isinstance(v2, (int, np.int32, np.int64)) and v2 == 0:
-    return v1
-  else:
-    return v1 + v2
+  try:
+    if op.index(v1) == 0:
+      return v2
+  except:
+    pass
+  try:
+    if op.index(v2) == 0:
+      return v1
+  except:
+    pass
+  return v1 + v2
 
 def _evaluate_multiply(v1, v2):
-  if isinstance(v1, (int, np.int32, np.int64)) and v1 == 1:
-    return v2
-  elif isinstance(v2, (int, np.int32, np.int64)) and v2 == 1:
-    return v1
-  else:
-    return v1 * v2
+  try:
+    if op.index(v1) == 1:
+      return v2
+  except:
+    pass
+  try:
+    if op.index(v2) == 1:
+      return v1
+  except:
+    pass
+  return v1 * v2
 
 def _is_known_constant(v) -> Optional[int]:
   try:
