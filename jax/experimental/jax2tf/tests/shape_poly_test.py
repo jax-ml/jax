@@ -651,6 +651,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jax2tf.convert(f_jax, polymorphic_shapes="(b, _, _)")(x),
                         f_jax(x))
 
+  def test_non_trivial_dim_expr(self):
+     check_shape_poly(
+        self,
+        lambda x: (x[0] + x.shape[0] + x.shape[0] * x.shape[0] + (5 * x.shape[0]) +
+                   x.shape[0] // 2 + (5 + x.shape[0]) // x.shape[0] +
+                   17 // x.shape[0] +
+                   x.shape[0] % 3 + 17 % x.shape[0]),
+        arg_descriptors=[RandArg((3,), np.int64)],
+        poly_axes=[0])
+
   def test_static_shape_result(self):
     """The result has static shape."""
 
@@ -972,7 +982,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      arg_descriptors=[RandArg((3, 4), _f32)],
                      poly_axes=[(0, 1)])
 
-  def test_non_trivial_polynomials(self):
+  def test_non_trivial_polynomials_spec(self):
     if config.jax_dynamic_shapes:
       raise unittest.SkipTest("--jax_dynamic_shapes supports only trivial polynomials")
     # We can handle non-trivial polynomials in the input shape,

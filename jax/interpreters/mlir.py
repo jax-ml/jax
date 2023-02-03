@@ -583,28 +583,37 @@ def sharded_aval(aval: core.ShapedArray,
   return aval.update(tuple(sharded_shape))
 
 
-class DimPolyEvaluator:
+class DimExprEvaluator:
   # A wrapper for an ir.Value that overloads + and * to be used for evaluating
-  # dimension polynomials.
+  # symbolic dimensions.
+  __array_priority__ = 1000  # Same as tracer, for __radd__ and others on ndarray
   def __init__(self, value: ir.Value):
     self.value = value
 
-  def __add__(self, other: Union[np.int32, np.int64, DimPolyEvaluator]):
-    if not isinstance(other, DimPolyEvaluator):
-      other = DimPolyEvaluator(ir_constant(other))
-    return DimPolyEvaluator(hlo.AddOp(self.value, other.value).result)
+  def __add__(self, other: Union[np.int32, np.int64, DimExprEvaluator]):
+    if not isinstance(other, DimExprEvaluator):
+      other = DimExprEvaluator(ir_constant(other))
+    return DimExprEvaluator(hlo.AddOp(self.value, other.value).result)
 
   def __radd__(self, other: Union[np.int32, np.int64]):
-    return DimPolyEvaluator(hlo.AddOp(ir_constant(other), self.value).result)
+    return DimExprEvaluator(ir_constant(other)).__add__(self)
 
-  def __mul__(self, other: Union[np.int32, np.int64, DimPolyEvaluator]):
-    if not isinstance(other, DimPolyEvaluator):
-      other = DimPolyEvaluator(ir_constant(other))
-    return DimPolyEvaluator(hlo.MulOp(self.value, other.value).result)
+  def __mul__(self, other: Union[np.int32, np.int64, DimExprEvaluator]):
+    if not isinstance(other, DimExprEvaluator):
+      other = DimExprEvaluator(ir_constant(other))
+    return DimExprEvaluator(hlo.MulOp(self.value, other.value).result)
 
   def __rmul__(self, other: Union[np.int32, np.int64]):
-    return DimPolyEvaluator(hlo.MulOp(ir_constant(other), self.value).result)
+    return DimExprEvaluator(ir_constant(other)).__mul__(self)
 
+  def __divmod__(self, divisor: Union[np.int32, np.int64, DimExprEvaluator]):
+    if not isinstance(divisor, DimExprEvaluator):
+      divisor = DimExprEvaluator(ir_constant(divisor))
+    return (DimExprEvaluator(hlo.DivOp(self.value, divisor.value).result),
+            DimExprEvaluator(hlo.RemOp(self.value, divisor.value).result))
+
+  def __rdivmod__(self, dividend: Union[np.int32, np.int64]):
+    return DimExprEvaluator(ir_constant(dividend)).__divmod__(self)
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
                        shape: core.Shape) -> Tuple[Union[int, Value], ...]:
@@ -612,7 +621,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
   if config.jax_dynamic_shapes:
     return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
   else:
-    dim_var_env = {dv_name : DimPolyEvaluator(dv_val[0])
+    dim_var_env = {dv_name : DimExprEvaluator(dv_val[0])
                    for dv_name, dv_val in zip(ctx.module_context.dim_vars, ctx.dim_var_values)}
     def eval_dim(d: core.DimSize) -> Union[int, ir.Value]:
       try:
