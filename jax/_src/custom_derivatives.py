@@ -334,7 +334,7 @@ class CustomJVPCallPrimitive(core.Primitive):
     tracers = map(top_trace.full_raise, args)  # type: ignore
     outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    return _apply_todos(env_trace_todo, map(core.full_lower, outs))
+    return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
   def impl(self, fun, _, *args):
     with core.new_sublevel():
@@ -376,12 +376,6 @@ def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
     outs, cur_todo = primitive.post_process(trace, outs, jvp_was_run)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
-
-def _apply_todos(todos, outs):
-  todos_list = list(todos)
-  while todos_list:
-    outs = map(core.full_lower, todos_list.pop()(outs))
-  return outs
 
 
 allowed_effects: Set[core.Effect] = set()
@@ -673,11 +667,11 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
                                              out_trees=out_trees)
     fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if fst:
-      return _apply_todos(env_trace_todo, map(core.full_lower, outs))
+      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
     else:
       env_trace_todo, bwd_transform = env_trace_todo
       bwd = _apply_bwd_transform(bwd_transform, bwd)
-      return _apply_todos(env_trace_todo, map(core.full_lower, outs))
+      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
   def impl(self, fun, fwd, bwd, *args, out_trees):
     del fwd, bwd, out_trees

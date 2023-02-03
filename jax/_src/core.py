@@ -1139,7 +1139,7 @@ def find_top_trace(xs) -> Trace:
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
-  return top_main and top_main.with_cur_sublevel()  # type: ignore
+  return top_main.with_cur_sublevel()  # type: ignore
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
@@ -2076,7 +2076,7 @@ class CallPrimitive(Primitive):
 def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
   top_trace = find_top_trace(args)
   fun_, env_trace_todo = process_env_traces_call(
-      fun, primitive, top_trace and top_trace.level, tuple(params.items()))
+      fun, primitive, top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
   fun_ = lu.annotate(fun_, fun.in_type)
 
@@ -2085,18 +2085,16 @@ def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
   return call_bind_continuation, top_trace, fun_, tracers, params
 
 @lu.transformation_with_aux
-def process_env_traces_call(primitive: CallPrimitive, level: Optional[int],
+def process_env_traces_call(primitive: CallPrimitive, level: int,
                             params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
   while True:
-    tracers = [x for x in outs if isinstance(x, Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
+    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
+    if not tracers:
       break
+    ans = max(tracers, key=operator.attrgetter('_trace.level'))
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
@@ -2223,10 +2221,9 @@ def process_env_traces_map(primitive: MapPrimitive, level: int,
   while True:
     tracers = [x for x in outs if isinstance(x, Tracer)
                and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
+    if not tracers:
       break
+    ans = max(tracers, key=operator.attrgetter('_trace.level'))
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, (cur_todo, cur_xform) = primitive.post_process(trace, outs, params)
