@@ -775,7 +775,7 @@ class CheckifyTransformTests(jtu.JaxTestCase):
   def test_retracing(self):
     f = checkify.checkify(jax.jit(lambda x: jnp.sin(x) ** 2))
     _ = f(3.)
-    with jtu.count_primitive_compiles() as count:
+    with jtu.count_jit_and_pmap_compiles() as count:
       _ = f(3.)
     self.assertEqual(count[0], 0)
 

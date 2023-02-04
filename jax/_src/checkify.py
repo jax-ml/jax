@@ -351,9 +351,8 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
   # call_jaxpr handling
   call_jaxpr = params.pop('call_jaxpr')
-  partial_checkify = lu.wrap_init(
-      functools.partial(checkify_jaxpr_flat, call_jaxpr, (), enabled_errors,
-                        err_tree))
+  partial_checkify = lu.hashable_partial(lu.wrap_init(
+      checkify_jaxpr_flat), call_jaxpr, (), enabled_errors, err_tree)
   partial_checkify, metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
 
@@ -688,6 +687,7 @@ error_checks[lax.scatter_max_p] = functools.partial(scatter_error_check,
 
 # HOP error check rules
 
+@weakref_lru_cache
 def jaxpr_to_checkify_jaxpr(
     jaxpr: core.ClosedJaxpr, enabled_errors, err_tree: PyTreeDef,
     *flat_err_and_in_vals) -> Tuple[core.ClosedJaxpr, PyTreeDef, Set[ErrorEffect]]:
