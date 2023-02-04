@@ -3209,7 +3209,10 @@ def _einsum(operands: Sequence,
       assert jax.config.jax_dynamic_shapes or _all(
         name in lhs_names and name in rhs_names and
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
-        for name in contracted_names)
+        for name in contracted_names), (
+          "Incompatible reduction dimensions: "
+          f"lhs.shape={lhs.shape} lhs_names={lhs_names} "
+          f"rhs.shape={rhs.shape} rhs_names={rhs_names}")
 
       # contract using lax.dot_general
       batch_names_str = ''.join(batch_names)
