@@ -467,8 +467,8 @@ def _xla_shard(mesh, names, aval_in, aval_out, x):
   manual_proto = pxla._manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
   axes = {name: i for i, ns in names.items() for name in ns}
-  sharding_proto = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
-      aval_in, axes).sharding_proto()
+  sharding_proto = pxla.new_mesh_sharding_specs(mesh.shape, mesh.axis_names)(
+      aval_in.ndim, axes).sharding_proto()
   sx = mlir.wrap_with_sharding_op(x, sharding_proto, unspecified_dims=set())
   return [mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, set())]
 
@@ -478,8 +478,8 @@ def _xla_unshard(mesh, names, aval_in, aval_out, xs):
   result_type, = mlir.aval_to_ir_types(aval_out)
   sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
-  sharding_proto = pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(
-      aval_out, axes).sharding_proto()
+  sharding_proto = pxla.new_mesh_sharding_specs(mesh.shape, mesh.axis_names)(
+      aval_out.ndim, axes).sharding_proto()
   return mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, set())
 
 # Eager evaluation
