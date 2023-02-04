@@ -3494,7 +3494,7 @@ class UnloadedMeshExecutable:
             out_shardings.append(xla_s)
             are_out_shardings_from_xla.append(True)
           else:
-            if not are_op_shardings_equal(
+            if xla_extension_version >= 123 and not are_op_shardings_equal(
                 xla_s._to_xla_op_sharding(aval.ndim),  # type: ignore
                 orig._to_xla_op_sharding(aval.ndim)):  # type: ignore
               raise AssertionError(
