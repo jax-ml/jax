@@ -419,13 +419,10 @@ class _DimExpr():
     lb, ub = _ensure_poly(self - other, "eq").bounds()
     if lb == ub == 0:
       return True
-    if lb > 0:
+    if lb > 0 or ub < 0:
       return False
-    if ub < 0:
-      return False
-    raise InconclusiveDimensionOperation(
-        f"Symbolic dimension comparison '{self}' == '{other}' is inconclusive.\n"
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
+    # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported
+    return False
 
   def ge(self, other: DimSize) -> bool:
     lb, ub = _ensure_poly(self - other, "ge").bounds()
