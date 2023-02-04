@@ -3174,7 +3174,7 @@ class MeshComputation(stages.XlaLowering):
 
   def _compile_unloaded(
       self,
-      _allow_propagation_to_outputs: bool = False,
+      _allow_propagation_to_outputs: Optional[Sequence[bool]] = None,
       _allow_compile_replicated: bool = True
   ) -> Union[UnloadedMeshExecutable, MeshExecutable]:
     if self.is_trivial:
@@ -3214,8 +3214,8 @@ class MeshComputation(stages.XlaLowering):
       return super().stablehlo()
 
   def compile(self,
-              _allow_propagation_to_outputs : bool = False,
-              _allow_compile_replicated : bool = True) -> MeshExecutable:
+              _allow_propagation_to_outputs: Optional[Sequence[bool]] = None,
+              _allow_compile_replicated: bool = True) -> MeshExecutable:
     if self._executable is None:
       executable = self._compile_unloaded(
           _allow_propagation_to_outputs, _allow_compile_replicated)
@@ -3398,7 +3398,7 @@ class UnloadedMeshExecutable:
                tuple_args: bool,
                in_is_global: Sequence[bool],
                auto_spmd_lowering: bool,
-               _allow_propagation_to_outputs: bool,
+               _allow_propagation_to_outputs: Optional[Sequence[bool]],
                _allow_compile_replicated: bool,
                unordered_effects: List[core.Effect],
                ordered_effects: List[core.Effect],
@@ -3446,14 +3446,16 @@ class UnloadedMeshExecutable:
       compile_options.executable_build_options.auto_spmd_partitioning_mesh_ids = \
           _get_logical_mesh_ids(list(mesh.shape.values())).reshape(-1)
     compile_options.parameter_is_tupled_arguments = tuple_args
+
+    if _allow_propagation_to_outputs is None:
+      _allow_propagation_to_outputs = [False] * len(out_shardings)
     if xla_extension_version >= 123:
-      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = [
+      # Convert bools to int because that is what the compilation option expects.
+      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
           _allow_propagation_to_outputs
-      ]
     else:
-      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = (
-          _allow_propagation_to_outputs
-      )
+      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
+          all(_allow_propagation_to_outputs)
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       return _compile_replicated_mesh_executable_from_hlo(
@@ -3484,11 +3486,22 @@ class UnloadedMeshExecutable:
         _, out_shardings_xla = _get_op_sharding_shardings_from_executable(  # type: ignore
             xla_executable, device_assignment,
             len(global_in_avals), len(global_out_avals))
-        out_shardings_tuple = [
-            (x, True) if _is_unspecified(o) else (o, False)
-            for x, o in safe_zip(out_shardings_xla, out_shardings)
-        ]
-        out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
+        orig_out_shardings = out_shardings
+        out_shardings, are_out_shardings_from_xla = [], []  # type: ignore
+        for xla_s, orig, aval in safe_zip(out_shardings_xla, orig_out_shardings,
+                                          global_out_avals):
+          if _is_unspecified(orig):
+            out_shardings.append(xla_s)
+            are_out_shardings_from_xla.append(True)
+          else:
+            if not are_op_shardings_equal(
+                xla_s._to_xla_op_sharding(aval.ndim),  # type: ignore
+                orig._to_xla_op_sharding(aval.ndim)):  # type: ignore
+              raise AssertionError(
+                  f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
+                  "(User sharding)")
+            out_shardings.append(orig)
+            are_out_shardings_from_xla.append(False)
       else:
         are_out_shardings_from_xla = (False,) * len(global_out_avals)
 

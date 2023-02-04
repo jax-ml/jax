@@ -1129,10 +1129,10 @@ def _pjit_call_impl(*args, jaxpr,
         resource_env.physical_mesh if resource_env is not None else None)
 
   in_is_global = _calc_is_global_sequence(in_positional_semantics, in_shardings)
-  if config.jax_array and all(_is_unspecified(o) for o in out_shardings):
-    _allow_propagation_to_outputs = True
+  if config.jax_array:
+    _allow_propagation_to_outputs = [_is_unspecified(o) for o in out_shardings]
   else:
-    _allow_propagation_to_outputs = False
+    _allow_propagation_to_outputs = [False] * len(out_shardings)
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, in_is_global, keep_unused,
@@ -1492,11 +1492,7 @@ def _pjit_partial_eval(trace, *in_tracers,
       keep_unused=keep_unused,
       inline=inline)
 
-  # resource_env is None in the jit wrapper around pjit.
-  # TODO(apaszke,yashkatariya): Replace this check with
-  # `if not config.jax_array` after XLA stops overriding user shardings when
-  # `_allow_propagation_to_outputs = True`.
-  if resource_env is not None:
+  if not config.jax_array:
     if num_residuals:
       in_is_global = _calc_is_global_sequence(
           known_params['in_positional_semantics'], known_params['in_shardings'])
@@ -1505,7 +1501,7 @@ def _pjit_partial_eval(trace, *in_tracers,
           known_params["out_shardings"], known_params["resource_env"],
           known_params["donated_invars"], known_params["name"],
           in_is_global, known_params['keep_unused'], always_lower=False).compile(
-              _allow_propagation_to_outputs=True,
+              _allow_propagation_to_outputs=[True] * len(known_params['out_shardings']),
               _allow_compile_replicated=False)
       da = compiled._device_assignment
       _, out_op_sharding_shardings = pxla._get_op_sharding_shardings_from_executable(

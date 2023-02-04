@@ -171,13 +171,9 @@ def _hash_executable_build_options(hash_obj, executable_obj):
       hash_obj.update(
           executable_obj.auto_spmd_partitioning_mesh_ids.serialize())
   if xla_extension_version >= 123:
-    _hash_bool(
-        hash_obj, all(executable_obj.allow_spmd_sharding_propagation_to_output)
-    )
+    _hash_bool_list(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
   else:
-    _hash_bool(
-        hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output
-    )
+    _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
 
 def _hash_debug_options(hash_obj, debug_obj):
   _hash_bool(hash_obj, debug_obj.xla_cpu_enable_fast_math)
@@ -248,3 +244,8 @@ def _hash_string(hash_obj, str_var):
 
 def is_initialized():
   return _cache is not None
+
+def _hash_bool_list(hash_obj, bool_list):
+  for b in bool_list:
+    _hash_bool(hash_obj, b)
+  _hash_int(hash_obj, len(bool_list))

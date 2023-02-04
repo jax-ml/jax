@@ -312,7 +312,6 @@ class XlaLowering(Lowering):
       raise ValueError(f"unknown dialect: {dialect}")
 
 
-
 # -- Public-facing API, plus helpers
 
 @dataclass
@@ -575,9 +574,12 @@ class Lowered(Stage):
     from jax.interpreters import pxla
 
     if (jax.config.jax_array and
-        isinstance(self._lowering, pxla.MeshComputation) and
-        all(pxla._is_unspecified(o) for o in self._lowering.compile_args['out_shardings'])):
-      kw = dict(_allow_propagation_to_outputs=True)
+        isinstance(self._lowering, pxla.MeshComputation)):
+      kw = dict(
+          _allow_propagation_to_outputs=[
+              pxla._is_unspecified(o)
+              for o in self._lowering.compile_args["out_shardings"]]
+      )
     else:
       kw = {}
 
