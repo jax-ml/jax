@@ -565,6 +565,9 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testAutodiffCache(self):
     if not jax.config.jax_array:
       self.skipTest('Does not work without jax.Array')
+    if xla_extension_version < 123:
+      self.skipTest('This test requires xla_extension_version >= 123.')
+
     f = pjit(lambda x: jnp.sin(x).sum(),
              in_axis_resources=P('x'), out_axis_resources=None)
     x = jnp.arange(16, dtype=jnp.float32)
