@@ -99,6 +99,9 @@ def _handle_array_process_allgather(inp, tiled):
     out = pjit(_identity_fn, out_axis_resources=reps)(inp)
   else:
     # All inputs here will be fully addressable.
+    if jax.process_count() == 1:
+      return np.asarray(inp)
+
     devices = np.array(jax.devices()).reshape(jax.process_count(),
                                               jax.local_device_count())
     global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))

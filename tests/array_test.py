@@ -32,6 +32,7 @@ from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     compile_and_serialize, load_compiled)
+from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import sharding
 from jax._src import array
@@ -649,6 +650,12 @@ class JaxArrayTest(jtu.JaxTestCase):
 
     x = jax.device_put(jnp.arange(8.), jax.devices()[0])
     x.is_ready()  # doesn't crash
+
+  def test_process_allgather_single_host(self):
+    x = jnp.arange(8.)
+    out = multihost_utils.process_allgather(x)
+    self.assertEqual(out.shape, x.shape)
+    self.assertArraysEqual(out, x)
 
 
 @jtu.with_config(jax_array=True)
