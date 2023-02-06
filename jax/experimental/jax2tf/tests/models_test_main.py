@@ -52,6 +52,7 @@ import jax.numpy as jnp
 import datetime
 from typing import Dict, List, Sequence, Tuple
 
+from flax.errors import FlaxError
 import tensorflow as tf
 
 from jax.experimental.jax2tf.shape_poly import InconclusiveDimensionOperation
@@ -235,7 +236,9 @@ def test_converters():
               InconclusiveDimensionOperation,
               TypeError,
               IndexError,
-              ValueError) as e:
+              ValueError,
+              # Errors originating from the Flax codebase.
+              FlaxError) as e:
             error_msg = _format(e)
             print("=== ", error_msg)
             _maybe_reraise(e)
