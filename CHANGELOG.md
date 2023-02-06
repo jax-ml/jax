@@ -24,6 +24,7 @@ Remember to align the itemized text with the first line of an item within a list
     like bfloat16. These definitions were previously internal to JAX, but have
     been split into a separate package to facilitate sharing them with other
     projects.
+  * JAX now requires NumPy 1.21 or newer and SciPy 1.7 or newer.
 
 * Deprecations
   * The type `jax.numpy.DeviceArray` is deprecated. Use `jax.Array` instead,

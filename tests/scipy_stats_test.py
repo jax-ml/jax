@@ -1322,8 +1322,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
   def testMode(self, shape, dtype, axis, contains_nans, keepdims):
     if scipy_version < (1, 9, 0) and keepdims != True:
       self.skipTest("scipy < 1.9.0 only support keepdims == True")
-    if numpy_version < (1, 21, 0) and contains_nans:
-      self.skipTest("numpy < 1.21.0 only support contains_nans == False")
 
     if contains_nans:
       rng = jtu.rand_some_nan(self.rng())
