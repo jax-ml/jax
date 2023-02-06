@@ -35,7 +35,6 @@ from jax.sharding import PartitionSpec as P
 from jax.experimental import pjit
 from jax import lax
 from jax import numpy as jnp
-from jax._src import lib as jaxlib
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.lib import xla_client
@@ -1877,15 +1876,11 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     comp = xla_client.XlaBuilder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
-    if jaxlib.xla_extension_version >= 112:
-      args = [0]
-    else:
-      args = []
     with self.assertRaisesRegex(RuntimeError,
                                 "Consumer ID cannot be a reserved value: 0"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 0,
-          [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], *args)
+          [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], 0)
 
   def test_tap_error_different_shapes(self):
     """Try to register different shapes for the same consumer ID."""
@@ -1894,23 +1889,19 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     comp = xla_client.XlaBuilder(self._testMethodName)
     token = hcb.xops.CreateToken(comp)
     hcb._initialize_outfeed_receiver()  # Needed if this is the sole test
-    if jaxlib.xla_extension_version >= 112:
-      args = [0]
-    else:
-      args = []
     hcb._callback_handler_data.receiver.add_outfeed(
         comp, token, 123,
-        [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], *args)
+        [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], 0)
     with self.assertRaisesRegex(
         RuntimeError, ".*does not match previous shape element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
-          [xops.Constant(comp, np.zeros((2, 3), dtype=np.int32))], *args)
+          [xops.Constant(comp, np.zeros((2, 3), dtype=np.int32))], 0)
     with self.assertRaisesRegex(
         RuntimeError, ".*does not match previous shape element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
-          [xops.Constant(comp, np.zeros((2,), dtype=np.float32))], *args)
+          [xops.Constant(comp, np.zeros((2,), dtype=np.float32))], 0)
 
   def test_tap_id_tap_removed_kwargs(self):
     def func(x, transforms, y):

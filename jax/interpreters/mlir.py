@@ -41,7 +41,6 @@ from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import util
-from jax._src.lib import mlir_api_version
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
@@ -124,11 +123,10 @@ _dtype_to_ir_type : Dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
 }
 
-if xc.mlir_api_version >= 43 and xc._version >= 113:
-  _dtype_to_ir_type.update({
-      np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
-      np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
-  })
+_dtype_to_ir_type.update({
+    np.dtype(dtypes.float8_e4m3fn): ir.Float8E4M3FNType.get,
+    np.dtype(dtypes.float8_e5m2): ir.Float8E5M2Type.get,
+})
 
 def dtype_to_ir_type(dtype: Union[np.dtype, np.generic]) -> ir.Type:
   assert isinstance(dtype, (np.dtype, np.generic)), type(dtype)
@@ -315,10 +313,7 @@ for t in device_array.device_array_types:
   register_constant_handler(t, _device_array_constant_handler)
 
 def _token_constant_handler(val, canonicalize_types):
-  if mlir_api_version < 40:
-    return [hlo.CreateTokenOp(hlo.TokenType.get()).result]
-  else:
-    return [hlo.CreateTokenOp().result]
+  return [hlo.CreateTokenOp().result]
 register_constant_handler(core.Token, _token_constant_handler)
 
 # Source locations
@@ -782,11 +777,7 @@ def token_type() -> Sequence[ir.Type]:
   return [hlo.TokenType.get()]
 
 def create_token() -> Token:
-  if mlir_api_version < 40:
-    return wrap_singleton_ir_values(
-        hlo.CreateTokenOp(hlo.TokenType.get()).result)
-  else:
-    return wrap_singleton_ir_values(hlo.CreateTokenOp().result)
+  return wrap_singleton_ir_values(hlo.CreateTokenOp().result)
 
 class TokenSet:
   """An immutable container of tokens to be used to lower effectful jaxprs. When lowering
@@ -1008,10 +999,7 @@ def lower_jaxpr_to_fun(
     args: List[List[ir.Value]] = []
     for aval, arg in zip(jaxpr.in_avals, unflattened_args):
       if replace_tokens_with_dummy and aval is core.abstract_token:
-        if mlir_api_version < 40:
-          args.append(hlo.CreateTokenOp(hlo.TokenType.get()).results)
-        else:
-          args.append(hlo.CreateTokenOp().results)
+        args.append(hlo.CreateTokenOp().results)
       else:
         args.append(arg)
     callee_name_stack = xla.extend_name_stack(ctx.name_stack,
@@ -1379,11 +1367,7 @@ def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
         ctx, aval_out, x, update, *start_indices)
 
   # TODO(necula): handle dynamic shapes
-  if mlir_api_version < 40:
-    return hlo.DynamicUpdateSliceOp(
-        aval_to_ir_type(aval_out), x, update, start_indices).result
-  else:
-    return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
+  return hlo.DynamicUpdateSliceOp(x, update, start_indices).result
 
 def pad(ctx: LoweringRuleContext, aval_out,
         x, padding_value,
@@ -1656,12 +1640,8 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
                  aval: core.ShapedArray, name: str, *,
                  sharding: Optional[xc.OpSharding] = None) -> ir.Value:
   channel_handle = hlo.ChannelHandle.get(channel, SEND_TO_HOST_TYPE)
-  if mlir_api_version < 40:
-    send_op = hlo.SendOp(hlo.TokenType.get(), [operand], token, channel_handle,
-                         is_host_transfer=ir.BoolAttr.get(True))
-  else:
-    send_op = hlo.SendOp([operand], token, channel_handle,
-                         is_host_transfer=ir.BoolAttr.get(True))
+  send_op = hlo.SendOp([operand], token, channel_handle,
+                        is_host_transfer=ir.BoolAttr.get(True))
   dtype_str = _dtype_to_xla_type_string(aval.dtype)
   if dtype_str in {"f64", "s64", "u64", "c64", "c128"}:
     raise NotImplementedError("64-bit types not supported.")
@@ -1710,10 +1690,7 @@ def _emit_tpu_python_callback(
     *,
     sharding: Optional[xc.OpSharding] = None
 ) -> Tuple[List[ir.Value], Any, Any]:
-  if mlir_api_version < 40:
-    token = token or hlo.CreateTokenOp(hlo.TokenType.get()).result
-  else:
-    token = token or hlo.CreateTokenOp().result
+  token = token or hlo.CreateTokenOp().result
   _wrapped_callback = callback
 
   send_channels = []

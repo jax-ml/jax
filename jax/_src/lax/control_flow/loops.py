@@ -41,7 +41,6 @@ from jax._src import util
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
-from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.ufuncs import logaddexp
@@ -1563,10 +1562,7 @@ def _pred_bcast_select_hlo(ctx,
   if x_y_aval is core.abstract_token:
     x, = xs
     y, = ys
-    if xc.mlir_api_version < 40:
-      return [hlo.AfterAllOp(mlir.aval_to_ir_type(x_y_aval), [x, y]).result]
-    else:
-      return [hlo.AfterAllOp([x, y]).result]
+    return [hlo.AfterAllOp([x, y]).result]
   else:
     assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
     x, = xs

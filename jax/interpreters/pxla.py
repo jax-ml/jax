@@ -75,7 +75,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import hlo, use_stablehlo
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
                            new_name_stack, wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
@@ -1519,16 +1519,10 @@ class PmapComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
-    if use_stablehlo:
-      return super().mhlo()
-    else:
-      return self._hlo
+    return super().mhlo()
 
   def stablehlo(self) -> ir.Module:
-    if use_stablehlo:
-      return self._hlo
-    else:
-      return super().stablehlo()
+    return self._hlo
 
   @profiler.annotate_function
   def compile(self) -> PmapExecutable:
@@ -2251,11 +2245,7 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, pl
     idxs = [_unravel_index_hlo(axis_env)] + [zero] * len(dims)
     broadcast_result = hlo.BroadcastOp(
         x, mlir.dense_int_elements([1])).result
-    if xc.mlir_api_version < 40:
-      padded = hlo.DynamicUpdateSliceOp(padded.type, padded, broadcast_result,
-                                        idxs).result
-    else:
-      padded = hlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
+    padded = hlo.DynamicUpdateSliceOp(padded, broadcast_result, idxs).result
     replica_groups = mlir.dense_int_elements(
       xla.axis_groups(axis_env, axis_env.names[-1]))
     out = hlo.CrossReplicaSumOp(padded, replica_groups).result
@@ -3198,20 +3188,12 @@ class MeshComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
-    if use_stablehlo:
-      return super().mhlo()
-    else:
-      if self.is_trivial:
-        raise ValueError("A trivial computation has no MHLO")
-      return self._hlo
+    return super().mhlo()
 
   def stablehlo(self) -> ir.Module:
-    if use_stablehlo:
-      if self.is_trivial:
-        raise ValueError("A trivial computation has no StableHLO")
-      return self._hlo
-    else:
-      return super().stablehlo()
+    if self.is_trivial:
+      raise ValueError("A trivial computation has no StableHLO")
+    return self._hlo
 
   def compile(self,
               _allow_propagation_to_outputs: Optional[Sequence[bool]] = None,
@@ -3615,7 +3597,7 @@ class MeshExecutable(stages.XlaExecutable):
             not self.unsafe_call.has_host_callbacks):
       return None
 
-    if not flags.FLAGS.experimental_cpp_pjit or xla_extension_version < 118:
+    if not flags.FLAGS.experimental_cpp_pjit:
       return None
 
     def aot_cache_miss(*args, **kwargs):

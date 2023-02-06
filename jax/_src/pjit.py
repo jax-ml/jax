@@ -241,8 +241,7 @@ def pre_infer_params(fun, in_axis_resources, out_axis_resources,
 
 def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
                       abstracted_axes):
-  if (FLAGS.experimental_cpp_pjit and xla_extension_version >= 118 and
-      abstracted_axes is None):
+  if FLAGS.experimental_cpp_pjit and abstracted_axes is None:
     wrapped = _cpp_pjit(fun, infer_params_fn, static_argnums, static_argnames)
   else:
     wrapped = _python_pjit(fun, infer_params_fn)

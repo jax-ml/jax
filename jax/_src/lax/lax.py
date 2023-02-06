@@ -4106,10 +4106,7 @@ create_token_p.def_abstract_eval(lambda *_: abstract_token)
 
 def _create_token_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
-  if xc.mlir_api_version < 40:
-    return hlo.CreateTokenOp(mlir.aval_to_ir_type(aval_out)).results
-  else:
-    return hlo.CreateTokenOp().results
+  return hlo.CreateTokenOp().results
 mlir.register_lowering(create_token_p, _create_token_lowering)
 
 
@@ -4131,10 +4128,7 @@ after_all_p.def_abstract_eval(_after_all_abstract_eval)
 
 def _after_all_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
-  if xc.mlir_api_version < 40:
-    return hlo.AfterAllOp(mlir.aval_to_ir_type(aval_out), operands).results
-  else:
-    return hlo.AfterAllOp(operands).results
+  return hlo.AfterAllOp(operands).results
 mlir.register_lowering(after_all_p, _after_all_lowering)
 
 
@@ -4228,18 +4222,10 @@ mlir.lowerable_effects.add(InOutFeedEffect.Outfeed)
 
 
 def _outfeed_lowering(ctx, token, *xs, partitions):
-  token_aval = ctx.avals_in[0]
-  if xc.mlir_api_version < 40:
-    outfeed = hlo.OutfeedOp(
-        mlir.aval_to_ir_type(token_aval),
-        mlir.flatten_lowering_ir_args(xs),
-        token,
-        outfeed_config=ir.StringAttr.get(''))
-  else:
-    outfeed = hlo.OutfeedOp(
-        mlir.flatten_lowering_ir_args(xs),
-        token,
-        outfeed_config=ir.StringAttr.get(''))
+  outfeed = hlo.OutfeedOp(
+      mlir.flatten_lowering_ir_args(xs),
+      token,
+      outfeed_config=ir.StringAttr.get(''))
   if partitions is not None:
     mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
   return outfeed.results

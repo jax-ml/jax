@@ -998,11 +998,8 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 def _outside_call_impl(*args, **params):
   assert "has_token" not in params
   if _inline_host_callback():
-    if jaxlib.xla_extension_version >= 112:
-      device_index = params["device_index"]
-      device = api.devices()[device_index]
-    else:
-      device = api.devices()[0]
+    device_index = params["device_index"]
+    device = api.devices()[device_index]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
   else:
@@ -1057,12 +1054,8 @@ def _outside_call_translation_rule(ctx,
             identity=identity,
             flat_results_aval=flat_results_aval,
             **params))
-    if jaxlib.xla_extension_version >= 112:
-      next_token = _callback_handler_data.receiver.add_outfeed(
-          comp, current_token, callback_id, args_to_outfeed, device_index)
-    else:
-      next_token = _callback_handler_data.receiver.add_outfeed(
-          comp, current_token, callback_id, args_to_outfeed)
+    next_token = _callback_handler_data.receiver.add_outfeed(
+        comp, current_token, callback_id, args_to_outfeed, device_index)
     if identity:
       results = list(args_to_outfeed)
       next_itoken = current_itoken
@@ -1081,10 +1074,7 @@ def _outside_call_translation_rule(ctx,
         array_sharding_proto = xla_client.OpSharding()
         array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
         array_sharding_proto.tile_assignment_dimensions = [1]
-        if jaxlib.xla_extension_version >= 112:
-          array_sharding_proto.tile_assignment_devices = [device_index]
-        else:
-          array_sharding_proto.tile_assignment_devices = [0]
+        array_sharding_proto.tile_assignment_devices = [device_index]
 
         token_sharding_proto = xla_client.OpSharding()
         token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
@@ -1245,10 +1235,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
     sharding = xla_client.OpSharding()
     sharding.type = xla_client.OpSharding.Type.MAXIMAL
     sharding.tile_assignment_dimensions = [1]
-    if jaxlib.xla_extension_version >= 112:
-      sharding.tile_assignment_devices = [device_index]
-    else:
-      sharding.tile_assignment_devices = [0]
+    sharding.tile_assignment_devices = [device_index]
   else:
     sharding = None
   results, next_token, keep_alive = mlir.emit_python_callback(ctx,
