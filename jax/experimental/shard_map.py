@@ -669,6 +669,11 @@ def _all_to_all_rule(_, in_rep, *, split_axis, concat_axis, axis_name,
   if axis_index_groups is not None: raise NotImplementedError
   return in_rep - {axis_name}  # removes replication
 
+@register_rule(lax_parallel.axis_index_p)
+def _axis_index_rule(mesh, *, axis_name):
+  axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  return set(mesh.shape) - set(axis_name)
+
 @register_rule(pjit.pjit_p)
 def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
   return _output_rep(mesh, jaxpr.jaxpr, in_rep)

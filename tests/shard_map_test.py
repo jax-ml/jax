@@ -377,6 +377,17 @@ class ShardMapTest(jtu.JaxTestCase):
     y_dot_expected = jnp.sin(jnp.arange(8.)) * (jnp.cos(x) * x).sum()
     self.assertAllClose(y_dot, y_dot_expected, check_dtypes=False)
 
+  @jtu.skip_on_devices("cpu")
+  def test_axis_index(self):
+    mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
+
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=P('x'))
+    def f():
+      return jax.lax.axis_index('x')[None]
+
+    x = f()
+    self.assertAllCLose(x, jnp.arange(4), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
