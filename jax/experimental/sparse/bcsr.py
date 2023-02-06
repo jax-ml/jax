@@ -40,6 +40,29 @@ from jax.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
+def bcsr_eliminate_zeros(mat: BCSR, nse: Optional[int] = None) -> BCSR:
+  """Eliminate zeros in BCSR representation."""
+  return BCSR.from_bcoo(bcoo.bcoo_eliminate_zeros(mat.to_bcoo(), nse=nse))
+
+
+def bcsr_sum_duplicates(mat: BCSR, nse: Optional[int] = None) -> BCSR:
+  """Sums duplicate indices within a BCSR array, returning an array with sorted indices.
+
+  Args:
+    mat : BCSR array
+    nse : integer (optional). The number of specified elements in the output matrix. This must
+      be specified for bcoo_sum_duplicates to be compatible with JIT and other JAX transformations.
+      If not specified, the optimal nse will be computed based on the contents of the data and
+      index arrays. If specified nse is larger than necessary, data and index arrays will be padded
+      with standard fill values. If smaller than necessary, data elements will be dropped from the
+      output matrix.
+
+  Returns:
+    mat_out : BCSR array with sorted indices and no duplicate indices.
+  """
+  return BCSR.from_bcoo(bcoo.bcoo_sum_duplicates(mat.to_bcoo(), nse=nse))
+
+
 class BCSRProperties(NamedTuple):
   n_batch: int
   n_dense: int
@@ -471,6 +494,8 @@ _bcsr_dot_general_default_lowering = mlir.lower_fun(
 mlir.register_lowering(
     bcsr_dot_general_p, _bcsr_dot_general_default_lowering)
 
+#----------------------------------------------------------------------
+# BCOO functions that maybe should be primitives?
 
 @tree_util.register_pytree_node_class
 class BCSR(JAXSparse):
@@ -485,17 +510,21 @@ class BCSR(JAXSparse):
   n_batch = property(lambda self: self.indices.ndim - 1)
   n_sparse = property(lambda _: 2)
   n_dense = property(lambda self: self.data.ndim - self.indices.ndim)
+  indices_sorted: bool
+  unique_indices: bool
   _bufs = property(lambda self: (self.data, self.indices, self.indptr))
-  _info = property(lambda self: SparseInfo(self.shape))
+  _info = property(lambda self: SparseInfo(self.shape, self.indices_sorted,
+                                           self.unique_indices))
 
   @property
   def _sparse_shape(self):
     return tuple(self.shape[self.n_batch:self.n_batch + 2])
 
-  def __init__(self, args, *, shape):
-    # JAX transforms will sometimes instantiate pytrees with null values, so we
-    # must catch that in the initialization of inputs.
+  def __init__(self, args: Tuple[Array, Array, Array], *, shape: Sequence[int],
+               indices_sorted: bool = False, unique_indices: bool = False):
     self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    self.indices_sorted = indices_sorted
+    self.unique_indices = unique_indices
     super().__init__(args, shape=shape)
     _validate_bcsr(self.data, self.indices, self.indptr, self.shape)
 
@@ -550,6 +579,32 @@ class BCSR(JAXSparse):
                        index_dtype)
     indptr = jnp.zeros((*batch_shape, sparse_shape[0] + 1), index_dtype)
     return cls((data, indices, indptr), shape=shape)
+
+  def sum_duplicates(self, nse: Optional[int] = None, remove_zeros: bool = True) -> BCSR:
+    """Return a copy of the array with duplicate indices summed.
+
+    Additionally, this operation will result in explicit zero entries removed, and
+    indices being sorted in lexicographic order.
+
+    Because the size of the resulting representation depends on the values in the
+    arrays, this operation is not compatible with JIT or other transforms. To use
+    ``sum_duplicates`` in such cases, you may pass a value to `nse` to specify the
+    desired size of the output representation.
+
+    Args:
+      nse : integer (optional), if specified, gives the number of specified elements in
+        the output sparse representation; if it is larger than the number required, data
+        will be padded with zeros and indices will be padded with out-of-bounds values.
+        If it is smaller than the number required, data will be silently discarded.
+      remove_zeros : bool (default=True). If True, remove explicit zeros from the data
+        as part of summing duplicates. If False, then explicit zeros at unique indices
+        will remain among the specified elements. Note: remove_zeros=True is incompatible
+        with autodiff.
+    """
+    if remove_zeros:
+      return bcsr_eliminate_zeros(self, nse=nse)
+    else:
+      return bcsr_sum_duplicates(self, nse=nse)
 
   @classmethod
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32, n_dense=0,
