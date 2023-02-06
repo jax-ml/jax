@@ -1388,14 +1388,7 @@ def _instantiate_zeros(tan, arg):
   """
   if type(tan) is not ad.Zero:
     return tan
-  if tan.aval is not core.abstract_unit:
-    return ad.instantiate_zeros_aval(tan.aval, tan)
-
-  if ad.is_undefined_primal(arg):
-    aval = arg.aval
-  else:
-    aval = core.raise_to_shaped(core.get_aval(arg))
-  return ad.instantiate_zeros_aval(aval, tan)
+  return ad.instantiate_zeros_aval(tan.aval, tan)
 
 def _outside_call_jvp_rule(primals, tangents, **params):
   assert "has_token" not in params

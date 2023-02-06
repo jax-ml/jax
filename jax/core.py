@@ -275,12 +275,3 @@ from jax._src.core import (
 )
 
 from typing import Any, Callable, Dict, Type
-
-# TODO(mattjj,frostig): remove these stubs (pytype workaround)
-extract_call_jaxpr: Callable
-eval_jaxpr_eqn: Callable
-initial_to_final_param_rules: Dict
-unit: Any
-abstract_unit: AbstractValue
-unitvar: Var
-UnitVar: Type
