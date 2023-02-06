@@ -163,12 +163,12 @@ def _spec_rank_error(
     prefix, base = 'in', 'args'
     ba = _try_infer_args(f, tree)
   else:
-    prefix, base = 'out', f'{f.__name__}(*args)'
+    prefix, base = 'out', f"{getattr(f, '__name__', str(f))}(*args)"
   msgs = []
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
     if error_type == SpecErrorType.input and ba is not None:
       arg_key, *_ = fail_key.keys
-      extra = (f", where {base}[{arg_key.key}] is bound to {f.__name__}'s "
+      extra = (f", where {base}[{arg_key.key}] is bound to {getattr(f, '__name__', str(f))}'s "
                f"parameter '{list(ba.arguments.keys())[arg_key.key]}',")
     else:
       extra = ""
@@ -178,13 +178,13 @@ def _spec_rank_error(
         f"{base}{fail_key.pprint()}{extra} has shape {aval.str_short()}, "
         f"which has rank {aval.ndim} (and {aval.ndim} < {len(spec)})")
   assert msgs
-  msg = (f"shard_map applied to the function '{f.__name__}' was given an "
+  msg = (f"shard_map applied to the function '{getattr(f, '__name__', str(f))}' was given an "
          f"{prefix}_specs entry which is too long to be compatible with the "
          f"corresponding {prefix}put value from the function:\n\n"
          + '\n\n'.join(msgs) + '\n\n' +
          f"Entries in {prefix}_specs must be of length no greater than the "
          f"number of axes in the corresponding {prefix}put value.\n\n"
-         f"Either revise the spec to be shorter, or modify '{f.__name__}' so "
+         f"Either revise the spec to be shorter, or modify '{getattr(f, '__name__', str(f))}' so "
          f"that its {prefix}puts have sufficient rank.")
   return msg
 
@@ -196,7 +196,7 @@ def _spec_divisibility_error(
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
     if ba is not None:
       arg_key, *_ = fail_key.keys
-      extra = (f", where args[{arg_key.key}] is bound to {f.__name__}'s "
+      extra = (f", where args[{arg_key.key}] is bound to {getattr(f, '__name__', str(f))}'s "
                f"parameter '{list(ba.arguments.keys())[arg_key.key]}',")
     names = _canonicalize_spec(spec)
     for d, ns in names.items():
@@ -211,7 +211,7 @@ def _spec_divisibility_error(
             f"{axis} (of {total}size {sz}), but {sz} does not evenly divide "
             f"{aval.shape[d]}")
   assert msgs
-  msg = (f"shard_map applied to the function '{f.__name__}' was given argument "
+  msg = (f"shard_map applied to the function '{getattr(f, '__name__', str(f))}' was given argument "
          f"arrays with axis sizes that are not evenly divisible by the "
          f"corresponding mesh axis sizes:\n\n"
          f"The mesh given has shape {mesh.device_ids.shape} with corresponding "
@@ -221,7 +221,7 @@ def _spec_divisibility_error(
          f"axis or axes indicated by the corresponding elements of the "
          f"argument's in_specs entry. Consider checking that in_specs are "
          f"correct, and if so consider changing the mesh axis sizes or else "
-         f"padding the input and adapting '{f.__name__}' appropriately.")
+         f"padding the input and adapting '{getattr(f, '__name__', str(f))}' appropriately.")
   return msg
 
 def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
@@ -246,7 +246,7 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
           f"corresponding output value is replicated across mesh axis "
           f"'{need_rep_}', but could not infer replication over any axes")
   assert msgs
-  msg = (f"shard_map applied to the function '{f.__name__}' was given "
+  msg = (f"shard_map applied to the function '{getattr(f, '__name__', str(f))}' was given "
          f"out_specs which require replication which can't be statically "
          f"inferred given the mesh:\n\n"
          f"The mesh given has shape {mesh.device_ids.shape} with corresponding "
