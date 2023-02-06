@@ -3206,6 +3206,9 @@ class MeshComputation(stages.XlaLowering):
       self._executable = executable
     return self._executable
 
+  def cost_analysis(self) -> Dict[str, float]:
+    return xe.hlo_module_cost_analysis(self.compile_args["backend"],
+                                       self.hlo().as_hlo_module())
 
 def _get_input_metadata(
     global_in_avals: Sequence[ShapedArray],

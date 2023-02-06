@@ -300,6 +300,14 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsInstance(f.as_text(), (str, type(None)))
 
   @jtu.skip_on_xla_cpu_mlir
+  def testLowerCostAnalysis(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    f = f.lower(x)
+    f.cost_analysis()  # doesn't raise
+
+  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)

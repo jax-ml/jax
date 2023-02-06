@@ -1010,6 +1010,11 @@ class XlaComputation(stages.XlaLowering):
 
     return self._executable
 
+  def cost_analysis(self) -> Dict[str, float]:
+    return xe.hlo_module_cost_analysis(self.compile_args["backend"],
+                                       self.hlo().as_hlo_module())
+
+
 @profiler.annotate_function
 def backend_compile(backend, built_c, options, host_callbacks):
   # we use a separate function call to ensure that XLA compilation appears

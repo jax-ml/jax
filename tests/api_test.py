@@ -64,6 +64,7 @@ from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
 from jax._src import prng
+from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax import tree_util
@@ -1107,6 +1108,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     g = self.jit(lambda x: x + 4).lower(1.).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
     self.assertIsInstance(g.as_text(), (str, type(None)))
+
+  @jtu.skip_on_xla_cpu_mlir
+  def test_jit_lower_cost_analysis(self):
+    # TODO(b/261771737): add support for uncompiled cost analysis in C API.
+    if "PJRT C API" in xla_bridge.get_backend().platform_version:
+      raise unittest.SkipTest("C API does not support uncompiled cost analysis")
+    f = self.jit(lambda x: x).lower(1.)
+    g = self.jit(lambda x: x + 4).lower(1.)
+    f.cost_analysis()  # doesn't raise
+    g.cost_analysis()  # doesn't raise
 
   @jtu.skip_on_xla_cpu_mlir
   def test_jit_lower_compile_cost_analysis(self):

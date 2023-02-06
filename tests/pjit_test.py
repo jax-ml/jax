@@ -984,6 +984,20 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   @jtu.skip_on_xla_cpu_mlir
+  def testLowerCostAnalysis(self):
+    @partial(pjit,
+             in_axis_resources=P(('x', 'y'),),
+             out_axis_resources=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+    f = f.lower(x, x + 1)
+    f.cost_analysis()  # doesn't raise
+
+  @jtu.with_mesh([('x', 2), ('y', 2)])
+  @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
     @partial(pjit,
              in_axis_resources=P(('x', 'y'),),
