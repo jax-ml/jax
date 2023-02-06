@@ -32,7 +32,7 @@ from jax._src.core import raise_to_shaped
 from jax.errors import UnexpectedTracerError
 from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import ad
+from jax._src.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import xla
@@ -790,8 +790,8 @@ batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(_custom_vjp_
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 
-batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
-mlir.register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
+mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
 
 
 def custom_gradient(fun):

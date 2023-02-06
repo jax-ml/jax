@@ -32,7 +32,7 @@ import numpy as np
 
 from jax._src import linear_util as lu
 from jax.config import config
-from jax.interpreters import ad
+from jax._src.interpreters import ad
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src import ad_util
@@ -1607,7 +1607,7 @@ def xla_fallback_lowering(prim: core.Primitive):
     return util.unflatten(flat_results, map(len, output_types))
   return fallback
 
-register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
 
 DEVICE_TO_DEVICE_TYPE = 1
 SEND_TO_HOST_TYPE = 2
