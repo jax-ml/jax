@@ -131,7 +131,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(hash1, hash2)
 
   def test_same_hash_key(self):
-    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
     compile_options = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     backend = xla_bridge.get_backend()
@@ -139,7 +139,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
                      cc.get_cache_key(computation, compile_options, backend))
 
   def test_different_hash_key(self):
-    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
     compile_options_not_filled = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     compile_options_filled = self.filled_compile_options()
@@ -148,8 +148,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
                         cc.get_cache_key(computation, compile_options_filled, backend))
 
   def test_different_computations(self):
-    computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
-    computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
+    computation1 = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
+    computation2 = str(jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir())
     compile_options = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     backend = xla_bridge.get_backend()
@@ -160,7 +160,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     if jtu.is_device_tpu_v4():
       raise unittest.SkipTest("TODO(b/240151176)")
 
-    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
     compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1)
     backend = xla_bridge.get_backend()
@@ -202,7 +202,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_get_no_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
-      computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+      computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()

@@ -124,12 +124,12 @@ def _hash_computation(hash_obj, xla_computation):
   elif isinstance(xla_computation, str):
     serialized_hlo = xla_computation.encode()  # MLIR module text
   else:
-    serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
+    raise TypeError(f"Unknown computation type {type(xla_computation)}")
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 37 if xla.xc._version >= 114 else 35
+  expected_num_compile_options = 37 if xla_extension_version >= 114 else 35
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
