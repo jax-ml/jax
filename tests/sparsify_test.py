@@ -335,23 +335,24 @@ class SparsifyTest(jtu.JaxTestCase):
     sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
     self.assertArraysEqual(f(arrs), f(sparrs).todense())
 
-  @jtu.sample_product(
-    lhs_shape=[(5,), (10,), (15,)],
-    rhs_shape=[(3,), (4,), (5,)],
-    mode=['same', 'valid', 'full'],
-    dtype=jtu.dtypes.numeric,
-  )
-  def testSparseConvolve(self, lhs_shape, rhs_shape, mode, dtype):
-    f = self.sparsify(partial(jnp.convolve, mode=mode, precision='highest'))
-    sprng = sptu.rand_bcoo(self.rng(), n_batch=0, n_dense=0)
+  @jax.default_matmul_precision("float32")
+  def testSparseConvolve(self, lhs_shape=(10,), rhs_shape=(5,),
+                         dtype='float32', mode='full'):
+    # Note: more comprehensive tests in sparse_test.py:test_bcoo_conv_general_dilated
+    dense_fun = partial(jnp.convolve, mode=mode)
+    sparse_fun = self.sparsify(dense_fun)
+
+    sprng = sptu.rand_bcoo(self.rng())
     rng = jtu.rand_default(self.rng())
 
-    lhs_sp = sprng(lhs_shape, dtype)
-    lhs = lhs_sp.todense()
+    lhs = sprng(lhs_shape, dtype)
     rhs = rng(rhs_shape, dtype)
 
+    expected = dense_fun(lhs.todense(), rhs)
+    actual = sparse_fun(lhs, rhs).todense()
+
     tol = {np.float32: 1E-5, np.complex64: 1E-5, np.float64: 1E-14, np.complex128: 1E-14}
-    self.assertAllClose(f(lhs, rhs), f(lhs_sp, rhs).todense(), atol=tol, rtol=tol)
+    self.assertAllClose(expected, actual, atol=tol, rtol=tol)
 
   def testSparseReshapeMethod(self):
     # Note: this is more fully tested in sparse_test.py:test_bcoo_reshape

@@ -1973,6 +1973,30 @@ class BCOOTest(sptu.SparseTestCase):
     if jnp.issubdtype(dtype, jnp.floating):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
+  @jtu.sample_product(
+    lhs_shape=[(1, 1, 5), (1, 1, 10)],
+    rhs_shape=[(1, 1, 5), (1, 1, 10)],
+    padding=['SAME', 'VALID', [(3, 3)]],
+    dtype=jtu.dtypes.inexact,
+    format=['sp-de', 'de-sp', 'sp-sp']
+  )
+  @jax.default_matmul_precision("float32")
+  @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  def test_bcoo_conv_general_dilated(self, lhs_shape, rhs_shape, dtype, padding, format):
+    kwds = dict(window_strides=(1,), padding=padding)
+    sparse_fun = partial(sparse.bcoo_conv_general_dilated, **kwds)
+    dense_fun = partial(lax.conv_general_dilated, **kwds)
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=2, n_dense=0)
+    rng = jtu.rand_default(self.rng())
+
+    def args_maker():
+      lhs = (sprng if format.startswith('sp') else rng)(lhs_shape, dtype)
+      rhs = (sprng if format.endswith('sp') else rng)(rhs_shape, dtype)
+      return lhs, rhs
+
+    tol = {np.float32: 1E-5, np.complex64: 1E-5, np.float64: 1E-14, np.complex128: 1E-14}
+    self._CheckAgainstDense(dense_fun, sparse_fun, args_maker, tol=tol)
+
   def test_bcoo_vmap_shape(self, shape=(2, 3, 4, 5), dtype=np.float32):
     # This test checks that BCOO shape metadata interacts correctly with vmap.
     rng = rand_sparse(self.rng())
