@@ -81,7 +81,7 @@ from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 from jax.interpreters import ad
 from jax.interpreters import batching
 
