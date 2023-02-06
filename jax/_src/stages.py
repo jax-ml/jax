@@ -594,7 +594,7 @@ class Lowered(Stage):
 
   def compile(self) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    from jax.interpreters import pxla
+    from jax._src.interpreters import pxla
 
     if (jax.config.jax_array and
         isinstance(self._lowering, pxla.MeshComputation)):
