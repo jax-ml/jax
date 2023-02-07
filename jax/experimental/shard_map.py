@@ -39,12 +39,11 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
 from jax._src.util import (prod, HashableFunction, unzip2, as_hashable_function,
                            memoize, partition_list, merge_lists)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
-from jax.experimental import maps
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 from jax.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_leaves)
@@ -467,7 +466,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
 def _xla_shard(mesh, names, aval_in, aval_out, x):
-  manual_proto = pxla._manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
+  manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
   axes = {name: i for i, ns in names.items() for name in ns}
   sharding_proto = pxla.new_mesh_sharding_specs(mesh.shape, mesh.axis_names)(
@@ -477,7 +476,7 @@ def _xla_shard(mesh, names, aval_in, aval_out, x):
 
 def _xla_unshard(mesh, names, aval_in, aval_out, xs):
   x, = xs
-  manual_proto = pxla._manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
+  manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
   sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
@@ -575,7 +574,7 @@ class ShardMapTrace(core.Trace):
     if call_primitive is not xla.xla_call_p: raise NotImplementedError
     fun, jaxpr = _grab_jaxpr_shadily(fun)  # TODO remove with initial-style jit
     bind = partial(call_primitive.bind, fun)  # TODO caching (compat w/ jaxpr())
-    fake_primitive = pxla._FakePrimitive(multiple_results=True, bind=bind)
+    fake_primitive = pxla.FakePrimitive(multiple_results=True, bind=bind)
     _rep_rules[fake_primitive] = lambda *_, **__: set()
     out_tracers_ = self.process_primitive(fake_primitive, tracers, params)
     out_vals = [t.val for t in out_tracers_]

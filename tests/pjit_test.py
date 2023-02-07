@@ -46,7 +46,7 @@ from jax._src import array
 from jax._src.sharding import NamedSharding, Sharding, OpShardingSharding
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src.lib import xla_client as xc, xla_bridge, xla_extension_version
 from jax._src.util import prod, curry, unzip2, safe_zip
@@ -3617,7 +3617,7 @@ class UtilTest(jtu.JaxTestCase):
 
     mp = NamedSharding(global_mesh, P(None))
 
-    _, out_indices, _ = pxla._get_input_metadata(
+    _, out_indices, _ = pxla.get_input_metadata(
         in_avals, [mp, mp, mp], [False, False, False])
 
     self.assertLen(out_indices, len(in_avals))
@@ -3630,7 +3630,7 @@ class UtilTest(jtu.JaxTestCase):
 
   def test_mesh_sharding_spec(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    array_mapping = pxla._get_array_mapping(P('x', 'y'))
+    array_mapping = pxla.get_array_mapping(P('x', 'y'))
     aval = jax.core.ShapedArray((1, 1), jnp.int32)
     with self.assertRaisesRegex(
         ValueError,

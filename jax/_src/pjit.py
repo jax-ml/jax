@@ -31,7 +31,6 @@ from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax.interpreters.pxla import PartitionSpec
 from jax.tree_util import (
@@ -53,6 +52,7 @@ from jax._src.api_util import (
     argnames_partial_except, resolve_argnums, FLAGS)
 from jax._src.config import config
 from jax._src.interpreters import ad
+from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_bridge as xb
@@ -77,16 +77,16 @@ def _is_from_gda(x):
   # doesn't cause an error to avoid user confusion.
   return isinstance(x, type(FROM_GDA))
 
-_AUTOAxisResource = pxla._AUTOAxisResource
+_AUTOAxisResource = pxla.AUTOAxisResource
 AUTO = pxla.AUTO
-_is_auto = pxla._is_auto
+is_auto = pxla.is_auto
 
-_UnspecifiedValue = pxla._UnspecifiedValue
+_UnspecifiedValue = pxla.UnspecifiedValue
 _UNSPECIFIED = pxla._UNSPECIFIED
 _is_unspecified = pxla._is_unspecified
 
 def _is_unspecified_or_from_gda_or_auto(x):
-  return _is_from_gda(x) or _is_auto(x) or _is_unspecified(x)
+  return _is_from_gda(x) or is_auto(x) or _is_unspecified(x)
 
 
 PjitSharding = Union[OpShardingSharding, _UnspecifiedValue, _AUTOAxisResource]
@@ -173,7 +173,7 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
       out_committed = [o._committed for o in out_flat]
       kept_var_bitvec = [i in executable._kept_var_idx
                          for i in range(len(args_flat))]
-      fastpath_data = pxla._MeshExecutableFastpathData(
+      fastpath_data = pxla.MeshExecutableFastpathData(
           executable.xla_executable, out_tree, executable._in_shardings,
           executable._out_shardings, out_avals, out_committed, kept_var_bitvec)
     else:
@@ -402,7 +402,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   out_positional_semantics = (
       pxla._PositionalSemantics.GLOBAL
       if jax.config.jax_parallel_functions_output_gda or jax.config.jax_array else
-      pxla._positional_semantics.val)
+      pxla.positional_semantics.val)
 
   global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
       hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
@@ -630,7 +630,7 @@ def hashable_pytree(pytree):
 def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
   if _is_unspecified_or_from_gda_or_auto(x):
     return x
-  return pxla._create_mesh_pspec_sharding(mesh, x.user_spec, x)
+  return pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x)
 
 
 def _create_sharding_for_array(mesh, x):
@@ -746,7 +746,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
                              allow_uneven_sharding=False)
     global_in_avals = local_in_avals
-    # TODO(yashkatariya): Only check for _is_auto or _is_unspecified when
+    # TODO(yashkatariya): Only check for is_auto or _is_unspecified when
     # FROM_GDA is removed.
     canonicalized_shardings = tuple(
         i if _is_unspecified_or_from_gda_or_auto(i) else to_op_sharding_sharding(i, aval.ndim)
@@ -758,7 +758,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     return (), ()
 
   in_axis_resources_flat = tuple(
-      i if _is_from_gda(i) or _is_auto(i) else i._parsed_pspec
+      i if _is_from_gda(i) or is_auto(i) else i._parsed_pspec
       for i in in_shardings_flat)
 
   # This check should be above local_to_global call below otherwise if
@@ -773,7 +773,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   # Use canonicalized in_axis_resources here because we want to treat P(None)
   # and None (for example) as equivalent.
   if all(
-      (not _is_from_gda(p) and not _is_auto(p) and
+      (not _is_from_gda(p) and not is_auto(p) and
        CanonicalizedParsedPartitionSpec(p).partitions == ()) or
       ips == pxla._PositionalSemantics.GLOBAL
       for p, ips in safe_zip(in_axis_resources_flat, in_positional_semantics)):
@@ -784,7 +784,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
                              allow_uneven_sharding=False)
   else:
     pjit_check_aval_sharding(
-        [i if _is_from_gda(i) or _is_auto(i) else
+        [i if _is_from_gda(i) or is_auto(i) else
          NamedSharding(i.mesh.local_mesh, i.spec)
          for i in in_shardings_flat],
         local_in_avals, "pjit arguments", allow_uneven_sharding=False)
@@ -792,7 +792,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   # Local or global avals doesn't matter for converting to op sharding because
   # the `ndim` does not change.
   canonicalized_in_shardings_flat = tuple(
-      i if _is_from_gda(i) or _is_auto(i) else to_op_sharding_sharding(i, aval.ndim)
+      i if _is_from_gda(i) or is_auto(i) else to_op_sharding_sharding(i, aval.ndim)
       for i, aval in safe_zip(in_shardings_flat, local_in_avals))
 
   global_in_avals = local_to_global(
@@ -804,16 +804,16 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
 
 @lu.cache
 def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
-  prev_positional_val = pxla._positional_semantics.val
+  prev_positional_val = pxla.positional_semantics.val
   try:
-    pxla._positional_semantics.val = pxla._PositionalSemantics.GLOBAL
+    pxla.positional_semantics.val = pxla._PositionalSemantics.GLOBAL
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                    "for pjit in {elapsed_time} sec",
                                     event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
           fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
   finally:
-    pxla._positional_semantics.val = prev_positional_val
+    pxla.positional_semantics.val = prev_positional_val
 
   if any(isinstance(c, core.Tracer) for c in consts):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
@@ -840,7 +840,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
                            allow_uneven_sharding=False)
 
   canonicalized_out_shardings_flat = tuple(
-      o if _is_unspecified(o) or _is_auto(o) else to_op_sharding_sharding(o, aval.ndim)
+      o if _is_unspecified(o) or is_auto(o) else to_op_sharding_sharding(o, aval.ndim)
       for o, aval in safe_zip(out_shardings_flat, global_out_avals)
   )
 
@@ -870,7 +870,7 @@ def pjit_check_aval_sharding(
     # XLACompatibleSharding.
     op_sharding = s._to_xla_op_sharding(len(shape))
     assert op_sharding is not None
-    num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(
+    num_ways_dim_sharded, _ = pxla.get_num_ways_dim_sharded(
         cast(xc.OpSharding, op_sharding))
     for i, size in enumerate(num_ways_dim_sharded):
       if not allow_uneven_sharding and shape[i] % size != 0:
@@ -1066,7 +1066,7 @@ def _resolve_in_shardings(
   # arg is on, reshard it to the device mentioned. So don't do any of the
   # checks and just return the pjit_in_shardings directly. `shard_args` will
   # handle the resharding.
-  if pxla._check_device_backend_on_shardings(pjit_in_shardings):
+  if pxla.check_device_backend_on_shardings(pjit_in_shardings):
     return pjit_in_shardings
 
   committed_arg_shardings = []
@@ -1170,7 +1170,7 @@ def _pjit_call_impl(*args, jaxpr,
   _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
-    pxla._check_gda_or_array_xla_sharding_match(args, compiled._in_shardings)
+    pxla.check_gda_or_array_xla_sharding_match(args, compiled._in_shardings)
   if config.jax_distributed_debug:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this
@@ -1279,7 +1279,7 @@ def _pjit_lower_cached(
   # Convert to `NamedSharding` when `jax_array` is not enabled. This is
   # because GDA/SDA/DA are dependent on mesh for generating outputs.
   # NamedSharding is required for host-local inputs too.
-  any_auto = pxla._check_if_any_auto(it.chain(in_shardings,  out_shardings))
+  any_auto = pxla.check_if_any_auto(it.chain(in_shardings,  out_shardings))
   if not config.jax_array or any_auto:
     in_shardings: Tuple[MeshShardingMinusUnspecified, ...] = cast(  # type:ignore[no-redef]
         Tuple[MeshShardingMinusUnspecified, ...], tuple(
@@ -1535,7 +1535,7 @@ def _pjit_partial_eval(trace, *in_tracers,
               _allow_propagation_to_outputs=[True] * len(known_params['out_shardings']),
               _allow_compile_replicated=False)
       da = compiled._device_assignment
-      _, out_op_sharding_shardings = pxla._get_op_sharding_shardings_from_executable(
+      _, out_op_sharding_shardings = pxla.get_op_sharding_shardings_from_executable(
           compiled.xla_executable, da, len(known_jaxpr.in_avals),
           len(known_jaxpr.out_avals))
       assert len(out_op_sharding_shardings) == len(known_jaxpr.out_avals), (
@@ -1801,7 +1801,7 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
       raise RuntimeError("Changing the physical mesh is not allowed inside pjit.")
 
   for aval, s in zip(jaxpr.in_avals, params['in_shardings']):
-    if _is_unspecified(s) or _is_auto(s):
+    if _is_unspecified(s) or is_auto(s):
       continue
     elif hasattr(s, '_original_sharding') and hasattr(
         s._original_sharding, '_parsed_pspec'):
@@ -1823,7 +1823,7 @@ def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_r
 
   what = "pjit output"
   for aval, s in zip(jaxpr.out_avals, params['out_shardings']):
-    if _is_unspecified(s) or _is_auto(s):
+    if _is_unspecified(s) or is_auto(s):
       continue
     elif hasattr(s, '_original_sharding') and hasattr(
         s._original_sharding, '_parsed_pspec'):
@@ -1860,7 +1860,7 @@ def with_sharding_constraint(x, axis_resources):
         for s in sharding_flat
     ]
   else:
-    sharding_flat = [pxla._create_mesh_pspec_sharding(mesh, a.user_spec, a)
+    sharding_flat = [pxla.create_mesh_pspec_sharding(mesh, a.user_spec, a)
                      for a in axis_resources_flat]
     # Calculate unconstrained_dims from NamedSharding because that information
     # is lost when converted to OpSharding. Bind unconstrained_dims to
@@ -1956,8 +1956,8 @@ pxla.custom_resource_typing_rules[sharding_constraint_p] = \
 def get_array_mapping(
     axis_resources: Union[ParsedPartitionSpec, _AUTOAxisResource, _UnspecifiedValue]
 ) -> pxla.ArrayMappingOrAutoOrUnspecified:
-  # TODO(yashkatariya): Use `TypeGuard` on `_is_auto` when it is supported.
-  # Don't use `_is_auto` here to satisfy pytype and mypy.
+  # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
+  # Don't use `is_auto` here to satisfy pytype and mypy.
   if isinstance(axis_resources, (_AUTOAxisResource, _UnspecifiedValue)):
     return axis_resources
   return OrderedDict((axis, i)
@@ -2026,14 +2026,14 @@ def _calc_is_global_sequence(in_positional_semantics, in_shardings):
 def _get_in_positional_semantics(arg) -> pxla._PositionalSemantics:
   if isinstance(arg, GDA):
     return pxla._PositionalSemantics.GLOBAL
-  return pxla._positional_semantics.val
+  return pxla.positional_semantics.val
 
 
 def _fast_path_get_device_assignment(
     shardings: Iterable[PjitSharding]) -> Optional[XLADeviceAssignment]:
   da = None
   for i in shardings:
-    if _is_auto(i) or _is_unspecified(i):
+    if is_auto(i) or _is_unspecified(i):
       continue
     da = i._device_assignment  # type: ignore
     break
@@ -2059,12 +2059,12 @@ def _maybe_replace_from_gda_with_pspec(
 
   out = []
   for in_sharding_flat, arg in safe_zip(in_shardings_flat, args_flat):
-    if _is_auto(in_sharding_flat):
+    if is_auto(in_sharding_flat):
       out.append(in_sharding_flat)
     elif isinstance(arg, array.ArrayImpl):
       out.append(to_op_sharding_sharding(arg.sharding, arg.ndim))
     elif isinstance(arg, GDA):
-      gda_sharding = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+      gda_sharding = pxla.create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
       out.append(_gda_check_and_get_sharding(gda_sharding, in_sharding_flat, arg.ndim))
     else:
       out.append(in_sharding_flat)

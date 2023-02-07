@@ -53,6 +53,7 @@ from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.reductions import (  # noqa: F401
@@ -5463,5 +5464,5 @@ def _set_device_array_attributes(device_array):
 for t in device_array.device_array_types:
   _set_device_array_attributes(t)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
-_set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)
+_set_device_array_attributes(pmap_lib.ShardedDeviceArray)
 _set_device_array_attributes(ArrayImpl)

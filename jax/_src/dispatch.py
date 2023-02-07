@@ -55,6 +55,7 @@ from jax._src.config import config, flags
 from jax._src.interpreters import ad
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import use_stablehlo
+from jax._src.lib import pmap_lib
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
@@ -1309,7 +1310,7 @@ def _device_put_jax_array(x, device: Optional[Device]):
 device_put_handlers[array.ArrayImpl] = _device_put_jax_array
 
 device_put_handlers[pxla._ShardedDeviceArray] = _device_put_array
-device_put_handlers[pxla.pmap_lib.ShardedDeviceArray] = _device_put_array
+device_put_handlers[pmap_lib.ShardedDeviceArray] = _device_put_array
 
 device_put_handlers[core.DArray] = lambda x, d: device_put(x._data, d)
 

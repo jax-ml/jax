@@ -19,8 +19,8 @@ import google_benchmark
 import jax
 from jax._src import test_util as jtu
 from jax._src.util import prod
-from jax.interpreters.pxla import PartitionSpec as P
-from jax.interpreters import pxla
+from jax.sharding import PartitionSpec as P
+from jax._src.interpreters import pxla
 from jax.experimental import global_device_array as gda
 from jax._src.sharding import NamedSharding
 import numpy as np
@@ -124,9 +124,9 @@ def gda_xla_sharding_match(mesh_shape, mesh_axes, state):
                                   dbs)
   in_xla_shardings = NamedSharding(global_mesh, mesh_axes)
   while state:
-    pxla._check_gda_or_array_xla_sharding_match([gda_inp] * 1000,
+    pxla.check_gda_or_array_xla_sharding_match([gda_inp] * 1000,
                                                 [in_xla_shardings] * 1000)
-  pxla._create_mesh_pspec_sharding.cache_clear()
+  pxla.create_mesh_pspec_sharding.cache_clear()
 
 
 benchmarks = []
