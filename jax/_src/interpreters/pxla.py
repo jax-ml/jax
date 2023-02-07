@@ -207,7 +207,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   return proto
 
 
-def _get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int], int]:
+def get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int], int]:
   partitions = op_sharding.tile_assignment_dimensions
   if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
     replicate_on_last_tile_dim = True
@@ -236,7 +236,7 @@ def _op_sharding_to_numpy_indices(
 
   assert num_devices == len(op_sharding.tile_assignment_devices)
 
-  partitions, num_replicas = _get_num_ways_dim_sharded(op_sharding)
+  partitions, num_replicas = get_num_ways_dim_sharded(op_sharding)
   assert len(partitions) == len(shape), (len(partitions), len(shape))
 
   axis_indices: List[Sequence[Index]] = []
@@ -368,7 +368,7 @@ def spec_to_indices(shape: Tuple[int, ...],
 
 def identity(x): return x
 
-def _shard_arg(arg, devices, arg_indices):
+def shard_arg(arg, devices, arg_indices):
   """Returns a list of size len(devices) containing per-device buffers.
 
   For the C++ pmap path, we fallback to Python (this function) to shard
@@ -383,7 +383,7 @@ def _shard_arg(arg, devices, arg_indices):
     # The shard_arg_handlers allow an extensible set of types to be sharded, but
     # inline handling for ShardedDeviceArray as a special case for performance
     # NOTE: we compare indices instead of sharding_spec because
-    # pmap_benchmark.pmap_shard_args_benchmark indicates this is faster.
+    # pmap_benchmark.pmapshard_args_benchmark indicates this is faster.
     return [
         buf if buf.device() == d else buf.copy_to_device(d)
         for d, buf in zip(devices, arg.device_buffers)
@@ -411,7 +411,7 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-  return [_shard_arg(arg, devices, indices[i]) for i, arg in enumerate(args)]
+  return [shard_arg(arg, devices, indices[i]) for i, arg in enumerate(args)]
 
 
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
@@ -432,20 +432,20 @@ def _shard_array(x, devices, indices):
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_device_array(x, devices, indices):
+def shard_device_array(x, devices, indices):
   start_indices, limit_indices, removed_dims = unzip3(
-      _as_slice_indices(x, idx) for idx in indices)
+      as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
 for t in device_array.device_array_types:
-  shard_arg_handlers[t] = _shard_device_array
+  shard_arg_handlers[t] = shard_device_array
 
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
 # require duplicating the ordering logic of spec_to_indices, which is more
 # subtle and more likely to change than the index logic we have to support here.
-def _as_slice_indices(arr: device_array.DeviceArrayProtocol, idx: Index) -> Tuple[
+def as_slice_indices(arr: device_array.DeviceArrayProtocol, idx: Index) -> Tuple[
     Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim
@@ -487,20 +487,20 @@ def _shard_abstract_array(size, axis: int, x):
 shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 
-class _AUTOAxisResource:
+class AUTOAxisResource:
   pass
-AUTO = _AUTOAxisResource()
+AUTO = AUTOAxisResource()
 
-def _is_auto(x):
-  return isinstance(x, _AUTOAxisResource)
+def is_auto(x):
+  return isinstance(x, AUTOAxisResource)
 
 
-class _UnspecifiedValue:
+class UnspecifiedValue:
   pass
-_UNSPECIFIED = _UnspecifiedValue()
+_UNSPECIFIED = UnspecifiedValue()
 
 def _is_unspecified(x):
-  return isinstance(x, _UnspecifiedValue)
+  return isinstance(x, UnspecifiedValue)
 
 """
 ArrayMapping specifies how an ndarray should map to mesh axes.
@@ -518,8 +518,8 @@ mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
 ArrayMapping = OrderedDictType[MeshAxisName, int]
-ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, _AUTOAxisResource,
-                                        _UnspecifiedValue]
+ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTOAxisResource,
+                                        UnspecifiedValue]
 
 
 def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
@@ -896,7 +896,7 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(yashkatariya): Move this to array.py when SDA is deleted. The local
 # import of Array should go away at that time.
-def _shard_sharded_device_array_slow_path(x, devices, indices):
+def shard_sharded_device_array_slow_path(x, devices, indices):
   from jax._src.array import ArrayImpl
 
   candidates = defaultdict(list)
@@ -933,7 +933,7 @@ def _sharded_device_array_mlir_constant_handler(val, canonicalize_types=True):
                            canonicalize_types=canonicalize_types)
 
 def _register_handlers_for_sharded_device_array(sda):
-  shard_arg_handlers[sda] = _shard_sharded_device_array_slow_path
+  shard_arg_handlers[sda] = shard_sharded_device_array_slow_path
   mlir.register_constant_handler(sda,
                                  _sharded_device_array_mlir_constant_handler)
 
@@ -1087,7 +1087,7 @@ def _multi_pmap(f: Callable, info: EmapInfo, names: List[core.AxisName],
   out_shard_axes = {name: i for i, name in enumerate(reversed(used_names))}
   return f, out_shard_axes
 
-_FakePrimitive = namedtuple("_FakePrimitive", ["multiple_results", "bind"])
+FakePrimitive = namedtuple("FakePrimitive", ["multiple_results", "bind"])
 
 class MapTrace(core.Trace):
 
@@ -1121,7 +1121,7 @@ class MapTrace(core.Trace):
     bind = HashableFunction(
         lambda *args, **kwargs: call_primitive.bind(fun, *args, **kwargs),
         (call_primitive, fun))
-    fake_primitive = _FakePrimitive(multiple_results=True, bind=bind)
+    fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
     return self.process_primitive(fake_primitive, tracers, params)
 
   def process_map(self, call_primitive, fun, tracers, params):
@@ -1131,7 +1131,7 @@ class MapTrace(core.Trace):
       bind = HashableFunction(
           lambda *args, **kwargs: call_primitive.bind(fun, *args, **kwargs),
           (call_primitive, fun))
-      fake_primitive = _FakePrimitive(multiple_results=True, bind=bind)
+      fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
       return self.process_primitive(fake_primitive, tracers, params)
     axis_name, in_axes, out_axes_thunk, axis_size = (params["axis_name"],
         params["in_axes"], params["out_axes_thunk"], params["axis_size"])
@@ -1154,7 +1154,7 @@ class MapTrace(core.Trace):
     bind = HashableFunction(
         lambda *args, **kwargs: primitive.bind(fun, jvp, *args, **kwargs),
         (primitive, fun, jvp))
-    fake_primitive = _FakePrimitive(multiple_results=True, bind=bind)
+    fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
     return self.process_primitive(fake_primitive, tracers, {})
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
@@ -1163,14 +1163,14 @@ class MapTrace(core.Trace):
         lambda *args, **kwargs: primitive.bind(fun, fwd, bwd, *args,
                                                out_trees=out_trees, **kwargs),
         (primitive, fun, fwd, bwd))
-    fake_primitive = _FakePrimitive(multiple_results=True, bind=bind)
+    fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
     return self.process_primitive(fake_primitive, tracers, {})
 
   def process_axis_index(self, frame):
     bind = HashableFunction(
         lambda _: jax.lax.axis_index(frame.name),
         (jax.lax.axis_index, frame.name))
-    fake_primitive = _FakePrimitive(multiple_results=False, bind=bind)
+    fake_primitive = FakePrimitive(multiple_results=False, bind=bind)
     with core.eval_context():
       range = jax.lax.iota(np.int32, frame.size)
     dummy_tracer = MapTracer(self, range, {frame.name: 0})
@@ -1911,7 +1911,7 @@ def _get_sharding_specs(
     return [s.sharding_spec for s in shardings]  # type: ignore
   elif all(isinstance(s, sharding_internal.NamedSharding) for s in shardings):
     return [new_mesh_sharding_specs(s.mesh.shape, s.mesh.axis_names)(
-              aval.ndim, _get_array_mapping(s.spec))
+              aval.ndim, get_array_mapping(s.spec))
             for aval, s in safe_zip(avals, shardings)]
   else:
     raise ValueError('Getting sharding spec is only supported for '
@@ -1945,7 +1945,7 @@ def global_avals_to_results_handler(
   else:
     # This path is taken when the outputs are SDAs.
     assert all(isinstance(s, sharding_internal.NamedSharding) for s in shardings)
-    local_out_avals = [s.mesh._global_to_local(_get_array_mapping(s.spec), aval)
+    local_out_avals = [s.mesh._global_to_local(get_array_mapping(s.spec), aval)
                        for aval, s in safe_zip(global_out_avals, shardings)]
     local_shardings = [sharding_internal.NamedSharding(s.mesh.local_mesh, s.spec)  # type: ignore
                        for s in shardings]
@@ -2484,7 +2484,7 @@ class Mesh(ContextDecorator):
 
 ResourceAxisName = core.AxisName
 
-class _Loop(NamedTuple):
+class Loop(NamedTuple):
   name: ResourceAxisName
   length: int
 
@@ -2495,7 +2495,7 @@ def show_axes(axes):
 
 class ResourceEnv(NamedTuple):
   physical_mesh: Mesh
-  loops: Tuple[_Loop, ...]
+  loops: Tuple[Loop, ...]
 
   def with_mesh(self, mesh: Mesh):
     overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
@@ -2505,7 +2505,7 @@ class ResourceEnv(NamedTuple):
                        f"{show_axes(overlap)}")
     return self._replace(physical_mesh=mesh)
 
-  def with_extra_loop(self, loop: _Loop):
+  def with_extra_loop(self, loop: Loop):
     if loop.name in self.resource_axes:
       raise ValueError(f"Cannot extend the resource environment with loop named "
                        f"`{loop.name}`. An axis of this name is already defined!")
@@ -2605,7 +2605,7 @@ def _full_to_shard_abstract_eval(x, axes, mesh, **_):
   # TODO: Assert x is a global aval! Or ideally check that it's global in dims from axes!
   return tile_aval_nd(mesh.shape, axes, x)
 
-def _manual_proto(aval: core.ShapedArray, manual_axes_set: FrozenSet[MeshAxisName], mesh: Mesh):
+def manual_proto(aval: core.ShapedArray, manual_axes_set: FrozenSet[MeshAxisName], mesh: Mesh):
   """Create an OpSharding proto that declares all mesh axes from `axes` as manual
   and all others as replicated.
   """
@@ -2638,9 +2638,9 @@ def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh, manual_ax
   sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_in, axes).sharding_proto()
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
   sx = mlir.wrap_with_sharding_op(x, sharding_proto, unspecified_dims=unspecified_dims)
-  manual_proto = _manual_proto(aval_in, manual_axes, mesh)
+  proto = manual_proto(aval_in, manual_axes, mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
-  return mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, unspecified_dims=unspecified_dims),
+  return mlir.wrap_with_full_to_shard_op(result_type, sx, proto, unspecified_dims=unspecified_dims),
 
 shard_to_full_p = core.Primitive('shard_to_full')
 
@@ -2653,10 +2653,10 @@ def _shard_to_full_abstract_eval(x, axes, mesh, **_):
 def _shard_to_full_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh, manual_axes: FrozenSet[MeshAxisName]):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
-  manual_proto = _manual_proto(aval_in, manual_axes, mesh)
+  proto = manual_proto(aval_in, manual_axes, mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
   unspecified_dims = set(range(aval_in.ndim)) - set(axes.values())
-  sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=unspecified_dims)
+  sx = mlir.wrap_with_sharding_op(x, proto, unspecified_dims=unspecified_dims)
   sharding_proto = mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval_out, axes).sharding_proto()
   return mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, unspecified_dims),
 
@@ -2704,21 +2704,21 @@ class _PSThreadLocalState(threading.local):
   def __init__(self):
     self.val = _PositionalSemantics.LOCAL
 
-_positional_semantics = _PSThreadLocalState()
+positional_semantics = _PSThreadLocalState()
 
 
-def _check_if_any_auto(
+def check_if_any_auto(
     shardings: Iterable[Union[sharding_internal.XLACompatibleSharding,
-                              _AUTOAxisResource, _UnspecifiedValue]]) -> bool:
+                              AUTOAxisResource, UnspecifiedValue]]) -> bool:
   for s in shardings:
-    if _is_auto(s):
+    if is_auto(s):
       return True
   return False
 
 
 def _get_and_check_device_assignment(
     shardings: Iterable[Union[sharding_internal.XLACompatibleSharding,
-                              _UnspecifiedValue, _AUTOAxisResource]],
+                              UnspecifiedValue, AUTOAxisResource]],
     devices: Optional[Sequence[xc.Device]]
 ) -> Tuple[xla.Backend, Sequence[xc.Device]]:
   from jax._src.api import local_devices
@@ -2730,7 +2730,7 @@ def _get_and_check_device_assignment(
     devices = list(devices)
 
   for i in shardings:
-    if _is_auto(i) or _is_unspecified(i):
+    if is_auto(i) or _is_unspecified(i):
       continue
     # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
     # skipped.
@@ -2772,8 +2772,8 @@ def lower_sharding_computation(
     fun: lu.WrappedFun,
     api_name: str,
     fun_name: str,
-    in_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, _UnspecifiedValue]],
-    out_shardings: Union[Sequence[Union[sharding_internal.XLACompatibleSharding, _UnspecifiedValue]], _UnspecifiedValue],
+    in_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue]],
+    out_shardings: Union[Sequence[Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue]], UnspecifiedValue],
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     in_is_global: Sequence[bool],
@@ -2991,9 +2991,9 @@ def lower_mesh_computation(
     api_name: str,
     fun_name: str,
     mesh: Mesh,
-    in_shardings: Sequence[Union[sharding_internal.NamedSharding, _AUTOAxisResource]],
-    out_shardings: Sequence[Union[sharding_internal.NamedSharding, _AUTOAxisResource,
-                            _UnspecifiedValue]],
+    in_shardings: Sequence[Union[sharding_internal.NamedSharding, AUTOAxisResource]],
+    out_shardings: Sequence[Union[sharding_internal.NamedSharding, AUTOAxisResource,
+                            UnspecifiedValue]],
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
@@ -3003,7 +3003,7 @@ def lower_mesh_computation(
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
 
-  auto_spmd_lowering = _check_if_any_auto(in_shardings + out_shardings)  # type: ignore
+  auto_spmd_lowering = check_if_any_auto(in_shardings + out_shardings)  # type: ignore
 
   if auto_spmd_lowering and not spmd_lowering:
     raise ValueError('Enable spmd_lowering to use auto spmd lowering.')
@@ -3035,15 +3035,15 @@ def lower_mesh_computation(
       # This is the xmap path where there is no `AUTO` or `UNSPECIFIED`, which
       # is why `.spec` can be accessed.
       fun = tiling_transform(
-          fun, mesh, [_get_array_mapping(i.spec) for i in in_shardings],  # type: ignore
-          [_get_array_mapping(o.spec) for o in out_shardings])  # type: ignore
+          fun, mesh, [get_array_mapping(i.spec) for i in in_shardings],  # type: ignore
+          [get_array_mapping(o.spec) for o in out_shardings])  # type: ignore
     in_jaxpr_avals = global_in_avals
   else:
     assert isinstance(tiling_method, TileVectorize)
     assert not auto_spmd_lowering
     # In non-spmd lowering path, there is no `AUTO` or `UNSPECIFIED`, which is
     # why `.spec` can be accessed.
-    in_tiled_avals = [tile_aval_nd(global_axis_sizes, _get_array_mapping(i.spec), aval)  # type: ignore
+    in_tiled_avals = [tile_aval_nd(global_axis_sizes, get_array_mapping(i.spec), aval)  # type: ignore
                       for aval, i in safe_zip(global_in_avals, in_shardings)]
     in_jaxpr_avals = in_tiled_avals
   with core.extend_axis_env_nd(mesh.shape.items()):
@@ -3057,7 +3057,7 @@ def lower_mesh_computation(
   else:
     # In non-spmd lowering path, there is no `AUTO` or `UNSPECIFIED`, which is
     # why `.spec` can be accessed.
-    global_out_avals = [untile_aval_nd(global_axis_sizes, _get_array_mapping(o.spec), aval)  # type: ignore
+    global_out_avals = [untile_aval_nd(global_axis_sizes, get_array_mapping(o.spec), aval)  # type: ignore
                         for aval, o in safe_zip(out_jaxpr_avals, out_shardings)]
   _sanitize_mesh_jaxpr(jaxpr)
   if mesh.is_multi_process:
@@ -3073,7 +3073,7 @@ def lower_mesh_computation(
   if spmd_lowering:
     in_partitions = []
     for aval, i in safe_zip(global_in_avals, in_shardings):
-      if _is_auto(i):
+      if is_auto(i):
         in_partitions.append(None)
       elif core.is_opaque_dtype(aval.dtype):
         in_partitions.append(aval.dtype._rules.physical_op_sharding(aval, i))
@@ -3084,7 +3084,7 @@ def lower_mesh_computation(
     # [None, OpShardingProto] has the sharding annotations.
     out_partitions = []
     for aval, o in safe_zip(global_out_avals, out_shardings):
-      if _is_auto(o) or _is_unspecified(o):
+      if is_auto(o) or _is_unspecified(o):
         out_partitions.append(None)
       elif core.is_opaque_dtype(aval.dtype):
         out_partitions.append(aval.dtype._rules.physical_op_sharding(aval, o))
@@ -3093,7 +3093,7 @@ def lower_mesh_computation(
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh, manual_axes)
   else:
-    replicated_args = [not _get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
+    replicated_args = [not get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
     in_partitions = None
     out_partitions = None
     axis_env = xla.AxisEnv(nreps=mesh.size,
@@ -3211,7 +3211,7 @@ class MeshComputation(stages.XlaLowering):
     return xe.hlo_module_cost_analysis(self.compile_args["backend"],
                                        self.hlo().as_hlo_module())
 
-def _get_input_metadata(
+def get_input_metadata(
     global_in_avals: Sequence[ShapedArray],
     in_shardings: Sequence[sharding_internal.XLACompatibleSharding], in_is_global: Sequence[bool]
 ) -> Tuple[Sequence[sharding_internal.XLACompatibleSharding], Sequence[Tuple[Optional[Index], ...]],
@@ -3236,7 +3236,7 @@ def _get_normalized_avals_and_shardings(
     else:
       assert isinstance(i, sharding_internal.NamedSharding)
       aval = i.mesh._global_to_local(
-          cast(ArrayMapping, _get_array_mapping(i.spec)), gaval)  # pylint: disable=g-bare-generic
+          cast(ArrayMapping, get_array_mapping(i.spec)), gaval)  # pylint: disable=g-bare-generic
       in_sharding = sharding_internal.NamedSharding(i.mesh.local_mesh, i.spec)
     avals.append(aval)
     shardings.append(in_sharding)
@@ -3272,7 +3272,7 @@ def _get_input_indices(
   return input_indices
 
 
-def _get_op_sharding_shardings_from_executable(
+def get_op_sharding_shardings_from_executable(
     xla_executable, device_assignment: Sequence[xc.Device],
     num_in_avals: int, num_out_avals: int
 ) -> Tuple[Sequence[sharding_internal.XLACompatibleSharding],
@@ -3377,9 +3377,9 @@ class UnloadedMeshExecutable:
                mesh: Optional[Mesh],
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
-               in_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, _AUTOAxisResource]],
-               out_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, _AUTOAxisResource,
-                                       _UnspecifiedValue]],
+               in_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, AUTOAxisResource]],
+               out_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, AUTOAxisResource,
+                                       UnspecifiedValue]],
                spmd_lowering: bool,
                tuple_args: bool,
                in_is_global: Sequence[bool],
@@ -3460,16 +3460,16 @@ class UnloadedMeshExecutable:
         assert mesh is not None
         in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
             xla_executable, mesh)
-        in_shardings = [x if _is_auto(i) else i
+        in_shardings = [x if is_auto(i) else i
                         for x, i in safe_zip(in_shardings_xla, in_shardings)]
         out_shardings_tuple = [
-            (x, True) if _is_auto(o) else (o, False)
+            (x, True) if is_auto(o) else (o, False)
             for x, o in safe_zip(out_shardings_xla, out_shardings)
         ]
         out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
       elif out_shardings and any(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
-        _, out_shardings_xla = _get_op_sharding_shardings_from_executable(  # type: ignore
+        _, out_shardings_xla = get_op_sharding_shardings_from_executable(  # type: ignore
             xla_executable, device_assignment,
             len(global_in_avals), len(global_out_avals))
         orig_out_shardings = out_shardings
@@ -3515,7 +3515,7 @@ class UnloadedMeshExecutable:
           auto_spmd_lowering=auto_spmd_lowering)
 
 
-class _MeshExecutableFastpathData(NamedTuple):
+class MeshExecutableFastpathData(NamedTuple):
   xla_executable: xla.XlaLoadedExecutable
   out_pytree_def: Any
   in_shardings: Sequence[sharding_internal.XLACompatibleSharding]
@@ -3562,7 +3562,7 @@ class MeshExecutable(stages.XlaExecutable):
       are_global = [True] * len(global_out_avals)
     else:
       are_global = [False] * len(global_out_avals)
-    _, indices, _ = _get_input_metadata(global_out_avals, out_shardings,
+    _, indices, _ = get_input_metadata(global_out_avals, out_shardings,
                                         are_global)
     local_device_assignment = [d for d in device_assignment
                                if d.process_index == d.client.process_index()]
@@ -3586,7 +3586,7 @@ class MeshExecutable(stages.XlaExecutable):
     ref_avals = self.in_avals
     dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
     # Check the GDA sharding and the input sharding.
-    _check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
+    check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
 
   def input_shardings(self) -> Sequence[sharding_internal.XLACompatibleSharding]:
@@ -3614,7 +3614,7 @@ class MeshExecutable(stages.XlaExecutable):
         out_committed = [o._committed for o in out_flat]
         kept_var_bitvec = [i in self._kept_var_idx
                            for i in range(len(args_flat))]
-        fastpath_data = _MeshExecutableFastpathData(
+        fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree, self._in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec)
       else:
@@ -3681,7 +3681,7 @@ def _compile_replicated_mesh_executable_from_hlo(
     host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
     backend, device_assignment, committed, pmap_nreps):
   assert not auto_spmd_lowering
-  in_shardings, input_indices, input_avals = _get_input_metadata(
+  in_shardings, input_indices, input_avals = get_input_metadata(
       global_in_avals, in_shardings, in_is_global)  # type: ignore
   if pmap_nreps > 1:
     # For a jit wrapping a pmap, replicate each input index to match the
@@ -3714,7 +3714,7 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
     in_is_global = [True] * len(global_in_avals)
   else:
     in_is_global = [False] * len(global_in_avals)
-  in_shardings, input_indices, input_avals = _get_input_metadata(
+  in_shardings, input_indices, input_avals = get_input_metadata(
       global_in_avals, in_shardings, in_is_global)  # type: ignore
   handle_outs = global_avals_to_results_handler(
       global_out_avals, out_shardings, committed,
@@ -3732,15 +3732,15 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 
 
 @lru_cache()
-def _create_mesh_pspec_sharding(
+def create_mesh_pspec_sharding(
     mesh: Mesh, pspec: PartitionSpec, parsed_pspec=None
 ) -> sharding_internal.NamedSharding:
   return sharding_internal.NamedSharding(mesh, pspec, parsed_pspec)
 
 
-def _check_device_backend_on_shardings(shardings) -> bool:
+def check_device_backend_on_shardings(shardings) -> bool:
   for i in shardings:
-    if _is_unspecified(i) or _is_auto(i):
+    if _is_unspecified(i) or is_auto(i):
       continue
     if hasattr(i, '_original_sharding') and getattr(
         i._original_sharding, '_device_backend', False):
@@ -3748,7 +3748,7 @@ def _check_device_backend_on_shardings(shardings) -> bool:
   return False
 
 
-def _check_gda_or_array_xla_sharding_match(
+def check_gda_or_array_xla_sharding_match(
     args, in_xla_shardings: Sequence[sharding_internal.XLACompatibleSharding]) -> None:
   from jax.experimental.global_device_array import GlobalDeviceArray
   from jax._src.array import ArrayImpl
@@ -3757,7 +3757,7 @@ def _check_gda_or_array_xla_sharding_match(
     if not isinstance(arg, (GlobalDeviceArray, ArrayImpl)):
       continue
     if isinstance(arg, GlobalDeviceArray):
-      arg_sharding = _create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+      arg_sharding = create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
       arg_type = 'GDA'
       committed = True
     else:
@@ -3767,7 +3767,7 @@ def _check_gda_or_array_xla_sharding_match(
 
     # No need to cache this check since MeshExecutable has a C++ fast path
     # for AOT compiled call.
-    if (not _check_device_backend_on_shardings([xs]) and
+    if (not check_device_backend_on_shardings([xs]) and
         committed and
         not are_op_shardings_equal(arg_sharding._to_xla_op_sharding(arg.ndim),
                                    xs._to_xla_op_sharding(arg.ndim))):
@@ -3777,12 +3777,12 @@ def _check_gda_or_array_xla_sharding_match(
           f"arg shape: {arg.shape}, arg value: {arg}")
 
 
-def _get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
+def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   # Import here to avoid cyclic import error when importing gda in pjit.py.
-  from jax.experimental.pjit import get_array_mapping, _prepare_axis_resources
+  from jax.experimental.pjit import get_array_mapping as _get_array_mapping, _prepare_axis_resources
 
   parsed_pspec, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
-  return get_array_mapping(parsed_pspec)
+  return _get_array_mapping(parsed_pspec)
 
 
 def are_op_shardings_equal(op1: xc.OpSharding, op2: xc.OpSharding) -> bool:

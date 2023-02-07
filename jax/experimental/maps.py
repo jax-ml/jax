@@ -39,7 +39,7 @@ from jax.experimental.global_device_array import GlobalDeviceArray
 from jax._src.sharding import NamedSharding
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 from jax.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import ad
@@ -56,7 +56,7 @@ map, unsafe_map = safe_map, map
 zip = safe_zip
 
 _PositionalSemantics = pxla._PositionalSemantics
-_positional_semantics = pxla._positional_semantics
+_positional_semantics = pxla.positional_semantics
 
 
 class FrozenDict(abc.Mapping):
@@ -160,7 +160,7 @@ def serial_loop(name: ResourceAxisName, length: int):
         axis_resources={'i': 'l'})(x)
   """
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
-  thread_resources.env = old_env.with_extra_loop(pxla._Loop(name, length))
+  thread_resources.env = old_env.with_extra_loop(pxla.Loop(name, length))
   try:
     yield
   finally:
@@ -1826,10 +1826,10 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                          f"{arr_flavor} mesh: {mesh}")
 
       if arr_flavor == 'GDA':
-        s = pxla._create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
+        s = pxla.create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
       else:
         s = arg.sharding
-      xmap_sharding = pxla._create_mesh_pspec_sharding(
+      xmap_sharding = pxla.create_mesh_pspec_sharding(
           mesh, pxla.array_mapping_to_axis_resources(xmap_array_mapping))
       # This check is cached because comparing OpSharding is expensive during
       # dispatch and if the shardings are the same, then there is no need to

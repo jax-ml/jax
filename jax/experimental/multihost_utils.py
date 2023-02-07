@@ -25,7 +25,8 @@ from jax._src import dispatch
 from jax._src import array
 from jax._src import sharding
 from jax.tree_util import PyTreeDef
-from jax.interpreters import pxla, xla
+from jax._src.interpreters import pxla
+from jax.interpreters import xla
 from jax.experimental import pjit as pjit_lib
 from jax.experimental.pjit import pjit, FROM_GDA
 from jax.interpreters.pxla import PartitionSpec as P
@@ -114,7 +115,7 @@ def _handle_array_process_allgather(inp, tiled):
 
     aval = jax.core.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
     global_aval = global_mesh._local_to_global(
-        pxla._get_array_mapping(pspec), aval)
+        pxla.get_array_mapping(pspec), aval)
 
     bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
     global_arr = array.make_array_from_single_device_arrays(
@@ -240,12 +241,12 @@ def _flatten_pspecs(name, in_tree, pspecs_thunk):
 
 @functools.lru_cache()
 def _local_to_global_aval(local_aval, mesh, pspec):
-  return mesh._local_to_global(pxla._get_array_mapping(pspec), local_aval)
+  return mesh._local_to_global(pxla.get_array_mapping(pspec), local_aval)
 
 @functools.lru_cache()
 def _global_to_local_aval(global_aval, mesh, pspec):
   return mesh._global_to_local(
-      pxla._get_array_mapping(pspec), global_aval)
+      pxla.get_array_mapping(pspec), global_aval)
 
 def _device_put(x, device):
   try:

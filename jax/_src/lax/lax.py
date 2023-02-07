@@ -60,6 +60,7 @@ from jax._src.lax.utils import (
   standard_primitive,
   standard_translate,
 )
+from jax._src.lib import pmap_lib
 from jax._src.lib import pytree
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
@@ -1496,12 +1497,12 @@ for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types,
     device_array.device_array_types, [array.ArrayImpl],
     [pxla.ShardedDeviceArray, pxla._ShardedDeviceArray,
-     pxla.pmap_lib.ShardedDeviceArray]):
+     pmap_lib.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[device_array._DeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[device_array.Buffer] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
-ad_util.jaxval_zeros_likers[pxla.pmap_lib.ShardedDeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[pmap_lib.ShardedDeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[array.ArrayImpl] = zeros_like_array
 
 

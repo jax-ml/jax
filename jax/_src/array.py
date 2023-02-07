@@ -30,7 +30,8 @@ from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src import api
 from jax._src.typing import ArrayLike
-from jax.interpreters import pxla, xla, mlir
+from jax._src.interpreters import pxla
+from jax.interpreters import xla, mlir
 from jax._src.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
@@ -646,9 +647,9 @@ def _array_shard_arg(x, devices, indices):
               for buf, d in safe_zip(x._arrays, devices)]
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
-      return pxla._shard_device_array(x, devices, indices)
+      return pxla.shard_device_array(x, devices, indices)
     else:
-      return pxla._shard_sharded_device_array_slow_path(x, devices, indices)
+      return pxla.shard_sharded_device_array_slow_path(x, devices, indices)
 
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
