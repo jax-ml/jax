@@ -345,7 +345,6 @@ class cuSparseTest(sptu.SparseTestCase):
     dtype=all_dtypes,
     transpose=[True, False],
   )
-  @jtu.skip_on_devices("rocm")  # will be fixed in rocm-5.1
   def test_csr_matvec(self, shape, dtype, transpose):
     op = lambda M: M.T if transpose else M
 
@@ -445,7 +444,6 @@ class cuSparseTest(sptu.SparseTestCase):
     dtype=all_dtypes,
     transpose=[True, False],
   )
-  @jtu.skip_on_devices("rocm")  # will be fixed in rocm-5.1
   def test_coo_matmat(self, shape, dtype, transpose):
     op = lambda M: M.T if transpose else M
 
@@ -1043,7 +1041,6 @@ class BCOOTest(sptu.SparseTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  @jtu.skip_on_devices("rocm")
   @jax.default_matmul_precision("float32")
   def test_bcoo_batched_matmat_cusparse(
     self, n_batch, lhs_shape, rhs_shape, dtype, lhs_contracting,
@@ -1102,7 +1099,6 @@ class BCOOTest(sptu.SparseTestCase):
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  @jtu.skip_on_devices("rocm")
   def test_bcoo_batched_matmat_default_lowering(
     self, n_batch, lhs_shape, rhs_shape, dtype, lhs_contracting,
     rhs_contracting):

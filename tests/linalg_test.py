@@ -523,7 +523,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
     compute_uv=[False, True],
   )
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   @jax.default_matmul_precision("float32")
   def testSVD(self, b, m, n, dtype, full_matrices, compute_uv, hermitian):
     rng = jtu.rand_default(self.rng())
@@ -831,7 +830,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
      for hermitian in ([False, True] if shape[-1] == shape[-2] else [False])],
     dtype=float_types + complex_types,
   )
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def testPinv(self, shape, hermitian, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
