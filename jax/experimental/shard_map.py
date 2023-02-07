@@ -16,6 +16,7 @@ from __future__ import annotations
 import enum
 from functools import partial, lru_cache
 import inspect
+import itertools as it
 import operator as op
 from typing import (Any, Callable, Dict, Hashable, List, Optional, Sequence,
                     Set, Tuple, TypeVar, Union, Protocol)
@@ -28,11 +29,13 @@ from jax.core import Tracer
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import ad_util
 from jax._src import linear_util as lu
+from jax._src import ops
 from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src.lax import lax, parallel as lax_parallel
+from jax._src.lax import (lax, parallel as lax_parallel, slicing,
+                          windowed_reductions, fft, linalg)
 from jax._src.util import (prod, HashableFunction, unzip2, as_hashable_function,
                            memoize, partition_list, merge_lists)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
@@ -636,7 +639,9 @@ register_standard = lambda prim: _rep_rules.setdefault(prim, _standard_rep_rule)
 def _standard_rep_rule(_, *in_rep, **__):
   return set.intersection(*in_rep)
 
-for o in lax.__dict__.values():
+for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
+                  windowed_reductions.__dict__.values(), fft.__dict__.values(),
+                  linalg.__dict__.values(), ops.__dict__.values()):
   if isinstance(o, core.Primitive): register_standard(o)
 register_standard(ad_util.add_any_p)
 
