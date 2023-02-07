@@ -11,6 +11,9 @@ Remember to align the itemized text with the first line of an item within a list
     * Deleted {func}`jax.scipy.linalg.polar_unitary`, which was a deprecated JAX 
       extension to the scipy API. Use {func}`jax.scipy.linalg.polar` instead.
 
+  * Changes
+    * Added {func}`jax.scipy.stats.rankdata`.
+
 ## jaxlib 0.4.3
 
 ## jax 0.4.2 (Jan 24, 2023)
