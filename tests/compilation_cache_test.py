@@ -61,9 +61,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
       raise SkipTest("serialize executable only works on " +
                      ",".join(supported_platforms))
 
+    # Reset cache if already initialized by JaxTestCase
+    if cc.is_initialized():
+      cc.reset_cache()
+
   def tearDown(self):
-      super().tearDown()
-      cc._cache = None
+    if cc.is_initialized():
+      cc.reset_cache()
+    super().tearDown()
 
   def test_compile_options(self):
     compile_options_not_filled = xla_bridge.get_compile_options(

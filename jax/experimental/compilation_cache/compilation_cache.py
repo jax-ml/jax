@@ -254,3 +254,9 @@ def _hash_int_list(hash_obj, int_list):
 
 def is_initialized():
   return _cache is not None
+
+def reset_cache():
+  global _cache
+  assert is_initialized()
+  logger.info("Resetting cache at %s.", _cache._path)
+  _cache = None
