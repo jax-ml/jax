@@ -59,6 +59,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import PmapSharding
 from jax._src.traceback_util import api_boundary
@@ -436,8 +437,11 @@ if jax.config.jax_jit_pjit_api_merge:
           inline=inline, resource_env=None)
       return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
+    has_explicit_sharding = pjit._pjit_explicit_sharding(
+        in_axis_resources, out_axis_resources, device, backend)
     return pjit.post_infer_params(fun, infer_params, static_argnums,
-                                  static_argnames, abstracted_axes)
+                                  static_argnames, donate_argnums,
+                                  abstracted_axes, has_explicit_sharding)
 
 
 def _jit(
@@ -3547,11 +3551,14 @@ def clear_backends():
   xb._clear_backends()
   jax.lib.xla_bridge._backends = {}
   dispatch.xla_callable.cache_clear()  # type: ignore
-  pjit._pjit_lower_cached.cache_clear()
-  pjit._pjit_jaxpr.cache_clear()
   dispatch.xla_primitive_callable.cache_clear()
   _cpp_jit_cache.clear()
   jax_jit.CompiledFunctionCache.clear_all()
+  pjit._pjit_lower_cached.cache_clear()
+  pjit._pjit_jaxpr.cache_clear()
+  if xla_extension_version >= 124:
+    pjit._cpp_pjit_cache.clear()
+    xc._xla.PjitFunctionCache.clear_all()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.

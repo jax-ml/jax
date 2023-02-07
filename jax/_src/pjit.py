@@ -142,7 +142,12 @@ def _read_most_recent_pjit_call_executable():
   return executable
 
 
-def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames):
+if xla_extension_version >= 124:
+  _cpp_pjit_cache = xc._xla.PjitFunctionCache()
+
+
+def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
+              donate_argnums, pjit_has_explicit_sharding):
 
   @api_boundary
   def cache_miss(*args, **kwargs):
@@ -175,10 +180,19 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames):
 
     return outs, fastpath_data
 
-  cpp_pjit_f = xc._xla.pjit(  # type: ignore
-      getattr(fun, "__name__", "<unnamed function>"),  # type:ignore
-      fun, cache_miss, static_argnums, static_argnames)  # type:ignore
-
+  if xla_extension_version < 124:
+    cpp_pjit_f = xc._xla.pjit(  # type: ignore
+        getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
+        fun, cache_miss, static_argnums, static_argnames)  # type: ignore
+  else:
+    if pjit_has_explicit_sharding:
+      global_cache = xc._xla.PjitFunctionCache()
+    else:
+      global_cache = _cpp_pjit_cache
+    cpp_pjit_f = xc._xla.pjit(  # type: ignore
+        getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
+        fun, cache_miss, static_argnums, static_argnames,  # type: ignore
+        donate_argnums, global_cache)  # type: ignore
   return wraps(fun)(cpp_pjit_f)
 
 
@@ -193,8 +207,8 @@ def pre_infer_params(fun, in_axis_resources, out_axis_resources,
 
   check_callable(fun)
 
-  if not jax.config.jax_array and (_is_unspecified(in_axis_resources) or
-                               _is_unspecified(out_axis_resources)):
+  if (not jax.config.jax_array and
+      (_is_unspecified(in_axis_resources) or _is_unspecified(out_axis_resources))):
     raise ValueError(
         "in_axis_resources and out_axis_resources should not "
         "be the unspecified singleton value. Please enable `jax.Array` to use "
@@ -240,9 +254,11 @@ def pre_infer_params(fun, in_axis_resources, out_axis_resources,
 
 
 def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
-                      abstracted_axes):
+                      donate_argnums, abstracted_axes,
+                      pjit_has_explicit_sharding):
   if FLAGS.experimental_cpp_pjit and abstracted_axes is None:
-    wrapped = _cpp_pjit(fun, infer_params_fn, static_argnums, static_argnames)
+    wrapped = _cpp_pjit(fun, infer_params_fn, static_argnums, static_argnames,
+                        donate_argnums, pjit_has_explicit_sharding)
   else:
     wrapped = _python_pjit(fun, infer_params_fn)
 
@@ -275,6 +291,16 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
 
   wrapped.lower = lower
   return wrapped
+
+
+def _pjit_explicit_sharding(in_axis_resources, out_axis_resources, device,
+                            backend) -> bool:
+  in_axis_resources_flat, _ = tree_flatten(in_axis_resources)
+  out_axis_resources_flat, _ = tree_flatten(out_axis_resources)
+  return (device is not None or
+          backend is not None or
+          any(not _is_unspecified(i) for i in in_axis_resources_flat) or
+          any(not _is_unspecified(i) for i in out_axis_resources_flat))
 
 
 class PjitInfo(NamedTuple):
@@ -582,8 +608,11 @@ def pjit(
           inline=inline, resource_env=resource_env)
     return common_infer_params(pjit_info_args, *args, **kwargs)
 
+  has_explicit_sharding = _pjit_explicit_sharding(
+      in_axis_resources, out_axis_resources, device, backend)
   return post_infer_params(fun, infer_params, static_argnums, static_argnames,
-                           abstracted_axes)
+                           donate_argnums, abstracted_axes,
+                           has_explicit_sharding)
 
 
 class _ListWithW(list):

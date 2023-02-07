@@ -28,6 +28,7 @@ import concurrent.futures
 
 import jax
 import jax.numpy as jnp
+from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.config import parallel_functions_output_gda, jax_array
 from jax import dtypes
@@ -2597,26 +2598,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((1,), ('x',))
     inp_data = np.arange(prod(shape)).reshape(shape)
 
-    original_pjit_lower = pjit_lib._pjit_lower
-    count = 0
-
-    def pjit_lower_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return original_pjit_lower(*args, **kwargs)
-
     f = pjit(lambda x: x @ x.T, in_axis_resources=None, out_axis_resources=None)
-
-    try:
-      pjit_lib._pjit_lower = pjit_lower_and_count
+    with jtu.count_pjit_cache_miss() as count:
       for _ in range(10):
         arr1 = jax.device_put(
             inp_data, jax.sharding.NamedSharding(mesh, P('x')))
         with mesh:
           f(arr1)
-        self.assertEqual(count, 1)
-    finally:
-      pjit_lib._pjit_lower = original_pjit_lower
+    self.assertEqual(count[0], 1)
 
   @jax_array(True)
   def test_single_device_add_single_compile(self):
@@ -2626,21 +2615,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(jnp.array([4, 5, 6], dtype=jnp.float32),
                        jax.devices()[0])
 
-    original_pjit_lower = pjit_lib._pjit_lower
-    count = 0
-
-    def pjit_lower_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return original_pjit_lower(*args, **kwargs)
-
-    try:
-      pjit_lib._pjit_lower = pjit_lower_and_count
+    with jtu.count_pjit_cache_miss() as count:
       for _ in range(2):
         f1(a, b)
-        self.assertEqual(count, 1)
-    finally:
-      pjit_lib._pjit_lower = original_pjit_lower
+    self.assertEqual(count[0], 1)
 
   @jax_array(True)
   def test_global_array_to_host_local_array_already_host_local(self):
@@ -2785,29 +2763,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     assert f_names(x='foo') == 1
 
   def test_pjit_with_static_argnames_cpp_dispatch(self):
-    original_pjit_lower = pjit_lib._pjit_lower
-    count = 0
-
-    def pjit_lower_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return original_pjit_lower(*args, **kwargs)
-
     def f(y, **kwargs):
       self.assertEqual(kwargs, {'x': 'foo'})
       return y * y
 
-    try:
-      pjit_lib._pjit_lower = pjit_lower_and_count
+    with jtu.count_pjit_cache_miss() as count:
       y = jnp.arange(8.)
-
       f_names = pjit(f, static_argnames='x')
       f_names(y, x='foo')
       f_names(y, x='foo')
-
-      self.assertEqual(count, 1)
-    finally:
-      pjit_lib._pjit_lower = original_pjit_lower
+    self.assertEqual(count[0], 1)
 
   def test_new_static_argnum_on_keyword_arguments(self):
     f = pjit(lambda x: x, static_argnums=0)
@@ -3224,6 +3189,79 @@ class ArrayPjitTest(jtu.JaxTestCase):
         message=".*Using jit-of-pmap can lead to inefficient data movement"):
       pjit(_pmapped_fun)(inputs)  # doesn't crash
       jax.jit(_pmapped_fun)(inputs)  # doesn't crash
+
+  def test_pjit_function_cache_cpp(self):
+    if xla_extension_version < 124 or not config.jax_array:
+      self.skipTest('This test requires xla_extension_version >= 124 and '
+                    'jax.Array')
+    def f(x):
+      return x * 2
+
+    inp = jnp.arange(3.)
+
+    with jtu.count_pjit_cache_miss() as count:
+      for _ in range(10):
+        pjit(f)(inp)
+    self.assertEqual(count[0], 1)
+
+  def test_pjit_no_global_cache_hit_axis_resources(self):
+    if xla_extension_version < 124 or not config.jax_array:
+      self.skipTest('This test requires xla_extension_version >= 124 and '
+                    'jax.Array')
+
+    mesh = jtu.create_global_mesh((1,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+
+    with jtu.count_pjit_cache_miss() as count:
+      for _ in range(10):
+        pjit(lambda x: x * 2, in_axis_resources=s, out_axis_resources=s)(jnp.arange(8.))
+    self.assertEqual(count[0], 10)
+
+    with jtu.count_pjit_cache_miss() as count:
+      for _ in range(10):
+        pjit(lambda x: x * 2, device=jax.devices()[0])(jnp.arange(8.))
+    self.assertEqual(count[0], 10)
+
+    pf = pjit(lambda x: x * 2, in_axis_resources=s, out_axis_resources=s)
+    with jtu.count_pjit_cache_miss() as count:
+      for _ in range(10):
+        pf(jnp.arange(8.))
+    self.assertEqual(count[0], 1)
+
+    pf1 = pjit(lambda x: x * 2, device=jax.devices()[0])
+    with jtu.count_pjit_cache_miss() as count:
+      for _ in range(10):
+        pf1(jnp.arange(8.))
+    self.assertEqual(count[0], 1)
+
+  def test_jit_function_cache_cpp(self):
+    if xla_extension_version < 124 or not config.jax_array:
+      self.skipTest('This test requires xla_extension_version >= 124 and '
+                    'jax.Array')
+    if jax.config.jax_jit_pjit_api_merge:
+      self.skipTest("This test only works if jax_jit_pjit_api_merge is False "
+                    "since it tests the old jit codepath.")
+
+    def f(x):
+      return x * 2
+
+    inp = jnp.arange(3.)
+
+    original_xla_call_impl_lazy = dispatch._xla_call_impl_lazy
+    count = 0
+
+    def xla_call_impl_lazy_and_count(*args, **kwargs):
+      nonlocal count
+      count += 1
+      return original_xla_call_impl_lazy(*args, **kwargs)
+
+    try:
+      dispatch._xla_call_impl_lazy = xla_call_impl_lazy_and_count
+      for _ in range(10):
+        jax.jit(f)(inp)
+        self.assertEqual(count, 1)
+    finally:
+      dispatch._xla_call_impl_lazy = original_xla_call_impl_lazy
 
 
 class TempSharding(Sharding):

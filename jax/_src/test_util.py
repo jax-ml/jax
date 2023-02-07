@@ -36,6 +36,7 @@ from jax import lax
 from jax.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
+from jax._src import pjit as pjit_lib
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
@@ -196,6 +197,22 @@ def count_primitive_compiles():
     yield count
   finally:
     count[0] = dispatch.xla_primitive_callable.cache_info().misses
+
+
+@contextmanager
+def count_pjit_cache_miss():
+  original_pjit_lower = pjit_lib._pjit_lower
+  count = [0]
+
+  def pjit_lower_and_count(*args, **kwargs):
+    count[0] += 1
+    return original_pjit_lower(*args, **kwargs)
+
+  pjit_lib._pjit_lower = pjit_lower_and_count
+  try:
+    yield count
+  finally:
+    pjit_lib._pjit_lower = original_pjit_lower
 
 
 @contextmanager

@@ -3620,7 +3620,10 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [])  # type: ignore
+    if xla_extension_version < 124:
+      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [])  # type: ignore
+    else:
+      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [])  # type: ignore
 
 
 def _out_shardings_for_trivial(
