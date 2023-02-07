@@ -46,7 +46,7 @@ from jax._src import util
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import use_stablehlo
 from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax._src.interpreters import xla
 
 
 source_info_util.register_exclusion(__file__)

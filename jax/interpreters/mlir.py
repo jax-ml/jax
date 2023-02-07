@@ -34,7 +34,7 @@ from jax._src import linear_util as lu
 from jax.config import config
 from jax._src.interpreters import ad
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+from jax._src.interpreters import xla
 from jax._src import ad_util
 from jax._src import core
 from jax._src import device_array
@@ -328,7 +328,7 @@ def _source_info_to_location(
   if frame is None:
     loc = ir.Location.unknown()
   else:
-    loc = ir.Location.file(xla._get_canonical_source_file(frame),
+    loc = ir.Location.file(xla.get_canonical_source_file(frame),
                            frame.start_line, frame.start_column)
   loc = ir.Location.name(eqn_str, childLoc=loc)
   # TODO(phawkins): also include primitive.name as the operator type.

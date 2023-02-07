@@ -36,7 +36,7 @@ from jax.errors import UnexpectedTracerError
 from jax.monitoring import record_event_duration_secs
 import jax.interpreters.batching as batching
 import jax.interpreters.mlir as mlir
-import jax.interpreters.xla as xla
+import jax._src.interpreters.xla as xla
 from jax.interpreters import pxla
 import jax.interpreters.partial_eval as pe
 
@@ -122,11 +122,6 @@ def apply_primitive(prim, *args, **params):
   compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
                                         **params)
   return compiled_fun(*args)
-
-# TODO(phawkins,frostig,mattjj): update code referring to
-# xla.apply_primitive to point here, or use simple_impl if that's why
-# it is using apply_primitive to begin with
-xla.apply_primitive = apply_primitive
 
 def simple_impl(prim):
   prim.def_impl(partial(apply_primitive, prim))
@@ -646,7 +641,7 @@ def eqn_replicas(eqn):
   call_jaxpr = eqn.params.get("call_jaxpr")
   if call_jaxpr:
     return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
-  elif eqn.primitive in xla._initial_style_primitives:
+  elif eqn.primitive in xla.initial_style_primitives:
     return initial_style_primitive_replicas(eqn.params)
   else:
     return 1
@@ -1030,9 +1025,6 @@ def backend_compile(backend, built_c, options, host_callbacks):
   # to take in `host_callbacks`
   return backend.compile(built_c, compile_options=options)
 
-# TODO(phawkins): update users.
-xla.backend_compile = backend_compile
-
 _ir_dump_counter = itertools.count()
 
 def _make_string_safe_for_filename(s: str) -> str:
@@ -1262,9 +1254,6 @@ def device_put(x, device: Optional[Device] = None) -> Tuple[Any, ...]:
     return device_put_handlers[type(x)](x, device)
   except KeyError as err:
     raise TypeError(f"No device_put handler for type: {type(x)}") from err
-
-# TODO(phawkins): update users.
-xla.device_put = device_put
 
 def _device_put_masked_array(x, device: Optional[Device]):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "

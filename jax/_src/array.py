@@ -30,8 +30,9 @@ from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src import api
 from jax._src.typing import ArrayLike
+from jax.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax.interpreters import xla, mlir
+from jax._src.interpreters import xla
 from jax._src.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
