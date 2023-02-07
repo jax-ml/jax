@@ -148,6 +148,7 @@ jax.scipy.stats
   :toctree: _autosummary
 
    mode
+   rankdata
 
 jax.scipy.stats.bernoulli
 ~~~~~~~~~~~~~~~~~~~~~~~~~
