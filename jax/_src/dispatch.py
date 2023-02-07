@@ -1080,7 +1080,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
                                  compile_options, host_callbacks)
       compile_time = time.monotonic() - start_time
       _cache_write(serialized_computation, compile_time, module_name,
-                   compile_options, backend, compiled)
+                   compile_options, backend, compiled, host_callbacks)
       return compiled
 
   return backend_compile(backend, serialized_computation, compile_options,
@@ -1108,10 +1108,17 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
 def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
                  compile_time_secs: float,
                  module_name: str, compile_options: CompileOptions,
-                 backend: Backend, compiled: XlaLoadedExecutable):
+                 backend: Backend, compiled: XlaLoadedExecutable,
+                 host_callbacks: List[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
+
+  if host_callbacks:
+    logger.info(
+        "Not writing persistent cache entry for '%s' because it uses host "
+        "callbacks (e.g. from jax.debug.print or breakpoint)")
+    return
 
   min_compile_time = config.jax_persistent_cache_min_compile_time_secs
   if min_compile_time:
