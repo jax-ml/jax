@@ -68,12 +68,8 @@ from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            extend_name_stack, new_name_stack, wrap_name, cache,
                            wraps, HashableFunction, weakref_lru_cache)
 
+
 # Unused imports to be exported
-from jax._src.core import ShapedArray, raise_to_shaped
-from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
-                                     local_devices, process_index,
-                                     process_count, host_id, host_ids,
-                                     host_count, default_backend)
 from jax.ad_checkpoint import checkpoint_policies, checkpoint as new_checkpoint
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
@@ -82,8 +78,6 @@ from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax._src.interpreters import pxla
-from jax.interpreters import ad
 from jax.interpreters import batching
 
 from jax._src.config import (
@@ -94,6 +88,13 @@ from jax._src.config import (
     _thread_local_state as config_thread_local_state,
     explicit_device_put_scope as config_explicit_device_put_scope,
     explicit_device_get_scope as config_explicit_device_get_scope)
+from jax._src.core import ShapedArray, raise_to_shaped
+from jax._src.interpreters import ad
+from jax._src.interpreters import pxla
+from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
+                                     local_devices, process_index,
+                                     process_count, host_id, host_ids,
+                                     host_count, default_backend)
 
 
 traceback_util.register_exclusion(__file__)

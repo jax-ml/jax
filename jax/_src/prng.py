@@ -25,26 +25,26 @@ from jax import lax
 from jax import numpy as jnp
 from jax.config import config
 from jax.dtypes import float0
-from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax._src import basearray
-from jax._src.sharding import (
-    NamedSharding, PmapSharding, OpShardingSharding)
 
+from jax._src import basearray
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src.api import jit, vmap
+from jax._src.interpreters import ad
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
+from jax._src.sharding import (
+    NamedSharding, PmapSharding, OpShardingSharding)
 from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
-from jax._src.lib import gpu_prng
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip

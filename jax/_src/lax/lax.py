@@ -25,40 +25,33 @@ import warnings
 import numpy as np
 
 import jax
-from jax._src import core
+from jax import tree_util
+from jax.interpreters import batching
+from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax.interpreters.batching import ConcatAxis
+from jax.tree_util import tree_map
+
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
+from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
-from jax._src import linear_util as lu
 from jax._src import dtypes
-from jax import tree_util
+from jax._src import linear_util as lu
+from jax._src import pretty_printer as pp
 from jax._src import source_info_util
-from jax._src.sharding import PmapSharding
+from jax._src import util
+from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
-from jax._src.abstract_arrays import array_types
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.interpreters import pxla
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters.batching import ConcatAxis
-import jax._src.pretty_printer as pp
-from jax._src import util
-from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
-                           split_list)
-from jax.tree_util import tree_map
-from jax._src.lib import pytree
-from jax._src.lib import xla_bridge
-from jax._src.lib import xla_client
-from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import chlo
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.interpreters import ad
+from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype,
   standard_abstract_eval,
@@ -67,8 +60,16 @@ from jax._src.lax.utils import (
   standard_primitive,
   standard_translate,
 )
-from jax._src.lax import slicing
+from jax._src.lib import pytree
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
+from jax._src.lib.mlir.dialects import hlo
+from jax._src.sharding import PmapSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike, Shape
+from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
+                           split_list)
 
 xb = xla_bridge
 xc = xla_client

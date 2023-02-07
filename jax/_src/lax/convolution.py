@@ -19,14 +19,15 @@ from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
 from jax._src import core
 from jax._src import dtypes
 from jax._src import util
+from jax._src.interpreters import ad
 from jax._src.lax import lax
 from jax._src.lib.mlir.dialects import hlo
+
+from jax.interpreters import batching
+from jax.interpreters import mlir
 
 _max = builtins.max
 

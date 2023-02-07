@@ -42,12 +42,11 @@ import sys
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
+
 import numpy as np
 
 import jax
-from jax._src import linear_util as lu
 from jax.errors import JAXTypeError
-from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
@@ -59,17 +58,19 @@ from jax._src import api_util
 from jax._src import basearray
 from jax._src import core
 from jax._src import device_array
-from jax._src import dtypes
-from jax._src import source_info_util
-from jax._src import util
 from jax._src import dispatch
+from jax._src import dtypes
+from jax._src import linear_util as lu
 from jax._src import profiler
-from jax._src import stages
 from jax._src import sharding as sharding_internal
+from jax._src import source_info_util
+from jax._src import stages
+from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.config import flags
 from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.interpreters import ad
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version

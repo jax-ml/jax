@@ -12,36 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for JAX debugging primitives and related functionality."""
+
 import enum
 import functools
 import string
 import sys
+from typing import Any, Dict, Callable, Optional, Sequence, Set, Tuple, Union
 import weakref
 
-from typing import Any, Dict, Callable, Optional, Sequence, Set, Tuple, Union
+import numpy as np
 
+import jax.numpy as jnp
 from jax import tree_util
 from jax import lax
-from jax._src import linear_util as lu
 from jax.config import config
 from jax.experimental import pjit
-from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
+
 from jax._src import ad_checkpoint
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import linear_util as lu
 from jax._src import util
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding, OpShardingSharding
-import jax.numpy as jnp
 
-import numpy as np
 # pytype: disable=import-error
 try:
   import rich

@@ -15,10 +15,25 @@
 import dataclasses
 import functools
 import itertools as it
-from typing import Union, Optional, Callable, Dict, Tuple, TypeVar, FrozenSet, Iterable, Type, Set, List, Sequence, Any
+from typing import (Union, Optional, Callable, Dict, Tuple, TypeVar,
+                    FrozenSet, Iterable, Type, Set, List, Sequence, Any)
+
+import numpy as np
 
 import jax
+import jax.numpy as jnp
+import jax.tree_util as jtu
 from jax import lax
+from jax.api_util import flatten_fun
+from jax.experimental import maps
+from jax.experimental import pjit
+from jax.interpreters import batching
+from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
+from jax.tree_util import tree_flatten
+from jax.tree_util import tree_map
+from jax.tree_util import tree_unflatten
+
 from jax._src import linear_util as lu
 from jax._src import core
 from jax._src import custom_derivatives
@@ -26,24 +41,12 @@ from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow as cf
 from jax._src.sharding import OpShardingSharding
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache)
-from jax.api_util import flatten_fun
-from jax.experimental import maps
-from jax.experimental import pjit
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.tree_util import tree_flatten
-from jax.tree_util import tree_map
-from jax.tree_util import tree_unflatten
-import jax.numpy as jnp
-import jax.tree_util as jtu
-import numpy as np
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)

@@ -21,38 +21,36 @@ import warnings
 import numpy as np
 
 import jax
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy.vectorize import vectorize
-from jax._src import ad_util
-from jax._src import api
 from jax import lax
-from jax._src import dtypes
+from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax._src.util import prod
+
+from jax._src import ad_util
+from jax._src import api
+from jax._src import dtypes
 from jax._src.core import (
     Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
-from jax._src.lax.lax import (
-    standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
-    _input_dtype)
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
-from jax._src.lib import lapack
-
+from jax._src.lax.lax import (
+    standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
+    _input_dtype)
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-
+from jax._src.lib import lapack
 from jax._src.lib import xla_client
-
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike
+from jax._src.util import prod
 
 xops = xla_client.ops
 

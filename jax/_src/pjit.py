@@ -24,41 +24,42 @@ import threading
 import warnings
 
 import jax
+from jax import core
+from jax import stages
+from jax.errors import JAXTypeError
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
+from jax.interpreters import batching
+from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax.interpreters.pxla import PartitionSpec
+from jax.tree_util import (
+    tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
+    treedef_tuple)
+
 from jax._src.sharding import (
     NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
-from jax import core
-from jax._src import linear_util as lu
-from jax import stages
 from jax._src import array
-from jax._src.config import config
 from jax._src import dispatch
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src.traceback_util import api_boundary
-from jax._src.api_util import (argnums_partial_except, flatten_axes,
-                               flatten_fun, flatten_fun_nokwargs,
-                               donation_vector, shaped_abstractify,
-                               check_callable, argnames_partial_except,
-                               resolve_argnums, FLAGS)
-from jax.errors import JAXTypeError
-from jax.interpreters import ad
-from jax.interpreters import mlir
-from jax.interpreters import pxla
-from jax.interpreters import xla
-from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
-from jax.interpreters.pxla import PartitionSpec
+from jax._src import util
+from jax._src.api_util import (
+    argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
+    donation_vector, shaped_abstractify, check_callable,
+    argnames_partial_except, resolve_argnums, FLAGS)
+from jax._src.config import config
+from jax._src.interpreters import ad
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
-from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           treedef_is_leaf, tree_structure, treedef_tuple)
+from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import prefix_errors
-from jax._src import util
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,

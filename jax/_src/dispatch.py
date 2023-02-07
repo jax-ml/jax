@@ -32,34 +32,36 @@ import warnings
 import numpy as np
 
 import jax
-from jax._src import linear_util as lu
 from jax.errors import UnexpectedTracerError
 from jax.monitoring import record_event_duration_secs
-import jax.interpreters.ad as ad
 import jax.interpreters.batching as batching
 import jax.interpreters.mlir as mlir
 import jax.interpreters.xla as xla
 from jax.interpreters import pxla
 import jax.interpreters.partial_eval as pe
+
 from jax._src import array
 from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import linear_util as lu
+from jax._src import path
 from jax._src import profiler
 from jax._src import stages
 from jax._src import traceback_util
-from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
-                               OpShardingSharding, NamedSharding, PartitionSpec,
-                               Sharding)
+from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
+from jax._src.interpreters import ad
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import use_stablehlo
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-import jax._src.util as util
+from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
+                               OpShardingSharding, NamedSharding, PartitionSpec,
+                               Sharding)
 from jax._src.util import flatten, unflatten
-from jax._src import path
+
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
 BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"

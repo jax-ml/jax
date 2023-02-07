@@ -18,21 +18,26 @@ import operator
 import os
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union, cast
+from typing import (
+    Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union,
+    cast)
 
 from absl import logging
+import numpy as np
 
 import jax
 from jax import lax
 from jax import config
-from jax import core, custom_derivatives
-from jax._src import linear_util as lu
-from jax import random, tree_util
+from jax import core
+from jax import custom_derivatives
+from jax import random
 from jax import numpy as jnp
+from jax import tree_util
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax._src import sharding
-from jax.interpreters import ad
+from jax.experimental.global_device_array import GlobalDeviceArray
+from jax.experimental.jax2tf import shape_poly
+from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
@@ -43,10 +48,13 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import linear_util as lu
 from jax._src import prng
 from jax._src import random as random_internal
+from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import util
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
@@ -55,12 +63,6 @@ from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src.numpy.ufuncs import logaddexp
 
-from jax.experimental.global_device_array import GlobalDeviceArray
-from jax.experimental.jax2tf import shape_poly
-from jax.experimental.jax2tf import impl_no_xla
-
-
-import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
 # These don't have public equivalents.
