@@ -412,7 +412,7 @@ which the computation should run. For example
 ...     return x + arg * jnp.ones(1)  # Include a constant in the inner function
 ...   return arg + inner(arg - 2.)
 ...
->>> print(make_jaxpr(func12)(1.))  # doctest:+ELLIPSIS, +SKIP
+>>> print(make_jaxpr(func12)(1.))  # doctest:+ELLIPSIS
 { lambda ; a:f32[]. let
     b:f32[] = sub a 2.0
     c:f32[1] = pjit[
