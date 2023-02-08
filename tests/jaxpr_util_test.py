@@ -99,7 +99,7 @@ class JaxprStatsTest(jtu.JaxTestCase):
       # comes from contextlib.
       return jax.named_call(jnp.cos, name='test')(x)
 
-    hist = jaxpr_util.source_locations(make_jaxpr(f)(1.).jaxpr)
+    hist = jaxpr_util.source_locations(make_jaxpr(f)(jnp.arange(8.)).jaxpr)
     for filename in hist.keys():
       self.assertIn(os.path.basename(__file__), filename)
 

@@ -354,8 +354,8 @@ class Partial(functools.partial):
   >>> print_zero = Partial(print, 0)
   >>> print_zero()
   0
-  >>> call_func(print_zero)
-  Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace(level=0/1)>
+  >>> call_func(print_zero)  # doctest:+ELLIPSIS
+  Traced<ShapedArray(int32[], weak_type=True)>with<DynamicJaxprTrace...>
   """
   def __new__(klass, func, *args, **kw):
     # In Python 3.10+, if func is itself a functools.partial instance,
