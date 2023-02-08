@@ -213,6 +213,8 @@ _xla_flags_to_exclude_from_cache_key = [
     "--xla_force_host_platform_device_count",
     "--xla_dump_disable_metadata",
     "--xla_dump_hlo_pipeline_re",
+    "--xla_tpu_sdc_checker_streamz_metric",
+    "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
 ]
 
 extra_flag_prefixes_to_include_in_cache_key: List[str] = []
