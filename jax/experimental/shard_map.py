@@ -40,7 +40,7 @@ from jax._src.util import (prod, HashableFunction, unzip2, as_hashable_function,
                            memoize, partition_list, merge_lists)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src.interpreters import pxla

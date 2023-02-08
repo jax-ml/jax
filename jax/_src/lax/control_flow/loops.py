@@ -26,7 +26,7 @@ from jax.config import config
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 import jax._src.pretty_printer as pp

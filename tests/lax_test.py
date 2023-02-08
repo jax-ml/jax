@@ -36,7 +36,7 @@ from jax import tree_util
 import jax.util
 
 from jax.interpreters import xla
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import batching
 from jax.interpreters import pxla
 from jax._src import array

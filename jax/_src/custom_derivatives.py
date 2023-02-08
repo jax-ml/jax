@@ -24,7 +24,7 @@ from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters.batching import not_mapped
 from jax.config import config

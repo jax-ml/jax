@@ -513,7 +513,7 @@ from jax import lax
 from jax.experimental import pjit
 from jax.interpreters import ad, batching, pxla
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src import ad_checkpoint
 from jax._src import dispatch

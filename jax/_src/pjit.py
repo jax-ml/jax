@@ -29,7 +29,7 @@ from jax import stages
 from jax.errors import JAXTypeError
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters.pxla import PartitionSpec

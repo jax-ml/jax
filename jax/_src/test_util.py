@@ -35,7 +35,7 @@ import numpy.random as npr
 import jax
 from jax import lax
 from jax.experimental.compilation_cache import compilation_cache
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
 from jax._src import pjit as pjit_lib

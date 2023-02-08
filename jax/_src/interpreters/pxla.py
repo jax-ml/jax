@@ -48,7 +48,7 @@ import numpy as np
 import jax
 from jax.errors import JAXTypeError
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map
 

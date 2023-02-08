@@ -27,7 +27,7 @@ from jax.interpreters import ad
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax._src import sharding
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import test_util as jtu

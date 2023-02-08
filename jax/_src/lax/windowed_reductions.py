@@ -20,7 +20,7 @@ import numpy as np
 
 from jax import tree_util
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src import ad_util

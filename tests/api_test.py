@@ -52,7 +52,7 @@ from jax._src import api, dtypes, dispatch, lib, api_util
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching

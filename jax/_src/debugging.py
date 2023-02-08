@@ -28,7 +28,7 @@ from jax import lax
 from jax.config import config
 from jax.experimental import pjit
 from jax.interpreters import batching
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 

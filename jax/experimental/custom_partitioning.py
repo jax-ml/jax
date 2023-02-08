@@ -22,7 +22,7 @@ from jax.errors import UnexpectedTracerError
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import ir
 import jax.interpreters.pxla as pxla
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
