@@ -412,18 +412,26 @@ which the computation should run. For example
 ...     return x + arg * jnp.ones(1)  # Include a constant in the inner function
 ...   return arg + inner(arg - 2.)
 ...
->>> print(make_jaxpr(func12)(1.))
+>>> print(make_jaxpr(func12)(1.))  # doctest:+ELLIPSIS
 { lambda ; a:f32[]. let
     b:f32[] = sub a 2.0
-    c:f32[1] = xla_call[
-      call_jaxpr={ lambda ; d:f32[] e:f32[]. let
+    c:f32[1] = pjit[
+      donated_invars=(False, False)
+      in_positional_semantics=(<_PositionalSemantics.GLOBAL: 1>, <_PositionalSemantics.GLOBAL: 1>)
+      in_shardings=(<jax._src.interpreters.pxla.UnspecifiedValue object ...>, <jax._src.interpreters.pxla.UnspecifiedValue object ...>)
+      inline=False
+      jaxpr={ lambda ; d:f32[] e:f32[]. let
           f:f32[1] = broadcast_in_dim[broadcast_dimensions=() shape=(1,)] 1.0
           g:f32[] = convert_element_type[new_dtype=float32 weak_type=False] d
           h:f32[1] = mul g f
           i:f32[] = convert_element_type[new_dtype=float32 weak_type=False] e
           j:f32[1] = add i h
         in (j,) }
+      keep_unused=False
       name=inner
+      out_positional_semantics=_PositionalSemantics.GLOBAL
+      out_shardings=(<jax._src.interpreters.pxla.UnspecifiedValue object ...>,)
+      resource_env=None
     ] a b
     k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] a
     l:f32[1] = add k c
