@@ -2687,29 +2687,31 @@ def _triu_size(n, m, k):
 
 
 @_wraps(np.triu_indices)
-def triu_indices(n, k, m=None):
+def triu_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Array]:
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
   m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
-  return nonzero(triu(ones((n, m)), k=k), size=_triu_size(n, m, k))
+  i, j = nonzero(triu(ones((n, m)), k=k), size=_triu_size(n, m, k))
+  return i, j
 
 
 @_wraps(np.tril_indices)
-def tril_indices(n, k, m=None):
+def tril_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Array]:
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
   m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
-  return nonzero(tril(ones((n, m)), k=k), size=_triu_size(m, n, -k))
+  i, j = nonzero(tril(ones((n, m)), k=k), size=_triu_size(m, n, -k))
+  return i, j
 
 
 @_wraps(np.triu_indices_from)
-def triu_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array]:
+def triu_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array, Array]:
   arr_shape = shape(arr)
   return triu_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
 
 @_wraps(np.tril_indices_from)
-def tril_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array]:
+def tril_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array, Array]:
   arr_shape = shape(arr)
   return tril_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
