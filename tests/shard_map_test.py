@@ -388,6 +388,28 @@ class ShardMapTest(jtu.JaxTestCase):
     x = f()
     self.assertAllCLose(x, jnp.arange(4), check_dtypes=False)
 
+  def test_remat_basic(self):
+    mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
+
+    # check param updating is handled
+    @jax.remat
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return jnp.sin(x)
+
+    x = jnp.arange(4.)
+    g = jax.grad(lambda x: f(x).sum())(x)  # doesn't crash
+    self.assertAllClose(g, jnp.cos(x), check_dtypes=False)
+
+    # also check residuals are handled correctly
+    @partial(jax.remat, policy=jax.checkpoint_policies.everything_saveable)
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f2(x):
+      return jnp.sin(x)
+
+    g2 = jax.grad(lambda x: f2(x).sum())(x)  # doesn't crash
+    self.assertAllClose(g2, jnp.cos(x), check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

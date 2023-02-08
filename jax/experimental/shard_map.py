@@ -908,6 +908,39 @@ def _shard_map_axis_subst(params, subst, traverse):
   return dict(params, jaxpr=new_jaxpr)
 core.axis_substitution_rules[shard_map_p] = _shard_map_axis_subst
 
+# Remat
+
+def _pe_custom_params(
+    unks_in: List[bool], inst_in: List[bool], kept_outs_known: List[bool],
+    kept_outs_staged: List[bool], num_res: int, params_known: Dict[str, Any],
+    params_staged: Dict[str, Any]
+  ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+  # prune inputs to jaxpr_known according to unks_in
+  mesh = params_known['mesh']
+  in_names_known, _ = partition_list(unks_in, params_known['in_names'])
+  _, out_names_known = partition_list(kept_outs_known, params_known['out_names'])
+  out_names_known = out_names_known + [{0: (*mesh.axis_names,)}] * num_res
+  new_params_known = dict(params_known, in_names=tuple(in_names_known),
+                          out_names=tuple(out_names_known))
+
+  # added num_res new inputs to jaxpr_staged, pruning according to inst_in
+  _, in_names_staged = partition_list(inst_in, params_staged['in_names'])
+  in_names_staged = [{0: (*mesh.axis_names,)}] * num_res + in_names_staged
+  _, out_names_staged = partition_list(kept_outs_staged, params_staged['out_names'])
+  new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
+                           out_names=tuple(out_names_staged), check_rep=False)
+  return new_params_known, new_params_staged
+
+def _pe_custom_res(params_known, aval):
+  mesh = params_known['mesh']
+  return _unshard_aval(mesh, {0: (*mesh.axis_names,)}, aval)
+
+pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
+    partial(pe.call_partial_eval_custom_rule, 'jaxpr', _pe_custom_params,
+            res_aval=_pe_custom_res)
+
+# Misc
+
 # TODO(mattjj): move this to _src/util.py
 class HashablePartial:
   def __init__(self, f, *args, **kwargs):
