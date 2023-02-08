@@ -8,6 +8,22 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.4
 
+* Changes
+  * The implementation of `jit` and `pjit` has been merged. Merging jit and pjit
+    changes the internals of JAX without affecting the public API of JAX.
+    Before, `jit` was a final style primitive. Final style means that the creation
+    of jaxpr was delayed as much as possible and transformations were stacked
+    on top of each other. With the `jit`-`pjit` implementation merge, `jit`
+    becomes an initial style primitive which means that we trace to jaxpr
+    as early as possible. For more information see
+    [this section in autodidax](https://jax.readthedocs.io/en/latest/autodidax.html#on-the-fly-final-style-and-staged-initial-style-processing).
+    Moving to initial style should simplify JAX's internals and make
+    development of features like dynamic shapes, etc easier.
+    You can disable it only via the environment variable i.e.
+    `os.environ['JAX_JIT_PJIT_API_MERGE'] = '0'`.
+    The merge must be disabled via an environment variable since it affects JAX
+    at import time so it needs to be disabled before jax is imported.
+
 ## jaxlib 0.4.4
 
 ## jax 0.4.3 (Feb 8, 2023)
