@@ -45,6 +45,7 @@ from jax._src.scipy.special import (
   ndtri as ndtri,
   polygamma as polygamma,
   sph_harm as sph_harm,
+  spence as spence,
   xlogy as xlogy,
   xlog1py as xlog1py,
   zeta as zeta,
