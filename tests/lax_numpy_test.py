@@ -1992,9 +1992,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    n=range(1, 5),
-    k=[-1, 0, 1],
-    m=range(1, 5),
+    n=range(5),
+    k=range(-3, 3),
+    m=[None, *range(5)],
   )
   def testTrilIndices(self, n, k, m):
     np_fun = lambda n, k, m: np.tril_indices(n, k=k, m=m)
@@ -2003,9 +2003,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    n=range(1, 5),
-    k=[-1, 0, 1],
-    m=range(1, 5),
+    n=range(5),
+    k=range(-3, 3),
+    m=[None, *range(5)],
   )
   def testTriuIndices(self, n, k, m):
     np_fun = lambda n, k, m: np.triu_indices(n, k=k, m=m)

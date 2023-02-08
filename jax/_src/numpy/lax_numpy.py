@@ -2673,9 +2673,33 @@ def _wrap_indices_function(f):
     return tuple(asarray(x) for x in f(*args, **kwargs))
   return wrapper
 
-tril_indices = _wrap_indices_function(np.tril_indices)
-triu_indices = _wrap_indices_function(np.triu_indices)
 mask_indices = _wrap_indices_function(np.mask_indices)
+
+
+def _triu_size(n, m, k):
+  if k < 0:
+    return n * m - _triu_size(m, n, (1 - k))
+  elif k >= m:
+    return 0
+  else:
+    mk = _min(n, m - k)
+    return mk * (mk + 1) // 2 + mk * (m - k - mk)
+
+
+@_wraps(np.triu_indices)
+def triu_indices(n, k, m=None):
+  n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
+  k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
+  m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
+  return nonzero(triu(ones((n, m)), k=k), size=_triu_size(n, m, k))
+
+
+@_wraps(np.tril_indices)
+def tril_indices(n, k, m=None):
+  n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
+  k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
+  m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
+  return nonzero(tril(ones((n, m)), k=k), size=_triu_size(m, n, -k))
 
 
 @_wraps(np.triu_indices_from)
