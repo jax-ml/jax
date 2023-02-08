@@ -68,6 +68,7 @@ namespace; they are listed below.
     arctanh
     argmax
     argmin
+    argpartition
     argsort
     argwhere
     around

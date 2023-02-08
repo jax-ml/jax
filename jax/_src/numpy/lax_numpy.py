@@ -3531,6 +3531,7 @@ def msort(a):
 @_wraps(np.partition, lax_description="""
 The jax version requires the ``kth`` argument to be a static integer rather than
 a general array. This is implemented via two calls to :func:`jax.lax.top_k`.
+See also :func:`jax.lax.approx_max_k` and :func:`jax.lax.approx_min_k`.
 """)
 @partial(jit, static_argnames=['kth', 'axis'])
 def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
@@ -3546,6 +3547,24 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
   return swapaxes(out, -1, axis)
+
+
+def argpartition(a, kth, axis=-1, kind=None, order=None):
+  """
+  argpartition is not implemented in JAX, because there is no efficient way to lower
+  this operation to XLA. Some related functionality that is available is:
+
+  - :func:`jax.lax.top_k`: return the largest ``k`` values and their indices.
+  - :func:`jax.lax.approx_max_k`: return the largest ``k`` values and their indices in an
+    approximate manner.
+  - :func:`jax.lax.approx_min_k`: return the smallest ``k`` values and their indices in an
+    approximate manner.
+  - :func:`jax.numpy.partition`: partition array values rather than indices. This is
+    implemented by concatenating multiple calls to :func:`jax.lax.top_k`.
+  """
+  raise NotImplementedError(
+    "jax.numpy.argpartition is not implemented. For some suggested alternatives, see "
+    "https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.argpartition.html")
 
 
 @partial(jit, static_argnums=(2,))
@@ -4947,19 +4966,6 @@ def _notimplemented_flat(self):
   raise NotImplementedError("JAX DeviceArrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
-### track unimplemented functions
-
-_NOT_IMPLEMENTED_DESC = """
-*** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
-"""
-
-def _not_implemented(fun, module=None):
-  @_wraps(fun, module=module, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
-  def wrapped(*args, **kwargs):
-    msg = "Numpy function {} not yet implemented"
-    raise NotImplementedError(msg.format(fun))
-  return wrapped
-
 
 @_wraps(np.place, lax_description="""
 Numpy function :func:`numpy.place` is not available in JAX and will raise a
@@ -5085,12 +5091,6 @@ _diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "trace", "var"]
-
-# These methods are mentioned explicitly by nondiff_methods, so we create
-# _not_implemented implementations of them here rather than in __init__.py.
-# TODO(phawkins): implement these.
-argpartition = _not_implemented(np.argpartition)
-
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch

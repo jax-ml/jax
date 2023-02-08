@@ -33,6 +33,7 @@ from jax._src.numpy.lax_numpy import (
     arange as arange,
     argmax as argmax,
     argmin as argmin,
+    argpartition as argpartition,
     argsort as argsort,
     argwhere as argwhere,
     around as around,

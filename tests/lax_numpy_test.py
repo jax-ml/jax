@@ -3610,6 +3610,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       lax.sort(lax.slice_in_dim(jnp_output, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis),
       lax.sort(lax.slice_in_dim(np_output, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis))
 
+  def testArgpartition(self):
+    # Make sure jnp.argpartition is exposed for documentation purposes
+    with self.assertRaises(NotImplementedError):
+      jnp.argpartition(jnp.arange(10), 5)
+
   @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)
       for shifts, axis in [
@@ -5330,7 +5335,7 @@ class NumpyDocTests(jtu.JaxTestCase):
     # Test that docstring wrapping & transformation didn't fail.
 
     # Functions that have their own docstrings & don't wrap numpy.
-    known_exceptions = {'broadcast_arrays', 'fromfile', 'fromiter', 'vectorize'}
+    known_exceptions = {'argpartition', 'broadcast_arrays', 'fromfile', 'fromiter', 'vectorize'}
 
     for name in dir(jnp):
       if name in known_exceptions or name.startswith('_'):
