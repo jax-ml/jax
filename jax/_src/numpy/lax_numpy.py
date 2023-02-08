@@ -3529,11 +3529,17 @@ def msort(a):
 
 
 @_wraps(np.partition, lax_description="""
-The jax version requires the ``kth`` argument to be a static integer rather than
-a general array. This is implemented via two calls to :func:`jax.lax.top_k`.
+The JAX version requires the ``kth`` argument to be a static integer rather than
+a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If
+you're only accessing the top or bottom k values of the output, it may be more
+efficient to call :func:`jax.lax.top_k` directly.
+
+The JAX version differs from the NumPy version in the treatment of NaN entries;
+NaNs which have the negative bit set are sorted to the beginning of the array.
 """)
 @partial(jit, static_argnames=['kth', 'axis'])
 def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
+  # TODO(jakevdp): handle NaN values like numpy.
   _check_arraylike("partition", a)
   arr = asarray(a)
   if issubdtype(arr.dtype, np.complexfloating):
@@ -3545,6 +3551,38 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   bottom = -lax.top_k(-arr, kth + 1)[0]
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
+  return swapaxes(out, -1, axis)
+
+
+@_wraps(np.argpartition, lax_description="""
+The JAX version requires the ``kth`` argument to be a static integer rather than
+a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If
+you're only accessing the top or bottom k values of the output, it may be more
+efficient to call :func:`jax.lax.top_k` directly.
+
+The JAX version differs from the NumPy version in the treatment of NaN entries;
+NaNs which have the negative bit set are sorted to the beginning of the array.
+""")
+@partial(jit, static_argnames=['kth', 'axis'])
+def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
+  # TODO(jakevdp): handle NaN values like numpy.
+  _check_arraylike("partition", a)
+  arr = asarray(a)
+  if issubdtype(arr.dtype, np.complexfloating):
+    raise NotImplementedError("jnp.argpartition for complex dtype is not implemented.")
+  axis = _canonicalize_axis(axis, arr.ndim)
+  kth = _canonicalize_axis(kth, arr.shape[axis])
+
+  arr = swapaxes(arr, axis, -1)
+  bottom_ind = lax.top_k(-arr, kth + 1)[1]
+
+  # To avoid issues with duplicate values, we compute the top indices via a proxy
+  set_to_zero = lambda a, i: a.at[i].set(0)
+  for _ in range(arr.ndim - 1):
+    set_to_zero = jax.vmap(set_to_zero)
+  proxy = set_to_zero(ones(arr.shape), bottom_ind)
+  top_ind = lax.top_k(proxy, arr.shape[-1] - kth - 1)[1]
+  out = lax.concatenate([bottom_ind, top_ind], dimension=arr.ndim - 1)
   return swapaxes(out, -1, axis)
 
 
@@ -4947,19 +4985,6 @@ def _notimplemented_flat(self):
   raise NotImplementedError("JAX DeviceArrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
-### track unimplemented functions
-
-_NOT_IMPLEMENTED_DESC = """
-*** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
-"""
-
-def _not_implemented(fun, module=None):
-  @_wraps(fun, module=module, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
-  def wrapped(*args, **kwargs):
-    msg = "Numpy function {} not yet implemented"
-    raise NotImplementedError(msg.format(fun))
-  return wrapped
-
 
 @_wraps(np.place, lax_description="""
 Numpy function :func:`numpy.place` is not available in JAX and will raise a
@@ -5085,12 +5110,6 @@ _diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
                  "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
                  "ravel", "repeat", "sort", "squeeze", "std", "sum",
                  "swapaxes", "take", "trace", "var"]
-
-# These methods are mentioned explicitly by nondiff_methods, so we create
-# _not_implemented implementations of them here rather than in __init__.py.
-# TODO(phawkins): implement these.
-argpartition = _not_implemented(np.argpartition)
-
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch

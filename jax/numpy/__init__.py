@@ -174,6 +174,7 @@ from jax._src.numpy.lax_numpy import (
     nan_to_num as nan_to_num,
     nanargmax as nanargmax,
     nanargmin as nanargmin,
+    argpartition as argpartition,
     nanmedian as nanmedian,
     nanpercentile as nanpercentile,
     nanquantile as nanquantile,
