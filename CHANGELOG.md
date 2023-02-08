@@ -6,15 +6,19 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.3
+## jax 0.4.4
+
+## jaxlib 0.4.4
+
+## jax 0.4.3 (Feb 8, 2023)
   * Breaking changes
-    * Deleted {func}`jax.scipy.linalg.polar_unitary`, which was a deprecated JAX 
+    * Deleted {func}`jax.scipy.linalg.polar_unitary`, which was a deprecated JAX
       extension to the scipy API. Use {func}`jax.scipy.linalg.polar` instead.
 
   * Changes
     * Added {func}`jax.scipy.stats.rankdata`.
 
-## jaxlib 0.4.3
+## jaxlib 0.4.3 (Feb 8, 2023)
 
 ## jax 0.4.2 (Jan 24, 2023)
 
