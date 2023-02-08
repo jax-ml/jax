@@ -2443,6 +2443,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "Please enable `jax_array` to use device_put with a `Sharding`"):
       jax.device_put(x, s1)
 
+  def test_device_put_sharding_nondivisible_sharding_error(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+
+    x = jnp.ones((1,))
+    with self.assertRaisesRegex(
+        ValueError, 'implies that the size of its dimension 0 should be '
+                    'divisible by 2, but it is equal to 1 '):
+      jax.device_put(x, s)
+
+    y = jnp.ones((2,))
+    with self.assertRaisesRegex(
+        ValueError, 'implies that the size of its dimension 0 should be '
+                    'divisible by 2, but it is equal to 1 '):
+      jax.device_put((y, x), s)
+
   @jax_array(True)
   def test_with_sharding_constraint_jit(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))

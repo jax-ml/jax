@@ -3008,6 +3008,10 @@ def device_put(
   """
   with config_explicit_device_put_scope():
     if device is None or isinstance(device, (xc.Device, jax.sharding.Sharding)):
+      if isinstance(device, jax.sharding.Sharding):
+        check_sharding = lambda x: pjit.pjit_check_aval_sharding(
+            (device,), (x,), "device_put args", allow_uneven_sharding=False)
+        tree_map(check_sharding, x)
       return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
 
     x_flat, treedef = tree_flatten(x)
