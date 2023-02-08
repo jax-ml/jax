@@ -2576,7 +2576,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertEqual(out, 1)
 
-
   @jax_array(True)
   def test_multi_device_pjit_mul(self):
     shape = (8, 2)
@@ -2783,6 +2782,42 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f = pjit(lambda x=4: x, static_argnums=0)
     y = f()
     assert y == 4
+
+  def test_pjit_different_default_device(self):
+    if jax.device_count() <= 1:
+      self.skipTest('Test requires more >1 device.')
+
+    if xla_extension_version < 125:
+      self.skipTest('This test requires xla_extension_version >= 125.')
+
+    system_default_device = jnp.add(1, 1).device()
+    test_device = jax.devices()[-1]
+
+    f = pjit(lambda x: x + 1)
+
+    f(1)
+    with jax.default_device(system_default_device):
+      f(1)
+    with jax.default_device(test_device):
+      f(1)
+
+    with jtu.count_pjit_cache_miss() as count:
+      f(1)
+
+      with jax.default_device(system_default_device):
+        f(1)
+
+      with jax.default_device(test_device):
+        f(1)
+
+      with jax.default_device(test_device):
+        with jax.default_device(system_default_device):
+          f(1)
+
+    # The count here is 0 because before `count_pjit_cache_miss`, `f` was
+    # called with `system_default_device` and `test_device` so it was added
+    # to the cache. Subsequent calls hit the C++ cache.
+    self.assertEqual(count[0], 0)
 
   def test_pjit_with_mismatched_static_argnames(self):
     x_is_tracer, y_is_tracer = False, False
