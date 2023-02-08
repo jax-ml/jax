@@ -4177,58 +4177,6 @@ class APITest(jtu.JaxTestCase):
                            sharding=jax.sharding.PartitionSpec('x'))
 
 
-@jtu.with_config(jax_experimental_subjaxpr_lowering_cache=True)
-class SubcallTraceCacheTest(jtu.JaxTestCase):
-
-  def test_subcall_trace_caching(self):
-    should_be_tracing_f = False
-
-    @api.jit
-    def f(x):
-      self.assertTrue(should_be_tracing_f)
-      return x**2
-
-    @api.jit
-    def g(x):
-      nonlocal should_be_tracing_f
-      self.assertTrue(should_be_tracing_g)
-      should_be_tracing_f = True
-      y = f(x)
-      should_be_tracing_f = False
-      z = f(x + 1)
-      return y + z
-
-    should_be_tracing_g = True
-    out = g(2)
-    self.assertEqual(out, 13)
-
-    should_be_tracing_g = False
-    out = g(3)
-    self.assertEqual(out, 25)
-
-  def test_subcall_jaxpr_id(self):
-
-    @api.jit
-    def f(x):
-      return x**2
-
-    def g(x):
-      y = f(x)
-      z = f(x + 1)
-      return y + z
-
-    jaxpr = api.make_jaxpr(g)(2)
-    if jax.config.jax_jit_pjit_api_merge:
-      jaxpr_param = 'jaxpr'
-    else:
-      jaxpr_param = 'call_jaxpr'
-    self.assertIn(f"{jaxpr_param}", jaxpr.eqns[0].params)
-    self.assertIn(f"{jaxpr_param}", jaxpr.eqns[2].params)
-    subjaxpr1 = jaxpr.eqns[0].params[f"{jaxpr_param}"]
-    subjaxpr2 = jaxpr.eqns[2].params[f"{jaxpr_param}"]
-    self.assertIs(subjaxpr1, subjaxpr2)
-
-
 class RematTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
