@@ -149,11 +149,16 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 34
-  assert len(dir(executable_obj)) == expected_options, (
+  expected_options = 10
+  # Ignore private and built-in methods. These can unexpectedly change and lead
+  # to false positives, e.g. when different Python versions include different
+  # built-ins.
+  actual_options = len(
+      [x for x in dir(executable_obj) if not x.startswith('_')])
+  assert actual_options == expected_options, (
         f"Unexpected number of executable_build_options fields: "
-        f"{len(dir(executable_obj))}. This likely means that an extra "
-        f"field was added, and this function needs to be updated.")
+        f"{actual_options}, expected: {expected_options}. This likely means "
+        "that an extra field was added, and this function needs to be updated.")
   if executable_obj.result_layout is not None:
     hash_obj.update(executable_obj.result_layout.to_serialized_proto())
   _hash_int(hash_obj, executable_obj.num_replicas)
