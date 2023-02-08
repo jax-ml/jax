@@ -45,5 +45,5 @@ py_library(
     tags = ["pytype_unchecked_annotations"],
     deps = [
         "//jax",
-    ] + py_deps("numpy") + py_deps("tensorflow") + jax2tf_deps,
+    ] + py_deps("numpy") + py_deps("tensorflow_core") + jax2tf_deps,
 )
