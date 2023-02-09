@@ -1921,7 +1921,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     u = np.ones((device_count, 100))
     multi_step_pmap(u)  # doesn't crash
 
-  @jtu.skip_on_devices("cpu")
+  # @jtu.skip_on_devices("cpu")
   def test_replicate_backend(self):
     # TODO(skye): fix backend caching so we always have multiple CPUs available
     if jax.device_count("cpu") < 4:
@@ -3266,6 +3266,12 @@ class EagerVmapOfPmapTest(EagerPmapMixin, VmapOfPmapTest):
 @jtu.pytest_mark_if_available('multiaccelerator')
 class EagerArrayPmapTest(EagerPmapMixin, ArrayPmapTest):
   pass
+
+class ShardMapPmapTest(PythonPmapTest):
+  @property
+  def pmap(self):
+    from jax.experimental.shard_map import pmap
+    return pmap
 
 
 if __name__ == '__main__':

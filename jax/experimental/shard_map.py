@@ -76,6 +76,7 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
   _check_specs(SpecErrorType.input, in_specs)
   _check_specs(SpecErrorType.out, out_specs)
 
+  @util.wraps(f)
   @traceback_util.api_boundary
   def wrapped(*args):
     fun = lu.wrap_init(f)
@@ -263,7 +264,10 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
   return msg
 
 def _unmentioned(mesh: Mesh, names: AxisNames) -> Set[AxisName]:
-  return set(mesh.axis_names) - {n for ns in names.values() for n in ns}
+  return set(mesh.axis_names) - _mentioned(names)
+
+def _mentioned(names: AxisNames) -> Set[AxisName]:
+  return {n for ns in names.values() for n in ns}
 
 def _try_infer_args(f, tree):
   dummy_args = tree_unflatten(tree, [False] * tree.num_leaves)
@@ -452,9 +456,17 @@ def _valid_repeats(mesh: Mesh, rep: Set[AxisName], dst: AxisNames) -> bool:
 
 # Lowering
 
-def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
-                        check_rep):
+def _shard_map_lowering(
+    ctx: mlir.LoweringRuleContext, *in_nodes: mlir.ir.Value, jaxpr, mesh,
+    in_names, out_names, check_rep) -> List[mlir.ir.Value]:
   del check_rep
+  if _is_manual_ctx(ctx):
+    return _shard_map_lower_nested(ctx, *in_nodes, jaxpr=jaxpr, mesh=mesh,
+                                   in_names=in_names, out_names=out_names)
+  return _shard_map_lower(ctx, *in_nodes, jaxpr=jaxpr, mesh=mesh,
+                          in_names=in_names, out_names=out_names)
+
+def _shard_map_lower(ctx, *in_nodes, jaxpr, mesh, in_names, out_names):
   sharded_avals = [v.aval for v in jaxpr.invars]
   in_nodes_ = map(partial(_xla_shard, mesh), in_names, ctx.avals_in,
                   sharded_avals, in_nodes)
@@ -487,6 +499,39 @@ def _xla_unshard(mesh, names, aval_in, aval_out, xs):
   sharding_proto = pxla.new_mesh_sharding_specs(mesh.shape, mesh.axis_names)(
       aval_out.ndim, axes).sharding_proto()
   return mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, set())
+
+def _is_manual_ctx(ctx: mlir.LoweringRuleContext) -> bool:
+  axc = ctx.module_context.axis_context
+  return isinstance(axc, mlir.SPMDAxisContext) and axc.manual_axes
+
+def _shard_map_lower_nested(ctx, *in_nodes, jaxpr, mesh, in_names, out_names):
+  # The plan is to exit and then re-enter manual mode.
+
+  # The caller must be replicated on any mentioned names; collect those in a
+  # replicated way, and collect all unmentioned (potentially already sharded)
+  # names together at the front.
+  reshard_names = [{0: tuple(_unmentioned(mesh, ns))} for ns in in_names]
+  reshard_avals_in = map(partial(_unshard_aval, mesh), reshard_names, ctx.avals_in)
+  reshard_avals_out = map(partial(_unshard_aval, mesh), reshard_names, ctx.avals_out)
+  in_nodes_ = map(partial(_xla_unshard, mesh), reshard_names, ctx.avals_in,
+                  reshard_avals_in, zip(in_nodes))
+
+  # Call the regular lowering rule with new names corresponding to the given
+  # names merged with the originally-unmentioned names we put at the front.
+  in_names_ = map(_merge_names, reshard_names, in_names)
+  out_names_ = map(_merge_names, reshard_names, out_names)
+  ctx_ = ctx.replace(avals_in=reshard_avals_in, avals_out=reshard_avals_out)
+  out_nodes_ = _shard_map_lower(ctx_, *in_nodes_, jaxpr=jaxpr, mesh=mesh,
+                                in_names=in_names_, out_names=out_names_)
+
+  # For the caller, split back out the axes we collected at the front.
+  reshard_names = [{0: tuple(_unmentioned(mesh, ns))} for ns in out_names]
+  out_nodes = map(partial(_xla_shard, mesh), reshard_names, reshard_avals_out,
+                  ctx.avals_out, out_nodes_)
+  return out_nodes
+
+def _merge_names(n1: AxisNames, n2: AxisNames) -> AxisNames:
+  return {a: n1.get(a, ()) + n2.get(a, ()) for a in it.chain(n1, n2)}
 
 # Eager evaluation
 
@@ -638,7 +683,7 @@ eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
 # Static replication checking
 
-def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: Set[AxisName],
+def _rep_rule(prim: core.Primitive, _: Mesh, *in_rep: Set[AxisName],
               **params: Any) -> Union[Set[AxisName], List[Set[AxisName]]]:
   raise NotImplementedError(f"no replication rule for {prim}")
 
@@ -658,17 +703,18 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
 
 register_standard(lax_parallel.ppermute_p)  # doesn't change replication
 
-@register_rule(lax_parallel.psum_p)
-def _psum_rule(_, *in_rep, axes, axis_index_groups):
+def _reducer_rule(_, *in_rep, axes, axis_index_groups):
   if axis_index_groups is not None: raise NotImplementedError
   axes = (axes,) if not isinstance(axes, tuple) else axes
   return [r | set(axes) for r in in_rep]  # introduces replication
+register_rule(lax_parallel.psum_p)(_reducer_rule)
+register_rule(lax_parallel.pmax_p)(_reducer_rule)
+register_rule(lax_parallel.pmin_p)(_reducer_rule)
 
 @register_rule(lax_parallel.all_gather_p)
 def _all_gather_rule(_, in_rep, *, all_gather_dimension, axis_name, axis_size,
                      axis_index_groups, tiled):
   if axis_index_groups is not None: raise NotImplementedError
-  if not tiled: raise NotImplementedError
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   return in_rep | set(axis_name)  # introduces replication
 
@@ -694,9 +740,20 @@ def _axis_index_rule(mesh, *, axis_name):
 def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
   return _output_rep(mesh, jaxpr.jaxpr, in_rep)
 
+
 @register_rule(debugging.debug_callback_p)
 def _debug_callback_rule(mesh, *in_rep, **_):
   return []
+
+@register_rule(shard_map_p)
+def _shard_map_rule(caller_mesh, *in_rep, mesh, in_names, out_names, jaxpr,
+                    check_rep):
+  for rep, names in zip(in_rep, in_names):
+    if not _mentioned(names).issubset(rep): raise Exception
+  in_rep = [r - _mentioned(names) for r, names in zip(in_rep, in_names)]
+  out_rep = _output_rep(caller_mesh, jaxpr, in_rep)
+  return [r | _mentioned(names) for r, names in zip(out_rep, out_names)]
+
 
 # Batching
 
@@ -980,3 +1037,57 @@ def _pe_custom_ctx(params):
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr', _pe_custom_params,
             res_aval=_pe_custom_res, ctx=_pe_custom_ctx)
+
+# Misc
+
+# TODO(mattjj): move this to _src/util.py
+class HashablePartial:
+  def __init__(self, f, *args, **kwargs):
+    self.f = f
+    self.args = args
+    self.kwargs = kwargs
+
+  def __eq__(self, other):
+    return (type(other) is HashablePartial and
+            self.f.__code__ == other.f.__code__ and
+            self.args == other.args and self.kwargs == other.kwargs)
+
+  def __hash__(self):
+    return hash((self.f.__code__, self.args, tuple(self.kwargs.items())))
+
+  def __call__(self, *args, **kwargs):
+    return self.f(*self.args, *args, **self.kwargs, **kwargs)
+
+# Implementing pmap in terms of shard_map
+
+from jax._src.api import _mapped_axis_size
+from jax.api_util import flatten_fun
+
+def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
+         static_broadcasted_argnums=(), devices=None, backend=None,
+         axis_size=None, donate_argnums=(), global_arg_shapes=None):
+  if (devices is not None or    # TODO this should inform the Mesh we create
+      backend is not None or    # TODO does anyone use it?
+      axis_size is not None or  # TODO what even is this?
+      in_axes != 0 or out_axes != 0):  # TODO this is easy
+    raise NotImplementedError
+  axis_name = core._TempAxisName(f) if axis_name is None else axis_name
+
+  @partial(jax.jit, donate_argnums=donate_argnums,
+           static_argnums=static_broadcasted_argnums)
+  def f_pmapped(*args, **kwargs):
+    args, in_tree = tree_flatten((args, kwargs))
+    axis_size = _mapped_axis_size(f, in_tree, args, [0] * len(args), "pmap")
+    fun, out_tree = flatten_fun(lu.wrap_init(f), in_tree)
+    fun = _handle_singletons(fun)
+    mesh = Mesh(jax.devices()[:axis_size], (axis_name,))
+    out = shard_map(fun.call_wrapped, mesh, P(axis_name), P(axis_name))(*args)
+    return tree_unflatten(out_tree(), out)
+  return f_pmapped
+
+@lu.transformation
+def _handle_singletons(*args, **kwargs):
+  args, kwargs = tree_map(_rem_singleton, (args, kwargs))
+  out = yield args, kwargs
+  yield tree_map(_add_singleton, out)
+>>>>>>> c964d98cd (pmap wip)

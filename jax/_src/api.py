@@ -1557,6 +1557,12 @@ def pmap(
         "global_arg_shapes only worked with sharded_jit which has long been"
         " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
         " from pmap.")
+  from jax.experimental.shard_map import pmap
+  return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
+              static_broadcasted_argnums=static_broadcasted_argnums,
+              devices=devices, backend=backend,
+              axis_size=axis_size,
+              donate_argnums=donate_argnums)
 
   if FLAGS.experimental_cpp_pmap:
     func = _cpp_pmap
