@@ -157,6 +157,7 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertAllClose(c[1, :], a[0, :])
 
+  @jtu.skip_on_devices("cpu")  # all_to_all has a warning on cpu
   def test_all_to_all(self):
     devices = np.array(jax.devices())
     mesh = Mesh(devices, axis_names=('x'))
@@ -409,6 +410,37 @@ class ShardMapTest(jtu.JaxTestCase):
 
     g2 = jax.grad(lambda x: f2(x).sum())(x)  # doesn't crash
     self.assertAllClose(g2, jnp.cos(x), check_dtypes=False)
+
+  def test_check_rep_false_doesnt_hit_rep_rules(self):
+    mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
+
+    prim = jax.core.Primitive('prim')  # no rep rule here!
+    prim.multiple_results = True
+    prim.def_impl(lambda: [])
+    prim.def_abstract_eval(lambda: [])
+
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=None, check_rep=True)
+    def f():
+      prim.bind()
+
+    with self.assertRaises(NotImplementedError):
+      f()
+    with self.assertRaises(NotImplementedError):
+      jax.jit(f)()
+
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=None, check_rep=False)
+    def f2():
+      prim.bind()
+
+    f2()
+    jax.jit(f2)()
+
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=None, check_rep=False)
+    def f3():
+      jax.jit(prim.bind)()
+
+    f3()
+    jax.jit(f3)()
 
 
 if __name__ == '__main__':
