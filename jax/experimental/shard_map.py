@@ -371,7 +371,8 @@ def _shard_map_staging(
   with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
-                out_names=out_names_thunk(), jaxpr=jaxpr, check_rep=check_rep)
+                out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
+                check_rep=check_rep)
   eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
                          jaxpr.effects, source_info)
   trace.frame.add_eqn(eqn)
@@ -701,18 +702,25 @@ def _shard_map_batch(
   if all(bdim is batching.not_mapped for bdim in in_dims):
     return prim.bind(fun, *in_vals, mesh=mesh, in_names=in_names,
                      out_names_thunk=out_names_thunk, check_rep=check_rep)
-  if trace.spmd_axis_name is not None:
-    raise NotImplementedError  # TODO add named axis to specs
   if any(isinstance(d, batching.ConcatAxis) for d in in_dims):
     raise NotImplementedError
   fun, out_dims = batching.batch_subtrace(fun, trace.main, tuple(in_dims))
-  new_in_names = [{ax + (d is not batching.not_mapped and ax <= d): names[ax]  # type: ignore
+  new_in_names = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]  # type: ignore
                    for ax in names} for names, d in zip(in_names, in_dims)]
+  spmd_axis_name = trace.spmd_axis_name
+  if spmd_axis_name is not None:
+    new_in_names = [{**ns, d:(spmd_axis_name,)} if d is not batching.not_mapped  # type: ignore
+                    else ns for ns, d in zip(new_in_names, in_dims)]
   @as_hashable_function(closure=out_names_thunk)
   def new_out_names_thunk():
     out_names = out_names_thunk()
-    return [{ax + (d is not batching.not_mapped and ax <= d): names[ax]
-             for ax in names} for names, d in zip(out_names, out_dims())]
+    out_names_ = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]
+                   for ax in names} for names, d in zip(out_names, out_dims())]
+    if spmd_axis_name is not None:
+      out_names_ = [{**ns, d:(spmd_axis_name,)} if d is not batching.not_mapped
+                    else ns for ns, d in zip(out_names_, out_dims())]
+    return out_names_
+
   new_params = dict(mesh=mesh, in_names=new_in_names,
                     out_names_thunk=new_out_names_thunk, check_rep=check_rep)
   out_vals = prim.bind(fun, *in_vals, **new_params)

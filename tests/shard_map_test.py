@@ -442,6 +442,21 @@ class ShardMapTest(jtu.JaxTestCase):
     f3()
     jax.jit(f3)()
 
+  def test_vmap_spmd_axis_name(self):
+    mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return x
+
+    x = jnp.arange(4 * 4).reshape(4, 4)
+    jaxpr = jax.make_jaxpr(jax.vmap(f, spmd_axis_name='y'))(x).jaxpr
+    e, = jaxpr.eqns
+    self.assertIn('in_names', e.params)
+    self.assertEqual(e.params['in_names'], ({0: ('y',), 1: ('x',)},))
+    self.assertIn('out_names', e.params)
+    self.assertEqual(e.params['out_names'], ({0: ('y',), 1: ('x',)},))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
