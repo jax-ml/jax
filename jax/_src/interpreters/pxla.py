@@ -223,7 +223,7 @@ def get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int],
 
 
 def _op_sharding_to_numpy_indices(
-    op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+    op_sharding: xc.OpSharding, shape: Sequence[int],
     num_devices: int) -> np.ndarray:
   indices = np.empty(num_devices, dtype=np.object_)
 
@@ -258,7 +258,7 @@ def _op_sharding_to_numpy_indices(
   return indices
 
 
-def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Tuple[int, ...],
+def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Sequence[int],
                            num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
   indices = _op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
   return tuple(indices.flat)
@@ -342,7 +342,7 @@ ShardingSpec.__repr__ = sharding_spec_repr  # type: ignore
 # Do not pollute the namespace
 del sharding_spec_mesh_shape, sharding_spec_indices, sharding_spec_repr
 
-def spec_to_indices(shape: Tuple[int, ...],
+def spec_to_indices(shape: Sequence[int],
                     spec: ShardingSpec) -> Tuple[Index, ...]:
   """Returns numpy-style indices corresponding to a sharding spec.
 

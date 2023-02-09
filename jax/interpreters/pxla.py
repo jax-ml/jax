@@ -157,4 +157,4 @@ _deprecations = {
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
 __getattr__ = _deprecation_getattr(__name__, _deprecations)
-del _deprecation_getattr, _deprecations
+del _deprecation_getattr
