@@ -487,6 +487,17 @@ py_test(
     ],
 )
 
+py_test(
+    name = "deprecation_test",
+    srcs = [
+        "deprecation_module/__init__.py",
+        "deprecation_test.py",
+    ],
+    deps = [
+        "//jax:test_util",
+    ],
+)
+
 jax_test(
     name = "linalg_test",
     srcs = ["linalg_test.py"],

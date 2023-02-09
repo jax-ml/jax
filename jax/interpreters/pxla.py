@@ -28,7 +28,6 @@ from jax._src.interpreters.pxla import (
   InputsHandler as InputsHandler,
   MapTrace as MapTrace,
   MapTracer as MapTracer,
-  Mesh as Mesh,
   MeshAxisName as MeshAxisName,
   MeshComputation as MeshComputation,
   MeshDimAssignment as MeshDimAssignment,
@@ -39,7 +38,6 @@ from jax._src.interpreters.pxla import (
   OutputType as OutputType,
   ParallelCallableInfo as ParallelCallableInfo,
   PartitionInfo as PartitionInfo,
-  PartitionSpec as PartitionSpec,
   PartitionsOrReplicated as PartitionsOrReplicated,
   PmapComputation as PmapComputation,
   PmapExecutable as PmapExecutable,
@@ -128,3 +126,35 @@ from jax._src.interpreters.pxla import (
   xla_pmap_impl_lazy as xla_pmap_impl_lazy,
   xla_pmap_p as xla_pmap_p,
 )
+
+# Deprecations
+
+from jax._src.interpreters.pxla import (
+  Mesh as _deprecated_Mesh,
+  PartitionSpec as _deprecated_PartitionSpec,
+)
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.interpreters.pxla import (
+    Mesh as Mesh,
+    PartitionSpec as PartitionSpec,
+  )
+del typing
+
+_deprecations = {
+  # Added Feb 8, 2023:
+  "Mesh": (
+    "jax.interpreters.pxla.Mesh is deprecated. Use jax.sharding.Mesh.",
+    _deprecated_Mesh,
+  ),
+  "PartitionSpec": (
+    ("jax.interpreters.pxla.PartitionSpec is deprecated. Use "
+     "jax.sharding.PartitionSpec."),
+     _deprecated_PartitionSpec,
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr, _deprecations

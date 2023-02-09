@@ -29,4 +29,4 @@ from jax._src.sharding import (
     PositionalSharding as PositionalSharding,
 )
 
-from jax.interpreters.pxla import Mesh as Mesh
+from jax._src.interpreters.pxla import Mesh as Mesh

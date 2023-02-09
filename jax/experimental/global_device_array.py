@@ -538,8 +538,8 @@ class GlobalDeviceArray:
 
     Example:
 
-      >>> from jax.experimental.maps import Mesh
-      >>> from jax.experimental import PartitionSpec as P
+      >>> from jax.sharding import Mesh
+      >>> from jax.sharding import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 2)
@@ -585,8 +585,8 @@ class GlobalDeviceArray:
 
     Example:
 
-      >>> from jax.experimental.maps import Mesh
-      >>> from jax.experimental import PartitionSpec as P
+      >>> from jax.sharding import Mesh
+      >>> from jax.sharding import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 2)

@@ -35,7 +35,7 @@ from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental import pjit
 from jax.interpreters import mlir
-from jax.interpreters.pxla import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]

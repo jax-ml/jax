@@ -28,8 +28,9 @@ from jax.config import config
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
-from jax.experimental.maps import xmap, Mesh
-from jax.interpreters.pxla import PartitionSpec as P
+from jax.experimental.maps import xmap
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
 from jax._src.lib import xla_bridge
 

@@ -32,7 +32,7 @@ from jax.interpreters import batching
 from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.interpreters.pxla import PartitionSpec
+from jax._src.interpreters.pxla import PartitionSpec
 from jax.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
     treedef_tuple)

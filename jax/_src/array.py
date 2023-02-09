@@ -595,8 +595,8 @@ def make_array_from_single_device_arrays(
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
     >>> shape = (8, 8)

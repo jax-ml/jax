@@ -17,7 +17,6 @@
 
 # TODO(https://github.com/google/jax/issues/13487): Remove PartitionSpec in
 # 3 months from `jax.experimental.PartitionSpec`.
-from jax.interpreters.pxla import PartitionSpec as PartitionSpec
 from jax.experimental.x64_context import (
   enable_x64 as enable_x64,
   disable_x64 as disable_x64,
@@ -25,3 +24,29 @@ from jax.experimental.x64_context import (
 from jax._src.callback import (
   io_callback as io_callback
 )
+
+# Deprecations
+
+from jax._src.interpreters.pxla import (
+  PartitionSpec as _deprecated_PartitionSpec,
+)
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.interpreters.pxla import (
+    PartitionSpec as PartitionSpec,
+  )
+del typing
+
+_deprecations = {
+  # Added Feb 8, 2023:
+  "PartitionSpec": (
+    ("jax.experimental.PartitionSpec is deprecated. Use "
+     "jax.sharding.PartitionSpec."),
+    _deprecated_PartitionSpec,
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr, _deprecations
