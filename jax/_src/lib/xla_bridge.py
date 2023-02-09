@@ -358,6 +358,7 @@ def backends():
     # support anything else there at the moment and warning would be pointless.
     if (py_platform.system() != "Darwin" and
         _default_backend.platform == "cpu" and
+        (FLAGS.jax_platforms is None or "cpu" not in FLAGS.jax_platforms) and
         FLAGS.jax_platform_name != 'cpu'):
       logger.warning('No GPU/TPU found, falling back to CPU. '
                       '(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)')
@@ -405,8 +406,9 @@ def _get_backend_uncached(platform=None):
   if not isinstance(platform, (type(None), str)):
     return platform
 
-  platform = (platform or FLAGS.jax_xla_backend or FLAGS.jax_platform_name
-              or None)
+  platform = (platform or FLAGS.jax_xla_backend
+              or (FLAGS.jax_platforms and FLAGS.jax_platforms.split(',')[0])
+              or FLAGS.jax_platform_name)
 
   bs = backends()
   if platform is not None:

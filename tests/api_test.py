@@ -9464,7 +9464,7 @@ class BackendsTest(jtu.JaxTestCase):
       "jax.numpy.arange(10)")
     warning_not_expected = (
       "import jax; "
-      "jax.config.update('jax_platform_name', 'cpu'); "
+      "jax.config.update('jax_platforms', 'cpu'); "
       "jax.numpy.arange(10)")
 
     result = subprocess.run([sys.executable, '-c', warning_expected],
