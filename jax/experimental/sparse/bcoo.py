@@ -35,13 +35,13 @@ from jax.experimental.sparse.util import (
   _dot_general_validated_shape, CuSparseEfficiencyWarning,
   SparseEfficiencyError, SparseEfficiencyWarning, Shape,
   SparseInfo)
-from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)

@@ -20,7 +20,6 @@ from typing import Any, Callable, Sequence
 import numpy as np
 
 from jax import tree_util
-from jax.interpreters import batching
 from jax.interpreters import mlir
 
 from jax._src import core
@@ -28,6 +27,7 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src import dispatch
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lib import xla_client as xc
 
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.

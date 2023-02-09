@@ -75,12 +75,12 @@ from typing import (Any, Tuple)
 import numpy as np
 
 from jax.interpreters import xla
-from jax.interpreters import batching
 
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import lax
 from jax._src.lib import xla_client as xc
 

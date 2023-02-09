@@ -18,8 +18,6 @@ from typing import Callable, Optional
 
 import jax
 from jax import tree_util
-from jax.interpreters import batching
-from jax.interpreters.batching import not_mapped
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -33,6 +31,8 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters.batching import not_mapped
 
 
 source_info_util.register_exclusion(__file__)

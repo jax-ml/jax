@@ -28,8 +28,6 @@ from jax._src import core
 from jax import stages
 from jax.errors import JAXTypeError
 from jax.experimental.global_device_array import GlobalDeviceArray as GDA
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src.interpreters.pxla import PartitionSpec
@@ -52,6 +50,8 @@ from jax._src.api_util import (
     argnames_partial_except, resolve_argnums, FLAGS)
 from jax._src.config import config
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect

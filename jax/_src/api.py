@@ -78,7 +78,6 @@ from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.interpreters import batching
 
 from jax._src.config import (
     config,
@@ -90,6 +89,7 @@ from jax._src.config import (
     explicit_device_get_scope as config_explicit_device_get_scope)
 from jax._src.core import ShapedArray, raise_to_shaped
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.interpreters import pxla
 from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
                                      local_devices, process_index,

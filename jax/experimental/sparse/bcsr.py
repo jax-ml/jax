@@ -23,6 +23,7 @@ from typing import NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+import jax.numpy as jnp
 from jax import config
 from jax import core
 from jax import lax
@@ -33,16 +34,17 @@ from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
     _csr_to_coo, _dot_general_validated_shape,
     CuSparseEfficiencyWarning, SparseInfo, Shape)
-import jax.numpy as jnp
+from jax.util import split_list, safe_zip
+
 from jax._src import api_util
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lib import gpu_sparse
-from jax.util import split_list, safe_zip
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike
+
 
 
 def bcsr_eliminate_zeros(mat: BCSR, nse: Optional[int] = None) -> BCSR:

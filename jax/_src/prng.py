@@ -25,9 +25,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax.config import config
 from jax.dtypes import float0
-from jax.interpreters import batching
-from jax._src.interpreters import pxla
-from jax._src.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src import basearray
@@ -37,6 +34,9 @@ from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src.api import jit, vmap
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import pxla
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng

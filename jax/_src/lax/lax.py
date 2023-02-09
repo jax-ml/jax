@@ -26,12 +26,9 @@ import numpy as np
 
 import jax
 from jax import tree_util
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax.interpreters.batching import ConcatAxis
 from jax.tree_util import tree_map
 
 from jax._src import ad_util
@@ -51,6 +48,9 @@ from jax._src.config import config
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters.batching import ConcatAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype,

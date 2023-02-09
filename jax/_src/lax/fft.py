@@ -19,13 +19,13 @@ from typing import Union, Sequence
 import numpy as np
 
 from jax import lax
-from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax._src.core import Primitive, is_constant_shape
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
