@@ -21,8 +21,8 @@ from functools import partial
 import itertools as it
 import operator
 import re
-from typing import (Any, Callable, Dict, List, NamedTuple, Optional,
-                    Protocol, Sequence, Set, Type, Tuple, Union)
+from typing import (Any, Callable, Dict, NamedTuple, Optional, Protocol,
+                    Sequence, Set, Type, Tuple, Union)
 
 import numpy as np
 
@@ -475,19 +475,13 @@ pe.padding_rules[xla_call_p] = partial(pe.call_padding_rule, xla_call_p)
 
 def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext,
                  settings: core.JaxprPpSettings,
-                 ) -> List[pp.Doc]:
+                 ) -> pp.Doc:
   printed_params = {k:v for k, v in eqn.params.items() if
                     k == 'call_jaxpr' or k == 'name' or
                     k == 'backend' and v is not None or
                     k == 'device' and v is not None or
                     k == 'donated_invars' and any(v)}
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 core.pp_eqn_rules[xla_call_p] = _pp_xla_call
 
 
