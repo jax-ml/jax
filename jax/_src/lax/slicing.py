@@ -20,8 +20,6 @@ import weakref
 import numpy as np
 
 import jax
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 
 from jax._src import ad_util
@@ -29,6 +27,8 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lax.utils import (
     _argnum_weak_type,

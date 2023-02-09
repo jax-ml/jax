@@ -27,7 +27,6 @@ from jax import lax
 from jax.api_util import flatten_fun
 from jax.experimental import maps
 from jax.experimental import pjit
-from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten
@@ -42,6 +41,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import control_flow as cf
 from jax._src.sharding import OpShardingSharding
 from jax._src.typing import Array

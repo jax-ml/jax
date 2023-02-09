@@ -27,8 +27,6 @@ from jax import tree_util
 from jax import lax
 from jax.config import config
 from jax.experimental import pjit
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import pxla
 
@@ -38,6 +36,8 @@ from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import util
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir

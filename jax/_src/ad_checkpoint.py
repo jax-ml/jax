@@ -18,7 +18,6 @@ from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
 import types
 
 import jax
-from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
@@ -31,6 +30,7 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo

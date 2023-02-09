@@ -22,8 +22,6 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src import ad_util
@@ -32,6 +30,8 @@ from jax._src import dtypes
 from jax._src.core import (
     Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal

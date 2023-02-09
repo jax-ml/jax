@@ -19,8 +19,6 @@ import warnings
 import numpy as np
 
 from jax import tree_util
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src import ad_util
@@ -29,6 +27,8 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lax import convolution
 from jax._src.lax import slicing
