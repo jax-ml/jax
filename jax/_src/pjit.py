@@ -279,7 +279,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     lowering = _pjit_lower(
         params['jaxpr'], in_shardings, params['out_shardings'],
         params['resource_env'], params['donated_invars'], params['name'],
-        in_is_global, params['keep_unused'], always_lower=True)
+        in_is_global, params['keep_unused'], params['device'],
+        always_lower=True)
 
     if kwargs:
       args_kwargs_in_tree = in_tree
@@ -438,6 +439,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
       inline=inline,
+      device=device,
   )
   return (consts + args_flat, local_in_avals, params, in_tree, out_tree(),
           donate_argnums)
@@ -1148,7 +1150,7 @@ def _pjit_call_impl(*args, jaxpr,
                     in_shardings, out_shardings, resource_env,
                     donated_invars, name,
                     in_positional_semantics, out_positional_semantics,
-                    keep_unused, inline):
+                    keep_unused, inline, device=None):
 
   global _most_recent_pjit_call_executable
 
@@ -1164,7 +1166,7 @@ def _pjit_call_impl(*args, jaxpr,
     _allow_propagation_to_outputs = [False] * len(out_shardings)
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
-      donated_invars, name, in_is_global, keep_unused,
+      donated_invars, name, in_is_global, keep_unused, device,
       always_lower=False).compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   _most_recent_pjit_call_executable.value = compiled
@@ -1256,6 +1258,8 @@ def _pjit_lower_cached(
     name: str,
     in_is_global: Sequence[bool],
     keep_unused: bool,
+    device: Optional[xc.Device],
+    *,
     always_lower: bool):
   in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
@@ -1343,7 +1347,7 @@ pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics,
-                   keep_unused, inline):
+                   keep_unused, inline, device=None):
   if not config.jax_jit_pjit_api_merge:
     if not isinstance(ctx.module_context.axis_context,
                       (mlir.SPMDAxisContext, mlir.ShardingContext)):
@@ -1384,7 +1388,7 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
                   vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings,
                   resource_env, donated_invars, name, in_positional_semantics,
-                  out_positional_semantics, keep_unused, inline):
+                  out_positional_semantics, keep_unused, inline, device):
   new_jaxpr, axes_out = batching.batch_jaxpr2(
       jaxpr, axis_size, dims_in, axis_name=axis_name, main_type=main_type)
 
@@ -1416,7 +1420,8 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     in_positional_semantics=in_positional_semantics,
     out_positional_semantics=out_positional_semantics,
     keep_unused=keep_unused,
-    inline=inline)
+    inline=inline,
+    device=device)
   return vals_out, axes_out
 
 batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
@@ -1446,7 +1451,7 @@ def _pjit_batcher_for_sharding(
 def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_shardings, out_shardings,
               resource_env, donated_invars, name, in_positional_semantics,
-              out_positional_semantics, keep_unused, inline):
+              out_positional_semantics, keep_unused, inline, device=None):
   is_nz_tangents_in = [type(t) is not ad.Zero for t in tangents_in]
   jaxpr_jvp, is_nz_tangents_out = ad.jvp_jaxpr(
       jaxpr, is_nz_tangents_in, instantiate=False)
@@ -1466,7 +1471,8 @@ def _pjit_jvp(primals_in, tangents_in,
       in_positional_semantics=(*in_positional_semantics, *_filter_zeros_in(in_positional_semantics)),
       out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
-      inline=inline)
+      inline=inline,
+      device=device)
 
   primals_out, tangents_out = split_list(outputs, [len(jaxpr.jaxpr.outvars)])
   assert len(primals_out) == len(jaxpr.jaxpr.outvars)
@@ -1488,7 +1494,7 @@ def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
 def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
                        resource_env, donated_invars, name, in_positional_semantics,
-                       out_positional_semantics, keep_unused, inline):
+                       out_positional_semantics, keep_unused, inline, device):
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
@@ -1519,7 +1525,8 @@ def _pjit_partial_eval(trace, *in_tracers,
       in_positional_semantics=keep_where(in_positional_semantics, known_ins),
       out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
-      inline=inline)
+      inline=inline,
+      device=device)
 
   # TODO(yashkatariya): After xla_extension_version is bumped to >= 123, make
   # this condition: `if not config.jax_array`.
@@ -1531,7 +1538,8 @@ def _pjit_partial_eval(trace, *in_tracers,
           known_params["jaxpr"], known_params["in_shardings"],
           known_params["out_shardings"], known_params["resource_env"],
           known_params["donated_invars"], known_params["name"],
-          in_is_global, known_params['keep_unused'], always_lower=False).compile(
+          in_is_global, known_params['keep_unused'], known_params["device"],
+          always_lower=False).compile(
               _allow_propagation_to_outputs=[True] * len(known_params['out_shardings']),
               _allow_compile_replicated=False)
       da = compiled._device_assignment

@@ -3046,6 +3046,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(g)(3)
     self.assertNotIn('pjit', str(jaxpr))
 
+  def test_pjit_device(self):
+    @partial(pjit, device=jax.devices('cpu')[0])
+    def f(x):
+      return x * 2
+
+    jaxpr = jax.make_jaxpr(f)(3)
+    self.assertIn('device=TFRT_CPU_0', str(jaxpr))
+
   def test_pmap_in_axis_resources_error(self):
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
     self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
