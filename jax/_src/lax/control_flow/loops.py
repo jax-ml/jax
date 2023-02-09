@@ -20,7 +20,7 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple, TypeVar
 
 import jax
 import weakref
-from jax import core
+from jax._src import core
 from jax._src import linear_util as lu
 from jax.config import config
 from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
@@ -29,7 +29,6 @@ from jax.interpreters import batching
 from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-import jax._src.pretty_printer as pp
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map)
 from jax._src import ad_checkpoint
@@ -964,14 +963,7 @@ def _scan_pp_rule(eqn, context, settings):
     del printed_params['num_consts']
   if not printed_params['reverse']:
     del printed_params['reverse']
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
-
+  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
 def scan_bind(*args, **params):
   if config.jax_enable_checks:

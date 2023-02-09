@@ -2383,16 +2383,10 @@ def _convert_elt_type_fwd_rule(eqn):
 def _convert_elt_type_pp_rule(eqn, context, settings):
   # don't print new_dtype because the output binder shows it, don't print
   # weak_type when false
-  printed_params = {}
-  if eqn.params['weak_type']:
-    printed_params['weak_type'] = True
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  params = dict(eqn.params)
+  del params['new_dtype']  # output binder shows it
+  if not params['weak_type']: del params['weak_type']  # don't show trivial case
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
 convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
@@ -2685,21 +2679,14 @@ def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
   lhs_ = _replace_masked_values(lhs, 0, padded_axes)
   return [dot_general(lhs_, rhs, dimension_numbers=dimension_numbers, **params)]
 
-def _dot_general_pp_rule(eqn, context, settings):
+def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   # * suppress printing precision or preferred_element_type when None.
   # * print dimension_numbers as list-of-lists to be shorter.
   printed_params = {k: v for k, v in eqn.params.items() if v is not None}
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
       (list(lhs_cont), list(rhs_cont)), (list(lhs_batch), list(rhs_batch)))
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
-
+  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general')
@@ -2917,13 +2904,8 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
   printed_params = {}
   if eqn.params['broadcast_dimensions']:
     printed_params['broadcast_dimensions'] = eqn.params['broadcast_dimensions']
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars[:1], context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  new_eqn = eqn.replpace(params=printed_params, invars=eqn.invars[:1])
+  return core._pp_eqn(new_eqn, context, settings)
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if dyn_shape: raise NotImplementedError
@@ -4521,13 +4503,7 @@ def _iota_pp_rule(eqn, context, settings):
   printed_params = {}
   if len(eqn.params['shape']) > 1:
     printed_params['dimension'] = eqn.params['dimension']
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 # core.pp_eqn_rules[iota_p] = _iota_pp_rule
 
 def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension):

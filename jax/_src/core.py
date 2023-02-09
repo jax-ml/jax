@@ -2867,19 +2867,22 @@ def pp_kv_pairs(kv_pairs, context: JaxprPpContext, settings: JaxprPpSettings) ->
     + pp.brk("") + pp.text("]")
   )
 
-def pp_eqn(eqn, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
+def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
+           ) -> pp.Doc:
+  rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
+          pp_eqn_rules.get(eqn.primitive, _pp_eqn))
+  return rule(eqn, context, settings)
+
+def _pp_eqn(eqn, context, settings) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
                 if settings.source_info else None)
-  rule = pp_eqn_rules.get(eqn.primitive)
   name_stack_annotation = f'[{eqn.source_info.name_stack}]' if settings.name_stack else None
-  if rule and settings.custom_pp_eqn_rules:
-    return pp.concat(rule(eqn, context, settings))
   lhs = pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
   rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
          pp_kv_pairs(sorted(eqn.params.items()), context, settings),
          pp.text(" ") + pp_vars(eqn.invars, context)]
   return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
-CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext, JaxprPpSettings], Sequence[pp.Doc]]
+CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext, JaxprPpSettings], pp.Doc]
 pp_eqn_rules: Dict[Primitive, CustomPpEqnRule]  = {}
 
 def pp_eqns(eqns, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
