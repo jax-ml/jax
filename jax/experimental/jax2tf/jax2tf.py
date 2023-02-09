@@ -25,6 +25,7 @@ from typing import (
     cast)
 
 from absl import logging
+from mlir.dialects import stablehlo
 import numpy as np
 
 import jax
@@ -703,11 +704,17 @@ def _lower_native_and_run(fun_jax: Callable,
   if config.jax2tf_use_stablehlo:
     mlir_module = lowered.stablehlo()
     xla_call_module_version = 3
+    mlir_str = mlir.module_to_bytecode(mlir_module)
+    target_version = stablehlo.get_earliest_forward_compatible_version()
+    mlir_serialized_module = xla_client._xla.mlir.serialize_portable_artifact(
+        mlir_str, target_version
+    )
+    xla_call_module_version = 4
   else:
     mlir_module = lowered.mhlo()
     xla_call_module_version = 1
+    mlir_serialized_module = mlir.module_to_bytecode(mlir_module)
 
-  mlir_serialized_module = mlir.module_to_bytecode(mlir_module)
   # Figure out the result types and shapes
   if "global_out_avals" in lowered.compile_args:
     # This is currently the case for pjit
