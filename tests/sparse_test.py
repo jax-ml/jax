@@ -100,6 +100,12 @@ def iter_sparse_layouts(shape: Sequence[int], min_n_batch=0) -> Iterator[SparseL
       n_sparse = len(shape) - n_batch - n_dense
       yield SparseLayout(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense)
 
+def iter_bcsr_layouts(shape: Sequence[int], min_n_batch=0) -> Iterator[SparseLayout]:
+  n_sparse = 2
+  for n_batch in range(min_n_batch, len(shape) - 1):
+    n_dense = len(shape) - n_sparse - n_batch
+    yield SparseLayout(n_batch=n_batch, n_sparse=n_sparse, n_dense=n_dense)
+
 
 def _generate_batched_dot_general_properties(
     shapes=((5,), (2, 3), (2, 3, 4), (2, 3, 4, 4)),
@@ -2083,79 +2089,32 @@ class BCOOTest(sptu.SparseTestCase):
 class BCSRTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch)
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
       for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(len(shape) - 1)
-    ],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+      for layout in iter_bcsr_layouts(shape)],
+    dtype=all_dtypes,
   )
-  def test_bcsr_dense_round_trip(self, shape, dtype, n_batch):
-    n_sparse = 2
-    n_dense = len(shape) - n_sparse - n_batch
+  def test_bcsr_dense_round_trip(self, shape, dtype, n_batch, n_dense):
+    n_sparse = len(shape) - n_batch - n_dense
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
+    nse = sparse.util._count_stored_elements(M, n_batch=n_batch, n_dense=n_dense)
+    def round_trip(M):
+      return sparse.BCSR.fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense).todense()
+    args_maker = lambda: [M]
+    ident = lambda x: x
 
-    args_maker_fromdense = lambda: [M]
-    fromdense = partial(sparse_bcsr._bcsr_fromdense, nse=nse, n_batch=n_batch,
-                        n_dense=n_dense)
-    self._CompileAndCheck(fromdense, args_maker_fromdense)
-
-    data, indices, indptr = fromdense(M)
-
-    self.assertEqual(data.dtype, dtype)
-    self.assertEqual(data.shape,
-                     shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:])
-    self.assertEqual(indices.dtype, jnp.int32)
-    self.assertEqual(indices.shape, shape[:n_batch] + (nse,))
-    self.assertEqual(indptr.dtype, jnp.int32)
-    self.assertEqual(indptr.shape, shape[:n_batch] + (shape[n_batch] + 1,))
-
-    todense = partial(sparse_bcsr._bcsr_todense,
-                      spinfo=sparse_util.SparseInfo(shape=shape))
-    self.assertArraysEqual(M, todense(data, indices, indptr))
-    args_maker_todense = lambda: [data, indices, indptr]
-    self._CompileAndCheck(todense, args_maker_todense)
-
-  @jtu.sample_product(
-    [dict(shape=shape, n_batch=n_batch)
-      for shape in [(5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
-      for n_batch in range(1, len(shape) - 1)
-    ],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
-  )
-  def test_bcsr_dense_round_trip_batched(self, shape, dtype, n_batch):
-    n_sparse = 2
-    n_dense = len(shape) - n_sparse - n_batch
-    rng = rand_sparse(self.rng())
-    M = rng(shape, dtype)
-
-    nse = sparse.util._count_stored_elements(M, n_batch=n_batch,
-                                             n_dense=n_dense)
-
-    fromdense = partial(sparse_bcsr._bcsr_fromdense, nse=nse, n_batch=0,
-                        n_dense=n_dense)
-    todense = partial(sparse_bcsr._bcsr_todense,
-                      spinfo=sparse_util.SparseInfo(shape))
-
-    for _ in range(n_batch):
-      fromdense = jax.vmap(fromdense)
-      todense = jax.vmap(todense)
-
-    data, indices, indptr = fromdense(M)
-
-    self.assertEqual(data.dtype, dtype)
-    self.assertEqual(data.shape,
-                     shape[:n_batch] + (nse,) + shape[n_batch + n_sparse:])
-    self.assertEqual(indices.dtype, jnp.int32)
-    self.assertEqual(indices.shape, shape[:n_batch] + (nse,))
-    self.assertEqual(indptr.dtype, jnp.int32)
-    self.assertEqual(indptr.shape, shape[:n_batch] + (shape[n_batch] + 1,))
-
-    self.assertArraysEqual(M, todense(data, indices, indptr))
-    args_maker_todense = lambda: [data, indices, indptr]
-    self._CompileAndCheck(todense, args_maker_todense)
+    self._CheckAgainstNumpy(ident, round_trip, args_maker)
+    self._CompileAndCheck(round_trip, args_maker)
+    self._CheckBatchingSparse(ident, round_trip, args_maker, bdims=self._random_bdims(n_batch))
+    if jnp.issubdtype(dtype, jnp.floating):
+      # For n_sparse != 0, we can't use an identity because output zeros must not
+      # be dependent on input zeros. This mimics the code in count_stored_elements().
+      def expected(M):
+        if n_sparse == 0: return M
+        mask = (M != 0).any(range(M.ndim - n_dense, M.ndim), keepdims=True)
+        return jnp.where(mask, M, 0)
+      self._CheckGradsSparse(expected, round_trip, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch)

@@ -38,6 +38,7 @@ from jax._src import api_util
 from jax._src.lax.lax import DotDimensionNumbers
 from jax._src.lib import gpu_sparse
 from jax.util import split_list, safe_zip
+from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax._src.lib.mlir.dialects import hlo
@@ -65,6 +66,25 @@ def bcsr_sum_duplicates(mat: BCSR, nse: Optional[int] = None) -> BCSR:
     mat_out : BCSR array with sorted indices and no duplicate indices.
   """
   return BCSR.from_bcoo(bcoo.bcoo_sum_duplicates(mat.to_bcoo(), nse=nse))
+
+
+def _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
+  data, indices, indptr = batched_args
+  data_bdim, indices_bdim, indptr_bdim = batch_dims
+  n_batch = indices.ndim - 1 + int(indices_bdim is None)
+  if not all(b is None or 0 <= b < n_batch for b in batch_dims):
+    raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
+                              f"Got {batch_dims=} for {n_batch=}.")
+  batched_data, batched_indices, batched_indptr = [
+      lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
+      for arg, bdim in [(data, data_bdim), (indices, indices_bdim), (indptr, indptr_bdim)]]
+  if batch_size is None:
+    batch_size = max(arg.shape[dim] for arg, dim in zip(batched_args, batch_dims) if dim is not None)
+  batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
+                              indices_sorted=spinfo.indices_sorted,
+                              unique_indices=spinfo.unique_indices)
+  return batched_data, batched_indices, batched_indptr, batched_spinfo
+
 
 
 class BCSRProperties(NamedTuple):
@@ -235,17 +255,45 @@ def _bcsr_fromdense_abstract_eval(mat, *, nse, n_batch, n_dense, index_dtype):
 def _bcsr_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch,
                                   n_dense, index_dtype):
   M, = batched_args
-  if batch_dims != (0,):
-    raise NotImplementedError(f"{batch_dims=}")
-  new_n_batch = n_batch + 1
-  n_sparse = M.ndim - n_dense - new_n_batch
-  if n_sparse != 2:
-    raise ValueError("_bcsr_fromdense_batching_rule: must have 2 sparse "
-                     f"dimensions but {n_sparse} is given.")
-  return _bcsr_fromdense(M, nse=nse, n_batch=new_n_batch, n_dense=n_dense,
-                         index_dtype=index_dtype), (0, 0, 0)
+  bdim, = batch_dims
+  if not (0 <= bdim <= n_batch):
+    raise ValueError(f"Expected 0 < bdim <= n_batch; got {bdim=}, {n_batch=}")
+  return _bcsr_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (bdim, bdim, bdim)
 
 
+def _bcsr_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype):
+  M, = primals
+  Mdot, = tangents
+
+  primals_out = _bcsr_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense, index_dtype=index_dtype)
+  data, indices, indptr = primals_out
+
+  if type(Mdot) is ad.Zero:
+    data_dot = ad.Zero.from_value(data)
+  else:
+    data_dot = bcsr_extract(indices, indptr, Mdot)
+
+  tangents_out = (data_dot, ad.Zero.from_value(indices), ad.Zero.from_value(indptr))
+
+  return primals_out, tangents_out
+
+
+def _bcsr_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
+  data, indices, indptr = ct
+  n_sparse = M.ndim - n_batch - n_dense
+  assert data.shape == M.shape[:n_batch] + (nse,) + M.shape[n_batch + n_sparse:]
+  assert indices.shape == M.shape[:n_batch] + (n_sparse, nse)
+  assert indptr.shape == M.shape[:n_batch] + (M.shape[n_batch] + 1,)
+  assert indices.dtype == index_dtype
+  assert indptr.dtype == index_dtype
+  if isinstance(indices, ad.Zero) or isinstance(indptr, ad.Zero):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ad.is_undefined_primal(M)
+  return _bcsr_todense(data, indices, indptr, spinfo=SparseInfo(M.aval.shape))
+
+
+ad.primitive_jvps[bcsr_fromdense_p] = _bcsr_fromdense_jvp
+ad.primitive_transposes[bcsr_fromdense_p] = _bcsr_fromdense_transpose
 batching.primitive_batchers[bcsr_fromdense_p] = _bcsr_fromdense_batching_rule
 mlir.register_lowering(bcsr_fromdense_p, mlir.lower_fun(
     _bcsr_fromdense_impl, multiple_results=True))
@@ -302,17 +350,27 @@ def _bcsr_todense_abstract_eval(data, indices, indptr, *, spinfo):
 
 
 def _bcsr_todense_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices, indptr = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  if batch_dims[2] is None:
-    indptr = indptr[None, ...]
+  data, indices, indptr, spinfo = _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo)
   return _bcsr_todense(data, indices, indptr, spinfo=spinfo), 0
 
+
+def _bcsr_todense_jvp(data_dot, data, indices, indptr, *, spinfo):
+  del data
+  return _bcsr_todense(data_dot, indices, indptr, spinfo=spinfo)
+
+
+def _bcsr_todense_transpose(ct, data, indices, indptr, *, spinfo):
+  shape = spinfo.shape
+  assert ad.is_undefined_primal(data)
+  if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ct.shape == shape
+  assert ct.dtype == data.aval.dtype
+  return bcsr_extract(indices, indptr, ct), indices, indptr
+
+
+ad.defjvp(bcsr_todense_p, _bcsr_todense_jvp, None, None)
+ad.primitive_transposes[bcsr_todense_p] = _bcsr_todense_transpose
 batching.primitive_batchers[bcsr_todense_p] = _bcsr_todense_batching_rule
 mlir.register_lowering(bcsr_todense_p, mlir.lower_fun(
     _bcsr_todense_impl, multiple_results=False))
@@ -351,6 +409,43 @@ def _bcsr_extract_abstract_eval(indices, indptr, mat):
   return core.ShapedArray(out_shape, mat.dtype)
 
 
+def _bcsr_extract_jvp(arr_dot, indices, indptr, arr):
+  assert arr_dot.shape == arr.shape
+  return bcsr_extract(indices, indptr, arr_dot)
+
+
+def _bcsr_extract_transpose(ct, indices, indptr, arr):
+  assert ad.is_undefined_primal(arr)
+  if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ct.dtype == arr.aval.dtype
+  return indices, indptr, _bcsr_todense(ct, indices, indptr, spinfo=SparseInfo(arr.aval.shape))
+
+
+def _bcsr_extract_batching_rule(batched_args, batch_dims):
+  indices, indptr, arr = batched_args
+  bdim_set = {b for b in batch_dims if b is not None}
+  if len(bdim_set) != 1:
+    # TODO(jakevdp): handle this by moving bdim to front?
+    raise NotImplementedError("bcoo_extract with unequal batch dimensions.")
+  bdim = next(iter(bdim_set))
+  if batch_dims[0] is None:
+    indices = lax.expand_dims(indices, (bdim,))
+  if batch_dims[1] is None:
+    indptr = lax.expand_dims(indptr, (bdim,))
+  if batch_dims[2] is None:
+    # TODO(jakevdp) can we handle this case without explicit broadcasting?
+    result_shape = list(arr.shape)
+    result_shape.insert(bdim, indices.shape[bdim])
+    arr = lax.broadcast_in_dim(arr, result_shape, (bdim,))
+  n_batch = indices.ndim - 1
+  if bdim >= n_batch:
+    raise ValueError(f"{batch_dims=} out of range for indices with {n_batch=}")
+  return bcsr_extract(indices, indptr, arr), bdim
+
+ad.defjvp(bcsr_extract_p, None, None, _bcsr_extract_jvp)
+ad.primitive_transposes[bcsr_extract_p] = _bcsr_extract_transpose
+batching.primitive_batchers[bcsr_extract_p] = _bcsr_extract_batching_rule
 mlir.register_lowering(bcsr_extract_p, mlir.lower_fun(
     _bcsr_extract_impl, multiple_results=False))
 
