@@ -972,8 +972,6 @@ def _bcoo_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, rhs, *, dimension_
 
 def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
   assert not ad.is_undefined_primal(lhs_indices)
-  if type(ct) is ad.Zero:
-    return ad.Zero
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim = len(lhs_spinfo.shape)
   rhs_ndim = rhs.aval.ndim if ad.is_undefined_primal(rhs) else rhs.ndim
