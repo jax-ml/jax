@@ -25,6 +25,12 @@ Remember to align the itemized text with the first line of an item within a list
     at import time so it needs to be disabled before jax is imported.
 
 ## jaxlib 0.4.4
+  * Breaking changes
+    * Support for NVIDIA Kepler series GPUs has been removed from the default
+      `jaxlib` builds. If Kepler support is needed, it is still possible to
+      build `jaxlib` from source with Kepler support (via the
+      `--cuda_compute_capabilities=sm_35` option to `build.py`), however note
+      that CUDA 12 has completely dropped support for Kepler GPUs.
 
 ## jax 0.4.3 (Feb 8, 2023)
   * Breaking changes
