@@ -28,6 +28,7 @@ from jax._src import dtypes
 from jax._src.config import config
 from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src import api
 from jax._src.typing import ArrayLike
 from jax.interpreters import mlir
@@ -104,6 +105,8 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 
 def _single_device_array_from_buf(buf, committed):
+  if isinstance(buf, ArrayImpl):
+    return buf
   db = dispatch._set_aval(buf)
   return ArrayImpl(db.aval, SingleDeviceSharding(db.device()), [db],
                    committed=committed, _skip_checks=True)
@@ -120,7 +123,7 @@ class ArrayImpl(basearray.Array):
   _skip_checks: bool
   _npy_value: Optional[np.ndarray]
 
-  @use_cpp_method
+  @use_cpp_method()
   def __init__(self, aval: core.ShapedArray, sharding: Sharding,
                arrays: Union[Sequence[DeviceArray], Sequence[ArrayImpl]],
                committed: bool, _skip_checks: bool = False):
@@ -360,6 +363,7 @@ class ArrayImpl(basearray.Array):
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
+  @use_cpp_method(xla_extension_version >= 128)
   def unsafe_buffer_pointer(self):
     if len(self._arrays) != 1:
       raise ValueError("unsafe_buffer_pointer() is supported only for unsharded"
@@ -375,8 +379,12 @@ class ArrayImpl(basearray.Array):
 
   def on_device_size_in_bytes(self):
     """Returns the total global on-device size of the array in bytes."""
-    return (self._arrays[0].on_device_size_in_bytes() *
-            len(self.sharding.device_set))
+    arr = self._arrays[0]
+    if hasattr(arr, "_on_device_size_in_bytes"):
+      per_shard_size = arr._on_device_size_in_bytes()  # type: ignore
+    else:
+      per_shard_size = arr.on_device_size_in_bytes()  # type: ignore
+    return per_shard_size * len(self.sharding.device_set)
 
   # TODO(yashkatariya): Remove this method when everyone is using devices().
   def device(self) -> Device:
@@ -447,6 +455,7 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(global_d, self.sharding, self.shape, array))
     return out
 
+  @use_cpp_method(xla_extension_version >= 128)
   def delete(self):
     if self._arrays is None:
       return
@@ -455,7 +464,7 @@ class ArrayImpl(basearray.Array):
     self._arrays = None
     self._npy_value = None
 
-  @use_cpp_method
+  @use_cpp_method()
   def is_deleted(self):
     if self._arrays is None:
       return True
@@ -468,7 +477,7 @@ class ArrayImpl(basearray.Array):
     if self.is_deleted():
       raise RuntimeError("Array has been deleted.")
 
-  @use_cpp_method
+  @use_cpp_method()
   def block_until_ready(self):
     self._check_if_deleted()
     for db in self._arrays:
@@ -478,6 +487,12 @@ class ArrayImpl(basearray.Array):
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
+      if self.is_fully_replicated:
+        arr = self._arrays[0]  # type: ignore
+        # copy_to_host_async implemented in c++ only for single device arrays.
+        if hasattr(arr, "_copy_single_device_array_to_host_async"):
+          arr._copy_single_device_array_to_host_async()  # type: ignore
+          return
       try:
         self.addressable_shards[0].replica_id
         replica_id_exists = True
@@ -486,7 +501,10 @@ class ArrayImpl(basearray.Array):
 
       for s in self.addressable_shards:
         if not replica_id_exists or s.replica_id == 0:
-          s.data._arrays[0].copy_to_host_async()  # pytype: disable=attribute-error
+          if xla_extension_version >= 128:
+            s.data.copy_to_host_async()  # pytype: disable=attribute-error
+          else:
+            s.data._arrays[0].copy_to_host_async()  # pytype: disable=attribute-error
 
   @property
   def _value(self) -> np.ndarray:
@@ -494,7 +512,12 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       if self.is_fully_replicated:
-        self._npy_value = np.asarray(self._arrays[0])  # type: ignore
+        arr = self._arrays[0]  # type: ignore
+        # Conversion to numpy implemented only for single device arrays.
+        if hasattr(arr, "_single_device_array_to_np_array"):
+          self._npy_value = arr._single_device_array_to_np_array()  # type: ignore
+        else:
+          self._npy_value = np.asarray(arr)  # type: ignore
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 

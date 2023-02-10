@@ -59,6 +59,7 @@ from jax._src.lib.mlir.dialects import use_stablehlo
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
                                OpShardingSharding, NamedSharding, PartitionSpec,
                                Sharding)
@@ -842,7 +843,6 @@ def _dynamic_array_result_handler(sticky_device, aval, env, buf):
     return core.DArray(aval.update(shape=tuple(shape)), data)
 
 
-
 result_handlers: Dict[
     Type[core.AbstractValue],
     Callable[[Optional[Device], Any], ResultHandler]] = {}
@@ -1088,7 +1088,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
 def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
                 compile_options: CompileOptions,
                 backend: Backend) -> Optional[XlaLoadedExecutable]:
-  """Looks up `computation` in the persisent compilation cache."""
+  """Looks up `computation` in the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
 
@@ -1294,8 +1294,11 @@ for t in device_array.device_array_types:
 
 def _device_put_jax_array(x, device: Optional[Device]):
   if is_single_device_sharding(x.sharding):
-    x = _copy_device_array_to_device(_set_aval(x._arrays[0]), device)
-    return (x,)
+    if xla_extension_version >= 128:
+      return (_copy_array_to_device(x, device),)
+    else:
+      x = _copy_device_array_to_device(_set_aval(x._arrays[0]), device)
+      return (x,)
   else:
     # Round trip via host if x is sharded. SDA also does a round trip via host.
     return _device_put_array(x._value, device)
@@ -1317,7 +1320,7 @@ def _copy_device_array_to_device(
     # source and target platforms are the same
     if x.device_buffer.device() == device:
       # no copying to be done because source equals target
-      if x._device == device:
+      if x.device == device:
         return x
       else:
         moved_buf = x.device_buffer  # We need to change stickyness
@@ -1337,25 +1340,34 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
     # no copying to be done because there's no target specified
     return x
 
-  buf = x._arrays[0]
-  if xb.get_device_backend(device).platform == buf.platform():
+  arr = x._arrays[0]
+  if xb.get_device_backend(device).platform == arr.platform():
     # source and target platforms are the same
     if x.device() == device:
       # no copying to be done because source equals target
       if x._committed:
         return x
       else:
-        moved_buf = buf  # We need to change stickyness
+        if isinstance(arr, array.ArrayImpl):
+          # Copy to device with the same device will update the stickyness.
+          moved_array = arr.copy_to_device(device)
+        else:
+          moved_array = arr  # We need to change stickyness
     else:
       # move the buffer with a device-to-device copy
-      moved_buf = buf.copy_to_device(device)
+      moved_array = arr.copy_to_device(device)
   else:
     # buffers from different XLA backends are passed through the host.
     backend = xb.get_device_backend(device)
-    moved_buf = backend.buffer_from_pyval(np.asarray(buf), device)
+    moved_array = backend.buffer_from_pyval(np.asarray(arr), device)
+  if isinstance(moved_array, array.ArrayImpl):
+    return moved_array
   return array.ArrayImpl(
-      x.aval, SingleDeviceSharding(moved_buf.device()), [moved_buf],
-      committed=(device is not None))
+      x.aval,
+      SingleDeviceSharding(moved_array.device()),
+      [moved_array],
+      committed=(device is not None),
+  )
 
 
 def _device_put_impl(
