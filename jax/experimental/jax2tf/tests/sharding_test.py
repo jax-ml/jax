@@ -16,7 +16,6 @@
 from functools import partial
 import logging
 import os
-import re
 from typing import Any, Sequence
 import unittest
 
@@ -29,6 +28,7 @@ from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
+from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
@@ -75,6 +75,7 @@ def _log_sharding_annotations(test,
                               f_jax,
                               args: Sequence[Any],
                               *,
+                              num_replicas=1,
                               num_partitions=2,
                               num_variables=0,
                               experimental_native_lowering="default"):
@@ -96,7 +97,6 @@ def _log_sharding_annotations(test,
   # We only dump JAX optimized code on the TPU
   if jtu.device_under_test() == "tpu":
     backend = xla_bridge.get_backend()
-    num_replicas = 1
     device_assignment = np.arange(num_partitions * num_replicas)
     device_assignment = np.reshape(device_assignment, (-1, num_partitions))
     use_spmd_partitioning = num_partitions > 1
@@ -230,142 +230,303 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         num_partitions=2)
 
 
-class PjitTest(tf_test_util.JaxToTfTestCase):
+class ShardingTest(tf_test_util.JaxToTfTestCase):
+  """
+  To verify that the tests do run indeed on multiple devices you can run
 
-  def create_test_mesh(self, *axis_names):
-    """Creates a mesh with 2 axes"""
-    assert len(axis_names) == 2, axis_names
-    nr_devices = len(jax.devices())
-    mesh_shape = (2, 1) if nr_devices >= 2 else (1, 1)
-    return jtu.create_global_mesh(mesh_shape, axis_names)
+     perftools/gputools/profiler/jfprof.sh jax/experimental/jax2tf/tests:sharding_test_tpu -- -c opt --test_filter=ShardingTest.test_shmap_all_to_all --test_arg=--vmodule=jax2tf=3 --
+  """
+  def setUp(self):
+    super().setUp()
+    if len(jax.devices()) < 2:
+      raise unittest.SkipTest("Test requires at least 2 local devices")
+    self.devices = np.array(jax.devices()[:2])  # use 2 devices
 
-  @jtu.with_mesh([("axis", 2)])
+    if jtu.device_under_test() == "tpu":
+      resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+      tf.config.experimental_connect_to_cluster(resolver)
+      # Do TPU init at beginning since it will wipe out all HBMs.
+      self.topology = tf.tpu.experimental.initialize_tpu_system(resolver)
+    else:
+      self.topology = None
+
+  def device_assignment(self,
+                        computation_shape=(1, 1, 1, 2),
+                        num_replicas=1):
+    self.assertEqual(jtu.device_under_test(), "tpu")
+    return tf.tpu.experimental.DeviceAssignment.build(
+      self.topology, computation_shape=computation_shape,
+      num_replicas=num_replicas)
+
   def test_pjit_basic1D(self):
-    def func_jax(x):
-      return x + x
+    @partial(pjit.pjit, in_axis_resources=(P("x"),),
+             out_axis_resources=None)
+    def f_jax(a):
+      return a + a
 
     shape = (8, 10)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    a = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
 
-    func_pjit = pjit.pjit(func_jax,
-                          in_axis_resources=P("axis"),
-                          out_axis_resources=None)
-    res_jax = func_pjit(x)
-    func_tf = jax2tf.convert(func_pjit)
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a):
+      f_converted = jax2tf.convert(f_jax,
+                                   experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2],
+            ))[0]
+      else:
+        res = f_converted(a)
+      return res
 
-    # Run in tf.function JIT compile mode
-    res_tf = tf.function(func_tf, autograph=False, jit_compile=True)(x)
-    self.assertAllClose(res_tf.numpy(), res_jax)
+    with Mesh(self.devices, axis_names=("x",)):
+      res_jax = f_jax(a)
+      res_tf = f_tf(a)
+      self.assertAllClose(res_tf.numpy(), res_jax)
 
-    # Run in tf.function mode
-    res_tf = tf.function(func_tf, autograph=False)(x)
-    self.assertAllClose(res_tf.numpy(), res_jax)
-
-    # Run the converted function in TF eager mode
-    with self.assertRaisesRegex(
-        ValueError,
-        r"A jit function with sharded .* arguments or results must be used under a `tf.function` context"):
-      func_tf(x)
-
-    # However, if we use REPLICATED sharding we can run in eager mode
-    res_tf = jax2tf.convert(pjit.pjit(func_jax,
-                                      in_axis_resources=None,
-                                      out_axis_resources=None))(x)
-    self.assertAllClose(res_tf.numpy(), res_jax)
-
-  @jtu.with_mesh([("x", 1)])
   def test_pjit_closed_over_const(self):
+
     const = jnp.full((4, 3), 7, dtype=np.float32)
-    @partial(pjit.pjit, in_axis_resources=(P("x"), None), out_axis_resources=None)
-    def func_jax(x, y):
-      return x + y * const
-
-    with self.create_test_mesh("x", "y"):
-      self.ConvertAndCompare(func_jax, jnp.ones((4, 3), dtype=np.float32),
-                             jnp.ones((1, 1), dtype=np.float32),
-                             limitations=[skip_eager_for_partitioning])
-
-  def test_pjit_closed_over_global_device_array(self):
-    global_mesh = self.create_test_mesh("x", "y")
-
-    input1 = np.arange(16).reshape(2, 8)
-    input2_raw = np.arange(16).reshape(8, 2)
-    input2_array = jax.make_array_from_callback(input2_raw.shape,
-                                                jax.sharding.NamedSharding(global_mesh, P("x", "y")),
-                                                lambda idx: input2_raw[idx])
-    @partial(pjit.pjit,
-             in_axis_resources=(P("y", "x"),),
+    a = np.ones((4, 3), dtype=np.float32)
+    b = np.ones((1, 1), dtype=np.float32)
+    @partial(pjit.pjit, in_axis_resources=(P("x"), None),
              out_axis_resources=None)
-    def jax_func(input_data):
-      return jnp.matmul(input_data, input2_array)
+    def f_jax(a, b):
+      return a + b * const
 
-    with global_mesh:
-      self.ConvertAndCompare(jax_func, input1,
-                             limitations=[skip_eager_for_partitioning])
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a, b):
+      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2])
+            )[0]
+      else:
+        res = f_converted(a, b)
+      return res
+
+    with Mesh(self.devices, axis_names=("x",)):
+      res_jax = f_jax(a, b)
+      res_tf = f_tf(a, b)
+      self.assertAllClose(res_tf, res_jax)
 
   def test_nested_pjit(self):
-    global_mesh = self.create_test_mesh("x", "y")
-    x = np.arange(16).reshape(2, 8)
+    if not config.jax_array:
+      raise unittest.SkipTest("Test works only with jax_array")
+    a = np.arange(16., dtype=np.float32).reshape(2, 8)
 
-    def func_jax(x):
+    def f_jax(a):
       # We have a pjit nested inside the function to be converted
       inner_func = pjit.pjit(
           jnp.sin,
-          in_axis_resources=(P("y", "x"),),
+          in_axis_resources=(P("x"),),
           out_axis_resources=None)
-      return inner_func(x)
+      return jnp.cos(inner_func(a))
 
-    with global_mesh:
-      self.ConvertAndCompare(func_jax, x,
-                             limitations=[skip_eager_for_partitioning])
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a):
+      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2])
+            )
+      else:
+        res = f_converted(a)
+      return res
 
-  def test_xmap_basic(self):
-    local_devices = list(jax.local_devices())
-    if len(local_devices) < 2:
-      raise unittest.SkipTest("Test requires at least 4 local devices")
-    def f(a, b):
-      return a * 2, b * 4
-    devices = np.array(local_devices[:2]).reshape((1, 2))
-    with Mesh(devices, ('x', 'y')):
-      fm = xmap(f,
-                in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
-                out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
-                axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
-      ashape = (16, 8, 5)
-      a = jnp.arange(np.prod(ashape)).reshape(ashape)
-      bshape = (2, 7)
-      b = jnp.arange(np.prod(bshape)).reshape(bshape)
-
-      res_jax = fm(a, b)
-      self.assertAllClose(res_jax, (a * 2, b * 4))
-
-      # xmap works only with native lowering
-      _log_sharding_annotations(self, fm, [a, b],
-                                experimental_native_lowering=True)
-      res_tf = tf.function(
-          jax2tf.convert(fm, experimental_native_lowering=True),
-          autograph=False, jit_compile=True)(a, b)
+    with Mesh(self.devices, axis_names=("x",)):
+      res_jax = f_jax(a)
+      res_tf = f_tf(a)
       self.assertAllClose(res_tf, res_jax)
 
-  @jtu.with_mesh([('x', 1), ('y', 2)])
+  def test_xmap_basic(self):
+    devices = np.reshape(self.devices, (1, 2))
+
+    f_jax = xmap(lambda a, b: (a * 2, b * 4),
+                 in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
+                 out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
+                 axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
+
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a, b):
+      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2])
+            )
+        res = (res[0], res[1])
+      else:
+        res = f_converted(a, b)
+      return res
+
+    with Mesh(devices, ('x', 'y')):
+      ashape = (16, 8, 5)
+      a = np.arange(np.prod(ashape)).reshape(ashape)
+      bshape = (2, 7)
+      b = np.arange(np.prod(bshape)).reshape(bshape)
+
+      res_jax = f_jax(a, b)
+      self.assertAllClose(res_jax, (a * 2, b * 4))
+
+      # jax2tf for xmap works only with native lowering
+      _log_sharding_annotations(self, f_jax, [a, b],
+                                experimental_native_lowering=True)
+      res_tf = f_tf(a, b)
+      self.assertAllClose(res_tf, res_jax)
+
   def test_xmap_collective_reduce(self):
-    fm = xmap(lambda a, b: (lax.psum(a * 2, 'a'), b * 4),
+    devices = np.reshape(self.devices, (1, 2))
+
+    f_jax = xmap(lambda a, b: (lax.psum(a * 2, 'a'), b * 4),
               in_axes=(['a', 'b', ...], {0: 'c'}),
               out_axes=(['b', ...], {0: 'c'}),
               axis_resources={'a': 'x', 'b': 'y', 'c': 'x'})
-    ashape = (16, 8, 5)
-    a = jnp.arange(np.prod(ashape)).reshape(ashape)
-    bshape = (2, 7)
-    b = jnp.arange(np.prod(bshape)).reshape(bshape)
-    res_jax = fm(a, b)
-    self.assertAllClose(res_jax, ((a * 2).sum(0), b * 4))
 
-    _log_sharding_annotations(self, fm, [a, b],
-                              experimental_native_lowering=True)
-    res_tf = tf.function(
-          jax2tf.convert(fm, experimental_native_lowering=True),
-          autograph=False, jit_compile=True)(a, b)
-    self.assertAllClose(res_tf, res_jax)
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a, b):
+      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2])
+            )
+        res = (res[0], res[1])
+      else:
+        res = f_converted(a, b)
+      return res
+
+    with Mesh(devices, ('x', 'y')):
+      ashape = (16, 8, 5)
+      a = np.arange(np.prod(ashape)).reshape(ashape)
+      bshape = (2, 7)
+      b = np.arange(np.prod(bshape)).reshape(bshape)
+      res_jax = f_jax(a, b)
+      self.assertAllClose(res_jax, ((a * 2).sum(0), b * 4))
+
+      _log_sharding_annotations(self, f_jax, [a, b],
+                                experimental_native_lowering=True)
+      res_tf = f_tf(a, b)
+      self.assertAllClose(res_tf, res_jax)
+
+  @jtu.ignore_warning(category=UserWarning,
+                      message="all_to_all .* are only implemented properly for TPUs and GPUs .*")
+  def test_shmap_all_to_all(self):
+    if jtu.device_under_test() == "cpu":
+      raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
+    mesh = Mesh(self.devices, axis_names=('x'))
+
+    @partial(pjit.pjit,
+             in_axis_resources=(P('x', None),), out_axis_resources=P(None, 'x'))
+    @partial(shard_map, mesh=mesh,
+             in_specs=(P('x', None),), out_specs=P(None, 'x'))
+    def f_jax(b):  # b: f32[2, 4]
+      return lax.all_to_all(b, 'x', split_axis=1, concat_axis=1, tiled=True)
+
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a):
+      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2])
+            )[0]
+      else:
+        res = f_converted(a)
+      return res
+
+    with mesh:
+      a = np.arange(np.prod(4 * 4)).reshape((4, 4))
+      res_jax = f_jax(a)  # res: f32[2, 8]
+      b0, b1 = np.split(a, 2, axis=0)  # The shard_map in_specs splits on axis 0
+      b00, b01 = np.split(b0, 2, axis=1)  # split_axis=1
+      b10, b11 = np.split(b1, 2, axis=1)
+      b0 = np.concatenate([b00, b10], axis=1)  # concat_axis=1
+      b1 = np.concatenate([b01, b11], axis=1)
+      res = np.concatenate([b0, b1], axis=1)  # out_specs concatenates on axis 1
+      self.assertAllClose(res_jax, res)
+      res_tf = f_tf(a)
+      self.assertAllClose(res_tf, res_jax)
+
+
+  @unittest.skip("TODO(b/268295912): ShardingRemover crash")
+  def test_repro_xla_bug_shmap_collective_permute(self):
+    mesh = Mesh(self.devices, axis_names=('x'))
+
+    @partial(pjit.pjit,
+             in_axis_resources=(P('x', None),), out_axis_resources=P('x', None))
+    @partial(shard_map, mesh=mesh,
+             in_specs=(P('x', None),), out_specs=P('x', None))
+    def f_jax(b):  # b: f32[2, 4]
+      axis_size = lax.psum(1, 'x')
+      perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+      return lax.ppermute(b, 'x', perm=perm)
+
+    with mesh:
+      a = np.arange(np.prod(4 * 4)).reshape((4, 4))
+      res_jax = f_jax(a)
+      b0, b1 = np.split(a, 2, axis=0)  # The shard_map splits on axis 0
+      b0, b1 = b1, b0
+      expected = np.concatenate([b0, b1], axis=0)  # out_specs concatenates on axis 0
+      self.assertAllClose(res_jax, expected)
+
+      _log_sharding_annotations(self, f_jax, [a],
+                                experimental_native_lowering=True,
+                                num_partitions=2, num_replicas=1)
+      # XLA bug: invoke the f_tf without tpu.replicate
+      f_tf = tf.function(
+          jax2tf.convert(f_jax, experimental_native_lowering=True),
+          autograph=False, jit_compile=True)
+
+      res_tf = f_tf(a)
+      self.assertAllClose(res_tf, expected)
+
+  def test_shmap_collective_permute(self):
+    if jtu.device_under_test() == "cpu":
+      raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
+    mesh = Mesh(self.devices, axis_names=('x'))
+
+    @partial(pjit.pjit,
+             in_axis_resources=(P('x', None),), out_axis_resources=P('x', None))
+    @partial(shard_map, mesh=mesh,
+             in_specs=(P('x', None),), out_specs=P('x', None))
+    def f_jax(b):  # b: f32[2, 4]
+      axis_size = lax.psum(1, 'x')
+      perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+      return lax.ppermute(b, 'x', perm=perm)
+
+    @tf.function(autograph=False, jit_compile=True)
+    def f_tf(a):
+      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      if jtu.device_under_test() == "tpu":
+        res = tf.compat.v1.tpu.rewrite(
+            f_converted, [tf.convert_to_tensor(a)],
+            device_assignment=self.device_assignment(
+                computation_shape=[1, 1, 1, 2])
+            )[0]
+      else:
+        res = f_converted(a)
+      return res
+
+    with mesh:
+      a = np.arange(np.prod(4 * 4)).reshape((4, 4))
+      res_jax = f_jax(a)
+      b0, b1 = np.split(a, 2, axis=0)  # The shard_map splits on axis 0
+      b0, b1 = b1, b0
+      expected = np.concatenate([b0, b1], axis=0)  # out_specs concatenates on axis 0
+      self.assertAllClose(res_jax, expected)
+      res_tf = f_tf(a)
+      self.assertAllClose(res_tf, expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
