@@ -1131,3 +1131,5 @@ tf_impl_no_xla[lax.scatter_min_p] = convert_scatter_jax_to_tf(tf.minimum,  tf.ma
 tf_impl_no_xla[lax.scatter_max_p] = convert_scatter_jax_to_tf(tf.maximum,  tf.math.unsorted_segment_max)
 
 tf_impl_no_xla[lax.sort_p] = _unimplemented("sort")
+
+tf_impl_no_xla[lax.reduce_precision_p] = _unimplemented("reduce_precision")
