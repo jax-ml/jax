@@ -104,7 +104,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     # in an error
 
     if jax.config.jax_jit_pjit_api_merge:
-      err_msg = "Devices of all `Array` inputs and outputs should be the same"
+      err_msg = "Received incompatible devices for jitted computation"
     else:
       err_msg = "primitive arguments must be colocated on the same device"
 

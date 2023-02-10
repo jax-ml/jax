@@ -45,6 +45,7 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import profiler
+from jax._src import source_info_util
 from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
@@ -553,20 +554,22 @@ def jaxpr_has_primitive(jaxpr, prim_name: str):
   return False
 
 
-def jaxpr_shardings(jaxpr) -> Iterator[jax.sharding.XLACompatibleSharding]:
+def jaxpr_shardings(jaxpr) -> Iterator[Tuple[jax.sharding.XLACompatibleSharding, str]]:
   from jax.experimental import pjit, shard_map
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
-      yield eqn.params['sharding']
+      yield (eqn.params['sharding'], source_info_util.summarize(eqn.source_info))
     elif eqn.primitive is pjit.pjit_p:
-      yield from eqn.params['in_shardings']
-      yield from eqn.params['out_shardings']
+      source_info = source_info_util.summarize(eqn.source_info)
+      yield from ((i, source_info) for i in eqn.params['in_shardings'])
+      yield from ((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
+      source_info = source_info_util.summarize(eqn.source_info)
       def _names_to_pspec(names):
         ndmin = max(names) + 1 if names else 0
         return PartitionSpec(*(names.get(i) for i in range(ndmin)))
-      yield from (NamedSharding(eqn.params['mesh'], _names_to_pspec(names))
+      yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
                   for names in eqn.params['in_names'])
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)

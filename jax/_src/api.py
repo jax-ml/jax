@@ -689,13 +689,19 @@ def _cpp_jit(
         inline=inline,
         keep_unused=keep_unused))
     execute = None
-    if isinstance(top_trace, core.EvalTrace) and not (
-        jax.config.jax_debug_nans or jax.config.jax_debug_infs):
-      execute = dispatch._xla_call_impl_lazy(fun_, *tracers, **params)
-      out_flat = call_bind_continuation(execute(*args_flat))
-    else:
-      out_flat = call_bind_continuation(
-          top_trace.process_call(primitive, fun_, tracers, params))
+    try:
+      if isinstance(top_trace, core.EvalTrace) and not (
+          jax.config.jax_debug_nans or jax.config.jax_debug_infs):
+        execute = dispatch._xla_call_impl_lazy(fun_, *tracers, **params)
+        out_flat = call_bind_continuation(execute(*args_flat))
+      else:
+        out_flat = call_bind_continuation(
+            top_trace.process_call(primitive, fun_, tracers, params))
+    except pxla.DeviceAssignmentMismatchError as e:
+      fails, = e.args
+      msg = pjit._device_assignment_mismatch_error(
+          fun, fails, in_tree, args_flat, 'jit')
+      raise ValueError(msg) from None
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 

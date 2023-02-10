@@ -1977,7 +1977,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jax_array(True):
       with global_mesh:
         with self.assertRaisesRegex(
-            ValueError, "Pjit's devices and Array's devices should be equal"):
+            ValueError, "Received incompatible devices for pjitted computation"):
           pjit(lambda x: x)(input_array)
 
   def test_array_lower_compile(self):
@@ -2061,15 +2061,15 @@ class ArrayPjitTest(jtu.JaxTestCase):
     m2 = jtu.create_global_mesh((2, 2), ('x', 'y'))
     spec = P('x', 'y')
 
-    a1, _ = create_array(input_shape, m1, spec)
+    a1 = jnp.arange(prod(input_shape)).reshape(input_shape)
 
     with jax_array(True):
       with m1:
         with self.assertRaisesRegex(
-            ValueError, "Pjit's devices and Array's devices should be equal"):
+            ValueError, "Received incompatible devices for pjitted computation"):
           pjit(lambda x, y: (x, y),
-               out_axis_resources=(NamedSharding(m1, spec),
-                                   NamedSharding(m2, spec)))(a1, a1)
+                out_axis_resources=(NamedSharding(m1, spec),
+                                    NamedSharding(m2, spec)))(a1, a1)
 
   def test_array_device_assignment_mismatch_in_and_out_shardings(self):
     input_shape = (8, 2)
@@ -2077,15 +2077,15 @@ class ArrayPjitTest(jtu.JaxTestCase):
     m2 = jtu.create_global_mesh((2, 2), ('x', 'y'))
     spec = P('x', 'y')
 
-    a1, _ = create_array(input_shape, m2, spec)
+    a1 = jnp.arange(prod(input_shape)).reshape(input_shape)
 
     with jax_array(True):
       with m1:
         with self.assertRaisesRegex(
-            ValueError, "Pjit's devices and Array's devices should be equal"):
+            ValueError, "Received incompatible devices for pjitted computation"):
           pjit(lambda x, y: (x, y),
-               in_axis_resources=NamedSharding(m2, spec),
-               out_axis_resources=NamedSharding(m1, spec))(a1, a1)
+                in_axis_resources=NamedSharding(m2, spec),
+                out_axis_resources=NamedSharding(m1, spec))(a1, a1)
 
   def test_mixed_inputs(self):
     input_shape = (8, 2)
@@ -2329,7 +2329,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.create_global_mesh((2, 2), ('x', 'y')):
       with self.assertRaisesRegex(
           ValueError,
-          "Pjit's devices and Array's devices should be equal."):
+          "Received incompatible devices for pjitted computation"):
         pjit(lambda x, y: (x, y))(uarr, carr)
 
   @jax_array(True)
@@ -2353,10 +2353,32 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
     with self.assertRaisesRegex(
         ValueError,
-        "Devices of all `Array` inputs and outputs should be the same. "
-        r"Got array device ids \[0\] on platform.*and "
-        r"another array's device ids \[1\] on platform"):
+        "Received incompatible devices for pjitted computation. Got argument "
+        r"x of.*\<lambda\> with int.*\[3\] and device ids \[0\].*and argument "
+        r"y of.*\<lambda\> with int.*\[3\] and device ids \[1\].*"):
       pjit(lambda x, y: (x, y))(a, b)
+
+  def test_pjit_pytree_inp_device_assignment_mismatch(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    a = jax.device_put(np.array([1, 2, 3]), jax.devices()[0])
+    b = jax.device_put(np.array([4, 5, 6]), jax.devices()[1])
+    c = jax.device_put(np.arange(16).reshape(8, 2),
+                       NamedSharding(mesh, P('x', 'y')))
+
+    msg = ("Received incompatible devices for pjitted computation. Got "
+           r"argument {} of.*<lambda> with int.*\[3\] and device ids \[0\].*and "
+           r"argument {} of.*<lambda> with int.*\[8,2\] and device ids "
+           r"\[0, 1, 2, 3\].*")
+
+    with self.assertRaisesRegex(
+        ValueError, msg.format(r'tuple_inp\[0\]', r'tuple_inp\[1\]\[0\]')):
+      pjit(lambda tuple_inp: tuple_inp)((a, (c, (b))))
+
+    with self.assertRaisesRegex(
+        ValueError, msg.format(r"dict_inp\['a'\]\['b'\]\['c'\]",
+                               r"dict_inp\['a'\]\['b'\]\['g'\]")):
+      inp = {'d': a, 'z': a, 'a': {'f': a, 'y': b, 'b': {'g': c, 'c': a}}}
+      pjit(lambda dict_inp: dict_inp)(inp)
 
   @jax_array(True)
   def test_same_out_sharding_id(self):
@@ -2475,7 +2497,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jax_array(True)
   def test_jit_with_sharding_constraint_committed_inp_error(self):
+    if not jax.config.jax_jit_pjit_api_merge or not jax.config.jax_array:
+      self.skipTest('Requires jit-pjit merge and jax.Array')
+
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    s = NamedSharding(mesh, P('x', 'y'))
 
     @jax.jit
     def sharded_inp(inp):
@@ -2485,11 +2512,30 @@ class ArrayPjitTest(jtu.JaxTestCase):
     committed_inp = jax.device_put(jnp.zeros((8, 2), jnp.bfloat16), jax.devices()[0])
     with self.assertRaisesRegex(
         ValueError,
-        "Devices of all `Array` inputs and outputs should be the same"):
+        "Received incompatible devices for jitted computation. Got argument "
+        r"inp of.*sharded_inp with bfloat16\[8,2\] and device ids \[0\].*"
+        r"with_sharding_constraint.*with device ids \[0, 1, 2, 3\].*"):
       sharded_inp(committed_inp)
+
+    @pjit
+    def my_nested_pjit(inp1, inp2, inp3):
+      @partial(pjit, in_axis_resources=(s, s, s),
+               out_axis_resources=(s, s, s))
+      def f(x, y, z):
+        return x * 2, y * 2, z * 2
+      return f(inp1, inp2, inp3)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Received incompatible devices for pjitted computation. Got argument "
+        r"inp1 of.*my_nested_pjit with bfloat16\[8,2\] and device ids \[0\].*"
+        r"nested pjit.*with device ids \[0, 1, 2, 3\].*"):
+      my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
   @jax_array(True)
   def test_jit_device_with_sharding_constraint_error(self):
+    if not jax.config.jax_jit_pjit_api_merge or not jax.config.jax_array:
+      self.skipTest('Requires jax.Array and jit-pjit merge.')
+
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
 
     @partial(jax.jit, static_argnums=(0, 1), device=jax.devices()[0])
@@ -2497,18 +2543,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
       out = jnp.zeros(shape, jnp.bfloat16)
       return jax.lax.with_sharding_constraint(out, NamedSharding(mesh, pspec))
 
-    # This split is needed because original `jit` adds `device` as a
-    # `devices_from_context` whereas `pjit` passes it as an in_sharding.
-    if jax.config.jax_jit_pjit_api_merge:
-      error_msg = ("Devices of all `Array` inputs and outputs should be the same. "
-                   r"Got array device ids \[0\] on platform.*and "
-                   r"another array's device ids \[0, 1, 2, 3\] on platform")
-    else:
-      error_msg = ("Pjit's devices and Array's devices should be equal. "
-                   r"Got Pjit's device ids \[0\] on platform.*and "
-                   r"Array's device ids \[0, 1, 2, 3\] on platform")
-
-    with self.assertRaisesRegex(ValueError, error_msg):
+    with self.assertRaisesRegex(
+        ValueError,
+        "Received incompatible devices for jitted computation. Got explicit "
+        r"output sharding with device ids \[0\].*with_sharding_constraint.*with "
+        r"device ids \[0, 1, 2, 3\].*"):
       sharded_zeros((4096, 3072), P('x', 'y'))
 
   @jax_array(True)

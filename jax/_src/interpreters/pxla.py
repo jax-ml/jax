@@ -2715,55 +2715,99 @@ def check_if_any_auto(
       return True
   return False
 
+class MismatchType(enum.Enum):
+  ARG_SHARDING = 0
+  OUT_SHARDING = 1
+  SHARDING_INSIDE_COMPUTATION = 2
+  CONTEXT_DEVICES = 3
+  IN_SHARDING = 4
+
+  def __str__(self):
+    if self.name == 'IN_SHARDING':
+      return 'explicit input sharding'
+    elif self.name == 'OUT_SHARDING':
+      return 'explicit output sharding'
+    elif self.name == 'SHARDING_INSIDE_COMPUTATION':
+      return 'with_sharding_constraint or nested pjit or shard_map'
+    elif self.name == 'CONTEXT_DEVICES':
+      return 'devices'
+    return f'{self.name}'
+
+
+@dataclasses.dataclass
+class DeviceAssignmentMismatch:
+  da: Sequence[xc.Device]
+  m_type: MismatchType
+  source_info: Optional[str]
+
+  @property
+  def device_ids(self) -> Sequence[int]:
+    return [d.id for d in self.da]
+
+  @property
+  def platform(self) -> str:
+    return self.da[0].platform.upper()
+
+  def _maybe_api_name(self, api_name) -> str:
+    return f" {api_name}'s" if self.m_type == MismatchType.CONTEXT_DEVICES else ""
+
+  @property
+  def source_info_str(self):
+    return "" if self.source_info is None else f" at {self.source_info}"
+
+  @property
+  def _dev_ids_plat_str(self):
+    return f"device ids {self.device_ids} on platform {self.platform}"
+
+  def _str(self, api_name):
+    return (f"{self._maybe_api_name(api_name)} {self.m_type} with "
+            f"{self._dev_ids_plat_str}{self.source_info_str}")
+
+
+class DeviceAssignmentMismatchError(Exception):
+  pass
+
+
+ShardingInfo = Tuple[Union[sharding_internal.XLACompatibleSharding,
+                           UnspecifiedValue, AUTOAxisResource],
+                     MismatchType, Optional[str]]
 
 def _get_and_check_device_assignment(
-    shardings: Iterable[Union[sharding_internal.XLACompatibleSharding,
-                              UnspecifiedValue, AUTOAxisResource]],
-    devices: Optional[Sequence[xc.Device]]
+    shardings: Iterable[ShardingInfo],
+    devices: Optional[Sequence[xc.Device]],
 ) -> Tuple[xla.Backend, Sequence[xc.Device]]:
   from jax._src.api import local_devices
 
-  first_device_assignment = None
+  first_sharding_info = None
   if devices is None:
     devices = []
   else:
     devices = list(devices)
 
-  for i in shardings:
+  for i, s_type, source_info in shardings:
     if is_auto(i) or _is_unspecified(i):
       continue
-    # Assign `first_device_assignment` after `AUTO` and `UNSPECIFIED` have been
+    # Assign `first_sharding_info` after `AUTO` and `UNSPECIFIED` have been
     # skipped.
-    if first_device_assignment is None:
-      first_device_assignment = list(i._device_assignment)  # type: ignore
+    if first_sharding_info is None:
+      first_sharding_info = (list(i._device_assignment), s_type, source_info)  # type: ignore
     arr_device_assignment = list(i._device_assignment)  # type: ignore
     if not devices:
-      if first_device_assignment != arr_device_assignment:
-        p1 = first_device_assignment[0].platform.upper()
-        fda_ids = [d.id for d in first_device_assignment]
-        a_ids = [d.id for d in arr_device_assignment]
-        p2 = arr_device_assignment[0].platform.upper()
-        raise ValueError(
-            "Devices of all `Array` inputs and outputs should be "
-            "the same. "
-            f"Got array device ids {fda_ids} on platform {p1} and "
-            f"another array's device ids {a_ids} on platform {p2}")
+      if first_sharding_info[0] != arr_device_assignment:
+        raise DeviceAssignmentMismatchError([
+            DeviceAssignmentMismatch(*first_sharding_info),
+            DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
     else:
       if devices != arr_device_assignment:
-        p1 = devices[0].platform.upper()
-        dev_ids = [d.id for d in devices]
-        a_ids = [d.id for d in arr_device_assignment]
-        p2 = arr_device_assignment[0].platform.upper()
-        raise ValueError(
-            "Pjit's devices and Array's devices should be equal. "
-            f"Got Pjit's device ids {dev_ids} on platform {p1} and "
-            f"Array's device ids {a_ids} on platform {p2}")
-  if first_device_assignment is None and devices:
+        raise DeviceAssignmentMismatchError([
+            DeviceAssignmentMismatch(devices, MismatchType.CONTEXT_DEVICES, None),
+            DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+  if first_sharding_info is None and devices:
     final_device_assignment = devices
-  elif first_device_assignment is None:
+  elif first_sharding_info is None:
     final_device_assignment = [config.jax_default_device or local_devices()[0]]
   else:
-    final_device_assignment = first_device_assignment
+    final_device_assignment = first_sharding_info[0]
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 
@@ -2807,8 +2851,12 @@ def lower_sharding_computation(
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   jaxpr_sharding = list(dispatch.jaxpr_shardings(jaxpr))
-  backend, device_assignment = _get_and_check_device_assignment(it.chain(
-      in_shardings, out_shardings, jaxpr_sharding), devices_from_context)  # type: ignore
+  backend, device_assignment = _get_and_check_device_assignment(
+      it.chain([(i, MismatchType.ARG_SHARDING, None) for i in in_shardings],
+               [(o, MismatchType.OUT_SHARDING, None) for o in out_shardings],  # type: ignore
+               [(js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)  # type: ignore
+                for js, source_info in jaxpr_sharding]),
+      devices_from_context)
 
   # TODO(yashkatariya): Make this logic work after DCE because there can be
   # equations inside the jaxpr that don't affect the output so whether the
@@ -2817,7 +2865,7 @@ def lower_sharding_computation(
       devices_from_context or
       len(device_assignment) > 1 or
       any(not _is_unspecified(i) for i in in_shardings) or
-      any(not _is_unspecified(js) for js in jaxpr_sharding) or
+      any(not _is_unspecified(js) for js, _ in jaxpr_sharding) or  # type: ignore
       any(not _is_unspecified(o) for o in out_shardings))  # type: ignore
 
   in_shardings = tuple(sharding_internal.OpShardingSharding.get_replicated(device_assignment)

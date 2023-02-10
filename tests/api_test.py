@@ -766,7 +766,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       return jax.jit(lambda x: x + 1, backend="cpu")(x)
 
     if jax.config.jax_jit_pjit_api_merge:
-      msg = 'Devices of all `Array` inputs and outputs should be the same'
+      msg = 'Received incompatible devices for jitted computation'
     else:
       msg = ("Outer-jit backend specification .* must match explicit inner-jit "
              "backend specification cpu.")

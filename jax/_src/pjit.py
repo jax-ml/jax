@@ -14,6 +14,7 @@
 
 import dataclasses
 from enum import IntEnum
+import inspect
 import numpy as np
 from collections import OrderedDict, Counter
 from typing import (Callable, Sequence, Tuple, Union, cast, List, Optional,
@@ -59,7 +60,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import prefix_errors
+from jax._src.tree_util import (prefix_errors, _generate_key_paths)
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
@@ -111,13 +112,86 @@ def _check_all_or_none_unspecified(axis_resources, name):
                        '`pjit._UNSPECIFIED`.')
   return unspecified
 
-def _python_pjit_helper(infer_params_fn, *args, **kwargs):
-  args_flat, _, params, _, out_tree, _ = infer_params_fn(*args, **kwargs)
+
+def _try_infer_args(f, tree):
+  dummy_args = tree_unflatten(tree, [False] * tree.num_leaves)
+  try:
+    return inspect.signature(f).bind(*dummy_args)
+  except (TypeError, ValueError):
+    return None
+
+
+def _find_arg_mismatch(arg_list, fails, fun_name):
+  first_err, second_err = fails
+  mismatched_args_msg = []
+  for name, inp_da, aval in arg_list:
+    if first_err.m_type == pxla.MismatchType.ARG_SHARDING:
+      if first_err.da == inp_da:
+        mismatched_args_msg.append(
+            (f"argument {name} of {fun_name} with {aval.str_short()} and "
+             f"{first_err._dev_ids_plat_str}"))
+        break
+
+  for name, inp_da, aval in arg_list:
+    if second_err.m_type == pxla.MismatchType.ARG_SHARDING:
+      if second_err.da == inp_da:
+        mismatched_args_msg.append(
+            (f"argument {name} of {fun_name} with {aval.str_short()} and "
+             f"{second_err._dev_ids_plat_str}"))
+        break
+  return mismatched_args_msg
+
+
+def _device_assignment_mismatch_error(fun, fails, in_tree, args_flat, api_name):
+  sig = _try_infer_args(fun, in_tree)
+  args = tree_unflatten(in_tree, args_flat)
+  args_aug = _generate_key_paths(args)
+
+  arg_list = []
+  for arg_key, val in args_aug:
+    ak, *rem_keys = arg_key.keys
+    if sig is not None:
+      loc = ''.join(k.pprint() for k in rem_keys)
+      arg_name = f'{list(sig.arguments.keys())[ak.key]}{loc}'
+    else:
+      arg_name = ''
+    da = val.sharding._device_assignment if hasattr(val, 'sharding') else None
+    arg_list.append((arg_name, da, shaped_abstractify(val)))
+
+  fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
+  mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
+
+  if len(mismatched_args_msg) == 2:
+    first, second = mismatched_args_msg  # pylint: disable=unbalanced-tuple-unpacking
+    extra_msg = f" Got {first} and {second}"
+  elif len(mismatched_args_msg) == 1:
+    first, second  = fails
+    # Choose the failure left which is not already covered by ARG_SHARDING.
+    left = second if first.m_type == pxla.MismatchType.ARG_SHARDING else first
+    extra_msg = f" Got {mismatched_args_msg[0]} and{left._str(api_name)}"
+  else:
+    first, second = fails
+    extra_msg = f" Got{first._str(api_name)} and{second._str(api_name)}"
+  msg = (f"Received incompatible devices for {api_name}ted computation.{extra_msg}")
+  return msg
+
+
+def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
+  args_flat, _, params, in_tree, out_tree, _ = infer_params_fn(
+      *args, **kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
-  out_flat = pjit_p.bind(*args_flat, **params)
+  try:
+    out_flat = pjit_p.bind(*args_flat, **params)
+  except pxla.DeviceAssignmentMismatchError as e:
+    fails, = e.args
+    api_name = 'jit' if params['resource_env'] is None else 'pjit'
+    msg = _device_assignment_mismatch_error(
+        fun, fails, in_tree, args_flat, api_name)
+    raise ValueError(msg) from None
   outs = tree_unflatten(out_tree, out_flat)
   return outs, out_flat, out_tree, args_flat
+
 
 def _python_pjit(fun: Callable, infer_params_fn):
 
@@ -126,7 +200,7 @@ def _python_pjit(fun: Callable, infer_params_fn):
   def wrapped(*args, **kwargs):
     if config.jax_disable_jit:
       return fun(*args, **kwargs)
-    return _python_pjit_helper(infer_params_fn, *args, **kwargs)[0]
+    return _python_pjit_helper(fun, infer_params_fn, *args, **kwargs)[0]
 
   return wrapped
 
@@ -153,7 +227,7 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
   @api_boundary
   def cache_miss(*args, **kwargs):
     outs, out_flat, out_tree, args_flat = _python_pjit_helper(
-        infer_params_fn, *args, **kwargs)
+        fun, infer_params_fn, *args, **kwargs)
 
     executable = _read_most_recent_pjit_call_executable()
 
@@ -1081,13 +1155,15 @@ def _resolve_in_shardings(
       if isinstance(arg_s, PmapSharding):
         continue
       if getattr(a, '_committed', True):
-        committed_arg_shardings.append(arg_s)
+        committed_arg_shardings.append((arg_s, pxla.MismatchType.ARG_SHARDING, None))
 
   # Check if the device_assignment across inputs, outputs and arguments is the
   # same.
   pxla._get_and_check_device_assignment(
       it.chain(
-          committed_arg_shardings, pjit_in_shardings, out_shardings),
+          committed_arg_shardings,
+          [(i, pxla.MismatchType.IN_SHARDING, None) for i in pjit_in_shardings],
+          [(o, pxla.MismatchType.OUT_SHARDING, None) for o in out_shardings]),
       (None if pjit_mesh is None or pjit_mesh.empty else list(pjit_mesh.devices.flat)))
 
   resolved_in_shardings = []
