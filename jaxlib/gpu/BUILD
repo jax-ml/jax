@@ -16,7 +16,10 @@
 
 licenses(["notice"])
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = ["//third_party/py/jax:license"],
+    default_visibility = ["//:__subpackages__"],
+)
 
 exports_files(srcs = [
     "blas.cc",

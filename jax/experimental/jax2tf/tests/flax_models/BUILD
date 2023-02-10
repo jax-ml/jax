@@ -16,6 +16,7 @@
 licenses(["notice"])
 
 package(
+    default_applicable_licenses = ["//third_party/py/jax:license"],
     default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
 )
 

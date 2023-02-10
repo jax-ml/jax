@@ -21,6 +21,7 @@ load(
 licenses(["notice"])
 
 package(
+    default_applicable_licenses = ["//third_party/py/jax:license"],
     default_visibility = ["//visibility:private"],
 )
 

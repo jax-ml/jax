@@ -17,6 +17,8 @@ load(
     "tf_cc_binary",
 )
 
+package(default_applicable_licenses = ["//third_party/py/jax:license"])
+
 licenses(["notice"])
 
 tf_cc_binary(

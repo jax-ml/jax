@@ -24,7 +24,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//visibility:private"])
+package(
+    default_applicable_licenses = ["//third_party/py/jax:license"],
+    default_visibility = ["//visibility:private"],
+)
 
 jax_generate_backend_suites()
 
