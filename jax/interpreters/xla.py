@@ -17,8 +17,6 @@ from jax._src.interpreters.xla import (
   Backend as Backend,
   Buffer as Buffer,
   ConcreteArray as ConcreteArray,
-  Device as Device,
-  DeviceArray as DeviceArray,
   Shape as Shape,
   ShapedArray as ShapedArray,
   SpatialSharding as SpatialSharding,
@@ -70,3 +68,33 @@ from jax._src.dispatch import (
   backend_compile as backend_compile,
   device_put as device_put,
 )
+
+
+from jax._src.interpreters.xla import (
+  Device as _deprecated_Device,
+  DeviceArray as _deprecated_DeviceArray,
+)
+
+_deprecations = {
+  # Added Feb 9, 2023:
+  "Device": (
+    "jax.interpreters.xla.Device is deprecated. Use jax.Device instead.",
+    _deprecated_Device,
+  ),
+  "DeviceArray": (
+    "jax.interpreters.xla.DeviceArray is deprecated. Use jax.Array instead.",
+    _deprecated_DeviceArray,
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.interpreters.xla import (
+    Device as Device,
+    DeviceArray as DeviceArray,
+  )
+del typing
