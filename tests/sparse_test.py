@@ -2631,9 +2631,10 @@ class SparseSolverTest(sptu.SparseTestCase):
     reorder=[0, 1, 2, 3],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/cusolver")
-  @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
-  @jtu.skip_on_devices("rocm")
+  @unittest.skipIf(jtu.device_under_test() == "tpu", "test requires CPU or GPU")
+  @unittest.skipIf(jtu.device_under_test() == "cuda" and not GPU_LOWERING_ENABLED,
+                   "test requires cusparse/cusolver")
+  @jtu.skip_on_devices("rocm", "test n gpu requires cusolver")
   def test_sparse_qr_linear_solver(self, size, reorder, dtype):
     rng = rand_sparse(self.rng())
     a = rng((size, size), dtype)
