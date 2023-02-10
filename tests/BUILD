@@ -624,6 +624,13 @@ jax_test(
 )
 
 jax_test(
+    name = "pytorch_interoperability_test",
+    srcs = ["pytorch_interoperability_test.py"],
+    disable_backends = ["tpu"],
+    deps = py_deps("torch"),
+)
+
+jax_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
 )
