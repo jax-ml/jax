@@ -101,7 +101,7 @@ traceback_util.register_exclusion(__file__)
 
 _dtype = partial(dtypes.dtype, canonicalize=True)
 
-AxisName = Any
+AxisName = Hashable
 
 Device = xc.Device
 
@@ -1228,7 +1228,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   check_callable(fun)
   argnums = core.concrete_or_error(_ensure_index, argnums)
-  reduce_axes = _ensure_str_tuple(reduce_axes)
+  reduce_axes = _ensure_str_tuple(reduce_axes)  # type: ignore
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   @api_boundary
@@ -1593,9 +1593,10 @@ def _split(x, indices, axis):
 def vmap(fun: F,
          in_axes: Union[int, Sequence[Any]] = 0,
          out_axes: Any = 0,
-         axis_name: Optional[Hashable] = None,
+         axis_name: Optional[AxisName] = None,
          axis_size: Optional[int] = None,
-         spmd_axis_name: Optional[Hashable] = None) -> F:
+         spmd_axis_name: Optional[Union[AxisName, Tuple[AxisName, ...]]] = None
+         ) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1733,6 +1734,8 @@ def vmap(fun: F,
     docstr += fun.__doc__
 
   axis_name = core.no_axis_name if axis_name is None else axis_name
+  if spmd_axis_name is not None and type(spmd_axis_name) is not tuple:
+    spmd_axis_name = (spmd_axis_name,)
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -2773,7 +2776,7 @@ def vjp(  # type: ignore
   -0.2524413
   """
   check_callable(fun)
-  reduce_axes = _ensure_str_tuple(reduce_axes)
+  reduce_axes = _ensure_str_tuple(reduce_axes)  # type: ignore
   return _vjp(
       lu.wrap_init(fun), *primals, has_aux=has_aux, reduce_axes=reduce_axes)
 
