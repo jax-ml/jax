@@ -662,9 +662,16 @@ get an error that `a` cannot be derived:
 
 ```python
 jax2tf.convert(lambda x_unused, y: y * 2.,
-               polymorphic_shapes=["b, a", "b, 2 * a"])(x, y)
+               polymorphic_shapes=["b, a", "b, _"])(x, y)
 ```
 
+An input is still considered unused if the computation uses only its shape.
+The code below gives the same error:
+
+```python
+jax2tf.convert(lambda x_unused, y: y * x_unused.shape[0],
+               polymorphic_shapes=["b, a", "b, _"])(x, y)
+```
 
 ## Known issues
 

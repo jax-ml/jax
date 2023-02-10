@@ -1023,6 +1023,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b1 * b1"])
 
+    # It is not sufficient to just use the shape of an input; it is still unused
+    if config.jax2tf_default_experimental_native_lowering:
+      with self.assertRaisesRegex(KeyError,
+                                  "Encountered dimension variable 'b1` that is not appearing in the shapes"):
+        check_shape_poly(self,
+            lambda x_unused, y: y + x_unused.shape[0],
+            arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],
+            input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+            polymorphic_shapes=["b1", "b2"])
+
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
 
@@ -1523,7 +1533,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_shape_as_array(self):
     def f_jax(x):
       # The entire x.shape is passed to jnp.array
-      return jnp.sum(jnp.array(x.shape)).astype(np.int32)
+      return x + jnp.sum(jnp.array(x.shape)).astype(np.int32)
 
     check_shape_poly(self,
                      f_jax,
@@ -1540,7 +1550,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       d1 = x.shape[0] + jnp.array(4)
       if isinstance(d1, core.Tracer):
         self.assertTrue(d1.aval.weak_type), d1
-      return d0 + np.array(5., dtype=np.float32) + d1
+      return d0 + np.array(5., dtype=np.float32) + d1 + x[0]
 
     with numpy_dtype_promotion("strict"):
       # strict type promotion is sensitive to weak_types
@@ -1621,15 +1631,15 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 4), _f32), RandArg((2, 3, 4), _f32)],
                 poly_axes=[0, 1]),
     PolyHarness("add_transpose", "",
-                jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=False) + x)),
+                jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=False) + jnp.sin(x))),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 poly_axes=[0]),
     PolyHarness("arange", "start",
-                lambda op: jnp.arange(2 * op.shape[0], dtype=_f32),
+                lambda op: jnp.arange(2 * op.shape[0], dtype=_f32) + op[0],
                 arg_descriptors=[RandArg((3,), _f32)],
                 poly_axes=[0]).both_enable_and_disable_xla(),
     PolyHarness("arange", "start_no_dtype",
-                lambda op: jnp.arange(op.shape[0]),
+                lambda op: jnp.arange(op.shape[0]) + op[0],
                 arg_descriptors=[RandArg((3,), _f32)],
                 poly_axes=[0]),
     PolyHarness("arange", "error1",
@@ -1693,8 +1703,9 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 1, 4), _f32)],
                 poly_axes=[(0, 2)]),
     PolyHarness("broadcast_in_dim", "transpose",
-                jax.grad(lambda x: jnp.sum(lax.broadcast_in_dim(x, [2, x.shape[0], 5, x.shape[2], 4],
-                                               broadcast_dimensions=(1, 2, 3)))),
+                jax.grad(lambda x: jnp.sum(
+                    lax.broadcast_in_dim(jnp.sin(x), [2, x.shape[0], 5, x.shape[2], 4],
+                                         broadcast_dimensions=(1, 2, 3)))),
                 arg_descriptors=[RandArg((3, 1, 4), _f32)],
                 poly_axes=[(0, 2)]),
     PolyHarness("clamp", "",
@@ -1711,7 +1722,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
                 poly_axes=[(0, 1)]),
     PolyHarness("concatenate", "grad",
-                jax.grad(lambda x: jnp.sum(jnp.concatenate([x, x], axis=0))),
+                jax.grad(lambda x: jnp.sum(jnp.concatenate([x, jnp.sin(x)], axis=0))),
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
                 poly_axes=[(0, 1)]),
 
