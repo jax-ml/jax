@@ -133,6 +133,7 @@ jax.scipy.special
    ndtr
    ndtri
    polygamma
+   spence
    sph_harm
    xlog1py
    xlogy
