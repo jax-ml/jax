@@ -19,7 +19,7 @@ from absl.testing import absltest
 import jax
 from jax.config import config
 import jax.dlpack
-from jax._src.lib import xla_bridge, xla_client
+from jax._src.lib import xla_bridge, xla_client, xla_extension_version
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 
@@ -38,19 +38,19 @@ torch_dtypes = [jnp.int8, jnp.int16, jnp.int32, jnp.int64,
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
 empty_array_shapes = []
-empty_array_shapes += [(0,), (0, 4), (3, 0),]
+empty_array_shapes += [(0,), (0, 4), (3, 0), (2, 0, 1)]
 nonempty_nonscalar_array_shapes += [(3, 1), (1, 4), (2, 1, 4)]
 
 nonempty_array_shapes = [()] + nonempty_nonscalar_array_shapes
 all_shapes = nonempty_array_shapes + empty_array_shapes
 
+@unittest.skipIf(not torch, "Test requires PyTorch")
 class DLPackTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     if jtu.device_under_test() == "tpu":
       self.skipTest("DLPack not supported on TPU")
 
-  @unittest.skipIf(not torch, "Test requires PyTorch")
   def testTorchToJaxFailure(self):
     x = torch.arange(6).reshape((2, 3))
     x = x.cuda() if jtu.device_under_test() == "gpu" else x
@@ -65,13 +65,10 @@ class DLPackTest(jtu.JaxTestCase):
       xla_client._xla.dlpack_managed_tensor_to_buffer(
           y, client)
 
-  @jtu.sample_product(
-    shape=all_shapes,
-    dtype=torch_dtypes,
-  )
-  @unittest.skipIf(not torch, "Test requires PyTorch")
+  @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
   def testJaxToTorch(self, shape, dtype):
-    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64]:
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
+                                            jnp.complex128]:
       self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
@@ -85,13 +82,37 @@ class DLPackTest(jtu.JaxTestCase):
     else:
       self.assertAllClose(np, y.cpu().numpy())
 
-  @unittest.skipIf(not torch, "Test requires PyTorch")
   def testTorchToJaxInt64(self):
     # See https://github.com/google/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         torch.utils.dlpack.to_dlpack(torch.ones((2, 3), dtype=torch.int64)))
     dtype_expected = jnp.int64 if config.x64_enabled else jnp.int32
     self.assertEqual(x.dtype, dtype_expected)
+
+
+  @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
+  @unittest.skipIf(xla_extension_version < 127,
+                   "Test requires jaxlib 0.4.4 or newer")
+  def testTorchToJax(self, shape, dtype):
+    if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
+                                            jnp.complex128]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
+
+    rng = jtu.rand_default(self.rng())
+    x_np = rng(shape, dtype)
+    if dtype == jnp.bfloat16:
+      x = torch.tensor(x_np.view(jnp.int16)).view(torch.bfloat16)
+    else:
+      x = torch.tensor(x_np)
+    x = x.cuda() if jtu.device_under_test() == "gpu" else x
+    x = x.contiguous()
+    y = jax.dlpack.from_dlpack(torch.utils.dlpack.to_dlpack(x))
+    self.assertAllClose(x_np, y)
+
+    # Verify the resulting value can be passed to a jit computation.
+    z = jax.jit(lambda x: x + 1)(y)
+    self.assertAllClose(x_np + dtype(1), z)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
