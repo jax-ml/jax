@@ -622,5 +622,29 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CompileAndCheck(lsp_cluster.vq.vq, args_maker)
 
 
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=float_dtypes,
+  )
+  def test_spence(self, shape, dtype):
+    rng = jtu.rand_positive(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    with self.subTest('Test against SciPy'):
+      self._CheckAgainstNumpy(osp_special.spence, lsp_special.spence, args_maker,
+                              rtol=1e-8, check_dtypes=False)
+
+    with self.subTest('Test JIT compatibility'):
+      self._CompileAndCheck(lsp_special.spence, args_maker)
+
+    # This function is not defined for negative values, this makes sure they are nan
+    with self.subTest('Test Negative Values'):
+      x = -rng(shape, dtype)
+      nan_array = jnp.nan * jnp.ones_like(x)
+      actual = lsp_special.spence(x)
+      self.assertArraysEqual(actual, nan_array, check_dtypes=False)
+
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
