@@ -3255,3 +3255,20 @@ def _make_iota_2x32_shape_harness(shape):
 
 for shape in [(3,), (5, 7, 4), (100, 100)]:
   _make_iota_2x32_shape_harness(shape)
+
+
+for in_dtype in jtu.dtypes.all_floating:
+  for out_dtype in jtu.dtypes.all_floating:
+    out_iinfo = dtypes.finfo(out_dtype)
+    for shape in [(), (5, 7)]:
+        define(
+            lax.reduce_precision_p,
+            f"in={jtu.format_shape_dtype_string(shape, in_dtype)}_out={jtu.format_shape_dtype_string(shape, out_dtype)}",
+            lambda x, exp_bits, mant_bits: lax.reduce_precision(x,
+                                                                exponent_bits=exp_bits,
+                                                                mantissa_bits=mant_bits),
+            [RandArg(shape, in_dtype),
+             StaticArg(out_iinfo.nexp), StaticArg(out_iinfo.nmant)],
+            shape=shape,
+            dtype=in_dtype,
+            out_dtype=out_dtype)

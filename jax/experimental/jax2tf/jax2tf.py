@@ -1309,7 +1309,6 @@ tf_not_yet_impl = [
     "clz",
     "igamma_grad_a",
     "random_gamma_grad",
-    "reduce_precision",
     "reduce_xor",
     "schur",
     "closed_call",
@@ -3219,6 +3218,12 @@ def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   return dim_tf
 
 tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
+
+def _reduce_precision(x, *, exponent_bits, mantissa_bits):
+  return tfxla.reduce_precision(x, exponent_bits=exponent_bits,
+                                mantissa_bits=mantissa_bits)
+
+tf_impl[lax.reduce_precision_p] = _reduce_precision
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""
