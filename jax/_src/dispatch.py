@@ -22,7 +22,7 @@ import itertools
 import time
 from typing import (
     Any, Callable, Dict, Iterable, Iterator, Optional, Protocol,
-    Sequence, Set, Tuple, List, Type, Union)
+    Sequence, Set, Tuple, List, Type, Union, NamedTuple)
 import logging
 import os
 import re
@@ -555,18 +555,28 @@ def jaxpr_has_primitive(jaxpr, prim_name: str):
   return False
 
 
-def jaxpr_shardings(jaxpr) -> Iterator[Tuple[jax.sharding.XLACompatibleSharding, str]]:
+class SourceInfo(NamedTuple):
+  source_info: str
+  eqn_name: str
+
+
+def jaxpr_shardings(
+    jaxpr) -> Iterator[Tuple[jax.sharding.XLACompatibleSharding, SourceInfo]]:
   from jax.experimental import pjit, shard_map
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
-      yield (eqn.params['sharding'], source_info_util.summarize(eqn.source_info))
+      source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                eqn.primitive.name)
+      yield (eqn.params['sharding'], source_info)
     elif eqn.primitive is pjit.pjit_p:
-      source_info = source_info_util.summarize(eqn.source_info)
+      source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                eqn.primitive.name)
       yield from ((i, source_info) for i in eqn.params['in_shardings'])
       yield from ((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
-      source_info = source_info_util.summarize(eqn.source_info)
+      source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                eqn.primitive.name)
       def _names_to_pspec(names):
         ndmin = max(names) + 1 if names else 0
         return PartitionSpec(*(names.get(i) for i in range(ndmin)))

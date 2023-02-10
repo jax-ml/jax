@@ -2727,8 +2727,6 @@ class MismatchType(enum.Enum):
       return 'explicit input sharding'
     elif self.name == 'OUT_SHARDING':
       return 'explicit output sharding'
-    elif self.name == 'SHARDING_INSIDE_COMPUTATION':
-      return 'with_sharding_constraint or nested pjit or shard_map'
     elif self.name == 'CONTEXT_DEVICES':
       return 'devices'
     return f'{self.name}'
@@ -2738,7 +2736,7 @@ class MismatchType(enum.Enum):
 class DeviceAssignmentMismatch:
   da: Sequence[xc.Device]
   m_type: MismatchType
-  source_info: Optional[str]
+  source_info: Optional[dispatch.SourceInfo]
 
   @property
   def device_ids(self) -> Sequence[int]:
@@ -2753,14 +2751,18 @@ class DeviceAssignmentMismatch:
 
   @property
   def source_info_str(self):
-    return "" if self.source_info is None else f" at {self.source_info}"
+    return "" if self.source_info is None else f" at {self.source_info.source_info}"
 
   @property
   def _dev_ids_plat_str(self):
     return f"device ids {self.device_ids} on platform {self.platform}"
 
+  def m_type_str(self, api_name):
+    return (f'{self.source_info.eqn_name} inside {api_name}'
+            if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
+
   def _str(self, api_name):
-    return (f"{self._maybe_api_name(api_name)} {self.m_type} with "
+    return (f"{self._maybe_api_name(api_name)} {self.m_type_str(api_name)} with "
             f"{self._dev_ids_plat_str}{self.source_info_str}")
 
 
@@ -2768,9 +2770,10 @@ class DeviceAssignmentMismatchError(Exception):
   pass
 
 
-ShardingInfo = Tuple[Union[sharding_internal.XLACompatibleSharding,
-                           UnspecifiedValue, AUTOAxisResource],
-                     MismatchType, Optional[str]]
+ShardingInfo = Tuple[
+    Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue,
+          AUTOAxisResource],
+    MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
 
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
