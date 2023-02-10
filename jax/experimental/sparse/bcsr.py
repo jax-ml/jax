@@ -37,14 +37,13 @@ from jax.experimental.sparse.util import (
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
-from jax._src.lax.lax import DotDimensionNumbers
+from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike
-
 
 
 def bcsr_eliminate_zeros(mat: BCSR, nse: Optional[int] = None) -> BCSR:
@@ -86,7 +85,6 @@ def _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None)
                               indices_sorted=spinfo.indices_sorted,
                               unique_indices=spinfo.unique_indices)
   return batched_data, batched_indices, batched_indptr, batched_spinfo
-
 
 
 class BCSRProperties(NamedTuple):
@@ -549,45 +547,51 @@ def _bcsr_dot_general_abstract_eval(lhs_data, lhs_indices, lhs_indptr, rhs, *,
   return core.ShapedArray(out_shape, lhs_data.dtype)
 
 
-# def _bcsr_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, lhs_indptr,
-#                               rhs, *, dimension_numbers, lhs_spinfo):
-#   del lhs_data
-#   return _bcsr_dot_general(lhs_data_dot, lhs_indices, lhs_indptr, rhs,
-#                            dimension_numbers=dimension_numbers,
-#                            lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+                              dimension_numbers, lhs_spinfo):
+  del lhs_data
+  return _bcsr_dot_general(lhs_data_dot, lhs_indices, lhs_indptr, rhs,
+                           dimension_numbers=dimension_numbers,
+                           lhs_spinfo=lhs_spinfo)
 
 
-# def _bcsr_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, lhs_indptr, rhs,
-#                               *, dimension_numbers, lhs_spinfo):
-#   del rhs
-#   return _bcsr_dot_general(lhs_data, lhs_indices, lhs_indptr, rhs_dot,
-#                            dimension_numbers=dimension_numbers,
-#                            lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+                              dimension_numbers, lhs_spinfo):
+  del rhs
+  return _bcsr_dot_general(lhs_data, lhs_indices, lhs_indptr, rhs_dot,
+                           dimension_numbers=dimension_numbers,
+                           lhs_spinfo=lhs_spinfo)
 
 
-# def _bcsr_dot_general_transpose(ct, lhs_data, lhs_indices, lhs_inptr, rhs, *,
-#                                  dimension_numbers, lhs_spinfo):
-#   lhs_bcoo_indices = _bcsr_to_bcoo(
-#     lhs_indices, lhs_inptr, shape=lhs_spinfo.shape)
-#   return bcoo._bcoo_dot_general_transpose(
-#       ct, lhs_data, lhs_bcoo_indices, rhs, dimension_numbers=dimension_numbers,
-#       lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_transpose(ct, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+                                 dimension_numbers, lhs_spinfo):
+  # TODO(jakevdp): implement this in terms of bcsr_dot_general
+  lhs_bcoo_indices = _bcsr_to_bcoo(
+    lhs_indices, lhs_indptr, shape=lhs_spinfo.shape)
+  data_out, _, rhs_out = bcoo._bcoo_dot_general_transpose(
+      ct, lhs_data, lhs_bcoo_indices, rhs, dimension_numbers=dimension_numbers,
+      lhs_spinfo=lhs_spinfo)
+  return data_out, lhs_indices, lhs_indptr, rhs_out
 
 
-# def _bcsr_dot_general_batch_rule(batched_args, batch_dims, *,
-#                                  dimension_numbers, lhs_spinfo):
-#   lhs_data, lhs_indices, lhs_indptr, rhs = batched_args
-#   lhs_bcoo_indices = _bcsr_to_bcoo(
-#     lhs_indices, lhs_indptr, shape=lhs_spinfo.shape)
-#   return bcoo._bcoo_dot_general_batch_rule(
-#       (lhs_data, lhs_bcoo_indices, rhs), batch_dims,
-#       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_batch_rule(batched_args, batch_dims, *,
+                                 dimension_numbers, lhs_spinfo):
+  *lhs_args, rhs = batched_args
+  *lhs_dims, rhs_bdim = batch_dims
+  *new_lhs_args, new_lhs_spinfo = _bcsr_batch_dims_to_front(
+    lhs_args, lhs_dims, lhs_spinfo,
+    batch_size=None if rhs_bdim is None else rhs.shape[rhs_bdim])
+  new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
+      (len(lhs_spinfo.shape), rhs.ndim), (0, rhs_bdim), dimension_numbers)
+  batched_out = _bcsr_dot_general(*new_lhs_args, rhs, lhs_spinfo=new_lhs_spinfo,
+                                  dimension_numbers=new_dimension_numbers)
+  return batched_out, result_batch_dim
 
 
-# ad.defjvp(bcsr_dot_general_p, _bcsr_dot_general_jvp_lhs, None,
-#           _bcsr_dot_general_jvp_rhs)
-# ad.primitive_transposes[bcsr_dot_general_p] = _bcsr_dot_general_transpose
-# batching.primitive_batchers[bcsr_dot_general_p] = _bcsr_dot_general_batch_rule
+ad.defjvp(bcsr_dot_general_p, _bcsr_dot_general_jvp_lhs, None, None,
+          _bcsr_dot_general_jvp_rhs)
+ad.primitive_transposes[bcsr_dot_general_p] = _bcsr_dot_general_transpose
+batching.primitive_batchers[bcsr_dot_general_p] = _bcsr_dot_general_batch_rule
 
 def _bcsr_dot_general_gpu_lowering(
     csr_matvec_lowering, csr_matmat_lowering,
