@@ -42,7 +42,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 import jax
 from jax._src.numpy import lax_numpy
 from jax._src import dtypes
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lax import lax
 from jax._src.typing import DimSize, Shape
@@ -207,7 +207,13 @@ class _DimAtom:
 
   def evaluate(self, env: ShapeEnv):
     if self.var is not None:
-      return env[self.var]
+      try:
+        return env[self.var]
+      except KeyError:
+        err_msg = (
+            f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the used function arguments.\n"
+            "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
+        raise KeyError(err_msg)
     else:
       operand_values = [opnd.evaluate(env) for opnd in self.operands]
       div_mod = divmod(*operand_values)  # type: ignore
