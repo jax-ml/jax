@@ -116,15 +116,30 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
       return tf.TensorSpec(a_tf_shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 
+    def check_tf_result(r_tf):
+      # Check that the TF function returns values of expected types. This
+      # improves error reporting, preventing hard-to-diagnose errors downstream
+      try:
+        jax2tf_internal._tfval_to_tensor_jax_dtype(r_tf)
+      except Exception as e:
+        msg = ("The called TF function returns a result that is not "
+               f"convertible to JAX: {r_tf}.")
+        raise ValueError(msg) from e
+
     res_treedef = None  # We'll store here the result treedef
+    res_tf_flat = None  # For error reporting
     # The function below will be called at least once, either in eager
     # or in graph mode.
     def callable_flat_tf(*args_tf_flat: TfVal) -> Sequence[TfVal]:
       args_tf = args_treedef.unflatten(args_tf_flat)
       res_tf = callable_tf(*args_tf)
-      nonlocal res_treedef
+      nonlocal res_treedef, res_tf_flat
       res_tf_flat, res_treedef_now = tree_util.tree_flatten(res_tf)
+      for r_tf in res_tf_flat:
+        check_tf_result(r_tf)
       assert res_treedef is None or res_treedef == res_treedef_now, f"Subsequent calls had different results. Previous {res_treedef} and now {res_treedef_now}"
+      for r_tf in res_tf_flat:
+        check_tf_result(r_tf)
       res_treedef = res_treedef_now
       return res_tf_flat
 
@@ -158,6 +173,21 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
         function_flat_tf=function_flat_tf,
         args_flat_sig_tf=args_flat_sig_tf,
         has_side_effects=has_side_effects)
+
+    assert res_treedef is not None
+    # Sometimes, in compiled mode, we get a different number of results than we
+    # got when tracing the TF function (and building the res_treedef). This
+    # can happen, e.g., when returning tf.TensorArray, which appears as one
+    # leaf when tracing but after compilation we get a tuple. See
+    # call_tf_test.test_error_bad_result_tensorarray.
+    if res_treedef.num_leaves != len(res_jax_flat):
+      # It is not clear if this error can happen once we have check_tf_result
+      # in callable_flat_tf, but we keep it for safety.
+      msg = (f"Incorrect number of results ({len(res_jax_flat)}) from the "
+             "called TF function after compilation. "
+             f"Expected {res_treedef.num_leaves} leaves based on observed "
+             f"results during tracing: {res_tf_flat}.")
+      raise ValueError(msg)
     return res_treedef.unflatten(res_jax_flat)
 
   # Define the fwd and bwd custom_vjp functions

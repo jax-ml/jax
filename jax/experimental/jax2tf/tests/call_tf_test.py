@@ -129,7 +129,17 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = fun_jax(x, y)
     self.assertAllClose((np.float32(12.), np.float64(11.)), res)
 
-  def test_eval_non_compileable_strings(self):
+  def test_result_tuple(self):
+    x1 = np.ones(3, dtype=np.int32)
+    x2 = np.ones(5, dtype=np.float32)
+    def fun_tf():
+      return tf.tuple([x1, x2])
+
+    fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
+    res = fun_jax()
+    self.assertAllClose(res, (x1, x2))
+
+  def test_error_non_compileable_strings(self):
     # Check that in op-by-op we call a function in eager mode.
     def f_tf_non_compileable(x):
       return tf.strings.length(tf.strings.format("Hello {}!", [x]))
@@ -145,18 +155,42 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
                                 _call_tf_non_compileable_error):
       lax.cond(True, lambda x: f_jax(x), lambda x: f_jax(x), x)
 
-  def test_eval_non_compileable_dynamic_shape(self):
+  def test_error_non_compileable_dynamic_shape(self):
     # Check that in op-by-op we call a function in eager mode.
     def f_tf_non_compileable(x):
       return tf.cond(x[0], lambda: x[1:], lambda: x)
 
     f_jax = jax2tf.call_tf(f_tf_non_compileable)
     x = np.array([True, False], dtype=np.bool_)
-    self.assertAllClose(f_tf_non_compileable(x), f_jax(x))
+    self.assertAllClose(f_tf_non_compileable(x), f_jax(x))  # Works in eager mode
 
     with self.assertRaisesRegex(ValueError,
                                 _call_tf_dynamic_shape_error):
       jax.jit(f_jax)(x)
+
+  def test_error_bad_result_tensorarray(self):
+    # Call a function that returns a tf.TensorArray. This should be detected
+    # early on. If we don't the function is actually compileable but returns
+    # a tuple instead of a single result.
+    def fun_tf():
+      ta = tf.TensorArray(tf.int32, size=0, dynamic_size=True)
+      ta = ta.unstack([0, 1, 2, 3, 4])
+      return ta
+
+    with self.assertRaisesRegex(ValueError,
+                                "The called TF function returns a result that is not convertible to JAX"):
+      fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
+      fun_jax()
+
+  def test_error_bad_result_string(self):
+    def fun_tf():
+      return tf.constant("foo")
+
+    # Now under jit, should fail because the function is not compileable
+    with self.assertRaisesRegex(ValueError,
+                                "The called TF function returns a result that is not convertible to JAX"):
+      fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
+      fun_jax()
 
   @_parameterized_jit
   def test_control_flow(self, with_jit=True):
