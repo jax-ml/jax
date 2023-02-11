@@ -644,7 +644,7 @@ register_rule = lambda prim: lambda rule: _rep_rules.setdefault(prim, rule)
 register_standard = lambda prim: _rep_rules.setdefault(prim, _standard_rep_rule)
 
 def _standard_rep_rule(_, *in_rep, **__):
-  return set.intersection(*in_rep)
+  return set.intersection(*in_rep) if in_rep else set()
 
 for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
                   windowed_reductions.__dict__.values(), fft.__dict__.values(),
