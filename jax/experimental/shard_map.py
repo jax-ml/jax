@@ -28,6 +28,7 @@ from jax import core
 from jax.core import Tracer
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import ad_util
+from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import ops
 from jax._src import pjit
@@ -648,10 +649,12 @@ def _standard_rep_rule(_, *in_rep, **__):
 
 for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
                   windowed_reductions.__dict__.values(), fft.__dict__.values(),
-                  linalg.__dict__.values(), ops.__dict__.values()):
+                  linalg.__dict__.values(), ops.__dict__.values(),
+                  ad_util.__dict__.values(),
+                  custom_derivatives.__dict__.values()):
   if isinstance(o, core.Primitive): register_standard(o)
-register_standard(ad_util.add_any_p)
 
+register_standard(xla.xla_call_p)
 register_standard(lax_parallel.ppermute_p)  # doesn't change replication
 
 @register_rule(lax_parallel.psum_p)
