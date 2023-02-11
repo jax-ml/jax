@@ -103,7 +103,7 @@ _on_exit = False
 ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
-  from jax.experimental import pjit
+  from jax._src import pjit
 
   aval = xla.abstractify(x)
   try:
@@ -561,7 +561,8 @@ class SourceInfo(NamedTuple):
 
 def jaxpr_shardings(
     jaxpr) -> Iterator[Tuple[jax.sharding.XLACompatibleSharding, SourceInfo]]:
-  from jax.experimental import pjit, shard_map
+  from jax._src import pjit
+  from jax.experimental import shard_map
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:

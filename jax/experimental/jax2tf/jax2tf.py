@@ -34,7 +34,6 @@ from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax.experimental import maps
-from jax.experimental import pjit
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.jax2tf import shape_poly
 from jax.experimental.jax2tf import impl_no_xla
@@ -49,6 +48,7 @@ from jax._src import api_util
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
 from jax._src import sharding

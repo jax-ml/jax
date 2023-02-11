@@ -27,7 +27,7 @@ from jax._src import sharding
 from jax.tree_util import PyTreeDef
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
-from jax.experimental import pjit as pjit_lib
+from jax._src import pjit as pjit_lib
 from jax.experimental.pjit import pjit, FROM_GDA
 from jax.sharding import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray

@@ -1855,7 +1855,7 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 
 
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
-  from jax.experimental.pjit import (
+  from jax._src.pjit import (
       sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
       OpShardingSharding)
 
