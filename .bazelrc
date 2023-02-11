@@ -256,6 +256,24 @@ common:tensorflow_testing_rbe_linux --remote_instance_name=projects/tensorflow-t
 build:tensorflow_testing_rbe_linux --config=tensorflow_testing_rbe
 #############################################################################
 
+#############################################################################
+# Some configs to make getting some forms of debug builds. In general, the
+# codebase is only regularly built with optimizations. Use 'debug_symbols' to
+# just get symbols for the parts of XLA/PJRT that jaxlib uses.
+# Or try 'debug' to get a build with assertions enabled and minimal 
+# optimizations.
+# Include these in a local .bazelrc.user file as:
+#   build --config=debug_symbols
+# Or:
+#   build --config=debug
+#
+# Additional files can be opted in for debug symbols by adding patterns
+# to a per_file_copt similar to below.
+#############################################################################
+
+build:debug_symbols --strip=never --per_file_copt="xla/pjrt|xla/python@-g3"
+build:debug --config debug_symbols -c fastbuild
+
 # Load `.jax_configure.bazelrc` file written by build.py
 try-import %workspace%/.jax_configure.bazelrc
 
