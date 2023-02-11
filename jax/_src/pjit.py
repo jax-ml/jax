@@ -1466,7 +1466,7 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
 
   # `insert_axis` is set to True only for some `xmap` uses.
   new_parts = (axis_name,) if insert_axis else (
-      () if spmd_axis_name is None else (spmd_axis_name,))
+      () if spmd_axis_name is None else spmd_axis_name)
 
   if resource_env is not None:
     mesh = resource_env.physical_mesh
@@ -2017,7 +2017,7 @@ def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,
   d, = dims_in
   # None means unconstrained in ParsedPartitionSpec
   new_parts = (axis_name,) if insert_axis else (
-      None if spmd_axis_name is None else (spmd_axis_name,))
+      None if spmd_axis_name is None else spmd_axis_name)
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
   if new_parts is None:
     unconstrained_dims.add(d)

@@ -709,7 +709,7 @@ def _shard_map_batch(
                    for ax in names} for names, d in zip(in_names, in_dims)]
   spmd_axis_name = trace.spmd_axis_name
   if spmd_axis_name is not None:
-    new_in_names = [{**ns, d:(spmd_axis_name,)} if d is not batching.not_mapped  # type: ignore
+    new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
                     else ns for ns, d in zip(new_in_names, in_dims)]
   @as_hashable_function(closure=out_names_thunk)
   def new_out_names_thunk():
@@ -717,7 +717,7 @@ def _shard_map_batch(
     out_names_ = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]
                    for ax in names} for names, d in zip(out_names, out_dims())]
     if spmd_axis_name is not None:
-      out_names_ = [{**ns, d:(spmd_axis_name,)} if d is not batching.not_mapped
+      out_names_ = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                     else ns for ns, d in zip(out_names_, out_dims())]
     return out_names_
 

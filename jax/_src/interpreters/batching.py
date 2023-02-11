@@ -16,8 +16,8 @@ from __future__ import annotations
 import collections
 import dataclasses
 from functools import partial
-from typing import (Any, Callable, Dict, Hashable, Iterable, Optional, Sequence,
-                    Set, Tuple, Type, Union)
+from typing import (Any, Callable, Dict, Iterable, Optional, Sequence, Set,
+                    Tuple, Type, Union)
 
 import numpy as np
 
@@ -25,7 +25,7 @@ import jax
 from jax.config import config
 from jax._src import core
 from jax._src import source_info_util
-from jax._src.core import raise_to_shaped, Trace, Tracer
+from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
@@ -111,7 +111,7 @@ class ConcatAxis:
 
 def _update_annotation(
     f: lu.WrappedFun, orig_type: Optional[core.InputType],
-    axis_size: core.AxisSize, axis_name: core.AxisName,
+    axis_size: core.AxisSize, axis_name: AxisName,
     explicit_in_dims: Sequence[Optional[Union[int, ConcatAxis]]],
     segment_lens: Sequence[Array],
   ) -> lu.WrappedFun:
@@ -479,7 +479,8 @@ class BatchTrace(Trace):
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
     bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
-                               out_dims2, in_dims, self.main.trace_type, self.spmd_axis_name)
+                               out_dims2, in_dims, self.main.trace_type,
+                               self.spmd_axis_name)
     out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
@@ -516,7 +517,7 @@ class BatchTrace(Trace):
     return vals, todo, bwd_transform
 
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
-                               axis_name: Iterable[core.AxisName],
+                               axis_name: Iterable[AxisName],
                                ) -> bool:
   # This function exists to identify whether a main trace corresponds to any of
   # the axis names used by a primitive. Axis names alone aren't enough because
@@ -525,9 +526,10 @@ def _main_trace_for_axis_names(main_trace: core.MainTrace,
 
 ### API for batching callables with vmappable inputs and outputs
 
-def batch(fun: lu.WrappedFun, axis_name: core.AxisName, axis_size,
+def batch(fun: lu.WrappedFun, axis_name: AxisName, axis_size,
           in_dims, out_dim_dests, main_type: Type[BatchTrace] = BatchTrace,
-          spmd_axis_name: Optional[Hashable] = None) -> lu.WrappedFun:
+          spmd_axis_name: Optional[Tuple[AxisName, ...]] = None
+          ) -> lu.WrappedFun:
   # we split up _batch_inner and _batch_outer for the leak checker
   f = _batch_inner(fun, axis_size, out_dim_dests)
   return _batch_outer(f, axis_name, axis_size, in_dims, main_type,
@@ -561,7 +563,7 @@ def vtile(f_flat: lu.WrappedFun,
           in_axes_flat: Tuple[Optional[int], ...],
           out_axes_flat: Tuple[Optional[int], ...],
           tile_size: Optional[int],
-          axis_name: core.AxisName,
+          axis_name: AxisName,
           main_type: Type[BatchTrace] = BatchTrace):
   @curry
   def tile_axis(arg, axis: Optional[int], tile_size):
@@ -630,7 +632,7 @@ def reassemble_concat_axes(vals, dims):
 def batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
                  axis_size: core.AxisSize,
                  in_axes: Tuple[Union[int, NotMapped], ...],
-                 axis_name: core.AxisName,
+                 axis_name: AxisName,
                  main_type: Type[BatchTrace],
                  ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_size, tuple(in_axes), axis_name,
@@ -640,7 +642,7 @@ def batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
 def _batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
                  axis_size: core.AxisSize,
                  in_axes: Tuple[Union[int, NotMapped], ...],
-                 axis_name: core.AxisName,
+                 axis_name: AxisName,
                  main_type: Type[BatchTrace],
                  ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
@@ -763,7 +765,8 @@ def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
 
 def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests, main_type, spmd_axis_name):
   bwd, out_dims_thunk = batch_subtrace(bwd)
-  bwd_ = _batch_outer(bwd, axis_name, axis_size, in_dims, main_type, spmd_axis_name)
+  bwd_ = _batch_outer(bwd, axis_name, axis_size, in_dims, main_type,
+                      spmd_axis_name)
   return _match_axes_and_sum(bwd_, axis_size, axis_name, out_dims_thunk, out_dim_dests)
 
 @lu.transformation
