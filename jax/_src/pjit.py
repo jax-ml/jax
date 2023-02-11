@@ -271,7 +271,30 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
   return wraps(fun)(cpp_pjit_f)
 
 
-def pre_infer_params(fun, in_axis_resources, out_axis_resources,
+def _resolve_axis_resources_and_shardings_arg(
+    in_shardings, out_shardings, in_axis_resources, out_axis_resources):
+  if not _is_unspecified(in_shardings) and not _is_unspecified(in_axis_resources):
+    raise ValueError(
+        'Setting both in_shardings and in_axis_resources is not '
+        'allowed. in_axis_resources is deprecated. Please use in_shardings.')
+  if not _is_unspecified(out_shardings) and not _is_unspecified(out_axis_resources):
+    raise ValueError(
+        'Setting both out_shardings and out_axis_resources is not '
+        'allowed. out_axis_resources is deprecated. Please use out_shardings.')
+
+  if not _is_unspecified(in_axis_resources):
+    final_in_shardings = in_axis_resources
+  else:
+    final_in_shardings = in_shardings
+
+  if not _is_unspecified(out_axis_resources):
+    final_out_shardings = out_axis_resources
+  else:
+    final_out_shardings = out_shardings
+  return final_in_shardings, final_out_shardings
+
+
+def pre_infer_params(fun, in_shardings, out_shardings,
                      donate_argnums, static_argnums, static_argnames, device,
                      backend, abstracted_axes):
   # TODO(yashkatariya, mattjj): Remove when pjit supports dynamic shapes.
@@ -283,9 +306,9 @@ def pre_infer_params(fun, in_axis_resources, out_axis_resources,
   check_callable(fun)
 
   if (not jax.config.jax_array and
-      (_is_unspecified(in_axis_resources) or _is_unspecified(out_axis_resources))):
+      (_is_unspecified(in_shardings) or _is_unspecified(out_shardings))):
     raise ValueError(
-        "in_axis_resources and out_axis_resources should not "
+        "in_shardings and out_shardings should not "
         "be the unspecified singleton value. Please enable `jax.Array` to use "
         "this feature. You can use jax.config.update('jax_array', True) or "
         "set the environment variable  JAX_ARRAY=1 , or set the `jax_array` "
@@ -301,30 +324,28 @@ def pre_infer_params(fun, in_axis_resources, out_axis_resources,
     if device is not None and backend is not None:
       raise ValueError("can't specify both a device and a backend for jit, "
                        f"got {device=} and {backend=}")
-    if not _is_unspecified(in_axis_resources):
+    if not _is_unspecified(in_shardings):
       raise ValueError('If backend or device is specified on jit, then '
-                       'in_axis_resources should not be specified.')
-    if not _is_unspecified(out_axis_resources):
+                       'in_shardings should not be specified.')
+    if not _is_unspecified(out_shardings):
       raise ValueError('If backend or device is specified on jit, then '
-                       'out_axis_resources should not be specified.')
+                       'out_shardings should not be specified.')
 
-  if isinstance(in_axis_resources, list):
+  if isinstance(in_shardings, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
     # list: if in_axes is not a leaf, it must be a tuple of trees. However,
     # in cases like these users expect tuples and lists to be treated
     # essentially interchangeably, so we canonicalize lists to tuples here
     # rather than raising an error. https://github.com/google/jax/issues/2367
-    in_axis_resources = tuple(in_axis_resources)
+    in_shardings = tuple(in_shardings)
 
-  in_axis_resources, _, _ = _prepare_axis_resources(
-      in_axis_resources, "in_axis_resources")
-  out_axis_resources, _, _ = _prepare_axis_resources(
-      out_axis_resources, "out_axis_resources")
+  in_shardings, _, _ = _prepare_axis_resources(in_shardings, 'in_shardings')
+  out_shardings, _, _ = _prepare_axis_resources(out_shardings, 'out_shardings')
 
   donate_argnums, static_argnums, static_argnames = resolve_argnums(
       fun, donate_argnums, static_argnums, static_argnames)
 
-  return (in_axis_resources, out_axis_resources, donate_argnums, static_argnums,
+  return (in_shardings, out_shardings, donate_argnums, static_argnums,
           static_argnames)
 
 
@@ -368,20 +389,20 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
   return wrapped
 
 
-def _pjit_explicit_sharding(in_axis_resources, out_axis_resources, device,
+def _pjit_explicit_sharding(in_shardings, out_shardings, device,
                             backend) -> bool:
-  in_axis_resources_flat, _ = tree_flatten(in_axis_resources)
-  out_axis_resources_flat, _ = tree_flatten(out_axis_resources)
+  in_shardings_flat, _ = tree_flatten(in_shardings)
+  out_shardings_flat, _ = tree_flatten(out_shardings)
   return (device is not None or
           backend is not None or
-          any(not _is_unspecified(i) for i in in_axis_resources_flat) or
-          any(not _is_unspecified(i) for i in out_axis_resources_flat))
+          any(not _is_unspecified(i) for i in in_shardings_flat) or
+          any(not _is_unspecified(i) for i in out_shardings_flat))
 
 
 class PjitInfo(NamedTuple):
   fun: Callable
-  in_axis_resources: Any
-  out_axis_resources: Any
+  in_shardings: Any
+  out_shardings: Any
   static_argnums: Tuple[int, ...]
   static_argnames: Tuple[str, ...]
   donate_argnums: Tuple[int, ...]
@@ -393,13 +414,13 @@ class PjitInfo(NamedTuple):
 
 
 def common_infer_params(pjit_info_args, *args, **kwargs):
-  (fun, in_axis_resources, out_axis_resources, static_argnums, static_argnames,
+  (fun, user_in_shardings, user_out_shardings, static_argnums, static_argnames,
    donate_argnums, device, backend, keep_unused, inline,
    resource_env) = pjit_info_args
 
-  if kwargs and not _is_unspecified(in_axis_resources):
+  if kwargs and not _is_unspecified(user_in_shardings):
     raise ValueError(
-        "pjit does not support kwargs when in_axis_resources is specified.")
+        "pjit does not support kwargs when in_shardings is specified.")
 
   if resource_env is not None:
     pjit_mesh = resource_env.physical_mesh
@@ -444,27 +465,29 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   if jax.config.jax_array:
     # If backend or device is set as an arg on jit, then resolve them to
-    # in_shardings and out_shardings as if user passed in in_axis_resources
-    # and out_axis_resources.
+    # in_shardings and out_shardings as if user passed in in_shardings
+    # and out_shardings.
     if backend or device:
       in_shardings = out_shardings = _create_sharding_with_device_backend(
           device, backend)
     else:
       in_shardings = tree_map(
-          lambda x: _create_sharding_for_array(pjit_mesh, x), in_axis_resources)
+          lambda x: _create_sharding_for_array(pjit_mesh, x), user_in_shardings)
       out_shardings = tree_map(
-          lambda x: _create_sharding_for_array(pjit_mesh, x), out_axis_resources)
+          lambda x: _create_sharding_for_array(pjit_mesh, x), user_out_shardings)
   else:
     in_shardings = tree_map(
         lambda x: _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x),
-        in_axis_resources)
+        user_in_shardings)
     out_shardings = tree_map(
         lambda x: x if _is_unspecified(x) else
-        _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x), out_axis_resources)
+        _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x), user_out_shardings)
     # This check fails extremely rarely and has a huge cost in the dispatch
     # path. So hide it behind the jax_enable_checks flag.
     if jax.config.jax_enable_checks:
       _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
+
+  del user_in_shardings, user_out_shardings
 
   local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
   # TODO(yashkatariya): This is a hack. This should go away when avals have
@@ -517,10 +540,12 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
           donate_argnums)
 
 
-# in_axis_resources and out_axis_resources can't be None as the default value
+# in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
 def pjit(
     fun: Callable,
+    in_shardings=_UNSPECIFIED,
+    out_shardings=_UNSPECIFIED,
     in_axis_resources=_UNSPECIFIED,
     out_axis_resources=_UNSPECIFIED,
     static_argnums: Union[int, Sequence[int], None] = None,
@@ -541,20 +566,20 @@ def pjit(
   ``fun`` by running each operation in parallel across multiple devices.
 
   The partitioning over devices happens automatically based on the
-  propagation of the input partitioning specified in ``in_axis_resources`` and
-  the output partitioning specified in ``out_axis_resources``. The resources
+  propagation of the input partitioning specified in ``in_shardings`` and
+  the output partitioning specified in ``out_shardings``. The resources
   specified in those two arguments must refer to mesh axes, as defined by
   the :py:func:`jax.sharding.Mesh` context manager. Note that the mesh
   definition at :func:`~pjit` application time is ignored, and the returned function
   will use the mesh definition available at each call site.
 
   Inputs to a :func:`~pjit`'d function will be automatically partitioned across devices
-  if they're not already correctly partitioned based on ``in_axis_resources``.
+  if they're not already correctly partitioned based on ``in_shardings``.
   In some scenarios, ensuring that the inputs are already correctly pre-partitioned
   can increase performance. For example, if passing the output of one
   :func:`~pjit`'d function to another :func:`~pjit`’d function (or the same
   :func:`~pjit`’d function in a loop), make sure the relevant
-  ``out_axis_resources`` match the corresponding ``in_axis_resources``.
+  ``out_shardings`` match the corresponding ``in_shardings``.
 
   .. note::
     **Multi-process platforms:** On multi-process platforms such as TPU pods,
@@ -590,7 +615,7 @@ def pjit(
       all, provided they are hashable and have an equality operation defined.
       Static arguments are included as part of a compilation cache key, which is
       why hash and equality operators must be defined.
-    in_axis_resources: Pytree of structure matching that of arguments to ``fun``,
+    in_shardings: Pytree of structure matching that of arguments to ``fun``,
       with all actual arguments replaced by resource assignment specifications.
       It is also valid to specify a pytree prefix (e.g. one value in place of a
       whole subtree), in which case the leaves get broadcast to all values in
@@ -598,6 +623,9 @@ def pjit(
 
       The valid resource assignment specifications are:
         - :py:obj:`None`, in which case the value will be replicated on all devices
+        - :py:class:`XLACompatibleSharding`, which will decide how the value
+          will be partitioned. With this, using a mesh context manager is not
+          required.
         - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
           of the partitioned value. Each element can be a :py:obj:`None`, a mesh
           axis or a tuple of mesh axes, and specifies the set of resources assigned
@@ -605,8 +633,10 @@ def pjit(
 
       The size of every dimension has to be a multiple of the total number of
       resources assigned to it.
-    out_axis_resources: Like ``in_axis_resources``, but specifies resource
+    out_shardings: Like ``in_shardings``, but specifies resource
       assignment for function outputs.
+    in_axis_resources: (Deprecated) Please use in_shardings.
+    out_axis_resources: (Deprecated) Please use out_shardings.
     static_argnums: An optional int or collection of ints that specify which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded in
@@ -662,29 +692,32 @@ def pjit(
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
   >>> f = pjit(lambda x: jax.numpy.convolve(x, jnp.asarray([0.5, 1.0, 0.5]), 'same'),
-  ...         in_axis_resources=None, out_axis_resources=PartitionSpec('devices'))
+  ...         in_shardings=None, out_shardings=PartitionSpec('devices'))
   >>> with Mesh(np.array(jax.devices()), ('devices',)):
   ...   print(f(x))  # doctest: +SKIP
   [ 0.5  2.   4.   6.   8.  10.  12.  10. ]
   """
-  (in_axis_resources, out_axis_resources, donate_argnums, static_argnums,
+  in_shardings, out_shardings = _resolve_axis_resources_and_shardings_arg(
+      in_shardings, out_shardings, in_axis_resources, out_axis_resources)
+
+  (in_shardings, out_shardings, donate_argnums, static_argnums,
    static_argnames) = pre_infer_params(
-       fun, in_axis_resources, out_axis_resources, donate_argnums,
+       fun, in_shardings, out_shardings, donate_argnums,
        static_argnums, static_argnames, device, backend, abstracted_axes)
 
   def infer_params(*args, **kwargs):
     # Putting this outside of wrapped would make resources lexically scoped
     resource_env = pxla.thread_resources.env
     pjit_info_args = PjitInfo(
-          fun=fun, in_axis_resources=in_axis_resources,
-          out_axis_resources=out_axis_resources, static_argnums=static_argnums,
+          fun=fun, in_shardings=in_shardings,
+          out_shardings=out_shardings, static_argnums=static_argnums,
           static_argnames=static_argnames, donate_argnums=donate_argnums,
           device=device, backend=backend, keep_unused=keep_unused,
           inline=inline, resource_env=resource_env)
     return common_infer_params(pjit_info_args, *args, **kwargs)
 
   has_explicit_sharding = _pjit_explicit_sharding(
-      in_axis_resources, out_axis_resources, device, backend)
+      in_shardings, out_shardings, device, backend)
   return post_infer_params(fun, infer_params, static_argnums, static_argnames,
                            donate_argnums, abstracted_axes,
                            has_explicit_sharding)
@@ -715,7 +748,7 @@ def _create_sharding_for_array(mesh, x):
   if mesh is None:
     raise RuntimeError(
         "jit does not support using the mesh context manager. Please pass in "
-        "the sharding explicitly via in_axis_resources or out_axis_resources.")
+        "the sharding explicitly via in_shardings or out_shardings.")
   if mesh.empty:
     raise RuntimeError("pjit requires a non-empty mesh! Is a mesh defined at "
                        "the call site? Alternatively, provide a "
@@ -811,7 +844,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     in_shardings_flat = (orig_in_shardings,) * len(local_in_avals)
   else:
     in_shardings_flat = flatten_axis_resources(
-          "pjit in_axis_resources", in_tree, orig_in_shardings,
+          "pjit in_shardings", in_tree, orig_in_shardings,
           tupled_args=True)
 
   # Fork here because the `Array` path is very simple and doesn't need all the
@@ -907,7 +940,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
     out_shardings_flat = (orig_out_shardings,) * len(global_out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
-        "pjit out_axis_resources", out_tree(), orig_out_shardings,
+        "pjit out_shardings", out_tree(), orig_out_shardings,
         tupled_args=False)
 
   pjit_check_aval_sharding(out_shardings_flat, global_out_avals, "pjit outputs",

@@ -2262,13 +2262,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        'One of in_axis_resources leaf specifications got sharding.*which is '
+        'One of in_shardings leaf specifications got sharding.*which is '
         'not a subclass of XLACompatibleSharding.'):
       pjit(lambda x: x, in_axis_resources=ts)(arr)
 
     with self.assertRaisesRegex(
         ValueError,
-        'One of out_axis_resources leaf specifications got sharding.*which is '
+        'One of out_shardings leaf specifications got sharding.*which is '
         'not a subclass of XLACompatibleSharding.'):
       pjit(lambda x: x, out_axis_resources=ts)(arr)
 
@@ -2284,7 +2284,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         TypeError,
-        "in_axis_resources leaf specifications are expected to be PartitionSpec "
+        "in_shardings leaf specifications are expected to be PartitionSpec "
         "instances or None, but got x"):
       pjit(lambda x: x, in_axis_resources='x')
 
@@ -2923,7 +2923,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_kwargs_axis_resources_error(self):
     with self.assertRaisesRegex(
         ValueError,
-        "pjit does not support kwargs when in_axis_resources is specified."):
+        "pjit does not support kwargs when in_shardings is specified."):
       pjit(lambda x: x, in_axis_resources=None)(x=jnp.arange(8.))
 
   def test_pjit_keep_unused_true(self):
@@ -3047,13 +3047,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
-        'in_axis_resources should not be specified.'):
+        'in_shardings should not be specified.'):
       pjit(lambda x: x, in_axis_resources=None, backend='cpu')
 
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
-        'out_axis_resources should not be specified.'):
+        'out_shardings should not be specified.'):
       pjit(lambda x: x, out_axis_resources=None, device=jax.devices()[0])
 
   def test_pjit_device_backend_both_error(self):
@@ -3091,12 +3091,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        r"One of in_axis_resources.*got sharding.*which is not allowed."):
+        r"One of in_shardings.*got sharding.*which is not allowed."):
       pjit(lambda x: x, in_axis_resources=pmap_out.sharding)
 
     with self.assertRaisesRegex(
         ValueError,
-        r"One of out_axis_resources.*got sharding.*which is not allowed."):
+        r"One of out_shardings.*got sharding.*which is not allowed."):
       pjit(lambda x: x, out_axis_resources=pmap_out.sharding)
 
   def test_pmap_sharding_input_to_pjit_single_device(self):
@@ -3221,8 +3221,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         RuntimeError,
         "jit does not support using the mesh context manager"):
       with mesh:
-        jax.jit(lambda x: x, in_axis_resources=P('x'),
-                out_axis_resources=P('x'))(jnp.arange(8))
+        jax.jit(lambda x: x, in_shardings=P('x'),
+                out_shardings=P('x'))(jnp.arange(8))
 
   def test_pjit_nested_uncommitted_output(self):
     @pjit
@@ -3336,6 +3336,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
         self.assertEqual(count, 1)
     finally:
       dispatch._xla_call_impl_lazy = original_xla_call_impl_lazy
+
+  def test_set_both_axis_resources_and_shardings(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "Setting both in_shardings and in_axis_resources is not allowed"):
+      pjit(lambda x: x, in_shardings=P('x'), in_axis_resources=P('x'))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Setting both out_shardings and out_axis_resources is not allowed"):
+      pjit(lambda x: x, out_shardings=P('x'), out_axis_resources=P('x'))
 
 
 class TempSharding(Sharding):
@@ -3462,7 +3473,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testRepeatedInResources(self):
     x = jnp.arange(2)
     for spec in [P('x', 'x'), P('x', ('y', 'x'))]:
-      error = (r"A single in_axis_resources specification can map every mesh "
+      error = (r"A single in_shardings specification can map every mesh "
                r"axis to at most one positional dimension, but " +
                spec_regex(spec) + " has duplicate entries for `x`")
       with self.assertRaisesRegex(ValueError, error):
@@ -3472,7 +3483,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testRepeatedOutResources(self):
     x = jnp.arange(2)
     for spec in [P('x', 'x'), P('x', ('y', 'x'))]:
-      error = (r"A single out_axis_resources specification can map every mesh "
+      error = (r"A single out_shardings specification can map every mesh "
                r"axis to at most one positional dimension, but " +
                spec_regex(spec) + " has duplicate entries for `x`")
       with self.assertRaisesRegex(ValueError, error):
@@ -3548,17 +3559,17 @@ class PJitErrorTest(jtu.JaxTestCase):
     pjit(lambda x: x, (p,), p)([x, x, x])  # OK
 
     error = re.escape(
-        "pjit in_axis_resources specification must be a tree prefix of the "
+        "pjit in_shardings specification must be a tree prefix of the "
         "positional arguments tuple passed to the `pjit`-decorated function. "
-        "In particular, pjit in_axis_resources must either be a None, a "
+        "In particular, pjit in_shardings must either be a None, a "
         "PartitionSpec, or a tuple of length equal to the number of positional "
-        "arguments. But pjit in_axis_resources is the wrong length: got a "
+        "arguments. But pjit in_shardings is the wrong length: got a "
         "tuple or list of length 3 for an args tuple of length 2.")
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x, y: x, p, p)(x, x)
 
     Foo = namedtuple('Foo', ['x'])
-    error = "in_axis_resources is not a tuple.*might need to be wrapped"
+    error = "in_shardings is not a tuple.*might need to be wrapped"
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, Foo(None), Foo(None))(Foo(x))
 
@@ -3585,7 +3596,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     error = re.escape(
         "pytree structure error: different lengths of list at "
         "key path\n"
-        "    pjit out_axis_resources tree root\n")
+        "    pjit out_shardings tree root\n")
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 

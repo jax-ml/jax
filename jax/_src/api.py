@@ -291,8 +291,8 @@ def jit(
 if jax.config.jax_jit_pjit_api_merge:
   def jit(  # type: ignore  # noqa: F811  # pylint: disable=function-redefined
     fun: Callable,
-    in_axis_resources=pxla._UNSPECIFIED,
-    out_axis_resources=pxla._UNSPECIFIED,
+    in_shardings=pxla._UNSPECIFIED,
+    out_shardings=pxla._UNSPECIFIED,
     static_argnums: Union[int, Sequence[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     donate_argnums: Union[int, Sequence[int]] = (),
@@ -318,7 +318,7 @@ if jax.config.jax_jit_pjit_api_merge:
         JAX keeps a weak reference to ``fun`` for use as a compilation cache key,
         so the object ``fun`` must be weakly-referenceable. Most :class:`Callable`
         objects will already satisfy this requirement.
-      in_axis_resources: Pytree of structure matching that of arguments to ``fun``,
+      in_shardings: Pytree of structure matching that of arguments to ``fun``,
         with all actual arguments replaced by resource assignment specifications.
         It is also valid to specify a pytree prefix (e.g. one value in place of a
         whole subtree), in which case the leaves get broadcast to all values in
@@ -326,16 +326,19 @@ if jax.config.jax_jit_pjit_api_merge:
 
         The valid resource assignment specifications are:
           - :py:obj:`None`, in which case the value will be replicated on all devices
+          - :py:class:`XLACompatibleSharding`, which will decide how the value
+            will be partitioned. With this, using a mesh context manager is not
+            required.
           - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
             of the partitioned value. Each element can be a :py:obj:`None`, a mesh
             axis or a tuple of mesh axes, and specifies the set of resources assigned
             to partition the value's dimension matching its position in the spec.
 
         The size of every dimension has to be a multiple of the total number of
-        resources assigned to it. This is similar to pjit's in_axis_resources.
-      out_axis_resources: Like ``in_axis_resources``, but specifies resource
+        resources assigned to it. This is similar to pjit's in_shardings.
+      out_shardings: Like ``in_shardings``, but specifies resource
         assignment for function outputs. This is similar to pjit's
-        out_axis_resources.
+        out_shardings.
       static_argnums: An optional int or collection of ints that specify which
         positional arguments to treat as static (compile-time constant).
         Operations that only depend on static arguments will be constant-folded in
@@ -424,22 +427,22 @@ if jax.config.jax_jit_pjit_api_merge:
       >>> g(jnp.arange(4), 3)
       Array([   0,    1,  256, 6561], dtype=int32)
     """
-    (in_axis_resources, out_axis_resources, donate_argnums, static_argnums,
+    (in_shardings, out_shardings, donate_argnums, static_argnums,
      static_argnames) = pjit.pre_infer_params(
-         fun, in_axis_resources, out_axis_resources, donate_argnums,
+         fun, in_shardings, out_shardings, donate_argnums,
          static_argnums, static_argnames, device, backend, abstracted_axes)
 
     def infer_params(*args, **kwargs):
       pjit_info_args = pjit.PjitInfo(
-          fun=fun, in_axis_resources=in_axis_resources,
-          out_axis_resources=out_axis_resources, static_argnums=static_argnums,
+          fun=fun, in_shardings=in_shardings,
+          out_shardings=out_shardings, static_argnums=static_argnums,
           static_argnames=static_argnames, donate_argnums=donate_argnums,
           device=device, backend=backend, keep_unused=keep_unused,
           inline=inline, resource_env=None)
       return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
     has_explicit_sharding = pjit._pjit_explicit_sharding(
-        in_axis_resources, out_axis_resources, device, backend)
+        in_shardings, out_shardings, device, backend)
     return pjit.post_infer_params(fun, infer_params, static_argnums,
                                   static_argnames, donate_argnums,
                                   abstracted_axes, has_explicit_sharding)
