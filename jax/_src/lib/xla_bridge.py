@@ -393,6 +393,9 @@ def backends():
           (platform, priority) for platform, (_, priority)
           in _backend_factories.items())
     default_priority = -1000
+    if lib.xla_extension_version < 126 and hasattr(xla_client,
+                                                   "maybe_load_pjrt_plugins"):
+      xla_client.maybe_load_pjrt_plugins()
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)
