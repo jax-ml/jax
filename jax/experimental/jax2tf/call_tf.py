@@ -251,8 +251,8 @@ call_tf_p.multiple_results = True
 def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
   # On GPU we use dlpack to avoid copies of data to the host.
   def _arg_jax_to_tf(arg_jax):
-    if (isinstance(arg_jax, xla.DeviceArray) and
-        arg_jax.device_buffer.client.platform in _DLPACK_PLATFORMS and
+    if (isinstance(arg_jax, jax.Array) and
+        arg_jax.device().platform in _DLPACK_PLATFORMS and
         arg_jax.dtype in dlpack.SUPPORTED_DTYPES):
       arg_dlpack = jax.dlpack.to_dlpack(arg_jax, take_ownership=False)
       return tf.experimental.dlpack.from_dlpack(arg_dlpack)
