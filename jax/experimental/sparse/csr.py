@@ -516,7 +516,7 @@ def _csr_matmat_gpu_lowering(csr_matmat_hlo, ctx, data, indices, indptr, B, *,
   return [csr_matmat_hlo(
       data, indices, indptr, B, shape=shape, transpose=transpose,
       index_dtype=indices_aval.dtype, data_dtype=data_aval.dtype,
-      B_dtype=B_aval.dtype)]
+      x_dtype=B_aval.dtype)]
 
 
 def _csr_matmat_jvp_left(data_dot, data, indices, indptr, B, *, shape, transpose):
