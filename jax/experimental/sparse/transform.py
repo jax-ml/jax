@@ -551,6 +551,13 @@ _BCOO_STANDARD_PRIMITIVES = {
 for prim, bcoo_impl in _BCOO_STANDARD_PRIMITIVES.items():
   sparse_rules_bcoo[prim] = _standard_sparse_rule(prim, bcoo_impl)
 
+_BCSR_STANDARD_PRIMITIVES = {
+  lax.dot_general_p: sparse.bcsr_dot_general,
+}
+
+for prim, bcsr_impl in _BCSR_STANDARD_PRIMITIVES.items():
+  sparse_rules_bcsr[prim] = _standard_sparse_rule(prim, bcsr_impl)
+
 
 def _transpose_sparse(spenv, *spvalues, permutation):
   permutation = tuple(permutation)
@@ -887,3 +894,12 @@ _bcoo_methods = {
 
 for method, impl in _bcoo_methods.items():
   setattr(BCOO, method, impl)
+
+
+_bcoo_methods = {
+  "__matmul__": sparsify(jnp.matmul),
+  "__rmatmul__": sparsify(_swap_args(jnp.matmul)),
+}
+
+for method, impl in _bcoo_methods.items():
+  setattr(BCSR, method, impl)

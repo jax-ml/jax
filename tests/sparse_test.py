@@ -1829,6 +1829,33 @@ class BCOOTest(sptu.SparseTestCase):
     if jnp.issubdtype(dtype, jnp.floating):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape, rhs_shape in [[(3, 4), (4,)],
+                                   [(3, 4), (4, 5)],
+                                   [(3, 4), (2, 4, 5)]]
+    ],
+    lhs_dtype=all_dtypes,
+    rhs_dtype=all_dtypes,
+  )
+  @jax.default_matmul_precision("float32")
+  @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
+  def test_bcsr_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
+    # Note: currently, batch dimensions in matmul must correspond to batch
+    # dimensions in the sparse representation.
+    n_batch_lhs = max(0, len(lhs_shape) - 2)
+
+    rng = jtu.rand_default(self.rng())
+    sprng = sptu.rand_bcsr(self.rng())
+    args_maker = lambda: [sprng(lhs_shape, lhs_dtype, n_batch=n_batch_lhs),
+                          jnp.array(rng(rhs_shape, rhs_dtype))]
+
+    tol = {np.float64: 1E-13, np.complex128: 1E-13,
+           np.float32: 1E-6, np.complex64: 1E-6}
+
+    with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
+      self._CheckAgainstDense(operator.matmul, operator.matmul, args_maker, tol=tol)
+
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)

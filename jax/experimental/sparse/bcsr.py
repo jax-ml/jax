@@ -649,7 +649,7 @@ def _bcsr_dot_general_gpu_lowering(
                          shape=lhs_spinfo.shape, transpose=False,
                          data_dtype=lhs_data_aval.dtype,
                          index_dtype=lhs_indices_aval.dtype,
-                         B_dtype=rhs_aval.dtype)]
+                         x_dtype=rhs_aval.dtype)]
 
 _bcsr_dot_general_default_lowering = mlir.lower_fun(
     _bcsr_dot_general_impl, multiple_results=False)
@@ -657,18 +657,19 @@ _bcsr_dot_general_default_lowering = mlir.lower_fun(
 mlir.register_lowering(
     bcsr_dot_general_p, _bcsr_dot_general_default_lowering)
 
-if gpu_sparse.cuda_is_supported:
-  mlir.register_lowering(bcsr_dot_general_p,
-                          partial(_bcsr_dot_general_gpu_lowering,
-                                  gpu_sparse.cuda_csr_matvec,
-                                  gpu_sparse.cuda_csr_matmat),
-                          platform='cuda')
-if gpu_sparse.rocm_is_supported:
-  mlir.register_lowering(bcsr_dot_general_p,
-                          partial(_bcsr_dot_general_gpu_lowering,
-                                  gpu_sparse.rocm_csr_matvec,
-                                  gpu_sparse.rocm_csr_matmat),
-                          platform='rocm')
+# TODO(jakevdp): check on wrong results in test_bcsr_matmul & re-enable these.
+# if gpu_sparse.cuda_is_supported:
+#   mlir.register_lowering(bcsr_dot_general_p,
+#                           partial(_bcsr_dot_general_gpu_lowering,
+#                                   gpu_sparse.cuda_csr_matvec,
+#                                   gpu_sparse.cuda_csr_matmat),
+#                           platform='cuda')
+# if gpu_sparse.rocm_is_supported:
+#   mlir.register_lowering(bcsr_dot_general_p,
+#                           partial(_bcsr_dot_general_gpu_lowering,
+#                                   gpu_sparse.rocm_csr_matvec,
+#                                   gpu_sparse.rocm_csr_matmat),
+#                           platform='rocm')
 
 
 #----------------------------------------------------------------------

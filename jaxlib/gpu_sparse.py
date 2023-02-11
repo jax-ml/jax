@@ -158,7 +158,7 @@ rocm_csr_matvec = partial(_csr_matvec_hlo, "hip", _hipsparse)
 
 def _csr_matmat_hlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
                     transpose=False, compute_dtype=None, compute_type=None,
-                    index_dtype, data_dtype, B_dtype):
+                    index_dtype, data_dtype, x_dtype):
   """CSR from dense matrix."""
   data_type, index_type, nnz = _validate_csr_hlo(data, indices, indptr, shape)
   rows, cols = shape
@@ -170,7 +170,7 @@ def _csr_matmat_hlo(platform, gpu_sparse, data, indices, indptr, B, *, shape,
     compute_type = data_type
 
   buffer_size, opaque = gpu_sparse.build_csr_matmat_descriptor(
-      data_dtype, B_dtype, compute_dtype, index_dtype,
+      data_dtype, x_dtype, compute_dtype, index_dtype,
       rows, cols, Ccols, nnz, transpose)
   out_size = cols if transpose else rows
 
