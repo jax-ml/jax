@@ -20,6 +20,7 @@
 .vscode
 .envrc
 jax.iml
+.bazelrc.user
 
 # virtualenv/venv directories
 /venv/
