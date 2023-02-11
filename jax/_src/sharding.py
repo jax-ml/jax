@@ -285,7 +285,7 @@ class NamedSharding(XLACompatibleSharding):
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
   """
 
-  @use_cpp_method()
+  @use_cpp_method
   def __init__(
       self, mesh: pxla.Mesh, spec: PartitionSpec, _parsed_pspec = None):
 
@@ -396,7 +396,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
     ...     jax.devices()[0])
   """
 
-  @use_cpp_method()
+  @use_cpp_method
   def __init__(self, device: Device):
     self._device = device
 
@@ -434,7 +434,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
 @use_cpp_class(xc.PmapSharding)
 class PmapSharding(XLACompatibleSharding):
 
-  @use_cpp_method()
+  @use_cpp_method
   def __init__(self, devices: np.ndarray, sharding_spec: pxla.ShardingSpec):
     self.devices = devices
     # The sharding spec should be pmap's sharding spec.
@@ -647,7 +647,7 @@ class DeviceIdSet:
 @use_cpp_class(xc.OpShardingSharding)
 class OpShardingSharding(XLACompatibleSharding):
 
-  @use_cpp_method()
+  @use_cpp_method
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
     self._devices = tuple(devices)
     self._op_sharding = op_sharding
