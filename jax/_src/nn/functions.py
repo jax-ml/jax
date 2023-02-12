@@ -473,4 +473,23 @@ def hard_silu(x: Array) -> Array:
   """
   return x * hard_sigmoid(x)
 
+@jax.jit
+def smelu(x: Array, beta: float = 2.0) -> Array:
+  r"""Smooth ReLU (SmeLU) activation function
+
+  Computes monotonicly the ReLU’s shape with a smooth form
+  https://arxiv.org/abs/2010.09931
+
+  .. math::
+    \mathrm{smooth\_relu}(x)= \frac{(x+\beta)^2 }{4^\beta}
+  Args:
+    x : input array of jnp
+    beta : beta value for Smooth ReLU
+  Return:
+    output activation array
+  """
+
+  return jnp.where(jnp.abs(x) <= beta, ((x + beta) ** 2) / (4 * beta), relu(x))
+
+
 hard_swish = hard_silu
