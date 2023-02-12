@@ -335,7 +335,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             f_converted, [tf.convert_to_tensor(a)],
             device_assignment=self.device_assignment(
                 computation_shape=[1, 1, 1, 2])
-            )
+            )[0]
       else:
         res = f_converted(a)
       return res
