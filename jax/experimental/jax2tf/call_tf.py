@@ -138,8 +138,6 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
       for r_tf in res_tf_flat:
         check_tf_result(r_tf)
       assert res_treedef is None or res_treedef == res_treedef_now, f"Subsequent calls had different results. Previous {res_treedef} and now {res_treedef_now}"
-      for r_tf in res_tf_flat:
-        check_tf_result(r_tf)
       res_treedef = res_treedef_now
       return res_tf_flat
 
