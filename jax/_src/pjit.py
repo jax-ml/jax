@@ -1975,37 +1975,65 @@ core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
 
 # -------------------- with_sharding_constraint --------------------
 
-def with_sharding_constraint(x, axis_resources):
+def _resolve_wsc_args(axis_resources, shardings):
+  if not _is_unspecified(axis_resources) and not _is_unspecified(shardings):
+    raise ValueError(
+        'Setting both axis_resources and shardings is not '
+        'allowed. axis_resources is deprecated. Please use shardings.')
+  if _is_unspecified(axis_resources) and _is_unspecified(shardings):
+    raise ValueError(
+        'Not specifying shardings to `with_sharding_constraint` is not allowed. '
+        'Please specify the shardings argument with a concrete sharding. Note '
+        'that axis_resources is deprecated, so use the shardings argument.')
+
+  if not _is_unspecified(axis_resources):
+    final_shardings = axis_resources
+  else:
+    final_shardings = shardings
+  return final_shardings
+
+
+# TODO(yashkatariya): Remove the axis_resources argument and make the signature
+# `with_sharding_constraint(x, shardings)` with no defaults after deprecation
+# period is finished. The deprecation period expires 3 months from Feb 13, 2023.
+def with_sharding_constraint(x, axis_resources=_UNSPECIFIED,
+                             shardings=_UNSPECIFIED):
+  final_shardings = _resolve_wsc_args(axis_resources, shardings)
   x_flat, tree = tree_flatten(x)
-  axis_resources, _, _ = _prepare_axis_resources(
-      axis_resources, "axis_resources", allow_unconstrained_dims=True)
-  axis_resources_flat = tuple(
-      flatten_axes("with_sharding_constraint sharding", tree, axis_resources))
+  user_shardings, _, _ = _prepare_axis_resources(
+      final_shardings, "shardings", allow_unconstrained_dims=True)
+  del final_shardings
+
+  user_shardings_flat = tuple(
+      flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
+  del user_shardings
+
   resource_env = pxla.thread_resources.env
   mesh = resource_env.physical_mesh
 
   if config.jax_array:
-    sharding_flat = [_create_sharding_for_array(mesh, a)
-                     for a in axis_resources_flat]
-    unconstrained_dims = [
-        get_unconstrained_dims(s) if isinstance(s, NamedSharding) else {}
-        for s in sharding_flat
-    ]
+    shardings_flat = [_create_sharding_for_array(mesh, a)
+                      for a in user_shardings_flat]
+    unconstrained_dims = [get_unconstrained_dims(s)
+                          if isinstance(s, NamedSharding) else {}
+                          for s in shardings_flat]
   else:
-    sharding_flat = [pxla.create_mesh_pspec_sharding(mesh, a.user_spec, a)
-                     for a in axis_resources_flat]
+    shardings_flat = [pxla.create_mesh_pspec_sharding(mesh, a.user_spec, a)
+                      for a in user_shardings_flat]
     # Calculate unconstrained_dims from NamedSharding because that information
     # is lost when converted to OpSharding. Bind unconstrained_dims to
     # with_sharding_constraint primitive.
-    unconstrained_dims = [get_unconstrained_dims(s) for s in sharding_flat]
+    unconstrained_dims = [get_unconstrained_dims(s) for s in shardings_flat]
 
-  pjit_check_aval_sharding(sharding_flat, x_flat, "with_sharding_constraint arguments",
+  del user_shardings_flat
+
+  pjit_check_aval_sharding(shardings_flat, x_flat, "with_sharding_constraint arguments",
                            allow_uneven_sharding=True)
 
   outs = [sharding_constraint_p.bind(xf, sharding=to_op_sharding_sharding(i, xf.ndim),
                                      resource_env=resource_env,
                                      unconstrained_dims=ud)
-          for xf, i, ud in safe_zip(x_flat, sharding_flat, unconstrained_dims)]
+          for xf, i, ud in safe_zip(x_flat, shardings_flat, unconstrained_dims)]
   return tree_unflatten(tree, outs)
 
 def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
