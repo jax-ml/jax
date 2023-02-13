@@ -24,6 +24,7 @@ Subpackages
    jax.profiler
    jax.stages
    jax.tree_util
+   jax.typing
    jax.example_libraries
    jax.experimental
 
@@ -104,6 +105,7 @@ jax.Array (:code:`jax.Array`)
 .. autosummary::
   :toctree: _autosummary
 
+    Array
     make_array_from_callback
     make_array_from_single_device_arrays
 
