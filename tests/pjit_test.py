@@ -3348,6 +3348,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "Setting both out_shardings and out_axis_resources is not allowed"):
       pjit(lambda x: x, out_shardings=P('x'), out_axis_resources=P('x'))
 
+  def test_set_none_wsc_axis_resources_and_shardings(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "Not specifying shardings to `with_sharding_constraint` is not allowed."):
+      pjit(jax.lax.with_sharding_constraint(jnp.arange(8)))
+
+  def test_set_both_wsc_axis_resources_and_shardings(self):
+    with self.assertRaisesRegex(
+        ValueError,
+        "Setting both axis_resources and shardings is not allowed"):
+      pjit(jax.lax.with_sharding_constraint(
+          jnp.arange(8), axis_resources=P('x'), shardings=P('x')))
+
 
 class TempSharding(Sharding):
 
@@ -3520,7 +3533,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   @jtu.with_mesh([('x', 2)])
   def testConstraintShardsXMapAxis(self):
     spec = P('x')
-    f = xmap(lambda x: with_sharding_constraint(x, axis_resources=spec),
+    f = xmap(lambda x: with_sharding_constraint(x, spec),
              in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
     x = jnp.arange(4).reshape((2, 2))
     error = (r"with_sharding_constraint input has an axis resources specification of " +
