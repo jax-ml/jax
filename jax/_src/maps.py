@@ -1039,6 +1039,9 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
                     donated_invars=new_donated_invars,
                     spmd_in_axes=new_spmd_in_axes,
                     spmd_out_axes=spmd_out_axes,
+                    in_positional_semantics=(
+                        *( _PositionalSemantics.GLOBAL,) * len(constvars),
+                        *params['in_positional_semantics']),
                     call_jaxpr=call_jaxpr)
   del new_params['out_axes_thunk']
   del new_params['spmd_out_axes_thunk']

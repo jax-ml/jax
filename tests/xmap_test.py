@@ -1340,6 +1340,19 @@ class XMapArrayTest(XMapTestCase):
              'specified in xmap. The partitioning must match.')):
           f(input_array)
 
+  def test_can_stage_and_interpret_xmap_with_constants(self):
+    def f(x):
+      # Create a jaxpr with a constant
+      return x + np.ones(x.shape, x.dtype)
+
+    def outer(x):
+      return xmap(f, in_axes=({0: 'batch'},), out_axes={0: 'batch'})(x)
+
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+    jaxpr = jax.make_jaxpr(outer)(x)
+    [out] = jax.core.jaxpr_as_fun(jaxpr)(x)
+    self.assertAllClose(out, x + 1)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class NewPrimitiveTest(XMapTestCase):
