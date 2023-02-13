@@ -3361,6 +3361,30 @@ class ArrayPjitTest(jtu.JaxTestCase):
       pjit(jax.lax.with_sharding_constraint(
           jnp.arange(8), axis_resources=P('x'), shardings=P('x')))
 
+  def test_with_sharding_constraint_spmd_axis_name(self):
+    mesh = jtu.create_global_mesh((2, 2, 2), ('replica', 'data', 'mdl'))
+    shape = (8, 4, 2, 2)
+    x = jnp.arange(prod(shape)).reshape(shape)
+
+    def f(inp):
+      return with_sharding_constraint(inp, P('data', None, None))
+
+    with mesh:
+      out = jax.vmap(jax.jit(f), spmd_axis_name='mdl')(x)
+      ns, _ = pxla.get_num_ways_dim_sharded(
+          out.sharding._to_xla_op_sharding(out.ndim))
+      self.assertListEqual(ns, [2, 2, 1, 1])
+
+    def apply_with_scan(x):
+      x, _ = jax.lax.scan(lambda x, _: (f(x), None), x, None, length=1)
+      return x
+
+    with mesh:
+      out2 = jax.vmap(apply_with_scan, spmd_axis_name='mdl')(x)
+      ns2, _ = pxla.get_num_ways_dim_sharded(
+          out2.sharding._to_xla_op_sharding(out2.ndim))
+      self.assertListEqual(ns2, [2, 2, 1, 1])
+
 
 class TempSharding(Sharding):
 

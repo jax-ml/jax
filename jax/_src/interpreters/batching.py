@@ -633,21 +633,24 @@ def batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
                  axis_size: core.AxisSize,
                  in_axes: Tuple[Union[int, NotMapped], ...],
                  axis_name: AxisName,
+                 spmd_axis_name: AxisName,
                  main_type: Type[BatchTrace],
                  ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
   return _batch_jaxpr2(closed_jaxpr, axis_size, tuple(in_axes), axis_name,
-                       main_type)
+                       spmd_axis_name, main_type)
 
 @weakref_lru_cache
 def _batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
                  axis_size: core.AxisSize,
                  in_axes: Tuple[Union[int, NotMapped], ...],
                  axis_name: AxisName,
+                 spmd_axis_name: AxisName,
                  main_type: Type[BatchTrace],
                  ) -> Tuple[core.ClosedJaxpr, Tuple[Union[int, NotMapped], ...]]:
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
-  f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
+  f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
+                         main_type)
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval)
               if b is not not_mapped else aval
               for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
@@ -655,13 +658,13 @@ def _batch_jaxpr2(closed_jaxpr: core.ClosedJaxpr,
   return core.ClosedJaxpr(jaxpr_out, consts), out_axes()
 
 def batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
-                main_type):
+                spmd_axis_name, main_type):
   inst = tuple(instantiate) if isinstance(instantiate, list) else instantiate
   return _batch_jaxpr(closed_jaxpr, axis_size, tuple(in_batched), inst,
-                      axis_name, main_type)
+                      axis_name, spmd_axis_name, main_type)
 
 def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
-                 main_type):
+                 spmd_axis_name, main_type):
   assert (isinstance(instantiate, bool) or
           isinstance(instantiate, (list, tuple)) and
           all(isinstance(b, bool) for b in instantiate))
@@ -670,20 +673,22 @@ def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
   in_axes = [0 if b else not_mapped for b in in_batched]
   out_axes_dest = [0 if inst else zero_if_mapped for inst in instantiate]
   return batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
-                          axis_name, main_type)
+                          axis_name, spmd_axis_name, main_type)
 
 def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
-                     main_type):
+                     spmd_axis_name, main_type):
   return _batch_jaxpr_axes(closed_jaxpr, axis_size, tuple(in_axes),
-                           tuple(out_axes_dest), axis_name, main_type)
+                           tuple(out_axes_dest), axis_name, spmd_axis_name,
+                           main_type)
 
 @weakref_lru_cache
 def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
-                      axis_name, main_type):
+                      axis_name, spmd_axis_name, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
   f, out_batched = _match_axes_jaxpr(f, axis_size, out_axes_dest, out_axes)
-  f = _batch_jaxpr_outer(f, axis_name, axis_size, in_axes, main_type)
+  f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
+                         main_type)
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]
   jaxpr_out, _, consts = pe.trace_to_jaxpr_dynamic(f, avals_in)
@@ -717,13 +722,15 @@ def _match_axes_jaxpr(axis_size, out_axes_dest, out_axes, main, in_axes,
   yield out_vals, out_batched
 
 @lu.transformation
-def _batch_jaxpr_outer(axis_name, axis_size, in_dims, main_type, *in_vals):
+def _batch_jaxpr_outer(axis_name, spmd_axis_name, axis_size, in_dims, main_type,
+                       *in_vals):
   if axis_size is None:
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims) if d is not not_mapped}
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              else ax for x, ax in unsafe_zip(in_vals, in_dims)]
-  with core.new_main(main_type, axis_name=axis_name) as main:
+  with core.new_main(main_type, axis_name=axis_name,
+                     spmd_axis_name=spmd_axis_name) as main:
     with core.extend_axis_env(axis_name, axis_size, main):
       out_vals = yield (main, in_dims, *in_vals), {}
       del main

@@ -764,7 +764,8 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
   batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-      fun_jaxpr, axis_size, in_batched, False, axis_name, main_type)
+      fun_jaxpr, axis_size, in_batched, False, axis_name, spmd_axis_name,
+      main_type)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
@@ -772,7 +773,8 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, axis_size, args_batched, False, axis_name, main_type)
+        fwd_jaxpr, axis_size, args_batched, False, axis_name, spmd_axis_name,
+        main_type)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 

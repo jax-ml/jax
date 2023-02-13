@@ -300,7 +300,7 @@ def _for_impl_unrolled(body, nsteps, unroll, *args):
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
 for_p.def_impl(functools.partial(xla.apply_primitive, for_p))
 
-def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
+def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
               jaxpr, nsteps, reverse, which_linear, unroll):
   init_batched = [d is not batching.not_mapped for d in dims]
   discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
@@ -309,7 +309,7 @@ def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
     _, out_batched = batching.batch_jaxpr(
         core.ClosedJaxpr(discharged_jaxpr, body_consts),
         axis_size, [False] + batched, instantiate=batched,
-        axis_name=axis_name, main_type=main_type)
+        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
     if out_batched == batched:
       break
     batched = map(operator.or_, batched, out_batched)
@@ -320,13 +320,14 @@ def _for_vmap(axis_size, axis_name, main_type, args, dims, *,
           for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
   batched_jaxpr_, _ = batching.batch_jaxpr(
       core.ClosedJaxpr(jaxpr, []), axis_size, [False] + batched, [],
-      axis_name=axis_name, main_type=main_type)
+      axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
   batched_jaxpr, () = batched_jaxpr_.jaxpr, batched_jaxpr_.consts  # TODO consts
   out_flat = for_p.bind(*args, jaxpr=batched_jaxpr, nsteps=nsteps,
                         reverse=reverse, which_linear=which_linear,
                         unroll=unroll)
   return out_flat, [0 if b else batching.not_mapped for b in batched]
-batching.axis_primitive_batchers[for_p] = _for_vmap
+batching.axis_primitive_batchers[for_p] = functools.partial(_for_vmap, None)
+batching.spmd_axis_primitive_batchers[for_p] = _for_vmap
 
 def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear,
              unroll):

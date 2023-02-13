@@ -1495,7 +1495,8 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
                   resource_env, donated_invars, name, in_positional_semantics,
                   out_positional_semantics, keep_unused, inline):
   new_jaxpr, axes_out = batching.batch_jaxpr2(
-      jaxpr, axis_size, dims_in, axis_name=axis_name, main_type=main_type)
+      jaxpr, axis_size, dims_in, axis_name=axis_name,
+      spmd_axis_name=spmd_axis_name, main_type=main_type)
 
   # `insert_axis` is set to True only for some `xmap` uses.
   new_parts = (axis_name,) if insert_axis else (
