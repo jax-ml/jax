@@ -403,28 +403,6 @@ def _code_generator_and_avals(
       raise ValueError(msg) from e
 
   xla_comp = xla_client.XlaComputation(func_tf_hlo)
-  # Check that the function does not have compile-time constant inputs that
-  # have been inlined in the compiled code.
-  xla_comp_parameter_shapes = xla_comp.program_shape().parameter_shapes()
-  found_parameter_avals = [
-      core.ShapedArray(found_xla_shape.dimensions(),
-                       dtypes.canonicalize_dtype(found_xla_shape.numpy_dtype()))
-      for found_xla_shape in xla_comp_parameter_shapes
-  ]
-  # Add the captured_inputs to args_flat_sig_tf
-  expected_args_flat_sig_tf = list(args_flat_sig_tf) + list(captured_inputs)
-  expected_parameter_avals = [
-      core.ShapedArray(tuple(arg_sig.shape.as_list()),
-                       dtypes.canonicalize_dtype(arg_sig.dtype.as_numpy_dtype))
-      for arg_sig in expected_args_flat_sig_tf]
-  if found_parameter_avals != expected_parameter_avals:
-    msg = ("Compiled TensorFlow function has unexpected parameter types " +
-           f"{found_parameter_avals}, while the expected types are " +
-           f"{expected_parameter_avals}. Perhaps the TensorFlow function " +
-           "has shape-influencing inputs, and thus needs to be recompiled " +
-           "for each value of some inputs. " +
-           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
-    raise ValueError(msg)
 
   # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
   def canonical_res_aval(res_shape: xla.XlaShape) -> core.ShapedArray:
