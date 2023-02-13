@@ -637,8 +637,10 @@ def _bcsr_dot_general_gpu_lowering(
 
   if rhs_aval.ndim == 1:
     dot_general_fn = csr_matvec_lowering
+    x_dtype = 'x_dtype'
   elif rhs_aval.ndim == 2:
     dot_general_fn = csr_matmat_lowering
+    x_dtype = 'B_dtype'
     if rhs_contract[0] == 1:
       rhs = hlo.TransposeOp(
           rhs, permutation=mlir.dense_int_elements([1, 0])).result
@@ -649,7 +651,7 @@ def _bcsr_dot_general_gpu_lowering(
                          shape=lhs_spinfo.shape, transpose=False,
                          data_dtype=lhs_data_aval.dtype,
                          index_dtype=lhs_indices_aval.dtype,
-                         x_dtype=rhs_aval.dtype)]
+                         **{x_dtype: rhs_aval.dtype})]
 
 _bcsr_dot_general_default_lowering = mlir.lower_fun(
     _bcsr_dot_general_impl, multiple_results=False)
