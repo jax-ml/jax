@@ -46,6 +46,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import mhlo
 from jax._src.lib.mlir.dialects import func as func_dialect
 
 
@@ -646,6 +647,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
     return tuple(eval_dim(d) for d in shape)
 
 class LoweringResult(NamedTuple):
+  context: ir.Context
   module: ir.Module
   keepalive: Optional[Any]
   host_callbacks: List[Any]
@@ -750,7 +752,8 @@ def lower_jaxpr_to_module(
     raise ValueError(
         f"Cannot lower jaxpr with verifier errors: {module_string}")
 
-  return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks)
+  return LoweringResult(
+      ctx.context, ctx.module, ctx.keepalives, ctx.host_callbacks)
 
 def module_to_string(module: ir.Module) -> str:
   output = io.StringIO()
@@ -762,6 +765,57 @@ def module_to_bytecode(module: ir.Module) -> bytes:
   output = io.BytesIO()
   module.operation.write_bytecode(file=output)
   return output.getvalue()
+
+def add_dynamic_shape_param_binding(
+    context: ir.Context,
+    module: ir.Module,
+    in_type: Optional[pe.InputType],
+    out_type: Optional[pe.OutputType],
+):
+  binding_list = []
+  with context:
+    target = "kParam"
+    for i, a in enumerate(in_type):
+      if type(a) is core.DShapedArray:
+        for j, s in enumerate(a.shape):
+          if isinstance(s, core.DBIdx):
+            binding_list.append(
+                mhlo.DynamicParameterBinding.get(
+                    dynamic_param_num=s.val,
+                    dynamic_param_indices=[],
+                    target=target,
+                    target_num=i,
+                    target_indices=[],
+                    target_dim_num=j,
+                )
+            )
+
+    target = "kOutput"
+    for i, a in enumerate(out_type):
+      if type(a) is core.DShapedArray:
+        for j, s in enumerate(a.shape):
+          if isinstance(s, core.InDBIdx):
+            binding_list.append(
+                mhlo.DynamicParameterBinding.get(
+                    dynamic_param_num=s.val,
+                    dynamic_param_indices=[],
+                    target=target,
+                    target_num=i,
+                    target_indices=[],
+                    target_dim_num=j,
+                )
+            )
+          elif isinstance(s, core.OutDBIdx):
+            raise TypeError(
+                "output dynamic dimension cannot be specified based on output"
+                " variable"
+            )
+
+    if not binding_list:
+      module.operation.attributes["mhlo.dynamic_parameter_bindings"] = (
+          ir.ArrayAttr.get(binding_list)
+      )
+      module.operation.attributes["mhlo.is_dynamic"] = ir.BoolAttr.get(True)
 
 
 def _set_up_aliases(avals_in, avals_out, donated_args):

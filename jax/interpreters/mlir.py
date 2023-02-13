@@ -35,6 +35,7 @@ from jax._src.interpreters.mlir import (
   _lowerings as _lowerings,
   _platform_specific_lowerings as _platform_specific_lowerings,
   _xla_call_lower as _xla_call_lower,
+  add_dynamic_shape_param_binding as add_dynamic_shape_param_binding,
   aval_to_ir_type as aval_to_ir_type,
   aval_to_ir_types as aval_to_ir_types,
   dense_bool_elements as dense_bool_elements,

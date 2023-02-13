@@ -519,6 +519,10 @@ def lower_xla_callable(
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,
       lowering_result.host_callbacks)
+  if config.jax_dynamic_shapes:
+    mlir.add_dynamic_shape_param_binding(
+        lowering_result.context, module, abstract_args, out_avals
+    )
   return XlaComputation(
       name, module, False, donated_invars, fun.in_type, tuple(closed_out_type),
       nreps=nreps, device=device, backend=backend, tuple_args=tuple_args,

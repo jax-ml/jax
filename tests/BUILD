@@ -45,6 +45,15 @@ jax_test(
 )
 
 jax_test(
+    name = "bounded_dynamic_test",
+    srcs = ["bounded_dynamic_test.py"],
+    # TODO(https://github.com/google/jax/issues/12291): Enable when jax.Array is supported.
+    env = {
+        "JAX_JIT_PJIT_API_MERGE": "0",
+    },
+)
+
+jax_test(
     name = "api_util_test",
     srcs = ["api_util_test.py"],
 )
