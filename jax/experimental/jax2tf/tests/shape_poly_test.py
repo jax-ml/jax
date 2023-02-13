@@ -546,14 +546,16 @@ def check_shape_poly(tst, f_jax: Callable, *,
                      poly_axes = None,
                      polymorphic_shapes: Optional[Sequence[Any]] = None,
                      input_signature: Optional[Sequence[tf.TensorSpec]] = None,
-                     expected_output_signature: Optional[tf.TensorSpec] = None):
+                     expected_output_signature: Optional[tf.TensorSpec] = None,
+                     expect_error=(None, None)):
   # Makes and tests a harness. See PolyHarness documentation.
   h = PolyHarness("", "", f_jax,
                   arg_descriptors=arg_descriptors,
                   skip_jax_run=skip_jax_run, poly_axes=poly_axes,
                   polymorphic_shapes=polymorphic_shapes,
                   input_signature=input_signature,
-                  expected_output_signature=expected_output_signature)
+                  expected_output_signature=expected_output_signature,
+                  expect_error=expect_error)
   h.run_test(tst)
 
 
@@ -1013,7 +1015,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         lambda x_unused, y: y * 2.0,
         arg_descriptors=[RandArg((4,), _f32), RandArg((3,), _f32)],
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-        polymorphic_shapes=["b1", "b2"])
+        polymorphic_shapes=["b1", "b2"],
+        expect_error=(
+            (None, None) if not config.jax2tf_default_experimental_native_lowering else
+            (ValueError,
+             "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
 
     # A polymorphic arg is not used, and the dimension var does appear
     # elsewhere but not as a trivial monomial.
@@ -1021,17 +1027,22 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         lambda x_unused, y: y * 2.0,
         arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-        polymorphic_shapes=["b1", "b1 * b1"])
+        polymorphic_shapes=["b1", "b1 * b1"],
+        expect_error=(
+            (None, None) if not config.jax2tf_default_experimental_native_lowering else
+            (ValueError,
+             "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
 
     # It is not sufficient to just use the shape of an input; it is still unused
-    if config.jax2tf_default_experimental_native_lowering:
-      with self.assertRaisesRegex(KeyError,
-                                  "Encountered dimension variable 'b1` that is not appearing in the shapes"):
-        check_shape_poly(self,
-            lambda x_unused, y: y + x_unused.shape[0],
-            arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],
-            input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-            polymorphic_shapes=["b1", "b2"])
+    check_shape_poly(self,
+        lambda x_unused, y: y + x_unused.shape[0],
+        arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],
+        input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
+        polymorphic_shapes=["b1", "b2"],
+        expect_error=(
+            (None, None) if not config.jax2tf_default_experimental_native_lowering else
+            (KeyError,
+             "Encountered dimension variable 'b1' that is not appearing in the shapes")))
 
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""
@@ -1132,6 +1143,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_grad_not_var_output(self):
     # Output of the function has poly shapes, non-variable
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("Not supported with native lowering")
     def f_jax(x):  # :[b, 3]
       return jnp.reshape(x, (-1,))  # : [3b]
     x = np.arange(12, dtype=np.float32).reshape((4, 3))
@@ -1243,6 +1256,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(y), restored_f(y))
 
   def test_saved_model_int_function(self):
+    # TODO(https://github.com/google/jax/issues/14437)
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("Gradient function does not use the dimension  variables")
+
     def f_jax(x):  # x:s32[b, 3, 4]
       return jnp.reshape(x, (-1,))  # : s32[b * 12]
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
@@ -1260,15 +1277,19 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x), res_jax_rt)
 
   def test_saved_model_constant_gradient(self):
+    # TODO(https://github.com/google/jax/issues/14437)
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("Gradient function does not use the dimension  variables")
+
     def f_jax(x):  # A function whose gradient is a constant
-      return 3.
+      return x
 
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
     x = np.array([0.7, 0.8], dtype=np.float32)
     restored_f, _ = tf_test_util.SaveAndLoadFunction(
         f_tf, input_signature=[tf.TensorSpec([None], x.dtype)])
-    self.assertAllClose(3., restored_f(x))
-    self.assertAllClose(np.array([0., 0.], dtype=np.float32), jax.grad(f_jax)(x))
+    self.assertAllClose(f_jax(x), restored_f(x))
+
 
   def test_readme_examples(self):
     """Some of the examples from the README."""
@@ -1285,15 +1306,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.sum(x, axis=0) / x.shape[0],
                    polymorphic_shapes=["(v, _)"])(np.ones((3, 4)))
 
-    jax2tf.convert(lambda x: jnp.array(x.shape[0]),
-                   polymorphic_shapes=["(v, _)"])(np.ones((4, 4)))
-
     with self.assertRaisesRegex(TypeError,
                                 "prod requires ndarray or scalar arguments"):
-      jax2tf.convert(lambda x: jnp.prod(x.shape),
+      jax2tf.convert(lambda x: jnp.prod(x.shape) + x,
                      polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
-    jax2tf.convert(lambda x: jnp.prod(jnp.array(x.shape)),
+    jax2tf.convert(lambda x: jnp.prod(jnp.array(x.shape)) + x,
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
     four_ones = np.ones((4,))
@@ -1352,10 +1370,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                 "Dimension variable b must have integer value >= 1. Found value 0 when solving .*"):
       jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
 
-    # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
-    f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
-    self.assertEqual(1, f_tf(x0))
+    # TODO(https://github.com/google/jax/issues/14437)
+    if not config.jax2tf_default_experimental_native_lowering:
+      # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
+      f_tf = tf.function(
+          jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+      self.assertEqual(1, f_tf(x0))
 
     # Unsoundness: not checking that the actual dimensions denoted by the same
     # dimension variables have equal sizes.
@@ -1373,9 +1393,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
 
     # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
-    f_tf = tf.function(
-        jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
-    self.assertEqual(1, f_tf(x45))
+     # TODO(https://github.com/google/jax/issues/14437)
+    if not config.jax2tf_default_experimental_native_lowering:
+      f_tf = tf.function(
+          jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+      self.assertEqual(1, f_tf(x45))
 
     x = np.ones((5,), dtype=np.float32)
     with self.assertRaisesRegex(ValueError,
@@ -1401,9 +1423,11 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["b", "b"])(x, np.array([0.1, 0.2, 0.3]))
     self.assertAllClose((9., 1.8), (res_primal, res_tangent))
 
-    self.assertAllClose(
-        np.array([3., 3., 3.]),
-        jax2tf.convert(jax.grad(f), polymorphic_shapes=["b"])(x))
+    # TODO(https://github.com/google/jax/issues/14437)
+    if not config.jax2tf_default_experimental_native_lowering:
+      self.assertAllClose(
+          np.array([3., 3., 3.]),
+          jax2tf.convert(jax.grad(f), polymorphic_shapes=["b"])(x))
 
     xv = np.arange(24.).reshape((2, 3, 4))
     res_vmap = jax.vmap(f, in_axes=1)(xv)
@@ -1801,8 +1825,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
                 poly_axes=[0]),
     PolyHarness("delta", "0",
-                lambda x: lax_internal._delta(_f32, x.shape, axes=(0, 1)),
-                arg_descriptors=[RandArg((3, 4), _f32)],
+                lambda x: lax_internal._delta(_f32, x.shape, axes=(0, 1)) + x,
+                arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
     PolyHarness("dot_general", "",
                 lambda lhs, rhs: lax.dot_general(lhs, rhs,
@@ -1904,16 +1928,16 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 expect_error=(AssertionError,
                               "Incompatible reduction dimensions")),
     PolyHarness("eye", "N=poly_M=None",
-                lambda x: jnp.eye(x.shape[0]),
-                arg_descriptors=[RandArg((3, 4), _f32)],
+                lambda x: jnp.eye(x.shape[0]) + x,
+                arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
     PolyHarness("eye", "N=poly_M=poly",
-                lambda x: jnp.eye(x.shape[0], M=x.shape[0] + 2),
-                arg_descriptors=[RandArg((3, 4), _f32)],
+                lambda x: jnp.eye(x.shape[0], M=x.shape[0] + 2) + x,
+                arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
     PolyHarness("full", "",
-                lambda x: lax.full((x.shape[0], 2), 3.),
-                arg_descriptors=[RandArg((3, 4), _f32)],
+                lambda x: lax.full((x.shape[0], 2), 3.) + x,
+                arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
     # operand is non-poly, index is poly
     PolyHarness("getitem", "op=static_idx=poly",
@@ -2021,7 +2045,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for axis in [None, (0,), (0, 1), (1,)]
     ],
     PolyHarness("ones", "",
-                lambda x: jnp.ones(x.shape, dtype=_f32),
+                lambda x: jnp.ones(x.shape, dtype=_f32) + x,
                 arg_descriptors=[RandArg((3, 2, 4), _f32)],
                 poly_axes=[0]),
     PolyHarness("pad", "",
@@ -2077,13 +2101,13 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[None, (0, 1)]),
     # Works when the known dimensions are known to be even or odd.
     PolyHarness("random_uniform", "even_1",
-                lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
+                lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32) + a,
                 arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 4), _f32)],
                 poly_axes=[None, 0]),
     PolyHarness("random_uniform", "even_2",
                 lambda key, a: jax.random.uniform(key, (2 * a.shape[0], a.shape[1]),
-                                                  dtype=_f32),
-                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 5), _f32)],
+                                                  dtype=_f32) + jnp.concatenate([a, a], axis=0),
+                arg_descriptors=[RandArg((2,), np.uint32), RandArg((3, 1), _f32)],
                 poly_axes=[None, 0]),
     PolyHarness("random_uniform", "error_not_even",
                 lambda key, a: jax.random.uniform(key, a.shape, dtype=_f32),
@@ -2143,8 +2167,8 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 poly_axes=[0]),
     # Repeat f32 * b
     PolyHarness("repeat", "repeats=poly_axis=None_scalar",
-                lambda x, y: jnp.repeat(x, repeats=y.shape[0], axis=None),
-                arg_descriptors=[RandArg((), _f32), RandArg((3, 2), _f32)],
+                lambda x, y: jnp.repeat(x, repeats=y.shape[0], axis=None) + y,
+                arg_descriptors=[RandArg((), _f32), RandArg((3, 1), _f32)],
                 poly_axes=[None, 0]),
     PolyHarness("repeat", "repeats=poly_axis=None_total_repeat_length1",
                 lambda x: jnp.repeat(x, repeats=x.shape[0], axis=None, total_repeat_length=8),
@@ -2296,12 +2320,12 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((4, 2), _f32)],
                 poly_axes=[0]),
     PolyHarness("tri", "N=poly_M=None",
-                lambda x: jnp.tri(x.shape[0]),
-                arg_descriptors=[RandArg((3, 4), _f32)],
+                lambda x: jnp.tri(x.shape[0]) + x,
+                arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
     PolyHarness("tri", "N=poly_M=poly",
-                lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2),
-                arg_descriptors=[RandArg((3, 4), _f32)],
+                lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2) + x,
+                arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
     [
         PolyHarness("var",
