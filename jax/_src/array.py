@@ -308,18 +308,6 @@ class ArrayImpl(basearray.Array):
         # here after uneven partitioning support is added.
         return (api.device_put(self._value[i]) for i in range(self.shape[0]))
 
-  def item(self):
-    if dtypes.issubdtype(self.dtype, np.complexfloating):
-      return complex(self)
-    elif dtypes.issubdtype(self.dtype, np.floating):
-      return float(self)
-    elif dtypes.issubdtype(self.dtype, np.integer):
-      return int(self)
-    elif dtypes.issubdtype(self.dtype, np.bool_):
-      return bool(self)
-    else:
-      raise TypeError(self.dtype)
-
   @property
   def is_fully_replicated(self) -> bool:
     return self.shape == self._arrays[0].shape

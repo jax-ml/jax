@@ -785,6 +785,17 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
                if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
+def _item(a: Array):
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    return complex(a)
+  elif dtypes.issubdtype(a.dtype, np.floating):
+    return float(a)
+  elif dtypes.issubdtype(a.dtype, np.integer):
+    return int(a)
+  elif dtypes.issubdtype(a.dtype, np.bool_):
+    return bool(a)
+  else:
+    raise TypeError(a.dtype)
 
 def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
@@ -5441,6 +5452,7 @@ _array_methods = {
   "diagonal": diagonal,
   "dot": dot,
   "flatten": ravel,
+  "item": _item,
   "max": max,
   "mean": mean,
   "min": min,
@@ -5495,7 +5507,6 @@ def _set_shaped_array_attributes(shaped_array):
   for prop_name, prop in _array_properties.items():
     setattr(shaped_array, prop_name, core.aval_property(prop))
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
-  setattr(shaped_array, "item", core.aval_method(ArrayImpl.item))
 
 _set_shaped_array_attributes(ShapedArray)
 _set_shaped_array_attributes(DShapedArray)
