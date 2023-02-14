@@ -15,7 +15,7 @@
 import builtins
 from functools import partial
 import operator
-from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -53,6 +53,10 @@ class ConvDimensionNumbers(NamedTuple):
 
 ConvGeneralDilatedDimensionNumbers = Union[
   None, ConvDimensionNumbers, Tuple[str, str, str]]
+ConvGeneralDilated = Callable[
+    [Array, Array, Sequence[int], Union[str, Sequence[Tuple[int, int]]]],
+    Array,
+]
 
 def conv_general_dilated(
   lhs: Array, rhs: Array, window_strides: Sequence[int],

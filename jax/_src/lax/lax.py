@@ -732,6 +732,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
 
 DotDimensionNumbers = Tuple[Tuple[Sequence[int], Sequence[int]],
                             Tuple[Sequence[int], Sequence[int]]]
+DotGeneral = Callable[[ArrayLike, ArrayLike, DotDimensionNumbers], Array]
 
 def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionNumbers,
                 precision: PrecisionLike = None,
@@ -2707,7 +2708,6 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
       [hlo.PrecisionAttr.get(str(p)) for p in full_precision])
 
 
-
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: Optional[np.dtype]):
   del preferred_element_type  # Implied by the output aval
@@ -3815,8 +3815,6 @@ mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, mlir.max_hlo,
                                              _get_max_identity))
 
 
-
-
 def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
   exponent_bits = operator.index(exponent_bits)
   mantissa_bits = operator.index(mantissa_bits)
@@ -3839,7 +3837,6 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
                                mlir.i32_attr(mantissa_bits)).results
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
-
 
 
 _UINT_DTYPES = {
