@@ -923,11 +923,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
                                     jit_compile=True)(x).numpy())
 
   def test_saved_model(self):
-
-    # TODO(b/268243107) TF SavedModel should trace custom_gradient under eager.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Skip test because of known TF SavedModel bug.")
-
     x = np.array([.7, .8], dtype=np.float32)
     def fun_tf(x):
       return tf.math.sin(x)
@@ -951,11 +946,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(np.sin(x), res.numpy())
 
   def test_saved_model_polymorphic_input_static_output(self):
-
-    # TODO(b/268243107) TF SavedModel should trace custom_gradient under eager.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Skip test because of known TF SavedModel bug.")
-
     x = np.array([.7, .8], dtype=np.float32)
     def fun_tf(x):
       return tf.math.reduce_sum(tf.math.sin(x))
@@ -1019,9 +1009,9 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_polymorphism_static_output_shape(self, with_jit=True):
-    # TODO(b/268243107) TF SavedModel should trace custom_gradient under eager.
+    # TODO(b/268386622) Dynamic shapes not yet supported.
     if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Skip test because of known TF SavedModel bug.")
+      raise unittest.SkipTest("Skip test because of dynamic shapes.")
     x = np.array([0.7, 0.8], dtype=np.float32)
 
     def fun_tf(x):
@@ -1043,10 +1033,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
   def test_several_round_trips(self,
                                f2_function=False, f2_saved_model=False,
                                f4_function=False, f4_saved_model=False):
-    # TODO(b/268243107) TF SavedModel should trace custom_gradient under eager.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Skip test because of known TF SavedModel bug.")
-
     x = np.array(.7, dtype=np.float32)
     # f(n)(x) = 2. * x^n
     def f(n):
