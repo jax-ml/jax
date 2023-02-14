@@ -17,6 +17,7 @@ Subpackages
    jax.debug
    jax.dlpack
    jax.distributed
+   jax.dtypes
    jax.flatten_util
    jax.image
    jax.nn
