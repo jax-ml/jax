@@ -1252,10 +1252,8 @@ f_jax(np.float32(42.))
 jax.jit(f_jax)(np.float(42.))
 ```
 
-Another similar situation is when a function uses input values in
-place of shapes. In this case TF actually does compile the function
-but re-compiles it for each distinct value of the input. This is
-not allowed when used from JAX:
+Yet another unsupported situation is when the TF function
+is compileable but with dynamic output shapes:
 
 ```python
 def f_tf_dynamic_shape(x):
@@ -1269,9 +1267,7 @@ f_jax(x)
 # Fails in jit mode
 jax.jit(f_jax)(x)
 ```
-
-Yet another unsupported situation is when the TF function
-is compileable but with dynamic output shapes:
+Another similar example that will fail to compile:
 
 ```python
 def f_tf_dynamic_output_shape(x):
