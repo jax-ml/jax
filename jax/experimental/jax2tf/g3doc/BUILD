@@ -13,9 +13,7 @@
 # limitations under the License.
 licenses(["notice"])
 
-package(
-    default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
-)
+package(default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"])
 
 filegroup(
     name = "convert_models_results",
