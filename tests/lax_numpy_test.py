@@ -2750,7 +2750,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, axis=axis, num_sections=num_sections)
       for shape, axis, num_sections in [
-          ((12, 4), 0, 4), ((12, 4), 1, 2),
+          ((12, 4), 0, 4), ((12,), 1, 2),
           ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]],
     dtype=default_dtypes,
   )
