@@ -996,9 +996,7 @@ class RngShardingTest(jtu.JaxTestCase):
 
     with jax.sharding.Mesh(np.array(jax.devices()), ('data',)):
       lowered = pjit(
-          fun,
-          in_axis_resources=P('data'),
-          out_axis_resources=P(None, 'data'),
+          fun, in_shardings=P('data'), out_shardings=P(None, 'data')
       ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
 
     def verify_serialization(lowered):

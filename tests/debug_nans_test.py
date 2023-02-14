@@ -148,9 +148,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       raise SkipTest("test requires >=2 devices")
 
     p = jax.sharding.PartitionSpec('x')
-    f = pjit.pjit(lambda x: 0. / x,
-                  in_axis_resources=p,
-                  out_axis_resources=p)
+    f = pjit.pjit(lambda x: 0.0 / x, in_shardings=p, out_shardings=p)
 
     with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
       with self.assertRaises(FloatingPointError):

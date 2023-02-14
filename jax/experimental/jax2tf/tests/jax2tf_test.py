@@ -1380,9 +1380,9 @@ def get_serialized_computation(
     out_axis_resources = None) -> str:
   if use_pjit:
     assert not abstracted_axes
-    lowered = pjit.pjit(f_jax,
-                   in_axis_resources=in_axis_resources,
-                   out_axis_resources=out_axis_resources).lower(*args)
+    lowered = pjit.pjit(
+        f_jax, in_shardings=in_axis_resources, out_shardings=out_axis_resources
+    ).lower(*args)
   else:
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
@@ -1485,8 +1485,9 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     out_axis_resources = None
     res_jax = pjit.pjit(
         func_jax,
-        in_axis_resources=in_axis_resources,
-        out_axis_resources=out_axis_resources)(x, x)
+        in_shardings=in_axis_resources,
+        out_shardings=out_axis_resources,
+    )(x, x)
     module = get_serialized_computation(
         func_jax,
         x,

@@ -427,9 +427,9 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     }
 
     with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=pjit.FROM_GDA,
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(
+          lambda x: x, in_shardings=pjit.FROM_GDA, out_shardings=mesh_axes
+      )
       out = f(gda1)
       for s in out.addressable_shards:
         device_id = s.device.id
@@ -478,9 +478,9 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     }
 
     with global_mesh:
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=pjit.FROM_GDA,
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(
+          lambda x: x, in_shardings=pjit.FROM_GDA, out_shardings=mesh_axes
+      )
       out = f(gda1)
 
       for s in out.addressable_shards:
@@ -494,17 +494,17 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
                                       global_input_data[expected_index])
 
     with global_mesh:
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=experimental.PartitionSpec(None),
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(
+          lambda x: x,
+          in_shardings=experimental.PartitionSpec(None),
+          out_shardings=mesh_axes,
+      )
       # Fully replicated values allows a non-contiguous mesh.
       out = f(global_input_data)
       self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
 
     with global_mesh:
-      f = pjit.pjit(lambda x: x,
-                    in_axis_resources=None,
-                    out_axis_resources=mesh_axes)
+      f = pjit.pjit(lambda x: x, in_shardings=None, out_shardings=mesh_axes)
       # Fully replicated values allows a non-contiguous mesh.
       out = f(global_input_data)
       self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
@@ -513,9 +513,11 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         global_input_shape, global_mesh, experimental.PartitionSpec(None), cb)
 
     with global_mesh:
-      f = pjit.pjit(lambda x, y: (x, y),
-                    in_axis_resources=(None, None),
-                    out_axis_resources=(mesh_axes, mesh_axes))
+      f = pjit.pjit(
+          lambda x, y: (x, y),
+          in_shardings=(None, None),
+          out_shardings=(mesh_axes, mesh_axes),
+      )
       # Fully replicated values + GDA allows a non-contiguous mesh.
       out1, out2 = f(global_input_data, gda2)
       self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
@@ -535,9 +537,11 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
         lambda idx: global_input_data[idx])
 
     with global_mesh:
-      f = pjit.pjit(lambda x, y: (x, y),
-                    in_axis_resources=experimental.PartitionSpec("x", "y"),
-                    out_axis_resources=experimental.PartitionSpec("x", "y"))
+      f = pjit.pjit(
+          lambda x, y: (x, y),
+          in_shardings=experimental.PartitionSpec("x", "y"),
+          out_shardings=experimental.PartitionSpec("x", "y"),
+      )
       inp_aval = core.ShapedArray((8, 2), jnp.int32)
       # `ShapedArray` is considered global when lowered and compiled.
       # Hence it can bypass the contiguous mesh restriction.

@@ -709,8 +709,9 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
 
   f = pjit_lib.pjit(
       lambda x: jax.tree_map(lambda x: x + 1, x),
-      in_axis_resources=in_axis_resources,
-      out_axis_resources=out_axis_resources)
+      in_shardings=in_axis_resources,
+      out_shardings=out_axis_resources,
+  )
 
   if use_aot:
     f = f.lower(x).compile()

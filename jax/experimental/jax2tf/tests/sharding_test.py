@@ -322,9 +322,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     def f_jax(a):
       # We have a pjit nested inside the function to be converted
       inner_func = pjit.pjit(
-          jnp.sin,
-          in_axis_resources=(P("x"),),
-          out_axis_resources=None)
+          jnp.sin, in_shardings=(P("x"),), out_shardings=None
+      )
       return jnp.cos(inner_func(a))
 
     @tf.function(autograph=False, jit_compile=True)
@@ -456,7 +455,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(res_jax, res)
       res_tf = f_tf(a)
       self.assertAllClose(res_tf, res_jax)
-
 
   @unittest.skip("TODO(b/268295912): ShardingRemover crash")
   def test_repro_xla_bug_shmap_collective_permute(self):

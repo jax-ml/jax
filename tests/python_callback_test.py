@@ -700,7 +700,7 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
 
       with mesh:
         inp = jnp.arange(float(jax.local_device_count()))
-        out = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)(inp)
+        out = pjit.pjit(f, in_shardings=spec, out_shardings=spec)(inp)
         np.testing.assert_allclose(
             out, np.sin(np.arange(jax.local_device_count()))
         )
@@ -709,9 +709,9 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
           with self.assertRaisesRegex(
               NotImplementedError, 'when all mesh axes are partitioned manually'
           ):
-            pjit.pjit(
-                without_xmap_f, in_axis_resources=spec, out_axis_resources=spec
-            )(inp)
+            pjit.pjit(without_xmap_f, in_shardings=spec, out_shardings=spec)(
+                inp
+            )
 
     finally:
       jtu.restore_spmd_manual_lowering_flag()
@@ -1027,7 +1027,7 @@ class IOPythonCallbackTest(jtu.JaxTestCase):
     else:
       spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
-    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=out_spec)
+    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
     with mesh:
       f(jnp.arange(mesh.size))
       jax.effects_barrier()

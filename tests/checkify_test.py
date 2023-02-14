@@ -488,9 +488,9 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       ps = jax.sharding.PartitionSpec("dev")
       x = jnp.arange(8)
 
-    f = pjit.pjit(f, in_axis_resources=ps, out_axis_resources=ps)
+    f = pjit.pjit(f, in_shardings=ps, out_shardings=ps)
     f = checkify.checkify(f, errors=checkify.float_checks)
-    g = pjit.pjit(g, in_axis_resources=ps, out_axis_resources=ps)
+    g = pjit.pjit(g, in_shardings=ps, out_shardings=ps)
     g = checkify.checkify(g, errors=checkify.float_checks)
     with mesh:
       u_err, _ = f(x)

@@ -222,8 +222,6 @@ class DebugPrintTest(jtu.JaxTestCase):
     """))
 
 
-
-
 @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class DebugPrintTransformationTest(jtu.JaxTestCase):
 
@@ -797,7 +795,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     else:
       spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
-    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=out_spec)
+    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
     with mesh:
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
@@ -808,7 +806,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       y = x.dot(x)
       debug_print("{}", y, ordered=False)
       return y
-    f2 = pjit.pjit(f2, in_axis_resources=spec, out_axis_resources=out_spec)
+    f2 = pjit.pjit(f2, in_shardings=spec, out_shardings=out_spec)
     with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
       with jtu.capture_stdout() as output:
         f2(np.arange(8, dtype=jnp.int32))
@@ -852,7 +850,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     else:
       spec = jax.sharding.PartitionSpec('dev')
-    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
     with mesh:
       with jtu.capture_stdout() as output:
         f(np.arange(8, dtype=jnp.int32))
@@ -883,7 +881,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     else:
       in_spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
-    f = pjit.pjit(f, in_axis_resources=in_spec, out_axis_resources=out_spec)
+    f = pjit.pjit(f, in_shardings=in_spec, out_shardings=out_spec)
     with mesh:
       with jtu.capture_stdout() as output:
         f(jnp.arange(8, dtype=jnp.int32) * 2)
@@ -1191,7 +1189,7 @@ class InspectShardingTest(jtu.JaxTestCase):
     else:
       spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
-    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=out_spec)
+    f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
     with mesh:
       f(np.arange(8, dtype=jnp.int32))
     self.assertTrue(is_called)
