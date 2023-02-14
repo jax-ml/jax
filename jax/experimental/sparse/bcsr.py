@@ -593,6 +593,23 @@ ad.defjvp(bcsr_dot_general_p, _bcsr_dot_general_jvp_lhs, None, None,
 ad.primitive_transposes[bcsr_dot_general_p] = _bcsr_dot_general_transpose
 batching.primitive_batchers[bcsr_dot_general_p] = _bcsr_dot_general_batch_rule
 
+
+def _bcsr_correct_out_of_bound_indices(data, indices, indptr, rhs, *, shape):
+  del rhs  # unused
+  props = _validate_bcsr(data, indices, indptr, shape)
+  if props.n_batch:
+    f = partial(_bcsr_correct_out_of_bound_indices, shape=shape[props.n_batch:])
+    return nfold_vmap(f, props.n_batch)(data, indices, indptr)
+  extent = indptr[-1]
+  i_data = lax.broadcasted_iota(indptr.dtype, data.shape, 0)
+  data = jnp.where(i_data < extent, data, 0)
+  i_indices = lax.broadcasted_iota(indptr.dtype, indices.shape, 0)
+  indices = jnp.where(i_indices < extent, indices, 0)
+  return [data, indices]
+
+_bcsr_correct_out_of_bound_indices_lowered = mlir.lower_fun(
+    _bcsr_correct_out_of_bound_indices, multiple_results=True)
+
 def _bcsr_dot_general_gpu_lowering(
     csr_matvec_lowering, csr_matmat_lowering,
     ctx, lhs_data, lhs_indices, lhs_indptr, rhs, *, dimension_numbers,
@@ -635,6 +652,11 @@ def _bcsr_dot_general_gpu_lowering(
       ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
+  # Account for a bug in cusparse: it references indices and data beyond
+  # the extent of indptr.
+  (lhs_data,), (lhs_indices,) = _bcsr_correct_out_of_bound_indices_lowered(
+      ctx, lhs_data, lhs_indices, lhs_indptr, rhs, shape=lhs_spinfo.shape)
+
   if rhs_aval.ndim == 1:
     dot_general_fn = csr_matvec_lowering
     x_dtype = 'x_dtype'
@@ -659,19 +681,18 @@ _bcsr_dot_general_default_lowering = mlir.lower_fun(
 mlir.register_lowering(
     bcsr_dot_general_p, _bcsr_dot_general_default_lowering)
 
-# TODO(jakevdp): check on wrong results in test_bcsr_matmul & re-enable these.
-# if gpu_sparse.cuda_is_supported:
-#   mlir.register_lowering(bcsr_dot_general_p,
-#                           partial(_bcsr_dot_general_gpu_lowering,
-#                                   gpu_sparse.cuda_csr_matvec,
-#                                   gpu_sparse.cuda_csr_matmat),
-#                           platform='cuda')
-# if gpu_sparse.rocm_is_supported:
-#   mlir.register_lowering(bcsr_dot_general_p,
-#                           partial(_bcsr_dot_general_gpu_lowering,
-#                                   gpu_sparse.rocm_csr_matvec,
-#                                   gpu_sparse.rocm_csr_matmat),
-#                           platform='rocm')
+if gpu_sparse.cuda_is_supported:
+  mlir.register_lowering(bcsr_dot_general_p,
+                          partial(_bcsr_dot_general_gpu_lowering,
+                                  gpu_sparse.cuda_csr_matvec,
+                                  gpu_sparse.cuda_csr_matmat),
+                          platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(bcsr_dot_general_p,
+                          partial(_bcsr_dot_general_gpu_lowering,
+                                  gpu_sparse.rocm_csr_matvec,
+                                  gpu_sparse.rocm_csr_matmat),
+                          platform='rocm')
 
 
 #----------------------------------------------------------------------

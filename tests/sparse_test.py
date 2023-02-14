@@ -1829,6 +1829,18 @@ class BCOOTest(sptu.SparseTestCase):
     if jnp.issubdtype(dtype, jnp.floating):
       self._CheckGradsSparse(dense_func, sparse_func, args_maker)
 
+  def test_bcsr_matmul_with_out_of_bounds_data(self):
+    # Simple regression test of a failure mode for cuSparse.
+    data = jnp.array([1, 2, 3, 4], dtype='float32')
+    indices = jnp.array([0, 1, 2, 3])
+    indptr = jnp.array([0, 1, 3, 3])
+    M = sparse.BCSR((data, indices, indptr), shape=(3, 4))
+    x = jnp.array([1, 2, 3, 4], dtype='float32')
+
+    sparse_result = jax.jit(operator.matmul)(M, x)
+    dense_result = jax.jit(operator.matmul)(M.todense(), x)
+    self.assertAllClose(sparse_result, dense_result)
+
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
       for lhs_shape, rhs_shape in [[(3, 4), (4,)],
