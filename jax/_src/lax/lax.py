@@ -185,7 +185,7 @@ def _extract_tracers_dyn_shape(
 def _merge_dyn_shape(
     static_shape: Sequence[Optional[int]],
     dyn_shape: Sequence[Any],
-  ) -> Tuple[Union[int, mlir.Value], ...]:
+  ) -> Tuple[Union[int, mlir.Value, core.Tracer], ...]:
   # Replace Nones in static_shape with elements of dyn_shape, in order
   dyn_shape_it = iter(dyn_shape)
   shape = tuple(next(dyn_shape_it) if d is None else d for d in static_shape)
@@ -2809,7 +2809,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   if (operand_bdim is not None and
       (not dyn_shape_bdims or dyn_shape_bdims[0] is None)):
     new_operand = batching.moveaxis(operand, operand_bdim, 0)
-    new_shape = (operand.shape[operand_bdim],) + shape
+    new_shape = (operand.shape[operand_bdim],) + _merge_dyn_shape(shape, dyn_shape)
     new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
     return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
   elif (operand_bdim is None and dyn_shape_bdims and
@@ -2909,6 +2909,7 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if dyn_shape: raise NotImplementedError
+  assert not any(d is None for d in shape)  # not implemented
   del dyn_shape
   if not any(isinstance(d, core.DArray) and
              type(core.get_aval(d).dtype) is core.bint for d in shape):
