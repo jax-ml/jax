@@ -30,6 +30,11 @@ Remember to align the itemized text with the first line of an item within a list
     from Feb 13, 2023.
   * added the {mod}`jax.typing` module, with tools for type annotations of JAX
     functions.
+* Breaking Changes
+  * the `initial` argument to reduction functions like :func:`jax.numpy.sum`
+    is now required to be a scalar, consistent with the corresponding NumPy API.
+    The previous behavior of broadcating the output against non-scalar `initial`
+    values was an unintentional implementation detail ({jax-issue}`#14446`).
 
 ## jaxlib 0.4.4
   * Breaking changes
