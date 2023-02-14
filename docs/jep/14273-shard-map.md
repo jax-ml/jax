@@ -158,7 +158,7 @@ jnp.concatenate([f(y_blk) for y_blk in jnp.split(y, 4)])
 Recall that `jnp.split` slices its input into equally-sized blocks with the same
 rank, so that if in the above example `y` has shape `f32[8,5]` then each `y_blk`
 has shape `f32[2,5]`, and if each `f(y_blk)` has shape `f32[3,7]` then the final
-concatenated result `shmap(f, ...)(y)` has shape `f32[12,7]`. So `shmap`
+concatenated result `shard_map(f, ...)(y)` has shape `f32[12,7]`. So `shmap`
 (`shard_map`) maps over shards, or blocks, of its inputs. We can say it's a
 *rank-preserving ma*p with unconcatenating/concatenating of its inputs/outputs.
 
@@ -321,7 +321,7 @@ physical layout of a single logical `Array`.
 from jax.sharding import Mesh
 Specs = PyTree[PartitionSpec]
 
-def shmap(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs
+def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs
           ) -> Callable:
   ...
 ```
