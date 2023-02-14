@@ -28,6 +28,8 @@ Remember to align the itemized text with the first line of an item within a list
     `axis_resources` as an arg. If you were using it as a kwarg, then please
     use `shardings` instead. `axis_resources` will be removed after 3 months
     from Feb 13, 2023.
+  * added the {mod}`jax.typing` module, with tools for type annotations of JAX
+    functions.
 
 ## jaxlib 0.4.4
   * Breaking changes

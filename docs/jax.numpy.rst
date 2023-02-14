@@ -498,14 +498,3 @@ This is because in general, pickling and unpickling may take place in different 
 environments, and there is no general way to map the device IDs of one runtime
 to the device IDs of another. If :mod:`pickle` is used in traced/JIT-compiled code,
 it will result in a :class:`~jax.errors.ConcretizationTypeError`.
-
-Class Reference
-~~~~~~~~~~~~~~~
-
-.. autoclass:: jax.numpy.DeviceArray
-
-.. autoclass:: jaxlib.xla_extension.DeviceArrayBase
-
-.. autoclass:: jaxlib.xla_extension.DeviceArray
-   :members:
-   :inherited-members:
