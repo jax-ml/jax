@@ -29,18 +29,16 @@ class Array(abc.ABC):
     def f(x: Array) -> Array:  # type annotations are valid for traced and non-traced types.
       return x
 
-  Because `jax.Array` is effectively an abstact base class, the main documentation for
-  its methods is not here, but rather at :mod:`jax.numpy`.
+  ``jax.Array`` should not be used directly for creation of arrays; instead you should use
+  array creation routines offered in :mod:`jax.numpy`, such as :func:`jax.numpy.array`,
+  :func:`jax.numpy.zeros`, :func:`jax.numpy.ones`, :func:`jax.numpy.full`,
+  :func:`jax.numpy.arange`, etc.
   """
-  # Note: no abstract methods are defined in this base class; the associated pyi
-  # file contains the type signature for static type checking.
+  # Note: abstract methods for this class are defined dynamically in lax_numpy.py
+  # For the sake of static type analysis, these definitinos are mirrored in the
+  # associated basearray.pyi file.
 
   __slots__ = ['__weakref__']
-
-  # at property must be defined because we overwrite its docstring in lax_numpy.py
-  @property
-  def at(self):
-    raise NotImplementedError("property must be defined in subclasses")
 
 
 Array.__module__ = "jax"

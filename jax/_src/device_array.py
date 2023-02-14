@@ -25,7 +25,6 @@ import numpy as np
 import jax
 from jax._src import core
 from jax._src import abstract_arrays
-from jax._src import dtypes
 from jax._src import profiler
 from jax._src import util
 from jax._src.config import config
@@ -222,20 +221,6 @@ for device_array in [DeviceArray]:
     return f"{prefix}{s},{sep}{dtype_str}"
 
   setattr(device_array, "__repr__", __repr__)
-
-  def item(self):
-    if dtypes.issubdtype(self.dtype, np.complexfloating):
-      return complex(self)
-    elif dtypes.issubdtype(self.dtype, np.floating):
-      return float(self)
-    elif dtypes.issubdtype(self.dtype, np.integer):
-      return int(self)
-    elif dtypes.issubdtype(self.dtype, np.bool_):
-      return bool(self)
-    else:
-      raise TypeError(self.dtype)
-
-  setattr(device_array, "item", item)
 
   def __len__(self):
     try:

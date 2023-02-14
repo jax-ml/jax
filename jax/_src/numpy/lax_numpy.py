@@ -24,6 +24,7 @@ transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
 
+import abc
 import builtins
 import collections
 from functools import partial
@@ -784,6 +785,17 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
                if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
+def _item(a: Array):
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    return complex(a)
+  elif dtypes.issubdtype(a.dtype, np.floating):
+    return float(a)
+  elif dtypes.issubdtype(a.dtype, np.integer):
+    return int(a)
+  elif dtypes.issubdtype(a.dtype, np.bool_):
+    return bool(a)
+  else:
+    raise TypeError(a.dtype)
 
 def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
@@ -5063,61 +5075,6 @@ def _deepcopy(self: Array, memo: Any) -> Array:
   del memo  # unused
   return self.copy()
 
-_operators = {
-    "getitem": _rewriting_take,
-    "setitem": _unimplemented_setitem,
-    "copy": _copy,
-    "deepcopy": _deepcopy,
-    "neg": negative,
-    "pos": positive,
-    "eq": _defer_to_unrecognized_arg("==", equal),
-    "ne": _defer_to_unrecognized_arg("!=", not_equal),
-    "lt": _defer_to_unrecognized_arg("<", less),
-    "le": _defer_to_unrecognized_arg("<=", less_equal),
-    "gt": _defer_to_unrecognized_arg(">", greater),
-    "ge": _defer_to_unrecognized_arg(">=", greater_equal),
-    "abs": abs,
-    "add": _defer_to_unrecognized_arg("+", add),
-    "radd": _defer_to_unrecognized_arg("+", add, swap=True),
-    "sub": _defer_to_unrecognized_arg("-", subtract),
-    "rsub": _defer_to_unrecognized_arg("-", subtract, swap=True),
-    "mul": _defer_to_unrecognized_arg("*", multiply),
-    "rmul": _defer_to_unrecognized_arg("*", multiply, swap=True),
-    "div": _defer_to_unrecognized_arg("/", divide),
-    "rdiv": _defer_to_unrecognized_arg("/", divide, swap=True),
-    "truediv": _defer_to_unrecognized_arg("/", true_divide),
-    "rtruediv": _defer_to_unrecognized_arg("/", true_divide, swap=True),
-    "floordiv": _defer_to_unrecognized_arg("//", floor_divide),
-    "rfloordiv": _defer_to_unrecognized_arg("//", floor_divide, swap=True),
-    "divmod": _defer_to_unrecognized_arg("divmod", divmod),
-    "rdivmod": _defer_to_unrecognized_arg("divmod", divmod, swap=True),
-    "mod": _defer_to_unrecognized_arg("%", mod),
-    "rmod": _defer_to_unrecognized_arg("%", mod, swap=True),
-    "pow": _defer_to_unrecognized_arg("**", power),
-    "rpow": _defer_to_unrecognized_arg("**", power, swap=True),
-    "matmul": _defer_to_unrecognized_arg("@", matmul),
-    "rmatmul": _defer_to_unrecognized_arg("@", matmul, swap=True),
-    "and": _defer_to_unrecognized_arg("&", bitwise_and),
-    "rand": _defer_to_unrecognized_arg("&", bitwise_and, swap=True),
-    "or": _defer_to_unrecognized_arg("|", bitwise_or),
-    "ror": _defer_to_unrecognized_arg("|", bitwise_or, swap=True),
-    "xor": _defer_to_unrecognized_arg("^", bitwise_xor),
-    "rxor": _defer_to_unrecognized_arg("^", bitwise_xor, swap=True),
-    "invert": bitwise_not,
-    "lshift": _defer_to_unrecognized_arg("<<", left_shift),
-    "rshift": _defer_to_unrecognized_arg(">>", right_shift),
-    "rlshift": _defer_to_unrecognized_arg("<<", left_shift, swap=True),
-    "rrshift": _defer_to_unrecognized_arg(">>", right_shift, swap=True),
-    "round": _operator_round,
-}
-
-# These numpy.ndarray methods are just refs to an equivalent numpy function
-_nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
-                    "nonzero", "searchsorted", "round"]
-_diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
-                 "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
-                 "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "trace", "var"]
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
@@ -5271,7 +5228,6 @@ class _IndexUpdateHelper:
 
   def __repr__(self):
     return f"_IndexUpdateHelper({repr(self.array)})"
-ndarray.at.__doc__ = _IndexUpdateHelper.__doc__
 
 _power_fn = power
 _divide_fn = divide
@@ -5436,37 +5392,127 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
+_array_operators = {
+  "getitem": _rewriting_take,
+  "setitem": _unimplemented_setitem,
+  "copy": _copy,
+  "deepcopy": _deepcopy,
+  "neg": negative,
+  "pos": positive,
+  "eq": _defer_to_unrecognized_arg("==", equal),
+  "ne": _defer_to_unrecognized_arg("!=", not_equal),
+  "lt": _defer_to_unrecognized_arg("<", less),
+  "le": _defer_to_unrecognized_arg("<=", less_equal),
+  "gt": _defer_to_unrecognized_arg(">", greater),
+  "ge": _defer_to_unrecognized_arg(">=", greater_equal),
+  "abs": abs,
+  "add": _defer_to_unrecognized_arg("+", add),
+  "radd": _defer_to_unrecognized_arg("+", add, swap=True),
+  "sub": _defer_to_unrecognized_arg("-", subtract),
+  "rsub": _defer_to_unrecognized_arg("-", subtract, swap=True),
+  "mul": _defer_to_unrecognized_arg("*", multiply),
+  "rmul": _defer_to_unrecognized_arg("*", multiply, swap=True),
+  "div": _defer_to_unrecognized_arg("/", divide),
+  "rdiv": _defer_to_unrecognized_arg("/", divide, swap=True),
+  "truediv": _defer_to_unrecognized_arg("/", true_divide),
+  "rtruediv": _defer_to_unrecognized_arg("/", true_divide, swap=True),
+  "floordiv": _defer_to_unrecognized_arg("//", floor_divide),
+  "rfloordiv": _defer_to_unrecognized_arg("//", floor_divide, swap=True),
+  "divmod": _defer_to_unrecognized_arg("divmod", divmod),
+  "rdivmod": _defer_to_unrecognized_arg("divmod", divmod, swap=True),
+  "mod": _defer_to_unrecognized_arg("%", mod),
+  "rmod": _defer_to_unrecognized_arg("%", mod, swap=True),
+  "pow": _defer_to_unrecognized_arg("**", power),
+  "rpow": _defer_to_unrecognized_arg("**", power, swap=True),
+  "matmul": _defer_to_unrecognized_arg("@", matmul),
+  "rmatmul": _defer_to_unrecognized_arg("@", matmul, swap=True),
+  "and": _defer_to_unrecognized_arg("&", bitwise_and),
+  "rand": _defer_to_unrecognized_arg("&", bitwise_and, swap=True),
+  "or": _defer_to_unrecognized_arg("|", bitwise_or),
+  "ror": _defer_to_unrecognized_arg("|", bitwise_or, swap=True),
+  "xor": _defer_to_unrecognized_arg("^", bitwise_xor),
+  "rxor": _defer_to_unrecognized_arg("^", bitwise_xor, swap=True),
+  "invert": bitwise_not,
+  "lshift": _defer_to_unrecognized_arg("<<", left_shift),
+  "rshift": _defer_to_unrecognized_arg(">>", right_shift),
+  "rlshift": _defer_to_unrecognized_arg("<<", left_shift, swap=True),
+  "rrshift": _defer_to_unrecognized_arg(">>", right_shift, swap=True),
+  "round": _operator_round,
+}
+
+_array_methods = {
+  "all": all,
+  "any": any,
+  "argmax": argmax,
+  "argmin": argmin,
+  "argpartition": argpartition,
+  "argsort": argsort,
+  "astype": _astype,
+  "choose": choose,
+  "clip": _clip,
+  "conj": conj,
+  "conjugate": conjugate,
+  "copy": copy,
+  "cumprod": cumprod,
+  "cumsum": cumsum,
+  "diagonal": diagonal,
+  "dot": dot,
+  "flatten": ravel,
+  "item": _item,
+  "max": max,
+  "mean": mean,
+  "min": min,
+  "nonzero": nonzero,
+  "prod": prod,
+  "ptp": ptp,
+  "ravel": ravel,
+  "repeat": repeat,
+  "reshape": _reshape,
+  "round": round,
+  "searchsorted": searchsorted,
+  "sort": sort,
+  "squeeze": squeeze,
+  "std": std,
+  "sum": sum,
+  "swapaxes": swapaxes,
+  "take": take,
+  "trace": trace,
+  "transpose": _transpose,
+  "var": var,
+  "view": _view,
+
+  # Extra methods handy for specializing dispatch
+  # TODO(jakevdp): find another mechanism for exposing these.
+  "broadcast": lax.broadcast,
+  "broadcast_in_dim": lax.broadcast_in_dim,
+  "split": split,
+  "compress": _compress_method,
+  "_multi_slice": _multi_slice,
+}
+
+_array_properties = {
+  "flat": _notimplemented_flat,
+  "T": transpose,
+  "real": real,
+  "imag": imag,
+  "nbytes": _nbytes,
+  "itemsize": _itemsize,
+  "at": _IndexUpdateHelper,
+}
 
 def _set_shaped_array_attributes(shaped_array):
   # Set up operator, method, and property forwarding on Tracer instances
   # containing
   # ShapedArray avals by following the forwarding conventions for Tracer.
   # Forward operators using a single-underscore-prefix naming convention:
-  for operator_name, function in _operators.items():
+  for operator_name, function in _array_operators.items():
     setattr(shaped_array, f"_{operator_name}", staticmethod(function))
   # Forward methods and properties using core.{aval_method, aval_property}:
-  for method_name in _nondiff_methods + _diff_methods:
-    setattr(shaped_array, method_name, core.aval_method(globals()[method_name]))
-  setattr(shaped_array, "reshape", core.aval_method(_reshape))
-  setattr(shaped_array, "transpose", core.aval_method(_transpose))
-  setattr(shaped_array, "flatten", core.aval_method(ravel))
-  setattr(shaped_array, "flat", core.aval_property(_notimplemented_flat))
-  setattr(shaped_array, "T", core.aval_property(transpose))
-  setattr(shaped_array, "real", core.aval_property(real))
-  setattr(shaped_array, "imag", core.aval_property(imag))
-  setattr(shaped_array, "astype", core.aval_method(_astype))
-  setattr(shaped_array, "view", core.aval_method(_view))
-  setattr(shaped_array, "nbytes", core.aval_property(_nbytes))
-  setattr(shaped_array, "itemsize", core.aval_property(_itemsize))
-  setattr(shaped_array, "clip", core.aval_method(_clip))
-
+  for method_name, method in _array_methods.items():
+    setattr(shaped_array, method_name, core.aval_method(method))
+  for prop_name, prop in _array_properties.items():
+    setattr(shaped_array, prop_name, core.aval_property(prop))
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
-  setattr(shaped_array, "broadcast", core.aval_method(lax.broadcast))
-  setattr(shaped_array, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
-  setattr(shaped_array, "split", core.aval_method(split))
-  setattr(shaped_array, "compress", _compress_method)
-  setattr(shaped_array, "at", core.aval_property(_IndexUpdateHelper))
-  setattr(shaped_array, "item", core.aval_method(device_array.DeviceArray.item))
 
 _set_shaped_array_attributes(ShapedArray)
 _set_shaped_array_attributes(DShapedArray)
@@ -5481,39 +5527,31 @@ def _set_device_array_base_attributes(device_array, include=None, exclude=None):
     if not include or attr_name in include:
       setattr(device_array, attr_name, target)
 
-  for operator_name, function in _operators.items():
+  for operator_name, function in _array_operators.items():
     maybe_setattr(f"__{operator_name}__", function)
-  for method_name in _nondiff_methods + _diff_methods:
-    maybe_setattr(method_name, globals()[method_name])
-  maybe_setattr("reshape", _reshape)
-  maybe_setattr("transpose", _transpose)
-  maybe_setattr("flatten", ravel)
-  maybe_setattr("flat", property(_notimplemented_flat))
-  maybe_setattr("T", property(transpose))
-  maybe_setattr("real", property(real))
-  maybe_setattr("imag", property(imag))
-  maybe_setattr("astype", _astype)
-  maybe_setattr("view", _view)
-  maybe_setattr("nbytes", property(_nbytes))
-  maybe_setattr("itemsize", property(_itemsize))
-  maybe_setattr("clip", _clip)
+  for method_name, method in _array_methods.items():
+    maybe_setattr(method_name, method)
+  for prop_name, prop in _array_properties.items():
+    maybe_setattr(prop_name, property(prop))
 
 _set_device_array_base_attributes(device_array.DeviceArray)
 _set_device_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
 
-
 def _set_device_array_attributes(device_array):
   setattr(device_array, "__array_module__", __array_module__)
-  # Extra methods that are handy
-  setattr(device_array, "broadcast", lax.broadcast)
-  setattr(device_array, "broadcast_in_dim", lax.broadcast_in_dim)
-  setattr(device_array, "split", split)
-  setattr(device_array, "compress", _compress_method)
-  setattr(device_array, "_multi_slice", _multi_slice)
-  setattr(device_array, "at", property(_IndexUpdateHelper))
 
 for t in device_array.device_array_types:
   _set_device_array_attributes(t)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
 _set_device_array_attributes(pmap_lib.ShardedDeviceArray)
 _set_device_array_attributes(ArrayImpl)
+
+def _set_jax_array_abstract_methods(jax_array):
+  for operator_name, function in _array_operators.items():
+    setattr(jax_array, f"__{operator_name}__", abc.abstractmethod(function))
+  for method_name, method in _array_methods.items():
+    setattr(jax_array, method_name, abc.abstractmethod(method))
+  for prop_name, prop in _array_properties.items():
+    setattr(jax_array, prop_name, abc.abstractproperty(prop))
+
+_set_jax_array_abstract_methods(jax.Array)
