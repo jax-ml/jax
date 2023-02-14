@@ -121,7 +121,7 @@ no released `jax` version uses that API.
 `jaxlib` is split across two main repositories, namely the
 [`jaxlib/` subdirectory in the main JAX repository](https://github.com/google/jax/tree/main/jaxlib)
 and in the
-[XLA source tree, which lives inside the TensorFlow repository](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla).
+[XLA source tree, which lives inside the XLA repository](https://github.com/openxla/xla).
 The JAX-specific pieces inside XLA are primarily in the
 [`xla/python` subdirectory](https://github.com/tensorflow/tensorflow/tree/master/tensorflow/compiler/xla/python).
 
@@ -164,7 +164,7 @@ compatibility, we have additional versioning that is independent of the `jaxlib`
 release version numbers.
 
 We maintain an additional version number (`_version`) in
-[`xla_client.py` in the XLA repository](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/xla/python/xla_client.py).
+[`xla_client.py` in the XLA repository](https://github.com/openxla/xla/blob/main/xla/python/xla_client.py).
 The idea is that this version number, is defined in `xla/python`
 together with the C++ parts of JAX, is also accessible to JAX Python as
 `jax._src.lib.xla_extension_version`, and must

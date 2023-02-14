@@ -22,7 +22,7 @@ limitations under the License.
 #include "jaxlib/gpu/solver_kernels.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/vendor.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
+#include "xla/service/custom_call_target_registry.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {

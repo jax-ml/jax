@@ -1,6 +1,10 @@
 ############################################################################
 # All default build options below.
 
+# Required by OpenXLA
+# https://github.com/openxla/xla/issues/1323
+build --nocheck_visibility
+
 # Sets the default Apple platform to macOS.
 build --apple_platform_type=macos
 build --macos_minimum_os=10.14
@@ -35,9 +39,9 @@ build --copt=-DMLIR_PYTHON_PACKAGE_PREFIX=jaxlib.mlir.
 
 # Later Bazel flag values override earlier values; if CUDA/ROCM/TPU are enabled,
 # these values are overridden.
-build --@org_tensorflow//tensorflow/compiler/xla/python:enable_gpu=false
-build --@org_tensorflow//tensorflow/compiler/xla/python:enable_tpu=false
-build --@org_tensorflow//tensorflow/compiler/xla/python:enable_plugin_device=false
+build --@xla//xla/python:enable_gpu=false
+build --@xla//xla/python:enable_tpu=false
+build --@xla//xla/python:enable_plugin_device=false
 
 ###########################################################################
 
@@ -65,12 +69,12 @@ build:cuda --repo_env TF_NEED_CUDA=1
 build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="sm_52,sm_60,sm_70,compute_80"
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
-build:cuda --@org_tensorflow//tensorflow/compiler/xla/python:enable_gpu=true
+build:cuda --@xla//xla/python:enable_gpu=true
 build:cuda --define=xla_python_enable_gpu=true
 
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
-build:rocm --@org_tensorflow//tensorflow/compiler/xla/python:enable_gpu=true
+build:rocm --@xla//xla/python:enable_gpu=true
 build:rocm --define=xla_python_enable_gpu=true
 build:rocm --repo_env TF_NEED_ROCM=1
 build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="gfx900,gfx906,gfx908,gfx90a,gfx1030"
@@ -113,10 +117,10 @@ build:macos --config=posix
 # Suppress all warning messages.
 build:short_logs --output_filter=DONT_MATCH_ANYTHING
 
-build:tpu --@org_tensorflow//tensorflow/compiler/xla/python:enable_tpu=true
+build:tpu --@xla//xla/python:enable_tpu=true
 build:tpu --define=with_tpu_support=true
 
-build:plugin_device --@org_tensorflow//tensorflow/compiler/xla/python:enable_plugin_device=true
+build:plugin_device --@xla//xla/python:enable_plugin_device=true
 
 #########################################################################
 # RBE config options below.

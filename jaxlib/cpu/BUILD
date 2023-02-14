@@ -31,7 +31,7 @@ cc_library(
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
     deps = [
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/base:dynamic_annotations",
     ],
 )
@@ -74,7 +74,7 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":ducc_fft_flatbuffers_cc",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_status",
+        "@xla//xla/service:custom_call_status",
         "@ducc",
         "@flatbuffers//:runtime_cc",
     ],
@@ -106,7 +106,7 @@ cc_library(
         ":ducc_fft_kernels",
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
-        "@org_tensorflow//tensorflow/compiler/xla/service:custom_call_target_registry",
+        "@xla//xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
 )

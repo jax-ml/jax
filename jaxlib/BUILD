@@ -68,7 +68,7 @@ symlink_files(
 
 symlink_files(
     name = "xla_client",
-    srcs = ["@org_tensorflow//tensorflow/compiler/xla/python:xla_client"],
+    srcs = ["@xla//xla/python:xla_client"],
     dst = ".",
     flatten = True,
 )
@@ -76,8 +76,8 @@ symlink_files(
 symlink_files(
     name = "xla_extension",
     srcs = if_windows(
-        ["@org_tensorflow//tensorflow/compiler/xla/python:xla_extension.pyd"],
-        ["@org_tensorflow//tensorflow/compiler/xla/python:xla_extension.so"],
+        ["@xla//xla/python:xla_extension.pyd"],
+        ["@xla//xla/python:xla_extension.so"],
     ),
     dst = ".",
     flatten = True,
@@ -140,7 +140,7 @@ pybind_extension(
     srcs = ["cpu_feature_guard.c"],
     module_name = "cpu_feature_guard",
     deps = [
-        "@org_tensorflow//third_party/python_runtime:headers",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
 

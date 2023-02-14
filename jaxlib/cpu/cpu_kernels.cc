@@ -18,7 +18,7 @@ limitations under the License.
 
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/cpu/ducc_fft_kernels.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
+#include "xla/service/custom_call_target_registry.h"
 
 namespace jax {
 namespace {

@@ -19,7 +19,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 #ifdef JAX_GPU_CUDA
 #include "third_party/gpus/cuda/include/cusolverSp.h"

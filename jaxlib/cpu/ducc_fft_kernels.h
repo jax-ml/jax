@@ -16,7 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_CPU_DUCC_FFT_KERNELS_H_
 #define JAXLIB_CPU_DUCC_FFT_KERNELS_H_
 
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 namespace jax {
 

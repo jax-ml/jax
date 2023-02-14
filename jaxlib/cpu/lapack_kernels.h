@@ -19,7 +19,7 @@ limitations under the License.
 #include <complex>
 #include <cstdint>
 
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 // Underlying function pointers (e.g., Trsm<double>::Fn) are initialized either
 // by the pybind wrapper that links them to an existing SciPy lapack instance,
