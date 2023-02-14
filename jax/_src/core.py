@@ -2025,6 +2025,10 @@ def _invalid_shape_error(shape: Shape, context: str=""):
          and not isinstance(get_aval(x), ConcreteArray) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
+    for x in shape:
+      if isinstance(x, Tracer) and hasattr(x, "_origin_msg"):
+        msg += x._origin_msg()
+
   return TypeError(msg)
 
 

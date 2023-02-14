@@ -321,6 +321,26 @@ class CoreTest(jtu.JaxTestCase):
     finally:
       gc.set_debug(debug)
 
+  def test_invalid_shape_error_with_jit_tracer_passed(self):
+    @jax.jit
+    def g_jit(x):
+      return jnp.zeros(shape=(2, x))
+
+    @jax.vmap
+    def g_vmap(x):
+      return jnp.zeros(shape=(2, x))
+
+    with self.assertRaisesRegex(
+        TypeError,
+        'This concrete value was not available in'
+        + ' Python because it depends on',
+    ):
+      g_jit(1)
+
+    with self.assertRaisesRegex(TypeError,
+          'This BatchTracer with object id'):
+      g_vmap(jnp.ones((1, )))
+
   def test_comparing_var(self):
     newsym = core.gensym()
     a = newsym(core.ShapedArray((), np.dtype('int32')))
