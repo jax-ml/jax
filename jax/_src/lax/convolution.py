@@ -28,6 +28,7 @@ from jax._src.lax import lax
 from jax._src.lib.mlir.dialects import hlo
 
 from jax.interpreters import mlir
+from jax._src.interpreters import mlir as internal_mlir
 
 _max = builtins.max
 
@@ -698,21 +699,50 @@ def _conv_general_dilated_lower(
   if len(padding) == 0:
     padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  return [
-      hlo.ConvolutionOp(
-        mlir.aval_to_ir_type(aval_out),
-        lhs,
-        rhs,
-        dimension_numbers=dnums,
-        feature_group_count=mlir.i64_attr(feature_group_count),
-        batch_group_count=mlir.i64_attr(batch_group_count),
-        window_strides=mlir.dense_int_elements(window_strides),
-        padding=mlir.dense_int_elements(padding),
-        lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-        rhs_dilation=mlir.dense_int_elements(rhs_dilation),
-        window_reversal=window_reversal,
-        precision_config=lax.precision_attr(precision)).result
-  ]
+  if (not core.is_constant_shape(window_strides) or
+      not core.is_constant_shape(lhs_dilation) or
+      not core.is_constant_shape(rhs_dilation)):
+    raise NotImplementedError("Convolutions with non-static strides or dilation")
+  if all(core.is_constant_shape(p) for p in padding):
+    return [
+        hlo.ConvolutionOp(
+          mlir.aval_to_ir_type(aval_out),
+          lhs,
+          rhs,
+          dimension_numbers=dnums,
+          feature_group_count=mlir.i64_attr(feature_group_count),
+          batch_group_count=mlir.i64_attr(batch_group_count),
+          window_strides=mlir.dense_int_elements(window_strides),
+          padding=mlir.dense_int_elements(padding),
+          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          window_reversal=window_reversal,
+          precision_config=lax.precision_attr(precision)).result
+    ]
+  else:
+    # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
+    # spatial dimension.
+    int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    def prep_one_pad(pad_lo_hi: Tuple[core.DimSize, core.DimSize]):
+      pad1 = mlir.shape_tensor(internal_mlir.eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
+      return hlo.ReshapeOp(int2d, pad1)
+    d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
+                                  mlir.i64_attr(0))
+    return [
+        hlo.DynamicConvOp(
+          mlir.aval_to_ir_type(aval_out),
+          lhs,
+          rhs,
+          d_padding,
+          dimension_numbers=dnums,
+          feature_group_count=mlir.i64_attr(feature_group_count),
+          batch_group_count=mlir.i64_attr(batch_group_count),
+          window_strides=mlir.dense_int_elements(window_strides),
+          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          window_reversal=window_reversal,
+          precision_config=lax.precision_attr(precision)).result
+    ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on
