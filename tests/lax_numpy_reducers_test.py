@@ -287,8 +287,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_op = getattr(jnp, rec.name)
     arr = jnp.ones((2, 3, 4))
     initial = jnp.zeros((1, 2, 3))
-    msg = (r"initial value has invalid shape \(1, 2, 3\) "
-           r"for reduction with output shape \(2, 3\)")
+    msg = r"initial value must be a scalar. Got array of shape \(1, 2, 3\)"
     with self.assertRaisesRegex(ValueError, msg):
       jnp_op(arr, axis=-1, initial=initial)
 

@@ -131,11 +131,10 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   else:
     result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
-    # TODO(jakevdp) require initial to be a scalar in order to match the numpy API.
     initial_arr = lax.convert_element_type(initial, _asarray(a).dtype)
-    if lax.broadcast_shapes(initial_arr.shape, result.shape) != result.shape:
-      raise ValueError(f"initial value has invalid shape {initial_arr.shape} "
-                       f"for reduction with output shape {result.shape}")
+    if initial_arr.shape != ():
+      raise ValueError("initial value must be a scalar. "
+                       f"Got array of shape {initial_arr.shape}")
     result = op(initial_arr, result)
   if keepdims:
     result = lax.expand_dims(result, pos_dims)
