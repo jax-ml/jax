@@ -1297,6 +1297,11 @@ def _pjit_call_impl(*args, jaxpr,
     return compiled.unsafe_call(*args)
   except FloatingPointError:
     assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
+
+    _ = core.jaxpr_as_fun(jaxpr)(*args)  # may raise, not return
+
+    # If control reaches this line, we got a NaN on the output of `compiled`
+    # but not `fun.call_wrapped` on the same arguments. Let's tell the user.
     msg = ("An invalid value was encountered in the output of the "
            f"`jit`-decorated function {name}. Because "
            "config.jax_debug_nans and/or config.jax_debug_infs is set, the "

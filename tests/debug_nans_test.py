@@ -186,7 +186,22 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
 
-  # TODO(skye): add parallel inf tests, ideally by factoring out test logic
+  def testDebugNansZeroDiv(self):
+    if not config.jax_array:
+      self.skipTest('This test only works with jax.Array')
+
+    inp = jnp.zeros(())
+    def f(x, y):
+      return x / y
+
+    with self.assertRaisesRegex(
+        FloatingPointError, r"invalid value \(nan\) encountered in jit\(div\)"):
+      f(inp, inp)
+
+    with self.assertRaisesRegex(
+        FloatingPointError, r"invalid value \(nan\) encountered in jit\(div\)"):
+      jax.jit(f)(inp, inp)
+
 
 class DebugInfsTest(jtu.JaxTestCase):
 
