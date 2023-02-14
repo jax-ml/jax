@@ -1040,6 +1040,9 @@ jax_test(
         "tpu",
         "cpu",
     ],
+    disable_configs = [
+        "gpu_a100",  # Numerical precision problems.
+    ],
     deps = [
         "//jax:rnn",
     ],

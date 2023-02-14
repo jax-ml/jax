@@ -737,6 +737,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       or len(jtu._dims_of_shape(rhs_shape)) == 0
       or lhs_shape[-1] == rhs_shape[-1]],
   )
+  @jax.default_matmul_precision("float32")
   def testInner(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -748,8 +749,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda lhs, rhs: jnp.inner(lhs, rhs)
     tol_spec = {np.float16: 1e-2, np.float32: 1e-5, np.float64: 1e-13,
                 np.complex64: 1e-5}
-    if jtu.device_under_test() == "tpu":
-      tol_spec[np.float32] = tol_spec[np.complex64] = 2e-1
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     # TODO(phawkins): there are float32/float64 disagreements for some inputs.

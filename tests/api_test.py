@@ -1684,7 +1684,7 @@ class APITest(jtu.JaxTestCase):
       else:
         self.assertEqual(x.device_buffer.device(), cpu_device)
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
     A = R(4, 3)
@@ -1697,7 +1697,7 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.tanh(jnp.dot(A, x))
     assert np.allclose(jacfwd(f)(x), jacrev(f)(x))
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_hessian(self):
     R = self.rng().randn
     A = R(4, 4)
@@ -1706,7 +1706,7 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, jnp.dot(A, x))
     assert np.allclose(hessian(f)(x), A + A.T)
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_hessian_holomorphic(self):
     R = self.rng().randn
     A = R(4, 4)
@@ -1715,7 +1715,7 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, jnp.dot(A.astype(x.dtype), x))
     assert np.allclose(hessian(f, holomorphic=True)(x), A + A.T)
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_hessian_aux(self):
     R = self.rng().randn
     A = R(4, 4)

@@ -883,6 +883,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     method=[None, "scott", "silverman", 1.5, "callable"],
     func=[None, "evaluate", "logpdf", "pdf"],
   )
+  @jax.default_matmul_precision("float32")
   def testKde(self, inshape, dtype, outsize, weights, method, func):
     if method == "callable":
       method = lambda kde: kde.neff ** -1./(kde.d+4)

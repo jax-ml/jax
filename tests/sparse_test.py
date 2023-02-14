@@ -2289,6 +2289,7 @@ class SparseGradTest(sptu.SparseTestCase):
     has_aux=[True, False],
     transform=['jacrev', 'jacfwd', 'jacobian']
   )
+  @jax.default_matmul_precision("float32")
   def test_sparse_jacobian(self, has_aux, transform):
     jac_dense = getattr(jax, transform)
     jac_sparse = getattr(sparse, transform)
