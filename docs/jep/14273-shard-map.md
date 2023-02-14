@@ -59,10 +59,15 @@ Or keep reading the next section to see some `shmap` examples and the API spec.
 Sho shick:
 
 ```python
+from functools import partial
+
+import numpy as np
+
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec as P
 from jax.experimental import mesh_utils
+from jax.experimental.shard_map import shard_map
 
 devices = mesh_utils.create_device_mesh((4, 2))
 mesh = Mesh(devices, axis_names=('x', 'y'))
@@ -70,7 +75,7 @@ mesh = Mesh(devices, axis_names=('x', 'y'))
 a = jnp.arange( 8 * 16.).reshape(8, 16)
 b = jnp.arange(16 * 32.).reshape(16, 32)
 
-@partial(shmap, mesh=mesh, in_specs=(P('x', 'y'), P('y', None)),
+@partial(shard_map, mesh=mesh, in_specs=(P('x', 'y'), P('y', None)),
          out_specs=P('x', None))
 def matmul_basic(a_block, b_block):
   # a_block: f32[2, 8]
@@ -99,13 +104,13 @@ Notice:
 Here's another matmul variant with a fully sharded result:
 
 ```python
-@partial(shmap, mesh=mesh, in_specs=(P('x', 'y'), P('y', None)),
+@partial(shard_map, mesh=mesh, in_specs=(P('x', 'y'), P('y', None)),
          out_specs=P('x', 'y'))
 def matmul_reduce_scatter(a_block, b_block):
   # c_partialsum: f32[8/X, 32]
   c_partialsum = jnp.matmul(a_block, b_block)
   # c_block: f32[8/X, 32/Y]
-  c_block = lax.psum_scatter(c_partialsum, 'y', scatter_dimension=1, tiled=True)
+  c_block = jax.lax.psum_scatter(c_partialsum, 'y', scatter_dimension=1, tiled=True)
   return c_block
 
 c = matmul_reduce_scatter(a, b)
