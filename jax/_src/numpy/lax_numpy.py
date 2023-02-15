@@ -785,7 +785,8 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
                if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
-def _item(a: Array):
+def _item(a: Array) -> Any:
+  """Copy an element of an array to a standard Python scalar and return it."""
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     return complex(a)
   elif dtypes.issubdtype(a.dtype, np.floating):
@@ -798,6 +799,10 @@ def _item(a: Array):
     raise TypeError(a.dtype)
 
 def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
+  """Returns an array containing the same data with a new shape.
+
+  Refer to :func:`jax.numpy.reshape` for full documentation.
+  """
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
   if order == "C":
     return lax.reshape(a, newshape, None)
@@ -810,6 +815,10 @@ def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
     raise ValueError(f"Unexpected value for 'order' argument: {order}.")
 
 def _transpose(a: Array, *args: Any) -> Array:
+  """Returns a view of the array with axes transposed.
+
+  Refer to :func:`jax.numpy.transpose` for full documentation.
+  """
   if not args:
     axis = None
   elif len(args) == 1:
@@ -4945,20 +4954,29 @@ def _astype(arr: ArrayLike, dtype: DTypeLike) -> Array:
 
 
 def _nbytes(arr: ArrayLike) -> int:
+  """Total bytes consumed by the elements of the array."""
   return size(arr) * _dtype(arr).itemsize
 
 
 def _itemsize(arr: ArrayLike) -> int:
+  """Length of one array element in bytes."""
   return _dtype(arr).itemsize
 
 
 def _clip(number: ArrayLike,
           min: Optional[ArrayLike] = None, max: Optional[ArrayLike] = None,  # noqa: F811
           out: None = None) -> Array:
+  """Return an array whose values are limited to a specified range.
+
+  Refer to :func:`jax.numpy.clip` for full documentation."""
   return clip(number, a_min=min, a_max=max, out=out)
 
 
 def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
+  """Return a bitwise copy of the array, viewed as a new dtype.
+
+  This is fuller-featured wrapper around :func:`jax.lax.bitcast_convert_type`.
+  """
   lax_internal._check_user_dtype_supported(dtype, "view")
   if type is not None:
     raise NotImplementedError("`type` argument of array.view()")
@@ -5090,6 +5108,9 @@ def __array_module__(self, types):
 
 def _compress_method(a: ArrayLike, condition: ArrayLike,
                      axis: Optional[int] = None, out: None = None) -> Array:
+  """Return selected slices of this array along given axis.
+
+  Refer to :func:`jax.numpy.compress` for full documentation."""
   return compress(condition, a, axis, out)
 
 
