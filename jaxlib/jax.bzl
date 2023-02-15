@@ -135,6 +135,7 @@ def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_sym
 
 ALL_BACKENDS = ["cpu", "gpu", "tpu"]
 
+# buildifier: disable=function-docstring
 def jax_test(
         name,
         srcs,
@@ -143,6 +144,7 @@ def jax_test(
         shard_count = None,
         deps = [],
         disable_backends = None,  # buildifier: disable=unused-variable
+        backend_variant_args = {},  # buildifier: disable=unused-variable
         backend_tags = {},  # buildifier: disable=unused-variable
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = None,  # buildifier: disable=unused-variable
