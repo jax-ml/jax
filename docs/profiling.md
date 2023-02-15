@@ -124,7 +124,7 @@ alternative to `start_trace` and `stop_trace`:
 ```python
 import jax
 
-with jax.profiler.trace():
+with jax.profiler.trace("/tmp/tensorboard"):
   key = jax.random.PRNGKey(0)
   x = jax.random.normal(key, (5000, 5000))
   y = x @ x
