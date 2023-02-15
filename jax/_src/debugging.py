@@ -239,6 +239,9 @@ def _format_print_callback(fmt: str, *args, **kwargs):
 def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   """Prints values and works in staged out JAX functions.
 
+  Note: This function does *not* work with f-strings because the formatting is
+  done lazily.
+
   Args:
     fmt: A format string, e.g. ``"hello {x}"``, that will be used to format
       input arguments.

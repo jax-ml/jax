@@ -35,6 +35,8 @@ def debug.print(fmt: str, *args: PyTree[Array], **kwargs: PyTree[Array]) -> None
 ```
 except that it can be staged out and transformed by JAX. See the {func}`API reference <jax.debug.print>` for more details.
 
+Note that `fmt` cannot be an f-string because f-strings are formatted immediately, whereas for `jax.debug.print`, we'd like to delay formatting until later.
+
 ### Why "_debug_" print?
 In the name of debugging, `jax.debug.print` can reveal information about _how_ computations are evaluated:
 
