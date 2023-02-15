@@ -18,7 +18,7 @@ from functools import partial, wraps
 import string
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
-from jax import core
+from jax._src import core
 from jax import lax
 from jax._src.lax import slicing as lax_slicing
 from jax._src import dtypes

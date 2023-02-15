@@ -26,7 +26,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import core
+from jax._src import core
 from jax import dtypes
 from jax.errors import UnexpectedTracerError
 from jax import lax

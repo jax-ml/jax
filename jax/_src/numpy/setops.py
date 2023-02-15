@@ -17,6 +17,12 @@ import operator
 from textwrap import dedent as _dedent
 from typing import Optional, Tuple, Union
 
+import numpy as np
+
+from jax import jit
+from jax import lax
+
+from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
@@ -26,10 +32,6 @@ from jax._src.numpy.lax_numpy import (
 from jax._src.numpy.util import _check_arraylike, _wraps
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import prod as _prod
-from jax import core
-from jax import jit
-from jax import lax
-import numpy as np
 
 
 _lax_const = lax_internal._const

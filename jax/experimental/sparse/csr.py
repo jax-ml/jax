@@ -21,13 +21,13 @@ import warnings
 
 import numpy as np
 
-from jax import core
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
 from jax.experimental.sparse.util import _csr_to_coo, _csr_extract, CuSparseEfficiencyWarning
 from jax import lax
 from jax import tree_util
+from jax._src import core
 from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse

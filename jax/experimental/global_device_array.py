@@ -19,7 +19,7 @@ import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import dispatch
 from jax._src import api_util
 from jax._src.lib import xla_bridge as xb

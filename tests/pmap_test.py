@@ -37,7 +37,8 @@ from jax import lax
 from jax._src.lax import parallel
 from jax._src import api as src_api
 from jax import random
-from jax.core import ShapedArray
+from jax._src import core
+from jax._src.core import ShapedArray
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
@@ -204,7 +205,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     for obj in [lowered, compiled]:
       self.assertFalse(obj._no_kwargs)
       self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
-      self.assertEqual(obj.in_avals, ((jax.core.ShapedArray(x.shape, x.dtype),), {}))
+      self.assertEqual(obj.in_avals, ((core.ShapedArray(x.shape, x.dtype),), {}))
 
   def testLowerCompileInTreeMismatch(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -334,7 +335,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
-    x_shape = jax.core.ShapedArray(x.shape, x.dtype)
+    x_shape = core.ShapedArray(x.shape, x.dtype)
     self.assertAllClose(f.lower(x_shape).compile()(x), f(x))
 
   def testMean(self):
@@ -2012,7 +2013,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def test_axis_env_length(self):
     f = lambda x: jax.pmap(g)(jnp.array([x]))[0]
     def g(x):
-      assert len(jax.core.thread_local_state.trace_state.axis_env) == 1
+      assert len(core.thread_local_state.trace_state.axis_env) == 1
       return x
     jax.grad(f)(3.)  # doesn't fail
 

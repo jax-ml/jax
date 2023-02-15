@@ -20,7 +20,7 @@ so it should be checked with pytype/mypy as well as being run with pytest.
 from typing import Any, Optional, Union
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src import typing

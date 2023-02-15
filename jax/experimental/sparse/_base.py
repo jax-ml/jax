@@ -16,7 +16,7 @@
 import abc
 from typing import Sequence, Tuple
 
-from jax import core
+from jax._src import core
 import jax.numpy as jnp
 from jax._src import util
 from jax._src.typing import Array

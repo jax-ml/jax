@@ -34,7 +34,6 @@ import operator
 from typing import Optional, Union
 
 import jax
-from jax import core
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.bcoo import BCOO
@@ -44,6 +43,7 @@ from jax.experimental.sparse.csr import CSR, CSC
 from jax.experimental.sparse.util import _coo_extract
 from jax.interpreters import mlir
 
+from jax._src import core
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching

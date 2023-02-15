@@ -35,6 +35,10 @@ del _cloud_tpu_init
 from jax import config as _config_module
 del _config_module
 
+# Force early import, allowing use of `jax.core` after importing `jax`.
+import jax.core as _core
+del _core
+
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 

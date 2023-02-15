@@ -16,7 +16,7 @@ import functools
 from absl.testing import absltest
 import jax
 import jax.numpy as jnp
-from jax import core
+from jax._src import core
 from jax import lax
 from jax._src.pjit import pjit
 from jax._src import linear_util as lu

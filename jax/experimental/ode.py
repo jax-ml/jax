@@ -31,7 +31,7 @@ import operator as op
 
 import jax
 import jax.numpy as jnp
-from jax import core
+from jax._src import core
 from jax import custom_derivatives
 from jax import lax
 from jax._src.numpy.util import _promote_dtypes_inexact

@@ -16,7 +16,7 @@ import itertools
 from typing import Any, Callable, Sequence, Tuple, Union
 
 import jax
-from jax import core
+from jax._src import core
 from jax import tree_util
 from jax._src.api_util import _ensure_index, _ensure_index_tuple
 from jax.util import safe_zip

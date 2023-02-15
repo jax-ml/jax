@@ -23,6 +23,7 @@ from jax import lax
 from jax.config import config
 from jax.experimental.maps import Mesh
 from jax.experimental.pjit import PartitionSpec as P
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
 import jax.numpy as jnp
@@ -414,7 +415,7 @@ class ShardMapTest(jtu.JaxTestCase):
   def test_check_rep_false_doesnt_hit_rep_rules(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 
-    prim = jax.core.Primitive('prim')  # no rep rule here!
+    prim = core.Primitive('prim')  # no rep rule here!
     prim.multiple_results = True
     prim.def_impl(lambda: [])
     prim.def_abstract_eval(lambda: [])

@@ -16,16 +16,16 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import threading
-
 from typing import Any, Dict, Hashable, List, Optional, Protocol, Tuple
 
+import numpy as np
+
 import jax.numpy as jnp
-from jax import core
 from jax import tree_util
+from jax._src import core
 from jax._src import debugging
 from jax._src import traceback_util
 from jax._src import util
-import numpy as np
 
 
 @tree_util.register_pytree_node_class

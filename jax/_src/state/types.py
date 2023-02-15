@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional, Sequence, Set, Union
 
-from jax import core
+from jax._src import core
 from jax._src.lib import xla_bridge, xla_client
 from jax._src.util import safe_map, safe_zip, tuple_insert, tuple_delete, prod
 from jax._src.lax.control_flow import common

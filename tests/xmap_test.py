@@ -31,8 +31,8 @@ import jax.scipy as jscipy
 from jax._src import test_util as jtu
 from jax import vmap
 from jax import lax
-from jax import core
-from jax.core import NamedShape
+from jax._src import core
+from jax._src.core import NamedShape
 from jax.experimental import maps
 from jax.experimental import global_device_array
 from jax._src import array

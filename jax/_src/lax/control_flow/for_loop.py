@@ -17,9 +17,8 @@ import operator
 
 from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple, TypeVar, Union
 
-from jax import core
+import jax.numpy as jnp
 from jax import lax
-from jax._src import linear_util as lu
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import ad
 from jax.interpreters import batching
@@ -28,14 +27,15 @@ from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_structure, tree_unflatten,
                            treedef_tuple, tree_map, tree_leaves, PyTreeDef)
+
 from jax._src import ad_util
+from jax._src import core
 from jax._src import dtypes
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import state
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict)
-import jax.numpy as jnp
-
 from jax._src.lax.control_flow import loops
 from jax._src.lax.control_flow.common import _abstractify, _initial_style_jaxpr
 

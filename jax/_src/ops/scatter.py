@@ -20,9 +20,9 @@ import warnings
 
 import numpy as np
 
-from jax import core
 from jax import lax
 
+from jax._src import core
 from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax as lax_internal

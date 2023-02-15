@@ -29,7 +29,6 @@ from typing import Any, Callable, Optional, Sequence, Tuple
 from absl import logging
 
 import jax
-from jax import core
 from jax import dlpack
 from jax import dtypes
 from jax import tree_util
@@ -40,6 +39,7 @@ from jax._src import ad_checkpoint
 from jax._src import custom_derivatives
 from jax.interpreters import mlir
 from jax.interpreters import xla
+from jax._src import core
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo

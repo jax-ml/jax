@@ -28,7 +28,6 @@ import numpy as np
 import jax
 from jax import lax
 from jax import config
-from jax import core
 from jax import custom_derivatives
 from jax import random
 from jax import numpy as jnp
@@ -45,6 +44,7 @@ from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
+from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu

@@ -20,10 +20,10 @@ import functools
 import jax
 import jax.numpy as jnp
 
-from jax import core
 from jax.interpreters import mlir
 from jax.interpreters import xla
 
+from jax._src import core
 from jax._src.lib import gpu_solver
 
 import numpy as np

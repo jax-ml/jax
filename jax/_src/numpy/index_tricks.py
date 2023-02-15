@@ -16,8 +16,8 @@ import abc
 from typing import Any, Iterable, List, Tuple, Union
 
 import jax
-from jax import core
 import jax._src.numpy.lax_numpy as jnp
+from jax._src import core
 from jax._src.numpy.util import _promote_dtypes
 from jax._src.typing import Array, ArrayLike
 

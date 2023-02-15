@@ -24,10 +24,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
-from jax import core
 from jax import lax
 from jax import numpy as jnp
-from jax._src import linear_util as lu
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.core import UnshapedArray, ShapedArray, DBIdx
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
@@ -35,6 +33,8 @@ from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
 from jax.api_util import flatten_fun_nokwargs
 from jax.interpreters import partial_eval as pe
 
+from jax._src import core
+from jax._src import linear_util as lu
 from jax._src import util
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal

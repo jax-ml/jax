@@ -23,7 +23,7 @@ from absl.testing import parameterized
 
 import scipy.stats
 
-from jax import core
+from jax._src import core
 from jax._src import test_util as jtu
 from jax.test_util import check_grads
 from jax import nn

@@ -25,9 +25,9 @@ import numpy as np
 import jax.numpy as jnp
 from jax import lax
 from jax import random
-from jax import core
-from jax._src.util import prod
+from jax._src import core
 from jax._src import dtypes
+from jax._src.util import prod
 
 KeyArray = random.KeyArray
 Array = Any

@@ -20,7 +20,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
 import jax
-from jax import core
+from jax._src import core
 from jax import lax
 from jax._src import linear_util as lu
 from jax.config import config

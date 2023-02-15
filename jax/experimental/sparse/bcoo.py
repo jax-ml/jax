@@ -24,7 +24,6 @@ import warnings
 import numpy as np
 
 import jax
-from jax import core
 from jax import lax
 from jax import tree_util
 from jax import vmap
@@ -40,6 +39,7 @@ from jax._src.interpreters import mlir
 import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
+from jax._src import core
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.lax.lax import (

@@ -23,7 +23,7 @@ import weakref
 from jax._src import core
 from jax._src import linear_util as lu
 from jax.config import config
-from jax.core import ConcreteArray, ShapedArray, raise_to_shaped
+from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.interpreters import mlir

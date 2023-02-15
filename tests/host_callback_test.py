@@ -27,7 +27,7 @@ from absl.testing import absltest
 
 import jax
 from jax import ad_checkpoint
-from jax import core
+from jax._src import core
 from jax.config import config
 from jax import dtypes
 from jax.experimental import host_callback as hcb

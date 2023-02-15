@@ -40,6 +40,7 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax.test_util import check_grads
 
+from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src import test_util as jtu
@@ -2296,9 +2297,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testSearchsortedDtype(self):
     # Test that for large arrays, int64 indices are used. We test this
     # via abstract evaluation to avoid allocating a large array in tests.
-    a_int32 = jax.core.ShapedArray((np.iinfo(np.int32).max,), np.float32)
-    a_int64 = jax.core.ShapedArray((np.iinfo(np.int32).max + 1,), np.float32)
-    v = jax.core.ShapedArray((), np.float32)
+    a_int32 = core.ShapedArray((np.iinfo(np.int32).max,), np.float32)
+    a_int64 = core.ShapedArray((np.iinfo(np.int32).max + 1,), np.float32)
+    v = core.ShapedArray((), np.float32)
 
     out_int32 = jax.eval_shape(jnp.searchsorted, a_int32, v)
     self.assertEqual(out_int32.dtype, np.int32)
@@ -3322,7 +3323,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if mode == 'raise':
       msg = ("The error occurred because ravel_multi_index was jit-compiled "
              "with mode='raise'. Use mode='wrap' or mode='clip' instead.")
-      with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg):
+      with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
         jax.jit(jnp_fun)(*args_maker())
     else:
       self._CompileAndCheck(jnp_fun, args_maker)
@@ -3360,7 +3361,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if mode == 'raise':
       msg = ("The error occurred because jnp.choose was jit-compiled"
              " with mode='raise'. Use mode='wrap' or mode='clip' instead.")
-      with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg):
+      with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
         jax.jit(jnp_fun)(*args_maker())
     else:
       self._CompileAndCheck(jnp_fun, args_maker)
@@ -4438,7 +4439,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         atol=atol,
                         rtol=rtol)
     # abstract tracer value for jnp.mgrid slice
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
                                 "slice start of jnp.mgrid"):
       jax.jit(lambda a, b: jnp.mgrid[a:b])(0, 2)
 
@@ -4479,7 +4480,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         atol=atol,
                         rtol=rtol)
     # abstract tracer value for ogrid slice
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
                                 "slice start of jnp.ogrid"):
       jax.jit(lambda a, b: jnp.ogrid[a:b])(0, 2)
 
@@ -4506,7 +4507,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
       jnp.r_["asdfgh",[1,2,3]]
     # abstract tracer value for r_ slice
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
                                 "slice start of jnp.r_"):
       jax.jit(lambda a, b: jnp.r_[a:b])(0, 2)
 
@@ -4555,7 +4556,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "could not understand directive.*"):
       jnp.c_["asdfgh",[1,2,3]]
     # abstract tracer value for c_ slice
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError,
+    with self.assertRaisesRegex(core.ConcretizationTypeError,
                                 "slice start of jnp.c_"):
       jax.jit(lambda a, b: jnp.c_[a:b])(0, 2)
 
@@ -4948,13 +4949,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testArangeConcretizationError(self):
     msg = r"It arose in jax.numpy.arange argument `{}`".format
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg('stop')):
       jax.jit(jnp.arange)(3)
 
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('start')):
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg('start')):
       jax.jit(lambda start: jnp.arange(start, 3))(0)
 
-    with self.assertRaisesRegex(jax.core.ConcretizationTypeError, msg('stop')):
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg('stop')):
       jax.jit(lambda stop: jnp.arange(0, stop))(3)
 
   @jtu.sample_product(dtype=[None] + float_dtypes)

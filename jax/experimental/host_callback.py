@@ -505,7 +505,7 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence,
 import warnings
 
 from jax._src import api
-from jax import core
+from jax._src import core
 from jax.config import config
 from jax import custom_derivatives
 from jax._src import dtypes

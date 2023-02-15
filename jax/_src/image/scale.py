@@ -16,13 +16,14 @@ from functools import partial
 import enum
 from typing import Callable, Sequence, Union
 
-from jax import core
+import numpy as np
+
 from jax import jit
 from jax import lax
 from jax import numpy as jnp
+from jax._src import core
 from jax._src.util import canonicalize_axis
 from jax._src.numpy.util import _promote_dtypes_inexact
-import numpy as np
 
 
 def _fill_lanczos_kernel(radius, x):

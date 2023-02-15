@@ -4426,7 +4426,7 @@ def rng_bit_generator(key, shape, dtype=np.uint32,
   Most users should use `jax.random` instead for a stable and more user
   friendly API.
   """
-  shape = jax.core.canonicalize_shape(shape)
+  shape = core.canonicalize_shape(shape)
   dtype = dtypes.canonicalize_dtype(dtype)
   if np.dtype(dtype) not in {np.dtype('uint8'), np.dtype('uint16'),
                              np.dtype('uint32'), np.dtype('uint64')}:

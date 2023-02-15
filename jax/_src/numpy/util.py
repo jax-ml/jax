@@ -20,14 +20,13 @@ from typing import (
 )
 import warnings
 
-from jax._src.config import config
 from jax._src import dtypes
-from jax._src.lax import lax as lax_internal
+from jax._src import api
+from jax._src import core
+from jax._src.config import config
+from jax._src.lax import lax
 from jax._src.numpy.ndarray import ndarray
 from jax._src.util import safe_zip, safe_map
-from jax._src import api
-from jax import core
-from jax._src.lax import lax
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, Shape
 
 import numpy as np
@@ -232,7 +231,7 @@ def _asarray(arr: ArrayLike) -> Array:
   """
   _check_arraylike("_asarray", arr)
   dtype, weak_type = dtypes._lattice_result_type(arr)
-  return lax_internal._convert_element_type(arr, dtype, weak_type)
+  return lax._convert_element_type(arr, dtype, weak_type)
 
 def _promote_shapes(fun_name: str, *args: ArrayLike) -> List[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
@@ -283,7 +282,7 @@ def _promote_dtypes(*args: ArrayLike) -> List[Array]:
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
     to_dtype = dtypes.canonicalize_dtype(to_dtype)
-    return [lax_internal._convert_element_type(x, to_dtype, weak_type) for x in args]
+    return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
 def _promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
@@ -293,7 +292,7 @@ def _promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
   to_dtype_inexact = dtypes.to_inexact_dtype(to_dtype)
-  return [lax_internal._convert_element_type(x, to_dtype_inexact, weak_type)
+  return [lax._convert_element_type(x, to_dtype_inexact, weak_type)
           for x in args]
 
 
@@ -304,7 +303,7 @@ def _promote_dtypes_numeric(*args: ArrayLike) -> List[Array]:
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
   to_dtype_numeric = dtypes.to_numeric_dtype(to_dtype)
-  return [lax_internal._convert_element_type(x, to_dtype_numeric, weak_type)
+  return [lax._convert_element_type(x, to_dtype_numeric, weak_type)
           for x in args]
 
 
@@ -315,7 +314,7 @@ def _promote_dtypes_complex(*args: ArrayLike) -> List[Array]:
   to_dtype, weak_type = dtypes._lattice_result_type(*args)
   to_dtype = dtypes.canonicalize_dtype(to_dtype)
   to_dtype_complex = dtypes.to_complex_dtype(to_dtype)
-  return [lax_internal._convert_element_type(x, to_dtype_complex, weak_type)
+  return [lax._convert_element_type(x, to_dtype_complex, weak_type)
           for x in args]
 
 
@@ -426,7 +425,7 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
                      "be provided to jax.numpy.where, got {} and {}."
                      .format(x, y))
   if not np.issubdtype(_dtype(condition), np.bool_):
-    condition = lax.ne(condition, lax_internal._zero(condition))
+    condition = lax.ne(condition, lax._zero(condition))
   x, y = _promote_dtypes(x, y)
   condition_arr, x_arr, y_arr = _broadcast_arrays(condition, x, y)
   try:

@@ -46,10 +46,10 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
-from jax import core, lax
+from jax._src import core
+from jax import lax
 from jax import custom_batching
 from jax._src import api, dtypes, dispatch, lib, api_util
-from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
 from jax._src.interpreters import mlir
@@ -965,7 +965,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     for obj in [lowered, compiled]:
       self.assertEqual(
           obj.in_avals,
-          ((jax.core.ShapedArray([], expected_dtype, weak_type=True),), {}))
+          ((core.ShapedArray([], expected_dtype, weak_type=True),), {}))
       self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
 
   def test_jit_lower_duck_typing(self):
@@ -1449,7 +1449,7 @@ class APITest(jtu.JaxTestCase):
           r"The __index__\(\) method was called on the JAX Tracer object.*", lambda: jit(f)(0))
 
   def test_unimplemented_interpreter_rules(self):
-    foo_p = Primitive('foo')
+    foo_p = core.Primitive('foo')
     def foo(x):
       return foo_p.bind(x)
 
@@ -3543,12 +3543,12 @@ class APITest(jtu.JaxTestCase):
 
   def test_jit_returning_token(self):
     x = jax.jit(jax.lax.create_token)(1.0)
-    self.assertIsInstance(x, jax.core.Token)
+    self.assertIsInstance(x, core.Token)
 
   def test_jit_capturing_token(self):
-    tok = jax.core.token
+    tok = core.token
     _, y = jax.jit(lambda x: (x + 2, tok))(7)
-    self.assertIsInstance(y, jax.core.Token)
+    self.assertIsInstance(y, core.Token)
 
   def test_leak_checker_catches_a_jit_leak(self):
     with jax.checking_leaks():
@@ -4119,7 +4119,7 @@ class APITest(jtu.JaxTestCase):
       return g(x)
 
     jaxpr = jax.make_jaxpr(h)(7)
-    jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+    core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
 
     b(8)  # don't crash
 
@@ -4142,7 +4142,7 @@ class APITest(jtu.JaxTestCase):
       return g(x)
 
     jaxpr = jax.make_jaxpr(h)(7)
-    jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
+    core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 7)
 
     b(8)  # don't crash
 
@@ -4734,7 +4734,7 @@ class RematTest(jtu.JaxTestCase):
       ])
   def test_remat_eval_counter(self, remat):
     # https://github.com/google/jax/issues/2737
-    add_one_p = Primitive('add_one')
+    add_one_p = core.Primitive('add_one')
     add_one = add_one_p.bind
 
     num_evals = 0
@@ -4772,7 +4772,7 @@ class RematTest(jtu.JaxTestCase):
 
     @jax_util.curry
     def call(f, *args):
-      return jax.core.call(
+      return core.call(
           lu.wrap_init(lambda *args: [f(*args)]),
           *args, name='foo')[0]
 

@@ -25,7 +25,6 @@ import numpy as np
 
 import jax.numpy as jnp
 from jax import config
-from jax import core
 from jax import lax
 from jax import tree_util
 from jax.experimental.sparse._base import JAXSparse
@@ -37,6 +36,7 @@ from jax.experimental.sparse.util import (
 from jax.util import split_list, safe_zip
 
 from jax._src import api_util
+from jax._src import core
 from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo

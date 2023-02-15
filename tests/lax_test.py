@@ -28,7 +28,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import core
+from jax._src import core
 from jax import lax
 import jax.numpy as jnp
 from jax.test_util import check_grads

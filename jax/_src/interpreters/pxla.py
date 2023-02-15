@@ -1539,7 +1539,7 @@ class PmapComputation(stages.XlaLowering):
 class UnloadedPmapExecutable:
   compiled: Any
   backend: xb.XlaBackend
-  local_input_avals: Sequence[jax.core.AbstractValue]
+  local_input_avals: Sequence[core.AbstractValue]
   input_shardings: Sequence[sharding_internal.XLACompatibleSharding]
   local_output_avals: Sequence[ShapedArray]
   output_shardings: Sequence[sharding_internal.XLACompatibleSharding]

@@ -54,8 +54,8 @@ from typing import (
 import numpy as np
 
 import jax
-from jax import core
 from jax import lax
+from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse

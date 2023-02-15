@@ -27,12 +27,12 @@ import scipy.special
 import scipy.stats
 
 import jax
-from jax import core
 from jax import grad
 from jax import lax
 from jax import numpy as jnp
 from jax import prng
 from jax import random
+from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap

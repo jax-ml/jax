@@ -14,7 +14,7 @@
 
 import jax
 import inspect
-from jax import core
+from jax._src import core
 from jax import tree_util
 from jax._src import linear_util as lu
 from jax.experimental import pjit
@@ -60,7 +60,7 @@ _CUSTOM_PARTITIONING_CALL_NAME = "CustomSPMDPartitioning"
 
 
 def _to_jax_shape(s):
-  return jax.core.ShapedArray(s.dimensions(), s.numpy_dtype())
+  return core.ShapedArray(s.dimensions(), s.numpy_dtype())
 
 
 def _custom_partitioning_propagate_user_sharding(sharding, shape, backend_string):

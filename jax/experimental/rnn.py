@@ -87,7 +87,7 @@ from typing import Any, Dict, List, Tuple
 
 import jax
 import numpy as np
-from jax import core
+from jax._src import core
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.custom_derivatives import custom_vjp

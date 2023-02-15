@@ -17,18 +17,20 @@ from functools import partial
 import operator
 from typing import Optional, Tuple, Union
 
-from jax import core
+import numpy as np
+
 from jax import jit
 from jax import lax
 from jax._src import dtypes
+from jax._src import core
 from jax._src.numpy.lax_numpy import (
-    all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve, diag, dot,
-    finfo, full, maximum, ones, outer, roll, sqrt, trim_zeros, trim_zeros_tol, true_divide,
-    vander, zeros)
+    all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve,
+    diag, dot, finfo, full, maximum, ones, outer, roll, sqrt, trim_zeros,
+    trim_zeros_tol, true_divide, vander, zeros)
 from jax._src.numpy import linalg
-from jax._src.numpy.util import _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _where, _wraps
+from jax._src.numpy.util import (
+    _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _where, _wraps)
 from jax._src.typing import Array, ArrayLike
-import numpy as np
 
 
 @jit

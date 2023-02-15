@@ -24,6 +24,7 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import lax
@@ -1178,7 +1179,7 @@ class BatchingTest(jtu.JaxTestCase):
     f = vmap(jax.grad(lambda x: -lax.psum(x, 'i')), out_axes=None, axis_name='i')
     self.assertEqual(
         f(a),
-        jax.core.jaxpr_as_fun(jax.make_jaxpr(f)(a))(a)[0])
+        core.jaxpr_as_fun(jax.make_jaxpr(f)(a))(a)[0])
 
   def testAllGatherToUnmapped(self):
     def f(x):
@@ -1301,7 +1302,7 @@ class BatchingTest(jtu.JaxTestCase):
 
 Array = Any
 ArrayElt = Any
-Int = Union[int, jax.core.Tracer]
+Int = Union[int, core.Tracer]
 
 # Can't used NamedTuple here b/c those are pytrees
 class NamedArray:

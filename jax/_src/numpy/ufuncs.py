@@ -24,16 +24,16 @@ from typing import Any, Callable, Tuple, Union, overload
 
 import numpy as np
 
-from jax._src.api import jit, custom_jvp
+from jax import lax
+from jax._src import core
 from jax._src import dtypes
+from jax._src.api import jit, custom_jvp
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
    _asarray, _check_arraylike, _promote_args, _promote_args_inexact,
    _promote_args_numeric, _promote_dtypes_inexact, _promote_dtypes_numeric,
    _promote_shapes, _where, _wraps)
-from jax import core
-from jax import lax
 
 _lax_const = lax_internal._const
 

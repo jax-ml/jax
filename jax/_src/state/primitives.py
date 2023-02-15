@@ -16,19 +16,21 @@ from functools import partial
 
 from typing import Any, List, Protocol, Tuple, TypeVar, Union
 
-from jax import core
+import numpy as np
+
 from jax import lax
-from jax._src import ad_util
-from jax._src import pretty_printer as pp
-from jax._src.typing import Array
-from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-import numpy as np
 
+from jax._src import ad_util
+from jax._src import core
+from jax._src import pretty_printer as pp
+from jax._src.typing import Array
 from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
                                   AccumEffect)
+from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
+
 
 ## General utilities
 

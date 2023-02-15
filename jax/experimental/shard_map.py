@@ -24,9 +24,8 @@ from typing import (Any, Callable, Dict, Hashable, List, Optional, Sequence,
 import numpy as np
 
 import jax
-from jax import core
-from jax.core import Tracer
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
+from jax._src import core
 from jax._src import ad_util
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -35,6 +34,7 @@ from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src.core import Tracer
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, fft, linalg)
 from jax._src.util import (prod, HashableFunction, unzip2, as_hashable_function,
@@ -502,7 +502,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
       outs_, out_rep = unzip2((t.val, t.rep) for t in out_tracers)
       del main, t, in_tracers, ans, out_tracers
   out_avals = [core.mapped_aval(x.shape[0], 0, core.get_aval(x)) for x in outs_]
-  _check_names(out_names_thunk(), out_avals)
+  _check_names(out_names_thunk(), out_avals)  # pytype: disable=wrong-arg-types
   if check_rep: _check_reps(mesh, out_names_thunk(), out_rep)
   return map(partial(_match_spec, mesh), out_rep, out_names_thunk(), outs_)
 core.EvalTrace.process_shard_map = _shard_map_impl
@@ -579,7 +579,7 @@ class ShardMapTrace(core.Trace):
     fun, jaxpr = _grab_jaxpr_shadily(fun)  # TODO remove with initial-style jit
     bind = partial(call_primitive.bind, fun)  # TODO caching (compat w/ jaxpr())
     fake_primitive = pxla.FakePrimitive(multiple_results=True, bind=bind)
-    _rep_rules[fake_primitive] = lambda *_, **__: set()
+    _rep_rules[fake_primitive] = lambda *_, **__: set()  # pytype: disable=container-type-mismatch
     out_tracers_ = self.process_primitive(fake_primitive, tracers, params)
     out_vals = [t.val for t in out_tracers_]
     if self.check:

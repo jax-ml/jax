@@ -21,7 +21,7 @@ from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
 from functools import wraps, partial, partialmethod, lru_cache
 
 from jax import numpy as jnp
-from jax import core
+from jax._src import core
 from jax._src import linear_util as lu
 from jax import stages
 from jax._src import dispatch

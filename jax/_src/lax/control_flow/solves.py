@@ -17,10 +17,7 @@ from functools import partial
 import operator
 
 import jax
-from jax import core
 from jax import lax
-from jax._src import linear_util as lu
-from jax.core import raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax.interpreters import mlir
@@ -28,6 +25,9 @@ from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
                            tree_unflatten, treedef_tuple)
 from jax._src import ad_util
+from jax._src import core
+from jax._src import linear_util as lu
+from jax._src.core import raise_to_shaped
 from jax._src.traceback_util import api_boundary
 from jax._src.util import split_list, safe_map
 import numpy as np

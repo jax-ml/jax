@@ -21,14 +21,14 @@ import numpy as np
 from typing import Any, Optional, Tuple, Union
 
 import jax
-from jax import custom_jvp
-from jax._src import dtypes
-from jax import lax
-from jax import core
-from jax.core import AxisName
-from jax._src import util
-from jax._src.ops.special import logsumexp as _logsumexp
 import jax.numpy as jnp
+from jax import custom_jvp
+from jax import lax
+from jax._src import core
+from jax._src import dtypes
+from jax._src import util
+from jax._src.core import AxisName
+from jax._src.ops.special import logsumexp as _logsumexp
 
 Array = Any
 

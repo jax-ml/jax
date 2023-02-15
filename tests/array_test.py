@@ -22,6 +22,7 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
+from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
@@ -145,7 +146,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(arr.is_fully_replicated, expected_is_fully_replicated)
     for i, s in enumerate(arr.addressable_shards):
       self.assertEqual(s.data.aval,
-                       jax.core.ShapedArray(expected_shard_shape, s.data.dtype))
+                       core.ShapedArray(expected_shard_shape, s.data.dtype))
       self.assertArraysEqual(s.data, global_input_data[s.index])
       self.assertArraysEqual(s.data, arr.addressable_data(i))
 
@@ -318,13 +319,13 @@ class JaxArrayTest(jtu.JaxTestCase):
         ValueError,
         r'Expected 8 per-device arrays \(this is how many devices are addressable '
         r'by the sharding\), but got 4'):
-      array.ArrayImpl(jax.core.ShapedArray(shape, np.float32), s, bufs[:4], committed=True)
+      array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs[:4], committed=True)
 
     with self.assertRaisesRegex(
         ValueError,
         r'Expected 8 per-device arrays \(this is how many devices are addressable '
         r'by the sharding\), but got 16'):
-      array.ArrayImpl(jax.core.ShapedArray(shape, np.float32), s, bufs + bufs, committed=True)
+      array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs + bufs, committed=True)
 
   def test_arrays_not_in_device_assignment(self):
     if jax.device_count() < 4:
@@ -342,7 +343,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         "Sharding contains devices {0, 1} that are not present in per-device "
         "arrays. Per-device arrays contain devices {2, 3} that are not present "
         "in the sharding."):
-      array.ArrayImpl(jax.core.ShapedArray(shape, np.float32), s, bufs, committed=True)
+      array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   def test_more_devices_in_sharding_than_arrays(self):
     shape = (8, 2)
@@ -357,7 +358,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         "Addressable devices and per-device arrays devices do not match. "
         r"Sharding contains devices \{1\} that are not present in per-device "
         "arrays."):
-      array.ArrayImpl(jax.core.ShapedArray(shape, np.float32), s, bufs, committed=True)
+      array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   def test_different_devices_in_arrays_than_sharding(self):
     if jax.device_count() < 3:
@@ -375,7 +376,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         r"Sharding contains devices \{2\} that are not present in per-device "
         r"arrays. Per-device arrays contain devices \{0\} that are not present "
         "in the sharding."):
-      array.ArrayImpl(jax.core.ShapedArray(shape, np.float32), s, bufs, committed=True)
+      array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y"), (2, 2)),
@@ -410,7 +411,7 @@ class JaxArrayTest(jtu.JaxTestCase):
         ValueError,
         "Input buffers to `Array` must have matching dtypes. "
         "Got int32, expected float32"):
-      array.ArrayImpl(jax.core.ShapedArray(shape, np.float32), s, bufs, committed=True)
+      array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
   def test_array_iter_pmap_sharding(self):
     if jax.device_count() < 2:
@@ -975,7 +976,7 @@ class RngShardingTest(jtu.JaxTestCase):
 
   def test_pickle_pjit_lower(self):
     example_exe = jax.jit(lambda x: x * x).lower(
-        jax.core.ShapedArray(
+        core.ShapedArray(
             (2, 2), dtype=np.float32)).compile()._executable.xla_executable
 
     # Skip if CompileOptions is not available. This is true on
@@ -995,7 +996,7 @@ class RngShardingTest(jtu.JaxTestCase):
           fun,
           in_axis_resources=P('data'),
           out_axis_resources=P(None, 'data'),
-      ).lower(jax.core.ShapedArray(shape=(8, 8), dtype=np.float32))
+      ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
 
     def verify_serialization(lowered):
       serialized, in_tree, out_tree = compile_and_serialize(lowered)

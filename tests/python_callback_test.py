@@ -19,9 +19,9 @@ from typing import Any, Callable, Sequence
 
 from absl.testing import absltest
 import jax
-from jax import core
 from jax import lax
 from jax import tree_util
+from jax._src import core
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import sharding

@@ -19,14 +19,18 @@ from typing import cast, Any, List, Optional, Tuple
 import numpy as np
 import scipy.special as osp_special
 
-from jax._src import api
-from jax._src import dtypes
-from jax import jit, vmap
-from jax import lax, core
-from jax.interpreters import ad
 import jax.numpy as jnp
+from jax import jit
+from jax import vmap
+from jax import lax
+from jax.interpreters import ad
+
+from jax._src import api
+from jax._src import core
+from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.lax_numpy import moveaxis, _promote_args_inexact, _promote_dtypes_inexact
+from jax._src.numpy.lax_numpy import (
+    moveaxis, _promote_args_inexact, _promote_dtypes_inexact)
 from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl

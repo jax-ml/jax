@@ -41,16 +41,16 @@ import opt_einsum
 
 import jax
 from jax import jit
-from jax import core
 from jax import errors
 from jax import lax
-from jax.core import ShapedArray, DShapedArray, ConcreteArray
 from jax.interpreters import pxla
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
+from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
+from jax._src.core import ShapedArray, DShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal

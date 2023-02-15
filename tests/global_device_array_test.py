@@ -19,7 +19,7 @@ import unittest
 import numpy as np
 
 import jax
-from jax import core
+from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
 

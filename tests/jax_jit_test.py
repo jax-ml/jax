@@ -19,6 +19,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import api
+from jax._src import core
 from jax import dtypes
 from jax._src import lib as jaxlib
 from jax import numpy as jnp
@@ -60,7 +61,7 @@ class JaxJitTest(jtu.JaxTestCase):
 
       self.assertFalse(output_buffer.aval.weak_type)
       dtype = dtypes.canonicalize_dtype(dtype)
-      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((), dtype))
+      self.assertEqual(output_buffer.aval, core.ShapedArray((), dtype))
       self.assertEqual(output_buffer.dtype, dtype)
 
   @parameterized.parameters([jax.device_put, _cpp_device_put])
@@ -73,7 +74,7 @@ class JaxJitTest(jtu.JaxTestCase):
 
       self.assertFalse(output_buffer.aval.weak_type)
       dtype = dtypes.canonicalize_dtype(dtype)
-      self.assertEqual(output_buffer.aval, jax.core.ShapedArray((3, 4), dtype))
+      self.assertEqual(output_buffer.aval, core.ShapedArray((3, 4), dtype))
       self.assertEqual(output_buffer.dtype, dtype)
       np.testing.assert_array_equal(output_buffer, np.zeros((3, 4),
                                                             dtype=dtype))

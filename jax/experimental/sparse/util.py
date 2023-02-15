@@ -19,10 +19,10 @@ from typing import Any, NamedTuple, Tuple, Union
 
 import numpy as np
 import jax
-from jax import core
 from jax import lax
 from jax import tree_util
 from jax import vmap
+from jax._src import core
 from jax._src import dtypes
 from jax._src import stages
 from jax._src.api_util import flatten_axes
