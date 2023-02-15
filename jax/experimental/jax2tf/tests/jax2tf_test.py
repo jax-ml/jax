@@ -35,7 +35,7 @@ from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental import pjit
 from jax.interpreters import mlir
-from jax.interpreters.pxla import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
@@ -974,6 +974,38 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     f_tf_graph_consts = self.FindLargeTfConstants(jax2tf.convert(f), const)
     self.assertLen(f_tf_graph_consts, 1)
+
+  def test_shared_constants_randint(self):
+    # randint has the property that that the TF lowering of the randbits_p
+    # primitive generates constants that did not exist in the Jaxpr. As such
+    # it has created new errors related to the sharing of the constants.
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
+
+    key = jax.random.PRNGKey(42)
+
+    def f_nested_jax(x):
+      # Lowering this will generate a tf.constant(shape=(1,), dtype=np.int32)
+      # that was not already in the Jaxpr, and hence JAX did not get a chance
+      # to share.
+      return x + jax.random.randint(key, shape=x.shape,
+                                    minval=0, maxval=100, dtype=np.int32)
+    def f_jax(x):
+      res = lax.cond(x[0] >= 2, lambda: f_nested_jax(x), lambda: f_nested_jax(x))
+      res += lax.while_loop(lambda x: f_nested_jax(x)[0] <= 0, f_nested_jax, x)
+      # We also generate tf.while in the batching rule for cond
+      res += jax.vmap(lambda x: lax.cond(x[0] >= 2,
+                                         lambda: f_nested_jax(x),
+                                         lambda: f_nested_jax(x)))(jnp.stack([x, x]))
+      res += f_nested_jax(x)
+      return res
+
+    # Must be odd to trigger the failure
+    x = np.array([123, 456, 789], dtype=np.int32)
+
+    f_tf = tf.function(jax2tf.convert(f_jax), autograph=False)
+    res_tf = f_tf(x)
+    self.assertAllClose(res_tf, f_jax(x))
 
   def test_weak_types(self):
     mul = jax.jit(jnp.multiply)

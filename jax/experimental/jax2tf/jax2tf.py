@@ -18,21 +18,25 @@ import operator
 import os
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union, cast
+from typing import (
+    Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union,
+    cast)
 
 from absl import logging
+import numpy as np
 
 import jax
 from jax import lax
 from jax import config
-from jax import core, custom_derivatives
-from jax._src import linear_util as lu
-from jax import random, tree_util
+from jax import core
+from jax import custom_derivatives
+from jax import random
 from jax import numpy as jnp
+from jax import tree_util
 from jax.experimental import maps
-from jax.experimental import pjit
-from jax._src import sharding
-from jax.interpreters import ad
+from jax.experimental.global_device_array import GlobalDeviceArray
+from jax.experimental.jax2tf import shape_poly
+from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import mlir
 from jax.interpreters import pxla
 from jax.interpreters import xla
@@ -43,10 +47,14 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
+from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import util
+from jax._src.interpreters import ad
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
@@ -55,12 +63,6 @@ from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src.numpy.ufuncs import logaddexp
 
-from jax.experimental.global_device_array import GlobalDeviceArray
-from jax.experimental.jax2tf import shape_poly
-from jax.experimental.jax2tf import impl_no_xla
-
-
-import numpy as np
 import tensorflow as tf  # type: ignore[import]
 
 # These don't have public equivalents.
@@ -837,13 +839,17 @@ def _interpret_subtrace(main: core.MainTrace,
 
 
 def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
-                     extra_name_stack: Optional[str]) -> Sequence[TfVal]:
+                     extra_name_stack: Optional[str],
+                     fresh_constant_cache: bool = True) -> Sequence[TfVal]:
   """Evaluates a Jaxpr with tf.Tensor arguments.
 
+  This is most often used as the body of a tf.function, or tf.switch_case,
+  in which case it should use a fresh constant cache.
   The output is a sequence of TfVal, suitable for use with TF.
   """
   outs_tf, _ = _interpret_fun_jax(core.jaxpr_as_fun(jaxpr),
-                                  args_tf, jaxpr.in_avals, extra_name_stack)
+                                  args_tf, jaxpr.in_avals, extra_name_stack,
+                                  fresh_constant_cache=fresh_constant_cache)
   return outs_tf
 
 
@@ -897,7 +903,11 @@ def _to_tf_dtype(jax_dtype):
 def _to_jax_dtype(tf_dtype):
   # Note that converting _to_tf_dtype and _to_jax_dtype are not inverses,
   # due to float0 and 64-bit behavior.
-  return dtypes.canonicalize_dtype(tf_dtype.as_numpy_dtype)
+  dt = dtypes.canonicalize_dtype(tf_dtype.as_numpy_dtype)
+  if dt not in dtypes._jax_dtype_set:
+    raise TypeError(f"dtype {dt} is not a valid JAX array "
+                    "type. Only arrays of numeric types are supported by JAX.")
+  return dt
 
 
 def _maybe_decode_gda(gda_or_py_object: Any):
@@ -950,7 +960,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     # Jaxpr consts, to the top level of the Jaxpr. This ensures that we see them
     # early, when entering the Jaxpr, so we create the tf.const early and its
     # scope is the entire Jaxpr.
-    do_memoize = (memoize_constants and np.shape(val) and _thread_local_state.constant_cache is not None)
+    do_memoize = (memoize_constants and np.size(val) > 1 and _thread_local_state.constant_cache is not None)
     if do_memoize:
       _, tf_val = _thread_local_state.constant_cache.get(const_key, (None, None))
     else:
@@ -1303,7 +1313,6 @@ tf_not_yet_impl = [
     "clz",
     "igamma_grad_a",
     "random_gamma_grad",
-    "reduce_precision",
     "reduce_xor",
     "schur",
     "closed_call",
@@ -1316,6 +1325,7 @@ tf_not_yet_impl = [
     "for",
     "inspect_sharding",
     "io_callback",
+    "shard_map",
 
     # Not high priority?
     "after_all",
@@ -1842,8 +1852,6 @@ def _conv_general_dilated(lhs, rhs, *,
                           dimension_numbers: lax.ConvDimensionNumbers,
                           feature_group_count: int,
                           batch_group_count: int,
-                          lhs_shape: Sequence[int],
-                          rhs_shape: Sequence[int],
                           precision: Optional[Tuple[PrecisionType, PrecisionType]],
                           preferred_element_type: Optional[DType],
                           _in_avals: Sequence[core.ShapedArray],
@@ -2161,12 +2169,6 @@ def _select_and_gather_add(
 
 
 tf_impl_with_avals[lax.select_and_gather_add_p] = _select_and_gather_add
-
-
-def _get_shape_from_tensor_or_array(x):
-  if isinstance(x.shape, tf.TensorShape):
-    return tuple(x.shape.as_list())
-  return tuple(x.shape)
 
 
 def _common_reduce_window(operand, init_val, reducer, window_dimensions,
@@ -2735,7 +2737,6 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
       partial(_interpret_jaxpr, jaxpr, *operands,
               # Same name stack as the XLA translation of cond_p
               extra_name_stack=f"branch_{i}_fun")
-      for jaxpr in branches
       for i, jaxpr in enumerate(branches)
   ]
   # Same name stack as XLA translation of cond_p
@@ -2769,7 +2770,7 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
     return pred
 
   body_tf_func = partial(_interpret_jaxpr, body_jaxpr, *body_consts,
-                                   extra_name_stack="while/body")
+                         extra_name_stack="while/body")
   # Sometimes TF infers more specific shapes for the init_carry, and this has
   # led to errors: "enters the loop with shape (1,), but has shape (None,) after one iteration"
   shape_invariants = [tf.TensorShape(_aval_to_tf_shape(_out_aval))
@@ -3082,7 +3083,8 @@ def _custom_jvp_call(*args: TfVal, call_jaxpr: core.ClosedJaxpr,
                            num_consts: int) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
   del jvp_jaxpr_thunk, num_consts
-  return _interpret_jaxpr(call_jaxpr, *args, extra_name_stack="custom_jvp")
+  return _interpret_jaxpr(call_jaxpr, *args, extra_name_stack="custom_jvp",
+                          fresh_constant_cache=False)
 
 
 tf_impl[custom_derivatives.custom_jvp_call_p] = _custom_jvp_call
@@ -3091,7 +3093,8 @@ tf_impl[custom_derivatives.custom_jvp_call_p] = _custom_jvp_call
 def _custom_vjp_call_jaxpr(*args: TfVal, fun_jaxpr: core.ClosedJaxpr,
                            **_) -> Sequence[TfVal]:
   # TODO(necula): ensure that there is no AD transformation in scope
-  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_vjp")
+  return _interpret_jaxpr(fun_jaxpr, *args, extra_name_stack="custom_vjp",
+                          fresh_constant_cache=False)
 
 
 tf_impl[custom_derivatives.custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr
@@ -3183,7 +3186,8 @@ def _pjit(*args: TfVal,
   sharded_args: Sequence[TfVal] = tuple(
       map(_shard_value, args, _in_avals, in_shardings))
   results = _interpret_jaxpr(jaxpr, *sharded_args,
-                             extra_name_stack=util.wrap_name(name, "pjit"))
+                             extra_name_stack=util.wrap_name(name, "pjit"),
+                             fresh_constant_cache=False)
   sharded_results: Sequence[TfVal] = tuple(
       map(_shard_value, results, _out_aval, out_shardings))
   return tuple(sharded_results)
@@ -3218,6 +3222,12 @@ def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   return dim_tf
 
 tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
+
+def _reduce_precision(x, *, exponent_bits, mantissa_bits):
+  return tfxla.reduce_precision(x, exponent_bits=exponent_bits,
+                                mantissa_bits=mantissa_bits)
+
+tf_impl[lax.reduce_precision_p] = _reduce_precision
 
 def _register_checkpoint_pytrees():
   """Registers TF custom container types as pytrees."""

@@ -100,7 +100,6 @@ def to_complex_dtype(dtype: DTypeLike) -> DType:
 
 @functools.lru_cache(maxsize=None)
 def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any) -> Union[DType, OpaqueDType]:
-  """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   from jax._src import core     # TODO(frostig): break this cycle
   if core.is_opaque_dtype(dtype):
     if not allow_opaque_dtype:
@@ -124,6 +123,7 @@ def canonicalize_dtype(dtype: Any, allow_opaque_dtype: Literal[False] = False) -
 def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]: ...
 
 def canonicalize_dtype(dtype: Any, allow_opaque_dtype: bool = False) -> Union[DType, OpaqueDType]:
+  """Convert from a dtype to a canonical dtype based on config.x64_enabled."""
   return _canonicalize_dtype(config.x64_enabled, allow_opaque_dtype, dtype)
 
 # Default dtypes corresponding to Python scalars.
@@ -135,6 +135,7 @@ python_scalar_dtypes : Dict[type, DType] = {
 }
 
 def scalar_type_of(x: Any) -> type:
+  """Return the scalar type associated with a JAX value."""
   typ = dtype(x)
   if typ == bfloat16:
     return float
@@ -374,6 +375,11 @@ def _issubclass(a: Any, b: Any) -> bool:
     return False
 
 def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
+  """Returns True if first argument is a typecode lower/equal in type hierarchy.
+
+  This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
+  :obj:`jax.dtypes.bfloat16`.
+  '"""
   if _fp8_enabled:
     if a == "float8_e4m3fn":
       a = float8_e4m3fn

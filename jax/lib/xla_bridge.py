@@ -15,11 +15,8 @@
 # flake8: noqa: F401
 from jax._src.lib.xla_bridge import (
   default_backend as default_backend,
-  device_count as device_count,
   get_backend as get_backend,
   get_compile_options as get_compile_options,
-  local_device_count as local_device_count,
-  process_index as process_index,
   xla_client as xla_client,
   _backends as _backends,
 )

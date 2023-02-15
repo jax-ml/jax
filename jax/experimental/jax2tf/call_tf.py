@@ -116,14 +116,27 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
       return tf.TensorSpec(a_tf_shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 
+    def check_tf_result(r_tf):
+      # Check that the TF function returns values of expected types. This
+      # improves error reporting, preventing hard-to-diagnose errors downstream
+      try:
+        jax2tf_internal._tfval_to_tensor_jax_dtype(r_tf)
+      except Exception as e:
+        msg = ("The called TF function returns a result that is not "
+               f"convertible to JAX: {r_tf}.")
+        raise ValueError(msg) from e
+
     res_treedef = None  # We'll store here the result treedef
+    res_tf_flat = None  # For error reporting
     # The function below will be called at least once, either in eager
     # or in graph mode.
     def callable_flat_tf(*args_tf_flat: TfVal) -> Sequence[TfVal]:
       args_tf = args_treedef.unflatten(args_tf_flat)
       res_tf = callable_tf(*args_tf)
-      nonlocal res_treedef
+      nonlocal res_treedef, res_tf_flat
       res_tf_flat, res_treedef_now = tree_util.tree_flatten(res_tf)
+      for r_tf in res_tf_flat:
+        check_tf_result(r_tf)
       assert res_treedef is None or res_treedef == res_treedef_now, f"Subsequent calls had different results. Previous {res_treedef} and now {res_treedef_now}"
       res_treedef = res_treedef_now
       return res_tf_flat
@@ -158,6 +171,21 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
         function_flat_tf=function_flat_tf,
         args_flat_sig_tf=args_flat_sig_tf,
         has_side_effects=has_side_effects)
+
+    assert res_treedef is not None
+    # Sometimes, in compiled mode, we get a different number of results than we
+    # got when tracing the TF function (and building the res_treedef). This
+    # can happen, e.g., when returning tf.TensorArray, which appears as one
+    # leaf when tracing but after compilation we get a tuple. See
+    # call_tf_test.test_error_bad_result_tensorarray.
+    if res_treedef.num_leaves != len(res_jax_flat):
+      # It is not clear if this error can happen once we have check_tf_result
+      # in callable_flat_tf, but we keep it for safety.
+      msg = (f"Incorrect number of results ({len(res_jax_flat)}) from the "
+             "called TF function after compilation. "
+             f"Expected {res_treedef.num_leaves} leaves based on observed "
+             f"results during tracing: {res_tf_flat}.")
+      raise ValueError(msg)
     return res_treedef.unflatten(res_jax_flat)
 
   # Define the fwd and bwd custom_vjp functions
@@ -221,8 +249,8 @@ call_tf_p.multiple_results = True
 def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
   # On GPU we use dlpack to avoid copies of data to the host.
   def _arg_jax_to_tf(arg_jax):
-    if (isinstance(arg_jax, xla.DeviceArray) and
-        arg_jax.device_buffer.client.platform in _DLPACK_PLATFORMS and
+    if (isinstance(arg_jax, jax.Array) and
+        arg_jax.device().platform in _DLPACK_PLATFORMS and
         arg_jax.dtype in dlpack.SUPPORTED_DTYPES):
       arg_dlpack = jax.dlpack.to_dlpack(arg_jax, take_ownership=False)
       return tf.experimental.dlpack.from_dlpack(arg_dlpack)
@@ -352,24 +380,13 @@ def _code_generator_and_avals(
       else:
         captured_inputs.append(inp)
 
-  # TODO(b/265073174): Currently TensorSpec get_compiler_ir does not support
-  # tf.function captured variables. We can elminate this after it is fixed.
-  if tf.executing_eagerly():
-    args_tf_flat = [
-        tf.constant(
-            (0 if a.dtype != tf.bool else False), shape=a.shape, dtype=a.dtype
-        )
-        for a in args_flat_sig_tf
-    ]
-  else:
+  def convert_to_spec(x):
+    if isinstance(x, tf.TensorSpec):
+      return x
+    else:
+      return tf.TensorSpec.from_tensor(x)
 
-    def maybe_convert_to_spec(x):
-      if isinstance(x, tf.TensorSpec):
-        return x
-      else:
-        return tf.TensorSpec.from_tensor(x)
-
-    args_tf_flat = [maybe_convert_to_spec(a) for a in args_flat_sig_tf]
+  args_tf_flat = [convert_to_spec(a) for a in args_flat_sig_tf]
 
   with jax2tf_internal.inside_call_tf():
     # When the TF computation uses variables on a particular device, we must
@@ -386,28 +403,6 @@ def _code_generator_and_avals(
       raise ValueError(msg) from e
 
   xla_comp = xla_client.XlaComputation(func_tf_hlo)
-  # Check that the function does not have compile-time constant inputs that
-  # have been inlined in the compiled code.
-  xla_comp_parameter_shapes = xla_comp.program_shape().parameter_shapes()
-  found_parameter_avals = [
-      core.ShapedArray(found_xla_shape.dimensions(),
-                       dtypes.canonicalize_dtype(found_xla_shape.numpy_dtype()))
-      for found_xla_shape in xla_comp_parameter_shapes
-  ]
-  # Add the captured_inputs to args_flat_sig_tf
-  expected_args_flat_sig_tf = list(args_flat_sig_tf) + list(captured_inputs)
-  expected_parameter_avals = [
-      core.ShapedArray(tuple(arg_sig.shape.as_list()),
-                       dtypes.canonicalize_dtype(arg_sig.dtype.as_numpy_dtype))
-      for arg_sig in expected_args_flat_sig_tf]
-  if found_parameter_avals != expected_parameter_avals:
-    msg = ("Compiled TensorFlow function has unexpected parameter types " +
-           f"{found_parameter_avals}, while the expected types are " +
-           f"{expected_parameter_avals}. Perhaps the TensorFlow function " +
-           "has shape-influencing inputs, and thus needs to be recompiled " +
-           "for each value of some inputs. " +
-           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
-    raise ValueError(msg)
 
   # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
   def canonical_res_aval(res_shape: xla.XlaShape) -> core.ShapedArray:

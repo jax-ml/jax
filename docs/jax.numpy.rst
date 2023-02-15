@@ -35,7 +35,7 @@ namespace; they are listed below.
 
 .. Generate the list below as follows:
    >>> import jax.numpy, numpy
-   >>> fns = set(dir(numpy)) & set(dir(jax.numpy)) - set(jax.numpy._NOT_IMPLEMENTED)
+   >>> fns = set(dir(numpy)) & set(dir(jax.numpy))
    >>> print('\n'.join('    ' + x for x in fns if callable(getattr(jax.numpy, x))))  # doctest: +SKIP
 
    # Finally, sort the list using sort(1), which is different than Python's
@@ -68,6 +68,7 @@ namespace; they are listed below.
     arctanh
     argmax
     argmin
+    argpartition
     argsort
     argwhere
     around
@@ -497,14 +498,3 @@ This is because in general, pickling and unpickling may take place in different 
 environments, and there is no general way to map the device IDs of one runtime
 to the device IDs of another. If :mod:`pickle` is used in traced/JIT-compiled code,
 it will result in a :class:`~jax.errors.ConcretizationTypeError`.
-
-Class Reference
-~~~~~~~~~~~~~~~
-
-.. autoclass:: jax.numpy.DeviceArray
-
-.. autoclass:: jaxlib.xla_extension.DeviceArrayBase
-
-.. autoclass:: jaxlib.xla_extension.DeviceArray
-   :members:
-   :inherited-members:

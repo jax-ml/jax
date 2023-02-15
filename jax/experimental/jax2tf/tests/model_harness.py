@@ -15,6 +15,7 @@
 import dataclasses
 import functools
 from typing import Any, Callable, Dict, Optional, Sequence, Union
+import re
 
 import numpy as np
 import jraph
@@ -69,9 +70,13 @@ ALL_HARNESSES: Dict[str, Callable[[str], ModelHarness]] = {}
 
 
 def _make_harness(harness_fn, name, poly_shapes=None, tensor_specs=None):
-  """Partially apply harness in order to create variables lazily."""
+  """Partially apply harness in order to create variables lazily.
+
+  Note: quotes and commas are stripped from `name` to ensure they can be passed
+        through the command-line.
+  """
   if poly_shapes:
-    name += "_" + str(poly_shapes).replace("'", "").replace('"', "")
+    name += "_" + re.sub(r"(?:'|\"|,)", "", str(poly_shapes))
   if tensor_specs:
     tensor_specs = [tf.TensorSpec(spec, dtype) for spec, dtype in tensor_specs]
   partial_fn = functools.partial(

@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import inspect
 import io
 import functools
 from functools import partial
 import re
 import os
+import tempfile
 import textwrap
-from typing import Callable, List, Generator, Sequence, Tuple, Union
+from typing import Callable, List, Generator, Optional, Sequence, Tuple, Union
 import unittest
 import warnings
 import zlib
@@ -33,13 +34,17 @@ import numpy.random as npr
 
 import jax
 from jax import lax
-from jax.interpreters import mlir
+from jax.experimental.compilation_cache import compilation_cache
+from jax._src.interpreters import mlir
 from jax.tree_util import tree_map, tree_all, tree_flatten, tree_unflatten
 from jax._src import api
+from jax._src import pjit as pjit_lib
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
-from jax._src.config import flags, bool_env, config
+from jax._src.config import (flags, bool_env, config,
+                             raise_persistent_cache_errors,
+                             persistent_cache_min_compile_time_secs)
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.util import prod, unzip2
 from jax._src.lib import xla_bridge
@@ -88,6 +93,12 @@ flags.DEFINE_string(
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
+
+flags.DEFINE_bool(
+    'jax_test_with_persistent_compilation_cache',
+    bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
+    help='If enabled, the persistent compilation cache will be enabled for all '
+    'test cases. This can be used to increase compilation cache coverage.')
 
 def num_float_bits(dtype):
   return _dtypes.finfo(_dtypes.canonicalize_dtype(dtype)).bits
@@ -196,6 +207,22 @@ def count_primitive_compiles():
     yield count
   finally:
     count[0] = dispatch.xla_primitive_callable.cache_info().misses
+
+
+@contextmanager
+def count_pjit_cache_miss():
+  original_pjit_lower = pjit_lib._pjit_lower
+  count = [0]
+
+  def pjit_lower_and_count(*args, **kwargs):
+    count[0] += 1
+    return original_pjit_lower(*args, **kwargs)
+
+  pjit_lib._pjit_lower = pjit_lower_and_count
+  try:
+    yield count
+  finally:
+    pjit_lib._pjit_lower = original_pjit_lower
 
 
 @contextmanager
@@ -805,6 +832,8 @@ class JaxTestCase(parameterized.TestCase):
     'jax_traceback_filtering': 'off',
   }
 
+  _compilation_cache_exit_stack: Optional[ExitStack] = None
+
   # TODO(mattjj): this obscures the error messages from failures, figure out how
   # to re-enable it
   # def tearDown(self) -> None:
@@ -826,6 +855,24 @@ class JaxTestCase(parameterized.TestCase):
     for key, value in self._original_config.items():
       config.update(key, value)
     super().tearDown()
+
+  @classmethod
+  def setUpClass(cls):
+    if FLAGS.jax_test_with_persistent_compilation_cache:
+      cls._compilation_cache_exit_stack = ExitStack()
+      stack = cls._compilation_cache_exit_stack
+      stack.enter_context(raise_persistent_cache_errors(True))
+      stack.enter_context(persistent_cache_min_compile_time_secs(0))
+
+      tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
+      compilation_cache.initialize_cache(tmp_dir)
+      stack.callback(lambda: compilation_cache.reset_cache()
+                     if compilation_cache.is_initialized() else None)
+
+  @classmethod
+  def tearDownClass(cls):
+    if FLAGS.jax_test_with_persistent_compilation_cache:
+      cls._compilation_cache_exit_stack.close()
 
   def rng(self):
     return self._rng
@@ -967,6 +1014,8 @@ _CPP_JIT_IMPLEMENTATION = functools.partial(api._jit, True)
 _CPP_JIT_IMPLEMENTATION._name = "cpp"
 _PYTHON_JIT_IMPLEMENTATION = functools.partial(api._jit, False)
 _PYTHON_JIT_IMPLEMENTATION._name = "python"
+_PJIT_IMPLEMENTATION = jax.jit
+_PJIT_IMPLEMENTATION._name = "pjit"
 _NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
 _NOOP_JIT_IMPLEMENTATION._name = "noop"
 

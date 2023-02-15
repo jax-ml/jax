@@ -19,3 +19,7 @@ Classes
 .. autoclass:: SingleDeviceSharding
    :members:
    :show-inheritance:
+.. autoclass:: PartitionSpec
+   :members:
+.. autoclass:: Mesh
+   :members:

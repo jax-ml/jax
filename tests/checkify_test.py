@@ -26,7 +26,6 @@ from jax._src.lib import xla_extension
 from jax.config import config
 from jax.experimental import checkify
 from jax.experimental import pjit
-from jax.experimental import maps
 from jax._src.sharding import NamedSharding
 from jax._src import array
 from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError
@@ -479,13 +478,13 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       # binary func
       return x / y
 
-    mesh = maps.Mesh(np.array(jax.devices()), ["dev"])
+    mesh = jax.sharding.Mesh(np.array(jax.devices()), ["dev"])
     if config.jax_array:
-      ps = NamedSharding(mesh, pjit.PartitionSpec("dev"))
+      ps = NamedSharding(mesh, jax.sharding.PartitionSpec("dev"))
       inp = np.arange(8)
       x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
     else:
-      ps = pjit.PartitionSpec("dev")
+      ps = jax.sharding.PartitionSpec("dev")
       x = jnp.arange(8)
 
     f = pjit.pjit(f, in_axis_resources=ps, out_axis_resources=ps)
@@ -772,6 +771,13 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     checked_f = jax.jit(checked_f)
     err, _ = checked_f(jnp.ones((2, 4)))
     self.assertIsNone(err.get())
+
+  def test_retracing(self):
+    f = checkify.checkify(jax.jit(lambda x: jnp.sin(x) ** 2))
+    _ = f(3.)
+    with jtu.count_jit_and_pmap_compiles() as count:
+      _ = f(3.)
+    self.assertEqual(count[0], 0)
 
 
 @jtu.with_config(jax_check_tracer_leaks=True)

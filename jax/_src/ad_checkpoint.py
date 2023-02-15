@@ -18,22 +18,21 @@ from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
 import types
 
 import jax
-from jax._src import linear_util as lu
-from jax.interpreters import ad
-from jax.interpreters import batching
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import core
-from jax._src import util
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import util
 from jax._src.api_util import flatten_fun, shaped_abstractify
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
-from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
@@ -576,18 +575,20 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros, reduce_axes):
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # type: ignore
 
-def remat_vmap(axis_size, axis_name, main_type, args, dims, *, jaxpr, **params):
+def remat_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
+               jaxpr, **params):
   assert not jaxpr.constvars
   jaxpr_batched_, out_batched = batching.batch_jaxpr_axes(
       pe.close_jaxpr(jaxpr), axis_size, dims,
       [batching.zero_if_mapped] * len(jaxpr.outvars),
-      axis_name=axis_name, main_type=main_type)
+      axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
   jaxpr_batched, consts = jaxpr_batched_.jaxpr, jaxpr_batched_.consts
   if consts:
     jaxpr_batched = pe.convert_constvars_jaxpr(jaxpr_batched)
   out_dims = [0 if b else None for b in out_batched]
   return remat_p.bind(*consts, *args, jaxpr=jaxpr_batched, **params), out_dims
-batching.axis_primitive_batchers[remat_p] = remat_vmap
+batching.axis_primitive_batchers[remat_p] = partial(remat_vmap, None)
+batching.spmd_axis_primitive_batchers[remat_p] = remat_vmap
 
 # TODO(mattjj,sharadmv): de-duplicate with pe.dce_jaxpr_call_rule
 def remat_dce(used_outputs: List[bool], eqn: core.JaxprEqn
@@ -634,12 +635,8 @@ def _optimization_barrier_abstract_eval(*args):
 
 def _optimization_barrier_lowering_rule(ctx, *args):
   barrier_types = map(mlir.aval_to_ir_types, ctx.avals_in)
-  flat_barrier_types = util.flatten(barrier_types)
   flat_args = mlir.flatten_lowering_ir_args(args)
-  if xc.mlir_api_version < 40:
-    barrier_op = hlo.OptimizationBarrierOp(flat_barrier_types, flat_args)
-  else:
-    barrier_op = hlo.OptimizationBarrierOp(flat_args)
+  barrier_op = hlo.OptimizationBarrierOp(flat_args)
   return util.unflatten(barrier_op.results, map(len, barrier_types))
 
 def _optimization_barrier(arg):

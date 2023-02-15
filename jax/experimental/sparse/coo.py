@@ -24,11 +24,11 @@ import numpy as np
 
 from jax import core
 from jax import lax
-from jax.interpreters import ad
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, CuSparseEfficiencyWarning
 from jax import tree_util
+from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import gpu_sparse

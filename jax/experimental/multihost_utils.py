@@ -25,11 +25,11 @@ from jax._src import dispatch
 from jax._src import array
 from jax._src import sharding
 from jax.tree_util import PyTreeDef
-from jax.interpreters import pxla, xla
-from jax.experimental import maps
-from jax.experimental import pjit as pjit_lib
+from jax._src.interpreters import pxla
+from jax.interpreters import xla
+from jax._src import pjit as pjit_lib
 from jax.experimental.pjit import pjit, FROM_GDA
-from jax.interpreters.pxla import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from jax.experimental.global_device_array import GlobalDeviceArray
 from jax._src import distributed
 from jax._src import config as config_internal
@@ -100,9 +100,12 @@ def _handle_array_process_allgather(inp, tiled):
     out = pjit(_identity_fn, out_axis_resources=reps)(inp)
   else:
     # All inputs here will be fully addressable.
+    if jax.process_count() == 1:
+      return np.asarray(inp)
+
     devices = np.array(jax.devices()).reshape(jax.process_count(),
                                               jax.local_device_count())
-    global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
+    global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
     pspec = P('processes')
     s = jax.sharding.NamedSharding(global_mesh, pspec)
 
@@ -112,7 +115,7 @@ def _handle_array_process_allgather(inp, tiled):
 
     aval = jax.core.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
     global_aval = global_mesh._local_to_global(
-        pxla._get_array_mapping(pspec), aval)
+        pxla.get_array_mapping(pspec), aval)
 
     bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
     global_arr = array.make_array_from_single_device_arrays(
@@ -158,7 +161,7 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
         # Shape of local_mesh will always be (1, local_device_count())
         devices = np.array(jax.devices()).reshape(jax.process_count(),
                                                   jax.local_device_count())
-        global_mesh = maps.Mesh(devices, ('processes', 'local_devices'))
+        global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
         in_axis_resources = P('processes')
         if inp.ndim == 0 or not tiled:
           inp = np.expand_dims(inp, axis=0)
@@ -238,12 +241,12 @@ def _flatten_pspecs(name, in_tree, pspecs_thunk):
 
 @functools.lru_cache()
 def _local_to_global_aval(local_aval, mesh, pspec):
-  return mesh._local_to_global(pxla._get_array_mapping(pspec), local_aval)
+  return mesh._local_to_global(pxla.get_array_mapping(pspec), local_aval)
 
 @functools.lru_cache()
 def _global_to_local_aval(global_aval, mesh, pspec):
   return mesh._global_to_local(
-      pxla._get_array_mapping(pspec), global_aval)
+      pxla.get_array_mapping(pspec), global_aval)
 
 def _device_put(x, device):
   try:

@@ -210,13 +210,6 @@ def _normalize_window_strides(window_strides):
   return window_strides
 
 
-def _normalize_output_perm(output_perm, is_conv1d):
-  """Ensure that output_perm has length 4."""
-  if is_conv1d:
-    output_perm = list(output_perm) + [1]
-  return output_perm
-
-
 def _validate_conv_features(
       is_transpose, is_atrous, is_depthwise, feature_group_count,
       batch_group_count, preferred_element_type, lhs_dtype):
@@ -243,14 +236,14 @@ def _validate_conv_features(
 def _conv_general_dilated(
     lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: lax.ConvDimensionNumbers, feature_group_count: int,
-    batch_group_count: int, lhs_shape: Sequence[int], rhs_shape: Sequence[int],
+    batch_group_count: int,
     precision: Optional[Tuple[PrecisionType, PrecisionType]],
     preferred_element_type: Optional[DType],
     _in_avals: Sequence[core.ShapedArray], _out_aval: core.ShapedArray):
   """Implementation of lax.conv_general_dilated_p using XlaConv."""
   # In presence of shape polymorphism, lhs.shape and rhs.shape may contain
   # None. The actual dimension polynomial shapes are in _in_avals.
-  del lhs_shape, rhs_shape, precision  # Unused arguments.
+  del precision  # Unused arguments.
   lhs_shape, rhs_shape = _in_avals[0].shape, _in_avals[1].shape
   out_shape = _out_aval.shape
   _validate_spatial_dimensions(lhs, lhs_shape, rhs, rhs_shape)
@@ -1138,3 +1131,5 @@ tf_impl_no_xla[lax.scatter_min_p] = convert_scatter_jax_to_tf(tf.minimum,  tf.ma
 tf_impl_no_xla[lax.scatter_max_p] = convert_scatter_jax_to_tf(tf.maximum,  tf.math.unsorted_segment_max)
 
 tf_impl_no_xla[lax.sort_p] = _unimplemented("sort")
+
+tf_impl_no_xla[lax.reduce_precision_p] = _unimplemented("reduce_precision")

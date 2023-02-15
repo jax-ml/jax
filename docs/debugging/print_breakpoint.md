@@ -223,6 +223,7 @@ Furthermore, when using `jax.debug.print` with `jax.pjit`, a global synchronizat
 #### Limitations
 * Adding print statements is a manual process
 * Can have performance impacts
+* Unsupported on Cloud TPUs
   
 ## Interactive inspection with `jax.debug.breakpoint()`
 
@@ -293,3 +294,4 @@ Because `jax.debug.breakpoint` is a just an application of `jax.debug.callback`,
 #### Limitations
 * Need to potentially use many breakpoints to pinpoint the source of an error
 * Materializes many intermediates
+* Unsupported on Cloud TPUs

@@ -147,7 +147,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = pjit.PartitionSpec('x')
+    p = jax.sharding.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
                   in_axis_resources=p,
                   out_axis_resources=p)
@@ -175,7 +175,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise SkipTest("test requires >=2 devices")
 
-    p = pjit.PartitionSpec('x')
+    p = jax.sharding.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
                   in_axis_resources=p,
                   out_axis_resources=p,
@@ -186,7 +186,22 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans = f(jnp.array([0., 1.]))
         ans.block_until_ready()
 
-  # TODO(skye): add parallel inf tests, ideally by factoring out test logic
+  def testDebugNansZeroDiv(self):
+    if not config.jax_array:
+      self.skipTest('This test only works with jax.Array')
+
+    inp = jnp.zeros(())
+    def f(x, y):
+      return x / y
+
+    with self.assertRaisesRegex(
+        FloatingPointError, r"invalid value \(nan\) encountered in jit\(div\)"):
+      f(inp, inp)
+
+    with self.assertRaisesRegex(
+        FloatingPointError, r"invalid value \(nan\) encountered in jit\(div\)"):
+      jax.jit(f)(inp, inp)
+
 
 class DebugInfsTest(jtu.JaxTestCase):
 

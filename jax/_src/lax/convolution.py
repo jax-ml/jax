@@ -19,15 +19,16 @@ from typing import Any, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
 from jax._src import core
 from jax._src import dtypes
 from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import lax
-from jax._src.lib import xla_client
 from jax._src.lib.mlir.dialects import hlo
+
+from jax.interpreters import mlir
+from jax._src.interpreters import mlir as internal_mlir
 
 _max = builtins.max
 
@@ -159,7 +160,6 @@ def conv_general_dilated(
       dimension_numbers=dnums,
       feature_group_count=feature_group_count,
       batch_group_count=batch_group_count,
-      lhs_shape=lhs.shape, rhs_shape=rhs.shape,
       precision=lax.canonicalize_precision(precision),
       preferred_element_type=preferred_element_type)
 
@@ -451,11 +451,13 @@ _conv_sdims = lambda spec: spec[2:]
 # --> which is feature grouping.
 
 def _conv_general_dilated_transpose_lhs(
-    g, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
+    g, lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers, feature_group_count, batch_group_count,
-    lhs_shape, rhs_shape, precision, preferred_element_type):
+    precision, preferred_element_type):
   assert type(dimension_numbers) is ConvDimensionNumbers
   assert batch_group_count == 1 or feature_group_count == 1
+  rhs_shape = rhs.shape
+  lhs_shape = lhs.aval.shape
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_spec, rhs_spec, out_spec = dimension_numbers
   t_rhs_spec = _conv_spec_transpose(rhs_spec)
@@ -487,20 +489,15 @@ def _conv_general_dilated_transpose_lhs(
   return out
 
 def _conv_general_dilated_transpose_rhs(
-    g, lhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
+    g, lhs, rhs, *, window_strides, padding, lhs_dilation, rhs_dilation,
     dimension_numbers: ConvDimensionNumbers, feature_group_count: int,
-    batch_group_count: int, lhs_shape, rhs_shape, precision,
-    preferred_element_type):
+    batch_group_count: int, precision, preferred_element_type):
   assert type(dimension_numbers) is ConvDimensionNumbers
   if np.size(g) == 0:
     # Avoids forming degenerate convolutions where the RHS has spatial size 0.
-    # Awkwardly, we don't have an aval for the rhs readily available, so instead
-    # of returning an ad_util.Zero instance here, representing a symbolic zero
-    # value, we instead return a None, which is meant to represent having no
-    # cotangent at all (and is thus incorrect for this situation), since the two
-    # are treated the same operationally.
-    # TODO(mattjj): adjust defbilinear so that the rhs aval is available here
-    return None
+    return ad.Zero(rhs.aval)
+  lhs_shape = lhs.shape
+  rhs_shape = rhs.aval.shape
   lhs_sdims, rhs_sdims, out_sdims = map(_conv_sdims, dimension_numbers)
   lhs_trans, rhs_trans, out_trans = map(_conv_spec_transpose, dimension_numbers)
   assert batch_group_count == 1 or feature_group_count == 1
@@ -702,21 +699,50 @@ def _conv_general_dilated_lower(
   if len(padding) == 0:
     padding = np.zeros((0, 2), dtype=np.int64)
   window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
-  return [
-      hlo.ConvolutionOp(
-        mlir.aval_to_ir_type(aval_out),
-        lhs,
-        rhs,
-        dimension_numbers=dnums,
-        feature_group_count=mlir.i64_attr(feature_group_count),
-        batch_group_count=mlir.i64_attr(batch_group_count),
-        window_strides=mlir.dense_int_elements(window_strides),
-        padding=mlir.dense_int_elements(padding),
-        lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-        rhs_dilation=mlir.dense_int_elements(rhs_dilation),
-        window_reversal=window_reversal,
-        precision_config=lax.precision_attr(precision)).result
-  ]
+  if (not core.is_constant_shape(window_strides) or
+      not core.is_constant_shape(lhs_dilation) or
+      not core.is_constant_shape(rhs_dilation)):
+    raise NotImplementedError("Convolutions with non-static strides or dilation")
+  if all(core.is_constant_shape(p) for p in padding):
+    return [
+        hlo.ConvolutionOp(
+          mlir.aval_to_ir_type(aval_out),
+          lhs,
+          rhs,
+          dimension_numbers=dnums,
+          feature_group_count=mlir.i64_attr(feature_group_count),
+          batch_group_count=mlir.i64_attr(batch_group_count),
+          window_strides=mlir.dense_int_elements(window_strides),
+          padding=mlir.dense_int_elements(padding),
+          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          window_reversal=window_reversal,
+          precision_config=lax.precision_attr(precision)).result
+    ]
+  else:
+    # d_padding will be an array i32[N, 2] with pad_lo and pad_hi for each
+    # spatial dimension.
+    int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
+    def prep_one_pad(pad_lo_hi: Tuple[core.DimSize, core.DimSize]):
+      pad1 = mlir.shape_tensor(internal_mlir.eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
+      return hlo.ReshapeOp(int2d, pad1)
+    d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
+                                  mlir.i64_attr(0))
+    return [
+        hlo.DynamicConvOp(
+          mlir.aval_to_ir_type(aval_out),
+          lhs,
+          rhs,
+          d_padding,
+          dimension_numbers=dnums,
+          feature_group_count=mlir.i64_attr(feature_group_count),
+          batch_group_count=mlir.i64_attr(batch_group_count),
+          window_strides=mlir.dense_int_elements(window_strides),
+          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
+          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          window_reversal=window_reversal,
+          precision_config=lax.precision_attr(precision)).result
+    ]
 
 mlir.register_lowering(conv_general_dilated_p, _conv_general_dilated_lower)
 # TODO(b/161124619, b/161126248): XLA does not support complex convolution on
@@ -749,27 +775,6 @@ def _reshape_axis_out_of(src, size1, x):
   assert not ragged
   shape[src:src+1] = [size1, size2]
   return lax.reshape(x, shape)
-
-
-def _check_conv_shapes(name, lhs_shape, rhs_shape, window_strides):
-  """Check that conv shapes are valid and are consistent with window_strides."""
-  if len(lhs_shape) != len(rhs_shape):
-    msg = "Arguments to {} must have same rank, got {} and {}."
-    raise TypeError(msg.format(name, len(lhs_shape), len(rhs_shape)))
-  if len(lhs_shape) < 2:
-    msg = "Arguments to {} must have rank at least 2, got {} and {}."
-    raise TypeError(msg.format(name, len(lhs_shape), len(rhs_shape)))
-  if lhs_shape[1] != rhs_shape[1]:
-    msg = "Arguments to {} must agree on input feature size, got {} and {}."
-    raise TypeError(msg.format(name, lhs_shape[1], rhs_shape[1]))
-  lax._check_shapelike(name, "window_strides", window_strides)
-  if not np.all(np.greater(window_strides, 0)):
-    msg = "All elements of window_strides must be positive, got {}."
-    raise TypeError(msg.format(window_strides))
-  if len(window_strides) != len(lhs_shape) - 2:
-    msg = "{} window_strides has wrong length: expected {}, got {}."
-    expected_length = len(lhs_shape) - 2
-    raise TypeError(msg.format(name, expected_length, len(window_strides)))
 
 
 def conv_shape_tuple(lhs_shape, rhs_shape, strides, pads, batch_group_count=1):
@@ -894,22 +899,6 @@ def conv_general_permutations(dimension_numbers):
 
   lhs_perm, rhs_perm, out_perm = map(getperm, dimension_numbers, charpairs)
   return lhs_perm, rhs_perm, out_perm
-
-
-def _conv_general_proto(dimension_numbers):
-  assert type(dimension_numbers) is ConvDimensionNumbers
-  lhs_spec, rhs_spec, out_spec = dimension_numbers
-  proto = xla_client.ConvolutionDimensionNumbers()
-  proto.input_batch_dimension = lhs_spec[0]
-  proto.input_feature_dimension = lhs_spec[1]
-  proto.output_batch_dimension = out_spec[0]
-  proto.output_feature_dimension = out_spec[1]
-  proto.kernel_output_feature_dimension = rhs_spec[0]
-  proto.kernel_input_feature_dimension = rhs_spec[1]
-  proto.input_spatial_dimensions.extend(lhs_spec[2:])
-  proto.kernel_spatial_dimensions.extend(rhs_spec[2:])
-  proto.output_spatial_dimensions.extend(out_spec[2:])
-  return proto
 
 
 def _conv_general_vjp_lhs_padding(

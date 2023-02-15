@@ -23,8 +23,8 @@ from jax import core
 from jax._src import test_util as jtu
 from jax._src.util import prod, safe_zip
 
-from jax.experimental import PartitionSpec as P
-from jax.experimental.maps import Mesh
+from jax.sharding import PartitionSpec as P
+from jax.sharding import Mesh
 import jax.experimental.global_device_array as gda_lib
 from jax.experimental.global_device_array import GlobalDeviceArray, get_shard_indices
 

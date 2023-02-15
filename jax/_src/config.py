@@ -780,9 +780,13 @@ jax_array = config.define_bool_state(
 
 jit_pjit_api_merge = config.define_bool_state(
     name='jax_jit_pjit_api_merge',
-    default=False,
+    default=True,
     upgrade=True,
-    help=('If True, jit and pjit API will be merged.'))
+    help=('If True, jit and pjit API will be merged. You can only disable it via '
+          "the environment variable i.e. `os.environ['JAX_JIT_PJIT_API_MERGE'] = '0'`. "
+          "The merge must be disabled via an environment variable since it "
+          "affects JAX at import time so it needs to be disabled before jax is "
+          "imported."))
 
 
 spmd_mode = config.define_enum_state(
@@ -1044,11 +1048,6 @@ config.define_bool_state(
          'distributed runtime.'
     )
 )
-
-config.define_bool_state(
-    name='jax_experimental_subjaxpr_lowering_cache',
-    default=False,
-    help='Enable using a cache for lowering subjaxprs.')
 
 # TODO(sharadmv,mattjj): set default to True, then remove
 config.define_bool_state(

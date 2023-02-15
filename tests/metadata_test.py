@@ -81,7 +81,8 @@ class MetadataTest(jtu.JaxTestCase):
 
   def test_source_file_prefix_removal(self):
     def make_hlo():
-      return jax.xla_computation(jnp.sin)(1.).get_hlo_module().to_string()
+      return jax.xla_computation(jnp.sin)(
+          jnp.arange(8.)).get_hlo_module().to_string()
 
     # Sanity check
     self.assertIn("/tests/metadata_test.py", make_hlo())

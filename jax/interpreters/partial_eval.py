@@ -1740,14 +1740,10 @@ class DynamicJaxprTrace(core.Trace):
     in_tracers = [*implicit_tracers, *explicit_tracers]
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     with core.new_sublevel():
-      if config.jax_check_tracer_leaks or not config.jax_experimental_subjaxpr_lowering_cache:
-        # TODO(lenamartens): Make call_primitive name -> API function name mapping.
-        # (currently this will display eg. 'xla_call' instead of `jit`)
-        dbg = debug_info_final(f, call_primitive.name)
-        jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main, debug_info=dbg)
-      else:
-        jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2_memoized(
-            f, self.main, call_primitive.name).val
+      # TODO(lenamartens): Make call_primitive name -> API function name mapping.
+      # (currently this will display eg. 'xla_call' instead of `jit`)
+      dbg = debug_info_final(f, call_primitive.name)
+      jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main, debug_info=dbg)
     if params.get('inline', False):
       return core.eval_jaxpr(jaxpr, consts, *in_tracers)
     source_info = source_info_util.current()
@@ -2039,20 +2035,6 @@ def trace_to_subjaxpr_dynamic2(
   return jaxpr, out_type, consts
 
 
-@lu.cache
-def trace_to_subjaxpr_dynamic2_memoized(fun: lu.WrappedFun,
-                                        main: core.MainTrace,
-                                        traced_for: str):
-  dbg = debug_info_final(fun, traced_for)
-  return WrapperForWeakRef(trace_to_subjaxpr_dynamic2(fun, main, dbg))
-
-
-class WrapperForWeakRef:
-  val: Any
-
-  def __init__(self, val):
-    self.val = val
-
 @contextlib.contextmanager
 def extend_jaxpr_stack(main, frame):
   main.jaxpr_stack = main.jaxpr_stack + (frame,)
@@ -2261,20 +2243,6 @@ def _extract_implicit_args(
   assert all(t is not None for t in tracers)
   tracers_validated = cast(List[DynamicJaxprTracer], tracers)  # remove Optional annotation.
   return [t for t, (_, e) in zip(tracers_validated, in_type) if not e]
-
-def _in_avals_from_tracers(
-    tracers: List[DynamicJaxprTracer]
-  ) -> List[AbstractValue]:
-  # Returned AbstractValues contain DBIdx indices. Uses Tracer obj id as name.
-  dbidxs: Dict[TracerId, DBIdx] = {id(t): DBIdx(i) for i, t in enumerate(tracers)}
-  in_avals: List[AbstractValue] = []
-  for t in tracers:
-    a = t.aval
-    if isinstance(a, DShapedArray) and any(isinstance(d, Tracer) for d in a.shape):
-      shape = [dbidxs[id(d)] if isinstance(d, Tracer) else d for d in a.shape]
-      a = a.update(shape=tuple(shape))
-    in_avals.append(a)
-  return in_avals
 
 def _input_type_to_tracers(
     new_arg: Callable[[AbstractValue], Tracer],

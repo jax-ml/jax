@@ -15,11 +15,24 @@
 import dataclasses
 import functools
 import itertools as it
-import types
-from typing import Union, Optional, Callable, Dict, Tuple, TypeVar, FrozenSet, Iterable, Type, Set, List, Sequence, Any
+from typing import (Union, Optional, Callable, Dict, Tuple, TypeVar,
+                    FrozenSet, Iterable, Type, Set, List, Sequence, Any)
+
+import numpy as np
 
 import jax
+import jax.numpy as jnp
+import jax.tree_util as jtu
 from jax import lax
+from jax.api_util import flatten_fun
+from jax.experimental import maps
+from jax.experimental import pjit
+from jax.interpreters import mlir
+from jax.interpreters import partial_eval as pe
+from jax.tree_util import tree_flatten
+from jax.tree_util import tree_map
+from jax.tree_util import tree_unflatten
+
 from jax._src import linear_util as lu
 from jax._src import core
 from jax._src import custom_derivatives
@@ -27,24 +40,13 @@ from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import control_flow as cf
 from jax._src.sharding import OpShardingSharding
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
-                           unzip3)
-from jax.api_util import flatten_fun
-from jax.experimental import maps
-from jax.experimental import pjit
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.tree_util import tree_flatten
-from jax.tree_util import tree_map
-from jax.tree_util import tree_unflatten
-import jax.numpy as jnp
-import jax.tree_util as jtu
-import numpy as np
+                           unzip3, weakref_lru_cache)
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -352,9 +354,8 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
   # call_jaxpr handling
   call_jaxpr = params.pop('call_jaxpr')
-  partial_checkify = lu.wrap_init(
-      functools.partial(checkify_jaxpr_flat, call_jaxpr, (), enabled_errors,
-                        err_tree))
+  partial_checkify = lu.hashable_partial(lu.wrap_init(
+      checkify_jaxpr_flat), call_jaxpr, (), enabled_errors, err_tree)
   partial_checkify, metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
 
@@ -382,6 +383,20 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 
 def get_shaped_aval(val):
   return core.raise_to_shaped(core.get_aval(val))
+
+def initial_style_jaxpr(
+    fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue]
+  ) -> Tuple[core.Jaxpr, List[Any], PyTreeDef]:
+  return _initial_style_jaxpr(fun, in_tree, tuple(in_avals))
+
+@weakref_lru_cache
+def _initial_style_jaxpr(fun, in_tree, in_avals):
+  # like control_flow._initial_style_jaxpr, but use flatten_fun not _nokwargs
+  fun_, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  debug = pe.debug_info(fun_, in_tree, False, 'checkify')
+  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
+  return jaxpr, consts, out_tree()
+
 
 def checkify_jaxpr(jaxpr: core.ClosedJaxpr, enabled_errors,
                    error: Error, *args) -> Tuple[Error, List[core.Value]]:
@@ -533,20 +548,6 @@ ErrorCheckRule = Callable  # (Error, FrozenSet[ErrorCategory], *in_vals, **param
 error_checks: Dict[core.Primitive, ErrorCheckRule] = {}
 
 
-def _get_current_traceback(skip_frames = 0) -> Optional[types.TracebackType]:
-  # TODO(lenamartens): use c++ version from XLA?
-  tb = None
-  import inspect
-  for frame_info in inspect.stack():
-    frame = frame_info.frame
-    if skip_frames:
-      skip_frames -= 1
-    elif not traceback_util.include_frame(frame):
-      continue
-    else:
-      tb = types.TracebackType(tb, frame, frame.f_lasti, frame.f_lineno)
-  return tb
-
 def summary() -> str:
   return str(source_info_util.summarize(source_info_util.current()))
 
@@ -689,6 +690,7 @@ error_checks[lax.scatter_max_p] = functools.partial(scatter_error_check,
 
 # HOP error check rules
 
+@weakref_lru_cache
 def jaxpr_to_checkify_jaxpr(
     jaxpr: core.ClosedJaxpr, enabled_errors, err_tree: PyTreeDef,
     *flat_err_and_in_vals) -> Tuple[core.ClosedJaxpr, PyTreeDef, Set[ErrorEffect]]:
@@ -1065,16 +1067,14 @@ def checkify(f: Callable[..., Out],
   @traceback_util.api_boundary
   def checked_fun(*args, **kwargs):
     # stage:
-    fun = lu.wrap_init(f)
-    flat_args, in_tree = jtu.tree_flatten((args, kwargs))
-    flat_fun, out_tree = flatten_fun(fun, in_tree)
-    flat_avals = map(get_shaped_aval, flat_args)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, flat_avals)
-    out_tree = out_tree()
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    in_avals = map(get_shaped_aval, flat_args)
+    jaxpr_, consts, out_tree = initial_style_jaxpr(f, in_tree, in_avals)
+    jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:
     flat_args = jtu.tree_leaves((args, kwargs))
-    error, out_flat = checkify_jaxpr(core.ClosedJaxpr(jaxpr, consts), errors,
-                                     init_error, *flat_args)
+    error, out_flat = checkify_jaxpr(jaxpr, errors, init_error,
+                                     *consts, *flat_args)
     return error, jtu.tree_unflatten(out_tree, out_flat)
   return checked_fun
 

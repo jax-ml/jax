@@ -17,6 +17,7 @@ Subpackages
    jax.debug
    jax.dlpack
    jax.distributed
+   jax.dtypes
    jax.flatten_util
    jax.image
    jax.nn
@@ -24,6 +25,7 @@ Subpackages
    jax.profiler
    jax.stages
    jax.tree_util
+   jax.typing
    jax.example_libraries
    jax.experimental
 
@@ -104,6 +106,7 @@ jax.Array (:code:`jax.Array`)
 .. autosummary::
   :toctree: _autosummary
 
+    Array
     make_array_from_callback
     make_array_from_single_device_arrays
 
@@ -145,4 +148,5 @@ Miscellaneous
 .. autosummary::
   :toctree: _autosummary
 
+    Device
     print_environment_info

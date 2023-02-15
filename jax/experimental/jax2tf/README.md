@@ -287,8 +287,8 @@ therefore outside of the `XlaSharding` wrapper.
 
 ## Shape-polymorphic conversion
 
-**The shape polymorphism support is work in progress. It is meant to be sound,
-but it may raise errors on some programs. Please report any bugs you encounter.**
+**The shape polymorphism support is work in progress.
+Please report any bugs you encounter.**
 
 We described above how to include in the SavedModel several specializations
 of a lowered function for a few specific input shapes. `jax2tf` can
@@ -365,11 +365,6 @@ uses JAX tracing only once, and invoking `f_tf(x)` does not use JAX tracing anym
 the latter invocation may happen after the `f_tf` has been serialized
 to a SavedModel and reloaded in an environment where `f_jax` and the JAX
 tracing machinery are not available anymore.
-
-Correctness is very important because it would be nasty to debug a subtle discrepancy
-of the code loaded from a SavedModel from the expected behavior written in JAX.
-We help ensure correctness
-by reusing the same JAX tracing and shape checking mechanism as when the shapes are fully known.
 
 ### Coverage of shape-polymorphic tracing
 
@@ -545,16 +540,13 @@ results are used as shapes, e.g., instead of `np.arange(n) * x.shape[0]` write
 Inside JAX there are a number of equality and inequality comparisons
 involving shapes, e.g., for doing shape checking or even for choosing
 the implementation for some primitives. Comparisons are supported
-is as follows:
+as follows:
 
-  * equality is partially supported: if the two symbolic dimensions denote the same
+  * equality is supported with a caveat: if the two symbolic dimensions denote the same
     value under all valuations for dimension variables, then equality evaluates to `True`,
-    e.g., for `b + b == 2*b`; if they denote different values under all valuations,
-    then equality evaluates to `False`, e.g., for `b + 1 == b` or `b == 0`.
-    Otherwise, equality raises an exception `core.InconclusiveDimensionOperation`,
-    e.g., when comparing `b == 1` or `a == b`.
-  * disequality is always the negation of equality (and results in an exception
-    if equality would result in an exception).
+    e.g., for `b + b == 2*b`; otherwise the equality evaluates to `False`. See below
+    for a discussion of important consequences of this behavior.
+  * disequality is always the negation of equality.
   * inequality is partially supported, in a similar way as partial equality.
     However, in this
     case we take into consideration that dimension variables range over strictly positive
@@ -563,17 +555,35 @@ is as follows:
 
 For example, the following code raises the exception
 `core.InconclusiveDimensionOperation` with the message
-`Dimension polynomial comparison 'a + 1' == 'b' is inconclusive`.
+`Dimension polynomial comparison 'a + 1' >= 'b' is inconclusive`.
 
 ```python
-jax2tf.convert(lambda x: 0 if x.shape[0] + 1 == x.shape[1] else 1,
+jax2tf.convert(lambda x: 0 if x.shape[0] + 1 >= x.shape[1] else 1,
                 polymorphic_shapes=["(a, b)"])(np.ones((3, 4)))
 ```
 
-Note that it would be unsound for JAX to compute `x.shape[0] + 1 == x.shape[1]`
-as `False` and produce a lowered function that returns `1` just because the dimension polynomials
-are not identical: there are some concrete input shapes for which the function
-should return `0`.
+The equality comparison returns `False` for `b + 1 == b` or `b == 0`
+(in which case it is certain that the dimensions are different for all valuations),
+but also for `b == 1` and for `a == b`. This is unsound, and we
+ought to raise `core.InconclusiveDimensionOperation` because under
+some valuations the result should be `True` and under other
+valuations it should be `False`. We choose to make equality total
+thus allowing unsoundness because otherwise we may get spurious errors
+in presence of hash collisions
+when hashing dimension expressions or objects that include
+them (shapes, `core.AbstractValue`, `core.Jaxpr`).
+Besides the hashing errors, a partial semantics of equality
+leads to errors for the following expressions `b == a or b == b` or `b in [a, b]`
+even though the error is avoided if we change the order of the comparisons.
+
+We attempted to retain soundness and hashability by creating both hashable and unhashable
+kinds of symbolic dimensions [PR #14200](https://github.com/google/jax/pull/14200),
+but it turned out to be very hard to diagnose hashing failures in user programs because
+often hashing is implicit when using sets or memo tables.
+
+Code of the form `if x.shape[0] != 1: raise NiceErrorMessage` is sound even
+with this treatment of equality, but code of the form `if x.shape[0] != 1: return 1`
+is unsound.
 
 ### Division of symbolic dimensions is partially supported
 
@@ -652,9 +662,16 @@ get an error that `a` cannot be derived:
 
 ```python
 jax2tf.convert(lambda x_unused, y: y * 2.,
-               polymorphic_shapes=["b, a", "b, 2 * a"])(x, y)
+               polymorphic_shapes=["b, a", "b, _"])(x, y)
 ```
 
+An input is still considered unused if the computation uses only its shape.
+The code below gives the same error:
+
+```python
+jax2tf.convert(lambda x_unused, y: y * x_unused.shape[0],
+               polymorphic_shapes=["b, a", "b, _"])(x, y)
+```
 
 ## Known issues
 
@@ -1235,10 +1252,8 @@ f_jax(np.float32(42.))
 jax.jit(f_jax)(np.float(42.))
 ```
 
-Another similar situation is when a function uses input values in
-place of shapes. In this case TF actually does compile the function
-but re-compiles it for each distinct value of the input. This is
-not allowed when used from JAX:
+Yet another unsupported situation is when the TF function
+is compileable but with dynamic output shapes:
 
 ```python
 def f_tf_dynamic_shape(x):
@@ -1252,9 +1267,7 @@ f_jax(x)
 # Fails in jit mode
 jax.jit(f_jax)(x)
 ```
-
-Yet another unsupported situation is when the TF function
-is compileable but with dynamic output shapes:
+Another similar example that will fail to compile:
 
 ```python
 def f_tf_dynamic_output_shape(x):

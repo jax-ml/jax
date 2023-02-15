@@ -31,7 +31,6 @@ jax_generate_backend_suites()
 jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = 10,
 )
@@ -55,7 +54,7 @@ jax_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
     disable_backends = ["tpu"],
-    deps = py_deps("tensorflow"),
+    deps = py_deps("tensorflow_core"),
 )
 
 jax_test(
@@ -69,7 +68,6 @@ jax_test(
 jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     shard_count = {
         "cpu": 5,
         "gpu": 10,
@@ -177,7 +175,6 @@ jax_test(
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
     },
-    disable_configs = ["cpu_jit_pjit_api_merge"],
     pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
@@ -249,7 +246,7 @@ jax_test(
         "tpu": 10,
         "iree": 10,
     },
-    deps = py_deps("pil") + py_deps("tensorflow"),
+    deps = py_deps("pil") + py_deps("tensorflow_core"),
 )
 
 jax_test(
@@ -274,7 +271,7 @@ py_test(
         "//jax:test_util",
         "//jax/experimental/jax2tf",
         "//jax/tools:jax_to_ir",
-    ] + py_deps("tensorflow"),
+    ] + py_deps("tensorflow_core"),
 )
 
 jax_test(
@@ -490,6 +487,17 @@ py_test(
     ],
 )
 
+py_test(
+    name = "deprecation_test",
+    srcs = [
+        "deprecation_module/__init__.py",
+        "deprecation_test.py",
+    ],
+    deps = [
+        "//jax:test_util",
+    ],
+)
+
 jax_test(
     name = "linalg_test",
     srcs = ["linalg_test.py"],
@@ -613,6 +621,13 @@ jax_test(
         "gpu",
         "tpu",
     ],
+)
+
+jax_test(
+    name = "pytorch_interoperability_test",
+    srcs = ["pytorch_interoperability_test.py"],
+    disable_backends = ["tpu"],
+    deps = py_deps("torch"),
 )
 
 jax_test(
@@ -763,6 +778,7 @@ jax_test(
     },
     deps = [
         "//jax:experimental_sparse",
+        "//jax:sparse_test_util",
     ],
 )
 
@@ -913,7 +929,7 @@ jax_test(
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
-    ] + py_deps("tensorflow"),
+    ] + py_deps("tensorflow_core"),
 )
 
 jax_test(
@@ -1008,6 +1024,11 @@ jax_test(
 )
 
 jax_test(
+    name = "shard_map_test",
+    srcs = ["shard_map_test.py"],
+)
+
+jax_test(
     name = "clear_backends_test",
     srcs = ["clear_backends_test.py"],
 )
@@ -1018,6 +1039,9 @@ jax_test(
     disable_backends = [
         "tpu",
         "cpu",
+    ],
+    disable_configs = [
+        "gpu_a100",  # Numerical precision problems.
     ],
     deps = [
         "//jax:rnn",

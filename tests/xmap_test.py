@@ -38,7 +38,7 @@ from jax.experimental import global_device_array
 from jax._src import array
 from jax._src.sharding import NamedSharding
 from jax.experimental.pjit import pjit, with_sharding_constraint
-from jax.experimental.pjit import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax._src import config as jax_config
@@ -273,7 +273,7 @@ class XMapTest(XMapTestCase):
     def f(a, b):
       return a * 2, b * 4
     devices = np.array(local_devices[:4]).reshape((2, 2))
-    with maps.Mesh(devices, ('x', 'y')):
+    with jax.sharding.Mesh(devices, ('x', 'y')):
       fm = xmap(f,
                 in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
                 out_axes=({0: 'a', 1: 'b'}, ['c', ...]),
@@ -382,14 +382,14 @@ class XMapTest(XMapTestCase):
     if devices.size < 2:
       raise SkipTest("Test requires 2 devices")
     x = np.arange(8).reshape((2, 2, 2))
-    with maps.Mesh(devices, ('x',)):
+    with jax.sharding.Mesh(devices, ('x',)):
       python_should_be_executing = True
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
       python_should_be_executing = False
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
-    with maps.Mesh(devices, ('x',)):
+    with jax.sharding.Mesh(devices, ('x',)):
       python_should_be_executing = False
       xmap(f, in_axes=['a', ...], out_axes=['a', ...],
            axis_resources={'a': 'x'})(x)
@@ -765,6 +765,16 @@ class XMapTest(XMapTestCase):
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     f = f.lower(x).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
+
+  @jtu.skip_on_xla_cpu_mlir
+  def testLowerCostAnalysis(self):
+    # TODO(b/261771737): add support for uncompiled cost analysis in C API.
+    if "PJRT C API" in xla_bridge.get_backend().platform_version:
+      raise SkipTest("C API does not support uncompiled cost analysis")
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...])
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    f = f.lower(x)
+    f.cost_analysis()  # doesn't raise
 
   @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
@@ -1330,6 +1340,19 @@ class XMapArrayTest(XMapTestCase):
              'specified in xmap. The partitioning must match.')):
           f(input_array)
 
+  def test_can_stage_and_interpret_xmap_with_constants(self):
+    def f(x):
+      # Create a jaxpr with a constant
+      return x + np.ones(x.shape, x.dtype)
+
+    def outer(x):
+      return xmap(f, in_axes=({0: 'batch'},), out_axes={0: 'batch'})(x)
+
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+    jaxpr = jax.make_jaxpr(outer)(x)
+    [out] = jax.core.jaxpr_as_fun(jaxpr)(x)
+    self.assertAllClose(out, x + 1)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class NewPrimitiveTest(XMapTestCase):
@@ -1795,7 +1818,7 @@ class XMapErrorTest(jtu.JaxTestCase):
   def testNestedDifferentResources(self):
     @partial(xmap, in_axes={0: 'a'}, out_axes={0: 'a'}, axis_resources={'a': 'x'})
     def f(x):
-      with maps.Mesh(np.empty((), dtype=np.object_), ()):
+      with jax.sharding.Mesh(np.empty((), dtype=np.object_), ()):
         @partial(xmap, in_axes={0: 'b'}, out_axes={0: 'b'})
         def h(x):
           return x

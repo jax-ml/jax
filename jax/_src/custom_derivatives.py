@@ -17,29 +17,31 @@ import inspect
 from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Set,
                     Any)
 
-from jax._src import linear_util as lu
 from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
                            treedef_is_leaf, treedef_tuple,
                            register_pytree_node_class, tree_leaves)
+from jax.errors import UnexpectedTracerError
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import xla
+from jax.config import config
+
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import dtypes
-from jax._src.lax import lax
-from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
+from jax._src import linear_util as lu
+from jax._src import traceback_util
+from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
 from jax._src.api_util import argnums_partial, flatten_fun_nokwargs
 from jax._src.core import raise_to_shaped
-from jax.errors import UnexpectedTracerError
-from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.interpreters.batching import not_mapped
-from jax.config import config
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters.batching import not_mapped
+from jax._src.lax import lax
+from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
 
-from jax._src import traceback_util
+
 traceback_util.register_exclusion(__file__)
 
 map = safe_map
@@ -62,9 +64,6 @@ def _initial_style_jaxpr(fun, in_avals):
 
 def _close_jaxpr(jaxpr):
   return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-
-def _initial_style_staging() -> bool:
-  return core.thread_local_state.trace_state.initial_style
 
 def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
@@ -337,7 +336,7 @@ class CustomJVPCallPrimitive(core.Primitive):
     tracers = map(top_trace.full_raise, args)  # type: ignore
     outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    return _apply_todos(env_trace_todo, map(core.full_lower, outs))
+    return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
   def impl(self, fun, _, *args):
     with core.new_sublevel():
@@ -379,12 +378,6 @@ def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
     outs, cur_todo = primitive.post_process(trace, outs, jvp_was_run)
     todo.append(cur_todo)
   yield outs, tuple(todo)  # Ensure the aux output is immutable
-
-def _apply_todos(todos, outs):
-  todos_list = list(todos)
-  while todos_list:
-    outs = map(core.full_lower, todos_list.pop()(outs))
-  return outs
 
 
 allowed_effects: Set[core.Effect] = set()
@@ -676,11 +669,11 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
                                              out_trees=out_trees)
     fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if fst:
-      return _apply_todos(env_trace_todo, map(core.full_lower, outs))
+      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
     else:
       env_trace_todo, bwd_transform = env_trace_todo
       bwd = _apply_bwd_transform(bwd_transform, bwd)
-      return _apply_todos(env_trace_todo, map(core.full_lower, outs))
+      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
   def impl(self, fun, fwd, bwd, *args, out_trees):
     del fwd, bwd, out_trees
@@ -771,7 +764,8 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
   batched_fun_jaxpr, out_batched = batching.batch_jaxpr(
-      fun_jaxpr, axis_size, in_batched, False, axis_name, main_type)
+      fun_jaxpr, axis_size, in_batched, False, axis_name, spmd_axis_name,
+      main_type)
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
@@ -779,7 +773,8 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
   def batched_fwd_jaxpr_thunk():
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
-        fwd_jaxpr, axis_size, args_batched, False, axis_name, main_type)
+        fwd_jaxpr, axis_size, args_batched, False, axis_name, spmd_axis_name,
+        main_type)
     out_dims2.append([0 if b else not_mapped for b in out_batched])
     return batched_fwd_jaxpr.jaxpr, batched_fwd_jaxpr.consts
 
@@ -799,8 +794,8 @@ batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(_custom_vjp_
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 
-batching.primitive_batchers[ad.custom_lin_p] = ad._raise_custom_vjp_error_on_jvp
-mlir.register_lowering(ad.custom_lin_p, ad._raise_custom_vjp_error_on_jvp)
+batching.primitive_batchers[ad.custom_lin_p] = ad.raise_custom_vjp_error_on_jvp
+mlir.register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
 
 
 def custom_gradient(fun):

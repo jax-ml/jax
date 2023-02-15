@@ -23,7 +23,7 @@ from unittest import mock, SkipTest
 import warnings
 
 from absl.testing import absltest
-from jax.experimental import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from jax.experimental.compilation_cache import compilation_cache as cc
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
@@ -33,6 +33,7 @@ from jax._src.util import prod
 import jax._src.test_util as jtu
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 import numpy as np
 
 from jax.config import config
@@ -49,17 +50,25 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def setUp(self):
     super().setUp()
     supported_platforms = ["tpu"]
-    if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
+
+    if xla_extension_version >= 122:
       supported_platforms.append("gpu")
+
     if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
       supported_platforms.append("cpu")
+
     if jtu.device_under_test() not in supported_platforms:
       raise SkipTest("serialize executable only works on " +
                      ",".join(supported_platforms))
 
+    # Reset cache if already initialized by JaxTestCase
+    if cc.is_initialized():
+      cc.reset_cache()
+
   def tearDown(self):
-      super().tearDown()
-      cc._cache = None
+    if cc.is_initialized():
+      cc.reset_cache()
+    super().tearDown()
 
   def test_compile_options(self):
     compile_options_not_filled = xla_bridge.get_compile_options(
@@ -127,7 +136,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     self.assertNotEqual(hash1, hash2)
 
   def test_same_hash_key(self):
-    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
     compile_options = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     backend = xla_bridge.get_backend()
@@ -135,7 +144,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
                      cc.get_cache_key(computation, compile_options, backend))
 
   def test_different_hash_key(self):
-    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
     compile_options_not_filled = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     compile_options_filled = self.filled_compile_options()
@@ -144,8 +153,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
                         cc.get_cache_key(computation, compile_options_filled, backend))
 
   def test_different_computations(self):
-    computation1 = jax.xla_computation(lambda x, y: x + y)(1, 1)
-    computation2 = jax.xla_computation(lambda x, y: x * y)(2, 2)
+    computation1 = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
+    computation2 = str(jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir())
     compile_options = xla_bridge.get_compile_options(
                        num_replicas=1, num_partitions=1)
     backend = xla_bridge.get_backend()
@@ -156,7 +165,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
     if jtu.is_device_tpu_v4():
       raise unittest.SkipTest("TODO(b/240151176)")
 
-    computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+    computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
     compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1)
     backend = xla_bridge.get_backend()
@@ -198,7 +207,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
   def test_get_no_executable(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
-      computation = jax.xla_computation(lambda x, y: x + y)(1, 1)
+      computation = str(jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir())
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1)
       backend = xla_bridge.get_backend()

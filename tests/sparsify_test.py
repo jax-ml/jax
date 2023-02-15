@@ -28,6 +28,7 @@ from jax.experimental.sparse import BCOO, sparsify, todense, SparseTracer
 from jax.experimental.sparse.transform import (
   arrays_to_spvalues, spvalues_to_arrays, sparsify_raw, SparsifyValue, SparsifyEnv)
 from jax.experimental.sparse.util import CuSparseEfficiencyWarning
+from jax.experimental.sparse import test_util as sptu
 
 config.parse_flags_with_absl()
 
@@ -291,6 +292,19 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(result_sparse, result_dense)
 
+  def testSparseRev(self):
+    # Note: more comprehensive tests in sparse_test.py:test_bcoo_rev
+    rng = jtu.rand_default(self.rng())
+
+    M_dense = rng((2, 3, 4), np.float32)
+    M_sparse = BCOO.fromdense(M_dense)
+    func = self.sparsify(partial(lax.rev, dimensions=(1, 2)))
+
+    result_dense = func(M_dense)
+    result_sparse = func(M_sparse).todense()
+
+    self.assertAllClose(result_sparse, result_dense)
+
   @jtu.sample_product(
     [dict(shapes=shapes, func=func, n_batch=n_batch)
       for shapes, func, n_batch in [
@@ -320,6 +334,25 @@ class SparsifyTest(jtu.JaxTestCase):
     arrs = [rng(shape, 'int32') for shape in shapes]
     sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
     self.assertArraysEqual(f(arrs), f(sparrs).todense())
+
+  @jax.default_matmul_precision("float32")
+  def testSparseConvolve(self, lhs_shape=(10,), rhs_shape=(5,),
+                         dtype='float32', mode='full'):
+    # Note: more comprehensive tests in sparse_test.py:test_bcoo_conv_general_dilated
+    dense_fun = partial(jnp.convolve, mode=mode)
+    sparse_fun = self.sparsify(dense_fun)
+
+    sprng = sptu.rand_bcoo(self.rng())
+    rng = jtu.rand_default(self.rng())
+
+    lhs = sprng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+
+    expected = dense_fun(lhs.todense(), rhs)
+    actual = sparse_fun(lhs, rhs).todense()
+
+    tol = {np.float32: 1E-5, np.complex64: 1E-5, np.float64: 1E-14, np.complex128: 1E-14}
+    self.assertAllClose(expected, actual, atol=tol, rtol=tol)
 
   def testSparseReshapeMethod(self):
     # Note: this is more fully tested in sparse_test.py:test_bcoo_reshape
@@ -498,7 +531,9 @@ class SparsifyTest(jtu.JaxTestCase):
     )
 
   @parameterized.named_parameters(
-      {"testcase_name": f"_{op.__name__}", "op": op, "dtype": dtype, "kwds": kwds}
+      {"testcase_name": f"_{op.__name__}_{fmt}", "op": op, "dtype": dtype,
+       "kwds": kwds, "fmt": fmt}
+      for fmt in ["BCSR", "BCOO"]
       for op, dtype, kwds in [
         (jnp.copy, jnp.float32, {}),
         (lax.abs, jnp.float32, {}),
@@ -519,17 +554,17 @@ class SparsifyTest(jtu.JaxTestCase):
         (lax.tan, jnp.float32, {}),
         (lax.tanh, jnp.float32, {}),
         (lax.convert_element_type, jnp.float32, {"new_dtype": np.dtype('complex64')})])
-  def testUnaryOperationsNonUniqueIndices(self, op, dtype, kwds):
-    shape = (10,)
-    nse = 5
+  def testUnaryOperationsNonUniqueIndices(self, fmt, op, dtype, kwds):
+    shape = (4, 5)
 
     # Note: we deliberately test non-unique indices here.
-    rng_idx = jtu.rand_int(self.rng(), low=0, high=10)
-    rng_data = jtu.rand_default(self.rng())
-
-    data = rng_data((nse,), dtype)
-    indices = rng_idx((nse, len(shape)), jnp.int32)
-    mat = BCOO((data, indices), shape=shape)
+    if fmt == "BCOO":
+      rng = sptu.rand_bcoo(self.rng())
+    elif fmt == "BCSR":
+      rng = sptu.rand_bcsr(self.rng())
+    else:
+      raise ValueError(f"Unrecognized {fmt=}")
+    mat = rng(shape, dtype)
 
     sparse_result = self.sparsify(partial(op, **kwds))(mat)
     dense_result = op(mat.todense(), **kwds)
@@ -538,7 +573,9 @@ class SparsifyTest(jtu.JaxTestCase):
 
     # Ops that commute with addition should not deduplicate indices.
     if op in [jnp.copy, lax.neg, lax.real, lax.imag]:
-      self.assertArraysAllClose(sparse_result.indices, indices)
+      self.assertArraysAllClose(sparse_result.indices, mat.indices)
+      if fmt == "BCSR":
+        self.assertArraysAllClose(sparse_result.indptr, mat.indptr)
 
 
 class SparsifyTracerTest(SparsifyTest):

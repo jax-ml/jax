@@ -224,6 +224,9 @@ _polygamma.defjvps(None, lambda g, ans, n, x: lax.mul(g, _polygamma(n + 1, x)))
 
 # Functions "ndtr" and "ndtri" are derived from calculations made in:
 # https://root.cern.ch/doc/v608/SpecFuncCephesInv_8cxx_source.html
+# The "spence" function is also based on the Cephes library with
+# the corresponding spence.c file located in the tarball:
+# https://netlib.org/cephes/misc.tgz
 # In the following email exchange, the author gives his consent to redistribute
 # derived works under an Apache 2.0 license.
 #
@@ -1518,3 +1521,97 @@ def exp1(x: ArrayLike, module='scipy.special') -> Array:
   x, = _promote_args_inexact("exp1", x)
   # Casting becuase custom_jvp generic does not work correctly with mypy.
   return cast(Array, expn(1, x))
+
+
+def _spence_poly(w: Array) -> Array:
+  A = jnp.array([4.65128586073990045278E-5,
+                  7.31589045238094711071E-3,
+                  1.33847639578309018650E-1,
+                  8.79691311754530315341E-1,
+                  2.71149851196553469920E0,
+                  4.25697156008121755724E0,
+                  3.29771340985225106936E0,
+                  1.00000000000000000126E0,
+                  ], dtype=w.dtype)
+
+  B = jnp.array([6.90990488912553276999E-4,
+                  2.54043763932544379113E-2,
+                  2.82974860602568089943E-1,
+                  1.41172597751831069617E0,
+                  3.63800533345137075418E0,
+                  5.03278880143316990390E0,
+                  3.54771340985225096217E0,
+                  9.99999999999999998740E-1,
+                  ],dtype=w.dtype)
+
+  return -w * jnp.polyval(A, w) / jnp.polyval(B, w)
+
+
+def _spence_calc(x: Array) -> Array:
+  x2_bool = x > 2.0
+  x = jnp.piecewise(x, [x2_bool],
+                    [lambda x: 1.0 / x, lambda x: x])
+
+  x1_5_bool = x > 1.5
+  x_5_bool = x < 0.5
+  x2_bool = x2_bool | x1_5_bool
+
+  w = jnp.piecewise(x,
+                    [x1_5_bool, x_5_bool],
+                    [lambda x: 1.0 / x - 1.0,
+                      lambda x: -x,
+                      lambda x: x - 1.0])
+
+  y = _spence_poly(w)
+  y_flag_one = jnp.pi ** 2 / 6.0 - jnp.log(x) * jnp.log(1.0 - x) - y
+  y = jnp.where(x_5_bool, y_flag_one, y)
+  y_flag_two = -0.5 * jnp.log(x) ** 2 - y
+  return jnp.where(x2_bool, y_flag_two, y)
+
+
+def _spence(x: Array) -> Array:
+  return jnp.piecewise(x,
+                       [x < 0.0, x == 1.0, x == 0.0],
+                       [jnp.nan, 0, jnp.pi ** 2 / 6, _spence_calc])
+
+
+def spence(x: Array) -> Array:
+  r"""
+  Spence's function, also known as the dilogarithm for real values.
+  It is defined to be:
+
+  .. math::
+    \begin{equation}
+    \int_1^z \frac{\log(t)}{1 - t}dt
+    \end{equation}
+
+  Unlike the SciPy implementation, this is only defined for positive
+  real values of `z`. For negative values, `NaN` is returned.
+
+  Args:
+    z: An array of type `float32`, `float64`.
+
+  Returns:
+    An array with `dtype=z.dtype`.
+    computed values of Spence's function.
+
+  Raises:
+    TypeError: if elements of array `z` are not in (float32, float64).
+
+  Notes:
+  There is a different convention which defines Spence's function by the
+  integral:
+
+  .. math::
+    \begin{equation}
+    -\int_0^z \frac{\log(1 - t)}{t}dt
+    \end{equation}
+
+  this is our spence(1 - z).
+  """
+  x = jnp.asarray(x)
+  dtype = lax.dtype(x)
+  if dtype not in (jnp.float32, jnp.float64):
+    raise TypeError(
+      f"x.dtype={dtype} is not supported, see docstring for supported types.")
+  return _spence(x)

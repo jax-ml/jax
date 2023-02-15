@@ -26,16 +26,17 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_extension_version
 from jax._src.util import prod, safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
-from jax.experimental import PartitionSpec as P
 from jax.experimental.serialize_executable import (
     compile_and_serialize, load_compiled)
+from jax.experimental import multihost_utils
+from jax.sharding import PartitionSpec as P
 from jax._src import sharding
 from jax._src import array
 from jax._src import prng
-from jax.experimental import maps
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -362,7 +363,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     if jax.device_count() < 3:
       self.skipTest('Requires more than 3 devices')
     shape = (8, 2)
-    mesh = maps.Mesh(np.array([jax.devices()[1], jax.devices()[2]]), ('x'))
+    mesh = jax.sharding.Mesh(np.array([jax.devices()[1], jax.devices()[2]]), ('x'))
     # sharding device ids = {1, 2}
     s = sharding.NamedSharding(mesh, P('x'))
     inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
@@ -505,7 +506,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.skipTest('Test requires >= 2 devices.')
 
     single_dev = jax.devices()[1:2]
-    mesh = maps.Mesh(np.array(single_dev), ('x'))
+    mesh = jax.sharding.Mesh(np.array(single_dev), ('x'))
     input_shape = (8, 2)
     arr, input_data = create_array(
         input_shape, sharding.NamedSharding(mesh, P('x')))
@@ -642,6 +643,20 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertGreaterEqual(shard_size, 4 * 2)
     self.assertEqual(shard_size * len(a.global_shards),
                      a.on_device_size_in_bytes())
+
+  def test_array_is_ready(self):
+    if xla_extension_version < 121:
+      self.skipTest('Test requires xla_extension_version >= 121')
+
+    x = jax.device_put(jnp.arange(8.), jax.devices()[0])
+    x.is_ready()  # doesn't crash
+
+  def test_process_allgather_single_host(self):
+    x = jnp.arange(8.)
+    out = multihost_utils.process_allgather(x)
+    self.assertEqual(out.shape, x.shape)
+    self.assertArraysEqual(out, x)
+
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
@@ -975,7 +990,7 @@ class RngShardingTest(jtu.JaxTestCase):
     def fun(x):
       return x * x
 
-    with maps.Mesh(np.array(jax.devices()), ('data',)):
+    with jax.sharding.Mesh(np.array(jax.devices()), ('data',)):
       lowered = pjit(
           fun,
           in_axis_resources=P('data'),

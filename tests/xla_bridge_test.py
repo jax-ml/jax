@@ -89,6 +89,30 @@ class XlaBridgeTest(jtu.JaxTestCase):
                              side_effect=_mock_tpu_client):
         xb.tpu_client_timer_callback(0.01)
 
+  def test_register_plugin(self):
+    if xc._version < 126:
+      return
+
+    with self.assertLogs(level="WARNING") as log_output:
+      xb.register_pjrt_plugin_factories("name1:path1,name2:path2,name3")
+    client_factory, priotiy = xb._backend_factories["name1"]
+    with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
+      with mock.patch.object(
+          xc, "load_pjrt_plugin_dynamically", autospec=True
+      ) as mock_load_plugin:
+        client_factory()
+
+    self.assertRegex(
+        log_output[1][0],
+        r"invalid value name3 in env var PJRT_NAMES_AND_LIBRARY_PATHS"
+        r" name1:path1,name2:path2,name3",
+    )
+    self.assertIn("name1", xb._backend_factories)
+    self.assertIn("name2", xb._backend_factories)
+    self.assertEqual(priotiy, 400)
+    mock_load_plugin.assert_called_once_with("name1", "path1")
+    mock_make.assert_called_once_with("name1")
+
 
 class GetBackendTest(jtu.JaxTestCase):
 

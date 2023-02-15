@@ -151,12 +151,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-  def testNotImplemented(self):
-    for name in jnp._NOT_IMPLEMENTED:
-      func = getattr(jnp, name)
-      with self.assertRaises(NotImplementedError):
-        func()
-
   @parameterized.parameters(
     [dtype for dtype in [jnp.bool_, jnp.uint8, jnp.uint16, jnp.uint32,
                          jnp.uint64, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
@@ -743,6 +737,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       or len(jtu._dims_of_shape(rhs_shape)) == 0
       or lhs_shape[-1] == rhs_shape[-1]],
   )
+  @jax.default_matmul_precision("float32")
   def testInner(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
@@ -754,8 +749,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda lhs, rhs: jnp.inner(lhs, rhs)
     tol_spec = {np.float16: 1e-2, np.float32: 1e-5, np.float64: 1e-13,
                 np.complex64: 1e-5}
-    if jtu.device_under_test() == "tpu":
-      tol_spec[np.float32] = tol_spec[np.complex64] = 2e-1
     tol = max(jtu.tolerance(lhs_dtype, tol_spec),
               jtu.tolerance(rhs_dtype, tol_spec))
     # TODO(phawkins): there are float32/float64 disagreements for some inputs.
@@ -1998,9 +1991,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    n=range(1, 5),
-    k=[-1, 0, 1],
-    m=range(1, 5),
+    n=range(5),
+    k=range(-3, 3),
+    m=[None, *range(5)],
   )
   def testTrilIndices(self, n, k, m):
     np_fun = lambda n, k, m: np.tril_indices(n, k=k, m=m)
@@ -2009,9 +2002,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
-    n=range(1, 5),
-    k=[-1, 0, 1],
-    m=range(1, 5),
+    n=range(5),
+    k=range(-3, 3),
+    m=[None, *range(5)],
   )
   def testTriuIndices(self, n, k, m):
     np_fun = lambda n, k, m: np.triu_indices(n, k=k, m=m)
@@ -2756,7 +2749,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(shape=shape, axis=axis, num_sections=num_sections)
       for shape, axis, num_sections in [
-          ((12, 4), 0, 4), ((12, 4), 1, 2),
+          ((12, 4), 0, 4), ((12,), 1, 2),
           ((2, 3, 4), 2, 2), ((4, 3, 4), 0, 2)]],
     dtype=default_dtypes,
   )
@@ -3228,17 +3221,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     self.assertRaises(jax.errors.ConcretizationTypeError, lambda: g(3.))
 
-  def testTracingPrimitiveWithNoTranslationErrorMessage(self):
-    # TODO(mattjj): update this for jax3
-    self.skipTest("test needs jax3 update")
-    foo = jnp._not_implemented(lambda x: x)
-
-    # No error if there's no tracing.
-    foo(np.arange(3))
-
-    cfoo = jax.jit(foo)
-    self.assertRaises(NotImplementedError, lambda: cfoo(np.arange(3)))
-
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in [(3,), (2, 3)]
@@ -3616,16 +3598,57 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_output = jnp.partition(arg, axis=axis, kth=kth)
     np_output = np.partition(arg, axis=axis, kth=kth)
 
-    # Assert that pivot point is equal
+    # Assert that pivot point is equal:
     self.assertArraysEqual(
       lax.index_in_dim(jnp_output, axis=axis, index=kth),
       lax.index_in_dim(np_output, axis=axis, index=kth))
+
+    # Assert remaining values are correctly partitioned:
     self.assertArraysEqual(
       lax.sort(lax.slice_in_dim(jnp_output, start_index=0, limit_index=kth, axis=axis), dimension=axis),
       lax.sort(lax.slice_in_dim(np_output, start_index=0, limit_index=kth, axis=axis), dimension=axis))
     self.assertArraysEqual(
       lax.sort(lax.slice_in_dim(jnp_output, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis),
       lax.sort(lax.slice_in_dim(np_output, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis))
+
+  @jtu.sample_product(
+    [{'shape': shape, 'axis': axis, 'kth': kth}
+     for shape in nonzerodim_shapes
+     for axis in range(-len(shape), len(shape))
+     for kth in range(-shape[axis], shape[axis])],
+    dtype=default_dtypes,
+  )
+  def testArgpartition(self, shape, dtype, axis, kth):
+    rng = jtu.rand_default(self.rng())
+    arg = rng(shape, dtype)
+
+    jnp_output = jnp.argpartition(arg, axis=axis, kth=kth)
+    np_output = np.argpartition(arg, axis=axis, kth=kth)
+
+    # Assert that all indices are present
+    self.assertArraysEqual(jnp.sort(jnp_output, axis), np.sort(np_output, axis), check_dtypes=False)
+
+    # Because JAX & numpy may treat duplicates differently, we must compare values
+    # rather than indices.
+    getvals = lambda x, ind: x[ind]
+    for ax in range(arg.ndim):
+      if ax != range(arg.ndim)[axis]:
+        getvals = jax.vmap(getvals, in_axes=ax, out_axes=ax)
+    jnp_values = getvals(arg, jnp_output)
+    np_values = getvals(arg, np_output)
+
+    # Assert that pivot point is equal:
+    self.assertArraysEqual(
+      lax.index_in_dim(jnp_values, axis=axis, index=kth),
+      lax.index_in_dim(np_values, axis=axis, index=kth))
+
+    # Assert remaining values are correctly partitioned:
+    self.assertArraysEqual(
+      lax.sort(lax.slice_in_dim(jnp_values, start_index=0, limit_index=kth, axis=axis), dimension=axis),
+      lax.sort(lax.slice_in_dim(np_values, start_index=0, limit_index=kth, axis=axis), dimension=axis))
+    self.assertArraysEqual(
+      lax.sort(lax.slice_in_dim(jnp_values, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis),
+      lax.sort(lax.slice_in_dim(np_values, start_index=kth + 1, limit_index=shape[axis], axis=axis), dimension=axis))
 
   @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)
@@ -5200,6 +5223,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): fix some of the following signatures. Some are due to wrong argument names.
     unsupported_params = {
+      'argpartition': ['kind', 'order'],
       'asarray': ['like'],
       'broadcast_to': ['subok'],
       'clip': ['kwargs'],
@@ -5293,7 +5317,9 @@ def _all_numpy_ufuncs() -> Iterator[str]:
   for name in dir(np):
     f = getattr(np, name)
     if isinstance(f, np.ufunc):
-      yield name
+      # jnp.spacing is not implemented.
+      if f.__name__ != "spacing":
+        yield name
 
 
 def _dtypes_for_ufunc(name: str) -> Iterator[Tuple[str, ...]]:

@@ -42,7 +42,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 import jax
 from jax._src.numpy import lax_numpy
 from jax._src import dtypes
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.lax import lax
 from jax._src.typing import DimSize, Shape
@@ -56,7 +56,7 @@ TfVal = Any
 # A dimension environment maps dimension variables to expressions that
 # compute the values of the dimension. An expression must support addition
 # and multiplication with other expressions or with int32/int64, e.g.,
-# by overloading __add__, __radd__, __mul__, __rmul__.
+# by overloading __add__, __radd__, __mul__, __rmul__, __divmod__, __rdivmod__.
 ShapeEnv = Dict[str, Any]
 DType = Any
 
@@ -207,7 +207,13 @@ class _DimAtom:
 
   def evaluate(self, env: ShapeEnv):
     if self.var is not None:
-      return env[self.var]
+      try:
+        return env[self.var]
+      except KeyError:
+        err_msg = (
+            f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the used function arguments.\n"
+            "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
+        raise KeyError(err_msg)
     else:
       operand_values = [opnd.evaluate(env) for opnd in self.operands]
       div_mod = divmod(*operand_values)  # type: ignore
@@ -419,13 +425,10 @@ class _DimExpr():
     lb, ub = _ensure_poly(self - other, "eq").bounds()
     if lb == ub == 0:
       return True
-    if lb > 0:
+    if lb > 0 or ub < 0:
       return False
-    if ub < 0:
-      return False
-    raise InconclusiveDimensionOperation(
-        f"Symbolic dimension comparison '{self}' == '{other}' is inconclusive.\n"
-        "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported.")
+    # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported
+    return False
 
   def ge(self, other: DimSize) -> bool:
     lb, ub = _ensure_poly(self - other, "ge").bounds()
@@ -942,20 +945,30 @@ def _parse_spec(spec: Optional[Union[str, PolyShape]],
 
 
 def _evaluate_add(v1, v2):
-  if isinstance(v1, (int, np.int32, np.int64)) and v1 == 0:
-    return v2
-  elif isinstance(v2, (int, np.int32, np.int64)) and v2 == 0:
-    return v1
-  else:
-    return v1 + v2
+  try:
+    if op.index(v1) == 0:
+      return v2
+  except:
+    pass
+  try:
+    if op.index(v2) == 0:
+      return v1
+  except:
+    pass
+  return v1 + v2
 
 def _evaluate_multiply(v1, v2):
-  if isinstance(v1, (int, np.int32, np.int64)) and v1 == 1:
-    return v2
-  elif isinstance(v2, (int, np.int32, np.int64)) and v2 == 1:
-    return v1
-  else:
-    return v1 * v2
+  try:
+    if op.index(v1) == 1:
+      return v2
+  except:
+    pass
+  try:
+    if op.index(v2) == 1:
+      return v1
+  except:
+    pass
+  return v1 * v2
 
 def _is_known_constant(v) -> Optional[int]:
   try:

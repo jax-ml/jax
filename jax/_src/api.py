@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """JAX user-facing transformations and utilities.
 
 The transformations here mostly wrap internal transformations, providing
@@ -58,6 +59,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import PmapSharding
 from jax._src.traceback_util import api_boundary
@@ -66,12 +68,8 @@ from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
                            extend_name_stack, new_name_stack, wrap_name, cache,
                            wraps, HashableFunction, weakref_lru_cache)
 
+
 # Unused imports to be exported
-from jax._src.core import ShapedArray, raise_to_shaped
-from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
-                                     local_devices, process_index,
-                                     process_count, host_id, host_ids,
-                                     host_count, default_backend)
 from jax.ad_checkpoint import checkpoint_policies, checkpoint as new_checkpoint
 from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp,
@@ -80,9 +78,6 @@ from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
 from jax.interpreters import xla
-from jax.interpreters import pxla
-from jax.interpreters import ad
-from jax.interpreters import batching
 
 from jax._src.config import (
     config,
@@ -92,13 +87,23 @@ from jax._src.config import (
     _thread_local_state as config_thread_local_state,
     explicit_device_put_scope as config_explicit_device_put_scope,
     explicit_device_get_scope as config_explicit_device_get_scope)
+from jax._src.core import ShapedArray, raise_to_shaped
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import pxla
+from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
+                                     local_devices, process_index,
+                                     process_count, host_id, host_ids,
+                                     host_count, default_backend)
 
 
 traceback_util.register_exclusion(__file__)
 
 _dtype = partial(dtypes.dtype, canonicalize=True)
 
-AxisName = Any
+AxisName = Hashable
+
+Device = xc.Device
 
 # These TypeVars are used below to express the fact that function types
 # (i.e. call signatures) are invariant under the vmap transformation.
@@ -286,8 +291,8 @@ def jit(
 if jax.config.jax_jit_pjit_api_merge:
   def jit(  # type: ignore  # noqa: F811  # pylint: disable=function-redefined
     fun: Callable,
-    in_axis_resources=pxla._UNSPECIFIED,
-    out_axis_resources=pxla._UNSPECIFIED,
+    in_shardings=pxla._UNSPECIFIED,
+    out_shardings=pxla._UNSPECIFIED,
     static_argnums: Union[int, Sequence[int], None] = None,
     static_argnames: Union[str, Iterable[str], None] = None,
     donate_argnums: Union[int, Sequence[int]] = (),
@@ -297,22 +302,150 @@ if jax.config.jax_jit_pjit_api_merge:
     inline: bool = False,
     abstracted_axes: Optional[Any] = None,
   ) -> stages.Wrapped:
-    (in_axis_resources, out_axis_resources, donate_argnums, static_argnums,
+    """Sets up ``fun`` for just-in-time compilation with XLA.
+
+    Args:
+      fun: Function to be jitted. ``fun`` should be a pure function, as
+        side-effects may only be executed once.
+
+        The arguments and return value of ``fun`` should be arrays,
+        scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
+        Positional arguments indicated by ``static_argnums`` can be anything at
+        all, provided they are hashable and have an equality operation defined.
+        Static arguments are included as part of a compilation cache key, which is
+        why hash and equality operators must be defined.
+
+        JAX keeps a weak reference to ``fun`` for use as a compilation cache key,
+        so the object ``fun`` must be weakly-referenceable. Most :class:`Callable`
+        objects will already satisfy this requirement.
+      in_shardings: Pytree of structure matching that of arguments to ``fun``,
+        with all actual arguments replaced by resource assignment specifications.
+        It is also valid to specify a pytree prefix (e.g. one value in place of a
+        whole subtree), in which case the leaves get broadcast to all values in
+        that subtree.
+
+        The valid resource assignment specifications are:
+          - :py:obj:`None`, in which case the value will be replicated on all devices
+          - :py:class:`XLACompatibleSharding`, which will decide how the value
+            will be partitioned. With this, using a mesh context manager is not
+            required.
+          - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
+            of the partitioned value. Each element can be a :py:obj:`None`, a mesh
+            axis or a tuple of mesh axes, and specifies the set of resources assigned
+            to partition the value's dimension matching its position in the spec.
+
+        The size of every dimension has to be a multiple of the total number of
+        resources assigned to it. This is similar to pjit's in_shardings.
+      out_shardings: Like ``in_shardings``, but specifies resource
+        assignment for function outputs. This is similar to pjit's
+        out_shardings.
+      static_argnums: An optional int or collection of ints that specify which
+        positional arguments to treat as static (compile-time constant).
+        Operations that only depend on static arguments will be constant-folded in
+        Python (during tracing), and so the corresponding argument values can be
+        any Python object.
+
+        Static arguments should be hashable, meaning both ``__hash__`` and
+        ``__eq__`` are implemented, and immutable. Calling the jitted function
+        with different values for these constants will trigger recompilation.
+        Arguments that are not arrays or containers thereof must be marked as
+        static.
+
+        If neither ``static_argnums`` nor ``static_argnames`` is provided, no
+        arguments are treated as static. If ``static_argnums`` is not provided but
+        ``static_argnames`` is, or vice versa, JAX uses
+        :code:`inspect.signature(fun)` to find any positional arguments that
+        correspond to ``static_argnames``
+        (or vice versa). If both ``static_argnums`` and ``static_argnames`` are
+        provided, ``inspect.signature`` is not used, and only actual
+        parameters listed in either ``static_argnums`` or ``static_argnames`` will
+        be treated as static.
+      static_argnames: An optional string or collection of strings specifying
+        which named arguments to treat as static (compile-time constant). See the
+        comment on ``static_argnums`` for details. If not
+        provided but ``static_argnums`` is set, the default is based on calling
+        ``inspect.signature(fun)`` to find corresponding named arguments.
+      donate_argnums: Specify which positional argument buffers are "donated" to
+        the computation. It is safe to donate argument buffers if you no longer
+        need them once the computation has finished. In some cases XLA can make
+        use of donated buffers to reduce the amount of memory needed to perform a
+        computation, for example recycling one of your input buffers to store a
+        result. You should not reuse buffers that you donate to a computation, JAX
+        will raise an error if you try to. By default, no argument buffers are
+        donated.
+        Note that donate_argnums only work for positional arguments, and keyword
+        arguments will not be donated.
+
+        For more details on buffer donation see the
+        `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
+      keep_unused: If `False` (the default), arguments that JAX determines to be
+        unused by `fun` *may* be dropped from resulting compiled XLA executables.
+        Such arguments will not be transferred to the device nor provided to the
+        underlying executable. If `True`, unused arguments will not be pruned.
+      device: This is an experimental feature and the API is likely to change.
+        Optional, the Device the jitted function will run on. (Available devices
+        can be retrieved via :py:func:`jax.devices`.) The default is inherited
+        from XLA's DeviceAssignment logic and is usually to use
+        ``jax.devices()[0]``.
+      backend: This is an experimental feature and the API is likely to change.
+        Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
+        ``'tpu'``.
+      inline: Specify whether this function should be inlined into enclosing
+        jaxprs (rather than being represented as an application of the xla_call
+        primitive with its own subjaxpr). Default False.
+
+    Returns:
+      A wrapped version of ``fun``, set up for just-in-time compilation.
+
+    Examples:
+      In the following example, ``selu`` can be compiled into a single fused kernel
+      by XLA:
+
+      >>> import jax
+      >>>
+      >>> @jax.jit
+      ... def selu(x, alpha=1.67, lmbda=1.05):
+      ...   return lmbda * jax.numpy.where(x > 0, x, alpha * jax.numpy.exp(x) - alpha)
+      >>>
+      >>> key = jax.random.PRNGKey(0)
+      >>> x = jax.random.normal(key, (10,))
+      >>> print(selu(x))  # doctest: +SKIP
+      [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
+      -0.85743 -0.78232  0.76827  0.59566 ]
+
+      To pass arguments such as ``static_argnames`` when decorating a function, a common
+      pattern is to use :func:`functools.partial`:
+
+      >>> from functools import partial
+      >>>
+      >>> @partial(jax.jit, static_argnames=['n'])
+      ... def g(x, n):
+      ...   for i in range(n):
+      ...     x = x ** 2
+      ...   return x
+      >>>
+      >>> g(jnp.arange(4), 3)
+      Array([   0,    1,  256, 6561], dtype=int32)
+    """
+    (in_shardings, out_shardings, donate_argnums, static_argnums,
      static_argnames) = pjit.pre_infer_params(
-         fun, in_axis_resources, out_axis_resources, donate_argnums,
+         fun, in_shardings, out_shardings, donate_argnums,
          static_argnums, static_argnames, device, backend, abstracted_axes)
 
     def infer_params(*args, **kwargs):
       pjit_info_args = pjit.PjitInfo(
-          fun=fun, in_axis_resources=in_axis_resources,
-          out_axis_resources=out_axis_resources, static_argnums=static_argnums,
+          fun=fun, in_shardings=in_shardings,
+          out_shardings=out_shardings, static_argnums=static_argnums,
           static_argnames=static_argnames, donate_argnums=donate_argnums,
           device=device, backend=backend, keep_unused=keep_unused,
           inline=inline, resource_env=None)
       return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
+    has_explicit_sharding = pjit._pjit_explicit_sharding(
+        in_shardings, out_shardings, device, backend)
     return pjit.post_infer_params(fun, infer_params, static_argnums,
-                                  static_argnames, abstracted_axes)
+                                  static_argnames, donate_argnums,
+                                  abstracted_axes, has_explicit_sharding)
 
 
 def _jit(
@@ -559,13 +692,19 @@ def _cpp_jit(
         inline=inline,
         keep_unused=keep_unused))
     execute = None
-    if isinstance(top_trace, core.EvalTrace) and not (
-        jax.config.jax_debug_nans or jax.config.jax_debug_infs):
-      execute = dispatch._xla_call_impl_lazy(fun_, *tracers, **params)
-      out_flat = call_bind_continuation(execute(*args_flat))
-    else:
-      out_flat = call_bind_continuation(
-          top_trace.process_call(primitive, fun_, tracers, params))
+    try:
+      if isinstance(top_trace, core.EvalTrace) and not (
+          jax.config.jax_debug_nans or jax.config.jax_debug_infs):
+        execute = dispatch._xla_call_impl_lazy(fun_, *tracers, **params)
+        out_flat = call_bind_continuation(execute(*args_flat))
+      else:
+        out_flat = call_bind_continuation(
+            top_trace.process_call(primitive, fun_, tracers, params))
+    except pxla.DeviceAssignmentMismatchError as e:
+      fails, = e.args
+      msg = pjit._device_assignment_mismatch_error(
+          fun, fails, in_tree, args_flat, 'jit')
+      raise ValueError(msg) from None
     out_pytree_def = out_tree()
     out = tree_unflatten(out_pytree_def, out_flat)
 
@@ -722,8 +861,8 @@ def disable_jit(disable: bool = True):
   ...   print("Value of y is", y)
   ...   return y + 3
   ...
-  >>> print(f(jax.numpy.array([1, 2, 3])))
-  Value of y is Traced<ShapedArray(int32[3])>with<DynamicJaxprTrace(level=0/1)>
+  >>> print(f(jax.numpy.array([1, 2, 3])))  # doctest:+ELLIPSIS
+  Value of y is Traced<ShapedArray(int32[3])>with<DynamicJaxprTrace...>
   [5 7 9]
 
   Here ``y`` has been abstracted by :py:func:`jit` to a :py:class:`ShapedArray`,
@@ -1092,7 +1231,7 @@ def value_and_grad(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
 
   check_callable(fun)
   argnums = core.concrete_or_error(_ensure_index, argnums)
-  reduce_axes = _ensure_str_tuple(reduce_axes)
+  reduce_axes = _ensure_str_tuple(reduce_axes)  # type: ignore
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   @api_boundary
@@ -1457,9 +1596,10 @@ def _split(x, indices, axis):
 def vmap(fun: F,
          in_axes: Union[int, Sequence[Any]] = 0,
          out_axes: Any = 0,
-         axis_name: Optional[Hashable] = None,
+         axis_name: Optional[AxisName] = None,
          axis_size: Optional[int] = None,
-         spmd_axis_name: Optional[Hashable] = None) -> F:
+         spmd_axis_name: Optional[Union[AxisName, Tuple[AxisName, ...]]] = None
+         ) -> F:
   """Vectorizing map. Creates a function which maps ``fun`` over argument axes.
 
   Args:
@@ -1597,6 +1737,8 @@ def vmap(fun: F,
     docstr += fun.__doc__
 
   axis_name = core.no_axis_name if axis_name is None else axis_name
+  if spmd_axis_name is not None and type(spmd_axis_name) is not tuple:
+    spmd_axis_name = (spmd_axis_name,)
 
   if isinstance(in_axes, list):
     # To be a tree prefix of the positional args tuple, in_axes can never be a
@@ -2307,7 +2449,7 @@ def _cpp_pmap(
     return out, fastpath_data
 
   cpp_mapped_f = pmap_lib.pmap(
-      fun, cache_miss, static_broadcasted_tuple, pxla._shard_arg)
+      fun, cache_miss, static_broadcasted_tuple, pxla.shard_arg)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
 
@@ -2637,7 +2779,7 @@ def vjp(  # type: ignore
   -0.2524413
   """
   check_callable(fun)
-  reduce_axes = _ensure_str_tuple(reduce_axes)
+  reduce_axes = _ensure_str_tuple(reduce_axes)  # type: ignore
   return _vjp(
       lu.wrap_init(fun), *primals, has_aux=has_aux, reduce_axes=reduce_axes)
 
@@ -3425,6 +3567,11 @@ def clear_backends():
   dispatch.xla_primitive_callable.cache_clear()
   _cpp_jit_cache.clear()
   jax_jit.CompiledFunctionCache.clear_all()
+  pjit._pjit_lower_cached.cache_clear()
+  pjit._pjit_jaxpr.cache_clear()
+  if xla_extension_version >= 124:
+    pjit._cpp_pjit_cache.clear()
+    xc._xla.PjitFunctionCache.clear_all()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.

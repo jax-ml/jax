@@ -72,7 +72,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
                axis: Axis = None, dtype: DTypeLike = None, out: None = None,
                keepdims: bool = False, initial: Optional[ArrayLike] = None,
                where_: Optional[ArrayLike] = None,
-               parallel_reduce: Optional[Callable[..., ArrayLike]] = None,
+               parallel_reduce: Optional[Callable[..., Array]] = None,
                promote_integers: bool = False) -> Array:
   bool_op = bool_op or op
   # Note: we must accept out=None as an argument, because numpy reductions delegate to
@@ -131,7 +131,11 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   else:
     result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
-    result = op(lax.convert_element_type(initial, _asarray(a).dtype), result)
+    initial_arr = lax.convert_element_type(initial, _asarray(a).dtype)
+    if initial_arr.shape != ():
+      raise ValueError("initial value must be a scalar. "
+                       f"Got array of shape {initial_arr.shape}")
+    result = op(initial_arr, result)
   if keepdims:
     result = lax.expand_dims(result, pos_dims)
   return lax.convert_element_type(result, dtype or result_dtype)

@@ -498,10 +498,7 @@ def _sytrd_hlo(platform, gpu_solver, dtype, a, *, lower):
         ir.RankedTensorType.get(s_type.shape, a_type.element_type), s)
     offsets = tuple(hlo.ConstantOp(intattr(i))
                     for i in ((0,) * len(batch_dims) + (0, 1)))
-    if xla_client.mlir_api_version < 40:
-      a = hlo.DynamicUpdateSliceOp(a.type, a, s, offsets).result
-    else:
-      a = hlo.DynamicUpdateSliceOp(a, s, offsets).result
+    a = hlo.DynamicUpdateSliceOp(a, s, offsets).result
 
   return a, d, e, taus, info
 

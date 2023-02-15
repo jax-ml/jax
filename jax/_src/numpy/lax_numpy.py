@@ -24,6 +24,7 @@ transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
 
+import abc
 import builtins
 import collections
 from functools import partial
@@ -53,6 +54,7 @@ from jax._src.api_util import _ensure_index_tuple
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client
 from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.reductions import (  # noqa: F401
@@ -254,12 +256,6 @@ _DEFAULT_TYPEMAP: Dict[type, _ScalarMeta] = {
 }
 
 _lax_const = lax_internal._const
-
-
-def _result_dtype(op: Callable[..., ArrayLike], *args: Any) -> DType:
-  """Compute result dtype of applying op to arguments with given dtypes."""
-  np_args = [np.ones((0,) * ndim(arg), _dtype(arg)) for arg in args]
-  return _dtype(op(*np_args))
 
 
 def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
@@ -789,6 +785,17 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
                if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
+def _item(a: Array):
+  if dtypes.issubdtype(a.dtype, np.complexfloating):
+    return complex(a)
+  elif dtypes.issubdtype(a.dtype, np.floating):
+    return float(a)
+  elif dtypes.issubdtype(a.dtype, np.integer):
+    return int(a)
+  elif dtypes.issubdtype(a.dtype, np.bool_):
+    return bool(a)
+  else:
+    raise TypeError(a.dtype)
 
 def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
   newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
@@ -1218,6 +1225,12 @@ def split(ary: ArrayLike, indices_or_sections: Union[int, ArrayLike], axis: int 
 def _split_on_axis(op: str, axis: int) -> Callable[[ArrayLike, Union[int, ArrayLike]], List[Array]]:
   @_wraps(getattr(np, op), update_doc=False)
   def f(ary: ArrayLike, indices_or_sections: Union[int, ArrayLike]) -> List[Array]:
+    # for 1-D array, hsplit becomes vsplit
+    nonlocal axis
+    _check_arraylike(op, ary)
+    a = asarray(ary)
+    if axis == 1 and len(a.shape) == 1:
+      axis = 0
     return _split(op, ary, indices_or_sections, axis=axis)
   return f
 
@@ -2678,19 +2691,45 @@ def _wrap_indices_function(f):
     return tuple(asarray(x) for x in f(*args, **kwargs))
   return wrapper
 
-tril_indices = _wrap_indices_function(np.tril_indices)
-triu_indices = _wrap_indices_function(np.triu_indices)
 mask_indices = _wrap_indices_function(np.mask_indices)
 
 
+def _triu_size(n, m, k):
+  if k < 0:
+    return n * m - _triu_size(m, n, (1 - k))
+  elif k >= m:
+    return 0
+  else:
+    mk = _min(n, m - k)
+    return mk * (mk + 1) // 2 + mk * (m - k - mk)
+
+
+@_wraps(np.triu_indices)
+def triu_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Array]:
+  n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
+  k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
+  m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
+  i, j = nonzero(triu(ones((n, m)), k=k), size=_triu_size(n, m, k))
+  return i, j
+
+
+@_wraps(np.tril_indices)
+def tril_indices(n: int, k: int = 0, m: Optional[int] = None) -> Tuple[Array, Array]:
+  n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
+  k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
+  m = n if m is None else core.concrete_or_error(operator.index, m, "m argument of jnp.triu_indices")
+  i, j = nonzero(tril(ones((n, m)), k=k), size=_triu_size(m, n, -k))
+  return i, j
+
+
 @_wraps(np.triu_indices_from)
-def triu_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array]:
+def triu_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array, Array]:
   arr_shape = shape(arr)
   return triu_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
 
 @_wraps(np.tril_indices_from)
-def tril_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array]:
+def tril_indices_from(arr: ArrayLike, k: int = 0) -> Tuple[Array, Array]:
   arr_shape = shape(arr)
   return tril_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
@@ -3215,7 +3254,10 @@ def _einsum(operands: Sequence,
       assert jax.config.jax_dynamic_shapes or _all(
         name in lhs_names and name in rhs_names and
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
-        for name in contracted_names)
+        for name in contracted_names), (
+          "Incompatible reduction dimensions: "
+          f"lhs.shape={lhs.shape} lhs_names={lhs_names} "
+          f"rhs.shape={rhs.shape} rhs_names={rhs_names}")
 
       # contract using lax.dot_general
       batch_names_str = ''.join(batch_names)
@@ -3249,14 +3291,6 @@ def _einsum(operands: Sequence,
     operands.append(operand)  # used in next iteration
 
   return operands[0]
-
-
-def _movechars(s, src, dst):
-  """Helper for einsum string munging, like moveaxis on identifier strings."""
-  chars = [c for i, c in enumerate(s) if i not in src]
-  for i, j in sorted(zip(dst, src)):
-    chars.insert(i, s[j])
-  return ''.join(chars)
 
 
 @_wraps(np.inner, lax_description=_PRECISION_DOC)
@@ -3515,11 +3549,17 @@ def msort(a):
 
 
 @_wraps(np.partition, lax_description="""
-The jax version requires the ``kth`` argument to be a static integer rather than
-a general array. This is implemented via two calls to :func:`jax.lax.top_k`.
+The JAX version requires the ``kth`` argument to be a static integer rather than
+a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If
+you're only accessing the top or bottom k values of the output, it may be more
+efficient to call :func:`jax.lax.top_k` directly.
+
+The JAX version differs from the NumPy version in the treatment of NaN entries;
+NaNs which have the negative bit set are sorted to the beginning of the array.
 """)
 @partial(jit, static_argnames=['kth', 'axis'])
 def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
+  # TODO(jakevdp): handle NaN values like numpy.
   _check_arraylike("partition", a)
   arr = asarray(a)
   if issubdtype(arr.dtype, np.complexfloating):
@@ -3531,6 +3571,38 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   bottom = -lax.top_k(-arr, kth + 1)[0]
   top = lax.top_k(arr, arr.shape[-1] - kth - 1)[0]
   out = lax.concatenate([bottom, top], dimension=arr.ndim - 1)
+  return swapaxes(out, -1, axis)
+
+
+@_wraps(np.argpartition, lax_description="""
+The JAX version requires the ``kth`` argument to be a static integer rather than
+a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If
+you're only accessing the top or bottom k values of the output, it may be more
+efficient to call :func:`jax.lax.top_k` directly.
+
+The JAX version differs from the NumPy version in the treatment of NaN entries;
+NaNs which have the negative bit set are sorted to the beginning of the array.
+""")
+@partial(jit, static_argnames=['kth', 'axis'])
+def argpartition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
+  # TODO(jakevdp): handle NaN values like numpy.
+  _check_arraylike("partition", a)
+  arr = asarray(a)
+  if issubdtype(arr.dtype, np.complexfloating):
+    raise NotImplementedError("jnp.argpartition for complex dtype is not implemented.")
+  axis = _canonicalize_axis(axis, arr.ndim)
+  kth = _canonicalize_axis(kth, arr.shape[axis])
+
+  arr = swapaxes(arr, axis, -1)
+  bottom_ind = lax.top_k(-arr, kth + 1)[1]
+
+  # To avoid issues with duplicate values, we compute the top indices via a proxy
+  set_to_zero = lambda a, i: a.at[i].set(0)
+  for _ in range(arr.ndim - 1):
+    set_to_zero = jax.vmap(set_to_zero)
+  proxy = set_to_zero(ones(arr.shape), bottom_ind)
+  top_ind = lax.top_k(proxy, arr.shape[-1] - kth - 1)[1]
+  out = lax.concatenate([bottom_ind, top_ind], dimension=arr.ndim - 1)
   return swapaxes(out, -1, axis)
 
 
@@ -3632,23 +3704,24 @@ def unpackbits(a, axis: Optional[int] = None, count=None, bitorder='big'):
 
 @_wraps(np.take, skip_params=['out'],
         lax_description="""
-The JAX version adds several extra parameters, described below, which are forwarded
-to :func:`jax.lax.gather` for finer control over indexing.""",
+By default, JAX assumes that all indices are in-bounds. Alternative out-of-bound
+index semantics can be specified via the ``mode`` parameter (see below).
+""",
         extra_params="""
 mode : string, default="fill"
     Out-of-bounds indexing mode. The default mode="fill" returns invalid values
-    (e.g. NaN) for out-of bounds indices. See :attr:`jax.numpy.ndarray.at` for
-    more discussion of out-of-bounds indexing in JAX.
+    (e.g. NaN) for out-of bounds indices (see also ``fill_value`` below).
+    For more discussion of mode options, see :attr:`jax.numpy.ndarray.at`.
+fill_value : optional
+    The fill value to return for out-of-bounds slices when mode is 'fill'. Ignored
+    otherwise. Defaults to NaN for inexact types, the largest negative value for
+    signed types, the largest positive value for unsigned types, and True for booleans.
 unique_indices : bool, default=False
     If True, the implementation will assume that the indices are unique,
     which can result in more efficient execution on some backends.
 indices_are_sorted : bool, default=False
     If True, the implementation will assume that the indices are sorted in
     ascending order, which can lead to more efficient execution on some backends.
-fill_value : optional
-    The fill value to return for out-of-bounds slices when mode is 'fill'. Ignored
-    otherwise. Defaults to NaN for inexact types, the largest negative value for
-    signed types, the largest positive value for unsigned types, and True for booleans.
 """)
 def take(a, indices, axis: Optional[int] = None, out=None, mode=None,
          unique_indices=False, indices_are_sorted=False, fill_value=None):
@@ -4932,19 +5005,6 @@ def _notimplemented_flat(self):
   raise NotImplementedError("JAX DeviceArrays do not implement the arr.flat property: "
                             "consider arr.flatten() instead.")
 
-### track unimplemented functions
-
-_NOT_IMPLEMENTED_DESC = """
-*** This function is not yet implemented by jax.numpy, and will raise NotImplementedError ***
-"""
-
-def _not_implemented(fun, module=None):
-  @_wraps(fun, module=module, update_doc=False, lax_description=_NOT_IMPLEMENTED_DESC)
-  def wrapped(*args, **kwargs):
-    msg = "Numpy function {} not yet implemented"
-    raise NotImplementedError(msg.format(fun))
-  return wrapped
-
 
 @_wraps(np.place, lax_description="""
 Numpy function :func:`numpy.place` is not available in JAX and will raise a
@@ -5014,68 +5074,6 @@ def _copy(self: Array) -> Array:
 def _deepcopy(self: Array, memo: Any) -> Array:
   del memo  # unused
   return self.copy()
-
-_operators = {
-    "getitem": _rewriting_take,
-    "setitem": _unimplemented_setitem,
-    "copy": _copy,
-    "deepcopy": _deepcopy,
-    "neg": negative,
-    "pos": positive,
-    "eq": _defer_to_unrecognized_arg("==", equal),
-    "ne": _defer_to_unrecognized_arg("!=", not_equal),
-    "lt": _defer_to_unrecognized_arg("<", less),
-    "le": _defer_to_unrecognized_arg("<=", less_equal),
-    "gt": _defer_to_unrecognized_arg(">", greater),
-    "ge": _defer_to_unrecognized_arg(">=", greater_equal),
-    "abs": abs,
-    "add": _defer_to_unrecognized_arg("+", add),
-    "radd": _defer_to_unrecognized_arg("+", add, swap=True),
-    "sub": _defer_to_unrecognized_arg("-", subtract),
-    "rsub": _defer_to_unrecognized_arg("-", subtract, swap=True),
-    "mul": _defer_to_unrecognized_arg("*", multiply),
-    "rmul": _defer_to_unrecognized_arg("*", multiply, swap=True),
-    "div": _defer_to_unrecognized_arg("/", divide),
-    "rdiv": _defer_to_unrecognized_arg("/", divide, swap=True),
-    "truediv": _defer_to_unrecognized_arg("/", true_divide),
-    "rtruediv": _defer_to_unrecognized_arg("/", true_divide, swap=True),
-    "floordiv": _defer_to_unrecognized_arg("//", floor_divide),
-    "rfloordiv": _defer_to_unrecognized_arg("//", floor_divide, swap=True),
-    "divmod": _defer_to_unrecognized_arg("divmod", divmod),
-    "rdivmod": _defer_to_unrecognized_arg("divmod", divmod, swap=True),
-    "mod": _defer_to_unrecognized_arg("%", mod),
-    "rmod": _defer_to_unrecognized_arg("%", mod, swap=True),
-    "pow": _defer_to_unrecognized_arg("**", power),
-    "rpow": _defer_to_unrecognized_arg("**", power, swap=True),
-    "matmul": _defer_to_unrecognized_arg("@", matmul),
-    "rmatmul": _defer_to_unrecognized_arg("@", matmul, swap=True),
-    "and": _defer_to_unrecognized_arg("&", bitwise_and),
-    "rand": _defer_to_unrecognized_arg("&", bitwise_and, swap=True),
-    "or": _defer_to_unrecognized_arg("|", bitwise_or),
-    "ror": _defer_to_unrecognized_arg("|", bitwise_or, swap=True),
-    "xor": _defer_to_unrecognized_arg("^", bitwise_xor),
-    "rxor": _defer_to_unrecognized_arg("^", bitwise_xor, swap=True),
-    "invert": bitwise_not,
-    "lshift": _defer_to_unrecognized_arg("<<", left_shift),
-    "rshift": _defer_to_unrecognized_arg(">>", right_shift),
-    "rlshift": _defer_to_unrecognized_arg("<<", left_shift, swap=True),
-    "rrshift": _defer_to_unrecognized_arg(">>", right_shift, swap=True),
-    "round": _operator_round,
-}
-
-# These numpy.ndarray methods are just refs to an equivalent numpy function
-_nondiff_methods = ["all", "any", "argmax", "argmin", "argpartition", "argsort",
-                    "nonzero", "searchsorted", "round"]
-_diff_methods = ["choose", "conj", "conjugate", "copy", "cumprod", "cumsum",
-                 "diagonal", "dot", "max", "mean", "min", "prod", "ptp",
-                 "ravel", "repeat", "sort", "squeeze", "std", "sum",
-                 "swapaxes", "take", "trace", "var"]
-
-# These methods are mentioned explicitly by nondiff_methods, so we create
-# _not_implemented implementations of them here rather than in __init__.py.
-# TODO(phawkins): implement these.
-argpartition = _not_implemented(np.argpartition)
-_NOT_IMPLEMENTED = ['argpartition']
 
 
 # Experimental support for NumPy's module dispatch with NEP-37.
@@ -5168,9 +5166,8 @@ class _IndexUpdateHelper:
   in which conflicting updates are applied is implementation-defined and may be
   nondeterministic (e.g., due to concurrency on some hardware platforms).
 
-  By default, JAX assumes that all indices are in-bounds. There is experimental
-  support for giving more precise semantics to out-of-bounds indexed accesses,
-  via the ``mode`` parameter (see below).
+  By default, JAX assumes that all indices are in-bounds. Alternative out-of-bound
+  index semantics can be specified via the ``mode`` parameter (see below).
 
   Arguments
   ---------
@@ -5231,7 +5228,6 @@ class _IndexUpdateHelper:
 
   def __repr__(self):
     return f"_IndexUpdateHelper({repr(self.array)})"
-ndarray.at.__doc__ = _IndexUpdateHelper.__doc__
 
 _power_fn = power
 _divide_fn = divide
@@ -5396,37 +5392,127 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
+_array_operators = {
+  "getitem": _rewriting_take,
+  "setitem": _unimplemented_setitem,
+  "copy": _copy,
+  "deepcopy": _deepcopy,
+  "neg": negative,
+  "pos": positive,
+  "eq": _defer_to_unrecognized_arg("==", equal),
+  "ne": _defer_to_unrecognized_arg("!=", not_equal),
+  "lt": _defer_to_unrecognized_arg("<", less),
+  "le": _defer_to_unrecognized_arg("<=", less_equal),
+  "gt": _defer_to_unrecognized_arg(">", greater),
+  "ge": _defer_to_unrecognized_arg(">=", greater_equal),
+  "abs": abs,
+  "add": _defer_to_unrecognized_arg("+", add),
+  "radd": _defer_to_unrecognized_arg("+", add, swap=True),
+  "sub": _defer_to_unrecognized_arg("-", subtract),
+  "rsub": _defer_to_unrecognized_arg("-", subtract, swap=True),
+  "mul": _defer_to_unrecognized_arg("*", multiply),
+  "rmul": _defer_to_unrecognized_arg("*", multiply, swap=True),
+  "div": _defer_to_unrecognized_arg("/", divide),
+  "rdiv": _defer_to_unrecognized_arg("/", divide, swap=True),
+  "truediv": _defer_to_unrecognized_arg("/", true_divide),
+  "rtruediv": _defer_to_unrecognized_arg("/", true_divide, swap=True),
+  "floordiv": _defer_to_unrecognized_arg("//", floor_divide),
+  "rfloordiv": _defer_to_unrecognized_arg("//", floor_divide, swap=True),
+  "divmod": _defer_to_unrecognized_arg("divmod", divmod),
+  "rdivmod": _defer_to_unrecognized_arg("divmod", divmod, swap=True),
+  "mod": _defer_to_unrecognized_arg("%", mod),
+  "rmod": _defer_to_unrecognized_arg("%", mod, swap=True),
+  "pow": _defer_to_unrecognized_arg("**", power),
+  "rpow": _defer_to_unrecognized_arg("**", power, swap=True),
+  "matmul": _defer_to_unrecognized_arg("@", matmul),
+  "rmatmul": _defer_to_unrecognized_arg("@", matmul, swap=True),
+  "and": _defer_to_unrecognized_arg("&", bitwise_and),
+  "rand": _defer_to_unrecognized_arg("&", bitwise_and, swap=True),
+  "or": _defer_to_unrecognized_arg("|", bitwise_or),
+  "ror": _defer_to_unrecognized_arg("|", bitwise_or, swap=True),
+  "xor": _defer_to_unrecognized_arg("^", bitwise_xor),
+  "rxor": _defer_to_unrecognized_arg("^", bitwise_xor, swap=True),
+  "invert": bitwise_not,
+  "lshift": _defer_to_unrecognized_arg("<<", left_shift),
+  "rshift": _defer_to_unrecognized_arg(">>", right_shift),
+  "rlshift": _defer_to_unrecognized_arg("<<", left_shift, swap=True),
+  "rrshift": _defer_to_unrecognized_arg(">>", right_shift, swap=True),
+  "round": _operator_round,
+}
+
+_array_methods = {
+  "all": all,
+  "any": any,
+  "argmax": argmax,
+  "argmin": argmin,
+  "argpartition": argpartition,
+  "argsort": argsort,
+  "astype": _astype,
+  "choose": choose,
+  "clip": _clip,
+  "conj": conj,
+  "conjugate": conjugate,
+  "copy": copy,
+  "cumprod": cumprod,
+  "cumsum": cumsum,
+  "diagonal": diagonal,
+  "dot": dot,
+  "flatten": ravel,
+  "item": _item,
+  "max": max,
+  "mean": mean,
+  "min": min,
+  "nonzero": nonzero,
+  "prod": prod,
+  "ptp": ptp,
+  "ravel": ravel,
+  "repeat": repeat,
+  "reshape": _reshape,
+  "round": round,
+  "searchsorted": searchsorted,
+  "sort": sort,
+  "squeeze": squeeze,
+  "std": std,
+  "sum": sum,
+  "swapaxes": swapaxes,
+  "take": take,
+  "trace": trace,
+  "transpose": _transpose,
+  "var": var,
+  "view": _view,
+
+  # Extra methods handy for specializing dispatch
+  # TODO(jakevdp): find another mechanism for exposing these.
+  "broadcast": lax.broadcast,
+  "broadcast_in_dim": lax.broadcast_in_dim,
+  "split": split,
+  "compress": _compress_method,
+  "_multi_slice": _multi_slice,
+}
+
+_array_properties = {
+  "flat": _notimplemented_flat,
+  "T": transpose,
+  "real": real,
+  "imag": imag,
+  "nbytes": _nbytes,
+  "itemsize": _itemsize,
+  "at": _IndexUpdateHelper,
+}
 
 def _set_shaped_array_attributes(shaped_array):
   # Set up operator, method, and property forwarding on Tracer instances
   # containing
   # ShapedArray avals by following the forwarding conventions for Tracer.
   # Forward operators using a single-underscore-prefix naming convention:
-  for operator_name, function in _operators.items():
+  for operator_name, function in _array_operators.items():
     setattr(shaped_array, f"_{operator_name}", staticmethod(function))
   # Forward methods and properties using core.{aval_method, aval_property}:
-  for method_name in _nondiff_methods + _diff_methods:
-    setattr(shaped_array, method_name, core.aval_method(globals()[method_name]))
-  setattr(shaped_array, "reshape", core.aval_method(_reshape))
-  setattr(shaped_array, "transpose", core.aval_method(_transpose))
-  setattr(shaped_array, "flatten", core.aval_method(ravel))
-  setattr(shaped_array, "flat", core.aval_property(_notimplemented_flat))
-  setattr(shaped_array, "T", core.aval_property(transpose))
-  setattr(shaped_array, "real", core.aval_property(real))
-  setattr(shaped_array, "imag", core.aval_property(imag))
-  setattr(shaped_array, "astype", core.aval_method(_astype))
-  setattr(shaped_array, "view", core.aval_method(_view))
-  setattr(shaped_array, "nbytes", core.aval_property(_nbytes))
-  setattr(shaped_array, "itemsize", core.aval_property(_itemsize))
-  setattr(shaped_array, "clip", core.aval_method(_clip))
-
+  for method_name, method in _array_methods.items():
+    setattr(shaped_array, method_name, core.aval_method(method))
+  for prop_name, prop in _array_properties.items():
+    setattr(shaped_array, prop_name, core.aval_property(prop))
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
-  setattr(shaped_array, "broadcast", core.aval_method(lax.broadcast))
-  setattr(shaped_array, "broadcast_in_dim", core.aval_method(lax.broadcast_in_dim))
-  setattr(shaped_array, "split", core.aval_method(split))
-  setattr(shaped_array, "compress", _compress_method)
-  setattr(shaped_array, "at", core.aval_property(_IndexUpdateHelper))
-  setattr(shaped_array, "item", core.aval_method(device_array.DeviceArray.item))
 
 _set_shaped_array_attributes(ShapedArray)
 _set_shaped_array_attributes(DShapedArray)
@@ -5441,39 +5527,31 @@ def _set_device_array_base_attributes(device_array, include=None, exclude=None):
     if not include or attr_name in include:
       setattr(device_array, attr_name, target)
 
-  for operator_name, function in _operators.items():
+  for operator_name, function in _array_operators.items():
     maybe_setattr(f"__{operator_name}__", function)
-  for method_name in _nondiff_methods + _diff_methods:
-    maybe_setattr(method_name, globals()[method_name])
-  maybe_setattr("reshape", _reshape)
-  maybe_setattr("transpose", _transpose)
-  maybe_setattr("flatten", ravel)
-  maybe_setattr("flat", property(_notimplemented_flat))
-  maybe_setattr("T", property(transpose))
-  maybe_setattr("real", property(real))
-  maybe_setattr("imag", property(imag))
-  maybe_setattr("astype", _astype)
-  maybe_setattr("view", _view)
-  maybe_setattr("nbytes", property(_nbytes))
-  maybe_setattr("itemsize", property(_itemsize))
-  maybe_setattr("clip", _clip)
+  for method_name, method in _array_methods.items():
+    maybe_setattr(method_name, method)
+  for prop_name, prop in _array_properties.items():
+    maybe_setattr(prop_name, property(prop))
 
 _set_device_array_base_attributes(device_array.DeviceArray)
 _set_device_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
 
-
 def _set_device_array_attributes(device_array):
   setattr(device_array, "__array_module__", __array_module__)
-  # Extra methods that are handy
-  setattr(device_array, "broadcast", lax.broadcast)
-  setattr(device_array, "broadcast_in_dim", lax.broadcast_in_dim)
-  setattr(device_array, "split", split)
-  setattr(device_array, "compress", _compress_method)
-  setattr(device_array, "_multi_slice", _multi_slice)
-  setattr(device_array, "at", property(_IndexUpdateHelper))
 
 for t in device_array.device_array_types:
   _set_device_array_attributes(t)
 _set_device_array_attributes(pxla._ShardedDeviceArray)
-_set_device_array_attributes(pxla.pmap_lib.ShardedDeviceArray)
+_set_device_array_attributes(pmap_lib.ShardedDeviceArray)
 _set_device_array_attributes(ArrayImpl)
+
+def _set_jax_array_abstract_methods(jax_array):
+  for operator_name, function in _array_operators.items():
+    setattr(jax_array, f"__{operator_name}__", abc.abstractmethod(function))
+  for method_name, method in _array_methods.items():
+    setattr(jax_array, method_name, abc.abstractmethod(method))
+  for prop_name, prop in _array_properties.items():
+    setattr(jax_array, prop_name, abc.abstractproperty(prop))
+
+_set_jax_array_abstract_methods(jax.Array)

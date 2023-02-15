@@ -19,7 +19,6 @@ from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
 from jax._src.device_array import DeviceArray as DeviceArray
-from jax._src.lib import xla_extension_version
 
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
@@ -175,6 +174,7 @@ from jax._src.numpy.lax_numpy import (
     nan_to_num as nan_to_num,
     nanargmax as nanargmax,
     nanargmin as nanargmin,
+    argpartition as argpartition,
     nanmedian as nanmedian,
     nanpercentile as nanpercentile,
     nanquantile as nanquantile,
@@ -257,14 +257,12 @@ from jax._src.numpy.lax_numpy import (
     where as where,
     zeros as zeros,
     zeros_like as zeros_like,
-    _NOT_IMPLEMENTED,
 )
 
-if xla_extension_version >= 117:
-  from jax._src.numpy.lax_numpy import (
-    float8_e4m3fn,
-    float8_e5m2,
-  )
+from jax._src.numpy.lax_numpy import (
+  float8_e4m3fn,
+  float8_e5m2,
+)
 
 from jax._src.numpy.index_tricks import (
   c_ as c_,
@@ -422,19 +420,3 @@ from jax._src.numpy.ufuncs import (
 )
 
 from jax._src.numpy.vectorize import vectorize as vectorize
-
-# Module initialization is encapsulated in a function to avoid accidental
-# namespace pollution.
-def _init():
-  import numpy as np
-  from jax._src.numpy import lax_numpy
-  from jax._src import util
-  # Builds a set of all unimplemented NumPy functions.
-  for name, func in util.get_module_functions(np).items():
-    if name not in globals():
-      _NOT_IMPLEMENTED.append(name)
-      globals()[name] = lax_numpy._not_implemented(func, module='numpy')
-
-_init()
-del _init
-del xla_extension_version

@@ -17,11 +17,14 @@ from __future__ import annotations
 
 from functools import partial
 import operator
+import warnings
 
 from typing import NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+import jax.numpy as jnp
+from jax import config
 from jax import core
 from jax import lax
 from jax import tree_util
@@ -30,14 +33,58 @@ from jax.experimental.sparse import bcoo
 from jax.experimental.sparse.util import (
     nfold_vmap, _count_stored_elements,
     _csr_to_coo, _dot_general_validated_shape,
-    SparseInfo, Shape)
-import jax.numpy as jnp
-from jax._src import api_util
-from jax._src.lax.lax import DotDimensionNumbers
+    CuSparseEfficiencyWarning, SparseInfo, Shape)
 from jax.util import split_list, safe_zip
-from jax.interpreters import batching
-from jax.interpreters import mlir
+
+from jax._src import api_util
+from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
+from jax._src.lib import gpu_sparse
+from jax._src.lib.mlir.dialects import hlo
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.typing import Array, ArrayLike, DTypeLike
+
+
+def bcsr_eliminate_zeros(mat: BCSR, nse: Optional[int] = None) -> BCSR:
+  """Eliminate zeros in BCSR representation."""
+  return BCSR.from_bcoo(bcoo.bcoo_eliminate_zeros(mat.to_bcoo(), nse=nse))
+
+
+def bcsr_sum_duplicates(mat: BCSR, nse: Optional[int] = None) -> BCSR:
+  """Sums duplicate indices within a BCSR array, returning an array with sorted indices.
+
+  Args:
+    mat : BCSR array
+    nse : integer (optional). The number of specified elements in the output matrix. This must
+      be specified for bcoo_sum_duplicates to be compatible with JIT and other JAX transformations.
+      If not specified, the optimal nse will be computed based on the contents of the data and
+      index arrays. If specified nse is larger than necessary, data and index arrays will be padded
+      with standard fill values. If smaller than necessary, data elements will be dropped from the
+      output matrix.
+
+  Returns:
+    mat_out : BCSR array with sorted indices and no duplicate indices.
+  """
+  return BCSR.from_bcoo(bcoo.bcoo_sum_duplicates(mat.to_bcoo(), nse=nse))
+
+
+def _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
+  data, indices, indptr = batched_args
+  data_bdim, indices_bdim, indptr_bdim = batch_dims
+  n_batch = indices.ndim - 1 + int(indices_bdim is None)
+  if not all(b is None or 0 <= b < n_batch for b in batch_dims):
+    raise NotImplementedError("batch_dims must be None or satisfy 0 < dim < n_batch. "
+                              f"Got {batch_dims=} for {n_batch=}.")
+  batched_data, batched_indices, batched_indptr = [
+      lax.expand_dims(arg, [0]) if bdim is None else jnp.moveaxis(arg, bdim, 0)
+      for arg, bdim in [(data, data_bdim), (indices, indices_bdim), (indptr, indptr_bdim)]]
+  if batch_size is None:
+    batch_size = max(arg.shape[dim] for arg, dim in zip(batched_args, batch_dims) if dim is not None)
+  batched_spinfo = SparseInfo((batch_size, *spinfo.shape),
+                              indices_sorted=spinfo.indices_sorted,
+                              unique_indices=spinfo.unique_indices)
+  return batched_data, batched_indices, batched_indptr, batched_spinfo
 
 
 class BCSRProperties(NamedTuple):
@@ -208,17 +255,45 @@ def _bcsr_fromdense_abstract_eval(mat, *, nse, n_batch, n_dense, index_dtype):
 def _bcsr_fromdense_batching_rule(batched_args, batch_dims, *, nse, n_batch,
                                   n_dense, index_dtype):
   M, = batched_args
-  if batch_dims != (0,):
-    raise NotImplementedError(f"{batch_dims=}")
-  new_n_batch = n_batch + 1
-  n_sparse = M.ndim - n_dense - new_n_batch
-  if n_sparse != 2:
-    raise ValueError("_bcsr_fromdense_batching_rule: must have 2 sparse "
-                     f"dimensions but {n_sparse} is given.")
-  return _bcsr_fromdense(M, nse=nse, n_batch=new_n_batch, n_dense=n_dense,
-                         index_dtype=index_dtype), (0, 0, 0)
+  bdim, = batch_dims
+  if not (0 <= bdim <= n_batch):
+    raise ValueError(f"Expected 0 < bdim <= n_batch; got {bdim=}, {n_batch=}")
+  return _bcsr_fromdense(M, nse=nse, n_batch=n_batch + 1, n_dense=n_dense, index_dtype=index_dtype), (bdim, bdim, bdim)
 
 
+def _bcsr_fromdense_jvp(primals, tangents, *, nse, n_batch, n_dense, index_dtype):
+  M, = primals
+  Mdot, = tangents
+
+  primals_out = _bcsr_fromdense(M, nse=nse, n_batch=n_batch, n_dense=n_dense, index_dtype=index_dtype)
+  data, indices, indptr = primals_out
+
+  if type(Mdot) is ad.Zero:
+    data_dot = ad.Zero.from_value(data)
+  else:
+    data_dot = bcsr_extract(indices, indptr, Mdot)
+
+  tangents_out = (data_dot, ad.Zero.from_value(indices), ad.Zero.from_value(indptr))
+
+  return primals_out, tangents_out
+
+
+def _bcsr_fromdense_transpose(ct, M, *, nse, n_batch, n_dense, index_dtype):
+  data, indices, indptr = ct
+  n_sparse = M.ndim - n_batch - n_dense
+  assert data.shape == M.shape[:n_batch] + (nse,) + M.shape[n_batch + n_sparse:]
+  assert indices.shape == M.shape[:n_batch] + (n_sparse, nse)
+  assert indptr.shape == M.shape[:n_batch] + (M.shape[n_batch] + 1,)
+  assert indices.dtype == index_dtype
+  assert indptr.dtype == index_dtype
+  if isinstance(indices, ad.Zero) or isinstance(indptr, ad.Zero):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ad.is_undefined_primal(M)
+  return _bcsr_todense(data, indices, indptr, spinfo=SparseInfo(M.aval.shape))
+
+
+ad.primitive_jvps[bcsr_fromdense_p] = _bcsr_fromdense_jvp
+ad.primitive_transposes[bcsr_fromdense_p] = _bcsr_fromdense_transpose
 batching.primitive_batchers[bcsr_fromdense_p] = _bcsr_fromdense_batching_rule
 mlir.register_lowering(bcsr_fromdense_p, mlir.lower_fun(
     _bcsr_fromdense_impl, multiple_results=True))
@@ -275,17 +350,27 @@ def _bcsr_todense_abstract_eval(data, indices, indptr, *, spinfo):
 
 
 def _bcsr_todense_batching_rule(batched_args, batch_dims, *, spinfo):
-  data, indices, indptr = batched_args
-  if any(b not in [0, None] for b in batch_dims):
-    raise NotImplementedError(f"{batch_dims=}. Only 0 and None are supported.")
-  if batch_dims[0] is None:
-    data = data[None, ...]
-  if batch_dims[1] is None:
-    indices = indices[None, ...]
-  if batch_dims[2] is None:
-    indptr = indptr[None, ...]
+  data, indices, indptr, spinfo = _bcsr_batch_dims_to_front(batched_args, batch_dims, spinfo)
   return _bcsr_todense(data, indices, indptr, spinfo=spinfo), 0
 
+
+def _bcsr_todense_jvp(data_dot, data, indices, indptr, *, spinfo):
+  del data
+  return _bcsr_todense(data_dot, indices, indptr, spinfo=spinfo)
+
+
+def _bcsr_todense_transpose(ct, data, indices, indptr, *, spinfo):
+  shape = spinfo.shape
+  assert ad.is_undefined_primal(data)
+  if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ct.shape == shape
+  assert ct.dtype == data.aval.dtype
+  return bcsr_extract(indices, indptr, ct), indices, indptr
+
+
+ad.defjvp(bcsr_todense_p, _bcsr_todense_jvp, None, None)
+ad.primitive_transposes[bcsr_todense_p] = _bcsr_todense_transpose
 batching.primitive_batchers[bcsr_todense_p] = _bcsr_todense_batching_rule
 mlir.register_lowering(bcsr_todense_p, mlir.lower_fun(
     _bcsr_todense_impl, multiple_results=False))
@@ -324,6 +409,43 @@ def _bcsr_extract_abstract_eval(indices, indptr, mat):
   return core.ShapedArray(out_shape, mat.dtype)
 
 
+def _bcsr_extract_jvp(arr_dot, indices, indptr, arr):
+  assert arr_dot.shape == arr.shape
+  return bcsr_extract(indices, indptr, arr_dot)
+
+
+def _bcsr_extract_transpose(ct, indices, indptr, arr):
+  assert ad.is_undefined_primal(arr)
+  if ad.is_undefined_primal(indices) or ad.is_undefined_primal(indptr):
+    raise ValueError("Cannot transpose with respect to sparse indices")
+  assert ct.dtype == arr.aval.dtype
+  return indices, indptr, _bcsr_todense(ct, indices, indptr, spinfo=SparseInfo(arr.aval.shape))
+
+
+def _bcsr_extract_batching_rule(batched_args, batch_dims):
+  indices, indptr, arr = batched_args
+  bdim_set = {b for b in batch_dims if b is not None}
+  if len(bdim_set) != 1:
+    # TODO(jakevdp): handle this by moving bdim to front?
+    raise NotImplementedError("bcoo_extract with unequal batch dimensions.")
+  bdim = next(iter(bdim_set))
+  if batch_dims[0] is None:
+    indices = lax.expand_dims(indices, (bdim,))
+  if batch_dims[1] is None:
+    indptr = lax.expand_dims(indptr, (bdim,))
+  if batch_dims[2] is None:
+    # TODO(jakevdp) can we handle this case without explicit broadcasting?
+    result_shape = list(arr.shape)
+    result_shape.insert(bdim, indices.shape[bdim])
+    arr = lax.broadcast_in_dim(arr, result_shape, (bdim,))
+  n_batch = indices.ndim - 1
+  if bdim >= n_batch:
+    raise ValueError(f"{batch_dims=} out of range for indices with {n_batch=}")
+  return bcsr_extract(indices, indptr, arr), bdim
+
+ad.defjvp(bcsr_extract_p, None, None, _bcsr_extract_jvp)
+ad.primitive_transposes[bcsr_extract_p] = _bcsr_extract_transpose
+batching.primitive_batchers[bcsr_extract_p] = _bcsr_extract_batching_rule
 mlir.register_lowering(bcsr_extract_p, mlir.lower_fun(
     _bcsr_extract_impl, multiple_results=False))
 
@@ -425,52 +547,156 @@ def _bcsr_dot_general_abstract_eval(lhs_data, lhs_indices, lhs_indptr, rhs, *,
   return core.ShapedArray(out_shape, lhs_data.dtype)
 
 
-# def _bcsr_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, lhs_indptr,
-#                               rhs, *, dimension_numbers, lhs_spinfo):
-#   del lhs_data
-#   return _bcsr_dot_general(lhs_data_dot, lhs_indices, lhs_indptr, rhs,
-#                            dimension_numbers=dimension_numbers,
-#                            lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+                              dimension_numbers, lhs_spinfo):
+  del lhs_data
+  return _bcsr_dot_general(lhs_data_dot, lhs_indices, lhs_indptr, rhs,
+                           dimension_numbers=dimension_numbers,
+                           lhs_spinfo=lhs_spinfo)
 
 
-# def _bcsr_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, lhs_indptr, rhs,
-#                               *, dimension_numbers, lhs_spinfo):
-#   del rhs
-#   return _bcsr_dot_general(lhs_data, lhs_indices, lhs_indptr, rhs_dot,
-#                            dimension_numbers=dimension_numbers,
-#                            lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+                              dimension_numbers, lhs_spinfo):
+  del rhs
+  return _bcsr_dot_general(lhs_data, lhs_indices, lhs_indptr, rhs_dot,
+                           dimension_numbers=dimension_numbers,
+                           lhs_spinfo=lhs_spinfo)
 
 
-# def _bcsr_dot_general_transpose(ct, lhs_data, lhs_indices, lhs_inptr, rhs, *,
-#                                  dimension_numbers, lhs_spinfo):
-#   lhs_bcoo_indices = _bcsr_to_bcoo(
-#     lhs_indices, lhs_inptr, shape=lhs_spinfo.shape)
-#   return bcoo._bcoo_dot_general_transpose(
-#       ct, lhs_data, lhs_bcoo_indices, rhs, dimension_numbers=dimension_numbers,
-#       lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_transpose(ct, lhs_data, lhs_indices, lhs_indptr, rhs, *,
+                                 dimension_numbers, lhs_spinfo):
+  # TODO(jakevdp): implement this in terms of bcsr_dot_general
+  lhs_bcoo_indices = _bcsr_to_bcoo(
+    lhs_indices, lhs_indptr, shape=lhs_spinfo.shape)
+  data_out, _, rhs_out = bcoo._bcoo_dot_general_transpose(
+      ct, lhs_data, lhs_bcoo_indices, rhs, dimension_numbers=dimension_numbers,
+      lhs_spinfo=lhs_spinfo)
+  return data_out, lhs_indices, lhs_indptr, rhs_out
 
 
-# def _bcsr_dot_general_batch_rule(batched_args, batch_dims, *,
-#                                  dimension_numbers, lhs_spinfo):
-#   lhs_data, lhs_indices, lhs_indptr, rhs = batched_args
-#   lhs_bcoo_indices = _bcsr_to_bcoo(
-#     lhs_indices, lhs_indptr, shape=lhs_spinfo.shape)
-#   return bcoo._bcoo_dot_general_batch_rule(
-#       (lhs_data, lhs_bcoo_indices, rhs), batch_dims,
-#       dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+def _bcsr_dot_general_batch_rule(batched_args, batch_dims, *,
+                                 dimension_numbers, lhs_spinfo):
+  *lhs_args, rhs = batched_args
+  *lhs_dims, rhs_bdim = batch_dims
+  *new_lhs_args, new_lhs_spinfo = _bcsr_batch_dims_to_front(
+    lhs_args, lhs_dims, lhs_spinfo,
+    batch_size=None if rhs_bdim is None else rhs.shape[rhs_bdim])
+  new_dimension_numbers, result_batch_dim = _dot_general_batch_dim_nums(
+      (len(lhs_spinfo.shape), rhs.ndim), (0, rhs_bdim), dimension_numbers)
+  batched_out = _bcsr_dot_general(*new_lhs_args, rhs, lhs_spinfo=new_lhs_spinfo,
+                                  dimension_numbers=new_dimension_numbers)
+  return batched_out, result_batch_dim
 
 
-# ad.defjvp(bcsr_dot_general_p, _bcsr_dot_general_jvp_lhs, None,
-#           _bcsr_dot_general_jvp_rhs)
-# ad.primitive_transposes[bcsr_dot_general_p] = _bcsr_dot_general_transpose
-# batching.primitive_batchers[bcsr_dot_general_p] = _bcsr_dot_general_batch_rule
+ad.defjvp(bcsr_dot_general_p, _bcsr_dot_general_jvp_lhs, None, None,
+          _bcsr_dot_general_jvp_rhs)
+ad.primitive_transposes[bcsr_dot_general_p] = _bcsr_dot_general_transpose
+batching.primitive_batchers[bcsr_dot_general_p] = _bcsr_dot_general_batch_rule
 
+
+def _bcsr_correct_out_of_bound_indices(data, indices, indptr, rhs, *, shape):
+  del rhs  # unused
+  props = _validate_bcsr(data, indices, indptr, shape)
+  if props.n_batch:
+    f = partial(_bcsr_correct_out_of_bound_indices, shape=shape[props.n_batch:])
+    return nfold_vmap(f, props.n_batch)(data, indices, indptr)
+  extent = indptr[-1]
+  i_data = lax.broadcasted_iota(indptr.dtype, data.shape, 0)
+  data = jnp.where(i_data < extent, data, 0)
+  i_indices = lax.broadcasted_iota(indptr.dtype, indices.shape, 0)
+  indices = jnp.where(i_indices < extent, indices, 0)
+  return [data, indices]
+
+_bcsr_correct_out_of_bound_indices_lowered = mlir.lower_fun(
+    _bcsr_correct_out_of_bound_indices, multiple_results=True)
+
+def _bcsr_dot_general_gpu_lowering(
+    csr_matvec_lowering, csr_matmat_lowering,
+    ctx, lhs_data, lhs_indices, lhs_indptr, rhs, *, dimension_numbers,
+    lhs_spinfo: SparseInfo):
+
+  if not config.jax_bcoo_cusparse_lowering:
+    return _bcsr_dot_general_default_lowering(
+      ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_data_aval, lhs_indices_aval, lhs_indptr_aval, rhs_aval = ctx.avals_in
+  props = _validate_bcsr(
+      lhs_data_aval, lhs_indices_aval, lhs_indptr_aval, lhs_spinfo.shape)
+
+  use_default_lowering = False
+  dtype = lhs_data_aval.dtype
+  # TODO(vanderplas, tianjianlu): lower batched matmuls to GPU
+  if lhs_batch or rhs_batch:
+    # batch dimensions in dot_general are not supported
+    use_default_lowering = True
+  elif len(lhs_spinfo.shape) != 2 or rhs_aval.ndim not in [1, 2]:
+    # only matmat / matvec supported
+    use_default_lowering = True
+  elif props.n_batch or props.n_dense:
+    # batch and dense dimensions in BCSR not supported
+    use_default_lowering = True
+  elif list(lhs_contract) != [1]:
+    # cusparse cannot contract over more than one dimension
+    use_default_lowering = True
+  elif dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
+    # This would be supported if not for the dtype.
+    warnings.warn(f'bcsr_dot_general cusparse/hipsparse lowering not available '
+                  f'for {dtype=}. Falling back to default implementation.',
+                  CuSparseEfficiencyWarning)
+    use_default_lowering = True
+
+  if use_default_lowering:
+    return _bcsr_dot_general_default_lowering(
+      ctx, lhs_data, lhs_indices, lhs_indptr, rhs,
+      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
+  # Account for a bug in cusparse: it references indices and data beyond
+  # the extent of indptr.
+  (lhs_data,), (lhs_indices,) = _bcsr_correct_out_of_bound_indices_lowered(
+      ctx, lhs_data, lhs_indices, lhs_indptr, rhs, shape=lhs_spinfo.shape)
+
+  if rhs_aval.ndim == 1:
+    dot_general_fn = csr_matvec_lowering
+    x_dtype = 'x_dtype'
+  elif rhs_aval.ndim == 2:
+    dot_general_fn = csr_matmat_lowering
+    x_dtype = 'B_dtype'
+    if rhs_contract[0] == 1:
+      rhs = hlo.TransposeOp(
+          rhs, permutation=mlir.dense_int_elements([1, 0])).result
+  else:
+    raise ValueError(f"rhs has to be 1d or 2d; get {rhs_aval.ndim}d.")
+
+  return [dot_general_fn(lhs_data, lhs_indices, lhs_indptr, rhs,
+                         shape=lhs_spinfo.shape, transpose=False,
+                         data_dtype=lhs_data_aval.dtype,
+                         index_dtype=lhs_indices_aval.dtype,
+                         **{x_dtype: rhs_aval.dtype})]
 
 _bcsr_dot_general_default_lowering = mlir.lower_fun(
     _bcsr_dot_general_impl, multiple_results=False)
+
 mlir.register_lowering(
     bcsr_dot_general_p, _bcsr_dot_general_default_lowering)
 
+if gpu_sparse.cuda_is_supported:
+  mlir.register_lowering(bcsr_dot_general_p,
+                          partial(_bcsr_dot_general_gpu_lowering,
+                                  gpu_sparse.cuda_csr_matvec,
+                                  gpu_sparse.cuda_csr_matmat),
+                          platform='cuda')
+if gpu_sparse.rocm_is_supported:
+  mlir.register_lowering(bcsr_dot_general_p,
+                          partial(_bcsr_dot_general_gpu_lowering,
+                                  gpu_sparse.rocm_csr_matvec,
+                                  gpu_sparse.rocm_csr_matmat),
+                          platform='rocm')
+
+
+#----------------------------------------------------------------------
+# BCOO functions that maybe should be primitives?
 
 @tree_util.register_pytree_node_class
 class BCSR(JAXSparse):
@@ -485,17 +711,21 @@ class BCSR(JAXSparse):
   n_batch = property(lambda self: self.indices.ndim - 1)
   n_sparse = property(lambda _: 2)
   n_dense = property(lambda self: self.data.ndim - self.indices.ndim)
+  indices_sorted: bool
+  unique_indices: bool
   _bufs = property(lambda self: (self.data, self.indices, self.indptr))
-  _info = property(lambda self: SparseInfo(self.shape))
+  _info = property(lambda self: SparseInfo(self.shape, self.indices_sorted,
+                                           self.unique_indices))
 
   @property
   def _sparse_shape(self):
     return tuple(self.shape[self.n_batch:self.n_batch + 2])
 
-  def __init__(self, args, *, shape):
-    # JAX transforms will sometimes instantiate pytrees with null values, so we
-    # must catch that in the initialization of inputs.
+  def __init__(self, args: Tuple[Array, Array, Array], *, shape: Sequence[int],
+               indices_sorted: bool = False, unique_indices: bool = False):
     self.data, self.indices, self.indptr = map(jnp.asarray, args)
+    self.indices_sorted = indices_sorted
+    self.unique_indices = unique_indices
     super().__init__(args, shape=shape)
     _validate_bcsr(self.data, self.indices, self.indptr, self.shape)
 
@@ -550,6 +780,32 @@ class BCSR(JAXSparse):
                        index_dtype)
     indptr = jnp.zeros((*batch_shape, sparse_shape[0] + 1), index_dtype)
     return cls((data, indices, indptr), shape=shape)
+
+  def sum_duplicates(self, nse: Optional[int] = None, remove_zeros: bool = True) -> BCSR:
+    """Return a copy of the array with duplicate indices summed.
+
+    Additionally, this operation will result in explicit zero entries removed, and
+    indices being sorted in lexicographic order.
+
+    Because the size of the resulting representation depends on the values in the
+    arrays, this operation is not compatible with JIT or other transforms. To use
+    ``sum_duplicates`` in such cases, you may pass a value to `nse` to specify the
+    desired size of the output representation.
+
+    Args:
+      nse : integer (optional), if specified, gives the number of specified elements in
+        the output sparse representation; if it is larger than the number required, data
+        will be padded with zeros and indices will be padded with out-of-bounds values.
+        If it is smaller than the number required, data will be silently discarded.
+      remove_zeros : bool (default=True). If True, remove explicit zeros from the data
+        as part of summing duplicates. If False, then explicit zeros at unique indices
+        will remain among the specified elements. Note: remove_zeros=True is incompatible
+        with autodiff.
+    """
+    if remove_zeros:
+      return bcsr_eliminate_zeros(self, nse=nse)
+    else:
+      return bcsr_sum_duplicates(self, nse=nse)
 
   @classmethod
   def fromdense(cls, mat, *, nse=None, index_dtype=np.int32, n_dense=0,

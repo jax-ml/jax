@@ -282,6 +282,15 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol, atol=tol)
 
+  @jtu.sample_product(rec = JAX_REDUCER_INITIAL_RECORDS)
+  def testReducerBadInitial(self, rec):
+    jnp_op = getattr(jnp, rec.name)
+    arr = jnp.ones((2, 3, 4))
+    initial = jnp.zeros((1, 2, 3))
+    msg = r"initial value must be a scalar. Got array of shape \(1, 2, 3\)"
+    with self.assertRaisesRegex(ValueError, msg):
+      jnp_op(arr, axis=-1, initial=initial)
+
   @parameterized.parameters(itertools.chain.from_iterable(
     jtu.sample_product_testcases(
       [dict(name=rec.name, rng_factory=rec.rng_factory, inexact=rec.inexact)],

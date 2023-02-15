@@ -13,8 +13,10 @@ jobs:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
         python-version: ["3.10"] # TODO(jakevdp): update to 3.11 when available.
-        jaxlib-version: ["latest-release", "nightly"]
+        jaxlib-version: ["latest", "nightly"]
         tpu-type: ["v3-8", "v4-8"]
+        pjrt: ["true", "false"]
+    name: "TPU test (${{ matrix.jaxlib-version }}, pjrt=${{ matrix.pjrt }}, ${{ matrix.tpu-type }})"
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     steps:
       # https://opensource.google/documentation/reference/github/services#actions
@@ -31,7 +33,7 @@ jobs:
       - name: Install JAX
         run: |
           pip uninstall -y jax jaxlib libtpu-nightly
-          if [ "${{ matrix.jaxlib-version }}" == "latest-release" ]; then
+          if [ "${{ matrix.jaxlib-version }}" == "latest" ]; then
             pip install .[tpu] \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
@@ -55,12 +57,15 @@ jobs:
       - name: Run tests
         env:
           JAX_PLATFORMS: tpu,cpu
+          JAX_USE_PJRT_C_API_ON_TPU: ${{ matrix.pjrt }}
+          EXTRA_TAGS: "${{ matrix.pjrt == 'true' && 'and not pjrt_c_api_unimplemented' || '' }}"
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python -m pytest -n=4 --tb=short \
-            --maxfail=20 -m "not multiaccelerator" tests examples
+            --maxfail=20 -m "not multiaccelerator ${EXTRA_TAGS}" tests examples
           # Run multi-accelerator across all chips
-          python -m pytest -m "multiaccelerator" --tb=short --maxfail=20 tests
+          python -m pytest --tb=short --maxfail=20 \
+            -m "multiaccelerator ${EXTRA_TAGS}" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}

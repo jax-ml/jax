@@ -20,29 +20,25 @@ import weakref
 import numpy as np
 
 import jax
+from jax.interpreters import partial_eval as pe
+
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
+from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.lax import lax
 from jax._src.lax.utils import (
     _argnum_weak_type,
     _input_dtype,
     standard_primitive,
 )
-from jax._src.lax import lax
-from jax._src import util
-from jax._src.util import safe_map, safe_zip
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.lib import xla_bridge
-from jax._src.lib import xla_client
 from jax._src.typing import Array, ArrayLike, Shape
-
-xb = xla_bridge
-xc = xla_client
+from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1059,18 +1055,6 @@ def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
 
-def _gather_dimensions_proto(
-    indices_shape: Sequence[int], dimension_numbers: GatherDimensionNumbers
-) -> xla_client.GatherDimensionNumbers:
-  assert type(dimension_numbers) is GatherDimensionNumbers
-  proto = xla_client.GatherDimensionNumbers()
-  proto.offset_dims.extend(dimension_numbers.offset_dims)
-  proto.collapsed_slice_dims.extend(dimension_numbers.collapsed_slice_dims)
-  proto.start_index_map.extend(dimension_numbers.start_index_map)
-  assert len(indices_shape) > 0, indices_shape
-  proto.index_vector_dim = len(indices_shape) - 1
-  return proto
-
 def _gather_dtype_rule(operand, indices, *, fill_value, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
@@ -1422,19 +1406,6 @@ def _gather_lower(ctx, operand, indices, *,
         indices_are_sorted=ir.BoolAttr.get(indices_are_sorted)).results
 
 mlir.register_lowering(gather_p, _gather_lower)
-
-def _scatter_dimensions_proto(
-    indices_shape: Sequence[int], dimension_numbers: ScatterDimensionNumbers
-) -> xla_client.ScatterDimensionNumbers:
-  assert type(dimension_numbers) is ScatterDimensionNumbers
-  proto = xla_client.ScatterDimensionNumbers()
-  proto.update_window_dims.extend(dimension_numbers.update_window_dims)
-  proto.inserted_window_dims.extend(dimension_numbers.inserted_window_dims)
-  proto.scatter_dims_to_operand_dims.extend(
-      dimension_numbers.scatter_dims_to_operand_dims)
-  assert len(indices_shape) > 0, indices_shape
-  proto.index_vector_dim = len(indices_shape) - 1
-  return proto
 
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):

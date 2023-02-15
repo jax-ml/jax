@@ -883,9 +883,10 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     method=[None, "scott", "silverman", 1.5, "callable"],
     func=[None, "evaluate", "logpdf", "pdf"],
   )
+  @jax.default_matmul_precision("float32")
   def testKde(self, inshape, dtype, outsize, weights, method, func):
     if method == "callable":
-      method = lambda kde: jax.numpy.power(kde.neff, -1./(kde.d+4))
+      method = lambda kde: kde.neff ** -1./(kde.d+4)
 
     def scipy_fun(dataset, points, w):
       w = np.abs(w) if weights else None
@@ -915,11 +916,12 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       rng(inshape, dtype), rng(outshape, dtype), rng(inshape[-1:], dtype)]
     self._CheckAgainstNumpy(
         scipy_fun, lax_fun, args_maker, tol={
-            np.float32: 1e-2 if jtu.device_under_test() == "tpu" else 1e-3,
-            np.float64: 1e-14
+            np.float32: 2e-2 if jtu.device_under_test() == "tpu" else 1e-3,
+            np.float64: 3e-14
         })
     self._CompileAndCheck(
-        lax_fun, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+        lax_fun, args_maker, rtol={np.float32: 3e-5, np.float64: 3e-14},
+        atol={np.float32: 3e-4, np.float64: 3e-14})
 
   @jtu.sample_product(
     shape=[(15,), (3, 15), (1, 12)],
@@ -1122,6 +1124,27 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     scipy_fun = jtu.ignore_warning(category=RuntimeWarning,
                                    message="invalid value encountered.*")(scipy_fun)
     lax_fun = partial(lsp_stats.mode, axis=axis, keepdims=keepdims)
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(dtype, tol_spec)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in [(0,), (7,), (47, 8), (0, 2, 3), (10, 5, 21)]
+      for axis in [None, *range(len(shape))
+    ]],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
+    method=['average', 'min', 'max', 'dense', 'ordinal']
+  )
+  def testRankData(self, shape, dtype, axis, method):
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    scipy_fun = partial(osp_stats.rankdata, method=method, axis=axis)
+    lax_fun = partial(lsp_stats.rankdata, method=method, axis=axis)
     tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
     tol = jtu.tolerance(dtype, tol_spec)
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,

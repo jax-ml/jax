@@ -119,18 +119,8 @@ exclude_patterns = [
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
     'jep/9407-type-promotion.md',
-    # TODO: revert to jax-101/*.md once 08-pjit has a notebook
-    'jax-101/01-jax-basics.md',
-    'jax-101/02-jitting.md',
-    'jax-101/03-vectorization.md',
-    'jax-101/04-advanced-autodiff.md',
-    'jax-101/05-random-numbers.md',
-    'jax-101/05.1-pytrees.md',
-    'jax-101/06-parallelism.md',
-    'jax-101/07-state.md',
+    'jax-101/*.md',
     'autodidax.md',
-    # Attempt to fix RTD build failure
-    'transformations.md',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.

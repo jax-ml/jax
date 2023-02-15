@@ -17,40 +17,28 @@
 import abc
 
 class Array(abc.ABC):
-  """Experimental Array base class for JAX
+  """Array base class for JAX
 
-  `jax.Array` is meant as the future public interface for instance checks and
-  type annotation of JAX array objects. JAX Array object types are currently in
-  flux, and this class only fully supports the new `jax.experimental.Array`, which
-  will soon replace the old-style {class}`DeviceArray`, {class}`ShardedDeviceArray`,
-  {class}`GlobalDeviceArray`, etc.
+  ``jax.Array`` is the public interface for instance checks and type annotation of JAX
+  arrays and tracers. Its main applications are in instance checks and type annotations;
+  for example::
 
-  The compatibility is summarized in the following table:
+    x = jnp.arange(5)
+    isinstance(x, jax.Array)  # returns True both inside and outside traced functions.
 
-  ================================  ======================  =========================
-  object type                       ``isinstance`` support  type annotation support
-  ================================  ======================  =========================
-  {class}`DeviceArray`               ✅                      ❌
-  {class}`ShardedDeviceArray`        ✅                      ❌
-  {class}`GlobalDeviceArray`         ✅                      ❌
-  {class}`~jax._src.core.Tracer`     ✅                      ✅
-  {class}`~jax.experimental.Array`   ✅                      ✅
-  ================================  ======================  =========================
+    def f(x: Array) -> Array:  # type annotations are valid for traced and non-traced types.
+      return x
 
-  In other words, ``isinstance(x, jax.Array)`` will return True for any of these types,
-  whereas annotations such as ``x : jax.Array`` will only type-check correctly for
-  instances of {class}`~jax._src.core.Tracer` and {class}`jax.experimental.Array`, and
-  not for the other soon-to-be-deprecated array types.
+  ``jax.Array`` should not be used directly for creation of arrays; instead you should use
+  array creation routines offered in :mod:`jax.numpy`, such as :func:`jax.numpy.array`,
+  :func:`jax.numpy.zeros`, :func:`jax.numpy.ones`, :func:`jax.numpy.full`,
+  :func:`jax.numpy.arange`, etc.
   """
-  # Note: no abstract methods are defined in this base class; the associated pyi
-  # file contains the type signature for static type checking.
+  # Note: abstract methods for this class are defined dynamically in lax_numpy.py
+  # For the sake of static type analysis, these definitinos are mirrored in the
+  # associated basearray.pyi file.
 
   __slots__ = ['__weakref__']
-
-  # at property must be defined because we overwrite its docstring in lax_numpy.py
-  @property
-  def at(self):
-    raise NotImplementedError("property must be defined in subclasses")
 
 
 Array.__module__ = "jax"

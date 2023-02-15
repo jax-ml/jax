@@ -24,21 +24,23 @@ import warnings
 import numpy as np
 
 from jax import tree_util
-from jax.interpreters import ad
 from jax.interpreters import mlir
-from jax.interpreters import xla
 from jax.interpreters import pxla
-from jax.interpreters import batching
+from jax.interpreters import xla
+
 from jax._src import core
 from jax._src import dtypes
+from jax._src import util
 from jax._src.core import ShapedArray, AxisName, raise_to_shaped
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax import lax
 from jax._src.lax import slicing
-from jax._src.numpy import lax_numpy
-import jax._src.util as util
-from jax._src.util import unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo, use_stablehlo
+from jax._src.numpy import lax_numpy
+from jax._src.util import (
+    unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis)
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -1686,15 +1688,15 @@ mlir.register_lowering(
     pdot_p,
     mlir.lower_fun(_pdot_lowering, multiple_results=False))
 
-def _pdot_transpose_lhs(g, y, *, axis_name, pos_contract, pos_batch, precision):
+def _pdot_transpose_lhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO: avals with names, call pbroadcast with axis_name
   return lax._dot_general_transpose_lhs(
-      g, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
+      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
       preferred_element_type=None)
-def _pdot_transpose_rhs(g, x, *, axis_name, pos_contract, pos_batch, precision):
+def _pdot_transpose_rhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
   # TODO: avals with names, call pbroadcast with axis_name
   return lax._dot_general_transpose_rhs(
-      g, x, dimension_numbers=[pos_contract, pos_batch], precision=precision,
+      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
       preferred_element_type=None)
 ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
 

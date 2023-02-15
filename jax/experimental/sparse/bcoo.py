@@ -35,13 +35,13 @@ from jax.experimental.sparse.util import (
   _dot_general_validated_shape, CuSparseEfficiencyWarning,
   SparseEfficiencyError, SparseEfficiencyWarning, Shape,
   SparseInfo)
-from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 import jax.numpy as jnp
-from jax.interpreters import ad
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
   DotDimensionNumbers)
@@ -972,8 +972,6 @@ def _bcoo_dot_general_jvp_rhs(rhs_dot, lhs_data, lhs_indices, rhs, *, dimension_
 
 def _bcoo_dot_general_transpose(ct, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
   assert not ad.is_undefined_primal(lhs_indices)
-  if type(ct) is ad.Zero:
-    return ad.Zero
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
   lhs_ndim = len(lhs_spinfo.shape)
   rhs_ndim = rhs.aval.ndim if ad.is_undefined_primal(rhs) else rhs.ndim
@@ -1749,18 +1747,22 @@ def _bcoo_broadcast_in_dim(data: Array, indices: Array, *, spinfo: SparseInfo, s
 
   if np.prod(spinfo.shape[props.n_batch: props.n_batch + props.n_sparse]) != np.prod(shape[new_n_batch:new_n_batch + new_n_sparse]):
     raise NotImplementedError("Adding sparse dimensions with lengths != 1")
-  nse = props.nse
+  new_data, new_indices = data, indices
+
   # batch & dense dimensions
-  new_data = lax.broadcast_in_dim(data,
-      shape=(*shape[:new_n_batch], nse, *shape[new_n_batch + new_n_sparse:]),
-      broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
-  new_indices = lax.broadcast_in_dim(indices,
-      shape=(*shape[:new_n_batch], nse, props.n_sparse),
-      broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
+  if (new_n_batch, new_n_dense) != (props.n_batch, props.n_dense):
+    new_data = lax.broadcast_in_dim(new_data,
+        shape=(*shape[:new_n_batch], props.nse, *shape[new_n_batch + new_n_sparse:]),
+        broadcast_dimensions=(*batch_dims, new_n_batch, *(b + 1 - new_n_sparse for b in dense_dims)))
+    new_indices = lax.broadcast_in_dim(new_indices,
+        shape=(*shape[:new_n_batch], props.nse, props.n_sparse),
+        broadcast_dimensions=(*batch_dims, new_n_batch, new_n_batch + 1))
 
   # sparse dimensions
-  new_indices = (jnp.zeros_like(new_indices, shape=(*shape[:new_n_batch], nse, new_n_sparse))
-                   .at[..., jnp.array(sparse_dims, int) - new_n_batch].set(new_indices))
+  if new_n_sparse != props.n_sparse:
+    shape = (*shape[:new_n_batch], props.nse, new_n_sparse)
+    ind = jnp.array(sparse_dims, int) - new_n_batch
+    new_indices = (jnp.zeros_like(new_indices, shape=shape).at[..., ind].set(new_indices))
 
   return new_data, new_indices
 
@@ -1896,6 +1898,33 @@ def bcoo_reshape(mat: BCOO, *, new_sizes: Sequence[int], dimensions: Sequence[in
     indices = jnp.where(oob_indices, jnp.array(new_sparse_shape, dtype=indices.dtype), indices)
 
   return BCOO((data, indices), shape=new_sizes)
+
+
+def bcoo_rev(operand, dimensions):
+  """Sparse implementation of {func}`jax.lax.rev`"""
+  # Check validity of dimensions via original implementation.
+  _ = jax.eval_shape(partial(lax.rev, dimensions=dimensions),
+                     jax.ShapeDtypeStruct(operand.shape, operand.dtype))
+  batch_dims = [d for d in dimensions if d < operand.n_batch]
+  sparse_dims = [d for d in dimensions if operand.n_batch <= d < operand.n_batch + operand.n_sparse]
+  dense_dims = [d for d in dimensions if d >= operand.n_batch + operand.n_sparse]
+
+  data, indices = operand.data, operand.indices
+
+  if batch_dims:
+    indices = lax.rev(indices, dimensions=batch_dims)
+  if batch_dims or dense_dims:
+    data = lax.rev(data, dimensions=batch_dims + [d + 1 - operand.n_sparse for d in dense_dims])
+
+  if sparse_dims:
+    sparse_shape = jnp.array(operand.shape[operand.n_batch: operand.n_batch + operand.n_sparse],
+                             dtype=indices.dtype)
+    spdims = jnp.array([d - operand.n_batch for d in sparse_dims])
+    indices = indices.at[..., spdims].mul(-1)
+    indices = indices.at[..., spdims].add(sparse_shape[spdims] - 1)
+    indices = jnp.where(indices < 0, sparse_shape, indices)
+
+  return BCOO((data, indices), shape=operand.shape)
 
 
 def bcoo_squeeze(arr: BCOO, *, dimensions: Sequence[int]) -> BCOO:
@@ -2323,6 +2352,78 @@ def bcoo_gather(operand: BCOO, start_indices: Array,
 
   return result.reshape(out_aval.shape).astype(out_aval.dtype)
 
+def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
+                              lhs_dilation=None, rhs_dilation=None, dimension_numbers=None,
+                              feature_group_count=1, batch_group_count=1, precision=None,
+                              preferred_element_type=None) -> BCOO:
+  # Validate and process parameters using lax.conv_general_dilated abstract evaluation.
+  func = functools.partial(
+      lax.conv_general_dilated,
+      window_strides=window_strides, padding=padding,
+      lhs_dilation=lhs_dilation, rhs_dilation=rhs_dilation, dimension_numbers=dimension_numbers,
+      feature_group_count=feature_group_count, batch_group_count=batch_group_count,
+      precision=precision, preferred_element_type=preferred_element_type)
+  jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
+                               jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+  assert len(jaxpr.eqns) == 1
+  params = jaxpr.eqns[0].params
+
+  if params['lhs_dilation'] !=  (1,) * (lhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with lhs_dilation.")
+  if params['rhs_dilation'] != (1,) * (rhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with lhs_dilation.")
+  if params['window_strides'] != (1,) * (lhs.ndim - 2):
+    raise NotImplementedError("bcoo convolution with non-unit window_strides.")
+  if params['batch_group_count'] != params['feature_group_count'] != 1:
+    raise NotImplementedError("bcoo convolution with non-unit group counts.")
+
+  if lhs.shape[:2] != rhs.shape[:2] != (1, 1):
+    raise NotImplementedError("bcoo convolution with leading dimensions other than (1, 1)")
+
+  index_dtype = (lhs.indices.dtype if hasattr(lhs, 'indices')
+                 else rhs.indices.dtype if hasattr(rhs, 'indices')
+                 else 'int32')
+
+  padding, = params['padding']
+  return _bcoo_conv_1d(_convert_to_1d_for_conv(lhs, index_dtype),
+                       _convert_to_1d_for_conv(rhs, index_dtype),
+                       padding=padding)
+
+def _convert_to_1d_for_conv(mat, index_dtype):
+  if isinstance(mat, (jax.Array, np.ndarray)):
+    data = lax.squeeze(mat, (0, 1))
+    indices = lax.broadcasted_iota(index_dtype, (len(data), 1), 0)
+  elif isinstance(mat, BCOO):
+    mat = mat.update_layout(n_batch=2, n_dense=0)
+    data = lax.squeeze(mat.data, (0, 1))
+    indices = lax.squeeze(mat.indices, (0, 1))
+    # zero-out data at OOB indices, otherwise strange things happen.
+    data = jnp.where(lax.squeeze(indices, (1,)) < mat.shape[-1], data, 0)
+  else:
+    raise ValueError(f"bcoo_conv_general_dilated: input of type {type(mat)} not recognized.")
+  return BCOO((data, indices), shape=mat.shape[2:])
+
+def _bcoo_conv_1d(lhs: BCOO, rhs: BCOO, padding: Sequence[int]) -> BCOO:
+  assert lhs.ndim == lhs.n_sparse == rhs.ndim == rhs.n_sparse == 1
+  assert lhs.dtype == rhs.dtype
+  padding = tuple(map(int, padding))
+  assert len(padding) == 2
+
+  new_data = (lhs.data[:, None] * rhs.data[None, :]).ravel()
+
+  offset = padding[0] - rhs.indices
+  new_indices = (lhs.indices[:, None] + offset[None, :]).ravel()
+
+  mask = (new_indices < 0)
+  new_indices = jnp.where(mask, 0, new_indices)
+  new_data = jnp.where(mask, 0, new_data)
+  dimsize = max(0, lhs.shape[0] + padding[0] + padding[1] - rhs.shape[0] + 1)
+
+  new_data = lax.expand_dims(new_data, (0, 1))
+  new_indices = lax.expand_dims(new_indices, (0, 1, 3))
+  return BCOO((new_data, new_indices), shape=(1, 1, dimsize))
+
+
 @tree_util.register_pytree_node_class
 class BCOO(JAXSparse):
   """Experimental batched COO matrix implemented in JAX
@@ -2392,8 +2493,6 @@ class BCOO(JAXSparse):
 
   def __init__(self, args: Tuple[Array, Array], *, shape: Sequence[int],
                indices_sorted: bool = False, unique_indices: bool = False):
-    # JAX transforms will sometimes instantiate pytrees with null values, so we
-    # must catch that in the initialization of inputs.
     self.data, self.indices = map(jnp.asarray, args)
     self.indices_sorted = indices_sorted
     self.unique_indices = unique_indices

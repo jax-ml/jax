@@ -65,7 +65,7 @@ from jax._src.config import (
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
 from jax._src.environment_info import print_environment_info as print_environment_info
 from jax._src.api import (
-  ad,  # TODO(phawkins): update users to avoid this.
+  Device as Device,
   effects_barrier,
   block_until_ready as block_until_ready,
   checkpoint as checkpoint,
@@ -109,16 +109,18 @@ from jax._src.api import (
   process_count as process_count,
   process_index as process_index,
   pure_callback as pure_callback,
-  pxla,  # TODO(phawkins): update users to avoid this.
   remat as remat,
   ShapedArray,  # TODO(jakevdp): update users to avoid this.
   ShapeDtypeStruct as ShapeDtypeStruct,
   value_and_grad as value_and_grad,
   vjp as vjp,
   vmap as vmap,
-  xla,  # TODO(phawkins): update users to avoid this.
   xla_computation as xla_computation,
 )
+
+from jax.interpreters import ad # TODO(phawkins): update users to avoid this.
+from jax.interpreters import pxla # TODO(phawkins): update users to avoid this.
+from jax.interpreters import xla # TODO(phawkins): update users to avoid this.
 
 from jax._src.array import (
     make_array_from_single_device_arrays as make_array_from_single_device_arrays,

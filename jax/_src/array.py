@@ -30,7 +30,9 @@ from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src import api
 from jax._src.typing import ArrayLike
-from jax.interpreters import pxla, xla, mlir
+from jax.interpreters import mlir
+from jax._src.interpreters import pxla
+from jax._src.interpreters import xla
 from jax._src.sharding import (
     Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
@@ -306,18 +308,6 @@ class ArrayImpl(basearray.Array):
         # here after uneven partitioning support is added.
         return (api.device_put(self._value[i]) for i in range(self.shape[0]))
 
-  def item(self):
-    if dtypes.issubdtype(self.dtype, np.complexfloating):
-      return complex(self)
-    elif dtypes.issubdtype(self.dtype, np.floating):
-      return float(self)
-    elif dtypes.issubdtype(self.dtype, np.integer):
-      return int(self)
-    elif dtypes.issubdtype(self.dtype, np.bool_):
-      return bool(self)
-    else:
-      raise TypeError(self.dtype)
-
   @property
   def is_fully_replicated(self) -> bool:
     return self.shape == self._arrays[0].shape
@@ -544,8 +534,8 @@ def make_array_from_callback(
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
     >>> input_shape = (8, 8)
@@ -593,8 +583,8 @@ def make_array_from_single_device_arrays(
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
     >>> shape = (8, 8)
@@ -646,9 +636,9 @@ def _array_shard_arg(x, devices, indices):
               for buf, d in safe_zip(x._arrays, devices)]
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
-      return pxla._shard_device_array(x, devices, indices)
+      return pxla.shard_device_array(x, devices, indices)
     else:
-      return pxla._shard_sharded_device_array_slow_path(x, devices, indices)
+      return pxla.shard_sharded_device_array_slow_path(x, devices, indices)
 
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 

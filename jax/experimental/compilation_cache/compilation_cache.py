@@ -21,6 +21,7 @@ from typing import List, Optional
 
 from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src import path as pathlib
+from jax._src.lib import xla_extension_version
 from jax._src.lib import version_str as jaxlib_version_str
 from jax.interpreters import xla
 
@@ -123,12 +124,12 @@ def _hash_computation(hash_obj, xla_computation):
   elif isinstance(xla_computation, str):
     serialized_hlo = xla_computation.encode()  # MLIR module text
   else:
-    serialized_hlo = xla_computation.as_serialized_hlo_module_proto()
+    raise TypeError(f"Unknown computation type {type(xla_computation)}")
   scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 37 if xla.xc._version >= 114 else 35
+  expected_num_compile_options = 37
   assert len(dir(compile_options_obj)) == expected_num_compile_options, (
       f"Unexpected number of CompileOption fields: "
       f"{len(dir(compile_options_obj))}. This likely: means that an extra "
@@ -148,11 +149,16 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
 
 def _hash_executable_build_options(hash_obj, executable_obj):
-  expected_options = 34
-  assert len(dir(executable_obj)) == expected_options, (
+  expected_options = 10
+  # Ignore private and built-in methods. These can unexpectedly change and lead
+  # to false positives, e.g. when different Python versions include different
+  # built-ins.
+  actual_options = len(
+      [x for x in dir(executable_obj) if not x.startswith('_')])
+  assert actual_options == expected_options, (
         f"Unexpected number of executable_build_options fields: "
-        f"{len(dir(executable_obj))}. This likely means that an extra "
-        f"field was added, and this function needs to be updated.")
+        f"{actual_options}, expected: {expected_options}. This likely means "
+        "that an extra field was added, and this function needs to be updated.")
   if executable_obj.result_layout is not None:
     hash_obj.update(executable_obj.result_layout.to_serialized_proto())
   _hash_int(hash_obj, executable_obj.num_replicas)
@@ -164,12 +170,15 @@ def _hash_executable_build_options(hash_obj, executable_obj):
   _hash_bool(hash_obj, executable_obj.use_auto_spmd_partitioning)
   if executable_obj.use_auto_spmd_partitioning:
     if executable_obj.auto_spmd_partitioning_mesh_shape is not None:
-      hash_obj.update(
-          executable_obj.auto_spmd_partitioning_mesh_shape.serialize())
+      _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_shape)
     if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
-      hash_obj.update(
-          executable_obj.auto_spmd_partitioning_mesh_ids.serialize())
-  _hash_bool(hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output)
+      _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_ids)
+  if xla_extension_version >= 123:
+    _hash_bool_list(hash_obj,
+                    executable_obj.allow_spmd_sharding_propagation_to_output)
+  else:
+    _hash_bool(hash_obj,
+               executable_obj.allow_spmd_sharding_propagation_to_output)
 
 def _hash_debug_options(hash_obj, debug_obj):
   _hash_bool(hash_obj, debug_obj.xla_cpu_enable_fast_math)
@@ -204,6 +213,8 @@ _xla_flags_to_exclude_from_cache_key = [
     "--xla_force_host_platform_device_count",
     "--xla_dump_disable_metadata",
     "--xla_dump_hlo_pipeline_re",
+    "--xla_tpu_sdc_checker_streamz_metric",
+    "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
 ]
 
 extra_flag_prefixes_to_include_in_cache_key: List[str] = []
@@ -238,5 +249,21 @@ def _hash_bool(hash_obj, bool_var):
 def _hash_string(hash_obj, str_var):
   hash_obj.update(str_var.encode('utf-8').strip())
 
+def _hash_bool_list(hash_obj, bool_list):
+  for b in bool_list:
+    _hash_bool(hash_obj, b)
+  _hash_int(hash_obj, len(bool_list))
+
+def _hash_int_list(hash_obj, int_list):
+  for i in int_list:
+    _hash_int(hash_obj, i)
+  _hash_int(hash_obj, len(int_list))
+
 def is_initialized():
   return _cache is not None
+
+def reset_cache():
+  global _cache
+  assert is_initialized()
+  logger.info("Resetting cache at %s.", _cache._path)
+  _cache = None

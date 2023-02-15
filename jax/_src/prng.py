@@ -25,26 +25,26 @@ from jax import lax
 from jax import numpy as jnp
 from jax.config import config
 from jax.dtypes import float0
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import pxla
 from jax.interpreters import xla
-from jax._src import basearray
-from jax._src.sharding import (
-    NamedSharding, PmapSharding, OpShardingSharding)
 
+from jax._src import basearray
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src.api import jit, vmap
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import pxla
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
+from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
+from jax._src.sharding import (
+    NamedSharding, PmapSharding, OpShardingSharding)
 from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
-from jax._src.lib import gpu_prng, xla_extension_version
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -841,11 +841,6 @@ def _make_rotate_left(dtype):
   return _rotate_left
 
 
-def _bit_stats(bits):
-  """This is a debugging function to compute the statistics of bit fields."""
-  return np.array([list(map(int, np.binary_repr(x, 64))) for x in bits]).mean(0)
-
-
 ### hash function and split
 
 def _threefry2x32_abstract_eval(*args):
@@ -946,23 +941,18 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
     return mlir.broadcast_in_dim(ctx, x, aval_out,
                                  broadcast_dimensions=range(rank - len(aval.shape), rank))
 
-  if xla_extension_version >= 113:
-    out_len = reduce(op.mul, aval_out.shape, 1)
-    if not core.is_constant_dim(out_len):
-      length = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, [out_len]))
-      length = mlir.hlo.ConvertOp(
-          mlir.ir.RankedTensorType.get((1,), mlir.ir.IntegerType.get_signless(64)),
-          length).result
-    else:
-      length = int(out_len)  # will be passed statically
-
-    return lowering_func(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length)
+  out_len = reduce(op.mul, aval_out.shape, 1)
+  if not core.is_constant_dim(out_len):
+    length = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, [out_len]))
+    length = mlir.hlo.ConvertOp(
+        mlir.ir.RankedTensorType.get((1,), mlir.ir.IntegerType.get_signless(64)),
+        length).result
   else:
-    return lowering_func(
-            (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
-            (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)))
+    length = int(out_len)  # will be passed statically
+
+  return lowering_func(
+          (_broadcast(k1, k1_aval), _broadcast(k2, k2_aval)),
+          (_broadcast(x1, x1_aval), _broadcast(x2, x2_aval)), length)
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True

@@ -713,6 +713,67 @@ class Tracer(typing.Array):
   def _origin_msg(self) -> str:
     return ""
 
+  # Methods that are only valid for materialized arrays
+  def addressable_data(self, index):
+    raise ConcretizationTypeError(self,
+      f"The addressable_data() method was called on the JAX Tracer object {self}")
+
+  @property
+  def block_until_ready(self):
+    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    raise AttributeError(self,
+      f"The 'block_until_ready' method is not available on the JAX Tracer object {self}")
+
+  @property
+  def copy_to_host_async(self):
+    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    raise AttributeError(self,
+      f"The 'copy_to_host_async' method is not available on the JAX Tracer object {self}")
+
+  def delete(self):
+    raise ConcretizationTypeError(self,
+      f"The delete() method was called on the JAX Tracer object {self}")
+
+  def device(self):
+    raise ConcretizationTypeError(self,
+      f"The device() method was called on the JAX Tracer object {self}")
+
+  def devices(self):
+    raise ConcretizationTypeError(self,
+      f"The devices() method was called on the JAX Tracer object {self}")
+
+  @property
+  def global_shards(self):
+    raise ConcretizationTypeError(self,
+      f"The global_shards property was called on the JAX Tracer object {self}")
+
+  def is_deleted(self):
+    raise ConcretizationTypeError(self,
+      f"The is_deleted() method was called on the JAX Tracer object {self}")
+
+  @property
+  def is_fully_addressable(self):
+    raise ConcretizationTypeError(self,
+      f"The is_fully_addressable property was called on the JAX Tracer object {self}")
+
+  @property
+  def is_fully_replicated(self):
+    raise ConcretizationTypeError(self,
+      f"The is_fully_replicated property was called on the JAX Tracer object {self}")
+
+  def on_device_size_in_bytes(self):
+    raise ConcretizationTypeError(self,
+      f"The on_device_size_in_bytes() method was called on the JAX Tracer object {self}")
+
+  @property
+  def traceback(self):
+    raise ConcretizationTypeError(self,
+      f"The traceback property was called on the JAX Tracer object {self}")
+
+  def unsafe_buffer_pointer(self):
+    raise ConcretizationTypeError(self,
+      f"The unsafe_buffer_pointer() method was called on the JAX Tracer object {self}")
+
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])
@@ -1139,7 +1200,7 @@ def find_top_trace(xs) -> Trace:
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
-  return top_main and top_main.with_cur_sublevel()  # type: ignore
+  return top_main.with_cur_sublevel()  # type: ignore
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
@@ -1964,6 +2025,10 @@ def _invalid_shape_error(shape: Shape, context: str=""):
          and not isinstance(get_aval(x), ConcreteArray) for x in shape):
     msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
             "smaller subfunctions.")
+    for x in shape:
+      if isinstance(x, Tracer) and hasattr(x, "_origin_msg"):
+        msg += x._origin_msg()
+
   return TypeError(msg)
 
 
@@ -2076,7 +2141,7 @@ class CallPrimitive(Primitive):
 def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
   top_trace = find_top_trace(args)
   fun_, env_trace_todo = process_env_traces_call(
-      fun, primitive, top_trace and top_trace.level, tuple(params.items()))
+      fun, primitive, top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
   fun_ = lu.annotate(fun_, fun.in_type)
 
@@ -2085,18 +2150,16 @@ def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
   return call_bind_continuation, top_trace, fun_, tracers, params
 
 @lu.transformation_with_aux
-def process_env_traces_call(primitive: CallPrimitive, level: Optional[int],
+def process_env_traces_call(primitive: CallPrimitive, level: int,
                             params_tuple: tuple, *args):
   outs = yield args, {}
   params = dict(params_tuple)
   todo = []
   while True:
-    tracers = [x for x in outs if isinstance(x, Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
+    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
+    if not tracers:
       break
+    ans = max(tracers, key=operator.attrgetter('_trace.level'))
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
@@ -2223,10 +2286,9 @@ def process_env_traces_map(primitive: MapPrimitive, level: int,
   while True:
     tracers = [x for x in outs if isinstance(x, Tracer)
                and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
+    if not tracers:
       break
+    ans = max(tracers, key=operator.attrgetter('_trace.level'))
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, (cur_todo, cur_xform) = primitive.post_process(trace, outs, params)
@@ -2870,19 +2932,22 @@ def pp_kv_pairs(kv_pairs, context: JaxprPpContext, settings: JaxprPpSettings) ->
     + pp.brk("") + pp.text("]")
   )
 
-def pp_eqn(eqn, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:
+def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
+           ) -> pp.Doc:
+  rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
+          pp_eqn_rules.get(eqn.primitive, _pp_eqn))
+  return rule(eqn, context, settings)
+
+def _pp_eqn(eqn, context, settings) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
                 if settings.source_info else None)
-  rule = pp_eqn_rules.get(eqn.primitive)
   name_stack_annotation = f'[{eqn.source_info.name_stack}]' if settings.name_stack else None
-  if rule and settings.custom_pp_eqn_rules:
-    return pp.concat(rule(eqn, context, settings))
   lhs = pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
   rhs = [pp.text(eqn.primitive.name, annotation=name_stack_annotation),
          pp_kv_pairs(sorted(eqn.params.items()), context, settings),
          pp.text(" ") + pp_vars(eqn.invars, context)]
   return pp.concat([lhs, pp.text(" = ", annotation=annotation), *rhs])
-CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext, JaxprPpSettings], Sequence[pp.Doc]]
+CustomPpEqnRule = Callable[[JaxprEqn, JaxprPpContext, JaxprPpSettings], pp.Doc]
 pp_eqn_rules: Dict[Primitive, CustomPpEqnRule]  = {}
 
 def pp_eqns(eqns, context: JaxprPpContext, settings: JaxprPpSettings) -> pp.Doc:

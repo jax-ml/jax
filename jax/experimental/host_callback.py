@@ -209,7 +209,7 @@ to return the entire array, which will then be sent in a single infeed to the
 same device that issued the outfeed. This device is then responsible for
 sending the required shards to the other devices::
 
-  with maps.Mesh(jax.local_devices()[:2], ["d"]):
+  with jax.sharding.Mesh(jax.local_devices()[:2], ["d"]):
     pjit.pjit(power3, in_axis_resources=(P("d"),),
               out_axis_resources=(P("d"),))(np.array([3., 4.]))
 
@@ -511,9 +511,10 @@ from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
 from jax.experimental import pjit
-from jax.interpreters import ad, xla, batching, pxla
+from jax.interpreters import ad, batching, pxla
 from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
+from jax._src.interpreters import xla
 from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import pretty_printer as pp
@@ -998,11 +999,8 @@ outside_call_p.def_abstract_eval(_outside_call_abstract_eval)
 def _outside_call_impl(*args, **params):
   assert "has_token" not in params
   if _inline_host_callback():
-    if jaxlib.xla_extension_version >= 112:
-      device_index = params["device_index"]
-      device = api.devices()[device_index]
-    else:
-      device = api.devices()[0]
+    device_index = params["device_index"]
+    device = api.devices()[device_index]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
   else:
@@ -1057,12 +1055,8 @@ def _outside_call_translation_rule(ctx,
             identity=identity,
             flat_results_aval=flat_results_aval,
             **params))
-    if jaxlib.xla_extension_version >= 112:
-      next_token = _callback_handler_data.receiver.add_outfeed(
-          comp, current_token, callback_id, args_to_outfeed, device_index)
-    else:
-      next_token = _callback_handler_data.receiver.add_outfeed(
-          comp, current_token, callback_id, args_to_outfeed)
+    next_token = _callback_handler_data.receiver.add_outfeed(
+        comp, current_token, callback_id, args_to_outfeed, device_index)
     if identity:
       results = list(args_to_outfeed)
       next_itoken = current_itoken
@@ -1081,10 +1075,7 @@ def _outside_call_translation_rule(ctx,
         array_sharding_proto = xla_client.OpSharding()
         array_sharding_proto.type = xla_client.OpSharding.Type.MAXIMAL
         array_sharding_proto.tile_assignment_dimensions = [1]
-        if jaxlib.xla_extension_version >= 112:
-          array_sharding_proto.tile_assignment_devices = [device_index]
-        else:
-          array_sharding_proto.tile_assignment_devices = [0]
+        array_sharding_proto.tile_assignment_devices = [device_index]
 
         token_sharding_proto = xla_client.OpSharding()
         token_sharding_proto.type = xla_client.OpSharding.Type.REPLICATED
@@ -1245,10 +1236,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
     sharding = xla_client.OpSharding()
     sharding.type = xla_client.OpSharding.Type.MAXIMAL
     sharding.tile_assignment_dimensions = [1]
-    if jaxlib.xla_extension_version >= 112:
-      sharding.tile_assignment_devices = [device_index]
-    else:
-      sharding.tile_assignment_devices = [0]
+    sharding.tile_assignment_devices = [device_index]
   else:
     sharding = None
   results, next_token, keep_alive = mlir.emit_python_callback(ctx,
@@ -1388,14 +1376,7 @@ def _instantiate_zeros(tan, arg):
   """
   if type(tan) is not ad.Zero:
     return tan
-  if tan.aval is not core.abstract_unit:
-    return ad.instantiate_zeros_aval(tan.aval, tan)
-
-  if ad.is_undefined_primal(arg):
-    aval = arg.aval
-  else:
-    aval = core.raise_to_shaped(core.get_aval(arg))
-  return ad.instantiate_zeros_aval(aval, tan)
+  return ad.instantiate_zeros_aval(tan.aval, tan)
 
 def _outside_call_jvp_rule(primals, tangents, **params):
   assert "has_token" not in params

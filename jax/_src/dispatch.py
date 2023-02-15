@@ -22,7 +22,7 @@ import itertools
 import time
 from typing import (
     Any, Callable, Dict, Iterable, Iterator, Optional, Protocol,
-    Sequence, Set, Tuple, List, Type, Union)
+    Sequence, Set, Tuple, List, Type, Union, NamedTuple)
 import logging
 import os
 import re
@@ -32,33 +32,38 @@ import warnings
 import numpy as np
 
 import jax
-from jax._src import linear_util as lu
 from jax.errors import UnexpectedTracerError
 from jax.monitoring import record_event_duration_secs
-import jax.interpreters.ad as ad
-import jax.interpreters.batching as batching
 import jax.interpreters.mlir as mlir
-import jax.interpreters.xla as xla
 from jax.interpreters import pxla
 import jax.interpreters.partial_eval as pe
+
 from jax._src import array
 from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
+from jax._src import linear_util as lu
+from jax._src import path
 from jax._src import profiler
+from jax._src import source_info_util
 from jax._src import stages
 from jax._src import traceback_util
-from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
-                               OpShardingSharding, Sharding)
+from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import use_stablehlo
+from jax._src.lib import pmap_lib
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-import jax._src.util as util
+from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
+                               OpShardingSharding, NamedSharding, PartitionSpec,
+                               Sharding)
 from jax._src.util import flatten, unflatten
-from jax._src import path
+
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
 BACKEND_COMPILE_EVENT = "/jax/core/compile/backend_compile_duration"
@@ -98,7 +103,7 @@ _on_exit = False
 ArgSpec = Tuple[core.AbstractValue, Optional[Device]]
 
 def arg_spec(x: Any) -> ArgSpec:
-  from jax.experimental import pjit
+  from jax._src import pjit
 
   aval = xla.abstractify(x)
   try:
@@ -118,11 +123,6 @@ def apply_primitive(prim, *args, **params):
   compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
                                         **params)
   return compiled_fun(*args)
-
-# TODO(phawkins,frostig,mattjj): update code referring to
-# xla.apply_primitive to point here, or use simple_impl if that's why
-# it is using apply_primitive to begin with
-xla.apply_primitive = apply_primitive
 
 def simple_impl(prim):
   prim.def_impl(partial(apply_primitive, prim))
@@ -328,11 +328,6 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
 
 def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
                      keep_unused, *arg_specs):
-  # TODO(yashkatariya): Remove the local imports from here when the functions
-  # in pxla.py move to dispatch.py or a utils file.
-  from jax.interpreters import pxla
-  from jax.experimental import pjit
-
   in_avals, in_shardings = util.unzip2(arg_specs)
 
   da = None
@@ -346,7 +341,7 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
   # the number of output avals at this stage. lower_sharding_computation will
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
-      fun, 'jit', name, in_shardings, pjit._UNSPECIFIED, donated_invars,
+      fun, 'jit', name, in_shardings, pxla._UNSPECIFIED, donated_invars,
       in_avals, in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
       always_lower=always_lower, devices_from_context=da)
 
@@ -356,7 +351,8 @@ def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
   if config.jax_array:
     computation = sharded_lowering(fun, device, backend, name, donated_invars,
                                    False, keep_unused, *arg_specs)
-    return computation.compile(_allow_propagation_to_outputs=True).unsafe_call
+    allow_prop = [True] * len(computation.compile_args['global_out_avals'])
+    return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
   else:
     return lower_xla_callable(fun, device, backend, name, donated_invars, False,
                               keep_unused, *arg_specs).compile().unsafe_call
@@ -531,10 +527,6 @@ def lower_xla_callable(
       keepalive=keepalive, host_callbacks=host_callbacks)
 
 
-def _backend_supports_unbounded_dynamic_shapes(backend: Backend) -> bool:
-  return backend.platform == 'iree'
-
-
 def prefetch(x):
   if isinstance(x, device_array.DeviceArray):
     x.copy_to_host_async()
@@ -562,15 +554,34 @@ def jaxpr_has_primitive(jaxpr, prim_name: str):
   return False
 
 
-def jaxpr_shardings(jaxpr) -> Iterator[jax.sharding.XLACompatibleSharding]:
-  from jax.experimental import pjit
+class SourceInfo(NamedTuple):
+  source_info: str
+  eqn_name: str
+
+
+def jaxpr_shardings(
+    jaxpr) -> Iterator[Tuple[jax.sharding.XLACompatibleSharding, SourceInfo]]:
+  from jax._src import pjit
+  from jax.experimental import shard_map
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
-      yield eqn.params['sharding']
+      source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                eqn.primitive.name)
+      yield (eqn.params['sharding'], source_info)
     elif eqn.primitive is pjit.pjit_p:
-      yield from eqn.params['in_shardings']
-      yield from eqn.params['out_shardings']
+      source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                eqn.primitive.name)
+      yield from ((i, source_info) for i in eqn.params['in_shardings'])
+      yield from ((o, source_info) for o in eqn.params['out_shardings'])
+    elif eqn.primitive is shard_map.shard_map_p:
+      source_info = SourceInfo(source_info_util.summarize(eqn.source_info),
+                                eqn.primitive.name)
+      def _names_to_pspec(names):
+        ndmin = max(names) + 1 if names else 0
+        return PartitionSpec(*(names.get(i) for i in range(ndmin)))
+      yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
+                  for names in eqn.params['in_names'])
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)
 
@@ -644,7 +655,7 @@ def eqn_replicas(eqn):
   call_jaxpr = eqn.params.get("call_jaxpr")
   if call_jaxpr:
     return eqn.params.get('axis_size', 1) * jaxpr_replicas(call_jaxpr)
-  elif eqn.primitive in xla._initial_style_primitives:
+  elif eqn.primitive in xla.initial_style_primitives:
     return initial_style_primitive_replicas(eqn.params)
   else:
     return 1
@@ -1011,6 +1022,11 @@ class XlaComputation(stages.XlaLowering):
 
     return self._executable
 
+  def cost_analysis(self) -> Dict[str, float]:
+    return xe.hlo_module_cost_analysis(self.compile_args["backend"],
+                                       self.hlo().as_hlo_module())
+
+
 @profiler.annotate_function
 def backend_compile(backend, built_c, options, host_callbacks):
   # we use a separate function call to ensure that XLA compilation appears
@@ -1022,9 +1038,6 @@ def backend_compile(backend, built_c, options, host_callbacks):
   # TODO(sharadmv): remove this fallback when all backends allow `compile`
   # to take in `host_callbacks`
   return backend.compile(built_c, compile_options=options)
-
-# TODO(phawkins): update users.
-xla.backend_compile = backend_compile
 
 _ir_dump_counter = itertools.count()
 
@@ -1058,13 +1071,9 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   else:
     serialized_computation = computation
 
-  # Persistent compilation cache only implemented on TPU.
+  # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu"]
-  # GPU caching can be enabled if JitRt is enabled.
-  # TODO(b/232263664): Remove check when JitRt is enabled by default.
-  if "--xla_gpu_enable_xla_runtime_executable=true" in os.environ.get("XLA_FLAGS", ""):
-    supported_platforms.append("gpu")
+  supported_platforms = ["tpu", "gpu"]
   # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
   if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("cpu")
@@ -1080,7 +1089,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
                                  compile_options, host_callbacks)
       compile_time = time.monotonic() - start_time
       _cache_write(serialized_computation, compile_time, module_name,
-                   compile_options, backend, compiled)
+                   compile_options, backend, compiled, host_callbacks)
       return compiled
 
   return backend_compile(backend, serialized_computation, compile_options,
@@ -1108,10 +1117,17 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
 def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
                  compile_time_secs: float,
                  module_name: str, compile_options: CompileOptions,
-                 backend: Backend, compiled: XlaLoadedExecutable):
+                 backend: Backend, compiled: XlaLoadedExecutable,
+                 host_callbacks: List[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
+
+  if host_callbacks:
+    logger.info(
+        "Not writing persistent cache entry for '%s' because it uses host "
+        "callbacks (e.g. from jax.debug.print or breakpoint)")
+    return
 
   min_compile_time = config.jax_persistent_cache_min_compile_time_secs
   if min_compile_time:
@@ -1136,25 +1152,6 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
     warnings.warn(
         f"Error writing persistent compilation cache entry for "
         f"'{module_name}': {type(ex).__name__}: {ex}")
-
-
-def _instruction_count(module: ir.Module, max_count: Optional[int] = None):
-
-  def _blocks_count(blocks, count):
-    for block in blocks:
-      for op in block.operations:
-        count += 1
-        # Untested premature performance optimization
-        if max_count is not None and count >= max_count:
-          return max_count
-        for region in op.regions:
-          count = _blocks_count(region.blocks, count)
-    return count
-
-  count = 0
-  for func in module.body.operations:
-    count = _blocks_count(func.body.blocks, count)
-  return count
 
 
 def get_buffer_counts(out_avals, ordered_effects, has_unordered_effects):
@@ -1272,9 +1269,6 @@ def device_put(x, device: Optional[Device] = None) -> Tuple[Any, ...]:
   except KeyError as err:
     raise TypeError(f"No device_put handler for type: {type(x)}") from err
 
-# TODO(phawkins): update users.
-xla.device_put = device_put
-
 def _device_put_masked_array(x, device: Optional[Device]):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
@@ -1319,7 +1313,7 @@ def _device_put_jax_array(x, device: Optional[Device]):
 device_put_handlers[array.ArrayImpl] = _device_put_jax_array
 
 device_put_handlers[pxla._ShardedDeviceArray] = _device_put_array
-device_put_handlers[pxla.pmap_lib.ShardedDeviceArray] = _device_put_array
+device_put_handlers[pmap_lib.ShardedDeviceArray] = _device_put_array
 
 device_put_handlers[core.DArray] = lambda x, d: device_put(x._data, d)
 

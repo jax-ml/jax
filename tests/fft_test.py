@@ -93,12 +93,6 @@ def _zero_for_irfft(z, axes):
 
 class FftTest(jtu.JaxTestCase):
 
-  def testNotImplemented(self):
-    for name in jnp.fft._NOT_IMPLEMENTED:
-      func = getattr(jnp.fft, name)
-      with self.assertRaises(NotImplementedError):
-        func()
-
   def testLaxFftAcceptsStringTypes(self):
     rng = jtu.rand_default(self.rng())
     x = rng((10,), np.complex64)

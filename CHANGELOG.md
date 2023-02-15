@@ -6,12 +6,53 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.3
+## jax 0.4.4
+
+* Changes
+  * The implementation of `jit` and `pjit` has been merged. Merging jit and pjit
+    changes the internals of JAX without affecting the public API of JAX.
+    Before, `jit` was a final style primitive. Final style means that the creation
+    of jaxpr was delayed as much as possible and transformations were stacked
+    on top of each other. With the `jit`-`pjit` implementation merge, `jit`
+    becomes an initial style primitive which means that we trace to jaxpr
+    as early as possible. For more information see
+    [this section in autodidax](https://jax.readthedocs.io/en/latest/autodidax.html#on-the-fly-final-style-and-staged-initial-style-processing).
+    Moving to initial style should simplify JAX's internals and make
+    development of features like dynamic shapes, etc easier.
+    You can disable it only via the environment variable i.e.
+    `os.environ['JAX_JIT_PJIT_API_MERGE'] = '0'`.
+    The merge must be disabled via an environment variable since it affects JAX
+    at import time so it needs to be disabled before jax is imported.
+  * `axis_resources` argument of `with_sharding_constraint` is deprecated.
+    Please use `shardings` instead. There is no change needed if you were using
+    `axis_resources` as an arg. If you were using it as a kwarg, then please
+    use `shardings` instead. `axis_resources` will be removed after 3 months
+    from Feb 13, 2023.
+  * added the {mod}`jax.typing` module, with tools for type annotations of JAX
+    functions.
+* Breaking Changes
+  * the `initial` argument to reduction functions like :func:`jax.numpy.sum`
+    is now required to be a scalar, consistent with the corresponding NumPy API.
+    The previous behavior of broadcating the output against non-scalar `initial`
+    values was an unintentional implementation detail ({jax-issue}`#14446`).
+
+## jaxlib 0.4.4
   * Breaking changes
-    * Deleted {func}`jax.scipy.linalg.polar_unitary`, which was a deprecated JAX 
+    * Support for NVIDIA Kepler series GPUs has been removed from the default
+      `jaxlib` builds. If Kepler support is needed, it is still possible to
+      build `jaxlib` from source with Kepler support (via the
+      `--cuda_compute_capabilities=sm_35` option to `build.py`), however note
+      that CUDA 12 has completely dropped support for Kepler GPUs.
+
+## jax 0.4.3 (Feb 8, 2023)
+  * Breaking changes
+    * Deleted {func}`jax.scipy.linalg.polar_unitary`, which was a deprecated JAX
       extension to the scipy API. Use {func}`jax.scipy.linalg.polar` instead.
 
-## jaxlib 0.4.3
+  * Changes
+    * Added {func}`jax.scipy.stats.rankdata`.
+
+## jaxlib 0.4.3 (Feb 8, 2023)
 
 ## jax 0.4.2 (Jan 24, 2023)
 

@@ -133,6 +133,7 @@ jax.scipy.special
    ndtr
    ndtri
    polygamma
+   spence
    sph_harm
    xlog1py
    xlogy
@@ -148,6 +149,7 @@ jax.scipy.stats
   :toctree: _autosummary
 
    mode
+   rankdata
 
 jax.scipy.stats.bernoulli
 ~~~~~~~~~~~~~~~~~~~~~~~~~

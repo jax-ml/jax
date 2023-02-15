@@ -25,9 +25,10 @@ from jax._src import api_util
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.config import config
-from jax.interpreters import pxla, xla, mlir
+from jax._src.interpreters import pxla
+from jax.interpreters import xla, mlir
 from jax._src.util import prod, safe_zip
-from jax.interpreters.pxla import PartitionSpec
+from jax._src.interpreters.pxla import PartitionSpec
 
 Shape = Tuple[int, ...]
 MeshAxes = PartitionSpec
@@ -41,7 +42,7 @@ _hashed_index = lambda x: hash(tuple((v.start, v.stop) for v in x))
 
 
 def _get_sharding_spec(global_shape, global_mesh, mesh_axes):
-  array_mapping = pxla._get_array_mapping(mesh_axes)
+  array_mapping = pxla.get_array_mapping(mesh_axes)
   # The dtype doesn't matter for creating sharding specs.
   aval = core.ShapedArray(global_shape, np.float32)
   return pxla.mesh_sharding_specs(global_mesh.shape,
@@ -207,8 +208,8 @@ class GlobalDeviceArray:
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
     >>> assert jax.device_count() == 8
@@ -490,8 +491,8 @@ class GlobalDeviceArray:
 
     Example:
 
-      >>> from jax.experimental.maps import Mesh
-      >>> from jax.experimental import PartitionSpec as P
+      >>> from jax.sharding import Mesh
+      >>> from jax.sharding import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 8)
@@ -537,8 +538,8 @@ class GlobalDeviceArray:
 
     Example:
 
-      >>> from jax.experimental.maps import Mesh
-      >>> from jax.experimental import PartitionSpec as P
+      >>> from jax.sharding import Mesh
+      >>> from jax.sharding import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 2)
@@ -584,8 +585,8 @@ class GlobalDeviceArray:
 
     Example:
 
-      >>> from jax.experimental.maps import Mesh
-      >>> from jax.experimental import PartitionSpec as P
+      >>> from jax.sharding import Mesh
+      >>> from jax.sharding import PartitionSpec as P
       >>> import numpy as np
       ...
       >>> global_input_shape = (8, 2)

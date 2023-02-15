@@ -18,47 +18,40 @@ import functools
 from functools import partial
 import itertools
 import operator
-from typing import (Any, Callable, Optional, Sequence, Tuple, List, Dict,
+from typing import (Any, Callable, Optional, Sequence, Tuple, List,
                     TypeVar, Union, cast as type_cast, overload)
 import warnings
 
 import numpy as np
 
 import jax
-from jax._src import core
+from jax import tree_util
+from jax.interpreters import partial_eval as pe
+from jax.interpreters import pxla
+from jax.interpreters import xla
+from jax.tree_util import tree_map
+
 from jax._src import ad_util
 from jax._src import api
 from jax._src import api_util
 from jax._src import array
+from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
-from jax._src import linear_util as lu
 from jax._src import dtypes
-from jax import tree_util
+from jax._src import linear_util as lu
+from jax._src import pretty_printer as pp
 from jax._src import source_info_util
-from jax._src.sharding import PmapSharding
+from jax._src import util
+from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
                            raise_to_shaped, abstract_token, canonicalize_shape)
-from jax._src.abstract_arrays import array_types
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.interpreters import pxla
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters.batching import ConcatAxis
-import jax._src.pretty_printer as pp
-from jax._src import util
-from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
-                           split_list)
-from jax.tree_util import tree_map
-from jax._src.lib import pytree
-from jax._src.lib import xla_bridge
-from jax._src.lib import xla_client
-from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import chlo
-from jax._src.lib.mlir.dialects import hlo
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters.batching import ConcatAxis
+from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype,
   standard_abstract_eval,
@@ -67,8 +60,17 @@ from jax._src.lax.utils import (
   standard_primitive,
   standard_translate,
 )
-from jax._src.lax import slicing
+from jax._src.lib import pmap_lib
+from jax._src.lib import pytree
+from jax._src.lib import xla_bridge
+from jax._src.lib import xla_client
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import chlo
+from jax._src.lib.mlir.dialects import hlo
+from jax._src.sharding import PmapSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike, Shape
+from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
+                           split_list)
 
 xb = xla_bridge
 xc = xla_client
@@ -183,7 +185,7 @@ def _extract_tracers_dyn_shape(
 def _merge_dyn_shape(
     static_shape: Sequence[Optional[int]],
     dyn_shape: Sequence[Any],
-  ) -> Tuple[Union[int, mlir.Value], ...]:
+  ) -> Tuple[Union[int, mlir.Value, core.Tracer], ...]:
   # Replace Nones in static_shape with elements of dyn_shape, in order
   dyn_shape_it = iter(dyn_shape)
   shape = tuple(next(dyn_shape_it) if d is None else d for d in static_shape)
@@ -1180,7 +1182,20 @@ def sort_key_val(keys: Array, values: ArrayLike, dimension: int = -1,
   return k, v
 
 def top_k(operand: ArrayLike, k: int) -> Tuple[Array, Array]:
-  """Returns top ``k`` values and their indices along the last axis of ``operand``."""
+  """Returns top ``k`` values and their indices along the last axis of ``operand``.
+
+  Args:
+    operand: N-dimensional array of non-complex type.
+    k: integer specifying the number of top entries.
+
+  Returns:
+    values: array containing the top k values along the last axis.
+    indices: array containing the indices corresponding to values.
+
+  See also:
+  - :func:`jax.lax.approx_max_k`
+  - :func:`jax.lax.approx_min_k`
+  """
   k = int(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
@@ -1495,12 +1510,12 @@ for t in itertools.chain(
     dtypes.python_scalar_dtypes.keys(), array_types,
     device_array.device_array_types, [array.ArrayImpl],
     [pxla.ShardedDeviceArray, pxla._ShardedDeviceArray,
-     pxla.pmap_lib.ShardedDeviceArray]):
+     pmap_lib.ShardedDeviceArray]):
   ad_util.jaxval_adders[t] = add
 ad_util.jaxval_zeros_likers[device_array._DeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[device_array.Buffer] = zeros_like_array
 ad_util.jaxval_zeros_likers[pxla.ShardedDeviceArray] = zeros_like_array
-ad_util.jaxval_zeros_likers[pxla.pmap_lib.ShardedDeviceArray] = zeros_like_array
+ad_util.jaxval_zeros_likers[pmap_lib.ShardedDeviceArray] = zeros_like_array
 ad_util.jaxval_zeros_likers[array.ArrayImpl] = zeros_like_array
 
 
@@ -1690,12 +1705,6 @@ def _nary_lower_hlo(op: Callable, ctx,
     return op(mlir.aval_to_ir_type(aval_out), *broadcasted_args).results
   else:
     return op(*broadcasted_args).results
-
-def _substitute_axis_sizes_in_aval(
-    env: Dict[core.Var, ir.Value], a: core.AbstractValue) -> core.AbstractValue:
-  if isinstance(a, core.DShapedArray):
-    return a.update(shape=tuple(env.get(d, d) for d in a.shape))  # type: ignore
-  return a
 
 
 _float = {np.floating}
@@ -2374,16 +2383,10 @@ def _convert_elt_type_fwd_rule(eqn):
 def _convert_elt_type_pp_rule(eqn, context, settings):
   # don't print new_dtype because the output binder shows it, don't print
   # weak_type when false
-  printed_params = {}
-  if eqn.params['weak_type']:
-    printed_params['weak_type'] = True
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  params = dict(eqn.params)
+  del params['new_dtype']  # output binder shows it
+  if not params['weak_type']: del params['weak_type']  # don't show trivial case
+  return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
 convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
@@ -2467,21 +2470,6 @@ def _precision_config(precision):
       config.operand_precision.extend((precision, precision))
     return config
   return None
-
-def _masked(padded_value, logical_shape, dimensions, value=0):
-  """
-  Sets all padding to the given value (default is 0) in the given dimensions.
-  All values outside the logical shape are considered padding.
-  """
-  if len(dimensions) == 0:
-    return padded_value
-
-  masks = [broadcasted_iota(np.int32, padded_value.shape, d) < logical_shape[d]
-           for d in dimensions]
-  mask_intersection = masks[0]
-  for mask in masks[1:]:
-    mask_intersection &= mask
-  return select(mask_intersection, padded_value, full_like(padded_value, value))
 
 
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
@@ -2568,11 +2556,11 @@ def _dot_general_dtype_rule(lhs, rhs, *, dimension_numbers, precision,
   _validate_preferred_element_type(input_dtype, preferred_element_type)
   return preferred_element_type
 
-def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
+def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: Optional[DTypeLike],
                                swap_ans=False):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
-  x_ndim = g.ndim - y.ndim + len(x_batch) + 2 * len(x_contract)
+  x_ndim = x.aval.ndim
   x_kept = remaining(range(x_ndim), x_contract, x_batch)
   y_kept = remaining(range(y.ndim), y_contract, y_batch)
   if swap_ans:
@@ -2586,12 +2574,12 @@ def _dot_general_transpose_lhs(g, y, *, dimension_numbers, precision,
                                preferred_element_type=preferred_element_type),
                    tuple(out_axes))
 
-def _dot_general_transpose_rhs(g, x, *, dimension_numbers, precision,
+def _dot_general_transpose_rhs(g, x, y, *, dimension_numbers, precision,
                                preferred_element_type: Optional[DTypeLike]):
   (x_contract, y_contract), (x_batch, y_batch) = dimension_numbers
   swapped_dimension_numbers = ((y_contract, x_contract), (y_batch, x_batch))
   return _dot_general_transpose_lhs(
-    g, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
+    g, y, x, dimension_numbers=swapped_dimension_numbers, precision=precision,
     preferred_element_type=preferred_element_type,
     swap_ans=True)
 
@@ -2691,21 +2679,14 @@ def _dot_general_padding_rule(in_avals, out_avals, lhs, rhs, *,
   lhs_ = _replace_masked_values(lhs, 0, padded_axes)
   return [dot_general(lhs_, rhs, dimension_numbers=dimension_numbers, **params)]
 
-def _dot_general_pp_rule(eqn, context, settings):
+def _dot_general_pp_rule(eqn, context, settings) -> pp.Doc:
   # * suppress printing precision or preferred_element_type when None.
   # * print dimension_numbers as list-of-lists to be shorter.
   printed_params = {k: v for k, v in eqn.params.items() if v is not None}
   (lhs_cont, rhs_cont), (lhs_batch, rhs_batch) = eqn.params['dimension_numbers']
   printed_params['dimension_numbers'] = (
       (list(lhs_cont), list(rhs_cont)), (list(lhs_batch), list(rhs_batch)))
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
-
+  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 
 dot_general_p = standard_primitive(_dot_general_shape_rule,
                                    _dot_general_dtype_rule, 'dot_general')
@@ -2828,7 +2809,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   if (operand_bdim is not None and
       (not dyn_shape_bdims or dyn_shape_bdims[0] is None)):
     new_operand = batching.moveaxis(operand, operand_bdim, 0)
-    new_shape = (operand.shape[operand_bdim],) + shape
+    new_shape = (operand.shape[operand_bdim],) + _merge_dyn_shape(shape, dyn_shape)
     new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
     return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
   elif (operand_bdim is None and dyn_shape_bdims and
@@ -2923,16 +2904,12 @@ def _broadcast_in_dim_pp_rule(eqn, context, settings):
   printed_params = {}
   if eqn.params['broadcast_dimensions']:
     printed_params['broadcast_dimensions'] = eqn.params['broadcast_dimensions']
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars[:1], context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  new_eqn = eqn.replpace(params=printed_params, invars=eqn.invars[:1])
+  return core._pp_eqn(new_eqn, context, settings)
 
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if dyn_shape: raise NotImplementedError
+  assert not any(d is None for d in shape)  # not implemented
   del dyn_shape
   if not any(isinstance(d, core.DArray) and
              type(core.get_aval(d).dtype) is core.bint for d in shape):
@@ -3242,26 +3219,6 @@ def shape_as_value(shape: core.Shape):
       for d in shape
   ]
   return concatenate(dims, dimension=0)
-
-def _is_singleton_reshape(old, new):
-  # A singleton reshape is one where only singleton dimensions are added. We
-  # want to detect them because they can be expressed as (lazy) broadcasts.
-  old, new = iter(old), iter(new)
-  d1, d2 = next(old, None), next(new, None)
-  bcast_dims = []
-  i = 0
-  while True:
-    if d1 is d2 is None:
-      return bcast_dims
-    elif d1 == d2:
-      bcast_dims.append(i)
-      i += 1
-      d1, d2 = next(old, None), next(new, None)
-    elif d2 == 1:
-      i += 1
-      d2 = next(new, None)
-    else:
-      return None
 
 def _reshape_shape_rule(operand, *, new_sizes, dimensions):
   if not all(core.greater_equal_dim(d, 0) for d in new_sizes):
@@ -4052,6 +4009,8 @@ mlir.register_lowering(sort_p, _sort_lower)
 
 
 def _top_k_abstract_eval(operand, *, k):
+  if dtypes.issubdtype(operand.dtype, np.complexfloating):
+    raise ValueError("top_k is not compatible with complex inputs.")
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   if len(operand.shape) == 0:
@@ -4147,10 +4106,7 @@ create_token_p.def_abstract_eval(lambda *_: abstract_token)
 
 def _create_token_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
-  if xc.mlir_api_version < 40:
-    return hlo.CreateTokenOp(mlir.aval_to_ir_type(aval_out)).results
-  else:
-    return hlo.CreateTokenOp().results
+  return hlo.CreateTokenOp().results
 mlir.register_lowering(create_token_p, _create_token_lowering)
 
 
@@ -4172,10 +4128,7 @@ after_all_p.def_abstract_eval(_after_all_abstract_eval)
 
 def _after_all_lowering(ctx, *operands):
   aval_out, = ctx.avals_out
-  if xc.mlir_api_version < 40:
-    return hlo.AfterAllOp(mlir.aval_to_ir_type(aval_out), operands).results
-  else:
-    return hlo.AfterAllOp(operands).results
+  return hlo.AfterAllOp(operands).results
 mlir.register_lowering(after_all_p, _after_all_lowering)
 
 
@@ -4269,18 +4222,10 @@ mlir.lowerable_effects.add(InOutFeedEffect.Outfeed)
 
 
 def _outfeed_lowering(ctx, token, *xs, partitions):
-  token_aval = ctx.avals_in[0]
-  if xc.mlir_api_version < 40:
-    outfeed = hlo.OutfeedOp(
-        mlir.aval_to_ir_type(token_aval),
-        mlir.flatten_lowering_ir_args(xs),
-        token,
-        outfeed_config=ir.StringAttr.get(''))
-  else:
-    outfeed = hlo.OutfeedOp(
-        mlir.flatten_lowering_ir_args(xs),
-        token,
-        outfeed_config=ir.StringAttr.get(''))
+  outfeed = hlo.OutfeedOp(
+      mlir.flatten_lowering_ir_args(xs),
+      token,
+      outfeed_config=ir.StringAttr.get(''))
   if partitions is not None:
     mlir.set_sharding(outfeed, xla.sharding_to_proto(partitions))
   return outfeed.results
@@ -4559,13 +4504,7 @@ def _iota_pp_rule(eqn, context, settings):
   printed_params = {}
   if len(eqn.params['shape']) > 1:
     printed_params['dimension'] = eqn.params['dimension']
-  lhs = core.pp_vars(eqn.outvars, context, print_shapes=settings.print_shapes)
-  rhs = [pp.text(eqn.primitive.name),
-         core.pp_kv_pairs(sorted(printed_params.items()), context, settings),
-         pp.text(" ") + core.pp_vars(eqn.invars, context)]
-  annotation = (source_info_util.summarize(eqn.source_info)
-                if settings.source_info else None)
-  return [lhs, pp.text(" = ", annotation=annotation), *rhs]
+  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
 # core.pp_eqn_rules[iota_p] = _iota_pp_rule
 
 def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension):

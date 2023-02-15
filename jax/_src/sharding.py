@@ -24,7 +24,7 @@ import jax
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax.interpreters import mlir
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 
 import numpy as np
 
@@ -149,7 +149,7 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
     op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
     if pxla.is_op_sharding_replicated(op_sharding):
       return global_shape
-    partitions, _ = pxla._get_num_ways_dim_sharded(op_sharding)
+    partitions, _ = pxla.get_num_ways_dim_sharded(op_sharding)
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
@@ -273,13 +273,13 @@ class NamedSharding(XLACompatibleSharding):
   ``Mesh`` and ``PartitionSpec``.
 
   Args:
-    mesh: A ``jax.experimental.maps.Mesh`` object.
-    spec: A ``jax.experimental.PartitionSpec`` object.
+    mesh: A ``jax.sharding.Mesh`` object.
+    spec: A ``jax.sharding.PartitionSpec`` object.
 
   Example:
 
-    >>> from jax.experimental.maps import Mesh
-    >>> from jax.experimental import PartitionSpec as P
+    >>> from jax.sharding import Mesh
+    >>> from jax.sharding import PartitionSpec as P
     >>> mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> spec = P('x', 'y')
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
@@ -676,7 +676,7 @@ class OpShardingSharding(XLACompatibleSharding):
     return f'OpShardingSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    num_ways_dim_sharded, _ = pxla._get_num_ways_dim_sharded(self._op_sharding)
+    num_ways_dim_sharded, _ = pxla.get_num_ways_dim_sharded(self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "

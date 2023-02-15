@@ -21,39 +21,36 @@ import warnings
 import numpy as np
 
 import jax
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy.vectorize import vectorize
+from jax import lax
+from jax.interpreters import xla
+
 from jax._src import ad_util
 from jax._src import api
-from jax import lax
 from jax._src import dtypes
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax._src.util import prod
 from jax._src.core import (
     Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
-from jax._src.lax.lax import (
-    standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
-    _input_dtype)
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import control_flow
 from jax._src.lax import eigh as lax_eigh
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import svd as lax_svd
-from jax._src.lib import lapack
-from jax._src.lib import mlir_api_version
-
+from jax._src.lax.lax import (
+    standard_primitive, standard_unop, naryop_dtype_rule, _float, _complex,
+    _input_dtype)
 from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
-
+from jax._src.lib import lapack
 from jax._src.lib import xla_client
-
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike
+from jax._src.util import prod
 
 xops = xla_client.ops
 
@@ -441,16 +438,10 @@ def _cholesky_cpu_gpu_lowering(potrf_impl, ctx, operand):
       select_aval,
       result, out_aval, _nan_like_hlo(ctx, out_aval), out_aval)]
 
-if mlir_api_version < 41:
-  mlir.register_lowering(
-      cholesky_p,
-      partial(_cholesky_cpu_gpu_lowering, lapack.potrf_mhlo),
-      platform='cpu')
-else:
-  mlir.register_lowering(
-      cholesky_p,
-      partial(_cholesky_cpu_gpu_lowering, lapack.potrf_hlo),
-      platform='cpu')
+mlir.register_lowering(
+    cholesky_p,
+    partial(_cholesky_cpu_gpu_lowering, lapack.potrf_hlo),
+    platform='cpu')
 
 # Asymmetric eigendecomposition
 
@@ -497,14 +488,9 @@ def _eig_cpu_lowering(ctx, operand, *, compute_left_eigenvectors,
   out_aval = ctx.avals_out[0]
   batch_dims = operand_aval.shape[:-2]
 
-  if mlir_api_version < 41:
-    w, vl, vr, info = lapack.geev_mhlo(operand_aval.dtype, operand,
-                                       jobvl=compute_left_eigenvectors,
-                                       jobvr=compute_right_eigenvectors)
-  else:
-    w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
-                                      jobvl=compute_left_eigenvectors,
-                                      jobvr=compute_right_eigenvectors)
+  w, vl, vr, info = lapack.geev_hlo(operand_aval.dtype, operand,
+                                    jobvl=compute_left_eigenvectors,
+                                    jobvr=compute_right_eigenvectors)
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
@@ -753,14 +739,9 @@ eigh_p.def_abstract_eval(_eigh_abstract_eval)
 ad.primitive_jvps[eigh_p] = _eigh_jvp_rule
 batching.primitive_batchers[eigh_p] = _eigh_batching_rule
 
-if mlir_api_version < 41:
-  mlir.register_lowering(
-      eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_mhlo),
-      platform='cpu')
-else:
-  mlir.register_lowering(
-      eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo),
-      platform='cpu')
+mlir.register_lowering(
+    eigh_p, partial(_eigh_cpu_gpu_lowering, lapack.syevd_hlo),
+    platform='cpu')
 
 if gpu_solver is not None:
   mlir.register_lowering(
@@ -914,14 +895,9 @@ def _triangular_solve_cpu_lower(
     conjugate_a = False
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
-    if mlir_api_version < 41:
-      return [lapack.trsm_mhlo(
-        a_aval.dtype, alpha,
-        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
-    else:
-      return [lapack.trsm_hlo(
-        a_aval.dtype, alpha,
-        a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
+    return [lapack.trsm_hlo(
+      a_aval.dtype, alpha,
+      a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal)]
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -1225,14 +1201,9 @@ mlir.register_lowering(lu_p, mlir.lower_fun(_lu_python, multiple_results=True))
 ad.primitive_jvps[lu_p] = _lu_jvp_rule
 batching.primitive_batchers[lu_p] = _lu_batching_rule
 
-if mlir_api_version < 41:
-  mlir.register_lowering(lu_p,
-                         partial(_lu_cpu_gpu_lowering, lapack.getrf_mhlo),
-                         platform='cpu')
-else:
-  mlir.register_lowering(lu_p,
-                         partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo),
-                         platform='cpu')
+mlir.register_lowering(lu_p,
+                        partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo),
+                        platform='cpu')
 
 mlir.register_lowering(
     lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf),
@@ -1371,14 +1342,9 @@ geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
 batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
 xla.register_translation(geqrf_p, _geqrf_translation_rule)
 
-if mlir_api_version < 41:
-  mlir.register_lowering(
-      geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_mhlo, None),
-      platform='cpu')
-else:
-  mlir.register_lowering(
-      geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_hlo, None),
-      platform='cpu')
+mlir.register_lowering(
+    geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_hlo, None),
+    platform='cpu')
 mlir.register_lowering(
     geqrf_p,
     partial(_geqrf_cpu_gpu_lowering, gpu_solver.cuda_geqrf,
@@ -1458,16 +1424,10 @@ householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
 batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
 xla.register_translation(householder_product_p, _householder_product_translation_rule)
 
-if mlir_api_version < 41:
-  mlir.register_lowering(
-      householder_product_p,
-      partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_mhlo),
-      platform='cpu')
-else:
-  mlir.register_lowering(
-      householder_product_p,
-      partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_hlo),
-      platform='cpu')
+mlir.register_lowering(
+    householder_product_p,
+    partial(_householder_product_cpu_gpu_lowering, lapack.orgqr_hlo),
+    platform='cpu')
 mlir.register_lowering(
     householder_product_p,
     partial(_householder_product_cpu_gpu_lowering, gpu_solver.cuda_orgqr),
@@ -1559,18 +1519,6 @@ mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering));
 def _svd_impl(operand, *, full_matrices, compute_uv):
   return xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
                              compute_uv=compute_uv)
-
-
-def _zeros_like_xla(c, aval):
-  zero = xops.Constant(c, np.array(0, aval.dtype))
-  return xops.Broadcast(zero, aval.shape)
-
-def _eye_like_xla(c, aval):
-  iota_shape = xla_client.Shape.array_shape(
-      xla.dtype_to_primitive_type(np.dtype(np.int32)), aval.shape)
-  x = xops.Eq(xops.Iota(c, iota_shape, len(aval.shape) - 1),
-              xops.Iota(c, iota_shape, len(aval.shape) - 2))
-  return xops.ConvertElementType(x, xla.dtype_to_primitive_type(aval.dtype))
 
 def _svd_abstract_eval(operand, *, full_matrices, compute_uv):
   if isinstance(operand, ShapedArray):
@@ -1740,14 +1688,9 @@ svd_p.def_abstract_eval(_svd_abstract_eval)
 ad.primitive_jvps[svd_p] = _svd_jvp_rule
 batching.primitive_batchers[svd_p] = _svd_batching_rule
 
-if mlir_api_version < 41:
-  mlir.register_lowering(
-      svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_mhlo),
-      platform='cpu')
-else:
-  mlir.register_lowering(
-      svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_hlo),
-      platform='cpu')
+mlir.register_lowering(
+    svd_p, partial(_svd_cpu_gpu_lowering, lapack.gesdd_hlo),
+    platform='cpu')
 mlir.register_lowering(
   svd_p, partial(_svd_cpu_gpu_lowering, gpu_solver.cuda_gesvd),
   platform='cuda')
@@ -1907,16 +1850,10 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
   operand_aval, = ctx.avals_in
   batch_dims = operand_aval.shape[:-2]
 
-  if mlir_api_version < 41:
-    gees_result = lapack.gees_mhlo(operand_aval.dtype, operand,
-                                   jobvs=compute_schur_vectors,
-                                   sort=sort_eig_vals,
-                                   select=select_callable)
-  else:
-    gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
-                                  jobvs=compute_schur_vectors,
-                                  sort=sort_eig_vals,
-                                  select=select_callable)
+  gees_result = lapack.gees_hlo(operand_aval.dtype, operand,
+                                jobvs=compute_schur_vectors,
+                                sort=sort_eig_vals,
+                                select=select_callable)
 
   # Number of return values depends on value of sort_eig_vals.
   T, vs, *_, info = gees_result
@@ -2023,10 +1960,7 @@ batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
 def _hessenberg_cpu_hlo(ctx, a):
   a_aval, = ctx.avals_in
   batch_dims = a_aval.shape[:-2]
-  if mlir_api_version < 41:
-    a, taus, info = lapack.gehrd_mhlo(a_aval.dtype, a)
-  else:
-    a, taus, info = lapack.gehrd_hlo(a_aval.dtype, a)
+  a, taus, info = lapack.gehrd_hlo(a_aval.dtype, a)
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
@@ -2126,14 +2060,9 @@ def _tridiagonal_cpu_gpu_hlo(sytrd_impl, ctx, a, *, lower):
   a, d, e, taus, info = sytrd_impl(a_aval.dtype, a, lower=lower)
   return a, d, e, taus, info
 
-if mlir_api_version < 41:
-  mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_mhlo),
-      platform='cpu')
-else:
-  mlir.register_lowering(
-      tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo),
-      platform='cpu')
+mlir.register_lowering(
+    tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, lapack.sytrd_hlo),
+    platform='cpu')
 mlir.register_lowering(
     tridiagonal_p, partial(_tridiagonal_cpu_gpu_hlo, gpu_solver.cuda_sytrd),
     platform='cuda')

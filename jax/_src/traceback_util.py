@@ -21,6 +21,7 @@ import jax
 from jax._src.lib import xla_extension
 from jax._src import util
 
+
 C = TypeVar("C", bound=Callable[..., Any])
 
 _exclude_paths = [__file__, util.__file__]

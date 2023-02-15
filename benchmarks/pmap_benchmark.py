@@ -43,8 +43,7 @@ def pmap_shard_sharded_device_array_benchmark():
     shape = (nshards, 4)
     args = [np.random.random(shape) for _ in range(nargs)]
     sharded_args = pmap(lambda x: x)(args)
-    assert all(isinstance(arg, jax.pxla.ShardedDeviceArray)
-               for arg in sharded_args)
+    assert all(isinstance(arg, jax.Array) for arg in sharded_args)
     def benchmark_fn():
       for _ in range(100):
         pmap_fn(*sharded_args)

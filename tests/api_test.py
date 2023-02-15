@@ -52,20 +52,21 @@ from jax._src import api, dtypes, dispatch, lib, api_util
 from jax.core import Primitive
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
-from jax.interpreters.pxla import PartitionSpec as P
+from jax.sharding import PartitionSpec as P
 from jax._src import array, sharding
 from jax.experimental import pjit
-from jax.experimental import maps
 from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax._src import device_array
 from jax._src import prng
+from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src import linear_util as lu
@@ -101,6 +102,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @property
   def jit(self):
+    if jax.config.jax_jit_pjit_api_merge and xla_extension_version >= 127:
+      return jax.jit
     return functools.partial(api._jit, self.use_cpp_jit)
 
   def test_jit_repr(self):
@@ -766,7 +769,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       return jax.jit(lambda x: x + 1, backend="cpu")(x)
 
     if jax.config.jax_jit_pjit_api_merge:
-      msg = 'Devices of all `Array` inputs and outputs should be the same'
+      msg = 'Received incompatible devices for jitted computation'
     else:
       msg = ("Outer-jit backend specification .* must match explicit inner-jit "
              "backend specification cpu.")
@@ -1110,6 +1113,16 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(g.as_text(), (str, type(None)))
 
   @jtu.skip_on_xla_cpu_mlir
+  def test_jit_lower_cost_analysis(self):
+    # TODO(b/261771737): add support for uncompiled cost analysis in C API.
+    if "PJRT C API" in xla_bridge.get_backend().platform_version:
+      raise unittest.SkipTest("C API does not support uncompiled cost analysis")
+    f = self.jit(lambda x: x).lower(1.)
+    g = self.jit(lambda x: x + 4).lower(1.)
+    f.cost_analysis()  # doesn't raise
+    g.cost_analysis()  # doesn't raise
+
+  @jtu.skip_on_xla_cpu_mlir
   def test_jit_lower_compile_cost_analysis(self):
     f = self.jit(lambda x: x).lower(1.).compile()
     g = self.jit(lambda x: x + 4).lower(1.).compile()
@@ -1157,7 +1170,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
 
   def test_hitting_cpp_path(self):
-    if not self.use_cpp_jit:
+    # pjit has a similar test in pjit_test.py
+    if not self.use_cpp_jit or jax.config.jax_jit_pjit_api_merge:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jit_impl = dispatch._xla_call_impl_lazy
@@ -1503,7 +1517,7 @@ class APITest(jtu.JaxTestCase):
 
   @jax_config.jax_array(True)
   def test_device_put_sharding(self):
-    mesh = maps.Mesh(jax.devices(), ('x',))
+    mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     s = sharding.NamedSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
 
@@ -1529,7 +1543,8 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)),
+                             ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
     s3 = sharding.NamedSharding(mesh, P("x", "y"))
@@ -1552,7 +1567,7 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
 
@@ -1574,7 +1589,7 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
 
@@ -1596,7 +1611,7 @@ class APITest(jtu.JaxTestCase):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
 
-    mesh = maps.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
+    mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
     s1 = sharding.NamedSharding(mesh, P("x"))
     s2 = sharding.NamedSharding(mesh, P("y"))
 
@@ -1673,7 +1688,7 @@ class APITest(jtu.JaxTestCase):
       else:
         self.assertEqual(x.device_buffer.device(), cpu_device)
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
     A = R(4, 3)
@@ -1686,7 +1701,7 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.tanh(jnp.dot(A, x))
     assert np.allclose(jacfwd(f)(x), jacrev(f)(x))
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_hessian(self):
     R = self.rng().randn
     A = R(4, 4)
@@ -1695,7 +1710,7 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, jnp.dot(A, x))
     assert np.allclose(hessian(f)(x), A + A.T)
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_hessian_holomorphic(self):
     R = self.rng().randn
     A = R(4, 4)
@@ -1704,7 +1719,7 @@ class APITest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, jnp.dot(A.astype(x.dtype), x))
     assert np.allclose(hessian(f, holomorphic=True)(x), A + A.T)
 
-  @jtu.skip_on_devices("tpu")
+  @jax.default_matmul_precision("float32")
   def test_hessian_aux(self):
     R = self.rng().randn
     A = R(4, 4)
@@ -4166,58 +4181,6 @@ class APITest(jtu.JaxTestCase):
                            sharding=jax.sharding.PartitionSpec('x'))
 
 
-@jtu.with_config(jax_experimental_subjaxpr_lowering_cache=True)
-class SubcallTraceCacheTest(jtu.JaxTestCase):
-
-  def test_subcall_trace_caching(self):
-    should_be_tracing_f = False
-
-    @api.jit
-    def f(x):
-      self.assertTrue(should_be_tracing_f)
-      return x**2
-
-    @api.jit
-    def g(x):
-      nonlocal should_be_tracing_f
-      self.assertTrue(should_be_tracing_g)
-      should_be_tracing_f = True
-      y = f(x)
-      should_be_tracing_f = False
-      z = f(x + 1)
-      return y + z
-
-    should_be_tracing_g = True
-    out = g(2)
-    self.assertEqual(out, 13)
-
-    should_be_tracing_g = False
-    out = g(3)
-    self.assertEqual(out, 25)
-
-  def test_subcall_jaxpr_id(self):
-
-    @api.jit
-    def f(x):
-      return x**2
-
-    def g(x):
-      y = f(x)
-      z = f(x + 1)
-      return y + z
-
-    jaxpr = api.make_jaxpr(g)(2)
-    if jax.config.jax_jit_pjit_api_merge:
-      jaxpr_param = 'jaxpr'
-    else:
-      jaxpr_param = 'call_jaxpr'
-    self.assertIn(f"{jaxpr_param}", jaxpr.eqns[0].params)
-    self.assertIn(f"{jaxpr_param}", jaxpr.eqns[2].params)
-    subjaxpr1 = jaxpr.eqns[0].params[f"{jaxpr_param}"]
-    subjaxpr2 = jaxpr.eqns[2].params[f"{jaxpr_param}"]
-    self.assertIs(subjaxpr1, subjaxpr2)
-
-
 class RematTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
@@ -6511,6 +6474,16 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_jit_tracer(self):
+    # This test would pass with "final-style" JIT tracing, but that was
+    # misleading: it doesn't work with "initial-style" staging, i.e. control
+    # flow primitives like jax.lax.scan or even pjit. The behavior isn't very
+    # useful either: instead of using nondiff_argnums here, a user can just pass
+    # such inputs as ordinary arguments, and ignore the corresponding tangents.
+    # Then nondiff_argnums can be reserved for (1) non jaxtype data (like a
+    # string- or callable-valued argument which parameterizes the function or
+    # rule) or (2) static data (e.g. integers which parameterize shapes).
+    raise unittest.SkipTest("behavior no longer supported")
+
     @partial(api.custom_jvp, nondiff_argnums=(0,))
     def f(x, y):
       return x * y
@@ -6525,6 +6498,22 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     ans = api.jvp(lambda y: g(2., y), (3.,), (1.,))
     expected = (6., 5.)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  def test_nondiff_arg_vmap_tracer(self):
+    @partial(api.custom_jvp, nondiff_argnums=(0,))
+    def f(x, y):
+      return x * y
+    def f_jvp(x, primals, tangents):
+      (y,), (t_y,) = primals, tangents
+      return f(x, y), 5 * t_y
+    f.defjvp(f_jvp)
+
+    g = jax.vmap(f)
+
+    ans = api.jvp(lambda y: g(jnp.array([2.]), y),
+                  (jnp.array([3.]),), (jnp.array([1.]),))
+    expected = (jnp.array([6.]), jnp.array([5.]))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_hiding_jvp_tracer(self):
@@ -7526,7 +7515,10 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = (2., jnp.cos(1.))
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_closed_over_tracer(self):
+  def test_closed_over_jit_tracer(self):
+    # See the comment in CustomJVPTest.test_nondiff_arg_jit_tracer.
+    raise unittest.SkipTest("behavior no longer supported")
+
     # This test is similar to test_nondiff_arg_tracer except it uses lexical
     # closure rather than the nondiff_argnums mechanism. We decided to disallow
     # tracers in nondiff_argnums to greatly simplify bookkeeping while still
@@ -7554,7 +7546,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     expected = jnp.cos(3.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  def test_closed_over_tracer2(self):
+  def test_closed_over_vmap_tracer(self):
     def outer(x):
       @api.custom_vjp
       def f(y):
