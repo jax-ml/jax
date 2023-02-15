@@ -2074,7 +2074,8 @@ def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Optional[str] = No
 
 
 @_wraps(np.copy, lax_description=_ARRAY_DOC)
-def copy(a: Any, order: Optional[str] = None) -> Array:
+def copy(a: ArrayLike, order: Optional[str] = None) -> Array:
+  _check_arraylike("copy", a)
   return array(a, copy=True, order=order)
 
 
