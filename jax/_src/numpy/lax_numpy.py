@@ -4723,15 +4723,15 @@ def _quantile(a: Array, q: Array, axis: Optional[Union[int, Tuple[int, ...]]],
   else:
     a = where(any(isnan(a), axis=axis, keepdims=True), nan, a)
     a = lax.sort(a, dimension=axis)
-    n = a_shape[axis]
-    q = lax.mul(q, _lax_const(q, n - 1))
+    n = lax.convert_element_type(array(a_shape[axis]), lax_internal._dtype(q))
+    q = lax.mul(q, n - 1)
     low = lax.floor(q)
     high = lax.ceil(q)
     high_weight = lax.sub(q, low)
     low_weight = lax.sub(_lax_const(high_weight, 1), high_weight)
 
-    low = lax.clamp(_lax_const(low, 0), low, _lax_const(low, n - 1))
-    high = lax.clamp(_lax_const(high, 0), high, _lax_const(high, n - 1))
+    low = lax.clamp(_lax_const(low, 0), low, n - 1)
+    high = lax.clamp(_lax_const(high, 0), high, n - 1)
     low = lax.convert_element_type(low, int64)
     high = lax.convert_element_type(high, int64)
 
