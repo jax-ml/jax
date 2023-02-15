@@ -16,8 +16,8 @@ from collections import namedtuple
 from functools import partial
 from typing import Optional, Tuple
 
+import jax
 import jax.numpy as jnp
-import scipy
 from jax import jit
 from jax._src import dtypes
 from jax._src.api import vmap
@@ -25,6 +25,8 @@ from jax._src.numpy.lax_numpy import _check_arraylike
 from jax._src.numpy.util import _wraps
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis, prod
+
+import scipy
 
 ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 
@@ -68,7 +70,7 @@ def mode(a: ArrayLike, axis: Optional[int] = 0, nan_policy: str = "propagate", k
     axis = 0
     x = x.ravel()
 
-  def _mode_helper(x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+  def _mode_helper(x: jax.Array) -> Tuple[jax.Array, jax.Array]:
     """Helper function to return mode and count of a given array."""
     if x.size == 0:
       return jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_)), jnp.array(jnp.nan, dtype=dtypes.canonicalize_dtype(jnp.float_))

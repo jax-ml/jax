@@ -153,7 +153,7 @@ def _crop_convert_error(msg: str) -> str:
   return msg
 
 
-def _get_random_data(x: jnp.ndarray) -> np.ndarray:
+def _get_random_data(x: jax.Array) -> np.ndarray:
   dtype = dtypes.canonicalize_dtype(x.dtype)
   if np.issubdtype(dtype, np.integer):
     return np.random.randint(0, 100, size=x.shape, dtype=dtype)

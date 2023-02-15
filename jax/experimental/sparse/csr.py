@@ -21,6 +21,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.coo import _coo_matmat, _coo_matvec, _coo_todense, COOInfo
@@ -43,9 +44,9 @@ class CSR(JAXSparse):
   grad and autodiff, and offers very little functionality. In general you
   should prefer :class:`jax.experimental.sparse.BCOO`.
   """
-  data: jnp.ndarray
-  indices: jnp.ndarray
-  indptr: jnp.ndarray
+  data: jax.Array
+  indices: jax.Array
+  indptr: jax.Array
   shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
@@ -129,9 +130,9 @@ class CSR(JAXSparse):
 @tree_util.register_pytree_node_class
 class CSC(JAXSparse):
   """Experimental CSC matrix implemented in JAX; API subject to change."""
-  data: jnp.ndarray
-  indices: jnp.ndarray
-  indptr: jnp.ndarray
+  data: jax.Array
+  indices: jax.Array
+  indptr: jax.Array
   shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)

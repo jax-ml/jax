@@ -257,10 +257,10 @@ class _Subproblem(NamedTuple):
   in the workspace.
   """
   # The row offset of the block in the matrix of blocks.
-  offset: jnp.ndarray
+  offset: jax.Array
 
   # The size of the block.
-  size: jnp.ndarray
+  size: jax.Array
 
 @partial(jax.jit, static_argnames=('termination_size',))
 def _eigh_work(H, n, termination_size=256):

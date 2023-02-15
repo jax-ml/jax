@@ -160,7 +160,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
      if dtype == dtypes.canonicalize_dtype(dtype)])
   def testDtypeWrappers(self, dtype):
     arr = dtype(0)
-    self.assertIsInstance(arr, jnp.ndarray)
+    self.assertIsInstance(arr, jax.Array)
     self.assertEqual(arr.dtype, np.dtype(dtype))
     self.assertArraysEqual(arr, 0, check_dtypes=False)
 
@@ -3183,7 +3183,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     @jax.jit
     def f(x):
-      self.assertIsInstance(x, jnp.ndarray)
+      self.assertIsInstance(x, jax.Array)
       return jnp.sum(x)
 
     f(arr)
@@ -4833,7 +4833,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def testBroadcastToOnScalar(self):
-    self.assertIsInstance(jnp.broadcast_to(10.0, ()), jnp.ndarray)
+    self.assertIsInstance(jnp.broadcast_to(10.0, ()), jax.Array)
     self.assertIsInstance(np.broadcast_to(10.0, ()), np.ndarray)
 
   def testPrecision(self):

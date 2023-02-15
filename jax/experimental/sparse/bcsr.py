@@ -23,6 +23,7 @@ from typing import NamedTuple, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
+import jax
 import jax.numpy as jnp
 from jax import config
 from jax import lax
@@ -97,7 +98,7 @@ def _compatible(shape1: Sequence[int], shape2: Sequence[int]) -> bool:
   return all(s1 in (1, s2) for s1, s2 in safe_zip(shape1, shape2))
 
 
-def _validate_bcsr_indices(indices: jnp.ndarray, indptr: jnp.ndarray,
+def _validate_bcsr_indices(indices: jax.Array, indptr: jax.Array,
                            shape: Sequence[int]) -> BCSRProperties:
   assert jnp.issubdtype(indices.dtype, jnp.integer)
   assert jnp.issubdtype(indptr.dtype, jnp.integer)
@@ -118,8 +119,8 @@ def _validate_bcsr_indices(indices: jnp.ndarray, indptr: jnp.ndarray,
   return BCSRProperties(n_batch=n_batch, n_dense=n_dense, nse=nse)
 
 
-def _validate_bcsr(data: jnp.ndarray, indices: jnp.ndarray,
-                   indptr: jnp.ndarray, shape: Sequence[int]) -> BCSRProperties:
+def _validate_bcsr(data: jax.Array, indices: jax.Array,
+                   indptr: jax.Array, shape: Sequence[int]) -> BCSRProperties:
   props = _validate_bcsr_indices(indices, indptr, shape)
   shape = tuple(shape)
   n_batch, n_dense, nse = props.n_batch, props.n_dense, props.nse
@@ -134,8 +135,8 @@ def _validate_bcsr(data: jnp.ndarray, indices: jnp.ndarray,
   return props
 
 
-def _bcsr_to_bcoo(indices: jnp.ndarray, indptr: jnp.ndarray, *,
-                  shape: Sequence[int]) -> jnp.ndarray:
+def _bcsr_to_bcoo(indices: jax.Array, indptr: jax.Array, *,
+                  shape: Sequence[int]) -> jax.Array:
   """Given BCSR (indices, indptr), return BCOO (indices)."""
   n_batch, _, _ = _validate_bcsr_indices(indices, indptr, shape)
   csr_to_coo = nfold_vmap(_csr_to_coo, n_batch)
@@ -478,8 +479,8 @@ def bcsr_dot_general(lhs: Union[BCSR, Array], rhs: Array, *,
     dense, the result will be dense, of type ndarray.
   """
   del precision, preferred_element_type  # unused
-  if isinstance(rhs, (np.ndarray, jnp.ndarray)):
-    if isinstance(lhs, (np.ndarray, jnp.ndarray)):
+  if isinstance(rhs, (np.ndarray, jax.Array)):
+    if isinstance(lhs, (np.ndarray, jax.Array)):
       return lax.dot_general(lhs, rhs, dimension_numbers=dimension_numbers)
 
     if isinstance(lhs, BCSR):
@@ -492,8 +493,8 @@ def bcsr_dot_general(lhs: Union[BCSR, Array], rhs: Array, *,
                             "lhs and ndarray rhs.")
 
 
-def _bcsr_dot_general(lhs_data: jnp.ndarray, lhs_indices: jnp.ndarray,
-                      lhs_indptr: jnp.ndarray, rhs: Array, *,
+def _bcsr_dot_general(lhs_data: jax.Array, lhs_indices: jax.Array,
+                      lhs_indptr: jax.Array, rhs: Array, *,
                       dimension_numbers: DotDimensionNumbers,
                       lhs_spinfo: SparseInfo) -> Array:
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -708,9 +709,9 @@ def bcsr_broadcast_in_dim(mat: BCSR, *, shape: Shape, broadcast_dimensions: Sequ
 class BCSR(JAXSparse):
   """Experimental batched CSR matrix implemented in JAX."""
 
-  data: jnp.ndarray
-  indices: jnp.ndarray
-  indptr: jnp.ndarray
+  data: jax.Array
+  indices: jax.Array
+  indptr: jax.Array
   shape: Shape
   nse = property(lambda self: self.indices.shape[-1])
   dtype = property(lambda self: self.data.dtype)

@@ -14,6 +14,7 @@
 
 
 from typing import Any, Optional, Sequence, Tuple, Union, cast as type_cast
+import jax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import prod
 from jax._src.lax import lax
@@ -22,7 +23,7 @@ from jax._src.lax import convolution
 DType = Any
 
 def conv_general_dilated_patches(
-    lhs: lax.Array,
+    lhs: jax.typing.ArrayLike,
     filter_shape: Sequence[int],
     window_strides: Sequence[int],
     padding: Union[str, Sequence[Tuple[int, int]]],
@@ -31,7 +32,7 @@ def conv_general_dilated_patches(
     dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
     precision: Optional[lax.PrecisionType] = None,
     preferred_element_type: Optional[DType] = None,
-) -> lax.Array:
+) -> jax.Array:
   """Extract patches subject to the receptive field of `conv_general_dilated`.
 
   Runs the input through a convolution with given parameters. The kernel of the
@@ -84,24 +85,25 @@ def conv_general_dilated_patches(
     (`np.prod(filter_shape) * lhs.shape[lhs_spec.index('C')]`).
 
   """
+  lhs_array = jnp.asarray(lhs)
   filter_shape = tuple(filter_shape)
   dimension_numbers = convolution.conv_dimension_numbers(
-      lhs.shape, (1, 1) + filter_shape, dimension_numbers)
+      lhs_array.shape, (1, 1) + filter_shape, dimension_numbers)
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
 
   spatial_size = prod(filter_shape)
-  n_channels = lhs.shape[lhs_spec[1]]
+  n_channels = lhs_array.shape[lhs_spec[1]]
 
   # Move separate `lhs` spatial locations into separate `rhs` channels.
-  rhs = jnp.eye(spatial_size, dtype=lhs.dtype).reshape(filter_shape * 2)
+  rhs = jnp.eye(spatial_size, dtype=lhs_array.dtype).reshape(filter_shape * 2)
 
   rhs = rhs.reshape((spatial_size, 1) + filter_shape)
   rhs = jnp.tile(rhs, (n_channels,) + (1,) * (rhs.ndim - 1))
   rhs = jnp.moveaxis(rhs, (0, 1), (rhs_spec[0], rhs_spec[1]))
 
   out = convolution.conv_general_dilated(
-      lhs=lhs,
+      lhs=lhs_array,
       rhs=rhs,
       window_strides=window_strides,
       padding=padding,
@@ -117,8 +119,8 @@ def conv_general_dilated_patches(
 
 
 def conv_general_dilated_local(
-    lhs: jnp.ndarray,
-    rhs: jnp.ndarray,
+    lhs: jax.typing.ArrayLike,
+    rhs: jax.typing.ArrayLike,
     window_strides: Sequence[int],
     padding: Union[str, Sequence[Tuple[int, int]]],
     filter_shape: Sequence[int],
@@ -126,7 +128,7 @@ def conv_general_dilated_local(
     rhs_dilation: Optional[Sequence[int]] = None,
     dimension_numbers: Optional[convolution.ConvGeneralDilatedDimensionNumbers] = None,
     precision: lax.PrecisionLike = None
-) -> jnp.ndarray:
+) -> jax.Array:
   """General n-dimensional unshared convolution operator with optional dilation.
 
   Also known as locally connected layer, the operation is equivalent to
@@ -195,6 +197,8 @@ def conv_general_dilated_local(
   If `dimension_numbers` is `None`, the default is `('NCHW', 'OIHW', 'NCHW')`
   (for a 2D convolution).
   """
+  lhs_array = jnp.asarray(lhs)
+
   c_precision = lax.canonicalize_precision(precision)
   lhs_precision = type_cast(
       Optional[lax.PrecisionType],
@@ -203,7 +207,7 @@ def conv_general_dilated_local(
        else c_precision))
 
   patches = conv_general_dilated_patches(
-      lhs=lhs,
+      lhs=lhs_array,
       filter_shape=filter_shape,
       window_strides=window_strides,
       padding=padding,
@@ -214,7 +218,7 @@ def conv_general_dilated_local(
   )
 
   lhs_spec, rhs_spec, out_spec = convolution.conv_dimension_numbers(
-      lhs.shape, (1, 1) + tuple(filter_shape), dimension_numbers)
+      lhs_array.shape, (1, 1) + tuple(filter_shape), dimension_numbers)
 
   lhs_c_dims, rhs_c_dims = [out_spec[1]], [rhs_spec[1]]
 

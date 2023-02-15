@@ -2381,7 +2381,7 @@ class SparseObjectTest(sptu.SparseTestCase):
 
     with self.subTest('to_elt'):
       M_out = vmap(to_elt)(Msp)
-      self.assertIsInstance(M_out, jnp.ndarray)
+      self.assertIsInstance(M_out, jax.Array)
       self.assertEqual(Msp.shape, M_out.shape)
 
     with self.subTest('axis_None'):

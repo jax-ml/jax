@@ -98,7 +98,7 @@ class DtypesTest(jtu.JaxTestCase):
     expected_dtype = dtypes.canonicalize_dtype(dtypes.python_scalar_dtypes[type_])
     for f in [jnp.array, jax.jit(jnp.array), jax.jit(lambda x: x)]:
       y = f(type_(0))
-      self.assertTrue(isinstance(y, jnp.ndarray), msg=(f, y))
+      self.assertTrue(isinstance(y, jax.Array), msg=(f, y))
       self.assertEqual(y.dtype, expected_dtype, msg=(f, y))
 
   def testUnsupportedType(self):
@@ -141,7 +141,7 @@ class DtypesTest(jtu.JaxTestCase):
     for x, y, dtype in testcases:
       x, y = (y, x) if swap else (x, y)
       z = op(x, y)
-      self.assertTrue(isinstance(z, jnp.ndarray), msg=(x, y, z))
+      self.assertTrue(isinstance(z, jax.Array), msg=(x, y, z))
       self.assertEqual(z.dtype, dtypes.canonicalize_dtype(dtype), msg=(x, y, z))
 
   @jax.numpy_dtype_promotion('strict')

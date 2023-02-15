@@ -59,23 +59,23 @@ def _binary_replace(replace_bit, original_dict, new_dict, keys=None):
 
 
 class _ZoomState(NamedTuple):
-  done: Union[bool, jnp.ndarray]
-  failed: Union[bool, jnp.ndarray]
-  j: Union[int, jnp.ndarray]
-  a_lo: Union[float, jnp.ndarray]
-  phi_lo: Union[float, jnp.ndarray]
-  dphi_lo: Union[float, jnp.ndarray]
-  a_hi: Union[float, jnp.ndarray]
-  phi_hi: Union[float, jnp.ndarray]
-  dphi_hi: Union[float, jnp.ndarray]
-  a_rec: Union[float, jnp.ndarray]
-  phi_rec: Union[float, jnp.ndarray]
-  a_star: Union[float, jnp.ndarray]
-  phi_star: Union[float, jnp.ndarray]
-  dphi_star: Union[float, jnp.ndarray]
-  g_star: Union[float, jnp.ndarray]
-  nfev: Union[int, jnp.ndarray]
-  ngev: Union[int, jnp.ndarray]
+  done: Union[bool, jax.Array]
+  failed: Union[bool, jax.Array]
+  j: Union[int, jax.Array]
+  a_lo: Union[float, jax.Array]
+  phi_lo: Union[float, jax.Array]
+  dphi_lo: Union[float, jax.Array]
+  a_hi: Union[float, jax.Array]
+  phi_hi: Union[float, jax.Array]
+  dphi_hi: Union[float, jax.Array]
+  a_rec: Union[float, jax.Array]
+  phi_rec: Union[float, jax.Array]
+  a_star: Union[float, jax.Array]
+  phi_star: Union[float, jax.Array]
+  dphi_star: Union[float, jax.Array]
+  g_star: Union[float, jax.Array]
+  nfev: Union[int, jax.Array]
+  ngev: Union[int, jax.Array]
 
 
 def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
@@ -215,18 +215,18 @@ def _zoom(restricted_func_and_grad, wolfe_one, wolfe_two, a_lo, phi_lo,
 
 
 class _LineSearchState(NamedTuple):
-  done: Union[bool, jnp.ndarray]
-  failed: Union[bool, jnp.ndarray]
-  i: Union[int, jnp.ndarray]
-  a_i1: Union[float, jnp.ndarray]
-  phi_i1: Union[float, jnp.ndarray]
-  dphi_i1: Union[float, jnp.ndarray]
-  nfev: Union[int, jnp.ndarray]
-  ngev: Union[int, jnp.ndarray]
-  a_star: Union[float, jnp.ndarray]
-  phi_star: Union[float, jnp.ndarray]
-  dphi_star: Union[float, jnp.ndarray]
-  g_star: jnp.ndarray
+  done: Union[bool, jax.Array]
+  failed: Union[bool, jax.Array]
+  i: Union[int, jax.Array]
+  a_i1: Union[float, jax.Array]
+  phi_i1: Union[float, jax.Array]
+  dphi_i1: Union[float, jax.Array]
+  nfev: Union[int, jax.Array]
+  ngev: Union[int, jax.Array]
+  a_star: Union[float, jax.Array]
+  phi_star: Union[float, jax.Array]
+  dphi_star: Union[float, jax.Array]
+  g_star: jax.Array
 
 
 class _LineSearchResults(NamedTuple):
@@ -243,15 +243,15 @@ class _LineSearchResults(NamedTuple):
     g_k: final gradient value
     status: integer end status
   """
-  failed: Union[bool, jnp.ndarray]
-  nit: Union[int, jnp.ndarray]
-  nfev: Union[int, jnp.ndarray]
-  ngev: Union[int, jnp.ndarray]
-  k: Union[int, jnp.ndarray]
-  a_k: Union[int, jnp.ndarray]
-  f_k: jnp.ndarray
-  g_k: jnp.ndarray
-  status: Union[bool, jnp.ndarray]
+  failed: Union[bool, jax.Array]
+  nit: Union[int, jax.Array]
+  nfev: Union[int, jax.Array]
+  ngev: Union[int, jax.Array]
+  k: Union[int, jax.Array]
+  a_k: Union[int, jax.Array]
+  f_k: jax.Array
+  g_k: jax.Array
+  status: Union[bool, jax.Array]
 
 
 def line_search(f, xk, pk, old_fval=None, old_old_fval=None, gfk=None, c1=1e-4,

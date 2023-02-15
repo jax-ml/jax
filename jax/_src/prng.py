@@ -94,7 +94,7 @@ class PRNGImpl(NamedTuple):
 
 # -- PRNG key arrays
 
-def _check_prng_key_data(impl, key_data: jnp.ndarray):
+def _check_prng_key_data(impl, key_data: jax.Array):
   ndim = len(impl.key_shape)
   if not all(hasattr(key_data, attr) for attr in ['ndim', 'shape', 'dtype']):
     raise TypeError("JAX encountered invalid PRNG key data: expected key_data "
@@ -136,7 +136,7 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   """
 
   impl: PRNGImpl
-  _base_array: jnp.ndarray
+  _base_array: jax.Array
 
   def __init__(self, impl, key_data: Any):
     assert not isinstance(key_data, core.Tracer)
@@ -794,14 +794,14 @@ mlir.register_lowering(random_unwrap_p, random_unwrap_lowering)
 # -- threefry2x32 PRNG implementation
 
 
-def _is_threefry_prng_key(key: jnp.ndarray) -> bool:
+def _is_threefry_prng_key(key: jax.Array) -> bool:
   try:
     return key.shape == (2,) and key.dtype == np.uint32
   except AttributeError:
     return False
 
 
-def threefry_seed(seed: jnp.ndarray) -> jnp.ndarray:
+def threefry_seed(seed: jax.Array) -> jax.Array:
   """Create a single raw threefry PRNG key from an integer seed.
 
   Args:
@@ -1099,26 +1099,26 @@ def threefry_2x32(keypair, count):
   return lax.reshape(out[:-1] if odd_size else out, count.shape)
 
 
-def threefry_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
+def threefry_split(key: jax.Array, num: int) -> jax.Array:
   if config.jax_threefry_partitionable:
     return _threefry_split_foldlike(key, int(num))  # type: ignore
   else:
     return _threefry_split_original(key, int(num))  # type: ignore
 
 @partial(jit, static_argnums=(1,), inline=True)
-def _threefry_split_original(key, num) -> jnp.ndarray:
+def _threefry_split_original(key, num) -> jax.Array:
   counts = lax.iota(np.uint32, num * 2)
   return lax.reshape(threefry_2x32(key, counts), (num, 2))
 
 @partial(jit, static_argnums=(1,), inline=True)
-def _threefry_split_foldlike(key, num) -> jnp.ndarray:
+def _threefry_split_foldlike(key, num) -> jax.Array:
   k1, k2 = key
   counts1, counts2 = iota_2x32_shape((num,))
   bits1, bits2 = threefry2x32_p.bind(k1, k2, counts1, counts2)
   return jnp.stack([bits1, bits2], axis=1)
 
 
-def threefry_fold_in(key: jnp.ndarray, data: jnp.ndarray) -> jnp.ndarray:
+def threefry_fold_in(key: jax.Array, data: jax.Array) -> jax.Array:
   assert not data.shape
   return _threefry_fold_in(key, jnp.uint32(data))
 
@@ -1127,7 +1127,7 @@ def _threefry_fold_in(key, data):
   return threefry_2x32(key, threefry_seed(data))
 
 
-def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
+def threefry_random_bits(key: jax.Array, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
   if not _is_threefry_prng_key(key):
     raise TypeError("threefry_random_bits got invalid prng key.")
@@ -1140,7 +1140,7 @@ def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   else:
     return _threefry_random_bits_original(key, bit_width, shape)
 
-def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
+def _threefry_random_bits_partitionable(key: jax.Array, bit_width, shape):
   if all(core.is_constant_dim(d) for d in shape) and prod(shape) > 2 ** 64:
     raise NotImplementedError('random bits array of size exceeding 2 ** 64')
 
@@ -1159,7 +1159,7 @@ def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
     return lax.convert_element_type(bits1 ^ bits2, dtype)
 
 @partial(jit, static_argnums=(1, 2), inline=True)
-def _threefry_random_bits_original(key: jnp.ndarray, bit_width, shape):
+def _threefry_random_bits_original(key: jax.Array, bit_width, shape):
   size = prod(shape)
   # Compute ceil(bit_width * size / 32) in a way that is friendly to shape
   # polymorphism
@@ -1219,12 +1219,12 @@ threefry_prng_impl = PRNGImpl(
 # stable/deterministic across backends or compiler versions. Correspondingly, we
 # reserve the right to change any of these implementations at any time!
 
-def _rbg_seed(seed: jnp.ndarray) -> jnp.ndarray:
+def _rbg_seed(seed: jax.Array) -> jax.Array:
   assert not seed.shape
   halfkey = threefry_seed(seed)
   return jnp.concatenate([halfkey, halfkey])
 
-def _rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
+def _rbg_split(key: jax.Array, num: int) -> jax.Array:
   if config.jax_threefry_partitionable:
     _threefry_split = _threefry_split_foldlike
   else:
@@ -1232,12 +1232,12 @@ def _rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
   return vmap(
       _threefry_split, (0, None), 1)(key.reshape(2, 2), num).reshape(num, 4)
 
-def _rbg_fold_in(key: jnp.ndarray, data: jnp.ndarray) -> jnp.ndarray:
+def _rbg_fold_in(key: jax.Array, data: jax.Array) -> jax.Array:
   assert not data.shape
   return vmap(_threefry_fold_in, (0, None), 0)(key.reshape(2, 2), data).reshape(4)
 
-def _rbg_random_bits(key: jnp.ndarray, bit_width: int, shape: Sequence[int]
-                     ) -> jnp.ndarray:
+def _rbg_random_bits(key: jax.Array, bit_width: int, shape: Sequence[int]
+                     ) -> jax.Array:
   if not key.shape == (4,) and key.dtype == jnp.dtype('uint32'):
     raise TypeError("_rbg_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):
@@ -1253,12 +1253,12 @@ rbg_prng_impl = PRNGImpl(
     fold_in=_rbg_fold_in,
     tag='rbg')
 
-def _unsafe_rbg_split(key: jnp.ndarray, num: int) -> jnp.ndarray:
+def _unsafe_rbg_split(key: jax.Array, num: int) -> jax.Array:
   # treat 10 iterations of random bits as a 'hash function'
   _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
   return keys[::10]
 
-def _unsafe_rbg_fold_in(key: jnp.ndarray, data: jnp.ndarray) -> jnp.ndarray:
+def _unsafe_rbg_fold_in(key: jax.Array, data: jax.Array) -> jax.Array:
   assert not data.shape
   _, random_bits = lax.rng_bit_generator(_rbg_seed(data), (10, 4), dtype='uint32')
   return key ^ random_bits[-1]

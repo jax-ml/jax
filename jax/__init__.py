@@ -43,6 +43,7 @@ del _core
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.basearray import Array as Array
+from jax import typing as typing
 
 from jax._src.config import (
   config as config,

@@ -775,7 +775,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     # test that we can pass in and out ShardedDeviceArrays
     y = f(x)
-    self.assertIsInstance(y, jnp.ndarray)
+    self.assertIsInstance(y, jax.Array)
     if config.jax_array:
       self.assertIsInstance(y, array.ArrayImpl)
     else:
@@ -1655,7 +1655,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
 
     y = f(x)
-    self.assertIsInstance(y, jnp.ndarray)
+    self.assertIsInstance(y, jax.Array)
     if config.jax_array:
       self.assertIsInstance(y, array.ArrayImpl)
     else:

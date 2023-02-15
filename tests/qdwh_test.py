@@ -39,7 +39,7 @@ _QDWH_TEST_EPS = jnp.finfo(_QDWH_TEST_DTYPE).eps
 _MAX_LOG_CONDITION_NUM = np.log10(int(1 / _QDWH_TEST_EPS))
 
 
-def _check_symmetry(x: jnp.ndarray) -> bool:
+def _check_symmetry(x: jax.Array) -> bool:
   """Check if the array is symmetric."""
   m, n = x.shape
   eps = jnp.finfo(x.dtype).eps

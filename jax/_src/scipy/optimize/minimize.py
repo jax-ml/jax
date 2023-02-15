@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from typing import Any, Callable, Mapping, Optional, Tuple, Union
+
+import jax
 from jax._src.scipy.optimize.bfgs import minimize_bfgs
 from jax._src.scipy.optimize._lbfgs import _minimize_lbfgs
 from typing import NamedTuple
@@ -34,20 +36,20 @@ class OptimizeResults(NamedTuple):
     njev: integer number of gradient evaluations.
     nit: integer number of iterations of the optimization algorithm.
   """
-  x: jnp.ndarray
-  success: Union[bool, jnp.ndarray]
-  status: Union[int, jnp.ndarray]
-  fun: jnp.ndarray
-  jac: jnp.ndarray
-  hess_inv: Optional[jnp.ndarray]
-  nfev: Union[int, jnp.ndarray]
-  njev: Union[int, jnp.ndarray]
-  nit: Union[int, jnp.ndarray]
+  x: jax.Array
+  success: Union[bool, jax.Array]
+  status: Union[int, jax.Array]
+  fun: jax.Array
+  jac: jax.Array
+  hess_inv: Optional[jax.Array]
+  nfev: Union[int, jax.Array]
+  njev: Union[int, jax.Array]
+  nit: Union[int, jax.Array]
 
 
 def minimize(
     fun: Callable,
-    x0: jnp.ndarray,
+    x0: jax.Array,
     args: Tuple = (),
     *,
     method: str,

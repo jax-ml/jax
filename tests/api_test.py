@@ -1474,11 +1474,11 @@ class APITest(jtu.JaxTestCase):
                      "Transpose rule (for reverse-mode differentiation) for 'foo' not implemented")
 
   def test_is_subclass(self):
-    self.assertTrue(issubclass(device_array.DeviceArray, jnp.ndarray))
-    self.assertTrue(issubclass(device_array.Buffer, jnp.ndarray))
-    self.assertTrue(issubclass(pxla.ShardedDeviceArray, jnp.ndarray))
-    self.assertTrue(issubclass(pxla._ShardedDeviceArray, jnp.ndarray))
-    self.assertFalse(issubclass(np.ndarray, jnp.ndarray))
+    self.assertTrue(issubclass(device_array.DeviceArray, jax.Array))
+    self.assertTrue(issubclass(device_array.Buffer, jax.Array))
+    self.assertTrue(issubclass(pxla.ShardedDeviceArray, jax.Array))
+    self.assertTrue(issubclass(pxla._ShardedDeviceArray, jax.Array))
+    self.assertFalse(issubclass(np.ndarray, jax.Array))
     self.assertFalse(issubclass(device_array.DeviceArray, np.ndarray))
     self.assertFalse(issubclass(device_array.Buffer, np.ndarray))
     self.assertFalse(issubclass(pxla.ShardedDeviceArray, np.ndarray))
@@ -1486,7 +1486,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_is_instance(self):
     def f(x):
-      self.assertIsInstance(x, jnp.ndarray)
+      self.assertIsInstance(x, jax.Array)
       self.assertNotIsInstance(x, np.ndarray)
       return x + 2
     jit(f)(3)
@@ -1496,10 +1496,10 @@ class APITest(jtu.JaxTestCase):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     dx = api.device_put(x)
     _check_instance(self, dx)
-    self.assertIsInstance(dx, jnp.ndarray)
+    self.assertIsInstance(dx, jax.Array)
     self.assertNotIsInstance(dx, np.ndarray)
     x2 = api.device_get(dx)
-    self.assertNotIsInstance(x2, jnp.ndarray)
+    self.assertNotIsInstance(x2, jax.Array)
     self.assertIsInstance(x2, np.ndarray)
     assert np.all(x == x2)
 
@@ -7114,7 +7114,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       raise unittest.SkipTest("test only applies when x64 is disabled")
 
     @jax.custom_jvp
-    def projection_unit_simplex(x: jnp.ndarray) -> jnp.ndarray:
+    def projection_unit_simplex(x: jax.Array) -> jax.Array:
       """Projection onto the unit simplex."""
       s = 1.0
       n_features = x.shape[0]

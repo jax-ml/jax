@@ -16,15 +16,15 @@
 import abc
 from typing import Sequence, Tuple
 
+import jax
 from jax._src import core
-import jax.numpy as jnp
 from jax._src import util
 from jax._src.typing import Array
 
 
 class JAXSparse(abc.ABC):
   """Base class for high-level JAX sparse objects."""
-  data: jnp.ndarray
+  data: jax.Array
   shape: Tuple[int, ...]
   nse: property
   dtype: property

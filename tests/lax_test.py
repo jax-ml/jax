@@ -2951,7 +2951,7 @@ def take_abstract_eval(x):
 
 class FooArray:
   shape: Tuple[int, ...]
-  data: jnp.ndarray
+  data: jax.Array
 
   def __init__(self, shape, data):
     assert data.shape == (*shape, 2)

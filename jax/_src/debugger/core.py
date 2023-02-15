@@ -20,7 +20,7 @@ from typing import Any, Dict, Hashable, List, Optional, Protocol, Tuple
 
 import numpy as np
 
-import jax.numpy as jnp
+import jax
 from jax import tree_util
 from jax._src import core
 from jax._src import debugging
@@ -84,7 +84,7 @@ class DebuggerFrame:
     flat_globals, globals_tree = _safe_flatten_dict(self.globals)
     flat_vars = flat_locals + flat_globals
     is_valid = [
-        isinstance(l, (core.Tracer, jnp.ndarray, np.ndarray))
+        isinstance(l, (core.Tracer, jax.Array, np.ndarray))
         for l in flat_vars
     ]
     invalid_vars, valid_vars = util.partition_list(is_valid, flat_vars)

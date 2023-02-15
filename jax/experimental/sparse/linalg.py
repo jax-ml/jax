@@ -31,10 +31,10 @@ from scipy.sparse import csr_matrix, linalg
 
 
 def lobpcg_standard(
-    A: Union[jnp.ndarray, Callable[[jnp.ndarray], jnp.ndarray]],
-    X: jnp.ndarray,
+    A: Union[jax.Array, Callable[[jax.Array], jax.Array]],
+    X: jax.Array,
     m: int = 100,
-    tol: Union[jnp.ndarray, float, None] = None):
+    tol: Union[jax.Array, float, None] = None):
   """Compute the top-k standard eigenvalues using the LOBPCG routine.
 
   LOBPCG [1] stands for Locally Optimal Block Preconditioned Conjugate Gradient.
@@ -95,16 +95,16 @@ def lobpcg_standard(
                  large (only `k * 5 < n` supported), or `k == 0`.
   """
   # Jit-compile once per matrix shape if possible.
-  if isinstance(A, (jnp.ndarray, np.ndarray)):
+  if isinstance(A, (jax.Array, np.ndarray)):
     return _lobpcg_standard_matrix(A, X, m, tol, debug=False)
   return _lobpcg_standard_callable(A, X, m, tol, debug=False)
 
 @functools.partial(jax.jit, static_argnames=['m', 'debug'])
 def _lobpcg_standard_matrix(
-    A: jnp.ndarray,
-    X: jnp.ndarray,
+    A: jax.Array,
+    X: jax.Array,
     m: int,
-    tol: Union[jnp.ndarray, float, None],
+    tol: Union[jax.Array, float, None],
     debug: bool = False):
   """Computes lobpcg_standard(), possibly with debug diagnostics."""
   return _lobpcg_standard_callable(
@@ -112,10 +112,10 @@ def _lobpcg_standard_matrix(
 
 @functools.partial(jax.jit, static_argnames=['A', 'm', 'debug'])
 def _lobpcg_standard_callable(
-    A: Callable[[jnp.ndarray], jnp.ndarray],
-    X: jnp.ndarray,
+    A: Callable[[jax.Array], jax.Array],
+    X: jax.Array,
     m: int,
-    tol: Union[jnp.ndarray, float, None],
+    tol: Union[jax.Array, float, None],
     debug: bool = False):
   """Supports generic lobpcg_standard() callable interface."""
 

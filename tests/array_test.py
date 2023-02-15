@@ -762,7 +762,7 @@ class ShardingTest(jtu.JaxTestCase):
 
   def test_is_subclass(self):
     # array version of api_test.py::APITest::test_is_subclass
-    self.assertTrue(issubclass(array.ArrayImpl, jnp.ndarray))
+    self.assertTrue(issubclass(array.ArrayImpl, jax.Array))
     self.assertFalse(issubclass(array.ArrayImpl, np.ndarray))
 
   def test_op_sharding_sharding_repr(self):

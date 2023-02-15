@@ -506,7 +506,7 @@ class PrngTest(jtu.JaxTestCase):
     if not config.jax_enable_custom_prng:
       self.skipTest("test requires config.jax_enable_custom_prng")
     key = random.PRNGKey(0)
-    self.assertIsInstance(key, jnp.ndarray)
+    self.assertIsInstance(key, jax.Array)
 
 
 class LaxRandomTest(jtu.JaxTestCase):

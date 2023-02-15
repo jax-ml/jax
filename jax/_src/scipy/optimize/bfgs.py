@@ -45,19 +45,19 @@ class _BFGSResults(NamedTuple):
     line_search_status: int describing line search end state (only means
       something if line search fails).
   """
-  converged: Union[bool, jnp.ndarray]
-  failed: Union[bool, jnp.ndarray]
-  k: Union[int, jnp.ndarray]
-  nfev: Union[int, jnp.ndarray]
-  ngev: Union[int, jnp.ndarray]
-  nhev: Union[int, jnp.ndarray]
-  x_k: jnp.ndarray
-  f_k: jnp.ndarray
-  g_k: jnp.ndarray
-  H_k: jnp.ndarray
-  old_old_fval: jnp.ndarray
-  status: Union[int, jnp.ndarray]
-  line_search_status: Union[int, jnp.ndarray]
+  converged: Union[bool, jax.Array]
+  failed: Union[bool, jax.Array]
+  k: Union[int, jax.Array]
+  nfev: Union[int, jax.Array]
+  ngev: Union[int, jax.Array]
+  nhev: Union[int, jax.Array]
+  x_k: jax.Array
+  f_k: jax.Array
+  g_k: jax.Array
+  H_k: jax.Array
+  old_old_fval: jax.Array
+  status: Union[int, jax.Array]
+  line_search_status: Union[int, jax.Array]
 
 
 _dot = partial(jnp.dot, precision=lax.Precision.HIGHEST)
@@ -66,7 +66,7 @@ _einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
 
 def minimize_bfgs(
     fun: Callable,
-    x0: jnp.ndarray,
+    x0: jax.Array,
     maxiter: Optional[int] = None,
     norm=jnp.inf,
     gtol: float = 1e-5,

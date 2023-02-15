@@ -22,6 +22,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax.interpreters import mlir
 from jax.experimental.sparse._base import JAXSparse
@@ -54,9 +55,9 @@ class COO(JAXSparse):
   grad and autodiff, and offers very little functionality. In general you
   should prefer :class:`jax.experimental.sparse.BCOO`.
   """
-  data: jnp.ndarray
-  row: jnp.ndarray
-  col: jnp.ndarray
+  data: jax.Array
+  row: jax.Array
+  col: jax.Array
   shape: Tuple[int, int]
   nse = property(lambda self: self.data.size)
   dtype = property(lambda self: self.data.dtype)
