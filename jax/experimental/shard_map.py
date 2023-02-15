@@ -313,7 +313,6 @@ class ShardMapPrimitive(core.Primitive):
     return map(core.full_lower, core.apply_todos(todos, outs))
 
   def get_bind_params(self, params):
-    """Goes from jaxpr form to python traceable form."""
     new_params = dict(params)
     jaxpr = new_params.pop('jaxpr')
     subfun = lu.hashable_partial(lu.wrap_init(core.eval_jaxpr), jaxpr, ())
@@ -522,7 +521,7 @@ def _unmatch(mesh, src_tup, x):
 
 def _check_names(names: Sequence[AxisNames], avals: Sequence[core.ShapedArray]
                  ) -> None:
-  fail = [a if not max(n, default=0) < a.ndim else no_fail
+  fail = [a if n and not max(n) < a.ndim else no_fail
           for n, a in zip(names, avals)]
   if any(f is not no_fail for f in fail): raise _SpecError(fail)
 class _SpecError(Exception): pass
@@ -654,7 +653,6 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
                   custom_derivatives.__dict__.values()):
   if isinstance(o, core.Primitive): register_standard(o)
 
-register_standard(xla.xla_call_p)
 register_standard(lax_parallel.ppermute_p)  # doesn't change replication
 
 @register_rule(lax_parallel.psum_p)
@@ -692,6 +690,10 @@ def _axis_index_rule(mesh, *, axis_name):
 @register_rule(pjit.pjit_p)
 def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
   return _output_rep(mesh, jaxpr.jaxpr, in_rep)
+
+@register_rule(xla.xla_call_p)
+def _jit_rule(mesh, *in_rep, jaxpr, **kwargs):
+  return _output_rep(mesh, jaxpr, in_rep)
 
 # Batching
 
@@ -754,7 +756,7 @@ def _shard_map_jvp(trace, shard_map_p, f, tracers, mesh, in_names,
   result = shard_map_p.bind(f_jvp, *args, **params)
   primal_out, tangent_out = tree_unflatten(out_tree(), result)
   tangent_out = [ad.Zero(core.get_aval(p).at_least_vspace()) if t is None else t
-              for p, t in zip(primal_out, tangent_out)]
+                 for p, t in zip(primal_out, tangent_out)]
   return [ad.JVPTracer(trace, p, t) for p, t in zip(primal_out, tangent_out)]
 ad.JVPTrace.process_shard_map = _shard_map_jvp
 
@@ -783,7 +785,6 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   f = _promote_scalar_residuals(f)
   f_known, aux = pe.partial_eval_wrapper_nounits(
       f, (*in_knowns,), (*in_avals_sharded,))
-  unk_in_names, known_in_names = pe.partition_list(in_knowns, in_names)
 
   @as_hashable_function(closure=out_names_thunk)
   def known_out_names():
