@@ -553,11 +553,11 @@ for prim, bcoo_impl in _BCOO_STANDARD_PRIMITIVES.items():
 
 _BCSR_STANDARD_PRIMITIVES = {
   lax.dot_general_p: sparse.bcsr_dot_general,
+  lax.broadcast_in_dim_p: sparse.bcsr_broadcast_in_dim,
 }
 
 for prim, bcsr_impl in _BCSR_STANDARD_PRIMITIVES.items():
   sparse_rules_bcsr[prim] = _standard_sparse_rule(prim, bcsr_impl)
-
 
 def _transpose_sparse(spenv, *spvalues, permutation):
   permutation = tuple(permutation)
@@ -851,7 +851,7 @@ def _astype(self, *args, **kwargs):
   """Copy the array and cast to a specified dtype."""
   return sparsify(lambda x: x.astype(*args, **kwargs))(self)
 
-def _sparse_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
+def _bcoo_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
                            mode=None, fill_value=None):
   # Only sparsify the array argument; sparse indices not yet supported
   result = sparsify(functools.partial(
@@ -882,7 +882,7 @@ _bcoo_methods = {
   "__radd__": sparsify(_swap_args(jnp.add)),
   "__sub__": sparsify(jnp.subtract),
   "__rsub__": sparsify(_swap_args(jnp.subtract)),
-  "__getitem__": _sparse_rewriting_take,
+  "__getitem__": _bcoo_rewriting_take,
   "__iter__": _sparse_iter,
   "__gt__": sparsify(jnp.greater),
   "__ge__": sparsify(jnp.greater_equal),
@@ -895,10 +895,22 @@ _bcoo_methods = {
 for method, impl in _bcoo_methods.items():
   setattr(BCOO, method, impl)
 
+#------------------------------------------------------------------------------
+# BCSR methods derived from sparsify
+# defined here to avoid circular imports
+
+def _bcsr_rewriting_take(arr, idx, indices_are_sorted=False, unique_indices=False,
+                           mode=None, fill_value=None):
+  # Only sparsify the array argument; sparse indices not yet supported
+  result = sparsify(functools.partial(
+    lax_numpy._rewriting_take, idx=idx, indices_are_sorted=indices_are_sorted,
+    mode=mode, unique_indices=unique_indices, fill_value=fill_value))(arr)
+  return result
 
 _bcoo_methods = {
   "__matmul__": sparsify(jnp.matmul),
   "__rmatmul__": sparsify(_swap_args(jnp.matmul)),
+  "__getitem__": _bcsr_rewriting_take,
 }
 
 for method, impl in _bcoo_methods.items():

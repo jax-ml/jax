@@ -2231,6 +2231,25 @@ class BCSRTest(sptu.SparseTestCase):
     # self._CheckBatchingSparse(dense_fun, sparse_fun, args_maker, atol=tol, rtol=tol,
     #                           bdims=self._random_bdims(props.n_batch, len(props.rhs_shape)))
 
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
+       for shape in [(3, 5), (3, 5, 4)]
+       for layout in iter_bcsr_layouts(shape)],
+    dtype=all_dtypes,
+  )
+  def test_bcsr_broadcast_in_dim(self, shape, dtype, n_batch, n_dense):
+    rng = rand_sparse(self.rng())
+    x = jnp.array(rng(shape, dtype))
+    xsp = sparse.BCSR.fromdense(x, n_batch=n_batch, n_dense=n_dense)
+
+    self.assertEqual(xsp[None].n_batch, xsp.n_batch + 1)
+    self.assertArraysEqual(xsp[None].todense(), x[None])
+
+    if n_batch == 1:
+      self.assertEqual(xsp[:, None].n_batch, xsp.n_batch + 1)
+      self.assertArraysEqual(xsp[:, None].todense(), x[:, None])
+
+
 class SparseGradTest(sptu.SparseTestCase):
   @jtu.sample_product(has_aux=[True, False])
   def test_sparse_value_and_grad(self, has_aux):
