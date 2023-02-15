@@ -24,7 +24,7 @@ from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax.experimental import mesh_utils
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 from jax._src import test_util
 
 

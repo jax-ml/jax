@@ -16,7 +16,6 @@ from jax._src.maps import (
   AxisName as AxisName,
   EMPTY_ENV as EMPTY_ENV,
   FrozenDict as FrozenDict,
-  Mesh as Mesh,
   ResourceEnv as ResourceEnv,
   ResourceSet as ResourceSet,
   SerialLoop as SerialLoop,
@@ -29,3 +28,29 @@ from jax._src.maps import (
   _positional_semantics as _positional_semantics,
   _prepare_axes as _prepare_axes,
 )
+
+
+# Deprecations
+
+from jax._src.maps import (
+  Mesh as _deprecated_Mesh,
+)
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.maps import (
+    Mesh as Mesh,
+  )
+del typing
+
+_deprecations = {
+  # Added Feb 13, 2023:
+  "Mesh": (
+    "jax.experimental.maps.Mesh is deprecated. Use jax.sharding.Mesh.",
+    _deprecated_Mesh,
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

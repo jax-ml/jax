@@ -32,6 +32,8 @@ Remember to align the itemized text with the first line of an item within a list
     functions.
   * The following names have been deprecated:
     * `jax.xla.Device` and `jax.interpreters.xla.Device`: use `jax.Device`.
+    * `jax.experimental.maps.Mesh`. Use `jax.sharding.Mesh`
+    instead.
     * `jax.experimental.pjit.NamedSharding`: use `jax.sharding.NamedSharding`.
     * `jax.experimental.pjit.PartitionSpec`: use `jax.sharding.PartitionSpec`.
     * `jax.interpreters.pxla.Mesh`: use `jax.sharding.Mesh`.
