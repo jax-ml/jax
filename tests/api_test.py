@@ -66,6 +66,7 @@ from jax._src import device_array
 from jax._src import prng
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src import linear_util as lu
@@ -101,6 +102,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @property
   def jit(self):
+    if jax.config.jax_jit_pjit_api_merge and xla_extension_version >= 127:
+      return jax.jit
     return functools.partial(api._jit, self.use_cpp_jit)
 
   def test_jit_repr(self):
@@ -1167,7 +1170,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
 
   def test_hitting_cpp_path(self):
-    if not self.use_cpp_jit:
+    # pjit has a similar test in pjit_test.py
+    if not self.use_cpp_jit or jax.config.jax_jit_pjit_api_merge:
       raise unittest.SkipTest("this test only applies to _cpp_jit")
 
     jit_impl = dispatch._xla_call_impl_lazy

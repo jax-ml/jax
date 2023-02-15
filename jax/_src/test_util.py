@@ -1014,6 +1014,8 @@ _CPP_JIT_IMPLEMENTATION = functools.partial(api._jit, True)
 _CPP_JIT_IMPLEMENTATION._name = "cpp"
 _PYTHON_JIT_IMPLEMENTATION = functools.partial(api._jit, False)
 _PYTHON_JIT_IMPLEMENTATION._name = "python"
+_PJIT_IMPLEMENTATION = jax.jit
+_PJIT_IMPLEMENTATION._name = "pjit"
 _NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
 _NOOP_JIT_IMPLEMENTATION._name = "noop"
 

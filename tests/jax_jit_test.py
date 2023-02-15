@@ -206,7 +206,11 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertTrue(signature.weak_type)
 
   def test_signature_support(self):
-    jit = partial(api._jit, True)
+    if jax.config.jax_jit_pjit_api_merge:
+      jit = jax.jit
+    else:
+      jit = partial(api._jit, True)
+
     def f(a, b, c):
       return a + b + c
 

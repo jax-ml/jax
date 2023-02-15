@@ -202,6 +202,9 @@ def _python_pjit(fun: Callable, infer_params_fn):
       return fun(*args, **kwargs)
     return _python_pjit_helper(fun, infer_params_fn, *args, **kwargs)[0]
 
+  def _python_pjit_evict_fn():
+    _pjit_jaxpr.evict_function(fun)  # type: ignore
+  wrapped.clear_cache = _python_pjit_evict_fn
   return wrapped
 
 class _MostRecentPjitCallExecutable(threading.local):
@@ -215,6 +218,11 @@ def _read_most_recent_pjit_call_executable():
   executable = _most_recent_pjit_call_executable.value
   _most_recent_pjit_call_executable.value = None
   return executable
+
+
+def _cpp_pjit_evict_fn(self):
+  self._clear_cache()
+  _pjit_jaxpr.evict_function(self._fun)  # type: ignore
 
 
 if xla_extension_version >= 124:
@@ -268,7 +276,11 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
         getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
         fun, cache_miss, static_argnums, static_argnames,  # type: ignore
         donate_argnums, global_cache)  # type: ignore
-  return wraps(fun)(cpp_pjit_f)
+
+  cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
+  cpp_pjitted_f._fun = fun
+  type(cpp_pjitted_f).clear_cache = _cpp_pjit_evict_fn
+  return cpp_pjitted_f
 
 
 def _resolve_axis_resources_and_shardings_arg(
