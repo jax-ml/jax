@@ -1007,6 +1007,24 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     ):
       fun_tf_rt(x)
 
+  def test_inner_native_lowering(self):
+    # Two nested jax2tf, the inner one being with native lowering
+    x = np.ones((3,), dtype=np.float32)
+    def f_inner_jax(x):
+      return jnp.sin(x)
+    def f_outer_jax(x):
+      f_inner_tf = jax2tf.convert(f_inner_jax, experimental_native_lowering=True)
+      return jnp.cos(jax2tf.call_tf(f_inner_tf)(x))
+
+    f_outer_tf = tf.function(
+        jax2tf.convert(f_outer_jax, experimental_native_lowering=False),
+        autograph=False)
+    f_outer_graph = str(f_outer_tf.get_concrete_function(tf.convert_to_tensor(x)).graph.as_graph_def())
+    # Quick way to check that there is an XlaCallModule op, and a Cos op, but no Sin op
+    self.assertIn('op: "Cos"', f_outer_graph)
+    self.assertIn('op: "XlaCallModule"', f_outer_graph)
+    self.assertNotIn('op: "Sin"', f_outer_graph)
+
   @_parameterized_jit
   def test_shape_polymorphism_static_output_shape(self, with_jit=True):
     # TODO(b/268386622) Dynamic shapes not yet supported.

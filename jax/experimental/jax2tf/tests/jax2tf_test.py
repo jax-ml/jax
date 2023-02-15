@@ -976,7 +976,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertLen(f_tf_graph_consts, 1)
 
   def test_shared_constants_randint(self):
-    # randint has the property that that the TF lowering of the randbits_p
+    # randint has the property that the TF lowering of the randbits_p
     # primitive generates constants that did not exist in the Jaxpr. As such
     # it has created new errors related to the sharing of the constants.
     if config.jax2tf_default_experimental_native_lowering:
