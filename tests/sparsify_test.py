@@ -326,9 +326,29 @@ class SparsifyTest(jtu.JaxTestCase):
           ([(2, 4), (4,), (3, 4)], "vstack", 0),
           ([(1, 4), (4,), (1, 4)], "vstack", 0),
       ]
-    ],
+    ]
   )
-  def testSparseConcatenate(self, shapes, func, n_batch):
+  def testSparseConcatenateBCOO(self, shapes, func, n_batch):
+    f = self.sparsify(getattr(jnp, func))
+    rng = jtu.rand_some_zero(self.rng())
+    arrs = [rng(shape, 'int32') for shape in shapes]
+    sparrs = [BCOO.fromdense(arr, n_batch=n_batch) for arr in arrs]
+    self.assertArraysEqual(f(arrs), f(sparrs).todense())
+
+  @jtu.sample_product(
+    [dict(shapes=shapes, func=func, n_batch=n_batch)
+      for shapes, func, n_batch in [
+          ([(2, 4), (2, 4)], "stack", 0),
+          ([(2, 4), (3, 4)], "vstack", 0),
+          ([(2, 4), (2, 5)], "hstack", 0),
+          ([(2, 4), (3, 4)], "vstack", 1),
+          ([(2, 4), (2, 5)], "hstack", 1),
+          ([(2, 4), (3, 4)], "vstack", 2),
+          ([(2, 4), (2, 5)], "hstack", 2),
+      ]
+    ]
+  )
+  def testSparseConcatenateBCSR(self, shapes, func, n_batch):
     f = self.sparsify(getattr(jnp, func))
     rng = jtu.rand_some_zero(self.rng())
     arrs = [rng(shape, 'int32') for shape in shapes]

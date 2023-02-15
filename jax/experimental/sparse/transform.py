@@ -554,6 +554,7 @@ for prim, bcoo_impl in _BCOO_STANDARD_PRIMITIVES.items():
 _BCSR_STANDARD_PRIMITIVES = {
   lax.dot_general_p: sparse.bcsr_dot_general,
   lax.broadcast_in_dim_p: sparse.bcsr_broadcast_in_dim,
+  lax.concatenate_p: lambda *a, **k: sparse.bcsr_concatenate(a, **k),
 }
 
 for prim, bcsr_impl in _BCSR_STANDARD_PRIMITIVES.items():
