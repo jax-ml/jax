@@ -613,10 +613,13 @@ class JaxArrayTest(jtu.JaxTestCase):
   # defragment API
   @jtu.skip_on_devices('cpu')  # defragment not implemented for TFRT CPU
   def test_defragment(self):
+    if xb.using_pjrt_c_api():
+      self.skipTest("Manual defragment not exposed via PJRT C API")
+
     # Create a few arrays
-    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    global_mesh = jtu.create_global_mesh((jax.local_device_count(),), ('x',))
     shape = (8, 2)
-    mpsharding = sharding.NamedSharding(global_mesh, P('x', 'y'))
+    mpsharding = sharding.NamedSharding(global_mesh, P('x',))
     arr1, data = create_array(shape, mpsharding)
     arr2, _ = create_array(shape, mpsharding, data)
     arr3, _ = create_array(shape, mpsharding, data)

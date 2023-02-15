@@ -631,3 +631,7 @@ def host_ids(backend=None):
       "instead. jax.host_ids will eventually be removed; please update your "
       "code.")
   return list(range(process_count(backend)))
+
+
+def using_pjrt_c_api(backend=None):
+  return "PJRT C API" in get_backend(backend).platform_version
