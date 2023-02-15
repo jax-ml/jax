@@ -704,6 +704,22 @@ def bcsr_broadcast_in_dim(mat: BCSR, *, shape: Shape, broadcast_dimensions: Sequ
     mat.to_bcoo(), shape=shape, broadcast_dimensions=broadcast_dimensions)
   return BCSR.from_bcoo(result_bcoo)
 
+def bcsr_concatenate(operands: Sequence[BCSR], *, dimension: int) -> BCSR:
+  """Sparse implementation of :func:`jax.lax.concatenate`
+
+  Args:
+    operands : Sequence of BCSR arrays to concatenate. The arrays must have equal
+      shapes, except in the `dimension` axis. Additionally, the arrays must have
+      have equivalent batch, sparse, and dense dimensions.
+    dimension : Positive integer specifying the dimension along which to concatenate
+      the arrays. The dimension must be among batch or sparse dimensions of the input;
+      concatenation along dense dimensions is not supported.
+
+  Returns:
+    A BCSR array containing the concatenation of the inputs.
+  """
+  return BCSR.from_bcoo(
+    bcoo.bcoo_concatenate([mat.to_bcoo() for mat in operands], dimension=dimension))
 
 @tree_util.register_pytree_node_class
 class BCSR(JAXSparse):

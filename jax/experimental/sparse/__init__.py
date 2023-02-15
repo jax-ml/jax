@@ -234,6 +234,7 @@ from jax.experimental.sparse.bcoo import (
 
 from jax.experimental.sparse.bcsr import (
     bcsr_broadcast_in_dim as bcsr_broadcast_in_dim,
+    bcsr_concatenate as bcsr_concatenate,
     bcsr_dot_general as bcsr_dot_general,
     bcsr_dot_general_p as bcsr_dot_general_p,
     bcsr_extract as bcsr_extract,

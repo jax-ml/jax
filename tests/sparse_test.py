@@ -2249,6 +2249,24 @@ class BCSRTest(sptu.SparseTestCase):
       self.assertEqual(xsp[:, None].n_batch, xsp.n_batch + 1)
       self.assertArraysEqual(xsp[:, None].todense(), x[:, None])
 
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, dimension=dimension)
+       for shape in [(3, 5), (3, 5, 4)]
+       for layout in iter_sparse_layouts(shape)
+       for dimension in range(len(shape) - layout.n_dense)  # Concatenation of dense dimensions not implemented.
+    ],
+    dtype=all_dtypes,
+  )
+  def test_bcsr_concatenate(self, shape, dtype, n_batch, n_dense, dimension):
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch, n_dense=n_dense)
+    args_maker = lambda: [[sprng(shape, dtype) for i in range(3)]]
+    dense_func = partial(lax.concatenate, dimension=dimension)
+    sparse_func = partial(sparse.bcoo_concatenate, dimension=dimension)
+
+    self._CheckAgainstDense(dense_func, sparse_func, args_maker)
+    if jnp.issubdtype(dtype, jnp.floating):
+      self._CheckGradsSparse(dense_func, sparse_func, args_maker)
+
 
 class SparseGradTest(sptu.SparseTestCase):
   @jtu.sample_product(has_aux=[True, False])
