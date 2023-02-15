@@ -30,6 +30,12 @@ Remember to align the itemized text with the first line of an item within a list
     from Feb 13, 2023.
   * added the {mod}`jax.typing` module, with tools for type annotations of JAX
     functions.
+  * The following names have been deprecated:
+    * `jax.xla.Device` and `jax.interpreters.xla.Device`: use `jax.Device`.
+    * `jax.experimental.pjit.NamedSharding`: use `jax.sharding.NamedSharding`.
+    * `jax.experimental.pjit.PartitionSpec`: use `jax.sharding.PartitionSpec`.
+    * `jax.interpreters.pxla.Mesh`: use `jax.sharding.Mesh`.
+    * `jax.interpreters.pxla.PartitionSpec`: use `jax.sharding.PartitionSpec`.
 * Breaking Changes
   * the `initial` argument to reduction functions like :func:`jax.numpy.sum`
     is now required to be a scalar, consistent with the corresponding NumPy API.

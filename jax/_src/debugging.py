@@ -42,7 +42,7 @@ from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding import Sharding, OpShardingSharding
+from jax._src.sharding import Sharding, OpShardingSharding, NamedSharding
 
 # pytype: disable=import-error
 try:
@@ -311,7 +311,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
         devices, op_sharding))
     pspec = pjit.parse_flatten_op_sharding(
         op_sharding, mesh)[0].get_partition_spec()
-    return callback(pjit.NamedSharding(mesh, pspec))
+    return callback(NamedSharding(mesh, pspec))
 
   if len(devices) == 1:
     # If we only have one device in our computation, we can construct a trivial
@@ -562,8 +562,8 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
 
   >>> import jax
   >>> import jax.numpy as jnp
-  >>> from jax.experimental.maps import Mesh
-  >>> from jax.experimental.pjit import PartitionSpec, pjit
+  >>> from jax.experimental.pjit import pjit
+  >>> from jax.sharding import Mesh, PartitionSpec
   >>>
   >>> x = jnp.arange(8, dtype=jnp.float32)
   >>> def f_(x):

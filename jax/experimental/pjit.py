@@ -17,9 +17,7 @@
 from jax._src.pjit import (
   AUTO as AUTO,
   FROM_GDA as FROM_GDA,
-  NamedSharding as NamedSharding,
   ParsedPartitionSpec as ParsedPartitionSpec,
-  PartitionSpec as PartitionSpec,
   get_array_mapping as get_array_mapping,
   hashable_pytree as hashable_pytree,
   parse_flatten_op_sharding as parse_flatten_op_sharding,
@@ -35,3 +33,35 @@ from jax._src.pjit import (_UNSPECIFIED, _prepare_axis_resources,
                            _calc_is_global_sequence, _pjit_jaxpr,
                            _create_mesh_pspec_sharding_from_parsed_pspec,
                            _process_in_axis_resources)
+
+
+from jax._src.pjit import (
+  NamedSharding as _deprecated_NamedSharding,
+  PartitionSpec as _deprecated_PartitionSpec,
+)
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.pjit import (
+    NamedSharding as NamedSharding,
+    PartitionSpec as PartitionSpec,
+  )
+del typing
+
+_deprecations = {
+  # Added Feb 13, 2023:
+  "NamedSharding": (
+    ("jax.experimental.pjit.NamedSharding is deprecated. Use "
+     "jax.sharding.NamedSharding."),
+    _deprecated_NamedSharding,
+  ),
+  "PartitionSpec": (
+    ("jax.experimental.pjit.PartitionSpec is deprecated. Use "
+     "jax.sharding.PartitionSpec."),
+     _deprecated_PartitionSpec,
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

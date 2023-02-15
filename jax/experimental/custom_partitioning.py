@@ -389,7 +389,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       return OpShardingSharding(devices, op_sharding)
     pspec = pjit.parse_flatten_op_sharding(op_sharding,
                                            mesh)[0].get_partition_spec()
-    return pjit.NamedSharding(mesh, pspec)
+    return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding, partition,
                                                 to_mesh_pspec_sharding,

@@ -21,8 +21,8 @@ import numpy as np
 import jax
 from jax import lax
 from jax.config import config
-from jax.experimental.maps import Mesh
-from jax.experimental.pjit import PartitionSpec as P
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.lib import xla_bridge
