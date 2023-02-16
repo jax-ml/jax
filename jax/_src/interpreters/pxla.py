@@ -640,6 +640,7 @@ def _create_pmap_sharding_spec(aval, sharded_dim=0, sharded_dim_size=None):
                              sharded_aval, sharded_dim)
 
 
+# TODO(yashkatariya, phawkins): Remove this function after March 15, 2023.
 def make_sharded_device_array(
     aval: ShapedArray,
     sharding_spec: Optional[ShardingSpec],
@@ -661,21 +662,37 @@ def make_sharded_device_array(
       be returned, for JAX extensions not implementing the C++ API.
     indices: For caching purposes, will be computed if `None`.
   """
+  from jax._src import pjit
+
   if sharding_spec is None:
     sharding_spec = _create_pmap_sharding_spec(aval)
 
-  if indices is None:
-    indices = spec_to_indices(aval.shape, sharding_spec)
+  if jax.config.jax_array:
+    mesh = thread_resources.env.physical_mesh
+    if mesh.empty:
+      sharding = sharding_internal.PmapSharding(
+          np.asarray([d.device() for d in device_buffers]), sharding_spec)
+    else:
+      op_sharding = sharding_spec_sharding_proto(sharding_spec)
+      pspec = pjit.parse_flatten_op_sharding(
+          op_sharding, mesh)[0].get_partition_spec()
+      sharding = sharding_internal.NamedSharding(mesh, pspec)
 
-  if (_USE_CPP_SDA and
-      (not device_buffers or
-       isinstance(device_buffers, xb.xla_client.ShardedBuffer) or
-       isinstance(device_buffers[0], xb.xla_client.Buffer))):
-    return pmap_lib.ShardedDeviceArray.make(
-        aval, sharding_spec, device_buffers,
-        indices, aval.weak_type)
+    return jax.make_array_from_single_device_arrays(
+        aval.shape, sharding, device_buffers)  # type: ignore
+  else:
+    if indices is None:
+      indices = spec_to_indices(aval.shape, sharding_spec)
 
-  return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
+    if (_USE_CPP_SDA and
+        (not device_buffers or
+        isinstance(device_buffers, xb.xla_client.ShardedBuffer) or
+        isinstance(device_buffers[0], xb.xla_client.Buffer))):
+      return pmap_lib.ShardedDeviceArray.make(
+          aval, sharding_spec, device_buffers,
+          indices, aval.weak_type)
+
+    return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
 
 
 if _USE_CPP_SDA:
@@ -1996,8 +2013,15 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, in_axis)
   device_buffers = device_put(val, devices, replicate=True)
-  return make_sharded_device_array(replicated_aval, sharding_spec,
-                                   device_buffers)
+
+  if jax.config.jax_array:
+    sharding = sharding_internal.PmapSharding(
+        np.asarray([d.device() for d in device_buffers]), sharding_spec)
+    return jax.make_array_from_single_device_arrays(
+        replicated_aval.shape, sharding, device_buffers)
+  else:
+    return make_sharded_device_array(replicated_aval, sharding_spec,
+                                     device_buffers)
 
 
 def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval,

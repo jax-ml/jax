@@ -639,7 +639,11 @@ class PythonPmapTest(jtu.JaxTestCase):
     num_devices = jax.device_count()
     replicated = pxla.replicate(base, num_devices, num_devices, in_axis=None)
     self.assertAllClose(base, replicated)
-    self.assertEmpty([a for a in replicated.sharding_spec.mesh_mapping
+    if jax.config.jax_array:
+      sharding_spec = replicated.sharding.sharding_spec
+    else:
+      sharding_spec = replicated.sharding_spec
+    self.assertEmpty([a for a in sharding_spec.mesh_mapping
                       if not isinstance(a, pxla.Replicated)])
 
   @parameterized.named_parameters(
