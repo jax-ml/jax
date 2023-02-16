@@ -87,7 +87,6 @@ Backend = xe.Client
 Device = xc.Device
 Buffer = xe.Buffer
 
-XlaLoadedExecutable = xla.XlaLoadedExecutable
 CompileOptions = xc.CompileOptions
 
 map, unsafe_map = util.safe_map, map
@@ -810,7 +809,7 @@ if MYPY:
   ResultHandler = Any
 else:
   class ResultHandler(Protocol):
-    def __call__(self, env: Optional[Sequence[Any]], *args: xla.Buffer) -> Any:
+    def __call__(self, env: Optional[Sequence[Any]], *args: xc.Buffer) -> Any:
       """Boxes raw buffers into their user-facing representation."""
 
 def aval_to_result_handler(sticky_device: Optional[Device],
@@ -894,7 +893,7 @@ def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
   return input_bufs, _remove_tokens
 
 
-def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
+def _execute_compiled(name: str, compiled: xc.LoadedExecutable,
                       input_handler: Optional[Callable],
                       output_buffer_counts: Sequence[int],
                       result_handler: Callable, has_unordered_effects: bool,
@@ -919,7 +918,7 @@ def _execute_compiled(name: str, compiled: XlaLoadedExecutable,
 
 
 def _execute_replicated(name: str,
-                        compiled: XlaLoadedExecutable,
+                        compiled: xc.LoadedExecutable,
                         input_handler: Optional[Callable],
                         output_buffer_counts: Sequence[int],
                         result_handler: Callable,
@@ -939,7 +938,7 @@ def _execute_replicated(name: str,
                 for device in compiled.local_devices()]
   input_bufs_flip = list(unsafe_zip(*input_bufs))
   out_bufs_flat_rep = compiled.execute_sharded_on_local_devices(input_bufs_flip)
-  out_flat = [bufs[0] for bufs in out_bufs_flat_rep]
+  out_flat = [bufs[0] for bufs in out_bufs_flat_rep]  # type: ignore
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)
   if from_lower_sharding_computation:
@@ -1098,7 +1097,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
 
 def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
                 compile_options: CompileOptions,
-                backend: Backend) -> Optional[XlaLoadedExecutable]:
+                backend: Backend) -> Optional[xc.LoadedExecutable]:
   """Looks up `computation` in the persisent compilation cache."""
   # Avoid import cycle between jax and jax.experimental
   from jax.experimental.compilation_cache import compilation_cache as cc
@@ -1117,7 +1116,7 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
 def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
                  compile_time_secs: float,
                  module_name: str, compile_options: CompileOptions,
-                 backend: Backend, compiled: XlaLoadedExecutable,
+                 backend: Backend, compiled: xc.LoadedExecutable,
                  host_callbacks: List[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
   # Avoid import cycle between jax and jax.experimental

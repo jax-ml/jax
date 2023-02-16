@@ -1261,11 +1261,11 @@ def parallel_callable(fun: lu.WrappedFun,
 @dataclasses.dataclass(frozen=True)
 class ParallelCallableInfo:
   name: str
-  backend: xla.Backend
+  backend: xc.Client
   axis_name: core.AxisName
   axis_size: int
   global_axis_size: int
-  devices: Optional[Sequence[xla.Device]]
+  devices: Optional[Sequence[xc.Device]]
   in_axes: Iterable[Optional[int]]
   out_axes_thunk: Callable[[], Sequence[Optional[int]]]
   avals: Sequence[core.AbstractValue]
@@ -1370,7 +1370,7 @@ def lower_parallel_callable(
     axis_name: core.AxisName,
     axis_size: int,
     global_axis_size: int,
-    devices: Optional[Sequence[xla.Device]],
+    devices: Optional[Sequence[xc.Device]],
     name: str,
     in_axes: Iterable[Optional[int]],
     out_axes_thunk: Callable[[], Sequence[Optional[int]]],
@@ -1731,6 +1731,7 @@ def _get_pmap_sharding(devices, specs):
 
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
+
 
 
 def check_multihost_collective_allowlist(jaxpr):
@@ -2295,8 +2296,8 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sub_ctx = ctx.module_context.replace(
         axis_context=mlir.ReplicaAxisContext(new_env),
-        name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                         util.wrap_name(name, 'pmap')))
+        name_stack=util.extend_name_stack(ctx.module_context.name_stack,
+                                          util.wrap_name(name, 'pmap')))
     sharded_outs, _ = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, mlir.TokenSet(), (),
                                          *in_nodes_sharded,
                                          dim_var_values=ctx.dim_var_values)
@@ -2778,7 +2779,7 @@ ShardingInfo = Tuple[
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     devices: Optional[Sequence[xc.Device]],
-) -> Tuple[xla.Backend, Sequence[xc.Device]]:
+) -> Tuple[xc.Client, Sequence[xc.Device]]:
   from jax._src.api import local_devices
 
   first_sharding_info = None
@@ -3572,7 +3573,7 @@ class UnloadedMeshExecutable:
 
 
 class MeshExecutableFastpathData(NamedTuple):
-  xla_executable: xla.XlaLoadedExecutable
+  xla_executable: xc.LoadedExecutable
   out_pytree_def: Any
   in_shardings: Sequence[sharding_internal.XLACompatibleSharding]
   out_shardings: Sequence[sharding_internal.XLACompatibleSharding]

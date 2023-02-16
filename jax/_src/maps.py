@@ -40,13 +40,13 @@ from jax._src.sharding import NamedSharding
 from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax.interpreters import xla
+from jax._src.interpreters import xla
 from jax.interpreters import batching
 from jax.interpreters import ad
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
                            as_hashable_function, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name,
-                           merge_lists, partition_list)
+                           merge_lists, partition_list, extend_name_stack)
 from jax import lax
 
 source_info_util.register_exclusion(__file__)
@@ -1373,8 +1373,8 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   sub_ctx = ctx.module_context.replace(
-      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       wrap_name(name, 'xmap')))
+      name_stack=extend_name_stack(ctx.module_context.name_stack,
+                                   wrap_name(name, 'xmap')))
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(),
@@ -1440,8 +1440,8 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
   sub_ctx = ctx.module_context.replace(
-      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       wrap_name(name, 'xmap')))
+      name_stack=extend_name_stack(ctx.module_context.name_stack,
+                                   wrap_name(name, 'xmap')))
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
@@ -1491,8 +1491,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   # translation rule just because the extra tuple stuff is a pain.
   assert isinstance(ctx.module_context.axis_context, mlir.SPMDAxisContext)
   sub_ctx = ctx.module_context.replace(
-      name_stack=xla.extend_name_stack(ctx.module_context.name_stack,
-                                       wrap_name(name, 'xmap')),
+      name_stack=extend_name_stack(ctx.module_context.name_stack,
+                                   wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
   if any(eff in core.ordered_effects for eff in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')

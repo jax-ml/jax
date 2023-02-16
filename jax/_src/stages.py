@@ -37,7 +37,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tu
 
 import jax
 from jax import tree_util
-from jax.lib import xla_client as xc
+from jax.interpreters import mlir
 
 from jax._src import core
 from jax._src import source_info_util
@@ -45,8 +45,7 @@ from jax._src import traceback_util
 from jax._src import util
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import use_stablehlo
-from jax.interpreters import mlir
-from jax._src.interpreters import xla
+from jax._src.lib import xla_client as xc
 
 
 source_info_util.register_exclusion(__file__)
@@ -200,7 +199,7 @@ class Lowering(Protocol):
 
 class XlaExecutable(Executable):
 
-  def xla_extension_executable(self) -> xla.XlaLoadedExecutable:
+  def xla_extension_executable(self) -> xc.LoadedExecutable:
     raise NotImplementedError("must override")
 
   def call(self, *args_flat) -> Sequence[Any]:

@@ -14,51 +14,30 @@
 
 from jax._src.interpreters.xla import (
   AxisEnv as AxisEnv,
-  Backend as Backend,
-  Buffer as Buffer,
-  ConcreteArray as ConcreteArray,
-  Shape as Shape,
-  ShapedArray as ShapedArray,
-  SpatialSharding as SpatialSharding,
   TranslationContext as TranslationContext,
   TranslationRule as TranslationRule,
-  XlaBuilder as XlaBuilder,
-  XlaLoadedExecutable as XlaLoadedExecutable,
-  XlaOp as XlaOp,
-  XlaShape as XlaShape,
-  _CppDeviceArray as _CppDeviceArray,
-  _DeviceArray as _DeviceArray,
   abstractify as abstractify,
-  aval_to_xla_shapes as aval_to_xla_shapes,
   axis_groups as axis_groups,
-  axis_read as axis_read,
   backend_specific_translations as backend_specific_translations,
   canonicalize_dtype as canonicalize_dtype,
   canonicalize_dtype_handlers as canonicalize_dtype_handlers,
   check_backend_matches as check_backend_matches,
-  dtype_to_primitive_type as dtype_to_primitive_type,
-  extend_axis_env as extend_axis_env,
-  extend_name_stack as extend_name_stack,
-  jaxpr_collectives as jaxpr_collectives,
-  make_device_array as make_device_array,
-  make_op_metadata as make_op_metadata,
-  new_name_stack as new_name_stack,
   parameter as parameter,
-  partition_list as partition_list,
-  primitive_subcomputation as primitive_subcomputation,
   pytype_aval_mappings as pytype_aval_mappings,
   register_collective_primitive as register_collective_primitive,
   register_initial_style_primitive as register_initial_style_primitive,
   register_translation as register_translation,
   sharding_to_proto as sharding_to_proto,
   translations as translations,
-  xb as xb,
-  xc as xc,
-  xe as xe,
   xla_call as xla_call,
   xla_call_p as xla_call_p,
   xla_destructure as xla_destructure,
   xla_shape_handlers as xla_shape_handlers,
+)
+
+from jax._src.core import (
+  ShapedArray as ShapedArray,
+  ConcreteArray as ConcreteArray,
 )
 
 # TODO(phawkins): update users.
@@ -68,9 +47,19 @@ from jax._src.dispatch import (
   device_put as device_put,
 )
 
+from jax._src.lib import xla_bridge as xb
+from jax._src.lib import xla_client as xc  # type: ignore
 
-from jax._src.interpreters.xla import (
-  Device as _deprecated_Device,
+_deprecated_Device = xc.Device
+XlaOp = xc.XlaOp
+xe = xc._xla
+Backend = xe.Client
+Buffer = xc.Buffer
+_CppDeviceArray = xe.Buffer
+
+from jax._src.device_array import (
+  make_device_array as make_device_array,
+  _DeviceArray as _DeviceArray,
   DeviceArray as _deprecated_DeviceArray,
 )
 
@@ -92,8 +81,8 @@ del _deprecation_getattr
 
 import typing
 if typing.TYPE_CHECKING:
-  from jax._src.interpreters.xla import (
-    Device as Device,
+  Device = xc.Device
+  from jax._src.device_array import (
     DeviceArray as DeviceArray,
   )
 del typing

@@ -837,7 +837,7 @@ def _cond_lowering(ctx, index, *args, branches, linear):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       sub_ctx = ctx.module_context.replace(
-          name_stack=xla.extend_name_stack(name_stack, f'branch_{i}_fun'))
+          name_stack=extend_name_stack(name_stack, f'branch_{i}_fun'))
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr.jaxpr, tokens_in,
           map(mlir.ir_constants, jaxpr.consts),

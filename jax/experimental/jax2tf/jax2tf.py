@@ -1083,6 +1083,19 @@ class TensorFlowTracer(core.Tracer):
   def full_lower(self):
     return self
 
+def _make_op_metadata(primitive: core.Primitive,
+                      params: Dict, *,
+                      source_info: source_info_util.SourceInfo,
+                      ) -> xla_client.OpMetadata:
+  eqn_str = (str(source_info.name_stack) + '/'
+             + core.str_eqn_compact(primitive.name, params))
+  frame = source_info_util.user_frame(source_info)
+  return xla_client.OpMetadata(
+        op_type=primitive.name,
+        op_name=eqn_str,
+        source_file=xla.get_canonical_source_file(frame) if frame else None,
+        source_line=frame.start_line if frame else None)
+
 
 class TensorFlowTrace(core.Trace):
   """Trace class that underlies the jax2tf transformation.
@@ -1168,9 +1181,8 @@ class TensorFlowTrace(core.Trace):
 
     with tf.name_scope(_sanitize_scope_name(scope)):
       if _thread_local_state.include_xla_op_metadata:
-        op_metadata = xla.make_op_metadata(primitive, params,
-                                           name_stack=current_name_stack,
-                                           source_info=source_info_util.current())
+        op_metadata = _make_op_metadata(primitive, params,
+                                        source_info=source_info_util.current())
         op_metadata_proto = xla_data_pb2.OpMetadata(
             op_type=op_metadata.op_type,
             op_name=op_metadata.op_name,

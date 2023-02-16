@@ -35,14 +35,11 @@ from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
-from jax._src.core import ConcreteArray, ShapedArray, str_eqn_compact
+from jax._src.core import ConcreteArray, ShapedArray
 from jax._src.interpreters import ad
 from jax._src.util import (prod, new_name_stack, safe_zip, safe_map,
                            partition_list)
 
-# TODO: update callers to refer to new location.
-from jax._src.util import extend_name_stack as extend_name_stack  # noqa: F401
-from jax._src.util import wrap_name as wrap_name  # noqa: F401
 from jax._src.typing import Shape
 
 from jax._src.lib import xla_bridge as xb
@@ -55,28 +52,12 @@ xe = xc._xla
 xops = xc._xla.ops
 
 # Types
-Backend = xe.Client
-Device = xc.Device
-Buffer = xe.Buffer
-
-XlaOp = xc.XlaOp
-XlaShape = xc.Shape
-XlaBuilder = xc.XlaBuilder
-XlaLoadedExecutable = Any
-XlaLoadedExecutable = xc.LoadedExecutable  # type:ignore
-
-# TODO(phawkins): update code to point to new locations.
-DeviceArray = device_array.DeviceArray
-_DeviceArray = device_array._DeviceArray
-_CppDeviceArray = xe.Buffer
-make_device_array = device_array.make_device_array
-
 
 def identity(x): return x
 
 _scalar_types = dtypes.python_scalar_dtypes.keys()
 
-def _make_array_shape(a: ShapedArray) -> Sequence[XlaShape]:
+def _make_array_shape(a: ShapedArray) -> Sequence[xc.Shape]:
   if a.dtype == dtypes.float0:
     return (xc.Shape.array_shape(np.dtype('bool'), a.shape),)
   else:
@@ -88,22 +69,6 @@ def get_canonical_source_file(frame: source_info_util.Frame):
     source_file = re.sub(config.jax_hlo_source_file_canonicalization_regex,
                          '', source_file)
   return source_file
-
-tracebacks = {}
-def make_op_metadata(primitive: core.Primitive,
-                     params: Dict, *,
-                     source_info: source_info_util.SourceInfo,
-                     name_stack: Union[str, source_info_util.NameStack] = "",
-                     ) -> xc.OpMetadata:
-  eqn_str = (str(source_info.name_stack) + '/'
-             + str_eqn_compact(primitive.name, params))
-  tracebacks[eqn_str] = source_info.traceback
-  frame = source_info_util.user_frame(source_info)
-  return xc.OpMetadata(
-        op_type=primitive.name,
-        op_name=eqn_str,
-        source_file=get_canonical_source_file(frame) if frame else None,
-        source_line=frame.start_line if frame else None)
 
 # Utilities
 
@@ -176,47 +141,16 @@ def with_sharding(builder, sharding: SpatialSharding, op_fn, *args, **kwargs):
 
 ### handlers
 
-# Numpy dtypes -> XLA primitive types
-
-_dtype_to_primitive_type: Dict[np.dtype, xc.PrimitiveType] = {
-  np.dtype('bool'): xc.PrimitiveType.PRED,
-  np.dtype('int8'): xc.PrimitiveType.S8,
-  np.dtype('int16'): xc.PrimitiveType.S16,
-  np.dtype('int32'): xc.PrimitiveType.S32,
-  np.dtype('int64'): xc.PrimitiveType.S64,
-  np.dtype('uint8'): xc.PrimitiveType.U8,
-  np.dtype('uint16'): xc.PrimitiveType.U16,
-  np.dtype('uint32'): xc.PrimitiveType.U32,
-  np.dtype('uint64'): xc.PrimitiveType.U64,
-  np.dtype(dtypes.bfloat16): xc.PrimitiveType.BF16,
-  np.dtype('float16'): xc.PrimitiveType.F16,
-  np.dtype('float32'): xc.PrimitiveType.F32,
-  np.dtype('float64'): xc.PrimitiveType.F64,
-  np.dtype('complex64'): xc.PrimitiveType.C64,
-  np.dtype('complex128'): xc.PrimitiveType.C128,
-}
-
-def dtype_to_primitive_type(dtype: np.dtype) -> xc.PrimitiveType:
-  """Converts a NumPy dtype into an XLA PrimitiveType."""
-  # Many things (e.g., strings, scalar types) can be compared with NumPy dtypes,
-  # but may not hash correctly. Make sure we have a true np.dtype.
-  assert isinstance(dtype, np.dtype), type(dtype)
-  try:
-    return _dtype_to_primitive_type[dtype]
-  except KeyError as err:
-    raise TypeError(f"No XLA lowering for NumPy dtype: {dtype}") from err
-
-
 # JAX abstract values -> XLA shapes
 
-def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[XlaShape]:
+def aval_to_xla_shapes(aval: core.AbstractValue) -> Sequence[xc.Shape]:
   try:
     return xla_shape_handlers[type(aval)](aval)
   except KeyError as err:
     raise TypeError(f"No xla_shape_handler for type: {type(aval)}") from err
 
 xla_shape_handlers: Dict[Type[core.AbstractValue],
-                         Callable[[Any], Sequence[XlaShape]]] = {
+                         Callable[[Any], Sequence[xc.Shape]]] = {
     ShapedArray: _make_array_shape,
     ConcreteArray: _make_array_shape,
 }
@@ -493,8 +427,8 @@ if not MYPY:
     def __call__(self, ctx: TranslationContext,
                  avals_in: Sequence[core.AbstractValue],
                  avals_out: Sequence[core.AbstractValue],
-                 *args: XlaOp, **kw
-                ) -> Sequence[XlaOp]:
+                 *args: xc.XlaOp, **kw
+                ) -> Sequence[xc.XlaOp]:
       """A translation rule lowers a primitive invocation into an XLA HLO."""
 else:
   TranslationRule = Any
@@ -545,7 +479,7 @@ def _wrap_old_translation(prim: core.Primitive, f: Callable) -> TranslationRule:
   @functools.wraps(f)
   def wrapped(ctx: TranslationContext, avals_in: Sequence[core.AbstractValue],
               avals_out: Sequence[core.AbstractValue],
-               *args: XlaOp, **kw) -> Sequence[XlaOp]:
+               *args: xc.XlaOp, **kw) -> Sequence[xc.XlaOp]:
     ans = f(ctx.builder, *args, **kw)
     if (prim.multiple_results or
         any(len(aval_to_xla_shapes(aval)) > 1 for aval in avals_out)):

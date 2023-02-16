@@ -78,7 +78,7 @@ from jax.custom_derivatives import (closure_convert, custom_gradient, custom_jvp
 from jax.custom_transpose import custom_transpose
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax._src.interpreters import xla
 
 from jax._src.config import (
     config,
@@ -560,7 +560,7 @@ class _BackendAndDeviceInfo(NamedTuple):
   committed_to_device: bool
 
 class _FastpathData(NamedTuple):
-  xla_executable: xla.XlaLoadedExecutable
+  xla_executable: xc.LoadedExecutable
   out_pytree_def: Any
   sticky_device: Optional[xc.Device]
   avals: Iterable[Any]
@@ -1101,7 +1101,7 @@ def xla_computation(fun: Callable,
         ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
     for out_aval in out_avals:
-      if not isinstance(out_aval, xla.ShapedArray):
+      if not isinstance(out_aval, ShapedArray):
         raise RuntimeError("As we want to propagate the weak_type, we need "
                            "to get a ShapedArray, otherwise this "
                            "information is lost")
@@ -2327,7 +2327,7 @@ def _python_pmap(
 
 class _PmapFastpathData(NamedTuple):
   version: int  # For forward and backward compatibility
-  xla_executable: xla.XlaLoadedExecutable
+  xla_executable: xc.LoadedExecutable
   in_handler: Any
   out_handler: Any
   out_pytree_def: Any

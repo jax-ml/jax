@@ -411,7 +411,7 @@ def _code_generator_and_avals(
   xla_comp = xla_client.XlaComputation(func_tf_hlo)
 
   # Canonicalize the results; e.g., makes them x32 if JAX is in 32-bit mode
-  def canonical_res_aval(res_shape: xla.XlaShape) -> core.ShapedArray:
+  def canonical_res_aval(res_shape: xla_client.Shape) -> core.ShapedArray:
     if not res_shape.is_static():
       msg = ("Compiled TensorFlow function has dynamic output shape " +
              f"{res_shape}. call_tf can used " +
