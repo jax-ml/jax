@@ -40,7 +40,6 @@ from jax._src.interpreters.xla import (
   extend_axis_env as extend_axis_env,
   extend_name_stack as extend_name_stack,
   jaxpr_collectives as jaxpr_collectives,
-  lower_fun as lower_fun,
   make_device_array as make_device_array,
   make_op_metadata as make_op_metadata,
   new_name_stack as new_name_stack,
