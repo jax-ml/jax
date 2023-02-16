@@ -3831,7 +3831,7 @@ def check_device_backend_on_shardings(shardings) -> bool:
 
 def check_gda_or_array_xla_sharding_match(
     args, in_xla_shardings: Sequence[sharding_internal.XLACompatibleSharding]) -> None:
-  from jax.experimental.global_device_array import GlobalDeviceArray
+  from jax._src.global_device_array import GlobalDeviceArray
   from jax._src.array import ArrayImpl
 
   for arg, xs in safe_zip(args, in_xla_shardings):

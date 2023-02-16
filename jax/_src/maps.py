@@ -35,7 +35,7 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax._src.array import ArrayImpl
-from jax.experimental.global_device_array import GlobalDeviceArray
+from jax._src.global_device_array import GlobalDeviceArray
 from jax._src.sharding import NamedSharding
 from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe

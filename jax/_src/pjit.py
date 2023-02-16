@@ -28,7 +28,7 @@ import jax
 from jax._src import core
 from jax import stages
 from jax.errors import JAXTypeError
-from jax.experimental.global_device_array import GlobalDeviceArray as GDA
+from jax._src.global_device_array import GlobalDeviceArray as GDA
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src.interpreters.pxla import PartitionSpec

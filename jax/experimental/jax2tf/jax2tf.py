@@ -33,7 +33,6 @@ from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax.experimental import maps
-from jax.experimental.global_device_array import GlobalDeviceArray
 from jax.experimental.jax2tf import shape_poly
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import mlir
@@ -54,6 +53,7 @@ from jax._src import random as random_internal
 from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import util
+from jax._src.global_device_array import GlobalDeviceArray
 from jax._src.interpreters import ad
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal

@@ -25,7 +25,7 @@ from typing import Callable, Sequence, Optional, Dict, Any
 import jax
 from jax._src import distributed
 from jax._src.config import config
-from jax.experimental import global_device_array as gda
+from jax._src import global_device_array as gda
 from jax._src import array
 from jax._src import sharding
 from jax._src import typing
