@@ -640,15 +640,42 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(jax2tf.convert(f_jax, polymorphic_shapes="(b, _, _)")(x),
                         f_jax(x))
 
-  def test_non_trivial_dim_expr(self):
-     check_shape_poly(
-        self,
-        lambda x: (x[0] + x.shape[0] + x.shape[0] * x.shape[0] + (5 * x.shape[0]) +
-                   x.shape[0] // 2 + (5 + x.shape[0]) // x.shape[0] +
-                   17 // x.shape[0] +
-                   x.shape[0] % 3 + 17 % x.shape[0]),
-        arg_descriptors=[RandArg((3,), np.int64)],
-        poly_axes=[0])
+  @parameterized.named_parameters([
+      dict(testcase_name=f"_expr={name}", expr=expr)
+      for name, expr in [
+          ("d + 2", lambda d: d + 2),
+          ("2 - d", lambda d: 2 - d),
+          ("d * 2", lambda d: d * 2),
+          ("d * d", lambda d: d * d),
+          ("(- d) * d", lambda d: (- d) * d),
+          ("d * d - d", lambda d: d * d - d),
+          # Division
+          ("d // 2", lambda d: d // 2),
+          ("(d + 1) // 2", lambda d: (d + 1) // 2),
+          ("d // -2", lambda d: d // -2),
+          ("(d + 1) // -2", lambda d: (d + 1) // -2),
+          ("(-d) // 2", lambda d: (-d) // 2),
+          ("(-d - 1) // 2", lambda d: (-d - 1) // 2),
+          ("(-d) // -2", lambda d: (-d) // -2),
+          ("(-d - 1) // -2", lambda d: (-d - 1) // -2),
+          # Remainder
+          ("d % 2", lambda d: d % 2),
+          ("(d + 1) % 2", lambda d: (d + 1) % 2),
+          ("d % -2", lambda d: d % -2),
+          ("(d + 1) % -2", lambda d: (d + 1) % -2),
+          ("(-d) % 2", lambda d: (-d) % 2),
+          ("(-d - 1) % 2", lambda d: (-d - 1) % 2),
+          ("(-d) % -2", lambda d: (-d) % -2),
+          ("(-d - 1) % -2", lambda d: (-d - 1) % -2),
+      ]
+  ])
+  def test_non_trivial_dim_expr(self, expr=lambda d: d % -2):
+    # Check the lowering for shape expressions
+    check_shape_poly(
+       self,
+       lambda x: x[0] * 0 + expr(x.shape[0]),
+       arg_descriptors=[RandArg((3,), np.int64)],
+       poly_axes=[0])
 
   def test_static_shape_result(self):
     """The result has static shape."""

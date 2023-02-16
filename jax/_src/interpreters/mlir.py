@@ -605,8 +605,22 @@ class DimExprEvaluator:
   def __divmod__(self, divisor: Union[np.int32, np.int64, DimExprEvaluator]):
     if not isinstance(divisor, DimExprEvaluator):
       divisor = DimExprEvaluator(ir_constant(divisor))
-    return (DimExprEvaluator(hlo.DivOp(self.value, divisor.value).result),
-            DimExprEvaluator(hlo.RemOp(self.value, divisor.value).result))
+    # Quotient
+    raw_quotient = hlo.DivOp(self.value, divisor.value)
+    raw_remainder = hlo.RemOp(self.value, divisor.value)
+    ops_different_sign = compare_hlo(hlo.SignOp(self.value),
+                                     hlo.SignOp(divisor.value),
+                                     "NE", "SIGNED")
+    rem_ne_zero = compare_hlo(raw_remainder, ir_constant(np.int64(0)),
+                              "NE", "SIGNED")
+    must_adjust = hlo.AndOp(ops_different_sign, rem_ne_zero)
+    quotient = hlo.SelectOp(must_adjust,
+                            hlo.SubtractOp(raw_quotient, ir_constant(np.int64(1))),
+                            raw_quotient)
+    # Remainder
+    remainder = hlo.SubtractOp(self.value, hlo.MulOp(divisor.value, quotient))
+    return (DimExprEvaluator(quotient.result),
+            DimExprEvaluator(remainder.result))
 
   def __rdivmod__(self, dividend: Union[np.int32, np.int64]):
     return DimExprEvaluator(ir_constant(dividend)).__divmod__(self)
