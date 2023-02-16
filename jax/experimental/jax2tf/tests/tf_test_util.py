@@ -291,10 +291,11 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
         logging.info("[%s] Logging HLO for exception in mode %s: %s",
                      self._testMethodName, mode, e)
-        jax_comp = jax.xla_computation(func_jax)(*args)
-        jax_hlo = jax_comp.as_hlo_text()
+        jax_lowered = jax.jit(func_jax).lower(*args)
+        # We log the HLO dialect for easier comparison with TF
         logging.info("[%s] JAX NON_OPT HLO\n%s",
-                     self._testMethodName, jax_hlo)
+                     self._testMethodName,
+                     jax_lowered.compiler_ir(dialect="hlo").as_hlo_text())  # type: ignore
 
         tf_args_signature = _make_tf_input_signature(*args)
         # If we give the signature, we cannot pass scalars
@@ -313,7 +314,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
                      tf_hlo)
 
         backend = xla_bridge.get_backend()
-        modules = backend.compile(jax_comp).hlo_modules()
+        modules = backend.compile(str(jax_lowered.compiler_ir())).hlo_modules()
         jax_opt_hlo = modules[0].to_string()
         logging.info("[%s] JAX OPT HLO\n%s", self._testMethodName,
                      jax_opt_hlo)
