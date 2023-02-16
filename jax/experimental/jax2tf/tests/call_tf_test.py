@@ -117,6 +117,13 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x, res)
     self.assertTrue(np.shares_memory(x, res))
 
+    x = jnp.array(3.0, dtype=jnp.bfloat16)
+    res = jax2tf.call_tf(lambda x: x)(x)
+    self.assertAllClose(x, res)
+    # bfloat16 scalar will create a copy.
+    with self.assertRaises(AssertionError):
+      self.assertTrue(np.shares_memory(x, res))
+
   @_parameterized_jit
   def test_eval_pytree(self, with_jit=True):
 
@@ -867,6 +874,101 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     expected = np.sin(x) + np.cos(y)
     res = tf.function(converted_fun, jit_compile=True, autograph=False)(x, y)
     self.assertAllClose(expected, res.numpy(), atol=1e-5, rtol=1e-5)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name=f"_{dtype.__name__}",
+          dtype=dtype,
+      )
+      for dtype in set(jtu.dtypes.all_floating)
+  )
+  def test_all_floating_input_gradient(self, dtype):
+    def tf_f(x):
+      res = tf.math.sin(x)
+      return tf.reduce_sum(res)
+
+    jax_f = jax2tf.call_tf(tf_f)
+    tf_f_rt = jax2tf.convert(jax_f)
+    x = jnp.array([5.0, 6.0, 7.0]).astype(dtype)
+
+    def assert_all_close_support_bfloat16(baseline, candidate):
+      def conversion(x):
+        # convert scalar to array and bfloat16 to float32
+        # to support self.assertAllClose numpy array comparision.
+        if x.shape == tf.TensorShape([]):
+          x = tf.convert_to_tensor([x])
+        if dtype == jnp.float16:
+          x = tf.cast(x, tf.float32)
+        return x
+
+      baseline = jax.tree_util.tree_map(conversion, baseline)
+      candidate = jax.tree_util.tree_map(conversion, candidate)
+      self.assertAllClose(baseline, candidate)
+
+    # Eager mode
+    assert_all_close_support_bfloat16(tf_f(x), tf_f_rt(x))
+
+    # Compiled function mode
+    assert_all_close_support_bfloat16(
+        tf.function(tf_f)(x), tf.function(tf_f_rt)(x)
+    )
+
+    # Compiled fucntion mode with jit_compiled=True
+    assert_all_close_support_bfloat16(
+        tf.function(tf_f, jit_compile=True)(x),
+        tf.function(tf_f_rt, jit_compile=True)(x),
+    )
+
+    # RoundTrip test for the gradient
+    grad_fun_jax = jax.grad(jax2tf.call_tf(tf_f))
+    grad_fun_jax_rt = jax2tf.call_tf(jax2tf.convert(grad_fun_jax))
+
+    # Eager mode
+    assert_all_close_support_bfloat16(grad_fun_jax(x), grad_fun_jax_rt(x))
+
+    # Jit mode
+    assert_all_close_support_bfloat16(
+        jax.jit(grad_fun_jax)(x), jax.jit(grad_fun_jax_rt)(x)
+    )
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name=f"_{dtype.__name__}",
+          dtype=dtype,
+      )
+      for dtype in set(jtu.dtypes.complex)
+  )
+  def test_complex_input_gradient(self, dtype):
+    def tf_f(x):
+      res = tf.math.sin(x)
+      return tf.reduce_sum(res)
+
+    x = jnp.array([(5.0 + 4.0j), (6.0 + 3.0j), (7.0 + 8.0j)]).astype(dtype)
+
+    jax_f = jax2tf.call_tf(tf_f)
+    tf_f_rt = jax2tf.convert(jax_f)
+
+    # Eager mode
+    self.assertAllClose(tf_f(x), tf_f_rt(x))
+
+    # tf.function context
+    self.assertAllClose(tf.function(tf_f)(x), tf.function(tf_f_rt)(x))
+
+    # tf.function context with jit_compiled=True
+    self.assertAllClose(
+        tf.function(tf_f, jit_compile=True)(x),
+        tf.function(tf_f_rt, jit_compile=True)(x),
+    )
+
+    # RoundTrip test for the gradient
+    grad_fun_jax = jax.grad(jax2tf.call_tf(tf_f), holomorphic=True)
+    grad_fun_jax_rt = jax2tf.call_tf(jax2tf.convert(grad_fun_jax))
+
+    # Eager mode
+    self.assertAllClose(grad_fun_jax(x), grad_fun_jax_rt(x))
+
+    # Jit mode
+    self.assertAllClose(jax.jit(grad_fun_jax)(x), jax.jit(grad_fun_jax_rt)(x))
 
 
 class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):

@@ -31,6 +31,7 @@ from absl import logging
 import jax
 from jax import dlpack
 from jax import dtypes
+from jax import numpy as jnp
 from jax import tree_util
 from jax._src import util
 from jax._src import ad_util
@@ -200,9 +201,9 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
       """Invoke TF gradient."""
 
       # TF does not like us to watch non-float vars
-      def replace_non_float(arg):
-        if np.issubdtype(arg.dtype.as_numpy_dtype, np.inexact):
-          return arg
+      def replace_non_float(arg_tf):
+        if arg_tf.dtype.is_floating or arg_tf.dtype.is_complex:
+          return arg_tf
         else:
           # When watched, this will be ignored. When use in results it will
           # result in a floating 0. gradient, which JAX will ignore (and
@@ -273,7 +274,12 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
-    return jax.device_put(np.asarray(res_tf))
+    # When working with a bfloat16 scalar tf.Tensor,np.asarray() can fail.
+    # To handle this special case, we create a numpy copy.
+    if res_tf.shape == tf.TensorShape([]) and res_tf.dtype == tf.bfloat16:
+      return jax.device_put(jnp.array(res_tf.numpy()))
+    else:
+      return jax.device_put(np.asarray(res_tf))
 
   return list(map(_res_tf_to_jax, res_tf_flat))
 
