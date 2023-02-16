@@ -37,7 +37,7 @@ try:
   import tensorflow as tf
   tf_version = tuple(
     int(x) for x in tf.version.VERSION.split("-")[0].split("."))
-except:
+except ImportError:
   tf = None
 
 
