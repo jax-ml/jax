@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.4
+## jax 0.4.5
+
+## jaxlib 0.4.5
+
+## jax 0.4.4 (Feb 16, 2023)
 
 * Changes
   * The implementation of `jit` and `pjit` has been merged. Merging jit and pjit
@@ -44,7 +48,7 @@ Remember to align the itemized text with the first line of an item within a list
     The previous behavior of broadcating the output against non-scalar `initial`
     values was an unintentional implementation detail ({jax-issue}`#14446`).
 
-## jaxlib 0.4.4
+## jaxlib 0.4.4 (Feb 16, 2023)
   * Breaking changes
     * Support for NVIDIA Kepler series GPUs has been removed from the default
       `jaxlib` builds. If Kepler support is needed, it is still possible to
