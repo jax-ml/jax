@@ -2227,9 +2227,8 @@ class BCSRTest(sptu.SparseTestCase):
       # Dense dimensions not yet fully supported in reverse mode.
       modes = ['fwd'] if props.n_dense != 0 else ['fwd', 'rev']
       self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=modes, atol=tol, rtol=tol)
-    # TODO: add this once bcsr_broadcast_in_dim & bcsr_concatenate are implemented
-    # self._CheckBatchingSparse(dense_fun, sparse_fun, args_maker, atol=tol, rtol=tol,
-    #                           bdims=self._random_bdims(props.n_batch, len(props.rhs_shape)))
+    self._CheckBatchingSparse(dense_fun, sparse_fun, args_maker, atol=tol, rtol=tol,
+                              bdims=self._random_bdims(props.n_batch, len(props.rhs_shape)))
 
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense)
