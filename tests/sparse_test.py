@@ -1690,12 +1690,13 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(x.indices, y.indices)
     self.assertArraysEqual(x.data, y.data)
 
-  def test_bcoo_fix_oob_indices(self):
+  def test_bcoo_correct_out_of_bound_indices(self):
     data = jnp.array([1, 2, 3, 4, 0, 0])
     indices = jnp.array([1, 3, 0, 2, 2, 4])[:, None]
     x1 = sparse.BCOO((data, indices), shape=(2,))
-    data_unbatched, indices_unbatched = sparse_bcoo._fix_oob_indices(
-        x1.data, x1.indices, spinfo=x1._info)
+    rhs = jnp.zeros((2), dtype=data.dtype)
+    data_unbatched, indices_unbatched = sparse_bcoo._bcoo_correct_out_of_bound_indices(
+        x1.data, x1.indices, rhs, shape=x1._info.shape)
     expected_data_unbatched = jnp.array([1, 0, 3, 0, 0, 0])
     expected_indices_unbatched = jnp.array([[1], [0], [0], [0], [0], [0]])
     with self.subTest('unbatched data'):
@@ -1708,8 +1709,8 @@ class BCOOTest(sptu.SparseTestCase):
     indices = jnp.array([[[0, 0], [1, 1], [3, 4], [4, 5]],
                          [[2, 1], [1, 0], [2, 3], [1, 1]]])
     x2 = sparse.BCOO((data, indices), shape=(2, 3, 2))
-    data_batched, indices_batched = sparse_bcoo._fix_oob_indices(
-        x2.data, x2.indices, spinfo=x2._info)
+    data_batched, indices_batched = sparse_bcoo._bcoo_correct_out_of_bound_indices(
+        x2.data, x2.indices, rhs, shape=x2._info.shape)
     expected_data_batched = jnp.array([[0, 1, 0, 0],
                                        [4, 5, 0, 7]])
     expected_indices_batched = jnp.array(
