@@ -258,6 +258,8 @@ pytype_library(
 pytype_library(
     name = "global_device_array",
     srcs = ["experimental/global_device_array.py"],
+    # TODO(phawkins): remove after removing global_device_array.py from :jax.
+    tags = ["keep_dep"],
     visibility = ["//visibility:public"],
     deps = [":jax"],
 )
