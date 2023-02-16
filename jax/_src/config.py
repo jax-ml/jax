@@ -469,7 +469,9 @@ class Config:
     return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
             self.jax_default_matmul_precision, self.jax_dynamic_shapes,
             self.jax_numpy_dtype_promotion, self.jax_default_device,
-            self.jax_array, self.jax_threefry_partitionable)
+            self.jax_array, self.jax_threefry_partitionable,
+            # Technically this affects jaxpr->MHLO lowering, not tracing.
+            self.jax_hlo_source_file_canonicalization_regex)
 
 class NoDefault: pass
 no_default = NoDefault()
