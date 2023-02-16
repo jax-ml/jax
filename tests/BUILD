@@ -97,6 +97,7 @@ py_test(
     tags = ["manual"],
     deps = [
         "//jax",
+        "//jax:global_device_array",
         "//jax:test_util",
     ] + py_deps("portpicker"),
 )
@@ -183,6 +184,7 @@ jax_test(
     },
     tags = ["multiaccelerator"],
     deps = [
+        "//jax:global_device_array",
         "//jax:maps",
     ],
 )
@@ -202,6 +204,7 @@ jax_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
+        "//jax:global_device_array",
     ],
 )
 
@@ -210,7 +213,7 @@ jax_test(
     srcs = ["global_device_array_test.py"],
     tags = ["multiaccelerator"],
     deps = [
-        "//jax:experimental",
+        "//jax:global_device_array",
     ],
 )
 

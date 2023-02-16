@@ -95,10 +95,11 @@ py_library_providing_imports_info(
             "**/*_test.py",
         ],
     ) + [
+        # TODO(phawkins): remove global_device_array from the main JAX target.
+        "experimental/global_device_array.py",
         # until new parallelism APIs are moved out of experimental
         "experimental/maps.py",
         "experimental/pjit.py",
-        "experimental/global_device_array.py",
         "experimental/multihost_utils.py",
         "experimental/shard_map.py",
         # until checkify is moved out of experimental
@@ -127,10 +128,14 @@ py_library(
 
 py_library_providing_imports_info(
     name = "experimental",
-    srcs = glob([
-        "experimental/*.py",
-        "example_libraries/*.py",
-    ]),
+    srcs = glob(
+        [
+            "experimental/*.py",
+            "example_libraries/*.py",
+        ],
+        # TODO(phawkins): exclude "experimental/global_device_array.py"
+        exclude = [],
+    ),
     visibility = ["//visibility:public"],
     deps = [
         ":jax",
@@ -246,6 +251,13 @@ pytype_library(
 pytype_library(
     name = "rnn",
     srcs = ["experimental/rnn.py"],
+    visibility = ["//visibility:public"],
+    deps = [":jax"],
+)
+
+pytype_library(
+    name = "global_device_array",
+    srcs = ["experimental/global_device_array.py"],
     visibility = ["//visibility:public"],
     deps = [":jax"],
 )
