@@ -2404,7 +2404,7 @@ def _cpp_pmap(
         # We don't support JAX extension backends.
         isinstance(execute, pxla.ExecuteReplicated) and
         # TODO(sharadmv): Enable effects in replicated computation
-        not execute.has_unordered_effects and not execute.has_host_callbacks and
+        not execute.has_unordered_effects and not execute.has_host_callbacks and  # pytype: disable=attribute-error
         # No tracers in the outputs. Checking for ShardedDeviceArray should be
         # sufficient, but we use the more general `DeviceArray`.
         all(
@@ -2414,8 +2414,8 @@ def _cpp_pmap(
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:
       execute_replicated = execute
-      out_handler = execute_replicated.out_handler
-      in_handler = execute_replicated.in_handler
+      out_handler = execute_replicated.out_handler  # pytype: disable=attribute-error
+      in_handler = execute_replicated.in_handler  # pytype: disable=attribute-error
       out_indices = [tuple(s.devices_indices_map(a.shape).values())
                      for s, a in safe_zip(out_handler.out_shardings, out_handler.out_avals)]
 
@@ -2428,7 +2428,7 @@ def _cpp_pmap(
 
       fastpath_data = _PmapFastpathData(
           version=1,
-          xla_executable=execute_replicated.xla_executable,
+          xla_executable=execute_replicated.xla_executable,  # pytype: disable=attribute-error
           in_handler=in_handler,
           out_handler=out_handler,
           out_pytree_def=out_pytree_def,

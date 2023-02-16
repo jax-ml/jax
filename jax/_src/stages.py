@@ -601,7 +601,7 @@ class Lowered(Stage):
       kw = dict(
           _allow_propagation_to_outputs=[
               pxla._is_unspecified(o)
-              for o in self._lowering.compile_args["out_shardings"]]
+              for o in self._lowering.compile_args["out_shardings"]]  # pytype: disable=attribute-error
       )
     else:
       kw = {}
