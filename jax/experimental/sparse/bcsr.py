@@ -38,6 +38,7 @@ from jax.util import split_list, safe_zip
 
 from jax._src import api_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src.lax.lax import DotDimensionNumbers, _dot_general_batch_dim_nums
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
@@ -509,7 +510,6 @@ def _bcsr_dot_general(lhs_data: jax.Array, lhs_indices: jax.Array,
                                  lhs_spinfo=lhs_spinfo)
 
 
-@bcsr_dot_general_p.def_impl
 def _bcsr_dot_general_impl(lhs_data, lhs_indices, lhs_indptr, rhs, *,
                            dimension_numbers, lhs_spinfo):
   lhs_data = jnp.asarray(lhs_data)
@@ -677,9 +677,9 @@ def _bcsr_dot_general_gpu_lowering(
 
 _bcsr_dot_general_default_lowering = mlir.lower_fun(
     _bcsr_dot_general_impl, multiple_results=False)
-
 mlir.register_lowering(
     bcsr_dot_general_p, _bcsr_dot_general_default_lowering)
+dispatch.simple_impl(bcsr_dot_general_p)
 
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(bcsr_dot_general_p,
