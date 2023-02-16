@@ -29,6 +29,7 @@ from jax import config
 from jax import dtypes
 from jax.experimental import sparse
 from jax.experimental.sparse import coo as sparse_coo
+from jax.experimental.sparse import csr as sparse_csr
 from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse import util as sparse_util
@@ -211,7 +212,7 @@ class cuSparseTest(sptu.SparseTestCase):
     M = rng(shape, dtype)
 
     args = (M.data, M.indices, M.indptr)
-    todense = lambda *args: sparse.csr_todense(*args, shape=M.shape)
+    todense = lambda *args: sparse_csr._csr_todense(*args, shape=M.shape)
 
     self.assertArraysEqual(M.toarray(), todense(*args))
     with self.gpu_dense_conversion_warning_context(dtype):
@@ -224,9 +225,9 @@ class cuSparseTest(sptu.SparseTestCase):
   def test_csr_todense_ad(self, shape, dtype):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
-    data, indices, indptr = sparse.csr_fromdense(M, nse=(M != 0).sum())
+    data, indices, indptr = sparse_csr._csr_fromdense(M, nse=(M != 0).sum())
     row, col = sparse_util._csr_to_coo(indices, indptr)
-    f = lambda data: sparse.csr_todense(data, indices, indptr, shape=M.shape)
+    f = lambda data: sparse_csr._csr_todense(data, indices, indptr, shape=M.shape)
 
     # Forward-mode
     primals, tangents = jax.jvp(f, [data], [jnp.ones_like(data)])
@@ -247,7 +248,7 @@ class cuSparseTest(sptu.SparseTestCase):
     rng = rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
     nse = (M != 0).sum()
-    f = lambda M: sparse.csr_fromdense(M, nse=nse)
+    f = lambda M: sparse_csr._csr_fromdense(M, nse=nse)
 
     # Forward-mode
     primals, tangents = jax.jvp(f, [M], [jnp.ones_like(M)])
@@ -275,7 +276,7 @@ class cuSparseTest(sptu.SparseTestCase):
   )
   @jax.default_matmul_precision("float32")
   def test_csr_matmul_ad(self, shape, dtype, bshape):
-    csr_matmul = sparse.csr_matvec if len(bshape) == 1 else sparse.csr_matmat
+    csr_matmul = sparse_csr._csr_matvec if len(bshape) == 1 else sparse_csr._csr_matmat
     tol = {np.float32: 2E-5, np.float64: 1E-12, np.complex64: 1E-5,
            np.complex128: 1E-12}
 
@@ -283,7 +284,7 @@ class cuSparseTest(sptu.SparseTestCase):
     rng_b = jtu.rand_default(self.rng())
 
     M = rng(shape, dtype)
-    data, indices, indptr = sparse.csr_fromdense(M, nse=(M != 0).sum())
+    data, indices, indptr = sparse_csr._csr_fromdense(M, nse=(M != 0).sum())
     x = rng_b(bshape, dtype)
     xdot = rng_b(bshape, dtype)
 
@@ -305,7 +306,7 @@ class cuSparseTest(sptu.SparseTestCase):
 
     # Forward-mode with respect to nonzero elements of the matrix
     f_sparse = lambda data: csr_matmul(data, indices, indptr, x, shape=M.shape)
-    f_dense = lambda data: sparse.csr_todense(data, indices, indptr, shape=M.shape) @ x
+    f_dense = lambda data: sparse_csr._csr_todense(data, indices, indptr, shape=M.shape) @ x
     data = rng((len(data),), data.dtype)
     data_dot = rng((len(data),), data.dtype)
     v_sparse, t_sparse = jax.jvp(f_sparse, [data], [data_dot])
@@ -333,7 +334,7 @@ class cuSparseTest(sptu.SparseTestCase):
 
     nse = M_csr.nnz
     index_dtype = jnp.int32
-    fromdense = lambda M: sparse.csr_fromdense(M, nse=nse, index_dtype=jnp.int32)
+    fromdense = lambda M: sparse_csr._csr_fromdense(M, nse=nse, index_dtype=jnp.int32)
 
     data, indices, indptr = fromdense(M)
     self.assertArraysEqual(data, M_csr.data.astype(dtype))
@@ -360,7 +361,7 @@ class cuSparseTest(sptu.SparseTestCase):
     v = v_rng(op(M).shape[1], dtype)
 
     args = (M.data, M.indices, M.indptr, v)
-    matvec = lambda *args: sparse.csr_matvec(*args, shape=M.shape, transpose=transpose)
+    matvec = lambda *args: sparse_csr._csr_matvec(*args, shape=M.shape, transpose=transpose)
 
     self.assertAllClose(op(M) @ v, matvec(*args), rtol=MATMUL_TOL)
     with self.gpu_matmul_dtype_warning_context(dtype):
@@ -380,7 +381,7 @@ class cuSparseTest(sptu.SparseTestCase):
     B = B_rng((op(M).shape[1], 4), dtype)
 
     args = (M.data, M.indices, M.indptr, B)
-    matmat = lambda *args: sparse.csr_matmat(*args, shape=shape, transpose=transpose)
+    matmat = lambda *args: sparse_csr._csr_matmat(*args, shape=shape, transpose=transpose)
 
     self.assertAllClose(op(M) @ B, matmat(*args), rtol=MATMUL_TOL)
     with self.gpu_matmul_dtype_warning_context(dtype):
@@ -577,19 +578,13 @@ class cuSparseTest(sptu.SparseTestCase):
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
-    mat_type=['csr', 'coo'],
+    mat_type=[sparse.CSR, sparse.COO],
   )
   def test_extra_nse(self, shape, dtype, mat_type):
     rng = rand_sparse(self.rng())
     M = rng(shape, dtype)
     nse = (M != 0).sum() + 5
-    fromdense = getattr(sparse, f"{mat_type}_fromdense")
-    todense = getattr(sparse, f"{mat_type}_todense")
-    args = fromdense(M, nse=nse, index_dtype=jnp.int32)
-    if mat_type == 'coo':
-      M_out = todense(args)
-    else:
-      M_out = todense(*args, shape=M.shape)
+    M_out = mat_type.fromdense(M, nse=nse, index_dtype=jnp.int32).todense()
     self.assertArraysEqual(M, M_out)
 
   @jtu.sample_product(
@@ -2715,7 +2710,7 @@ class SparseSolverTest(sptu.SparseTestCase):
     rng = rand_sparse(self.rng())
     a = rng((size, size), dtype)
     nse = (a != 0).sum()
-    data, indices, indptr = sparse.csr_fromdense(a, nse=nse)
+    data, indices, indptr = sparse_csr._csr_fromdense(a, nse=nse)
 
     rng_k = jtu.rand_default(self.rng())
     b = rng_k([size], dtype)
