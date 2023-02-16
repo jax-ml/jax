@@ -39,18 +39,20 @@ import operator as op
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
+import numpy as np
+import opt_einsum
+
 import jax
-from jax._src.numpy import lax_numpy
+from jax import config
+from jax.interpreters import xla
+
+from jax._src import core
 from jax._src import dtypes
 from jax._src.interpreters import mlir
-from jax.interpreters import xla
+from jax._src.numpy import lax_numpy
 from jax._src.lax import lax
 from jax._src.typing import DimSize, Shape
-import opt_einsum
-from jax import config
-from jax import core
 
-import numpy as np
 
 TfVal = Any
 # A dimension environment maps dimension variables to expressions that
