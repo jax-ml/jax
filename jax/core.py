@@ -78,7 +78,6 @@ from jax._src.core import (
   Value as Value,
   Var as Var,
   abstract_token as abstract_token,
-  annotations as annotations,
   apply_todos as apply_todos,
   as_hashable_function as as_hashable_function,
   as_named_shape as as_named_shape,
