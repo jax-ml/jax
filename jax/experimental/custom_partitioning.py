@@ -213,7 +213,7 @@ class custom_partitioning:
       from jax.experimental.custom_partitioning import custom_partitioning
       from jax.experimental.pjit import pjit
       from jax.sharding import PartitionSpec as P
-      from jax.experimental.maps import Mesh
+      from jax.sharding import Mesh
       from jax.numpy.fft import fft
       import regex as re
       import numpy as np

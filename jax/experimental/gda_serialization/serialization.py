@@ -29,7 +29,7 @@ from jax.experimental import global_device_array as gda
 from jax._src import array
 from jax._src import sharding
 from jax._src import typing
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 import jax.numpy as jnp
 import numpy as np
 import tensorstore as ts

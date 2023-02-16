@@ -479,8 +479,8 @@ We are using `jax.experimental.pjit.pjit` for parallel execution on multiple dev
 Let's first test the forward operation on multiple devices.  We are creating a simple 1D mesh and sharding `x` on all devices.
 
 ```python
-from jax.experimental.maps import Mesh
-from jax.experimental.pjit import PartitionSpec, pjit
+from jax.sharding import Mesh, PartitionSpec
+from jax.experimental.pjit import pjit
 
 
 mesh = Mesh(jax.local_devices(), ("x",))
@@ -777,11 +777,12 @@ import jax.numpy as jnp
 from build import gpu_ops
 from jax import core, dtypes
 from jax.abstract_arrays import ShapedArray
-from jax.experimental.maps import Mesh, xmap
-from jax.experimental.pjit import PartitionSpec, pjit
+from jax.experimental.maps import xmap
+from jax.experimental.pjit import pjit
 from jax.interpreters import mlir, xla
 from jax.interpreters.mlir import ir
 from jax.lib import xla_client
+from jax.sharding import Mesh, PartitionSpec
 from jaxlib.mhlo_helpers import custom_call
 
 

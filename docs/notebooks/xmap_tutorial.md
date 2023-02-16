@@ -120,7 +120,7 @@ But on a whim we can decide to parallelize over the batch axis:
 
 import jax
 import numpy as np
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 
 loss = xmap(named_loss, in_axes=in_axes, out_axes=[...],
             axis_resources={'batch': 'x'})
@@ -536,7 +536,7 @@ To introduce the resources in a scope, use the `with Mesh` context manager:
 ```{code-cell} ipython3
 :id: kYdoeaSS9m9f
 
-from jax.experimental.maps import Mesh
+from jax.sharding import Mesh
 
 local = local_matmul(x, x)  # The local function doesn't require the mesh definition
 with Mesh(*mesh_def):  # Makes the mesh axis names available as resources
