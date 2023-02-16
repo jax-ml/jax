@@ -114,8 +114,6 @@ from jax._src.core import (
   as_named_shape as as_named_shape,
   attrgetter as attrgetter,
   aval_mapping_handlers as aval_mapping_handlers,
-  aval_method as aval_method,
-  aval_property as aval_property,
   axis_frame as axis_frame,
   call as call,
   call_bind_with_continuation as call_bind_with_continuation,

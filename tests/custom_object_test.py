@@ -18,20 +18,23 @@ import unittest
 import numpy as np
 
 import jax
-from jax._src import test_util as jtu
 import jax.numpy as jnp
-from jax import core, jit, lax, make_jaxpr
+from jax import jit, lax, make_jaxpr
+from jax.config import config
+from jax.interpreters import mlir
+from jax.interpreters import xla
+
+from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
-from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge, xla_client
+
 xc = xla_client
 xb = xla_bridge
 
-from jax.config import config
 config.parse_flags_with_absl()
 
 # TODO(jakevdp): use a setup/teardown method to populate and unpopulate all the
