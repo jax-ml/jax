@@ -962,7 +962,7 @@ def xla_pmap_impl_lazy(
     donated_invars: Sequence[bool],
     global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
     is_explicit_global_axis_size: bool,
-):
+) -> Callable:
   if (config.jax_disable_jit and config.jax_eager_pmap and
       not is_explicit_global_axis_size and not any(d for d in donated_invars)
       and not all(g is not None for g in global_arg_shapes)):

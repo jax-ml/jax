@@ -280,6 +280,8 @@ class XlaExecutable(Executable):
 class XlaLowering(Lowering):
   """Adapts our various internal XLA-backed computations into a ``Lowering``."""
 
+  compile_args: Dict[str, Any]
+
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
     raise NotImplementedError("must override")
