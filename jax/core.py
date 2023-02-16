@@ -117,7 +117,6 @@ from jax._src.core import (
   aval_method as aval_method,
   aval_property as aval_property,
   axis_frame as axis_frame,
-  axis_substitution_rules as axis_substitution_rules,
   call as call,
   call_bind_with_continuation as call_bind_with_continuation,
   call_impl as call_impl,
