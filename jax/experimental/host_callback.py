@@ -542,6 +542,20 @@ def _inline_host_callback() -> bool:
 def _use_outfeed(platform: str) -> bool:
   return (platform in ("tpu", "gpu", "cuda", "rocm") or FLAGS.jax_host_callback_outfeed)
 
+
+def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
+  """Should be called whenever outfeed (or infeed) will be used."""
+  if xb.using_pjrt_c_api(backend):
+    raise NotImplementedError(
+        "host_callback functionality isn't supported with the new Cloud TPU "
+        "runtime. See https://jax.readthedocs.io/en/latest/debugging/index.html"
+        " and "
+        "https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html"
+        " for alternatives. Please file a feature request at "
+        "https://github.com/google/jax/issues if none of the alternatives are "
+        "sufficent.")
+
+
 xops = xla_client._xla.ops
 
 XlaOp = xla_client.XlaOp
@@ -1048,6 +1062,7 @@ def _outside_call_translation_rule(ctx,
   send_infeed = use_outfeed and need_callback_results_on_device
   generated_infeed = False  # Keep track if we emitted an infeed op
   if use_outfeed:
+    _raise_if_using_outfeed_with_pjrt_c_api(xb.get_backend(ctx.platform))
     callback_id = _register_callback(
         functools.partial(
             _outside_call_run_callback,
@@ -1956,6 +1971,8 @@ def _initialize_outfeed_receiver(
     _callback_handler_data.clients = clients  # type: ignore[assignment]
     _callback_handler_data.devices = devices  # type: ignore[assignment]
     clients_with_outfeed = [c for c in clients if _use_outfeed(c.platform)]
+    for client in clients_with_outfeed:
+      _raise_if_using_outfeed_with_pjrt_c_api(client)
     if clients_with_outfeed:
       devices_with_outfeed = list(
         itertools.chain(*[backend.local_devices() for backend in clients_with_outfeed]))

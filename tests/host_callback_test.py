@@ -239,6 +239,8 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     super().setUp()
     if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest("host_callback not implemented in PJRT C API")
 
     testing_stream.reset()
     testing_stream._test_method_name = self._testMethodName
@@ -2031,6 +2033,8 @@ class HostCallbackCallTest(jtu.JaxTestCase):
     super().setUp()
     if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest("host_callback not implemented in PJRT C API")
 
     testing_stream.reset()
     testing_stream._test_method_name = self._testMethodName
@@ -2460,6 +2464,8 @@ class CallJaxTest(jtu.JaxTestCase):
   def setUp(self):
     if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest("host_callback not implemented in PJRT C API")
 
     if jtu.device_under_test() != "cpu":
       assert jax.devices("cpu")
@@ -2534,6 +2540,8 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
   def setUp(self):
     if jtu.device_under_test() == "gpu" and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest("host_callback not implemented in PJRT C API")
     super().setUp()
 
   def assertRewrite(self, expected: str, func: Callable, args: Sequence,

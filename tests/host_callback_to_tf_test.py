@@ -28,6 +28,7 @@ import jax
 from jax.config import config
 from jax import numpy as jnp
 from jax._src import test_util as jtu
+from jax._src.lib import xla_bridge
 from jax.experimental import host_callback as hcb
 
 import numpy as np
@@ -163,6 +164,8 @@ class CallToTFTest(jtu.JaxTestCase):
   def setUp(self):
     if tf is None:
       raise unittest.SkipTest("Test requires tensorflow")
+    if xla_bridge.using_pjrt_c_api():
+      raise unittest.SkipTest("host_callback not implemented in PJRT C API")
     super().setUp()
 
   @parameterized.named_parameters(
