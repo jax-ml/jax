@@ -73,6 +73,14 @@ py_library(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
+py_library(
+    name = "internal_test_util",
+    testonly = 1,
+    srcs = glob(["_src/internal_test_util/*.py"]),
+    visibility = [":internal"],
+    deps = [":jax"] + py_deps("numpy"),
+)
+
 py_library_providing_imports_info(
     name = "jax",
     srcs = glob(
@@ -93,6 +101,7 @@ py_library_providing_imports_info(
             "_src/test_util.py",
             "*_test.py",
             "**/*_test.py",
+            "_src/internal_test_util/**",
         ],
     ) + [
         # TODO(phawkins): remove global_device_array from the main JAX target.
