@@ -595,16 +595,26 @@ def bitcast_convert_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
 
   Wraps XLA's `BitcastConvertType
   <https://www.tensorflow.org/xla/operation_semantics#bitcastconverttype>`_
-  operator, which performs a bit cast from one type to another. The bitwidth
-  of the source and destination types must match.
+  operator, which performs a bit cast from one type to another.
+
+  The output shape depends on the size of the input and output dtypes with
+  the following logic::
+
+    if new_dtype.itemsize == operand.dtype.itemsize:
+      output_shape = operand.shape
+    if new_dtype.itemsize < operand.dtype.itemsize:
+      output_shape = (*operand.shape, operand.dtype.itemsize // new_dtype.itemsize)
+    if new_dtype.itemsize > operand.dtype.itemsize:
+      assert operand.shape[-1] * operand.dtype.itemsize == new_dtype.itemsize
+      output_shape = operand.shape[:-1]
 
   Args:
     operand: an array or scalar value to be cast
     new_dtype: the new type. Should be a NumPy type.
 
   Returns:
-    An array with the same shape as `operand`, bitcast elementwise to
-    `new_dtype`.
+    An array of shape `output_shape` (see above) and type `new_dtype`,
+    constructed from the same bits as operand.
   """
   new_dtype = dtypes.canonicalize_dtype(new_dtype)
   return bitcast_convert_type_p.bind(operand, new_dtype=new_dtype)
@@ -2418,15 +2428,26 @@ mlir.register_lowering(convert_element_type_p, _convert_element_type_lower)
 
 
 def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
-  return operand.shape
+  old_dtype = dtypes.canonicalize_dtype(operand.dtype)
+  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+
+  if old_dtype.itemsize == new_dtype.itemsize:
+    return operand.shape
+  elif old_dtype.itemsize > new_dtype.itemsize:
+    return (*operand.shape, old_dtype.itemsize // new_dtype.itemsize)
+  elif operand.shape[-1] * old_dtype.itemsize != new_dtype.itemsize:
+    raise ValueError(
+      f"Attempting to convert array of shape {operand.shape} "
+      f"from {str(old_dtype)} of size {old_dtype.itemsize} "
+      f"to {str(new_dtype)} of size {new_dtype.itemsize}, "
+      f"but {operand.shape[-1]} * {old_dtype.itemsize} != {new_dtype.itemsize}")
+  return operand.shape[:-1]
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
   old_dtype = dtypes.canonicalize_dtype(operand.dtype)
   if dtypes.issubdtype(old_dtype, np.bool_) or dtypes.issubdtype(old_dtype, np.complexfloating):
     if old_dtype != new_dtype:
       raise TypeError(f"`bitcast_convert_type` for operand type ({old_dtype}) cannot have different destination type ({new_dtype})")
-  if np.dtype(old_dtype).itemsize != np.dtype(new_dtype).itemsize:
-    raise TypeError(f"`bitcast_convert_type` for operand type ({old_dtype}) must have destination type ({new_dtype}) of same size.")
   return new_dtype
 
 bitcast_convert_type_p = standard_primitive(
