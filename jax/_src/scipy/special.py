@@ -1115,7 +1115,7 @@ def sph_harm(m: Array,
   :math:`Y_n^m(\theta, \phi) = N_n^m * P_n^m(\cos \phi) * \exp(i m \theta)`,
   where :math:`N_n^m = \sqrt{\frac{\left(2n+1\right) \left(n-m\right)!}
   {4 \pi \left(n+m\right)!}}` is the normalization factor and :math:`\phi` and
-  :math:\theta` are the colatitude and longitude, repectively. :math:`N_n^m` is
+  :math:`\theta` are the colatitude and longitude, repectively. :math:`N_n^m` is
   chosen in the way that the spherical harmonics form a set of orthonormal basis
   functions of :math:`L^2(S^2)`.
 
