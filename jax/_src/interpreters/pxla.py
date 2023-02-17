@@ -1166,9 +1166,11 @@ class MapTrace(core.Trace):
                            for v, s, dst in zip(out, outaxes, out_axes_thunk()))
     return map(partial(MapTracer, self), out, outaxes)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
+                              symbolic_zeros):
     bind = HashableFunction(
-        lambda *args, **kwargs: primitive.bind(fun, jvp, *args, **kwargs),
+        lambda *args, **kwargs: primitive.bind(
+            fun, jvp, *args, symbolic_zeros=symbolic_zeros, **kwargs),
         (primitive, fun, jvp))
     fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
     return self.process_primitive(fake_primitive, tracers, {})

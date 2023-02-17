@@ -31,7 +31,8 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
-from jax._src.ad_util import Zero, zeros_like_aval, stop_gradient_p
+from jax._src.ad_util import (Zero, SymbolicZero, zeros_like_aval,
+                              stop_gradient_p)
 from jax._src.api_util import argnums_partial, flatten_fun_nokwargs
 from jax._src.core import raise_to_shaped
 from jax._src.interpreters import ad
@@ -131,19 +132,25 @@ class custom_jvp(Generic[ReturnValue]):
 
   .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
+  fun: Callable[..., ReturnValue]
+  nondiff_argnums: Tuple[int, ...]
+  jvp: Optional[Callable[..., Tuple[ReturnValue, ReturnValue]]] = None
+  symbolic_zeros: bool = False
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: Tuple[int, ...] = ()):
+               nondiff_argnums: Tuple[int, ...] = (),
+               ):
     update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
-    self.jvp: Optional[Callable[..., Tuple[ReturnValue, ReturnValue]]] = None
 
   __getattr__ = custom_api_util.forward_attr
 
-  def defjvp(self, jvp: Callable[..., Tuple[ReturnValue, ReturnValue]]
-    ) -> Callable[..., Tuple[ReturnValue, ReturnValue]]:
+  def defjvp(self,
+             jvp: Callable[..., Tuple[ReturnValue, ReturnValue]],
+             symbolic_zeros: bool = False,
+             ) -> Callable[..., Tuple[ReturnValue, ReturnValue]]:
     """Define a custom JVP rule for the function represented by this instance.
 
     Args:
@@ -155,6 +162,13 @@ class custom_jvp(Generic[ReturnValue]):
         produce as output a pair where the first element is the primal output
         and the second element is the tangent output. Elements of the input and
         output tuples may be arrays or any nested tuples/lists/dicts thereof.
+      symbolic_zeros: boolean, indicating whether the rule should be passed
+        objects representing static symbolic zeros in its tangent tuple
+        argument; otherwise, only standard JAX types (e.g. array-likes) are
+        passed. Setting this option to True allows a JVP rule to detect whether
+        certain inputs are not involved in differentiation, but at the cost of
+        needing special handling for these objects (which e.g. can't be passed
+        into jax.numpy functions). Default False.
 
     Returns:
       None.
@@ -174,6 +188,7 @@ class custom_jvp(Generic[ReturnValue]):
         return primal_out, tangent_out
     """
     self.jvp = jvp
+    self.symbolic_zeros = symbolic_zeros
     return jvp
 
   def defjvps(self, *jvps: Optional[Callable[..., ReturnValue]]):
@@ -230,13 +245,14 @@ class custom_jvp(Generic[ReturnValue]):
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args)
     else:
-      f_, dyn_args = lu.wrap_init(self.fun), args
+      f_, dyn_args = lu.wrap_init(self.fun), args  # type: ignore
       jvp = lu.wrap_init(self.jvp)
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_type1 = _flatten_fun_nokwargs(f_, in_tree)
     flat_jvp, out_type2 = _flatten_jvp(jvp, primal_name, jvp_name, in_tree,
                                        out_type1)
-    out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat)
+    out_flat = custom_jvp_call_p.bind(flat_fun, flat_jvp, *args_flat,
+                                      symbolic_zeros=self.symbolic_zeros)
     _, (out_tree, _) = lu.merge_linear_aux(out_type1, out_type2)
     return tree_unflatten(out_tree, out_flat)
 
@@ -309,7 +325,7 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
       for x in primals_out]
   tangent_avals_out = [
       raise_to_shaped(core.get_aval(t), weak_type=False).strip_named_shape()
-      for t in tangents_out]
+      if type(t) is not SymbolicZero else t.aval for t in tangents_out]
   if primal_avals_out != tangent_avals_out:
     if len(primal_avals_out) == 1:
       (av1,), (av2,) = primal_avals_out, tangent_avals_out
@@ -328,7 +344,7 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
 
-  def bind(self, fun, jvp, *args):
+  def bind(self, fun, jvp, *args, symbolic_zeros):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = process_env_traces(
@@ -336,7 +352,8 @@ class CustomJVPCallPrimitive(core.Primitive):
     jvp, env_trace_todo2 = process_env_traces(
         jvp, self, top_trace and top_trace.level, True)
     tracers = map(top_trace.full_raise, args)  # type: ignore
-    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers)  # type: ignore
+    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers,  # type: ignore
+                                             symbolic_zeros=symbolic_zeros)  # type: ignore
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
@@ -386,7 +403,8 @@ allowed_effects.add_type(lax.InOutFeedEffect)
 
 custom_jvp_call_p = CustomJVPCallPrimitive('custom_jvp_call')
 
-def _custom_jvp_call_typecheck(*in_avals, call_jaxpr, jvp_jaxpr_thunk, num_consts):
+def _custom_jvp_call_typecheck(*in_avals, call_jaxpr, jvp_jaxpr_thunk, num_consts,
+                               symbolic_zeros):
   # TODO(mattjj): could do more checking here...
   del in_avals, jvp_jaxpr_thunk, num_consts
   disallowed_effects = allowed_effects.filter_not_in(call_jaxpr.effects)
@@ -397,8 +415,8 @@ def _custom_jvp_call_typecheck(*in_avals, call_jaxpr, jvp_jaxpr_thunk, num_const
 core.custom_typechecks[custom_jvp_call_p] = _custom_jvp_call_typecheck
 
 def _custom_jvp_call_mlir_translation(ctx, *args, call_jaxpr, jvp_jaxpr_thunk,
-                                      num_consts):
-  del jvp_jaxpr_thunk, num_consts
+                                      num_consts, symbolic_zeros):
+  del jvp_jaxpr_thunk, num_consts, symbolic_zeros
   args_ = map(mlir.wrap_singleton_ir_values, args)
   consts = mlir._ir_consts(call_jaxpr.consts)
   out, tokens = mlir.jaxpr_subcomp(ctx.module_context, call_jaxpr.jaxpr,

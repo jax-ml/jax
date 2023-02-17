@@ -26,8 +26,10 @@ from jax.tree_util import (tree_flatten, tree_unflatten,
                            register_pytree_node, Partial)
 from jax._src import core
 from jax._src import source_info_util
-from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
-                              zeros_like_aval, zeros_like_p, Zero)
+from jax._src.ad_util import (
+    add_jaxvals, add_jaxvals_p, zeros_like_jaxval, zeros_like_aval,
+    zeros_like_p, Zero, replace_internal_symbolic_zeros,
+    replace_rule_output_symbolic_zeros)
 from jax._src.api_util import flatten_fun, flatten_fun_nokwargs
 from jax._src.core import (Trace, Tracer, get_aval, call_p, Primitive, Literal,
                            raise_to_shaped)
@@ -172,6 +174,7 @@ def recast_to_float0(primal, tangent):
     return Zero(get_aval(primal).at_least_vspace())
   else:
     return tangent
+
 
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)
@@ -367,15 +370,17 @@ class JVPTrace(Trace):
   process_map = process_call
   post_process_map = post_process_call
 
-  def process_custom_jvp_call(self, _, __, f_jvp, tracers):
+  def process_custom_jvp_call(self, _, __, f_jvp, tracers, *, symbolic_zeros):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
     primals_in = map(core.full_lower, primals_in)
-    tangents_in = map(instantiate_zeros, tangents_in)
-    # Cast float0 to zeros with the primal dtype because custom jvp rules don't
-    # currently handle float0s
-    tangents_in = map(replace_float0s, primals_in, tangents_in)
+    if not symbolic_zeros:
+      tangents_in = map(instantiate_zeros, tangents_in)
+      tangents_in = map(replace_float0s, primals_in, tangents_in)
+    else:
+      tangents_in = map(replace_internal_symbolic_zeros, tangents_in)
     outs = f_jvp.call_wrapped(*it.chain(primals_in, tangents_in))
     primals_out, tangents_out = split_list(outs, [len(outs) // 2])
+    tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
 

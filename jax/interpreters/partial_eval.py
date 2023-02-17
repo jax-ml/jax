@@ -465,10 +465,10 @@ class JaxprTrace(Trace):
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     # We assume partial evaluation is only performed to build linear functions,
     # and hence we don't need to keep the custom JVP rule around anymore.
-    del jvp
+    del jvp, symbolic_zeros
     assert not all(t.is_known() for t in tracers)
     return fun.call_wrapped(*tracers)
 
@@ -1857,7 +1857,7 @@ class DynamicJaxprTrace(core.Trace):
   def post_process_map(self, map_primitive, out_tracers, params):
     assert False  # unreachable
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     in_avals = [t.aval for t in tracers]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
@@ -1872,7 +1872,8 @@ class DynamicJaxprTrace(core.Trace):
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
                              jvp_jaxpr_thunk=jvp_jaxpr_thunk,
-                             num_consts=len(consts)),
+                             num_consts=len(consts),
+                             symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
                         source_info_util.current())
     self.frame.add_eqn(eqn)

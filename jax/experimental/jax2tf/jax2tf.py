@@ -1314,11 +1314,11 @@ class TensorFlowTrace(core.Trace):
   def post_process_map(self, map_primitive, out_tracers, params):
     raise NotImplementedError("post_process_map")
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     # Drop the custom differentiation rule and act like a call primitive. This
     # behavior is desirable because jax2tf stages code out of the JAX system, so
     # there are no more JAX differentiation transformations to be applied.
-    del jvp  # Unused.
+    del jvp, symbolic_zeros  # Unused.
     return self.process_call(core.call_p, fun, tracers, {})
 
   def post_process_custom_jvp_call(self, out_tracers, _):

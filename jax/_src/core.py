@@ -484,7 +484,8 @@ class Trace:
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
+                              symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_jvp_call "
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
@@ -794,17 +795,17 @@ class EvalTrace(Trace):
   process_map = process_call
 
   def process_custom_transpose(self, primitive, call, tracers, **_):
-    del primitive
+    del primitive, _
     with new_sublevel():
       return call.call_wrapped(*tracers)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
-    del primitive, jvp  # Unused.
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, **_):
+    del primitive, jvp, _  # Unused.
     with new_sublevel():
       return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, **_):  # pytype: disable=signature-mismatch
-    del primitive, fwd, bwd  # Unused.
+    del primitive, fwd, bwd, _  # Unused.
     with new_sublevel():
       return fun.call_wrapped(*tracers)
 

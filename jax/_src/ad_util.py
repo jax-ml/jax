@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+import types
 from typing import Any, Callable, Dict, TypeVar, Union, cast
 
 from jax.tree_util import register_pytree_node
@@ -91,3 +92,40 @@ def _stop_gradient_impl(x: T) -> T:
 stop_gradient_p : Primitive = Primitive('stop_gradient')
 stop_gradient_p.def_impl(_stop_gradient_impl)
 stop_gradient_p.def_abstract_eval(lambda x: x)
+
+
+class SymbolicZero:
+  def __init__(self, aval: core.AbstractValue) -> None:
+    self.aval = aval
+
+  def __repr__(self) -> str:
+    return self.__class__.__name__
+
+  # TODO(mattjj,frostig): this forwards attr lookup to self.aval delegate;
+  # should dedup with core.Tracer.__getattr__ which does the same thing
+  def __getattr__(self, name):
+    # if the aval property raises an AttributeError, gets caught here
+    try:
+      attr = getattr(self.aval, name)
+    except KeyError as err:
+      raise AttributeError(
+          f"{self.__class__.__name__} has no attribute {name}"
+      ) from err
+    else:
+      t = type(attr)
+      if t is core.aval_property:
+        return attr.fget(self)
+      elif t is core.aval_method:
+        return types.MethodType(attr.fun, self)
+      else:
+        return attr
+
+JaxTypeOrTracer = Any
+
+def replace_internal_symbolic_zeros(
+    x: Union[JaxTypeOrTracer, Zero]) -> Union[JaxTypeOrTracer, SymbolicZero]:
+  return SymbolicZero(x.aval) if type(x) is Zero else x
+
+def replace_rule_output_symbolic_zeros(
+    x: Union[JaxTypeOrTracer, SymbolicZero]) -> Union[JaxTypeOrTracer, Zero]:
+  return Zero(x.aval) if type(x) is SymbolicZero else x
