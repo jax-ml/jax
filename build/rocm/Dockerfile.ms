@@ -1,8 +1,8 @@
 ################################################################################
-FROM rocm/dev-ubuntu-20.04:5.3-complete as rt_build
-MAINTAINER Chao Chen <Chao.Chen.2@amd.com>
+FROM rocm/dev-ubuntu-20.04:5.4-complete as rt_build
+MAINTAINER Rahul Batra<rahbatra@amd.com>
 ################################################################################
-ARG ROCM_PATH=/opt/rocm-5.3.0
+ARG ROCM_PATH=/opt/rocm-5.4.0
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV HOME /root/
