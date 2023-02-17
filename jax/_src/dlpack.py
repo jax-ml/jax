@@ -74,9 +74,11 @@ def from_dlpack(dlpack):
 
   buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
       dlpack, cpu_backend, gpu_backend)
-
-  xla_shape = buf.xla_shape()
-  assert not xla_shape.is_tuple()
-  aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
+  if isinstance(buf, array.ArrayImpl):
+    aval = buf.aval
+  else:
+    xla_shape = buf.xla_shape()
+    assert not xla_shape.is_tuple()
+    aval = core.ShapedArray(xla_shape.dimensions(), xla_shape.numpy_dtype())
   return jnp.asarray(           # asarray ensures dtype canonicalization
       dispatch.maybe_create_array_from_da(buf, aval, buf.device()))
