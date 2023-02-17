@@ -24,7 +24,6 @@ transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
 
-import abc
 import builtins
 import collections
 from functools import partial
@@ -5567,13 +5566,3 @@ for t in device_array.device_array_types:
 _set_device_array_attributes(pxla._ShardedDeviceArray)
 _set_device_array_attributes(pmap_lib.ShardedDeviceArray)
 _set_device_array_attributes(ArrayImpl)
-
-def _set_jax_array_abstract_methods(jax_array):
-  for operator_name, function in _array_operators.items():
-    setattr(jax_array, f"__{operator_name}__", abc.abstractmethod(function))
-  for method_name, method in _array_methods.items():
-    setattr(jax_array, method_name, abc.abstractmethod(method))
-  for prop_name, prop in _array_properties.items():
-    setattr(jax_array, prop_name, abc.abstractproperty(prop))
-
-_set_jax_array_abstract_methods(jax.Array)
