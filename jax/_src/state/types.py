@@ -14,10 +14,11 @@
 """Module for state types."""
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Set, Union
+from typing import Any, List, Sequence, Set, Union
 
 from jax._src import core
 from jax._src import effects
+from jax._src import pretty_printer as pp
 from jax._src.lib import xla_bridge, xla_client
 from jax._src.util import safe_map, safe_zip, tuple_insert, tuple_delete, prod
 
@@ -31,34 +32,41 @@ zip, unsafe_zip = safe_zip, zip
 
 Array = Any
 
-class RefEffect(effects.Effect):
-  def __init__(self, ref_aval: ShapedArrayRef):
-    self.ref_aval = ref_aval
+_ref_effect_color = pp.Color.GREEN
+
+class RefEffect(effects.JaxprInputEffect):
+  name: str
 
   def __eq__(self, other):
     if not isinstance(other, self.__class__):
       return False
-    return self.ref_aval is other.ref_aval
+    return self.input_index == other.input_index
 
   def __hash__(self):
-    return hash((self.__class__, self.ref_aval))
+    return hash((self.__class__, self.input_index))
 
-  def replace(self, *, ref_aval: Optional[ShapedArrayRef] = None):
-    if ref_aval is None:
-      ref_aval = self.ref_aval
-    return self.__class__(ref_aval)
+  def _pretty_print(self, context: core.JaxprPpContext) -> pp.Doc:
+    if isinstance(self.input_index, core.Var):
+      index_text = pp.text(core.pp_var(self.input_index, context))
+    else:
+      index_text = pp.text(self.input_index)
+    return pp.concat([
+      pp.color(pp.text(self.name), foreground=_ref_effect_color),
+      pp.text("<"),
+      index_text,
+      pp.text(">")])
+
+  def __str__(self):
+    return f"{self.name}<{self.input_index}>"
 
 class ReadEffect(RefEffect):
-  def __str__(self):
-    return f"Read<{self.ref_aval}>"
+  name: str = "Read"
 
 class WriteEffect(RefEffect):
-  def __str__(self):
-    return f"Write<{self.ref_aval}>"
+  name: str = "Write"
 
 class AccumEffect(RefEffect):
-  def __str__(self):
-    return f"Accum<{self.ref_aval}>"
+  name: str = "Accum"
 
 effects.control_flow_allowed_effects.add_type(RefEffect)
 
@@ -139,4 +147,4 @@ def get_ref_state_effects(
     effects: core.Effects) -> List[Set[StateEffect]]:
   return [{eff for eff in effects
            if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
-           and eff.ref_aval is aval} for aval in avals]
+           and eff.input_index == i} for i, aval in enumerate(avals)]

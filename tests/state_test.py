@@ -98,7 +98,8 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     else:
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           lu.wrap_init(f), [ref_aval])
-      self.assertSetEqual(jaxpr.effects, {state.ReadEffect(ref_aval)})
+      self.assertSetEqual(jaxpr.effects,
+                          {state.ReadEffect(len(jaxpr.constvars))})
       self.assertLen(out_avals, 1)
       out_aval, = out_avals
       self.assertIsInstance(out_aval, core.ShapedArray)
@@ -164,7 +165,8 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     else:
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           lu.wrap_init(f), [ref_aval, val_aval])
-      self.assertSetEqual(jaxpr.effects, {state.WriteEffect(ref_aval)})
+      self.assertSetEqual(jaxpr.effects,
+                          {state.WriteEffect(len(jaxpr.constvars))})
       self.assertLen(out_avals, 1)
       out_aval, = out_avals
       self.assertIsInstance(out_aval, core.ShapedArray)
@@ -219,7 +221,8 @@ class StatePrimitivesTest(jtu.JaxTestCase):
     else:
       jaxpr, out_avals, _ = pe.trace_to_jaxpr_dynamic(
           lu.wrap_init(f), [ref_aval, val_aval])
-      self.assertSetEqual(jaxpr.effects, {state.AccumEffect(ref_aval)})
+      self.assertSetEqual(jaxpr.effects,
+                          {state.AccumEffect(len(jaxpr.constvars))})
       self.assertLen(out_avals, 0)
 
   def test_addupdate_abstract_eval_must_take_in_refs(self):
@@ -646,7 +649,7 @@ class StateDischargeTest(jtu.JaxTestCase):
     self.assertIsInstance(discharged_jaxpr.invars[0].aval, state.ShapedArrayRef)
     self.assertIsInstance(discharged_jaxpr.invars[1].aval, core.ShapedArray)
     self.assertEqual(discharged_jaxpr.effects,
-        {state.WriteEffect(discharged_jaxpr.invars[0].aval)})
+        {state.WriteEffect(len(discharged_jaxpr.constvars))})
 
   def test_ellipsis_index(self):
     def f(ref):

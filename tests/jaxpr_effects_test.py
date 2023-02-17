@@ -24,9 +24,10 @@ from jax import lax
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax.config import config
-from jax.interpreters import ad
 from jax.experimental import maps
 from jax.experimental import pjit
+from jax.interpreters import ad
+from jax.interpreters import partial_eval as pe
 from jax._src import sharding
 from jax._src.interpreters import mlir
 from jax._src import ad_checkpoint
@@ -59,6 +60,7 @@ class OrderedEffect(BasicEffect): pass
 class UnlowerableEffect(effects.Effect): pass
 class WhileEffect(effects.Effect): pass
 class RematEffect(effects.Effect): pass
+class InputEffect(effects.JaxprInputEffect): pass
 
 foo_effect = OrderedEffect("foo")
 foo2_effect = OrderedEffect("foo2")
@@ -75,8 +77,8 @@ effects.lowerable_effects.add_type(WhileEffect)
 effects.ordered_effects.add_type(OrderedEffect)
 effects.ordered_effects.add_type(WhileEffect)
 effects.control_flow_allowed_effects.add_type(WhileEffect)
-
 effects.remat_allowed_effects.add_type(RematEffect)
+effects.control_flow_allowed_effects.add_type(InputEffect)
 
 
 def trivial_effect_lowering(ctx, *, effect):
@@ -184,7 +186,7 @@ class JaxprEffectsTest(jtu.JaxTestCase):
     jaxpr = jaxpr.replace(effects={foo_effect})
 
     with self.assertRaisesRegex(core.JaxprTypeError,
-        'Equation effects are not subset of Jaxpr effects.'):
+        'Equation effect not present in jaxpr effects.'):
       core.check_jaxpr(jaxpr)
 
 class HigherOrderPrimitiveTest(jtu.JaxTestCase):
@@ -267,7 +269,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       return x
     with self.assertRaisesRegex(
         ValueError,
-        "Ordered effects not supported for map primitives: {.*}"):
+        r"Ordered effects not supported for map primitives: \[.*\]"):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
   def test_xmap_inherits_effects(self):
@@ -554,7 +556,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1
     with self.assertRaisesRegex(
         ValueError,
-        "Ordered effects not supported for map primitives: {foo}"):
+        r"Ordered effects not supported for map primitives: \[foo\]"):
       f(jnp.arange(jax.device_count()))
 
   def test_runtime_tokens_should_update_after_running_effectful_function(self):
@@ -936,6 +938,161 @@ class ControlFlowEffectsTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(NotImplementedError, 'Effects not supported'):
       jax.make_jaxpr(f)(2.)
+
+
+input_effect_p = core.Primitive('input_effect')
+input_effect_p.multiple_results = True
+input_effect = input_effect_p.bind
+
+def _input_effect_abstract_eval(*avals, index):
+  return [], {InputEffect(index)}
+input_effect_p.def_effectful_abstract_eval(_input_effect_abstract_eval)
+
+class JaxprInputEffectTest(jtu.JaxTestCase):
+
+  def test_simple_jaxpr_input_effect(self):
+    def f(x, y):
+      input_effect(x, y, index=0)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+  def test_jaxpr_input_effect_is_tracked_by_index_properly(self):
+    def f(x, y):
+      input_effect(y, x, index=0)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    def f(x, y):
+      input_effect(y, x, index=1)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+  def test_jaxpr_input_effect_is_tracked_through_a_jit(self):
+    @jax.jit
+    def f(x, y):
+      input_effect(y, x, index=0)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    @jax.jit
+    def f(x, y):
+      return jax.jit(lambda a, b: input_effect(b, a, index=1))(x, y)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+    x = np.array([0, 1])
+    @jax.jit
+    def f(y):
+      return input_effect(x, y, index=0)
+    jaxpr = jax.make_jaxpr(f)(0)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+  def test_jaxpr_input_effect_is_tracked_through_partial_eval_custom(self):
+    def f(_, y):
+      input_effect(y, index=0)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    jaxpr_left, jaxpr_right, _, _, _ = pe.partial_eval_jaxpr_custom(
+        jaxpr.jaxpr, [False, True], in_inst=[False, True],
+        ensure_out_unknowns=[], ensure_out_inst=[],
+        saveable=lambda *_, **__: True)
+    self.assertEmpty(jaxpr_left.effects)
+    self.assertSetEqual({InputEffect(0)}, jaxpr_right.effects)
+
+    jaxpr_left, jaxpr_right, _, _, _ = pe.partial_eval_jaxpr_custom(
+        jaxpr.jaxpr, [True, False], in_inst=[True, False],
+        ensure_out_unknowns=[], ensure_out_inst=[],
+        saveable=lambda *_, **__: True)
+    self.assertEmpty(jaxpr_right.effects)
+    self.assertSetEqual({InputEffect(0)}, jaxpr_left.effects)
+
+  def test_jaxpr_input_effect_is_tracked_through_dce(self):
+    def f(_, y):
+      input_effect(y, index=0)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+    jaxpr2, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False, False])
+    self.assertIn(InputEffect(0), jaxpr2.effects)
+
+    @jax.jit
+    def f(_, y):
+      input_effect(y, index=0)
+    jaxpr = jax.make_jaxpr(f)(0, 1)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+    jaxpr2, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False, False])
+    self.assertIn(InputEffect(0), jaxpr2.effects)
+
+    x = np.ones(2, np.int32)
+    def f(_):
+      input_effect(x, index=0)
+    jaxpr = jax.make_jaxpr(f)(0)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+    jaxpr3, _ = pe.dce_jaxpr(jaxpr.jaxpr, [], instantiate=[False])
+    self.assertIn(InputEffect(0), jaxpr3.effects)
+
+  def test_jaxpr_input_effect_is_tracked_through_while_loop(self):
+
+    y = np.ones(2)
+
+    def make_fun(index):
+      def f(x):
+        def body(y):
+          input_effect(x, y, index=index)
+          return y
+        lax.while_loop(lambda _: True, body, y)
+      return f
+    jaxpr = jax.make_jaxpr(make_fun(0))(0)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    jaxpr = jax.make_jaxpr(make_fun(1))(0)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+    def f(x):
+      def body(y):
+        input_effect(x, y, index=1)
+        return y
+      lax.while_loop(lambda _: (x > 0).all(), body, y)
+    jaxpr = jax.make_jaxpr(f)(0)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+  def test_jaxpr_input_effect_is_tracked_through_scan(self):
+    c = np.ones(2)
+    def make_fun(index):
+      def f(xs, z):
+        def body(z, x):
+          input_effect(x, z, c, index=index)
+          return z, x
+        lax.scan(body, z, xs)
+      return f
+    jaxpr = jax.make_jaxpr(make_fun(0))(jnp.arange(8), 0)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    jaxpr = jax.make_jaxpr(make_fun(1))(jnp.arange(8), 0)
+    self.assertIn(InputEffect(2), jaxpr.effects)
+
+    jaxpr = jax.make_jaxpr(make_fun(2))(jnp.arange(8), 0)
+    self.assertIn(InputEffect(0), jaxpr.effects)
+
+  def test_jaxpr_input_effect_is_tracked_through_cond(self):
+
+    c = np.ones(2)
+
+    def make_fun(index):
+      def f(x):
+        def true_fun(x):
+          input_effect(x, c, index=index)
+          return x
+        def false_fun(x):
+          return x
+        lax.cond(False, true_fun, false_fun, x)
+      return f
+    # [c, pred, x]
+    jaxpr = jax.make_jaxpr(make_fun(0))(0)
+    self.assertIn(InputEffect(1), jaxpr.effects)
+
+    jaxpr = jax.make_jaxpr(make_fun(1))(0)
+    self.assertIn(InputEffect(0), jaxpr.effects)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -105,12 +105,14 @@ class Jaxpr:
   __repr__ = __str__
 
   def pretty_print(self, *, source_info=False, print_shapes=True,
-                   custom_pp_eqn_rules=True, name_stack=False, **kw):
+                   custom_pp_eqn_rules=True, name_stack=False,
+                   print_effects: bool = False, **kw):
     doc = pp_jaxpr(self, JaxprPpContext(),
                    JaxprPpSettings(source_info=source_info,
                                    print_shapes=print_shapes,
                                    custom_pp_eqn_rules=custom_pp_eqn_rules,
-                                   name_stack=name_stack))
+                                   name_stack=name_stack,
+                                   print_effects=print_effects))
     return doc.format(**kw)
 
   def _repr_pretty_(self, p, cycle):
@@ -2693,24 +2695,39 @@ def _check_jaxpr(
 
       # Compute the type of the primitive application.
       if prim in custom_typechecks:
-        out_type, effects = custom_typechecks[prim](*in_atoms, **eqn.params)
+        out_type, eqn_effects = custom_typechecks[prim](*in_atoms, **eqn.params)
       elif prim.call_primitive:
-        out_type, effects = _check_call(ctx_factory, prim, in_atoms, eqn.params)
+        out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
+                                            eqn.params)
       elif prim.map_primitive:
-        out_type, effects = _check_map(ctx_factory, prim, in_avals, eqn.params)
+        out_type, eqn_effects = _check_map(ctx_factory, prim, in_avals,
+                                           eqn.params)
       else:
-        out_type, effects = check_eqn(prim, in_avals, eqn.params)
+        out_type, eqn_effects = check_eqn(prim, in_avals, eqn.params)
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
-      if eqn.effects != effects:
+      if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
-                             f"Jaxpr effects: {effects}")
-      if not eqn.effects.issubset(jaxpr.effects):
-        raise JaxprTypeError("Equation effects are not subset of Jaxpr effects. "
-                             f"Equation effects: {eqn.effects}. "
-                             f"Jaxpr effects: {jaxpr.effects}")
+                             f"Inferred effects: {eqn_effects}")
+      for eff in eqn.effects:
+        if isinstance(eff, effects.JaxprInputEffect):
+          eqn_invar = eqn.invars[eff.input_index]
+          all_vars = [*jaxpr.constvars, *jaxpr.invars]
+          if eqn_invar not in all_vars:
+            raise JaxprTypeError(
+                "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
+          jaxpr_index = all_vars.index(eqn_invar)
+          jaxpr_effect = eff.replace(input_index=jaxpr_index)
+          if jaxpr_effect not in jaxpr.effects:
+            raise JaxprTypeError(
+                "Invalid `JaxprInputEffect`: must be present in jaxpr. "
+                f"{jaxpr_effect} is not in {jaxpr.effects}.")
+        elif eff not in jaxpr.effects:
+          raise JaxprTypeError("Equation effect not present in jaxpr effects. "
+                               f"Equation effect: {eff}. "
+                               f"Jaxpr effects: {jaxpr.effects}")
 
       # Check out_type matches the let-binders' annotation (after substitution).
       out_type = substitute_vars_in_output_ty(out_type, eqn.invars, eqn.outvars)
@@ -2871,6 +2888,7 @@ class JaxprPpSettings(NamedTuple):
   source_info: bool = False
   name_stack: bool = False
   custom_pp_eqn_rules: bool = True
+  print_effects: bool = False
 
 # A JaxprPpContext allows us to globally uniquify variable names within nested
 # Jaxprs.
@@ -2976,12 +2994,29 @@ def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
   outvars = pp.concat([
     pp.text("("), pp_vars(jaxpr.outvars, context, separator=","),
     pp.text(")" if len(jaxpr.outvars) != 1 else ",)")])
+  if settings.print_effects:
+    # TODO(sharadmv): render an entire signature here
+    eff_text = [pp.text(" : { ")]
+    for i, eff in enumerate(jaxpr.effects):
+      if i > 0:
+        eff_text.append(pp.text(", "))
+      if isinstance(eff, effects.JaxprInputEffect):
+        index = eff.input_index
+        all_vars = [*jaxpr.constvars, *jaxpr.invars]
+        eff_text.append(pp_effect(eff.replace(input_index=all_vars[index]),
+                                  context))
+      else:
+        eff_text.append(pp_effect(eff, context))
+    eff_text.append(pp.text(" }"))
+  else:
+    eff_text = []
   return pp.group(pp.nest(2, pp.concat([
     pp.text("{ "), pp.keyword(pp.text("lambda ")),
     constvars, pp.text("; "), invars,
     pp.text(". "), pp.keyword(pp.text("let")),
     pp.nest(2, pp.brk() + eqns), pp.brk(),
-    pp.keyword(pp.text("in ")), outvars
+    pp.keyword(pp.text("in ")), outvars,
+    pp.concat(eff_text)
   ])) + pp.text(" }"))
 
 
@@ -3015,3 +3050,8 @@ def pp_jaxpr_eqn_range(jaxpr: Jaxpr, lo: int, hi: int, context: JaxprPpContext,
         pps.append(pp.text('...'))
     return pp.join(pp.brk("; "), pps)
   return pp_jaxpr_skeleton(jaxpr, eqns_fn, context, settings)
+
+def pp_effect(effect: Effect, context: JaxprPpContext) -> pp.Doc:
+  if hasattr(effect, "_pretty_print"):
+    return effect._pretty_print(context)
+  return pp.text(str(effect))

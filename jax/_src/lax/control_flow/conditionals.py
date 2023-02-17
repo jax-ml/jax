@@ -303,23 +303,23 @@ def _cond_with_per_branch_args(pred,
                lambda op: false_fun(op[1]),
                (true_operand, false_operand))
 
+def _join_cond_effects(branches: Sequence[core.Jaxpr]) -> effects.Effects:
+  joined_effects = set()
+  for b in branches:
+    for eff in b.effects:
+      if isinstance(eff, effects.JaxprInputEffect):
+        # Offset index to handle predicate
+        eff = eff.replace(input_index=eff.input_index + 1)
+      joined_effects.add(eff)
+  return joined_effects
+
 def _cond_abstract_eval(*avals, branches, **_):
-  joined_effects = core.join_effects(*(b.effects for b in branches))
+  joined_effects = _join_cond_effects(branches)
   disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `cond`: {disallowed_effects}')
-  joined_effects = core.join_effects(*(b.effects for b in branches))
-  state_effects = {eff for eff in joined_effects if isinstance(eff,
-    state.RefEffect)}
-  jaxpr_aval_effects = state.get_ref_state_effects(
-      [v.aval for v in branches[0].jaxpr.invars], joined_effects)
-  aval_effects = [set(eff.replace(ref_aval=aval) for eff in effs) for aval, effs
-      in zip(avals[1:], jaxpr_aval_effects)
-      if isinstance(aval, state.ShapedArrayRef)]
-  nonlocal_state_effects = core.join_effects(*aval_effects)
-  all_effects = (joined_effects - state_effects) | nonlocal_state_effects
-  return map(raise_to_shaped, branches[0].out_avals), all_effects
+  return map(raise_to_shaped, branches[0].out_avals), joined_effects
 
 def _bcast_select(pred, on_true, on_false):
   if np.ndim(pred) != np.ndim(on_true):
@@ -548,7 +548,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   linear_known = [l for l, uk in zip(eqn.params['linear'], ops_uk) if not uk]
   params_known = dict(branches=branches_known, linear=tuple(linear_known))
-  effects_known = core.join_effects(*(b.effects for b in branches_known))
+  effects_known = _join_cond_effects(branches_known)
   eqn_known = pe.new_jaxpr_eqn(
       ins_known, [*out_binders_known, *res_binders], cond_p, params_known,
       effects_known, eqn.source_info)
@@ -557,7 +557,7 @@ def _cond_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   _, out_binders_staged = partition_list(inst_out, eqn.outvars)
   linear_staged = [False] * len(res_binders) + list(eqn.params['linear'])
   params_staged = dict(branches=branches_staged, linear=tuple(linear_staged))
-  effects_staged = core.join_effects(*(b.effects for b in branches_staged))
+  effects_staged = _join_cond_effects(branches_staged)
   eqn_staged = pe.new_jaxpr_eqn(
       [eqn.invars[0], *res_binders, *eqn.invars[1:]], out_binders_staged,
       cond_p, params_staged, effects_staged, eqn.source_info)
@@ -669,6 +669,7 @@ def _cond_dce_rule(used_outputs: List[bool], eqn: core.JaxprEqn,
   new_params = dict(eqn.params, branches=tuple(dce_branches),
                     linear=tuple(dce_linear))
   new_effects = core.join_effects(*(b.effects for b in dce_branches))
+  new_effects = _join_cond_effects(dce_branches_)
   new_eqn = pe.new_jaxpr_eqn(
       [v for v, used in zip(eqn.invars, [True, *used_inputs]) if used],
       [v for v, used in zip(eqn.outvars, used_outputs) if used],
@@ -751,7 +752,7 @@ def _cond_typecheck(*in_atoms, branches, linear):
   jaxpr0 = branches[0]
   jaxpr0_in_avals_str = _avals_short(jaxpr0.in_avals)
   jaxpr0_out_avals_str = _avals_short(jaxpr0.out_avals)
-  joined_effects = core.join_effects(*(b.effects for b in branches))
+  joined_effects = _join_cond_effects(branches)
   disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
@@ -788,7 +789,6 @@ def _cond_typecheck(*in_atoms, branches, linear):
     raise core.JaxprTypeError(
       f'cond branches take input types {jaxpr0_in_avals_str}, '
       f'called with operands of type {_avals_short(op_avals)}')
-  joined_effects = core.join_effects(*(b.effects for b in branches))
   return jaxpr0.out_avals, joined_effects
 
 def cond_bind(*args, branches, linear):
