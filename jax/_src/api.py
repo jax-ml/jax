@@ -3570,7 +3570,7 @@ def clear_backends():
   _cpp_jit_cache.clear()
   jax_jit.CompiledFunctionCache.clear_all()
   pjit._pjit_lower_cached.cache_clear()
-  pjit._pjit_jaxpr.cache_clear()
+  pjit._create_pjit_jaxpr.cache_clear()
   if xla_extension_version >= 124:
     pjit._cpp_pjit_cache.clear()
     xc._xla.PjitFunctionCache.clear_all()
