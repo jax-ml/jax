@@ -12,26 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
 import warnings
 
 from absl.testing import absltest
 from jax._src import test_util as jtu
-
+from jax._src.internal_test_util import deprecation_module as m
 
 class DeprecationTest(absltest.TestCase):
 
   def testDeprecation(self):
-    # This manipulation of sys.path exists to make this test work in Google's
-    # Hermetic Python environment: it ensures the module is resolvable.
-    saved_path = sys.path[0]
-    try:
-      sys.path[0] = os.path.dirname(__file__)
-      import deprecation_module as m
-    finally:
-      sys.path[0] = saved_path
-
     with warnings.catch_warnings():
       warnings.simplefilter("error")
       self.assertEqual(m.x, 42)
