@@ -222,6 +222,10 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
           output_gradients=ct_res_tf,
           unconnected_gradients=tf.UnconnectedGradients.ZERO)
 
+      dres_darg = tree_util.tree_map(
+          lambda x: x if x is None else tf.convert_to_tensor(x),
+          dres_darg,
+      )
       tf.nest.assert_same_structure(dres_darg, args_tf)
       return dres_darg
 

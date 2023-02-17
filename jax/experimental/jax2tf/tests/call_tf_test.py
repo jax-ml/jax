@@ -699,6 +699,21 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     print(jax.make_jaxpr(cos_tf_sin_jax)(x))
     print(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
 
+  def test_tf_gather(self):
+    """tf_gather gradient output is tf.IndexSlices."""
+    operand = jnp.array(np.random.uniform(size=(100, 128)))
+    indices = jnp.array(np.random.randint(low=0, high=100, size=(4000,)))
+
+    @tf.function(jit_compile=True, autograph=False)
+    def fun_tf(operand, indices):
+      return tf.experimental.numpy.std(tf.gather(operand, indices))
+
+    fun_jax = jax2tf.call_tf(fun_tf)
+    grad_fun_jax = jax.grad(fun_jax)
+    grad_res = grad_fun_jax(operand, indices)
+    self.assertEqual(grad_res.shape, (100, 128))
+
+
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
   "Reloading output of jax2tf into JAX with call_tf"
   def setUp(self):
