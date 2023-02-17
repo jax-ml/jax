@@ -2435,19 +2435,28 @@ def _bitcast_convert_type_shape_rule(operand, *, new_dtype):
     return operand.shape
   elif old_dtype.itemsize > new_dtype.itemsize:
     return (*operand.shape, old_dtype.itemsize // new_dtype.itemsize)
-  elif operand.shape[-1] * old_dtype.itemsize != new_dtype.itemsize:
-    raise ValueError(
-      f"Attempting to convert array of shape {operand.shape} "
-      f"from {str(old_dtype)} of size {old_dtype.itemsize} "
-      f"to {str(new_dtype)} of size {new_dtype.itemsize}, "
-      f"but {operand.shape[-1]} * {old_dtype.itemsize} != {new_dtype.itemsize}")
-  return operand.shape[:-1]
+  else:
+    dim_size = operand.shape[-1] if operand.shape else 1
+    if dim_size * old_dtype.itemsize != new_dtype.itemsize:
+      raise ValueError(
+        f"Attempting to convert array of shape {operand.shape} "
+        f"from {str(old_dtype)} of size {old_dtype.itemsize} "
+        f"to {str(new_dtype)} of size {new_dtype.itemsize}, "
+        f"but {dim_size} * {old_dtype.itemsize} != {new_dtype.itemsize}")
+    return operand.shape[:-1]
 
 def _bitcast_convert_type_dtype_rule(operand, *, new_dtype):
   old_dtype = dtypes.canonicalize_dtype(operand.dtype)
-  if dtypes.issubdtype(old_dtype, np.bool_) or dtypes.issubdtype(old_dtype, np.complexfloating):
+  new_dtype = dtypes.canonicalize_dtype(new_dtype)
+  if (dtypes.issubdtype(old_dtype, np.bool_) or
+      dtypes.issubdtype(old_dtype, np.complexfloating) or
+      dtypes.issubdtype(new_dtype, np.bool_) or
+      dtypes.issubdtype(new_dtype, np.complexfloating)):
     if old_dtype != new_dtype:
-      raise TypeError(f"`bitcast_convert_type` for operand type ({old_dtype}) cannot have different destination type ({new_dtype})")
+      raise TypeError("lax.bitcast_convert_type does not support bool or complex values "
+                      "unless the operand and destination types match. "
+                      f"Got operand dtype={old_dtype}, {new_dtype=}. "
+                      "Consider using the arr.view() method instead.")
   return new_dtype
 
 bitcast_convert_type_p = standard_primitive(
