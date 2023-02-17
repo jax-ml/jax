@@ -40,18 +40,18 @@ import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.lax.lax import (
-  _const, ranges_like, remaining, _dot_general_batch_dim_nums, _dot_general_shape_rule,
-  DotDimensionNumbers)
+  _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_bridge
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
 
 
@@ -659,7 +659,6 @@ def _bcoo_rdot_general(lhs: Array, rhs_data: Array, rhs_indices: Array, *,
   permutation = tuple([*range(n_batch), *range(n_swap, result.ndim), *range(n_batch, n_swap)])
   return lax.transpose(result, permutation)
 
-@bcoo_dot_general_p.def_impl
 def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
   lhs_data = jnp.asarray(lhs_data)
   lhs_indices = jnp.asarray(lhs_indices)
@@ -1040,9 +1039,8 @@ def _bcoo_dot_general_batch_rule(batched_args, batch_dims, *, dimension_numbers,
 ad.defjvp(bcoo_dot_general_p, _bcoo_dot_general_jvp_lhs, None, _bcoo_dot_general_jvp_rhs)
 ad.primitive_transposes[bcoo_dot_general_p] = _bcoo_dot_general_transpose
 batching.primitive_batchers[bcoo_dot_general_p] = _bcoo_dot_general_batch_rule
-
-mlir.register_lowering(
-    bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
+mlir.register_lowering(bcoo_dot_general_p, _bcoo_dot_general_default_lowering)
+dispatch.simple_impl(bcoo_dot_general_p)
 
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(bcoo_dot_general_p,
