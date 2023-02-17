@@ -3430,19 +3430,36 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
-    shape=[(8,), (3, 8)],  # last dim = 8 to ensure shape compatibility
-    a_dtype=default_dtypes + unsigned_dtypes + bool_dtypes,
-    dtype=default_dtypes + unsigned_dtypes + bool_dtypes,
+    # Final dimension must be a multiple of 16 to ensure compatibilty of all dtype pairs.
+    shape=[(0,), (32,), (2, 16)],
+    a_dtype=all_dtypes,
+    dtype=(*all_dtypes, None) if config.x64_enabled else all_dtypes,
   )
   def testView(self, shape, a_dtype, dtype):
     if jtu.device_under_test() == 'tpu':
       if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
         self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
-    if not config.x64_enabled:
-      if jnp.dtype(a_dtype).itemsize == 8 or jnp.dtype(dtype).itemsize == 8:
-        self.skipTest("x64 types are disabled by jax_enable_x64")
     rng = jtu.rand_fullrange(self.rng())
     args_maker = lambda: [rng(shape, a_dtype)]
+    np_op = lambda x: np.asarray(x).view(dtype)
+    jnp_op = lambda x: jnp.asarray(x).view(dtype)
+    # Above may produce signaling nans; ignore warnings from invalid values.
+    with np.errstate(invalid='ignore'):
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+      self._CompileAndCheck(jnp_op, args_maker)
+
+  @jtu.sample_product([
+    {'a_dtype': a_dtype, 'dtype': dtype}
+    for a_dtype in all_dtypes
+    for dtype in all_dtypes
+    if np.dtype(a_dtype).itemsize == np.dtype(dtype).itemsize
+  ])
+  def testViewScalar(self, a_dtype, dtype):
+    if jtu.device_under_test() == 'tpu':
+      if jnp.dtype(a_dtype).itemsize in [1, 2] or jnp.dtype(dtype).itemsize in [1, 2]:
+        self.skipTest("arr.view() not supported on TPU for 8- or 16-bit types.")
+    rng = jtu.rand_fullrange(self.rng())
+    args_maker = lambda: [jnp.array(rng((), a_dtype))]
     np_op = lambda x: np.asarray(x).view(dtype)
     jnp_op = lambda x: jnp.asarray(x).view(dtype)
     # Above may produce signaling nans; ignore warnings from invalid values.
