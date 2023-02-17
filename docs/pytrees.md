@@ -320,3 +320,14 @@ class MyTree:
       a = jnp.asarray(a)
     self.a = a
 ```
+Another possibility is to structure your `tree_unflatten` function so that it avoids
+calling `__init__`; for example:
+```{code-cell}
+def tree_unflatten(aux_data, children):
+  del aux_data  # unused in this class
+  obj = object.__new__(MyTree)
+  obj.a = a
+  return obj
+```
+If you go this route, make sure that your `tree_unflatten` function stays in-sync with 
+`__init__` if and when the code is updated.
