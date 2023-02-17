@@ -1127,7 +1127,6 @@ def _check(pred, msg, debug, *fmt_args, **fmt_kwargs):
   _check_error(error, debug=debug)
 
 def _check_error(error, *, debug=False):
-  error = tree_map(core.raise_as_much_as_possible, error)
   if any(map(np.shape, error._pred.values())):
     error = _reduce_any_error(error)
   err_args, tree_def = tree_flatten(error)
