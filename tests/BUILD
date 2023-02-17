@@ -466,6 +466,7 @@ py_test(
         "lazy_loader_test.py",
     ],
     deps = [
+        "//jax:internal_test_util",
         "//jax:test_util",
     ],
 )

@@ -76,7 +76,7 @@ py_library(
 py_library(
     name = "internal_test_util",
     testonly = 1,
-    srcs = glob(["_src/internal_test_util/*.py"]),
+    srcs = glob(["_src/internal_test_util/**/*.py"]),
     visibility = [":internal"],
     deps = [":jax"] + py_deps("numpy"),
 )
