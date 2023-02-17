@@ -40,6 +40,8 @@ jax_internal_packages = []
 jax_test_util_visibility = []
 loops_visibility = []
 
+global_device_array_visibility = []
+
 def py_deps(_package):
     """Returns the Bazel deps for Python package `package`."""
 

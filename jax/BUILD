@@ -17,6 +17,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "//jaxlib:jax.bzl",
+    "global_device_array_visibility",
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_test_util_visibility",
@@ -269,6 +270,6 @@ pytype_library(
     srcs = ["experimental/global_device_array.py"],
     # TODO(phawkins): remove after removing global_device_array.py from :jax.
     tags = ["keep_dep"],
-    visibility = ["//visibility:public"],
+    visibility = [":internal"] + global_device_array_visibility,
     deps = [":jax"],
 )
