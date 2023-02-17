@@ -15,7 +15,8 @@ from functools import partial
 import itertools as it
 import os
 from types import SimpleNamespace
-from typing import NamedTuple, Callable, Optional
+from typing import (Any, Sequence, Set, Iterable, Iterator, NamedTuple,
+                    Callable, Optional, Tuple, List, Generator, TypeVar, Union)
 import unittest
 
 from absl.testing import absltest
@@ -482,7 +483,7 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
 
 
-class CaseSpec(NamedTuple):
+class FunSpec(NamedTuple):
   name: str
   num_inputs: int
   fun: Callable
@@ -490,21 +491,21 @@ class CaseSpec(NamedTuple):
   valid_types: Optional[Callable] = None
 
 fun_specs = [
-    CaseSpec('id', 1, lambda x: x, lambda r: r),
-    CaseSpec('flip', 2, lambda x, y: (y, x), lambda r_x, r_y: (r_y, r_x)),
-    CaseSpec('transpose', 1, lambda x: x.T, lambda r: r),
-    CaseSpec('ravel', 1, lambda x: x.ravel(), lambda r: r),
-    CaseSpec('dot', 2, jnp.dot,
-             lambda r1, r2: r1 & r2,
-             lambda x1, x2: (x1.shape and x2.shape and
-                             x1.shape[-1] == x2.shape[-2 if x2.ndim > 1 else 0]),
+    FunSpec('id', 1, lambda x: x, lambda r: r),
+    FunSpec('flip', 2, lambda x, y: (y, x), lambda r_x, r_y: (r_y, r_x)),
+    FunSpec('transpose', 1, lambda x: x.T, lambda r: r),
+    FunSpec('ravel', 1, lambda x: x.ravel(), lambda r: r),
+    FunSpec(
+        'dot', 2, jnp.dot, lambda r1, r2: r1 & r2,
+        lambda x1, x2: (x1.shape and x2.shape and
+                        x1.shape[-1] == x2.shape[-2 if x2.ndim > 1 else 0]),
              ),
-    CaseSpec('sin_dot_sin', 2,
-             lambda x1, x2: jnp.sin(jnp.dot(jnp.sin(x1), x2)),
-             lambda r1, r2: r1 & r2,
-             lambda x1, x2: (x1.shape and x2.shape and
-                             x1.shape[-1] == x2.shape[-2 if x2.ndim > 1 else 0]),
-             ),
+    FunSpec(
+        'sin_dot_sin', 2,
+        lambda x1, x2: jnp.sin(jnp.dot(jnp.sin(x1), x2)),
+        lambda r1, r2: r1 & r2,
+        lambda x1, x2: (x1.shape and x2.shape and
+                        x1.shape[-1] == x2.shape[-2 if x2.ndim > 1 else 0])),
 ]
 
 input_shapes = [
@@ -523,61 +524,17 @@ mesh_shapes = [
     (4, 2),
 ]
 
-def make_in_specs(mesh, in_types):
-  pairs = []
-  for ty in in_types:
-    pair = yield from make_in_spec(mesh, ty)
-    pairs.append(pair)
-  return list(zip(*pairs))
+# Reference implementation of shard_map.
 
-def make_in_spec(mesh, in_type_base):
-  assert len(list(powerset(mesh.shape)))
-  subset = yield powerset(mesh.shape)
-  elts = yield partitions(subset, len(in_type_base.shape))
-  partition_spec = P(*(tuple(e) if e else None for e in elts))
-  new_type = dilate(mesh, partition_spec, in_type_base)
-  return new_type, partition_spec
+ShapeDtypeDuck = Any  # has shape and dtype attributes
+Specs = Any  # pytree of PartitionSpec
 
-def dilate(mesh, spec, shape):
-  new_shape = tuple(d * prod(mesh.shape[ax] for ax in (elt or ()))
-                    for d, elt in zip(shape.shape, spec))
-  return jax.ShapeDtypeStruct(new_shape, shape.dtype)
-
-def make_out_specs(mesh, out_types, out_reps):
-  if type(out_types) is not tuple:
-    out_spec = yield from make_out_spec(mesh, out_types, out_reps)
-    return out_spec
-  else:
-    out_specs = []
-    for ty, rep in zip(out_types, out_reps):
-      out_spec = yield from make_out_spec(mesh, ty, rep)
-      out_specs.append(out_spec)
-    return tuple(out_specs)
-
-def make_out_spec(mesh, out_type, out_rep):
-  subset = yield (s for s in powerset(mesh.shape)
-                  if out_rep | set(s) == set(mesh.shape))
-  elts = yield partitions(subset, len(out_type.shape))
-  return P(*(tuple(e) if e else None for e in elts))
-
-def partitions(s, k):
-  for indices in it.product(range(k), repeat=len(s)):
-    outs = [[] for _ in range(k)]
-    for i, elt in zip(indices, s):
-      outs[i].append(elt)
-    yield outs
-
-def powerset(s):
-  s = list(s)
-  return it.chain.from_iterable(it.combinations(s, r) for r in range(len(s)+1))
-
-def unmentioned(mesh, pspec):
-  return set(mesh.axis_names) - {n for ns in pspec if ns is not None
-                                 for n in (ns if type(ns) is tuple else [ns])}
-
-
-def shmap_reference(body_in_types, body_out_types, out_types,
-                    f, mesh, in_specs, out_specs):
+def shmap_reference(
+    body_in_types: Sequence[ShapeDtypeDuck],
+    body_out_types: Sequence[ShapeDtypeDuck],
+    out_types: Sequence[ShapeDtypeDuck],
+    f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs
+  ) -> Callable:
   def f_shmapped(*args):
     outs = jax.tree_map(lambda y: jnp.zeros(y.shape, y.dtype), out_types)
     getters = [make_indexer(mesh, s, x) for s, x in zip(in_specs, args)]
@@ -593,7 +550,8 @@ def shmap_reference(body_in_types, body_out_types, out_types,
     return outs
   return f_shmapped
 
-def make_indexer(mesh, spec, x):
+def make_indexer(mesh: Mesh, spec: P, x: Any
+                 ) -> Callable[[Tuple[int, ...]], Tuple[slice, ...]]:
   block_shape = [d // prod(mesh.shape[ax] for ax in (elt or ()))
                  for d, elt in zip(x.shape, spec)]
   def indexer(idx):
@@ -607,7 +565,19 @@ def make_indexer(mesh, spec, x):
   return indexer
 
 
-def sample_shmap():
+# The code below is similar to named_cases_from_sampler in test_util.py, but it
+# uses generators instead of passing a "select" function around.
+
+# To sample test cases efficiently, we construct a generator which yields to the
+# caller to choose one of an iterable's options. That is, we can read 'yield' in
+# this code as 'choose one'. To call functions which themselves need to make
+# choices, we use 'yield from'. That is, we can read 'yield from' in this code
+# as 'call this choice-making function'.
+Option = Any
+CaseSpec = Tuple  # first element is a string test name
+Chooser = Generator[Iterable[Option], Option, CaseSpec]
+
+def sample_shmap() -> Chooser:
   spec = yield fun_specs
   mesh_shape = yield mesh_shapes
   axis_names = ('i', 'j', 'k', 'l')[:len(mesh_shape)]
@@ -629,16 +599,25 @@ def sample_shmap():
   name = f'{spec.name}_{mesh.shape}_{in_specs}_{out_specs}_{in_str}'
   return name, spec.fun, mesh.shape, in_specs, out_specs, args, ref
 
-def sample(num, make_gen):
+def unmentioned(mesh: Mesh, pspec: P) -> Set[core.AxisName]:
+  return set(mesh.axis_names) - {n for ns in pspec if ns is not None
+                                 for n in (ns if type(ns) is tuple else [ns])}
+
+
+# To drive the sampler, we have `sample` function which just runs a loop.
+def sample(num: int, make_gen: Callable[[], Chooser]) -> Iterator[CaseSpec]:
   rng = np.random.RandomState(0)
-  seen = set()
+  seen: Set[str] = set()
   while len(seen) < num:
     name, *case = sample_one(rng, make_gen())
     if name not in seen:
       seen.add(name)
       yield name, *case
 
-def sample_one(rng, gen):
+# To sample one test spec, we run the generator, getting back sequences of
+# options from it and sending in our choices from those options until finally a
+# test case spec is produced.
+def sample_one(rng: np.random.RandomState, gen: Chooser) -> CaseSpec:
   lst = list(next(gen))
   try:
     while True:
@@ -646,6 +625,68 @@ def sample_one(rng, gen):
       lst = list(gen.send(choice))
   except StopIteration as e:
     return e.value
+
+# Next are some choice-making functions for shard_map test specifications.
+
+MeshDuck = Any  # same attributes as a Mesh
+
+def make_in_specs(mesh: MeshDuck, in_types: Sequence[ShapeDtypeDuck]
+                  ) -> Chooser:
+  pairs = []
+  for ty in in_types:
+    pair = yield from make_in_spec(mesh, ty)
+    pairs.append(pair)
+  return tuple(zip(*pairs))
+
+def make_in_spec(mesh: Mesh, in_type_base: ShapeDtypeDuck) -> Chooser:
+  assert len(list(powerset(mesh.shape)))
+  subset = yield powerset(mesh.shape)
+  elts = yield partitions(subset, len(in_type_base.shape))
+  partition_spec = P(*(tuple(e) if e else None for e in elts))
+  new_type = dilate(mesh, partition_spec, in_type_base)
+  return new_type, partition_spec
+
+def dilate(mesh: Mesh, spec: P, shape: ShapeDtypeDuck) -> ShapeDtypeDuck:
+  new_shape = tuple(d * prod(mesh.shape[ax] for ax in (elt or ()))
+                    for d, elt in zip(shape.shape, spec))
+  return jax.ShapeDtypeStruct(new_shape, shape.dtype)
+
+def make_out_specs(
+    mesh: MeshDuck, out_types: Union[ShapeDtypeDuck, Sequence[ShapeDtypeDuck]],
+    out_reps: Union[Set[core.AxisName], Sequence[Set[core.AxisName]]]
+  ) -> Chooser:
+  if type(out_types) is not tuple:
+    out_spec = yield from make_out_spec(mesh, out_types, out_reps)  # type: ignore
+    return out_spec
+  else:
+    out_specs = []
+    for ty, rep in zip(out_types, out_reps):
+      out_spec = yield from make_out_spec(mesh, ty, rep)  # type: ignore
+      out_specs.append(out_spec)
+    return tuple(out_specs)
+
+def make_out_spec(
+    mesh: Mesh, out_type: ShapeDtypeDuck, out_rep: Set[core.AxisName]
+  ) -> Chooser:
+  subset = yield (s for s in powerset(mesh.shape)
+                  if out_rep | set(s) == set(mesh.shape))
+  elts = yield partitions(subset, len(out_type.shape))
+  return P(*(tuple(e) if e else None for e in elts))
+
+# Combinatorial helper functions
+
+T = TypeVar('T')
+def partitions(s: Sequence[T], k: int) -> Iterator[List[List[T]]]:
+  for indices in it.product(range(k), repeat=len(s)):
+    outs: List[List[T]] = [[] for _ in range(k)]
+    for i, elt in zip(indices, s):
+      outs[i].append(elt)
+    yield outs
+
+def powerset(s: Iterable[T]) -> Iterator[Sequence[T]]:
+  s = list(s)
+  return it.chain.from_iterable(it.combinations(s, r) for r in range(len(s)+1))
+
 
 
 class ShardMapSystematicTest(jtu.JaxTestCase):
