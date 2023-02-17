@@ -25,7 +25,7 @@ from jax.interpreters import partial_eval as pe
 
 from jax._src import core
 from jax._src import linear_util as lu
-from jax._src.state.types import ShapedArrayRef
+from jax._src.state.types import AbstractRef
 from jax._src.state.primitives import get_p, swap_p, addupdate_p
 from jax._src.util import safe_map, safe_zip, split_list
 
@@ -47,8 +47,8 @@ def discharge_state(jaxpr: core.Jaxpr, consts: Sequence[Any], * ,
   """Converts a jaxpr that takes in `Ref`s into one that doesn't."""
   if isinstance(should_discharge, bool):
     should_discharge = [should_discharge] * len(jaxpr.invars)
-  in_avals = [core.ShapedArray(v.aval.shape, v.aval.dtype)
-              if type(v.aval) is ShapedArrayRef and d
+  in_avals = [v.aval.inner_aval
+              if type(v.aval) is AbstractRef and d
               else v.aval for v, d in zip(jaxpr.invars, should_discharge)]
   eval_jaxpr = lu.wrap_init(partial(_eval_jaxpr_discharge_state, jaxpr,
                                     should_discharge, consts))
@@ -83,7 +83,7 @@ def register_discharge_rule(prim: core.Primitive):
   return register
 
 def _has_refs(eqn: core.JaxprEqn):
-  return any(isinstance(v.aval, ShapedArrayRef) for v in eqn.invars)
+  return any(isinstance(v.aval, AbstractRef) for v in eqn.invars)
 
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
@@ -97,7 +97,7 @@ def _eval_jaxpr_discharge_state(
 
   refs_to_discharge = set(id(v.aval) for v, d
                           in zip(jaxpr.invars, should_discharge) if d
-                          and isinstance(v.aval, ShapedArrayRef))
+                          and isinstance(v.aval, AbstractRef))
 
   for eqn in jaxpr.eqns:
     if _has_refs(eqn) and any(id(v.aval) in refs_to_discharge
@@ -237,7 +237,7 @@ def _closed_call_discharge_rule(
                                              call_jaxpr=discharged_closed_jaxpr)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
-  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, ShapedArrayRef)
+  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)
   assert next(ref_vals_iter, None) is None
   return new_invals, out_vals

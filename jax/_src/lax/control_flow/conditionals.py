@@ -237,7 +237,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
-  if any(isinstance(op_aval, state.ShapedArrayRef) for op_aval in ops_avals):
+  if any(isinstance(op_aval, state.AbstractRef) for op_aval in ops_avals):
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
@@ -866,5 +866,5 @@ def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
   new_invals = []
   for aval in in_avals:
     new_invals.append(
-        next(ref_val_iter) if isinstance(aval, state.ShapedArrayRef) else None)
+        next(ref_val_iter) if isinstance(aval, state.AbstractRef) else None)
   return new_invals, out_vals
