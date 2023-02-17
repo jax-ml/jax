@@ -523,6 +523,9 @@ class GlobalDeviceArray:
         jax.device_put(data_callback(global_indices_rid[device][0]), device)
         for device in local_devices
     ]
+    if config.jax_array:
+      return jax.make_array_from_single_device_arrays(
+          global_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), dbs)
     return cls(global_shape, global_mesh, mesh_axes, dbs,
                _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 
@@ -570,6 +573,9 @@ class GlobalDeviceArray:
     local_indices = [global_indices_rid[d][0] for d in local_devices]
     local_arrays = data_callback(local_indices)
     dbs = pxla.device_put(local_arrays, local_devices)
+    if config.jax_array:
+      return jax.make_array_from_single_device_arrays(
+          global_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), dbs)  # type: ignore
     return cls(global_shape, global_mesh, mesh_axes, dbs,
                _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 
@@ -633,6 +639,9 @@ class GlobalDeviceArray:
         (index, tuple(devices)) for index, devices in index_to_device.values()
     ]
     dbs = data_callback(cb_inp)
+    if config.jax_array:
+      return jax.make_array_from_single_device_arrays(
+          global_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), dbs)  # type: ignore
     return cls(global_shape, global_mesh, mesh_axes, dbs,
                _gda_fast_path_args=_GdaFastPathArgs(global_indices_rid, local_devices))
 

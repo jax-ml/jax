@@ -1615,10 +1615,10 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
 
   @parameterized.named_parameters(
-    ('gda', parallel_functions_output_gda, create_gda, 'GDA'),
-    ('array', jax_array, create_array, 'Array'),
+    ('gda', parallel_functions_output_gda, create_gda),
+    ('array', jax_array, create_array),
   )
-  def test_xla_arr_sharding_mismatch(self, ctx, create_fun, arr_type):
+  def test_xla_arr_sharding_mismatch(self, ctx, create_fun):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
@@ -1637,6 +1637,10 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                            else P('x', 'y'))
         arr, _ = create_fun(global_input_shape, global_mesh, different_pspec,
                             input_data)
+        if jax.config.jax_array:
+          arr_type = 'Array'
+        else:
+          arr_type = 'GDA'
         with self.assertRaisesRegex(
             ValueError,
             f"{arr_type} sharding does not match the input sharding."):

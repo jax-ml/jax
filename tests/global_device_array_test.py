@@ -83,7 +83,6 @@ class GDATest(jtu.JaxTestCase):
                                           mesh_axes, cb)
     self.assertEqual(gda.ndim, 2)
     self.assertEqual(gda.size, 16)
-    self.assertEqual(gda.mesh_axes, mesh_axes)
     self.assertEqual(gda.addressable_shards[0].index, expected_index[0])
     self.assertArraysEqual(gda.addressable_data(0),
                            global_input_data[expected_index[0]])
@@ -283,6 +282,8 @@ class GDATest(jtu.JaxTestCase):
                            expected_second_shard_value)
 
   def test_gda_str_repr(self):
+    if jax.config.jax_array:
+      self.skipTest('jax.Array repr already has a test')
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P(('x', 'y'))
@@ -300,6 +301,8 @@ class GDATest(jtu.JaxTestCase):
                     "mesh_axes=PartitionSpec(('x', 'y'),))"))
 
   def test_gda_equality_raises_not_implemented(self):
+    if jax.config.jax_array:
+      self.skipTest('jax.Array has __eq__.')
     global_mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P(None,)
@@ -385,8 +388,12 @@ class GDATest(jtu.JaxTestCase):
     gda, _ = create_gda(input_shape, global_mesh, P("x", "y"))
     gda._check_if_deleted()
     gda.delete()
+    if jax.config.jax_array:
+      arr_type = 'Array'
+    else:
+      arr_type = 'GlobalDeviceArray'
     with self.assertRaisesRegex(RuntimeError,
-                                "GlobalDeviceArray has been deleted."):
+                                f"{arr_type} has been deleted."):
       gda._check_if_deleted()
 
 
