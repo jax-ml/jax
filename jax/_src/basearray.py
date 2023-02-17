@@ -40,5 +40,10 @@ class Array(abc.ABC):
 
   __slots__ = ['__weakref__']
 
+  # at property must be defined because we overwrite its docstring in lax_numpy.py
+  @property
+  def at(self):
+    raise NotImplementedError("property must be defined in subclasses")
+
 
 Array.__module__ = "jax"

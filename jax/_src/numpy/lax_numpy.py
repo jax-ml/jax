@@ -5249,6 +5249,7 @@ class _IndexUpdateHelper:
 
   def __repr__(self):
     return f"_IndexUpdateHelper({repr(self.array)})"
+ndarray.at.__doc__ = _IndexUpdateHelper.__doc__
 
 _power_fn = power
 _divide_fn = divide
