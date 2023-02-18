@@ -39,6 +39,7 @@ from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -4162,7 +4163,10 @@ def _after_all_lowering(ctx, *operands):
 mlir.register_lowering(after_all_p, _after_all_lowering)
 
 
-InOutFeedEffect = enum.Enum('InOutFeedEffect', ['Infeed', 'Outfeed'])
+class InOutFeedEffect(effects.Effect):
+  pass
+infeed_effect = InOutFeedEffect()
+outfeed_effect = InOutFeedEffect()
 
 
 def infeed(token, shape=None, partitions=None):
@@ -4190,14 +4194,14 @@ def infeed(token, shape=None, partitions=None):
 def _infeed_abstract_eval(token, *, shapes, partitions):
   if token is not abstract_token:
     raise TypeError("First argument to infeed must be a token")
-  return (*shapes, abstract_token), {InOutFeedEffect.Infeed}
+  return (*shapes, abstract_token), {infeed_effect}
 
 
 infeed_p = Primitive("infeed")
 infeed_p.multiple_results = True
 infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
 infeed_p.def_effectful_abstract_eval(_infeed_abstract_eval)
-mlir.lowerable_effects.add(InOutFeedEffect.Infeed)
+mlir.lowerable_effects.add_type(InOutFeedEffect)
 
 
 def _infeed_lowering(ctx, token, *, shapes, partitions):
@@ -4243,12 +4247,12 @@ def outfeed(token, xs, partitions = None):
 def _outfeed_abstract_eval(token, *xs, partitions):
   if token is not abstract_token:
     raise TypeError("First argument to outfeed must be a token")
-  return abstract_token, {InOutFeedEffect.Outfeed}
+  return abstract_token, {outfeed_effect}
 
 outfeed_p = Primitive("outfeed")
 outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
 outfeed_p.def_effectful_abstract_eval(_outfeed_abstract_eval)
-mlir.lowerable_effects.add(InOutFeedEffect.Outfeed)
+mlir.lowerable_effects.add_type(InOutFeedEffect)
 
 
 def _outfeed_lowering(ctx, token, *xs, partitions):

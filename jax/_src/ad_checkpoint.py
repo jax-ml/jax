@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from functools import partial
-from typing import (Callable, Optional, List, Tuple, Sequence, Set, Union, Any,
-                    FrozenSet)
+from typing import (Any, Callable, FrozenSet, List, Optional, Sequence, Tuple,
+                    Union)
 import types
 
 import jax
@@ -25,6 +25,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -44,6 +45,7 @@ traceback_util.register_exclusion(__file__)
 map = safe_map
 zip = safe_zip
 
+allowed_effects: effects.EffectTypeSet = effects.remat_allowed_effects
 
 ### Policies
 
@@ -451,14 +453,11 @@ def remat_jvp(primals, tangents, jaxpr, prevent_cse, differentiated, policy):
   return out_primals, out_tangents
 ad.primitive_jvps[remat_p] = remat_jvp
 
-remat_allowed_effects: Set[core.Effect] = set()
-remat_allowed_effects.add(lax_internal.InOutFeedEffect.Infeed)
-remat_allowed_effects.add(lax_internal.InOutFeedEffect.Outfeed)
+allowed_effects.add_type(lax_internal.InOutFeedEffect)
 
 def remat_partial_eval(trace, *tracers, jaxpr, **params):
   assert not jaxpr.constvars
-  disallowed_effects = {eff for eff in jaxpr.effects
-                        if eff not in remat_allowed_effects}
+  disallowed_effects = allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         'Effects not supported in partial-eval of `checkpoint`/`remat`: '

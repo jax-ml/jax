@@ -36,13 +36,13 @@ from jax.tree_util import tree_unflatten
 from jax._src import linear_util as lu
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import effects
 from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.lax import control_flow as cf
 from jax._src.sharding import GSPMDSharding
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
@@ -100,13 +100,9 @@ class JaxException(Exception):
 
 @functools.total_ordering
 @dataclasses.dataclass(eq=True, frozen=True)
-class ErrorEffect:
+class ErrorEffect(effects.Effect):
   error_type: Type[JaxException]
   shape_dtypes: Tuple[jax.ShapeDtypeStruct, ...]
-
-  def __post_init__(self):
-    cf.allowed_effects.add(self)
-    mlir.lowerable_effects.add(self)
 
   def __lt__(self, other: 'ErrorEffect'):
     shape_dtypes = lambda x: tuple((sd.shape, str(sd.dtype))  # dtype is not comparable
@@ -114,6 +110,8 @@ class ErrorEffect:
     unpack = lambda x: (str(x.error_type), shape_dtypes(x))
     return (unpack(self) < unpack(other))
 
+effects.control_flow_allowed_effects.add_type(ErrorEffect)
+effects.lowerable_effects.add_type(ErrorEffect)
 
 class DivisionByZeroError(JaxException):
 

@@ -30,6 +30,7 @@ from jax._src import linear_util as lu
 from jax.config import config
 from jax._src import api_util
 from jax._src import core
+from jax._src import effects
 from jax._src import dtypes
 from jax._src import profiler
 from jax._src import source_info_util
@@ -1782,7 +1783,7 @@ class DynamicJaxprTrace(core.Trace):
       with core.new_sublevel():
         jaxpr, reduced_out_avals, consts = trace_to_subjaxpr_dynamic(
             f, self.main, reduced_in_avals, debug_info=debug_info_final(f, map_primitive.name))
-      ordered_effects = jaxpr.effects & core.ordered_effects
+      ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
       if ordered_effects:
         raise ValueError("Ordered effects not supported for "
                          f"map primitives: {ordered_effects}")

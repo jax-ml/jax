@@ -156,7 +156,6 @@ from jax._src.core import (
   np as np,
   opaque_dtypes as opaque_dtypes,
   operator as operator,
-  ordered_effects as ordered_effects,
   outfeed_primitives as outfeed_primitives,
   partial as partial,
   partialmethod as partialmethod,

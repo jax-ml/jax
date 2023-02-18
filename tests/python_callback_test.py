@@ -24,6 +24,7 @@ from jax import tree_util
 from jax._src import core
 from jax._src import debugging
 from jax._src import dispatch
+from jax._src import effects
 from jax._src import sharding
 from jax._src import test_util as jtu
 from jax._src import util
@@ -91,8 +92,7 @@ def callback(f, result_shape, *args, ordered: bool = False, **kwargs):
       core.ShapedArray(s.shape, s.dtype) for s in flat_result_shapes
   ]
   effect = (
-      debugging.DebugEffect.ORDERED_PRINT
-      if ordered else debugging.DebugEffect.PRINT)
+      debugging.ordered_debug_effect if ordered else debugging.debug_effect)
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   def _flat_callback(*flat_args):
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
@@ -111,7 +111,7 @@ def callback_lowering(ctx, *args, effect, callback, **params):
     return tuple(
         callback_p.impl(*flat_args, effect=effect, callback=callback, **params))
 
-  if effect in core.ordered_effects:
+  if effects.ordered_effects.contains(effect):
     token = ctx.tokens_in.get(effect)[0]
     result, token, keepalive = mlir.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out, True)

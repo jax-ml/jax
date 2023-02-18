@@ -37,6 +37,7 @@ import numpy as np
 
 from jax._src import dtypes
 from jax._src import config as jax_config
+from jax._src import effects
 from jax._src.config import FLAGS, config
 from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
                         TracerIntegerConversionError, UnexpectedTracerError)
@@ -59,12 +60,10 @@ map, unsafe_map = safe_map, map
 
 # -------------------- jaxprs --------------------
 
-Effect = Hashable
-Effects = Set[Effect]
-no_effects: Effects = set()
-ordered_effects: Set[Effect] = set()
-control_flow_allowed_effects: Set[Effect] = set()
-
+Effect = effects.Effect
+Effects = effects.Effects
+EffectTypeSet = effects.EffectTypeSet
+no_effects: Effects = effects.no_effects
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns', '_effects']
@@ -2829,7 +2828,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
   if "call_jaxpr" not in params:
     raise JaxprTypeError(f"Map primitive {prim} missing 'call_jaxpr' parameter")
   call_jaxpr = params["call_jaxpr"]
-  ordered_effects_ = call_jaxpr.effects & ordered_effects
+  ordered_effects_ = effects.ordered_effects.filter_in(call_jaxpr.effects)
   if ordered_effects_:
     raise JaxprTypeError(
         f"Map primitive {prim} mapping ordered effects: {ordered_effects_}")

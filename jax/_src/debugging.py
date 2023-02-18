@@ -13,7 +13,6 @@
 # limitations under the License.
 """Module for JAX debugging primitives and related functionality."""
 
-import enum
 import functools
 import string
 import sys
@@ -25,24 +24,21 @@ import numpy as np
 import jax.numpy as jnp
 from jax import tree_util
 from jax import lax
-from jax.config import config
-from jax.experimental import pjit
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import pxla
-
-from jax._src import ad_checkpoint
 from jax._src import core
-from jax._src import custom_derivatives
+from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import pjit
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lax import control_flow as lcf
+from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding, GSPMDSharding, NamedSharding
+from jax.interpreters import partial_eval as pe
+from jax.config import config
 
 # pytype: disable=import-error
 try:
@@ -58,17 +54,23 @@ except:
   RICH_ENABLED = False
 # pytype: enable=import-error
 
-DebugEffect = enum.Enum('DebugEffect', ['PRINT', 'ORDERED_PRINT'])
+class DebugEffect(effects.Effect):
+  pass
+debug_effect = DebugEffect()
 
-core.ordered_effects.add(DebugEffect.ORDERED_PRINT)
-mlir.lowerable_effects.add(DebugEffect.PRINT)
-mlir.lowerable_effects.add(DebugEffect.ORDERED_PRINT)
-lcf.allowed_effects.add(DebugEffect.PRINT)
-lcf.allowed_effects.add(DebugEffect.ORDERED_PRINT)
-ad_checkpoint.remat_allowed_effects.add(DebugEffect.PRINT)
-ad_checkpoint.remat_allowed_effects.add(DebugEffect.ORDERED_PRINT)
-custom_derivatives.allowed_effects.add(DebugEffect.PRINT)
-custom_derivatives.allowed_effects.add(DebugEffect.ORDERED_PRINT)
+class OrderedDebugEffect(effects.Effect):
+  pass
+ordered_debug_effect = OrderedDebugEffect()
+
+effects.ordered_effects.add_type(OrderedDebugEffect)
+effects.lowerable_effects.add_type(DebugEffect)
+effects.lowerable_effects.add_type(OrderedDebugEffect)
+effects.control_flow_allowed_effects.add_type(DebugEffect)
+effects.control_flow_allowed_effects.add_type(OrderedDebugEffect)
+effects.remat_allowed_effects.add_type(DebugEffect)
+effects.remat_allowed_effects.add_type(OrderedDebugEffect)
+effects.custom_derivatives_allowed_effects.add_type(DebugEffect)
+effects.custom_derivatives_allowed_effects.add_type(OrderedDebugEffect)
 
 # `debug_callback_p` is the main primitive for staging out Python callbacks.
 debug_callback_p = core.Primitive('debug_callback')
@@ -133,7 +135,7 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
     return tuple(
         debug_callback_p.impl(
             *flat_args, effect=effect, callback=callback, **params))
-  if effect in core.ordered_effects:
+  if effects.ordered_effects.contains(effect):
     token = ctx.tokens_in.get(effect)[0]
     result, token, keepalive = mlir.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out, True)
@@ -209,7 +211,7 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
     The value of `callback(*args, **kwargs)`.
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
-  effect = DebugEffect.ORDERED_PRINT if ordered else DebugEffect.PRINT
+  effect = ordered_debug_effect if ordered else debug_effect
   def _flat_callback(*flat_args):
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     callback(*args, **kwargs)
@@ -273,7 +275,7 @@ inspect_sharding_p.def_impl(_inspect_sharding_impl)
 def _inspect_sharding_abstract_eval(aval, **_):
   del aval
   # Effectful abstract avoids DCE
-  return [], {DebugEffect.PRINT}
+  return [], {debug_effect}
 inspect_sharding_p.def_effectful_abstract_eval(_inspect_sharding_abstract_eval)
 
 def _inspect_sharding_batching_rule(args, _, *, callback):
