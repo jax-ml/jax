@@ -168,8 +168,9 @@ def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
           inp = np.expand_dims(inp, axis=0)
 
       with global_mesh:
-        out = pjit(_identity_fn, in_axis_resources=in_axis_resources,
-                   out_axis_resources=None)(inp)
+        out = pjit(
+            _identity_fn, in_shardings=in_axis_resources, out_shardings=None
+        )(inp)
       return np.asarray(out.addressable_data(0))
 
   if jax.config.jax_array:

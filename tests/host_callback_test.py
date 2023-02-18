@@ -1715,10 +1715,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
                           output_stream=testing_stream,
                           tap_with_device=True, device_index=device_index)
 
-    pjit_fun1 = pjit.pjit(
-        fun1,
-        in_axis_resources=(P("d"),),
-        out_axis_resources=P("d"))
+    pjit_fun1 = pjit.pjit(fun1, in_shardings=(P("d"),), out_shardings=P("d"))
 
     with jax.sharding.Mesh(devices, ["d"]):
       # Print the internal IR
@@ -2330,8 +2327,7 @@ class HostCallbackCallTest(jtu.JaxTestCase):
           callback_x5_func, xy, result_shape=xy, call_with_device=True,
           device_index=device_index)
 
-    pjit_fun = pjit.pjit(
-        fun, in_axis_resources=(P("d"),), out_axis_resources=P("d"))
+    pjit_fun = pjit.pjit(fun, in_shardings=(P("d"),), out_shardings=P("d"))
     with jax.sharding.Mesh(devices, ["d"]):
       # Print the internal IR
       helper_log_ir(

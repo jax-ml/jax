@@ -329,8 +329,11 @@ class CliDebuggerTest(jtu.JaxTestCase):
     def g(x):
       y = f(x)
       return jnp.exp(y)
-    g = pjit.pjit(g, in_axis_resources=jax.sharding.PartitionSpec("dev"),
-                  out_axis_resources=jax.sharding.PartitionSpec("dev"))
+    g = pjit.pjit(
+        g,
+        in_shardings=jax.sharding.PartitionSpec("dev"),
+        out_shardings=jax.sharding.PartitionSpec("dev"),
+    )
     with jax.sharding.Mesh(np.array(jax.devices()), ["dev"]):
       arr = (1 + np.arange(8)).astype(np.int32)
       expected = _format_multiline(r"""
@@ -360,7 +363,6 @@ class CliDebuggerTest(jtu.JaxTestCase):
     f(2.)
     jax.effects_barrier()
     self.assertRegex(stdout.getvalue(), expected)
-
 
   def test_debugger_accesses_globals(self):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':

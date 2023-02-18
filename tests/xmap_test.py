@@ -857,7 +857,7 @@ class XMapTestSPMD(SPMDTestMixin, XMapTest):
   def testConstantsInLowering(self):
     h = xmap(partial(constant_introducing_p.bind, axis_name='i'),
              in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
-    f = pjit(h, in_axis_resources=None, out_axis_resources=None)
+    f = pjit(h, in_shardings=None, out_shardings=None)
     yp = 1 + jnp.arange(10, dtype=np.float32)
     self.assertAllClose(
       f(jnp.ones(20, dtype=np.float32)),
@@ -884,14 +884,14 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testInPJit(self):
     f = xmap(lambda x: jnp.sin(x) + x, in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
-    h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
+    h = pjit(lambda x: f(x * x) + x, in_shardings=P('y'), out_shardings=None)
     x = jnp.arange(20, dtype=jnp.float32)
     self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testInPJitReplicated(self):
     f = xmap(lambda x: jnp.sin(x) + x, in_axes={}, out_axes={}, axis_sizes={'i': 4}, axis_resources={'i': 'x'})
-    h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
+    h = pjit(lambda x: f(x * x) + x, in_shardings=P('y'), out_shardings=None)
     x = jnp.arange(20, dtype=jnp.float32)
     self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
 
@@ -900,7 +900,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     # TODO(b/219691408): Using P('y') instead of P() causes an XLA crash!
     fimpl = lambda x: with_sharding_constraint(jnp.sin(x), P()) + x
     f = xmap(fimpl, in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
-    h = pjit(lambda x: f(x * x) + x, in_axis_resources=P('y'), out_axis_resources=None)
+    h = pjit(lambda x: f(x * x) + x, in_shardings=P('y'), out_shardings=None)
     x = jnp.arange(20, dtype=jnp.float32).reshape(4, 5)
     self.assertAllClose(h(x), jnp.sin(x * x) + x * x + x)
 
@@ -915,7 +915,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     all_axes = tuple(axis[0] for axis in mesh)
     f = xmap(lambda x: lax.psum(x, 'i'), in_axes=['i', 'j'], out_axes=['j'],
              axis_resources=dict(zip('ij', all_axes)))
-    h = pjit(lambda x: f(x * x), in_axis_resources=P(*all_axes), out_axis_resources=None)
+    h = pjit(lambda x: f(x * x), in_shardings=P(*all_axes), out_shardings=None)
     x = jnp.arange(16, dtype=jnp.float32).reshape(4, 4)
     self.assertAllClose(h(x), (x * x).sum(0))
 
@@ -933,8 +933,7 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     f = xmap(lambda x: lax.all_gather(x, 'i', axis=0, tiled=True),
              in_axes=['i', None], out_axes=[None],
              axis_resources={'i': 'x'})
-    h = pjit(f, in_axis_resources=P('x', None),
-             out_axis_resources=P(None))(x)
+    h = pjit(f, in_shardings=P('x', None), out_shardings=P(None))(x)
     assert (h.device_buffers[0] == x.reshape(8)).all()
 
   @parameterized.named_parameters(
@@ -951,8 +950,11 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
     f = xmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=0, tiled=True),
              in_axes=[None, None], out_axes=['i', None, None], axis_sizes={'i': 2},
              axis_resources={'i': 'x'})
-    h = pjit(lambda x: f(x).reshape((2,4)), in_axis_resources=P(None, None),
-             out_axis_resources=P('x', None))(x)
+    h = pjit(
+        lambda x: f(x).reshape((2, 4)),
+        in_shardings=P(None, None),
+        out_shardings=P('x', None),
+    )(x)
 
     assert (h.device_buffers[0].reshape(4) == x[0, :]*2).all()
 
@@ -971,14 +973,14 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
 
     f = xmap(lambda x: lax.ppermute(x, 'i', perm=[(j, (j + 1) % n) for j in range(n)]),
              in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
-    g = pjit(f, in_axis_resources=P('x'), out_axis_resources=P('x'))
+    g = pjit(f, in_shardings=P('x'), out_shardings=P('x'))
     self.assertAllClose(g(x), x[::-1])
 
   @jtu.with_mesh([('x', 2)])
   def testConstantsInLowering(self):
     h = xmap(partial(constant_introducing_p.bind, axis_name='i'),
              in_axes=['i'], out_axes=['i'], axis_resources={'i': 'x'})
-    f = pjit(h, in_axis_resources=None, out_axis_resources=None)
+    f = pjit(h, in_shardings=None, out_shardings=None)
     yp = 1 + jnp.arange(10, dtype=np.float32)
     self.assertAllClose(
       f(jnp.ones(20, dtype=np.float32)),
@@ -1251,8 +1253,9 @@ class XMapGDATest(XMapTestCase):
         global_input_shape, global_mesh, mesh_axes, lambda idx: input_data[idx])
     with jax_config.parallel_functions_output_gda(True):
       with global_mesh:
-        out = pjit(lambda x: x, in_axis_resources=P('x', 'y'),
-                   out_axis_resources=P('x', 'y'))(gda_obj)
+        out = pjit(
+            lambda x: x, in_shardings=P('x', 'y'), out_shardings=P('x', 'y')
+        )(gda_obj)
 
         xmap_out = maps.xmap(
             lambda x: x,
@@ -1260,7 +1263,6 @@ class XMapGDATest(XMapTestCase):
             out_axes=({0: "a", 1: "b"}),
             axis_resources={"a": "x", "b": "y"})(out)  # doesn't crash
         self.assertArraysEqual(xmap_out, input_data)
-
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

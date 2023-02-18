@@ -289,7 +289,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     else:
       spec = jax.sharding.PartitionSpec('x')
-    f = pjit.pjit(f, in_axis_resources=spec, out_axis_resources=spec)
+    f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
     with mesh:
       jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
