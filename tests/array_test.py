@@ -765,7 +765,7 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(issubclass(array.ArrayImpl, jax.Array))
     self.assertFalse(issubclass(array.ArrayImpl, np.ndarray))
 
-  def test_op_sharding_sharding_repr(self):
+  def test_gspmd_sharding_repr(self):
     op = xc.OpSharding()
     op.type = xc.OpSharding.Type.OTHER
     op.tile_assignment_dimensions = [4, 1, 2]

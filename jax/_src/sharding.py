@@ -137,9 +137,8 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     op_sharding = self._to_xla_op_sharding(len(global_shape))
-    op_sharding_sharding = GSPMDSharding(self._device_assignment,
-                                              op_sharding)
-    return op_sharding_sharding.devices_indices_map(global_shape)
+    gspmd_sharding = GSPMDSharding(self._device_assignment, op_sharding)
+    return gspmd_sharding.devices_indices_map(global_shape)
 
   @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:

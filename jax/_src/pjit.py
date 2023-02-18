@@ -865,7 +865,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
     # TODO(yashkatariya): Only check for is_auto or _is_unspecified when
     # FROM_GDA is removed.
     canonicalized_shardings = tuple(
-        i if _is_unspecified_or_from_gda_or_auto(i) else to_op_sharding_sharding(i, aval.ndim)
+        i if _is_unspecified_or_from_gda_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
         for i, aval in safe_zip(in_shardings_flat, global_in_avals))
     return tuple(global_in_avals), canonicalized_shardings
 
@@ -908,7 +908,7 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
   # Local or global avals doesn't matter for converting to op sharding because
   # the `ndim` does not change.
   canonicalized_in_shardings_flat = tuple(
-      i if _is_from_gda(i) or is_auto(i) else to_op_sharding_sharding(i, aval.ndim)
+      i if _is_from_gda(i) or is_auto(i) else to_gspmd_sharding(i, aval.ndim)
       for i, aval in safe_zip(in_shardings_flat, local_in_avals))
 
   global_in_avals = local_to_global(
@@ -961,7 +961,7 @@ def _check_and_canonicalize_out_shardings(
                            allow_uneven_sharding=False)
 
   canonicalized_out_shardings_flat = tuple(
-      o if _is_unspecified(o) or is_auto(o) else to_op_sharding_sharding(o, aval.ndim)
+      o if _is_unspecified(o) or is_auto(o) else to_gspmd_sharding(o, aval.ndim)
       for o, aval in safe_zip(out_shardings_flat, global_out_avals)
   )
   return canonicalized_out_shardings_flat
@@ -1233,7 +1233,7 @@ def _resolve_in_shardings(
           if isinstance(arg_s, PmapSharding):
             resolved_in_shardings.append(_UNSPECIFIED)
           else:
-            resolved_in_shardings.append(to_op_sharding_sharding(
+            resolved_in_shardings.append(to_gspmd_sharding(
                 cast(XLACompatibleSharding, arg_s), arg.ndim))
         else:
           if dispatch.is_single_device_sharding(arg_s):
@@ -1671,13 +1671,13 @@ def _pjit_partial_eval(trace, *in_tracers,
               _allow_propagation_to_outputs=[True] * len(known_params['out_shardings']),
               _allow_compile_replicated=False)
       da = compiled._device_assignment
-      _, out_op_sharding_shardings = pxla.get_op_sharding_shardings_from_executable(
+      _, out_gspmd_shardings = pxla.get_gspmd_shardings_from_executable(
           compiled.xla_executable, da, len(known_jaxpr.in_avals),
           len(known_jaxpr.out_avals))
-      assert len(out_op_sharding_shardings) == len(known_jaxpr.out_avals), (
-          len(out_op_sharding_shardings), len(known_jaxpr.out_avals))
+      assert len(out_gspmd_shardings) == len(known_jaxpr.out_avals), (
+          len(out_gspmd_shardings), len(known_jaxpr.out_avals))
       out_op_shardings = [o._to_xla_op_sharding(a.ndim) for o, a in
-                          safe_zip(out_op_sharding_shardings, known_jaxpr.out_avals)]
+                          safe_zip(out_gspmd_shardings, known_jaxpr.out_avals)]
       residual_op_shardings = tuple(out_op_shardings[-num_residuals:])
     else:
       residual_op_shardings = ()
@@ -2057,7 +2057,7 @@ def with_sharding_constraint(x, axis_resources=_UNSPECIFIED,
   pjit_check_aval_sharding(shardings_flat, x_flat, "with_sharding_constraint arguments",
                            allow_uneven_sharding=True)
 
-  outs = [sharding_constraint_p.bind(xf, sharding=to_op_sharding_sharding(i, xf.ndim),
+  outs = [sharding_constraint_p.bind(xf, sharding=to_gspmd_sharding(i, xf.ndim),
                                      resource_env=resource_env,
                                      unconstrained_dims=ud)
           for xf, i, ud in safe_zip(x_flat, shardings_flat, unconstrained_dims)]
@@ -2152,13 +2152,13 @@ def get_array_mapping(
                      if axes is not None for axis in axes)
 
 
-def to_op_sharding_sharding(s: XLACompatibleSharding, ndim: int) -> GSPMDSharding:
+def to_gspmd_sharding(s: XLACompatibleSharding, ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  op_sharding_sharding =  GSPMDSharding(
+  gspmd_sharding = GSPMDSharding(
       s._device_assignment, s._to_xla_op_sharding(ndim))
-  op_sharding_sharding._original_sharding = s
-  return op_sharding_sharding
+  gspmd_sharding._original_sharding = s
+  return gspmd_sharding
 
 
 def get_unconstrained_dims(sharding: NamedSharding):
@@ -2242,14 +2242,14 @@ def _maybe_replace_from_gda_with_pspec(
           "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. "
           f"Got GDA sharding: {gda_sharding} and "
           f"pjit sharding: {in_sharding._original_sharding}")  # type: ignore
-    return to_op_sharding_sharding(gda_sharding, ndim)
+    return to_gspmd_sharding(gda_sharding, ndim)
 
   out = []
   for in_sharding_flat, arg in safe_zip(in_shardings_flat, args_flat):
     if is_auto(in_sharding_flat):
       out.append(in_sharding_flat)
     elif isinstance(arg, array.ArrayImpl):
-      out.append(to_op_sharding_sharding(arg.sharding, arg.ndim))
+      out.append(to_gspmd_sharding(arg.sharding, arg.ndim))
     elif isinstance(arg, GDA):
       gda_sharding = pxla.create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
       out.append(_gda_check_and_get_sharding(gda_sharding, in_sharding_flat, arg.ndim))

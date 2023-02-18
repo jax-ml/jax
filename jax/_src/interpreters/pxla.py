@@ -3353,7 +3353,7 @@ def _get_input_indices(
   return input_indices
 
 
-def get_op_sharding_shardings_from_executable(
+def get_gspmd_shardings_from_executable(
     xla_executable, device_assignment: Sequence[xc.Device],
     num_in_avals: int, num_out_avals: int
 ) -> Tuple[Sequence[sharding_internal.XLACompatibleSharding],
@@ -3550,7 +3550,7 @@ class UnloadedMeshExecutable:
         out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
       elif out_shardings and any(_is_unspecified(o) for o in out_shardings):
         assert mesh is None
-        _, out_shardings_xla = get_op_sharding_shardings_from_executable(  # type: ignore
+        _, out_shardings_xla = get_gspmd_shardings_from_executable(  # type: ignore
             xla_executable, device_assignment,
             len(global_in_avals), len(global_out_avals))
         orig_out_shardings = out_shardings

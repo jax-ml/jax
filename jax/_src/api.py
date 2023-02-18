@@ -779,7 +779,7 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
         # assume that `x` is committed. This might happen when the input is
         # a `ShapedDtypeStruct` or `types.SimpleNamespace`, etc that might
         # only have a `sharding` attribute on them.
-        return aval, (pjit.to_op_sharding_sharding(x.sharding, x.ndim)
+        return aval, (pjit.to_gspmd_sharding(x.sharding, x.ndim)
                       if getattr(x, '_committed', True) else None)
       else:
         return aval, None

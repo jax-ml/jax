@@ -1878,12 +1878,11 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
       mps = NamedSharding._from_parsed_pspec(
           resource_env.physical_mesh, ParsedPartitionSpec((), ()))
       unconstrained_dims = get_unconstrained_dims(mps)
-      op_sharding_sharding = GSPMDSharding.get_replicated(
-          mps._device_assignment)
+      gspmd_sharding = GSPMDSharding.get_replicated(mps._device_assignment)
       new_eqns.append(core.JaxprEqn(
           [tmpvar], [outvar], sharding_constraint_p,
           dict(resource_env=resource_env,
-               sharding=op_sharding_sharding,
+               sharding=gspmd_sharding,
                unconstrained_dims=unconstrained_dims),
           set(),
           eqn.source_info))

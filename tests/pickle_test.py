@@ -182,7 +182,7 @@ class PickleTest(jtu.JaxTestCase):
     s = jax.sharding.PmapSharding(jax.devices(), ss)
     self.assertEqual(s, pickle.loads(pickle.dumps(s)))
 
-  def test_pickle_op_sharding_sharding(self):
+  def test_pickle_gspmd_sharding(self):
     op_sharding = xla.xc.OpSharding()
     op_sharding.type = xla.xc.OpSharding.Type.REPLICATED
     s = jax.sharding.GSPMDSharding(jax.devices(), op_sharding)

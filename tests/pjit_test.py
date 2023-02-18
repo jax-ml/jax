@@ -393,7 +393,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     shape = (8, 8)
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P(None))
-    ops = pjit_lib.to_op_sharding_sharding(
+    ops = pjit_lib.to_gspmd_sharding(
         NamedSharding(mesh, P('x', 'y')), len(shape))
 
     @partial(pjit, in_axis_resources=s, out_axis_resources=s)
@@ -3960,18 +3960,18 @@ class UtilTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
 
     mps1 = NamedSharding(mesh, P('x', 'y'))
-    op_sharding_sharding = pjit_lib.to_op_sharding_sharding(mps1, ndim)
-    next_loop_sharding = simulated_cached_fun(op_sharding_sharding)
+    gspmd_sharding = pjit_lib.to_gspmd_sharding(mps1, ndim)
+    next_loop_sharding = simulated_cached_fun(gspmd_sharding)
     cache_info1 = simulated_cached_fun.cache_info()
 
-    next_op_sharding_sharding = pjit_lib.to_op_sharding_sharding(
+    next_gspmd_sharding = pjit_lib.to_gspmd_sharding(
         next_loop_sharding, ndim)
-    simulated_cached_fun(next_op_sharding_sharding)
+    simulated_cached_fun(next_gspmd_sharding)
     cache_info2 = simulated_cached_fun.cache_info()
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
-    self.assertEqual(id(next_op_sharding_sharding), id(op_sharding_sharding))
+    self.assertEqual(id(next_gspmd_sharding), id(gspmd_sharding))
 
   def test_get_partition_spec(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
