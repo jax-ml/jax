@@ -2896,7 +2896,7 @@ def lower_sharding_computation(
       any(not _is_unspecified(js) for js, _ in jaxpr_sharding) or  # type: ignore
       any(not _is_unspecified(o) for o in out_shardings))  # type: ignore
 
-  in_shardings = tuple(sharding_internal.OpShardingSharding.get_replicated(device_assignment)
+  in_shardings = tuple(sharding_internal.GSPMDSharding.get_replicated(device_assignment)
                        if _is_unspecified(i) else i for i in in_shardings)
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -3372,9 +3372,9 @@ def get_op_sharding_shardings_from_executable(
 
   in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
 
-  in_shardings_xla = [sharding_internal.OpShardingSharding(device_assignment, i)
+  in_shardings_xla = [sharding_internal.GSPMDSharding(device_assignment, i)
                       for i in in_op_shardings]
-  out_shardings_xla = [sharding_internal.OpShardingSharding(device_assignment, o)
+  out_shardings_xla = [sharding_internal.GSPMDSharding(device_assignment, o)
                        for o in out_op_shardings]
   # This condition happens when all the elements in the output tuple have the
   # same sharding, so XLA decides to run the `FusionTupleDeduplicator` to
@@ -3720,7 +3720,7 @@ def _out_shardings_for_trivial(
   #     a replicated sharding
   from jax._src import array
 
-  rep = sharding_internal.OpShardingSharding(
+  rep = sharding_internal.GSPMDSharding(
       device_assignment, sharding_internal._get_replicated_op_sharding())
   shardings: Dict[core.Var, sharding_internal.XLACompatibleSharding] = {}
   for constvar, constval in zip(jaxpr.constvars, consts):

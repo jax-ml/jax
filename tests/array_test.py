@@ -694,7 +694,7 @@ class ShardingTest(jtu.JaxTestCase):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = sharding.NamedSharding(mesh, pspec)
-    ops = sharding.OpShardingSharding(
+    ops = sharding.GSPMDSharding(
         list(mesh.devices.flat), mps._to_xla_op_sharding(len(shape)))
     self.assertDictEqual(
         ops.devices_indices_map(shape), mps.devices_indices_map(shape))
@@ -771,16 +771,16 @@ class ShardingTest(jtu.JaxTestCase):
     op.tile_assignment_dimensions = [4, 1, 2]
     op.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
     op.replicate_on_last_tile_dim = True
-    s = sharding.OpShardingSharding(jax.devices(), op)
+    s = sharding.GSPMDSharding(jax.devices(), op)
     self.assertEqual(
         repr(s),
-        'OpShardingSharding({devices=[4,1,2]0,1,2,3,4,5,6,7 '
+        'GSPMDSharding({devices=[4,1,2]0,1,2,3,4,5,6,7 '
         'last_tile_dim_replicate})')
 
     op2 = xc.OpSharding()
     op2.type = xc.OpSharding.Type.REPLICATED
-    s2 = sharding.OpShardingSharding(jax.devices(), op2)
-    self.assertEqual(repr(s2), 'OpShardingSharding({replicated})')
+    s2 = sharding.GSPMDSharding(jax.devices(), op2)
+    self.assertEqual(repr(s2), 'GSPMDSharding({replicated})')
 
   @parameterized.named_parameters(
       ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),
@@ -876,9 +876,9 @@ class ShardingTest(jtu.JaxTestCase):
 
     op1 = xc.OpSharding()
     op1.type = xc.OpSharding.Type.REPLICATED
-    s6 = jax.sharding.OpShardingSharding([jax.devices()[0]], op1)
+    s6 = jax.sharding.GSPMDSharding([jax.devices()[0]], op1)
 
-    s7 = jax.sharding.OpShardingSharding(jax.devices(), op1)
+    s7 = jax.sharding.GSPMDSharding(jax.devices(), op1)
 
     # The OpSharding is replicated but the Sharding itself are on different
     # devices.
@@ -888,7 +888,7 @@ class ShardingTest(jtu.JaxTestCase):
     op2.type = xc.OpSharding.Type.OTHER
     op2.tile_assignment_devices = [0, 1]
     op2.tile_assignment_dimensions = [2, 1]
-    s8 = jax.sharding.OpShardingSharding(list(mesh2.devices.flat), op2)
+    s8 = jax.sharding.GSPMDSharding(list(mesh2.devices.flat), op2)
 
     self.assertTrue(s1.is_equivalent_to(s6, 2))
     self.assertTrue(s5.is_equivalent_to(s8, 2))
@@ -901,7 +901,7 @@ class ShardingTest(jtu.JaxTestCase):
     op3.tile_assignment_devices = [0, 1]
     op3.tile_assignment_dimensions = [1, 1, 2]
     op3.replicate_on_last_tile_dim = True
-    s10 = jax.sharding.OpShardingSharding(list(mesh2.devices.flat), op3)
+    s10 = jax.sharding.GSPMDSharding(list(mesh2.devices.flat), op3)
 
     self.assertTrue(s9.is_equivalent_to(s10, 2))
 

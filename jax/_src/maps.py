@@ -1860,7 +1860,7 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
   from jax._src.pjit import (
       sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
-      OpShardingSharding)
+      GSPMDSharding)
 
   rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
   if isinstance(jaxpr, core.ClosedJaxpr):
@@ -1878,7 +1878,7 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
       mps = NamedSharding._from_parsed_pspec(
           resource_env.physical_mesh, ParsedPartitionSpec((), ()))
       unconstrained_dims = get_unconstrained_dims(mps)
-      op_sharding_sharding = OpShardingSharding.get_replicated(
+      op_sharding_sharding = GSPMDSharding.get_replicated(
           mps._device_assignment)
       new_eqns.append(core.JaxprEqn(
           [tmpvar], [outvar], sharding_constraint_p,

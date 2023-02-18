@@ -24,6 +24,7 @@ import jax
 from jax._src import core
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax.interpreters import mlir
 from jax._src.interpreters import pxla
 
@@ -75,10 +76,10 @@ class Sharding(metaclass=abc.ABCMeta):
     """Returns True if two shardings put the same logical array
     (sharded/unsharded) on the same device(s).
 
-    For example, every XLACompatibleSharding lowers to OpShardingSharding which
+    For example, every XLACompatibleSharding lowers to GSPMDSharding which
     is a general representation. So `jax.sharding.NamedSharding` is equivalent
     to `jax.sharding.PositionalSharding` if both of them lower to the same
-    OpShardingSharding.
+    GSPMDSharding.
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -136,7 +137,7 @@ class XLACompatibleSharding(Sharding, metaclass=abc.ABCMeta):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     op_sharding = self._to_xla_op_sharding(len(global_shape))
-    op_sharding_sharding = OpShardingSharding(self._device_assignment,
+    op_sharding_sharding = GSPMDSharding(self._device_assignment,
                                               op_sharding)
     return op_sharding_sharding.devices_indices_map(global_shape)
 
@@ -645,8 +646,8 @@ class DeviceIdSet:
             self._ids == other._ids)
 
 
-@use_cpp_class(xc.OpShardingSharding)
-class OpShardingSharding(XLACompatibleSharding):
+@use_cpp_class(xc.GSPMDSharding if xla_extension_version >= 129 else xc.OpShardingSharding)  # type: ignore
+class GSPMDSharding(XLACompatibleSharding):
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):
@@ -661,7 +662,7 @@ class OpShardingSharding(XLACompatibleSharding):
     return hash(xc.HloSharding.from_proto(self._op_sharding))
 
   def __eq__(self, other):
-    if not isinstance(other, OpShardingSharding):
+    if not isinstance(other, GSPMDSharding):
       return False
     if id(self) == id(other):
       return True
@@ -674,7 +675,7 @@ class OpShardingSharding(XLACompatibleSharding):
     return self._hash
 
   def __repr__(self):
-    return f'OpShardingSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
+    return f'GSPMDSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
     num_ways_dim_sharded, _ = pxla.get_num_ways_dim_sharded(self._op_sharding)
@@ -705,3 +706,8 @@ class OpShardingSharding(XLACompatibleSharding):
   def get_replicated(cls, device_assignment):
     proto = _get_replicated_op_sharding()
     return cls(device_assignment, proto)
+
+
+# TODO(yashkatariya); Remove OpShardingSharding after 3 months from Feb 17, 2023
+# per the deprecation policy.
+OpShardingSharding = GSPMDSharding

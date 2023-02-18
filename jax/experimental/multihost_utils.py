@@ -96,7 +96,7 @@ def _identity_fn(x):
 
 def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
-    reps = sharding.OpShardingSharding(inp.sharding._device_assignment,
+    reps = sharding.GSPMDSharding(inp.sharding._device_assignment,
                                        sharding._get_replicated_op_sharding())
     out = pjit(_identity_fn, out_axis_resources=reps)(inp)
   else:

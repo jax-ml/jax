@@ -22,7 +22,7 @@ from jax._src import util
 from jax._src import config as jax_config
 from jax.config import config
 from jax._src import array
-from jax._src.sharding import NamedSharding, OpShardingSharding
+from jax._src.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.gda_serialization import serialization
 import numpy as np
@@ -133,7 +133,7 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
 
-    new_ds = OpShardingSharding.get_replicated(list(global_mesh.devices.flat))
+    new_ds = GSPMDSharding.get_replicated(list(global_mesh.devices.flat))
     m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)], [np.float32])
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data1.astype('float32'))

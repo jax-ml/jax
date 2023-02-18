@@ -43,7 +43,7 @@ from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
 from jax._src.sharding import (
-    NamedSharding, PmapSharding, OpShardingSharding)
+    NamedSharding, PmapSharding, GSPMDSharding)
 from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
@@ -375,7 +375,7 @@ class KeyTyRules:
       if is_out_sharding_from_xla:
         phys_sharding = out_sharding
       else:
-        phys_sharding = OpShardingSharding(
+        phys_sharding = GSPMDSharding(
             out_sharding._device_assignment,
             KeyTyRules.physical_op_sharding(aval, out_sharding))
 

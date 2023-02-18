@@ -42,7 +42,7 @@ from jax._src.lax import control_flow as lcf
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding import Sharding, OpShardingSharding, NamedSharding
+from jax._src.sharding import Sharding, GSPMDSharding, NamedSharding
 
 # pytype: disable=import-error
 try:
@@ -310,7 +310,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
 
   def _op_sharding_callback(op_sharding: xc.OpSharding):
     if mesh.empty:
-      return callback(OpShardingSharding(
+      return callback(GSPMDSharding(
         devices, op_sharding))
     pspec = pjit.parse_flatten_op_sharding(
         op_sharding, mesh)[0].get_partition_spec()

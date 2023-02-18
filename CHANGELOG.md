@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.5
 
+* Deprecations
+  * `jax.sharding.OpShardingSharding` has been renamed to `jax.sharding.GSPMDSharding`.
+    `jax.sharding.OpShardingSharding` will be removed in 3 months from Feb 17, 2023.
+
 ## jaxlib 0.4.5
 
 ## jax 0.4.4 (Feb 16, 2023)

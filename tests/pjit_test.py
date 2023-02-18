@@ -44,7 +44,7 @@ from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import NamedSharding, Sharding, OpShardingSharding
+from jax._src.sharding import NamedSharding, Sharding, GSPMDSharding
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
 from jax._src.interpreters import pxla
@@ -1860,7 +1860,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     def _checks(out, input_data):
       self.assertIsInstance(out, array.ArrayImpl)
-      self.assertIsInstance(out.sharding, OpShardingSharding)
+      self.assertIsInstance(out.sharding, GSPMDSharding)
       self.assertEqual(out.shape, (8, 2))
       self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
       for s in out.addressable_shards:
@@ -2416,20 +2416,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     f = pjit(lambda x: x)
     out1 = f(arr)
-    self.assertIsInstance(out1.sharding, OpShardingSharding)
+    self.assertIsInstance(out1.sharding, GSPMDSharding)
     out1.sharding.devices_indices_map(shape)
-    cache_info1 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info1 = GSPMDSharding.devices_indices_map.cache_info()
 
     out2 = f(out1)
-    self.assertIsInstance(out2.sharding, OpShardingSharding)
+    self.assertIsInstance(out2.sharding, GSPMDSharding)
     out2.sharding.devices_indices_map(shape)
-    cache_info2 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info2 = GSPMDSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     out3 = f(out2)
-    self.assertIsInstance(out3.sharding, OpShardingSharding)
+    self.assertIsInstance(out3.sharding, GSPMDSharding)
     out3.sharding.devices_indices_map(shape)
-    cache_info3 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info3 = GSPMDSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
   @jax_array(True)
@@ -3871,21 +3871,21 @@ class UtilTest(jtu.JaxTestCase):
     shape = (8, 4)
     devices = jax.devices()
 
-    ops = OpShardingSharding(devices, op1)
+    ops = GSPMDSharding(devices, op1)
     ops.devices_indices_map(shape)
-    cache_info1 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info1 = GSPMDSharding.devices_indices_map.cache_info()
 
     ops.devices_indices_map(shape)
-    cache_info2 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info2 = GSPMDSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
-    ops = OpShardingSharding(devices, op2)
+    ops = GSPMDSharding(devices, op2)
     ops.devices_indices_map(shape)
-    cache_info3 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info3 = GSPMDSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
     ops.devices_indices_map(shape)
-    cache_info4 = OpShardingSharding.devices_indices_map.cache_info()
+    cache_info4 = GSPMDSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
 
 

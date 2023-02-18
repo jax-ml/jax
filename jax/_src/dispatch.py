@@ -61,7 +61,7 @@ from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
-                               OpShardingSharding, NamedSharding, PartitionSpec,
+                               GSPMDSharding, NamedSharding, PartitionSpec,
                                Sharding)
 from jax._src.util import flatten, unflatten
 
@@ -322,7 +322,7 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
   assert len(da) == 1
   # in_shardings will be marked as replicated regardless of whatever the input
   # had. Given that only a single device is allowed above, this is correct.
-  in_shardings = [OpShardingSharding.get_replicated(da)] * num_ins
+  in_shardings = [GSPMDSharding.get_replicated(da)] * num_ins
   return da, in_shardings
 
 

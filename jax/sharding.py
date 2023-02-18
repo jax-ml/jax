@@ -18,13 +18,16 @@
 from jax._src.sharding import (
     Sharding as Sharding,
     XLACompatibleSharding as XLACompatibleSharding,
-    # TODO(yashkatariya): Deprecate MeshPspecSharding in 3 months.
+    # TODO(yashkatariya): Remove MeshPspecSharding in 3 months.
     MeshPspecSharding as MeshPspecSharding,
     # New name of MeshPspecSharding to match PositionalSharding below.
     NamedSharding as NamedSharding,
     PartitionSpec as PartitionSpec,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
+    GSPMDSharding as GSPMDSharding,
+    # TODO(yashkatariya): Remove OpShardingSharding in 3 months from
+    # Feb 17, 2023.
     OpShardingSharding as OpShardingSharding,
     PositionalSharding as PositionalSharding,
 )

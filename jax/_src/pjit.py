@@ -37,7 +37,7 @@ from jax.tree_util import (
     treedef_tuple)
 
 from jax._src.sharding import (
-    NamedSharding, Sharding, XLACompatibleSharding, OpShardingSharding,
+    NamedSharding, Sharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
 from jax._src import array
 from jax._src import dispatch
@@ -90,8 +90,8 @@ def _is_unspecified_or_from_gda_or_auto(x):
   return _is_from_gda(x) or is_auto(x) or _is_unspecified(x)
 
 
-PjitSharding = Union[OpShardingSharding, _UnspecifiedValue, _AUTOAxisResource]
-PjitShardingMinusUnspecified = Union[OpShardingSharding, _AUTOAxisResource]
+PjitSharding = Union[GSPMDSharding, _UnspecifiedValue, _AUTOAxisResource]
+PjitShardingMinusUnspecified = Union[GSPMDSharding, _AUTOAxisResource]
 MeshSharding = Union[NamedSharding, _UnspecifiedValue, _AUTOAxisResource]
 MeshShardingMinusUnspecified = Union[NamedSharding, _AUTOAxisResource]
 
@@ -535,7 +535,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   in_positional_semantics = (
       pxla._PositionalSemantics.GLOBAL,) * len(consts) + in_positional_semantics
 
-  # in_shardings and out_shardings here are all OpShardingSharding.
+  # in_shardings and out_shardings here are all GSPMDSharding.
   params = dict(
       jaxpr=jaxpr,
       in_shardings=canonicalized_in_shardings_flat,
@@ -1353,7 +1353,7 @@ class SameDeviceAssignmentTuple:
   device_assignment: Optional[XLADeviceAssignment]
 
   def __hash__(self):
-    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, OpShardingSharding) else s # type: ignore
+    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, GSPMDSharding) else s # type: ignore
                            for s in self.shardings)
     if self.device_assignment is None:
       return hash(shardings_hash)
@@ -1364,7 +1364,7 @@ class SameDeviceAssignmentTuple:
     if not isinstance(other, SameDeviceAssignmentTuple):
       return False
     return (all(pxla.are_op_shardings_equal(s._op_sharding, o._op_sharding)  # pytype: disable=attribute-error
-                if isinstance(s, OpShardingSharding) and isinstance(o, OpShardingSharding)
+                if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding)
                 else s == o
                 for s, o in safe_zip(self.shardings, other.shardings)) and
             self.device_assignment == other.device_assignment)
@@ -1420,14 +1420,14 @@ def _pjit_lower_cached(
         Tuple[MeshShardingMinusUnspecified, ...], tuple(
             NamedSharding._from_parsed_pspec(
                 mesh, parse_flatten_op_sharding(i._op_sharding, mesh)[0]) # type: ignore
-            if isinstance(i, OpShardingSharding) else i
+            if isinstance(i, GSPMDSharding) else i
             for i in in_shardings
     ))
     out_shardings: Tuple[MeshSharding, ...] = cast(  # type: ignore[no-redef]
         Tuple[MeshSharding, ...], tuple(
             NamedSharding._from_parsed_pspec(
                 mesh, parse_flatten_op_sharding(o._op_sharding, mesh)[0]) # type: ignore
-            if isinstance(o, OpShardingSharding) else o
+            if isinstance(o, GSPMDSharding) else o
             for o in out_shardings
     ))
 
@@ -1560,7 +1560,7 @@ batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
 pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
 
 def _pjit_batcher_for_sharding(
-    s: Union[OpShardingSharding, _UnspecifiedValue],
+    s: Union[GSPMDSharding, _UnspecifiedValue],
     dim: int, val: Tuple[str, ...], mesh, ndim: int):
   if _is_unspecified(s):
     return s
@@ -1569,14 +1569,14 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    return OpShardingSharding(s._device_assignment, new_op)  # type: ignore
+    return GSPMDSharding(s._device_assignment, new_op)  # type: ignore
   else:
-    assert isinstance(s, OpShardingSharding)
+    assert isinstance(s, GSPMDSharding)
     assert mesh is not None and not mesh.empty
     parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]  # type: ignore
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
-    return OpShardingSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
+    return GSPMDSharding(mps._device_assignment, mps._to_xla_op_sharding(ndim))
 
 
 def _pjit_jvp(primals_in, tangents_in,
@@ -1642,7 +1642,7 @@ def _pjit_partial_eval(trace, *in_tracers,
     residual_shardings = (_UNSPECIFIED,) * num_residuals
   else:
     da = list(resource_env.physical_mesh.devices.flat)
-    residual_shardings = (OpShardingSharding.get_replicated(da),) * num_residuals
+    residual_shardings = (GSPMDSharding.get_replicated(da),) * num_residuals
   # Compute the known outputs
   known_params = dict(
       jaxpr=known_jaxpr,
@@ -1683,7 +1683,7 @@ def _pjit_partial_eval(trace, *in_tracers,
       residual_op_shardings = ()
     assert len(residual_shardings) == len(residual_op_shardings), (
         len(residual_shardings), len(residual_op_shardings))
-    residual_shardings = tuple(OpShardingSharding(da, op) for op in residual_op_shardings)
+    residual_shardings = tuple(GSPMDSharding(da, op) for op in residual_op_shardings)
     known_params['out_shardings'] = (
         keep_where(out_shardings, known_outs) + residual_shardings)
 
@@ -2080,13 +2080,13 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   aval, = ctx.avals_in
   axis_ctx = ctx.module_context.axis_context
   # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
-  # NamedSharding. So convert the OpShardingSharding to NamedSharding
+  # NamedSharding. So convert the GSPMDSharding to NamedSharding
   # and then convert it back with the added special axes.
   if isinstance(axis_ctx, mlir.SPMDAxisContext):
     mesh = resource_env.physical_mesh
     parsed_pspec = parse_flatten_op_sharding(sharding._op_sharding, mesh)[0]
     mps = NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
-    sharding = OpShardingSharding(
+    sharding = GSPMDSharding(
         mps._device_assignment, mps._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
       mlir.wrap_with_sharding_op(
@@ -2152,10 +2152,10 @@ def get_array_mapping(
                      if axes is not None for axis in axes)
 
 
-def to_op_sharding_sharding(s: XLACompatibleSharding, ndim: int) -> OpShardingSharding:
-  if isinstance(s, OpShardingSharding):
+def to_op_sharding_sharding(s: XLACompatibleSharding, ndim: int) -> GSPMDSharding:
+  if isinstance(s, GSPMDSharding):
     return s
-  op_sharding_sharding =  OpShardingSharding(
+  op_sharding_sharding =  GSPMDSharding(
       s._device_assignment, s._to_xla_op_sharding(ndim))
   op_sharding_sharding._original_sharding = s
   return op_sharding_sharding
@@ -2232,7 +2232,7 @@ def _maybe_replace_from_gda_with_pspec(
 
   @lru_cache()
   def _gda_check_and_get_sharding(
-      gda_sharding: NamedSharding, in_sharding: OpShardingSharding, ndim: int):
+      gda_sharding: NamedSharding, in_sharding: GSPMDSharding, ndim: int):
     if not _is_from_gda(in_sharding) and not pxla.are_op_shardings_equal(
         gda_sharding._to_xla_op_sharding(ndim),
         in_sharding._to_xla_op_sharding(ndim)):

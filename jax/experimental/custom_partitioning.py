@@ -385,8 +385,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
 
   def to_mesh_pspec_sharding(op_sharding: xc.OpSharding):
     if mesh.empty:
-      from jax._src.sharding import OpShardingSharding
-      return OpShardingSharding(devices, op_sharding)
+      from jax._src.sharding import GSPMDSharding
+      return GSPMDSharding(devices, op_sharding)
     pspec = pjit.parse_flatten_op_sharding(op_sharding,
                                            mesh)[0].get_partition_spec()
     return jax.sharding.NamedSharding(mesh, pspec)

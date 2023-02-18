@@ -43,7 +43,7 @@ from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.lax import control_flow as cf
-from jax._src.sharding import OpShardingSharding
+from jax._src.sharding import GSPMDSharding
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache)
@@ -860,7 +860,7 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
   if jax.config.jax_array:
     sharding = pjit._UNSPECIFIED
   else:
-    sharding = OpShardingSharding.get_replicated(
+    sharding = GSPMDSharding.get_replicated(
         list(resource_env.physical_mesh.devices.flat))
 
   new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)

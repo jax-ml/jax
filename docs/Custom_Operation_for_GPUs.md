@@ -655,7 +655,7 @@ with mesh:
     c:bf16[32,512,512] d:bf16[512,512] = pjit[
       donated_invars=(False, False)
       in_positional_semantics=(<_PositionalSemantics.GLOBAL: 1>, <_PositionalSemantics.GLOBAL: 1>)
-      in_shardings=(OpShardingSharding({devices=[8,1,1]0,1,2,3,4,5,6,7}), OpShardingSharding({replicated}))
+      in_shardings=(GSPMDSharding({devices=[8,1,1]0,1,2,3,4,5,6,7}), GSPMDSharding({replicated}))
       jaxpr={ lambda ; e:bf16[32,512,512] f:bf16[512,512]. let
           g:bf16[8,4,512,512] = reshape[
             dimensions=None
@@ -734,7 +734,7 @@ with mesh:
         in (bn, bf) }
       name=<unnamed function>
       out_positional_semantics=_PositionalSemantics.GLOBAL
-      out_shardings=(OpShardingSharding({devices=[8,1,1]0,1,2,3,4,5,6,7}), OpShardingSharding({replicated}))
+      out_shardings=(GSPMDSharding({devices=[8,1,1]0,1,2,3,4,5,6,7}), GSPMDSharding({replicated}))
       resource_env=ResourceEnv(Mesh(device_ids=array([0, 1, 2, 3, 4, 5, 6, 7]), axis_names=('x',)), ())
     ] a b
   in (c, d) }
