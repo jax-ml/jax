@@ -107,10 +107,6 @@ def _ducc_fft_descriptor(shape: List[int], dtype, fft_type: FftType,
   return descriptor, out_dtype, out_shape
 
 
-# TODO(burmako): Remove this compatibility shim when mlir_api_version >= 41.
-def ducc_fft_mhlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
-  return ducc_fft_hlo(a, dtype, fft_type=fft_type, fft_lengths=fft_lengths)
-
 def ducc_fft_hlo(a, dtype, *, fft_type: FftType, fft_lengths: List[int]):
   """DUCC FFT kernel for CPU."""
   a_type = ir.RankedTensorType(a.type)
