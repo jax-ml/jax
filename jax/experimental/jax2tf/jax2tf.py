@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
+import dataclasses
 from functools import partial
 import contextlib
 import operator
@@ -32,6 +33,7 @@ from jax import custom_derivatives
 from jax import random
 from jax import numpy as jnp
 from jax import tree_util
+from jax import sharding
 from jax.experimental import maps
 from jax.experimental.jax2tf import shape_poly
 from jax.experimental.jax2tf import impl_no_xla
@@ -49,7 +51,6 @@ from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
-from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.global_device_array import GlobalDeviceArray
@@ -216,7 +217,10 @@ def convert(fun_jax: Callable,
             with_gradient=True,
             enable_xla=True,
             experimental_native_lowering="default",
-            experimental_native_lowering_strict_checks=True) -> Callable:
+            experimental_native_lowering_platforms=(),
+            experimental_native_lowering_strict_checks=False,
+            in_shardings=pxla._UNSPECIFIED,
+            out_shardings=pxla._UNSPECIFIED) -> Callable:
   """Lowers `fun_jax` into a function that uses only TensorFlow ops.
 
   See
@@ -276,6 +280,11 @@ def convert(fun_jax: Callable,
       function and aborts if this is not possible.
     experimental_native_lowering: DO NOT USE, for experimental purposes only.
       The value "default" defers to --jax2tf_default_experimental_native_lowering.
+    experimental_native_lowering_platforms: DO NOT USE, for experimental purposes only.
+      In conjunction with `experimental_native_lowering`, specify the platform
+      for which to lower the code. Must be a tuple with one element, one of
+      'cpu', 'gpu', 'tpu'. The default (empty tuple), specifies the JAX default
+      backend on the machine where the lowering is done.
     experimental_native_lowering_strict_checks: DO NOT USE, for experimental purposes only.
       In conjunction with `experimental_native_lowering`, enable the following
       checks: the lowered computation is executed on a platform for which it
@@ -292,6 +301,33 @@ def convert(fun_jax: Callable,
   if experimental_native_lowering and not enable_xla:
     raise ValueError(
         "experimental_native_lowering is not supported with enable_xla=False")
+
+  if experimental_native_lowering and not experimental_native_lowering_platforms:
+    experimental_native_lowering_platforms = (jax.default_backend(),)
+
+  if experimental_native_lowering_platforms:
+    if not experimental_native_lowering:
+      raise ValueError(
+          "experimental_native_lowering_platforms is not supported without "
+          "experimental_native_lowering")
+    if (not isinstance(experimental_native_lowering_platforms, (list, tuple)) or
+        not all(p in ["tpu", "cpu", "gpu"] for p in experimental_native_lowering_platforms)):
+      raise ValueError(
+          "experimental_native_lowering_platforms must be a sequence "
+          "containing a subset of {'cpu', 'gpu', 'tpu'}. "
+          f"Got: {experimental_native_lowering_platforms}")
+    experimental_native_lowering_platforms = tuple(experimental_native_lowering_platforms)
+    if len(experimental_native_lowering_platforms) > 1:
+      raise NotImplementedError(
+          "experimental_native_lowering_platforms is not implemented for multiple platforms")
+
+  params = LoweringParameters(
+      experimental_native_lowering=experimental_native_lowering,
+      experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks,
+      experimental_native_lowering_platforms=experimental_native_lowering_platforms,
+      in_shardings=in_shardings,
+      out_shardings=out_shardings
+  )
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
   name_stack = util.wrap_name(fun_name, "jax2tf")
@@ -345,7 +381,9 @@ def convert(fun_jax: Callable,
       dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
           args_avals_flat)
       dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
-                                         args_avals_flat, name_stack)
+                                         args_avals_flat, name_stack,
+                                         params=LoweringParameters(
+                                             experimental_native_lowering=False))
       shape_env = zip(dim_vars, dim_values)
 
       assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
@@ -370,8 +408,7 @@ def convert(fun_jax: Callable,
               args_flat_tf, args_avals_flat,
               name_stack,
               fresh_constant_cache=True,
-              experimental_native_lowering=experimental_native_lowering,
-              experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
+              params=params)
           return (tuple(outs_tf),
                   make_custom_gradient_fn_tf(
                       fun_flat_jax=fun_flat_jax,
@@ -387,8 +424,7 @@ def convert(fun_jax: Callable,
             args_flat_tf, args_avals_flat,
             name_stack,
             fresh_constant_cache=True,
-            experimental_native_lowering=experimental_native_lowering,
-            experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
+            params=params)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
         # We use PreventGradient, which is propagated through a SavedModel.
@@ -407,6 +443,15 @@ def convert(fun_jax: Callable,
     return out_tf
 
   return converted_fun_tf
+
+
+@dataclasses.dataclass
+class LoweringParameters:
+  experimental_native_lowering: bool
+  experimental_native_lowering_strict_checks: bool = False
+  experimental_native_lowering_platforms: Tuple[str, ...] = ()
+  in_shardings: Any = pxla._UNSPECIFIED
+  out_shardings: Any = pxla._UNSPECIFIED
 
 
 def dtype_of_val(val: TfVal) -> DType:
@@ -576,15 +621,14 @@ def _interpret_fun_jax(
     args_tf: Sequence[TfVal],
     args_avals: Sequence[core.ShapedArray],
     extra_name_stack: Optional[str],
-    fresh_constant_cache: bool = False,
-    experimental_native_lowering: bool = False,
-    experimental_native_lowering_strict_checks: bool = True,
+    fresh_constant_cache: bool = False, *,
+    params: LoweringParameters,
 ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
-  if experimental_native_lowering:
+  if params.experimental_native_lowering:
     del extra_name_stack
     return _lower_native_and_run(
         fun_jax, args_avals, args_tf,
-        experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
+        params=params)
   else:
     with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
       subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
@@ -601,8 +645,7 @@ def _interpret_fun_jax(
 def _lower_native_and_run(fun_jax: Callable,
                           args_avals: Sequence[core.ShapedArray],
                           args_tf: Sequence[TfVal],
-                          *,
-                          experimental_native_lowering_strict_checks: bool,
+                          params: LoweringParameters
                           ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   """Lowers the function using native lowering and then invokes it.
 
@@ -637,20 +680,7 @@ def _lower_native_and_run(fun_jax: Callable,
   else:
     abstracted_axes = None  # type: ignore
 
-  arg_specs_jax = [
-    jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
-    for aval in args_avals
-  ]
-  # TODO: specify the backend for experimental_native_lowering
-  if not hasattr(fun_jax, "lower") or abstracted_axes:
-    # We support convert(pjit(f_jax, ...)) and convert(jit(f_jax)) but also
-    # convert(f_jax), in which case a "jit" is implied. We also add a jit when
-    # we need to pass the abstracted axes.
-    fun_jax_lower = jax.jit(fun_jax,
-                            abstracted_axes=abstracted_axes).lower
-  else:
-    fun_jax_lower = fun_jax.lower
-  lowered = fun_jax_lower(*arg_specs_jax)._lowering
+  lowered = native_lowering(fun_jax, args_avals, params=params, abstracted_axes=abstracted_axes)
   if config.jax2tf_use_stablehlo:
     mlir_module = lowered.stablehlo()
     xla_call_module_version = 3
@@ -757,7 +787,7 @@ def _lower_native_and_run(fun_jax: Callable,
       dim_args_spec=dim_args_spec)
   log_msg = f"version={xla_call_module_version} dim_args_spec=" + ", ".join(dim_args_spec)
   if xla_call_module_version == 3:
-    if experimental_native_lowering_strict_checks:
+    if params.experimental_native_lowering_strict_checks:
       call_module_attrs["platforms"] = (default_jax_backend().upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking
@@ -784,6 +814,107 @@ def _lower_native_and_run(fun_jax: Callable,
       _convert_res(res_val, out_aval.dtype)
       for res_val, out_aval in zip(res, out_avals))
   return res, out_avals
+
+
+def native_lowering(fun_jax, args_avals: Sequence[core.ShapedArray],
+                    params: LoweringParameters,
+                    abstracted_axes=None):
+  if params.experimental_native_lowering_platforms:
+    lowering_mesh, in_shardings = get_shardings_for_avals(len(args_avals), params)
+  else:
+    lowering_mesh = None
+    in_shardings = (None,) * len(args_avals)
+  arg_specs_jax = [
+      jax.ShapeDtypeStruct(aval.shape, aval.dtype,
+                           named_shape=aval.named_shape, sharding=sharding)
+      for aval, sharding in zip(args_avals, in_shardings)
+  ]
+  if not hasattr(fun_jax, "lower") or abstracted_axes:
+    # We support convert(pjit(f_jax, ...)) and convert(jit(f_jax)) but also
+    # convert(f_jax), in which case a "jit" is implied. We also add a jit when
+    # we need to pass the abstracted axes.
+    fun_jax_lower = jax.jit(fun_jax,
+                            abstracted_axes=abstracted_axes).lower
+  else:
+    fun_jax_lower = fun_jax.lower
+
+  def new_check(*args):
+    return xb.get_backend('tpu'), fake_devices()  # that you create
+
+  prev_check = pxla._get_and_check_device_assignment
+  try:
+    pxla._get_and_check_device_assignment = new_check
+
+    if lowering_mesh is not None and False:
+      with lowering_mesh:
+        lowered = fun_jax_lower(*arg_specs_jax)._lowering
+    else:
+      lowered = fun_jax_lower(*arg_specs_jax)._lowering
+  finally:
+    pxla._get_and_check_device_assignment = prev_check
+
+  return lowered
+
+def get_shardings_for_avals(nr_args: int,
+                            params: LoweringParameters
+                            ) -> Tuple[sharding.Mesh,
+                                       Sequence[sharding.XLACompatibleSharding]]:
+  # TODO(necula): this should match what JAX does; best if I could call something directly in JAX
+  user_in_shardings = params.in_shardings
+  if nr_args == 0:
+    raise NotImplementedError("Nullary functions not yet supported")
+  # Cross-platform lowering
+  if pxla._is_unspecified(user_in_shardings):
+    user_in_shardings = (None,) * nr_args
+
+  assert len(user_in_shardings) == nr_args
+  # Resolve with the current mesh first
+  resource_env = pxla.thread_resources.env
+  resolved_user_in_shardings = []
+  orig_mesh = None
+  for in_s in user_in_shardings:
+    if in_s is None:
+      in_s = sharding.NamedSharding(resource_env.physical_mesh, sharding.PartitionSpec())
+    elif isinstance(in_s, sharding.PartitionSpec):
+      in_s = sharding.NamedSharding(resource_env.physical_mesh, in_s)
+    assert isinstance(in_s, sharding.XLACompatibleSharding), in_s
+    if orig_mesh is None:
+      orig_mesh = in_s.mesh
+    else:
+      assert orig_mesh == in_s.mesh
+    resolved_user_in_shardings.append(in_s)
+
+    # Now replace the devices
+  assert orig_mesh is not None and not orig_mesh.is_multi_process
+  lowering_client = LoweringOnlyClient(params.experimental_native_lowering_platforms[0],
+                                       len(orig_mesh.devices))
+  lowering_mesh = sharding.Mesh(
+      # TODO: is this correct?
+      [lowering_client.devices[d.id] for d in orig_mesh.devices],
+      orig_mesh.axis_names)
+  in_shardings = tuple(sharding.NamedSharding(lowering_mesh,  in_s.spec)
+                       for in_s in resolved_user_in_shardings)
+  return lowering_mesh, in_shardings
+
+
+class LoweringOnlyClient:
+  def __init__(self, platform: str, nr_devices: int):
+    self.platform = platform
+    self._process_index = 0
+    self.devices = [LoweringOnlyDevice(self, i) for i in range(nr_devices)]
+    self.lowering_only_client = True
+
+  def process_index(self):
+    return self._process_index
+
+  def device_count(self):
+    return len(self.devices)
+
+class LoweringOnlyDevice:
+  def __init__(self, client: LoweringOnlyClient, id: int):
+    self.client = client
+    self.process_index = client.process_index()
+    self.id = id
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
                                           in_vals: Sequence[TfVal],

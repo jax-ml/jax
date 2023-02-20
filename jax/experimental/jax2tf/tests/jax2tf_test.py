@@ -20,19 +20,21 @@ from typing import Callable, Dict, Optional, Tuple
 import unittest
 
 from absl import logging
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
+from jax import sharding
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 import jax._src.lib.xla_bridge
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
+from jax.experimental.shard_map import shard_map
 from jax.experimental import pjit
 from jax.interpreters import mlir
 from jax.sharding import PartitionSpec as P
@@ -1313,9 +1315,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllOperationStartWith(g2, outer_scope)
 
   def test_name_scope_cond(self):
-
     def f(x):
-
       def f_pos(x):
         with jax.named_scope("jax_f_pos"):
           return lax.cond(x < 1., jnp.cos, jnp.sin, x)
@@ -1352,13 +1352,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertAllOperationStartWith(func.graph, "tf_outer_back")
 
   def test_name_scope_while_loop(self):
-
     def f(x):
       with tf.name_scope("outer_scope"):
-
         def condition(x):
           return jnp.sum(x, keepdims=False) < 100
-
         def body(x):
           return jnp.add(x, 2.0)
 
@@ -1374,6 +1371,66 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           self.fail(
               "tf graph has repeated name issue on when converting lax.while to tf.while."
               f"See op.name = : {op.name}")
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_wrapper={wrapper}_shard={shard}",
+           wrapper=wrapper, shard=shard)
+      for wrapper in ["none", "jit", "pjit", "shard_map"]
+      for shard in ["unspecified", "None", "P", "Sharding"])
+  def test_cross_platform(self, wrapper="shard_map", shard="P"):
+    def f_jax(x):
+      # cummax has distinctive lowering for TPU, using a reduce-window op
+      return lax.cummax(x, axis=0, reverse=False)
+
+    mesh = sharding.Mesh(jax.devices()[:1], ("a",))
+    if wrapper == "none":
+      to_convert = f_jax
+    elif wrapper == "jit":
+      to_convert = jax.jit(f_jax)
+    elif wrapper == "pjit":
+      to_convert = pjit.pjit(f_jax)
+    elif wrapper == "shard_map":
+      # TODO: I wish I could use the same cummax but it has no replication rule
+      def f_jax(x):
+        axis_size = lax.psum(1, 'a')
+        perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+        return lax.ppermute(x, 'a', perm=perm)
+      to_convert = shard_map(f_jax, mesh,
+                             in_specs=(P("a", None),), out_specs=P("a", None))
+    else:
+      assert False
+
+    params = dict(experimental_native_lowering=True)
+    needs_with_mesh = True
+
+    if shard == "unspecified":
+      pass
+    elif shard == "None":
+      params["in_shardings"] = (None,)
+    elif shard == "P":
+      params["in_shardings"] = (P("a"),)
+    elif shard == "Sharding":
+      params["in_shardings"] = (sharding.NamedSharding(mesh, P("a")),)
+      needs_with_mesh = False
+    else:
+      assert False
+
+    x = np.ones((3, 5), dtype=np.float32)
+    f_tf = jax2tf.convert(to_convert,
+                          experimental_native_lowering_platforms=('tpu',),
+                          **params)
+    f_tf = tf.function(f_tf, jit_compile=True, autograph=False)
+    if needs_with_mesh:
+      with mesh:
+        tf_hlo = f_tf.experimental_get_compiler_ir(x)(stage="hlo")
+    else:
+      tf_hlo = f_tf.experimental_get_compiler_ir(x)(stage="hlo")
+    if wrapper == "shard_map":
+      # TODO: find something to lower in shard_map that is different on TPU
+      # cummax does not have a replication rule
+      pass
+    else:
+      self.assertIn("reduce-window(f32[3,5]", tf_hlo)
 
 def get_serialized_computation(
     f_jax: Callable,
