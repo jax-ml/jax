@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import collections
+import contextlib
 import dataclasses
 import functools
 from functools import partial
@@ -23,6 +24,7 @@ import io
 import itertools
 import operator
 import re
+import threading
 import typing
 from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
                     Protocol, Sequence, Set, Tuple, Type, Union, FrozenSet)
@@ -61,6 +63,23 @@ MYPY = False
 
 lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
+class _MlirThreadLocalState(threading.local):
+
+  def __init__(self):
+    # Used for cross-platform lowering
+    # one of 'cpu', 'tpu', 'cuda', 'rocm'
+    self.lowering_platform_override = None
+
+  @contextlib.contextmanager
+  def lowering_platform(self, platform: str):
+    prev = self.lowering_platform_override
+    self.lowering_platform_override = ("cuda" if platform == "gpu" else platform)
+    try:
+      yield
+    finally:
+      self.lowering_platform_override = prev
+
+thread_local_state = _MlirThreadLocalState()
 
 # IR Helpers
 
@@ -464,6 +483,9 @@ class ModuleContext:
     self.symbol_table = symbol_table or ir.SymbolTable(self.module.operation)
     self.backend_or_name = backend_or_name
     self.platform = platform
+    if thread_local_state.lowering_platform_override is not None:
+      assert platform == thread_local_state.lowering_platform_override, (platform, thread_local_state.lowering_platform_override)
+
     self.axis_context = axis_context
     self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
@@ -478,6 +500,8 @@ class ModuleContext:
 
   @property
   def backend(self) -> xb.XlaBackend:
+    if thread_local_state.lowering_platform_override is not None:
+      raise NotImplementedError("backend property under lowering_platform_override")
     if self.backend_or_name is None or isinstance(self.backend_or_name, str):
       return xb.get_backend(self.backend_or_name)
     return self.backend_or_name

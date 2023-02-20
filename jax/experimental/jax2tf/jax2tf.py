@@ -214,6 +214,7 @@ def convert(fun_jax: Callable,
             with_gradient=True,
             enable_xla=True,
             experimental_native_lowering="default",
+            experimental_native_lowering_platforms=(),
             experimental_native_lowering_strict_checks=False) -> Callable:
   """Lowers `fun_jax` into a function that uses only TensorFlow ops.
 
@@ -274,6 +275,11 @@ def convert(fun_jax: Callable,
       function and aborts if this is not possible.
     experimental_native_lowering: DO NOT USE, for experimental purposes only.
       The value "default" defers to --jax2tf_default_experimental_native_lowering.
+    experimental_native_lowering_platforms: DO NOT USE, for experimental purposes only.
+      In conjunction with `experimental_native_lowering`, specify the platform
+      for which to lower the code. Must be a tuple with one element, one of
+      'cpu', 'gpu', 'tpu'. The default (empty tuple), specifies the JAX default
+      backend on the machine where the lowering is done.
     experimental_native_lowering_strict_checks: DO NOT USE, for experimental purposes only.
       In conjunction with `experimental_native_lowering`, enable the following
       checks: the lowered computation is executed on a platform for which it
@@ -290,6 +296,26 @@ def convert(fun_jax: Callable,
   if experimental_native_lowering and not enable_xla:
     raise ValueError(
         "experimental_native_lowering is not supported with enable_xla=False")
+
+  if experimental_native_lowering and not experimental_native_lowering_platforms:
+    experimental_native_lowering_platforms = (jax.default_backend(),)
+
+  if experimental_native_lowering_platforms:
+    if not experimental_native_lowering:
+      raise ValueError(
+          "experimental_native_lowering_platforms is not supported without "
+          "experimental_native_lowering")
+    if (not isinstance(experimental_native_lowering_platforms, (list, tuple)) or
+        not all(p in ["tpu", "cpu", "gpu"] for p in experimental_native_lowering_platforms)):
+      raise ValueError(
+          "experimental_native_lowering_platforms must be a sequence "
+          "containing a subset of {'cpu', 'gpu', 'tpu'}. "
+          f"Got: {experimental_native_lowering_platforms}")
+    experimental_native_lowering_platforms = tuple(experimental_native_lowering_platforms)
+    if len(experimental_native_lowering_platforms) > 1:
+      raise NotImplementedError(
+          "experimental_native_lowering_platforms is not implemented for multiple platforms")
+
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
   name_stack = util.wrap_name(fun_name, "jax2tf")
@@ -369,6 +395,7 @@ def convert(fun_jax: Callable,
               name_stack,
               fresh_constant_cache=True,
               experimental_native_lowering=experimental_native_lowering,
+              experimental_native_lowering_platforms=experimental_native_lowering_platforms,
               experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
           return (tuple(outs_tf),
                   make_custom_gradient_fn_tf(
@@ -386,6 +413,7 @@ def convert(fun_jax: Callable,
             name_stack,
             fresh_constant_cache=True,
             experimental_native_lowering=experimental_native_lowering,
+            experimental_native_lowering_platforms=experimental_native_lowering_platforms,
             experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
@@ -576,12 +604,14 @@ def _interpret_fun_jax(
     extra_name_stack: Optional[str],
     fresh_constant_cache: bool = False,
     experimental_native_lowering: bool = False,
+    experimental_native_lowering_platforms: Sequence[str] = (),
     experimental_native_lowering_strict_checks: bool = True,
 ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   if experimental_native_lowering:
     del extra_name_stack
     return _lower_native_and_run(
         fun_jax, args_avals, args_tf,
+        experimental_native_lowering_platforms=experimental_native_lowering_platforms,
         experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
   else:
     with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
@@ -600,6 +630,7 @@ def _lower_native_and_run(fun_jax: Callable,
                           args_avals: Sequence[core.ShapedArray],
                           args_tf: Sequence[TfVal],
                           *,
+                          experimental_native_lowering_platforms: Sequence[str],
                           experimental_native_lowering_strict_checks: bool,
                           ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   """Lowers the function using native lowering and then invokes it.
@@ -648,7 +679,11 @@ def _lower_native_and_run(fun_jax: Callable,
                             abstracted_axes=abstracted_axes).lower
   else:
     fun_jax_lower = fun_jax.lower
-  lowered = fun_jax_lower(*arg_specs_jax)._lowering
+
+  with mlir.thread_local_state.lowering_platform(
+      experimental_native_lowering_platforms[0]):
+    lowered = fun_jax_lower(*arg_specs_jax)._lowering
+
   if config.jax2tf_use_stablehlo:
     mlir_module = lowered.stablehlo()
     xla_call_module_version = 3

@@ -2843,7 +2843,8 @@ def lower_sharding_computation(
     in_is_global: Sequence[bool],
     keep_unused: bool,
     always_lower: bool,
-    devices_from_context: Optional[Sequence[xc.Device]] = None
+    devices_from_context: Optional[Sequence[xc.Device]] = None,
+    lowering_platform_override: Optional[str] = None,
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -3011,7 +3012,7 @@ def lower_sharding_computation(
       unordered_effects,
       ordered_effects,
       backend,
-      backend.platform,
+      lowering_platform_override or backend.platform,
       axis_ctx,
       name_stack,
       donated_invars,
@@ -3066,7 +3067,8 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_global: Sequence[bool]) -> MeshComputation:
+    in_is_global: Sequence[bool],
+    lowering_platform_override: Optional[str] = None) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = new_name_stack(wrap_name(fun_name, api_name))
@@ -3185,7 +3187,7 @@ def lower_mesh_computation(
         unordered_effects,
         ordered_effects,
         backend,
-        backend.platform,
+        lowering_platform_override or backend.platform,
         axis_ctx,
         name_stack,
         donated_invars,
