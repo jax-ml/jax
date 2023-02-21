@@ -29,6 +29,7 @@ from jax._src import profiler
 from jax._src import util
 from jax._src.config import config
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.typing import Array
 
 ### device-persistent data
@@ -59,6 +60,13 @@ def make_device_array(
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
+  from jax._src import array
+
+  if (jax.config.jax_array and xla_extension_version >= 128 and
+      isinstance(device_buffer, (array.ArrayImpl, xc.Buffer))):
+    return array._single_device_array_from_buf(
+        device_buffer, False if device_buffer._device is None else True)
+
   if isinstance(device_buffer, xc.Buffer):
 
     if device_buffer.aval == aval and device_buffer._device == device:
