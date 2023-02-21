@@ -45,7 +45,7 @@ class COOInfo(NamedTuple):
   shape: Shape
   rows_sorted: bool = False
   cols_sorted: bool = False
-  padded: bool = False
+  padded: bool = True  # assume padded unless specified otherwise
 
 
 @tree_util.register_pytree_node_class
