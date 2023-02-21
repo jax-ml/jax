@@ -293,10 +293,13 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     y = np.int32(3)
     self.ConvertAndCompare(jnp.floor_divide, x, y)
     expected = jnp.floor_divide(x, y)
-    # Try it with TF 1 as well (#5831)
-    with tf.compat.v1.Session() as sess:
-      tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
-      self.assertAllClose(expected, tf1_res)
+    if not config.jax2tf_default_experimental_native_lowering:
+      # With native lowering TF1 seems to want to run the converted code
+      # on the CPU even when the default backend is the TPU.
+      # Try it with TF 1 as well (#5831)
+      with tf.compat.v1.Session() as sess:
+        tf1_res = sess.run(jax2tf.convert(jnp.floor_divide)(x, y))
+        self.assertAllClose(expected, tf1_res)
 
   def test_boolean_gather(self):
     values = np.array([[True, True], [False, True], [False, False]],
