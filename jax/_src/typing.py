@@ -68,3 +68,4 @@ ArrayLike = Union[
   np.bool_, np.number,  # NumPy scalar types
   bool, int, float, complex,  # Python scalar types
 ]
+ArrayLike.__doc__ = "Type annotation for JAX array-like objects."
