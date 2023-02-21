@@ -1487,7 +1487,7 @@ def _t(key, df, shape, dtype) -> Array:
   n = normal(key_n, shape, dtype)
   two = _lax_const(n, 2)
   half_df = lax.div(df, two)
-  g = gamma(key_n, half_df, shape, dtype)
+  g = gamma(key_g, half_df, shape, dtype)
   return n * jnp.sqrt(half_df / g)
 
 

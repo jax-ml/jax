@@ -1136,7 +1136,7 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
-    key = self.seed_prng(0)
+    key = self.seed_prng(1)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
     crand = jax.jit(rand)
 
