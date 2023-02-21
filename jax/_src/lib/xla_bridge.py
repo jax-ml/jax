@@ -48,10 +48,6 @@ traceback_util.register_exclusion(__file__)
 
 XlaBackend = xla_client._xla.Client
 
-# TODO(phawkins): replace with xla_client.ShardedBuffer after fixing type
-# errors.
-ShardedBuffer = Any
-
 FLAGS = flags.FLAGS
 
 logger = logging.getLogger(__name__)

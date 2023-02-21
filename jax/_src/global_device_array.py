@@ -22,7 +22,6 @@ import jax
 from jax._src import core
 from jax._src import dispatch
 from jax._src import api_util
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.config import config
 from jax._src.interpreters import pxla
@@ -260,13 +259,13 @@ class GlobalDeviceArray:
                global_shape: Shape,
                global_mesh: pxla.Mesh,
                mesh_axes: MeshAxes,
-               device_buffers: Union[xb.ShardedBuffer, Sequence[DeviceArray]],
+               device_buffers: Sequence[DeviceArray],
                _gda_fast_path_args: Optional[_GdaFastPathArgs] = None,
                _enable_checks: bool = True):
     self._global_shape = global_shape
     self._global_mesh = global_mesh
     self._mesh_axes = mesh_axes
-    self._init_buffers(device_buffers)
+    self._device_buffers = device_buffers
 
     # Optionally precomputed for performance.
     self._gda_fast_path_args = _gda_fast_path_args
@@ -290,46 +289,12 @@ class GlobalDeviceArray:
           f"Expected shard shape {ss} doesn't match the device buffer "
           f"shape, got: {[db.shape for db in self._device_buffers]}")
 
-    if self._sharded_buffer is None:
-      dtype = device_buffers[0].dtype  # type: ignore
-    else:
-      dtype = self._sharded_buffer.dtype  # type: ignore
+    dtype = device_buffers[0].dtype  # type: ignore
     if _enable_checks or config.jax_enable_checks:
       assert all(db.dtype == dtype for db in self._device_buffers), (
           "Input arrays to GlobalDeviceArray must have matching dtypes, "
           f"got: {[db.dtype for db in self._device_buffers]}")
     self.dtype = dtype
-
-  def _init_buffers(self, device_buffers):
-    from jax._src.array import ArrayImpl
-
-    self._maybe_device_buffers = None
-
-    # ShardedBuffer is the fast path for managing sharded buffers that avoids
-    # creating python objects for every device.
-    if isinstance(device_buffers, xc.ShardedBuffer):
-      # if ShardedBuffer is provided, we don't need to use `_device_buffers`
-      self._sharded_buffer = device_buffers  # type: ignore
-    elif isinstance(device_buffers[0], DeviceArray):  # type: ignore
-      # if xla_client.Buffer is provided, we convert it to ShardedBuffer.
-      self._sharded_buffer = xc.ShardedBuffer.create_sharded_buffer(device_buffers)
-    elif isinstance(device_buffers[0], ArrayImpl):
-      self._sharded_buffer = None
-      self._maybe_device_buffers = [db._arrays[0] for db in device_buffers]
-    else:
-      # if `device_buffers` is any other types that cannot
-      # be converted to ShardedBuffer, then we use `device_buffers`.
-      # TODO(yashkatariya,chky): Remove this branch once everyone is using
-      # sharded_buffer
-      self._sharded_buffer = None
-      self._maybe_device_buffers = device_buffers
-
-  @property
-  def _device_buffers(self):
-    self._check_if_deleted()
-    if self._maybe_device_buffers is None:
-      self._maybe_device_buffers = self._sharded_buffer.get_device_buffers()  # type: ignore
-    return self._maybe_device_buffers
 
   def __eq__(self, other: object):
     raise NotImplementedError(
@@ -453,12 +418,8 @@ class GlobalDeviceArray:
 
   def block_until_ready(self):
     self._check_if_deleted()
-    # self._sharded_buffer can be None if _DeviceArray is used.
-    if self._sharded_buffer is None:
-      for db in self._device_buffers:
-        db.block_until_ready()
-    else:
-      self._sharded_buffer.block_until_ready()  # type: ignore
+    for db in self._device_buffers:
+      db.block_until_ready()
     return self
 
   def _check_if_deleted(self):
@@ -466,16 +427,12 @@ class GlobalDeviceArray:
       raise RuntimeError("GlobalDeviceArray has been deleted.")
 
   def is_deleted(self):
-    return self._sharded_buffer is None and self._maybe_device_buffers is None
+    return self._device_buffers is None
 
   def delete(self):
-    if self._sharded_buffer:
-      self._sharded_buffer.delete()
-      self._sharded_buffer = None
-    if self._maybe_device_buffers:
-      for b in self._maybe_device_buffers:
-        b.delete()
-      self._maybe_device_buffers = None
+    for b in self._device_buffers:
+      b.delete()
+    self._device_buffers = None
 
   @property
   def sharding(self):
@@ -664,10 +621,7 @@ mlir.register_constant_handler(GlobalDeviceArray, _gda_mlir_constant_handler)
 
 def _gda_shard_arg(x, devices, indices):
   x._check_if_deleted()
-  # self._sharded_buffer can be None if _DeviceArray is used.
-  if x._sharded_buffer is None:
-    return x._device_buffers
-  return x._sharded_buffer
+  return x._device_buffers
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg
 
 

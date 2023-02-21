@@ -397,7 +397,7 @@ def shard_arg(arg, devices, arg_indices):
 @profiler.annotate_function
 def shard_args(devices: Sequence[xb.xla_client.Device],
                indices: Sequence[Sequence[Index]],
-               args) -> Sequence[Union[xb.ShardedBuffer, Sequence[xb.xla_client.Buffer]]]:
+               args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
   """Shard each argument data array along its leading axis.
 
   Args:
@@ -572,8 +572,7 @@ def local_aval_to_result_handler(
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-PxlaResultHandler = Callable[..., Callable[
-    [Union[List[xb.xla_client.Buffer], xb.ShardedBuffer]], Any]]
+PxlaResultHandler = Callable[..., Callable[[Sequence[xb.xla_client.Buffer]], Any]]
 local_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaResultHandler] = {}
 
 def sda_array_result_handler(aval: ShapedArray, sharding, indices):
@@ -687,7 +686,6 @@ def make_sharded_device_array(
 
     if (_USE_CPP_SDA and
         (not device_buffers or
-        isinstance(device_buffers, xb.xla_client.ShardedBuffer) or
         isinstance(device_buffers[0], xb.xla_client.Buffer))):
       return pmap_lib.ShardedDeviceArray.make(
           aval, sharding_spec, device_buffers,
@@ -1751,7 +1749,6 @@ def _get_pmap_sharding(devices, specs):
 multi_host_supported_collectives: Set[core.Primitive] = set()
 
 
-
 def check_multihost_collective_allowlist(jaxpr):
   used_collectives = set(xla.jaxpr_collectives(jaxpr))
   if not used_collectives.issubset(multi_host_supported_collectives):
@@ -2135,13 +2132,7 @@ class ExecuteReplicated:
           input_bufs)
     if dispatch.needs_check_special():
       for bufs in out_bufs:
-        if isinstance(bufs, xc.ShardedBuffer):
-          bufs = cast(xc.ShardedBuffer, bufs).get_device_buffers()
         dispatch.check_special(self.name, bufs)
-    # TODO(yashkatariya): Remove once migration to Array is completed.
-    if (config.jax_array and out_bufs and
-        isinstance(out_bufs[0], xc.ShardedBuffer)):
-      out_bufs = [o.get_device_buffers() for o in out_bufs]
     return self.out_handler(out_bufs)
 
 
