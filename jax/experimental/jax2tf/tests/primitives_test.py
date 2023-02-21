@@ -128,25 +128,9 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("Unexplained failure, but in old no_jax_array")
 
     if (config.jax2tf_default_experimental_native_lowering and
-        "cholesky" in harness.fullname):
-      raise unittest.SkipTest("b/269386856: cholesky failures")
-
-    if (config.jax2tf_default_experimental_native_lowering and
-        device in ["cpu", "gpu"] and
-        "igammac" in harness.fullname):
-      raise unittest.SkipTest("b/269401509: igammac failures")
-
-    if (config.jax2tf_default_experimental_native_lowering and
-        device == "tpu" and
-        harness.dtype == jnp.bfloat16 and
-        "eigh" in harness.fullname):
-      raise unittest.SkipTest("b/269388842: eigh failures on TPU for bfloat16")
-
-    if (config.jax2tf_default_experimental_native_lowering and
         device == "gpu" and
         "lu" in harness.fullname):
       raise unittest.SkipTest("b/269388847: lu failures on GPU")
-
 
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:

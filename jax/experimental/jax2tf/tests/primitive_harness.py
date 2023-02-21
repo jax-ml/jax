@@ -1024,38 +1024,23 @@ _make_binary_elementwise_harnesses(
 _make_binary_elementwise_harnesses(
     prim=lax.sub_p, dtypes=set(jtu.dtypes.all) - set(jtu.dtypes.boolean))
 
-_min_max_special_cases = tuple(
-    (lhs, rhs)
-    for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex
-    for lhs, rhs in [(np.array([np.inf, np.inf], dtype=dtype),
-                      np.array([np.nan, np.nan], dtype=dtype)),
-                     (np.array([-np.inf, -np.inf], dtype=dtype),
-                      np.array([np.nan, np.nan], dtype=dtype))])
-
-_make_binary_elementwise_harnesses(
-    prim=lax.min_p, dtypes=jtu.dtypes.all,
-    broadcasting_dtypes=(np.float32, np.complex64, np.complex128))
-# Validate special cases
-for lhs, rhs in _min_max_special_cases:
-  define(
-      lax.min_p,
-      f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
-      lax.min_p.bind, [lhs, rhs],
-      prim=lax.min_p,
-      dtype=lhs.dtype)
-
-_make_binary_elementwise_harnesses(
-    prim=lax.max_p, dtypes=jtu.dtypes.all,
-    broadcasting_dtypes=(np.float32, np.complex64, np.complex128))
-# Validate special cases
-for lhs, rhs in _min_max_special_cases:
-  define(
-      lax.max_p,
-      f"inf_nan_{jtu.dtype_str(lhs.dtype)}_{lhs[0]}_{rhs[0]}",
-      lax.max_p.bind, [lhs, rhs],
-      prim=lax.max_p,
-      dtype=lhs.dtype)
-
+for minmax_p in [lax.min_p, lax.max_p]:
+  _make_binary_elementwise_harnesses(
+      prim=minmax_p, dtypes=jtu.dtypes.all,
+      broadcasting_dtypes=(np.float32, np.complex64, np.complex128))
+  # Validate special cases nan/inf/-inf
+  for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
+    define(
+        minmax_p,
+        f"inf_nan_{jtu.dtype_str(dtype)}",
+        minmax_p.bind, [np.array([[np.nan, np.nan, np.nan],
+                                  [np.inf, np.inf, np.inf],
+                                  [-np.inf, -np.inf, -np.inf]], dtype=dtype),
+                        np.array([[np.nan, np.inf, -np.inf],
+                                  [np.nan, np.inf, -np.inf],
+                                  [np.nan, np.inf, -np.inf]], dtype=dtype)],
+        prim=minmax_p,
+        dtype=dtype)
 
 def _make_broadcast_in_dim_harness(name,
                                    *,
