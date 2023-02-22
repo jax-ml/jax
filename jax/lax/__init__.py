@@ -367,4 +367,5 @@ from jax._src.lax.ann import (
 from jax._src.ad_util import stop_gradient_p as stop_gradient_p
 from jax.lax import linalg as linalg
 
-from jax.experimental.pjit import with_sharding_constraint
+from jax._src.pjit import with_sharding_constraint
+from jax._src.dispatch import device_put_p
