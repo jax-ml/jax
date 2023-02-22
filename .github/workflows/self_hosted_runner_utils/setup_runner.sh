@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # Heavily influenced by
-# https://github.com/iree-org/iree/tree/main/build_tools/github_actions/runner/config
+# https://github.com/openxla/iree/tree/main/build_tools/github_actions/runner/config
 
 set -eux
 

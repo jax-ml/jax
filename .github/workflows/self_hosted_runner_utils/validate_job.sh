@@ -15,7 +15,7 @@
 # limitations under the License.
 
 # More or less copied from
-# https://github.com/iree-org/iree/tree/main/build_tools/github_actions/runner/config
+# https://github.com/openxla/iree/tree/main/build_tools/github_actions/runner/config
 
 set -euo pipefail
 
