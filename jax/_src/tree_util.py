@@ -13,20 +13,22 @@
 # limitations under the License.
 
 import collections
+from dataclasses import dataclass
 import difflib
 import functools
 from functools import partial
 import operator as op
-from typing import (Any, Callable, Dict, Hashable, Iterable, List, NamedTuple,
-                    Optional, Sequence, Tuple, Type, TypeVar, overload)
 import textwrap
+from typing import (Any, Callable, Hashable, Iterable, List, NamedTuple,
+                    Optional, Tuple, Type, TypeVar, Union, overload)
 import warnings
 
-from jax._src.lib import pytree
-
-from jax._src.util import safe_zip, unzip2
-
 from jax._src import traceback_util
+from jax._src.lib import pytree
+from jax._src.util import safe_zip
+from jax._src.util import unzip2
+
+
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
@@ -291,7 +293,6 @@ register_pytree_node(
   lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index,call-overload]
 
 
-
 class _HashableCallableShim:
   """Object that delegates __call__, __hash__, and __eq__ to another object."""
   def __init__(self, fun):
@@ -398,85 +399,290 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
   return result
 
 def flatten_one_level(pytree: Any) -> Tuple[List[Any], Hashable]:
+  """Flatten the given pytree node by one level.
+
+  Args:
+    pytree: A valid pytree node, either built-in or registered via
+      ``register_pytree_node`` or ``register_pytree_with_keys``.
+
+  Returns:
+    A pair of the pytree's flattened children and its hashable metadata.
+
+  Raises:
+    ValueError: If the given pytree is not a built-in or registered container
+    via ``register_pytree_node`` or ``register_pytree_with_keys``.
+  """
   handler = _registry.get(type(pytree))
   if handler:
     children, meta = handler.to_iter(pytree)
     return list(children), meta
   elif isinstance(pytree, tuple) and hasattr(pytree, '_fields'):
-    return list(pytree), None
+    # handle namedtuple as a special case, based on heuristic
+    return [getattr(pytree, s) for s in pytree._fields], None
   else:
     raise ValueError(f"can't tree-flatten type: {type(pytree)}")
 
 def prefix_errors(prefix_tree: Any, full_tree: Any,
                   is_leaf: Optional[Callable[[Any], bool]] = None,
                   ) -> List[Callable[[str], ValueError]]:
-  return list(_prefix_error(KeyPath(()), prefix_tree, full_tree, is_leaf))
+  return list(_prefix_error((), prefix_tree, full_tree, is_leaf))
 
-class KeyPathEntry(NamedTuple):
+# TODO(ivyzheng): Remove old APIs when all users migrated.
+
+class _DeprecatedKeyPathEntry(NamedTuple):
   key: Any
   def pprint(self) -> str:
     assert False  # must override
 
-class KeyPath(NamedTuple):
-  keys: Tuple[KeyPathEntry, ...]
-  def __add__(self, other):
-    if isinstance(other, KeyPathEntry):
-      return KeyPath(self.keys + (other,))
-    raise TypeError(type(other))
-  def pprint(self, root: str = ' tree root') -> str:
-    if not self.keys:
-      return root
-    return ''.join(k.pprint() for k in self.keys)
-
-class GetitemKeyPathEntry(KeyPathEntry):
+class GetitemKeyPathEntry(_DeprecatedKeyPathEntry):
   def pprint(self) -> str:
     return f'[{repr(self.key)}]'
+  def __str__(self):
+    return self.pprint()
 
-class AttributeKeyPathEntry(KeyPathEntry):
+class AttributeKeyPathEntry(_DeprecatedKeyPathEntry):
   def pprint(self) -> str:
     return f'.{self.key}'
+  def __str__(self):
+    return self.pprint()
 
-class FlattenedKeyPathEntry(KeyPathEntry):  # fallback
+class FlattenedKeyPathEntry(_DeprecatedKeyPathEntry):  # fallback
   def pprint(self) -> str:
     return f'[<flat index {self.key}>]'
+  def __str__(self):
+    return self.pprint()
 
-def _child_keys(pytree: Any) -> Sequence[KeyPathEntry]:
-  assert not treedef_is_strict_leaf(tree_structure(pytree))
-  handler = _keypath_registry.get(type(pytree))
+
+@dataclass(frozen=True)
+class SequenceKey():
+  idx: int
+  def __str__(self):
+    return f'[{repr(self.idx)}]'
+
+@dataclass(frozen=True)
+class DictKey():
+  key: Hashable
+  def __str__(self):
+    return f'[{repr(self.key)}]'
+
+@dataclass(frozen=True)
+class GetAttrKey():
+  name: str
+  def __str__(self):
+    return f'.{self.name}'
+
+@dataclass(frozen=True)
+class FlattenedIndexKey():
+  key: int
+  def __str__(self):
+    return f'[<flat index {self.key}>]'
+
+BuiltInKeyEntry = Union[SequenceKey, DictKey, GetAttrKey, FlattenedIndexKey]
+
+KeyEntry = TypeVar("KeyEntry", bound=Hashable)
+KeyPath = Tuple[KeyEntry, ...]
+
+def keystr(keys: KeyPath):
+  return ''.join([str(k) for k in keys])
+
+
+class _RegistryWithKeypathsEntry(NamedTuple):
+  flatten_with_keys: Callable[..., Any]
+  unflatten_func: Callable[..., Any]
+
+
+def register_keypaths(
+    ty: Type[T], handler: Callable[[T], Tuple[KeyEntry, ...]]
+) -> None:
+  """[Deprecated] Register the method to get keypaths for type.
+
+  Please use ``register_pytree_with_keys`` instead.
+
+  Only works if the type was already registered with ``register_pytree_node``.
+  """
+  warnings.warn(
+      (
+          "jax.tree_util.register_keypaths is deprecated, and will be removed"
+          " in a future release. Please use `register_pytree_with_keys()`"
+          " instead."
+      ),
+      category=FutureWarning,
+      stacklevel=2,
+  )
+  _register_keypaths(ty, handler)
+
+
+def _register_keypaths(
+    ty: Type[T], handler: Callable[[T], Tuple[KeyEntry, ...]]
+) -> None:
+  def flatten_with_keys(xs):
+    children, treedef = _registry[ty].to_iter(xs)
+    return list(zip(handler(xs), children)), treedef
+  if ty in _registry:
+    _registry_with_keypaths[ty] = _RegistryWithKeypathsEntry(
+        flatten_with_keys, _registry[ty].from_iter
+    )
+
+
+_registry_with_keypaths = {}
+
+_register_keypaths(
+    tuple, lambda xs: tuple(SequenceKey(i) for i in range(len(xs)))
+)
+_register_keypaths(
+    list, lambda xs: tuple(SequenceKey(i) for i in range(len(xs)))
+)
+_register_keypaths(dict, lambda xs: tuple(DictKey(k) for k in sorted(xs)))
+
+_register_keypaths(
+    collections.defaultdict, lambda x: tuple(DictKey(k) for k in x.keys())
+)
+
+_register_keypaths(
+    collections.OrderedDict, lambda x: tuple(DictKey(k) for k in x.keys())
+)
+
+def register_pytree_with_keys(
+    nodetype: Type[T],
+    flatten_with_keys: Callable[[T], Tuple[Iterable[Tuple[KeyPath, _Children]], _AuxData]],
+    unflatten_func: Callable[[_AuxData, _Children], T]):
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This is a more powerful alternative to ``register_pytree_node`` that allows
+  you to access each pytree leaf's key path when flattening and tree-mapping.
+
+  Args:
+    nodetype: a Python type to treat as an internal pytree node.
+    flatten_func: a function to be used during flattening, taking a value of
+      type ``nodetype`` and returning a pair, with (1) an iterable for tuples of
+      each key path and its child, and (2) some hashable auxiliary data to be
+      stored in the treedef and to be passed to the ``unflatten_func``.
+    unflatten_func: a function taking two arguments: the auxiliary data that was
+      returned by ``flatten_func`` and stored in the treedef, and the
+      unflattened children. The function should return an instance of
+      ``nodetype``.
+  """
+  def flatten_func(tree):
+    key_children, treedef = flatten_with_keys(tree)
+    return [c for _, c in key_children], treedef
+  register_pytree_node(nodetype, flatten_func, unflatten_func)
+  _registry_with_keypaths[nodetype] = _RegistryWithKeypathsEntry(
+      flatten_with_keys, unflatten_func
+  )
+
+def register_pytree_with_keys_class(cls: U) -> U:
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This function is similar to ``register_pytree_node_class``, but requires a
+  class that defines how it could be flattened with keys.
+
+  It is a thin wrapper around ``register_pytree_with_keys``, and
+  provides a class-oriented interface::
+
+    @register_pytree_with_keys_class
+    class Special:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+      def tree_flatten_with_keys(self):
+        return (((GetAttrKey('x'), self.x), (GetAttrKey('y'), self.y)), None)
+      @classmethod
+      def tree_unflatten(cls, aux_data, children):
+        return cls(*children)
+  """
+  register_pytree_with_keys(
+      cls, op.methodcaller("tree_flatten_with_keys"), cls.tree_unflatten
+  )
+  return cls
+
+
+def tree_flatten_with_path(
+    tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
+) -> Tuple[List[Tuple[KeyPath, Any]], PyTreeDef]:
+  """Flattens a pytree like ``tree_flatten``, but also returns each leaf's key path.
+
+  Args:
+    tree: a pytree to flatten. If it contains a custom type, it must be
+      registered with ``register_pytree_with_keys``.
+  Returns:
+    A pair which the first element is a list of key-leaf pairs, each of
+    which contains a leaf and its key path. The second element is a treedef
+    representing the structure of the flattened tree.
+  """
+  _, tree_def = tree_flatten(tree, is_leaf)
+  return _generate_key_paths(tree, is_leaf), tree_def
+
+
+def _generate_key_paths(
+    tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
+) -> List[Tuple[KeyPath, Any]]:
+  return list(_generate_key_paths_((), tree, is_leaf))
+
+
+# The overall logic should be same as PyTreeDef::FlattenIntoImpl
+def _generate_key_paths_(
+    key_path: KeyPath,
+    tree: Any,
+    is_leaf: Optional[Callable[[Any], bool]] = None,
+) -> Iterable[Tuple[KeyPath, Any]]:
+  if is_leaf and is_leaf(tree):
+    yield key_path, tree
+    return
+  handler = _registry_with_keypaths.get(type(tree))
   if handler:
-    return handler(pytree)
+    key_children, _ = handler.flatten_with_keys(tree)
+    for k, c in key_children:
+      yield from _generate_key_paths_(tuple((*key_path, k)), c, is_leaf)
+  elif isinstance(tree, tuple) and hasattr(tree, '_fields'):
+    # handle namedtuple as a special case, based on heuristic
+    key_children = [(GetAttrKey(s), getattr(tree, s)) for s in tree._fields]
+    for k, c in key_children:
+      yield from _generate_key_paths_(tuple((*key_path, k)), c, is_leaf)
+  elif tree is not None:  # Some strictly leaf type, like int or numpy array
+    yield key_path, tree
+
+
+def tree_map_with_path(f: Callable[..., Any],
+                       tree: Any, *rest: Any,
+                       is_leaf: Optional[Callable[[Any], bool]] = None) -> Any:
+  """Maps a multi-input function over pytree key path and args to produce a new pytree.
+
+  This is a more powerful alternative of ``tree_map`` that can take the key path
+  of each leaf as input argument as well.
+
+  Args:
+    f: function that takes ``2 + len(rest)`` arguments, aka. the key path and
+      each corresponding leaves of the pytrees.
+    tree: a pytree to be mapped over, with each leaf's key path as the first
+      positional argument and the leaf itself as the second argument to ``f``.
+    *rest: a tuple of pytrees, each of which has the same structure as ``tree``
+      or has ``tree`` as a prefix.
+
+  Returns:
+    A new pytree with the same structure as ``tree`` but with the value at each
+    leaf given by ``f(kp, x, *xs)`` where ``kp`` is the key path of the leaf at
+    the corresponding leaf in ``tree``, ``x`` is the leaf value and ``xs`` is
+    the tuple of values at corresponding nodes in ``rest``.
+  """
+
+  keypath_leaves, treedef = tree_flatten_with_path(tree, is_leaf)
+  keypath_leaves = list(zip(*keypath_leaves))
+  all_keypath_leaves = keypath_leaves + [treedef.flatten_up_to(r) for r in rest]
+  return treedef.unflatten(f(*xs) for xs in zip(*all_keypath_leaves))
+
+
+def _child_keys(pytree: Any) -> KeyPath:
+  assert not treedef_is_strict_leaf(tree_structure(pytree))
+  handler = _registry_with_keypaths.get(type(pytree))
+  if handler:
+    return tuple(k for k, _ in handler.flatten_with_keys(pytree)[0])
   elif isinstance(pytree, tuple) and hasattr(pytree, '_fields'):
     # handle namedtuple as a special case, based on heuristic
-    return [AttributeKeyPathEntry(s) for s in pytree._fields]
+    return tuple(GetAttrKey(s) for s in pytree._fields)
   else:
     num_children = len(treedef_children(tree_structure(pytree)))
-    return [FlattenedKeyPathEntry(i) for i in range(num_children)]
+    return tuple(FlattenedIndexKey(i) for i in range(num_children))
 
-_keypath_registry: Dict[Type, Callable[[Any], Sequence[KeyPathEntry]]] = {}
-
-def register_keypaths(ty: Type, handler: Callable[[Any], Sequence[KeyPathEntry]]
-                      ) -> None:
-  _keypath_registry[ty] = handler
-
-register_keypaths(tuple,
-                  lambda tup: [GetitemKeyPathEntry(i) for i in range(len(tup))])
-register_keypaths(list,
-                  lambda lst: [GetitemKeyPathEntry(i) for i in range(len(lst))])
-register_keypaths(dict,
-                  lambda dct: [GetitemKeyPathEntry(k) for k in sorted(dct)])
-
-def _generate_key_paths(tree: Any) -> List[Tuple[KeyPath, Any]]:
-  return list(_generate_key_paths_(KeyPath(()), tree))
-
-def _generate_key_paths_(key_path: KeyPath, tree: Any
-                         ) -> Iterable[Tuple[KeyPath, Any]]:
-  if treedef_is_strict_leaf(tree_structure(tree)):
-    yield key_path, tree
-  else:
-    child_keys = _child_keys(tree)
-    tree_children, _ = flatten_one_level(tree)
-    for k, c in zip(child_keys, tree_children):
-      yield from _generate_key_paths_(key_path + k, c)
 
 def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
                   is_leaf: Optional[Callable[[Any], bool]] = None,
@@ -488,7 +694,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
   if type(prefix_tree) != type(full_tree):
     yield lambda name: ValueError(
       "pytree structure error: different types at key path\n"
-      f"    {{name}}{key_path.pprint()}\n"
+      f"    {{name}}{keystr(key_path)}\n"
       f"At that key path, the prefix pytree {{name}} has a subtree of type\n"
       f"    {type(prefix_tree)}\n"
       f"but at the same key path the full pytree has a subtree of different type\n"
@@ -510,7 +716,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
       ty = type(prefix_tree)
       yield lambda name: ValueError(
           f"pytree structure error: different lengths of {ty.__name__} at key path\n"
-          f"    {{name}}{key_path.pprint()}\n"
+          f"    {{name}}{keystr(key_path)}\n"
           f"At that key path, the prefix pytree {{name}} has a subtree of type "
           f"{ty.__name__} of length {len(prefix_tree)}, but the full pytree "
           f"has a subtree of the same type but of length {len(full_tree)}."
@@ -525,7 +731,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
     if len(prefix_tree_children) != len(full_tree_children):
       yield lambda name: ValueError(
         "pytree structure error: different numbers of pytree children at key path\n"
-        f"    {{name}}{key_path.pprint()}\n"
+        f"    {{name}}{keystr(key_path)}\n"
         f"At that key path, the prefix pytree {{name}} has a subtree of type\n"
         f"    {type(prefix_tree)}\n"
         f"with {len(prefix_tree_children)} child keys\n"
@@ -549,7 +755,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
         prefix="    ")
     yield lambda name: ValueError(
       "pytree structure error: different pytree metadata at key path\n"
-      f"    {{name}}{key_path.pprint()}\n"
+      f"    {{name}}{keystr(key_path)}\n"
       f"At that key path, the prefix pytree {{name}} has a subtree of type\n"
       f"    {type(prefix_tree)}\n"
       f"with metadata\n"
@@ -567,7 +773,7 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
     ("equal pytree nodes gave differing prefix_tree_keys: "
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
-    yield from _prefix_error(key_path + k, t1, t2)
+    yield from _prefix_error(tuple((*key_path, k)), t1, t2)
 
 
 # TODO(jakevdp) remove these deprecated wrappers & their imports in jax/__init__.py

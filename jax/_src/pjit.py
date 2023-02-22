@@ -148,10 +148,10 @@ def _device_assignment_mismatch_error(fun, fails, in_tree, args_flat, api_name):
 
   arg_list = []
   for arg_key, val in args_aug:
-    ak, *rem_keys = arg_key.keys
+    ak, *rem_keys = arg_key
     if sig is not None:
-      loc = ''.join(k.pprint() for k in rem_keys)
-      arg_name = f'{list(sig.arguments.keys())[ak.key]}{loc}'
+      loc = ''.join(str(k) for k in rem_keys)
+      arg_name = f'{list(sig.arguments.keys())[ak.idx]}{loc}'
     else:
       arg_name = ''
     da = val.sharding._device_assignment if hasattr(val, 'sharding') else None

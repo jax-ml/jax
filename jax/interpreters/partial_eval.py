@@ -43,7 +43,7 @@ from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
                            unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, DebugInfo)
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
-                                KeyPath, _generate_key_paths)
+                                KeyPath, _generate_key_paths, keystr)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache,
@@ -1493,7 +1493,7 @@ class DynamicJaxprTracer(core.Tracer):
     arg_info = arg_info_all(dbg)
     if invar_pos and arg_info:
       arg_info = [arg_info[i] for i in invar_pos]
-      arg_names = [f'{name}{path.pprint("")}' for name, path in arg_info]
+      arg_names = [f'{name}{keystr(path)}' for name, path in arg_info]
       if len(arg_names) == 1:
         arg_info_str = f"the argument {arg_names[0]}"
       elif len(arg_names) == 2:

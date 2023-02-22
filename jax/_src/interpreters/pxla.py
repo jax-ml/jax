@@ -49,7 +49,7 @@ import numpy as np
 import jax
 from jax.errors import JAXTypeError
 from jax.interpreters import partial_eval as pe
-from jax.tree_util import tree_flatten, tree_map
+from jax.tree_util import tree_flatten, tree_map, keystr
 
 from jax._src import abstract_arrays
 from jax._src import api_util
@@ -3058,7 +3058,7 @@ def lower_sharding_computation(
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
   arg_info = jaxpr.debug_info and pe.arg_info_all(jaxpr.debug_info)
   arg_names = None if arg_info is None else [
-      f'{name}{path.pprint("")}' for i, (name, path) in enumerate(arg_info)
+      f'{name}{keystr(path)}' for i, (name, path) in enumerate(arg_info)
       if i in kept_var_idx]
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
@@ -3249,7 +3249,7 @@ def lower_mesh_computation(
       closed_jaxpr.effects))
     arg_info = jaxpr.debug_info and pe.arg_info_all(jaxpr.debug_info)
     arg_names = None if arg_info is None else [
-        f'{name}{path.pprint("")}' for i, (name, path) in enumerate(arg_info)]
+        f'{name}{keystr(path)}' for i, (name, path) in enumerate(arg_info)]
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,

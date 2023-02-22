@@ -48,7 +48,7 @@ from jax.interpreters import xla
 from jax._src.interpreters import pxla
 from jax.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           tree_structure, tree_leaves)
+                           tree_structure, tree_leaves, keystr)
 from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
                                 _generate_key_paths, KeyPath)
 
@@ -130,7 +130,7 @@ SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 def _check_specs(error_type: SpecErrorType, specs: Any) -> None:
   if all(isinstance(p, PartitionSpec) for p in tree_leaves(specs)): return
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
-  msgs = [f"  {prefix}_specs{key.pprint()} is {x} of type {type(x).__name__}, "
+  msgs = [f"  {prefix}_specs{keystr(key)} is {x} of type {type(x).__name__}, "
           for key, x in _generate_key_paths(specs) if not isinstance(x, P)]
   raise TypeError(
       f"shard_map {prefix}_specs argument must be a pytree of "
@@ -169,15 +169,15 @@ def _spec_rank_error(
   msgs = []
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
     if error_type == SpecErrorType.input and ba is not None:
-      arg_key, *_ = fail_key.keys
-      extra = (f", where {base}[{arg_key.key}] is bound to {f.__name__}'s "
-               f"parameter '{list(ba.arguments.keys())[arg_key.key]}',")
+      arg_key, *_ = fail_key
+      extra = (f", where {base}[{arg_key}] is bound to {f.__name__}'s "
+               f"parameter '{list(ba.arguments.keys())[arg_key.idx]}',")
     else:
       extra = ""
     msgs.append(
-        f"{prefix}_specs{spec_key.pprint()} is {spec} which has length "
+        f"{prefix}_specs{keystr(spec_key)} is {spec} which has length "
         f"{len(spec)}, but "
-        f"{base}{fail_key.pprint()}{extra} has shape {aval.str_short()}, "
+        f"{base}{keystr(fail_key)}{extra} has shape {aval.str_short()}, "
         f"which has rank {aval.ndim} (and {aval.ndim} < {len(spec)})")
   assert msgs
   msg = (f"shard_map applied to the function '{f.__name__}' was given an "
@@ -197,9 +197,9 @@ def _spec_divisibility_error(
   msgs = []
   for (spec_key, spec), (fail_key, aval) in _iter_paths(tree, specs, fails):
     if ba is not None:
-      arg_key, *_ = fail_key.keys
-      extra = (f", where args[{arg_key.key}] is bound to {f.__name__}'s "
-               f"parameter '{list(ba.arguments.keys())[arg_key.key]}',")
+      arg_key, *_ = fail_key
+      extra = (f", where args[{arg_key}] is bound to {f.__name__}'s "
+               f"parameter '{list(ba.arguments.keys())[arg_key.idx]}',")
     names = _canonicalize_spec(spec)
     for d, ns in names.items():
       if aval.shape[d] % math.prod(mesh.shape[n] for n in ns):
@@ -207,8 +207,8 @@ def _spec_divisibility_error(
         total = 'total ' if len(ns) > 1 else ''
         sz = math.prod(mesh.shape[n] for n in ns)
         msgs.append(
-            f"args{fail_key.pprint()} of shape {aval.str_short()}{extra} "
-            f"corresponds to in_specs{spec_key.pprint()} of value {spec}, "
+            f"args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
+            f"corresponds to in_specs{keystr(spec_key)} of value {spec}, "
             f"which maps array axis {d} (of size {aval.shape[d]}) to mesh "
             f"{axis} (of {total}size {sz}), but {sz} does not evenly divide "
             f"{aval.shape[d]}")
@@ -237,14 +237,14 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
       got_rep = ','.join(map(str, rep))
       diff = ','.join(map(str, unmentioned - rep))
       msgs.append(
-          f"out_specs{spec_key.pprint()} is {spec} which implies that the "
+          f"out_specs{keystr(spec_key)} is {spec} which implies that the "
           f"corresponding output value is replicated across mesh axes "
           f"{{{need_rep}}}, but could only infer replication over {{{got_rep}}}, "
           f"which is missing the required axes {diff}")
     else:
       need_rep_, = unmentioned
       msgs.append(
-          f"out_specs{spec_key.pprint()} is {spec} which implies that the "
+          f"out_specs{keystr(spec_key)} is {spec} which implies that the "
           f"corresponding output value is replicated across mesh axis "
           f"'{need_rep_}', but could not infer replication over any axes")
   assert msgs

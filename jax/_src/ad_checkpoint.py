@@ -23,7 +23,7 @@ import jax
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten, keystr
 from jax._src import ad_util
 from jax._src import core
 from jax._src import linear_util as lu
@@ -407,7 +407,7 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     if v in res_vars:
       if arg_info is not None:
         arg_name, arg_path = arg_info[i]
-        src = f'from the argument {arg_name}{arg_path.pprint("")}'
+        src = f'from the argument {arg_name}{keystr(arg_path)}'
       else:
         src = 'from the argument at flattened index {i}'
       results.append((v.aval, src))
