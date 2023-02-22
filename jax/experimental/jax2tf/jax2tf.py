@@ -60,6 +60,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
+from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.numpy.ufuncs import logaddexp
 
@@ -768,7 +769,7 @@ def _lower_native_and_run(fun_jax: Callable,
   log_msg = f"version={xla_call_module_version} dim_args_spec=" + ", ".join(dim_args_spec)
   if xla_call_module_version == 3:
     if experimental_native_lowering_strict_checks:
-      call_module_attrs["platforms"] = (jax.default_backend().upper(),)
+      call_module_attrs["platforms"] = (default_jax_backend().upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking
     log_msg += " platforms=" + ", ".join(call_module_attrs["platforms"])  # type: ignore
@@ -1014,6 +1015,9 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
         _thread_local_state.constant_cache[const_key] = (val, tf_val)
     return tf_val, jax_dtype
 
+def default_jax_backend() -> str:
+  # Canonicalize to turn into CUDA or ROCM
+  return xb.canonicalize_platform(jax.default_backend())
 
 def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
   # Returns a tuple of shape_poly.dim_as_value_dtype
