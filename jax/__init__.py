@@ -168,6 +168,9 @@ from jax import stages as stages
 from jax import tree_util as tree_util
 from jax import util as util
 
+# Also circular dependency.
+from jax._src.array import Shard as Shard
+
 import jax.lib  # TODO(phawkins): remove this export.
 
 if hasattr(jax, '_src'):
