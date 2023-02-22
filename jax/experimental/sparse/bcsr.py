@@ -596,10 +596,9 @@ batching.primitive_batchers[bcsr_dot_general_p] = _bcsr_dot_general_batch_rule
 
 
 def _bcsr_correct_out_of_bound_indices(data, indices, indptr, rhs, *, shape):
-  del rhs  # unused
   props = _validate_bcsr(data, indices, indptr, shape)
   if props.n_batch:
-    f = partial(_bcsr_correct_out_of_bound_indices, shape=shape[props.n_batch:])
+    f = partial(_bcsr_correct_out_of_bound_indices, rhs=rhs, shape=shape[props.n_batch:])
     return nfold_vmap(f, props.n_batch)(data, indices, indptr)
   extent = indptr[-1]
   i_data = lax.broadcasted_iota(indptr.dtype, data.shape, 0)
