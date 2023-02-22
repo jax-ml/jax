@@ -57,12 +57,13 @@ def nothing_saveable(*_, **__) -> bool:
   # This is the effective policy when using jax.remat without explicit policy.
   return False
 
-def checkpoint_dots(prim, *_, **__) -> bool:
+def dots_saveable(prim, *_, **__) -> bool:
   # Matrix multiplies are expensive, so let's save them (and nothing else).
   return prim in {lax_internal.dot_general_p,
                   lax_convolution.conv_general_dilated_p}
+checkpoint_dots = dots_saveable
 
-def dot_with_no_batch_dims(prim, *_, **params) -> bool:
+def dot_with_no_batch_dims_saveable(prim, *_, **params) -> bool:
   # This is a useful heuristic for transformers.
   if prim is lax_internal.dot_general_p:
     (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
@@ -111,8 +112,10 @@ def save_from_both_policies(policy_1, policy_2):
 checkpoint_policies = types.SimpleNamespace(
     everything_saveable=everything_saveable,
     nothing_saveable=nothing_saveable,
-    checkpoint_dots=checkpoint_dots,
-    checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims,
+    dots_saveable=dots_saveable,
+    checkpoint_dots=dots_saveable,
+    dots_with_no_batch_dims_saveable=dot_with_no_batch_dims_saveable,
+    checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims_saveable,
     save_anything_except_these_names=save_anything_except_these_names,
     save_any_names_but_these=save_any_names_but_these,
     save_only_these_names=save_only_these_names,
