@@ -946,10 +946,12 @@ def tracers_to_jaxpr(
       raise TypeError(r)
 
   env_vars, env_vals = unzip2(env.items())
+  invars = [*env_vars, *map(get_atom, in_tracers)]
   const_vars, const_vals = unzip2(consts.items())
-  effects = core.join_effects(*(eqn.effects for eqn in eqns))
-  jaxpr = Jaxpr(const_vars, [*env_vars, *map(get_atom, in_tracers)],  # type: ignore[list-item]
-                map(get_atom, out_tracers), eqns, effects)
+  outvars = map(get_atom, out_tracers)  # type: ignore[arg-type]
+  jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
+  jaxpr = Jaxpr(const_vars, invars,  # type: ignore[list-item,arg-type]
+                outvars, eqns, jaxpr_effects)
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
@@ -968,6 +970,8 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
 @weakref_lru_cache
 def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
   """Move n invars to constvars. Like an inverse of convert_constvars_Jaxpr."""
+  if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
+    raise NotImplementedError
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
   lifted_jaxpr = Jaxpr(constvars=tuple(constvars), invars=invars,
@@ -977,6 +981,8 @@ def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
   return lifted_jaxpr
 
 def convert_envvars_to_constvars(jaxpr: Jaxpr, num_env_vars: int) -> Jaxpr:
+  if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
+    raise NotImplementedError
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   env_vars, invars = split_list(jaxpr.invars, [num_env_vars])
   converted_jaxpr = Jaxpr(constvars=jaxpr.constvars + env_vars,
@@ -1180,15 +1186,20 @@ def _partial_eval_jaxpr_custom_cached(
 
   ins_known, _ = partition_list(in_unknowns, jaxpr.invars)
   outs_known, _ = partition_list(out_unknowns, jaxpr.outvars)
-  known_effects = core.join_effects(*(eqn.effects for eqn in known_eqns))
-  jaxpr_known = Jaxpr(jaxpr.constvars, ins_known, [*outs_known, *residuals],
+  known_outvars = [*outs_known, *residuals]
+  known_effects = make_jaxpr_effects(jaxpr.constvars, ins_known, known_outvars,
+                                      known_eqns)
+  jaxpr_known = Jaxpr(jaxpr.constvars, ins_known, known_outvars,
                       known_eqns, known_effects)
   config.jax_enable_checks and core.check_jaxpr(jaxpr_known)
 
   _, ins_staged = partition_list(in_inst, jaxpr.invars)
   _, outs_staged = partition_list(out_inst, jaxpr.outvars)
   staged_effects = core.join_effects(*(eqn.effects for eqn in staged_eqns))
-  jaxpr_staged = Jaxpr(jaxpr.constvars, [*residuals, *ins_staged],
+  staged_invars = [*residuals, *ins_staged]
+  staged_effects = make_jaxpr_effects(jaxpr.constvars, staged_invars,
+                                       outs_staged, staged_eqns)
+  jaxpr_staged = Jaxpr(jaxpr.constvars, staged_invars,
                        outs_staged, staged_eqns, staged_effects)
   config.jax_enable_checks and core.check_jaxpr(jaxpr_staged)
 
@@ -1366,10 +1377,12 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...],
   used_inputs = map(read, jaxpr.invars)
   used_inputs = map(op.or_, instantiate, used_inputs)
 
-  new_jaxpr = Jaxpr(jaxpr.constvars,
-                    [v for v, b in zip(jaxpr.invars, used_inputs)   if b],
-                    [v for v, b in zip(jaxpr.outvars, used_outputs) if b],
-                    new_eqns[::-1], jaxpr.effects)
+  invars = [v for v, b in zip(jaxpr.invars, used_inputs)   if b]
+  outvars = [v for v, b in zip(jaxpr.outvars, used_outputs) if b]
+  eqns = new_eqns[::-1]
+  jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
+
+  new_jaxpr = Jaxpr(jaxpr.constvars, invars, outvars, eqns, jaxpr_effects)
   config.jax_enable_checks and core.check_jaxpr(new_jaxpr)
 
   return new_jaxpr, used_inputs
@@ -1500,6 +1513,21 @@ class DynamicJaxprTracer(core.Tracer):
     return self if val is None else get_referent(val)
 api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = op.attrgetter("aval")
 
+def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
+  del outvars
+  jaxpr_effects = set()
+  all_vars = [*constvars, *invars]
+  for eqn in eqns:
+    for eff in eqn.effects:
+      if isinstance(eff, effects.JaxprInputEffect):
+        invar = eqn.invars[eff.input_index]
+        if invar not in all_vars:
+          raise ValueError(
+              "`JaxprInputEffect` does not have corresponding input.")
+        eff = eff.replace(input_index=all_vars.index(invar))
+      jaxpr_effects.add(eff)
+  return jaxpr_effects
+
 
 class JaxprStackFrame:
   gensym: Callable[[AbstractValue], Var]
@@ -1525,14 +1553,15 @@ class JaxprStackFrame:
 
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
-    self.effects |= eqn.effects
 
   def to_jaxpr(self, out_tracers):
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
     outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     constvars, constvals = unzip2(self.constvar_to_val.items())
-    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, self.effects)
+    jaxpr_effects = make_jaxpr_effects(constvars, self.invars, outvars,
+                                        self.eqns)
+    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, jaxpr_effects)
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     return jaxpr, constvals
@@ -1542,7 +1571,10 @@ class JaxprStackFrame:
     assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
     constvars, constvals = unzip2(self.constvar_to_val.items())
     expl_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
-    jaxpr = Jaxpr(constvars, self.invars, expl_outvars, self.eqns, self.effects)
+    jaxpr_effects = make_jaxpr_effects(constvars, self.invars, expl_outvars,
+                                        self.eqns)
+    jaxpr = Jaxpr(constvars, self.invars, expl_outvars, self.eqns,
+                  jaxpr_effects)
     # We can't run check_jaxpr until after we normalize.
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
@@ -1581,7 +1613,10 @@ def _const_folding_and_forwarding(jaxpr, constvals):
     # always apply invar substitutions
     eqn = eqn.replace(invars=[var_subs.get(v, v) for v in eqn.invars])
     # if any inputs are constants and we have a constant-folding rule, apply it
-    if eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars):
+    has_input_effect = any(isinstance(eff, effects.JaxprInputEffect)
+                           for eff in eqn.effects)
+    if (eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars)
+        and not has_input_effect):
       consts_in = [consts.get(v) for v in eqn.invars]
       consts_out, new_eqn = const_fold_rules[eqn.primitive](consts_in, eqn)
       assert (new_eqn is None) == all(c is not None for c in consts_out)
@@ -1590,7 +1625,7 @@ def _const_folding_and_forwarding(jaxpr, constvals):
       if new_eqn is None: continue
       else: eqn = new_eqn
     # if the application trivially maps some inputs to outputs, simplify
-    if eqn.primitive in forwarding_rules:
+    if eqn.primitive in forwarding_rules and not has_input_effect:
       fwd_vars, new_eqn = forwarding_rules[eqn.primitive](eqn)
       assert (new_eqn is None) == all(v is not None for v in fwd_vars)
       for v_orig, v_new in zip(eqn.outvars, fwd_vars):
@@ -1600,7 +1635,10 @@ def _const_folding_and_forwarding(jaxpr, constvals):
     new_eqns.append(eqn)
   new_constvars, new_constvals = unzip2(consts.items())
   new_outvars = [var_subs.get(v, v) for v in jaxpr.outvars]
-  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns, jaxpr.effects)
+  jaxpr_effects = make_jaxpr_effects(new_constvars, jaxpr.invars, new_outvars,
+                                      new_eqns)
+  new_jaxpr = Jaxpr(new_constvars, jaxpr.invars, new_outvars, new_eqns,
+                    jaxpr_effects)
   return new_jaxpr, new_constvals
 
 ConstFoldRule = Callable[[List[Optional[Any]], JaxprEqn],
@@ -1613,8 +1651,14 @@ forwarding_rules: Dict[Primitive, ForwardingRule] = {}
 
 def _inline_literals(jaxpr, constvals):
   # This function also prunes unused constants and inserts `dropvar` symbols.
-  lits = {v: Literal(c, v.aval) for v, c in zip(jaxpr.constvars, constvals)
-          if type(c) in core.literalable_types and not np.shape(c)}
+  input_effects = {eff for eff in jaxpr.effects
+                   if isinstance(eff, effects.JaxprInputEffect)}
+  # Don't inline any literal with an input effect
+  has_input_effect = [any(eff.input_index == i for eff in input_effects)
+                      for i in range(len(constvals))]
+  lits = {v: Literal(c, v.aval) for v, c, e in zip(jaxpr.constvars, constvals,
+                                                   has_input_effect)
+          if type(c) in core.literalable_types and not np.shape(c) and not e}
   lit: Callable[[Var], Optional[Literal]] = lits.get
   newname: Callable[[AbstractValue], Var] = core.gensym()
   newvars: Dict[Var, Var] = {}
@@ -1641,8 +1685,10 @@ def _inline_literals(jaxpr, constvals):
     outvars = [var(v) if v in used else dropvar(v.aval) for v in eqn.outvars]
     new_eqns.append(eqn.replace(invars=invars, outvars=outvars))
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
+  jaxpr_effects = make_jaxpr_effects(new_constvars, new_invars, new_outvars,
+                                      new_eqns)
   new_jaxpr = Jaxpr(new_constvars, new_invars, new_outvars, new_eqns,
-                    jaxpr.effects)
+                    jaxpr_effects)
   return new_jaxpr, new_constvals
 
 class DynamicJaxprTrace(core.Trace):

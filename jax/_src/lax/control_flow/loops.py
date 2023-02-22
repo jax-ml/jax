@@ -1108,9 +1108,28 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
   return tree_unflatten(body_tree, outs)
 
-def _while_loop_abstract_eval(*args, cond_jaxpr, body_jaxpr, **kwargs):
-  del args, kwargs
-  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
+                       ) -> effects.Effects:
+  joined_effects = set()
+  for eff in cond_jaxpr.effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      index = eff.input_index
+      if index >= cond_nconsts:
+        index += body_nconsts
+      eff = eff.replace(input_index=index)
+    joined_effects.add(eff)
+  for eff in body_jaxpr.effects:
+    if isinstance(eff, effects.JaxprInputEffect):
+      index = eff.input_index + cond_nconsts
+      eff = eff.replace(input_index=index)
+    joined_effects.add(eff)
+  return joined_effects
+
+def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
+                              cond_nconsts):
+  del avals
+  joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
+                                       cond_nconsts)
   disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(
@@ -1531,7 +1550,8 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
 def _while_typecheck(*in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
                      body_nconsts):
   # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
-  joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
+  joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
+                                       cond_nconsts)
   disallowed_effects = allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
     raise NotImplementedError(

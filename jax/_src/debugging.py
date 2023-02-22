@@ -55,11 +55,11 @@ except:
 # pytype: enable=import-error
 
 class DebugEffect(effects.Effect):
-  pass
+  __str__ = lambda self: "Debug"
 debug_effect = DebugEffect()
 
 class OrderedDebugEffect(effects.Effect):
-  pass
+  __str__ = lambda self: "OrderedDebug"
 ordered_debug_effect = OrderedDebugEffect()
 
 effects.ordered_effects.add_type(OrderedDebugEffect)
