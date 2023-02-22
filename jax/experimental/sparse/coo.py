@@ -45,7 +45,6 @@ class COOInfo(NamedTuple):
   shape: Shape
   rows_sorted: bool = False
   cols_sorted: bool = False
-  padded: bool = False
 
 
 @tree_util.register_pytree_node_class
@@ -55,6 +54,10 @@ class COO(JAXSparse):
   Note: this class has minimal compatibility with JAX transforms such as
   grad and autodiff, and offers very little functionality. In general you
   should prefer :class:`jax.experimental.sparse.BCOO`.
+
+  Additionally, there are known failures in the case that `nse` is larger
+  than the true number of nonzeros in the represented matrix. This situation
+  is better handled in BCOO.
   """
   data: jax.Array
   row: jax.Array
@@ -64,19 +67,16 @@ class COO(JAXSparse):
   dtype = property(lambda self: self.data.dtype)
   _info = property(lambda self: COOInfo(
       shape=self.shape, rows_sorted=self._rows_sorted,
-      cols_sorted=self._cols_sorted, padded=self._padded))
+      cols_sorted=self._cols_sorted))
   _bufs = property(lambda self: (self.data, self.row, self.col))
   _rows_sorted: bool
   _cols_sorted: bool
-  _padded: bool
 
   def __init__(self, args: Tuple[Array, Array, Array], *, shape: Shape,
-               rows_sorted: bool = False, cols_sorted: bool = False,
-               padded: bool = True):
+               rows_sorted: bool = False, cols_sorted: bool = False):
     self.data, self.row, self.col = map(jnp.asarray, args)
     self._rows_sorted = rows_sorted
     self._cols_sorted = cols_sorted
-    self._padded = padded
     super().__init__(args, shape=shape)
 
   @classmethod
@@ -135,7 +135,7 @@ class COO(JAXSparse):
     if axes is not None:
       raise NotImplementedError("axes argument to transpose()")
     return COO((self.data, self.col, self.row), shape=self.shape[::-1],
-               rows_sorted=self._cols_sorted, cols_sorted=self._rows_sorted, padded=self._padded)
+               rows_sorted=self._cols_sorted, cols_sorted=self._rows_sorted)
 
   def tree_flatten(self) -> Tuple[Tuple[Array, Array, Array], Dict[str, Any]]:
     return (self.data, self.row, self.col), self._info._asdict()
@@ -144,12 +144,11 @@ class COO(JAXSparse):
   def tree_unflatten(cls, aux_data, children):
     obj = object.__new__(cls)
     obj.data, obj.row, obj.col = children
-    if aux_data.keys() != {'shape', 'rows_sorted', 'cols_sorted', 'padded'}:
+    if aux_data.keys() != {'shape', 'rows_sorted', 'cols_sorted'}:
       raise ValueError(f"COO.tree_unflatten: invalid {aux_data=}")
     obj.shape = aux_data['shape']
     obj._rows_sorted = aux_data['rows_sorted']
     obj._cols_sorted = aux_data['cols_sorted']
-    obj._padded = aux_data['padded']
     return obj
 
   def __matmul__(self, other: ArrayLike) -> Array:
@@ -211,9 +210,6 @@ def _coo_todense_gpu_lowering(coo_todense_hlo, ctx, data, row, col, *, spinfo):
   if not (np.issubdtype(dtype, np.floating) or np.issubdtype(dtype, np.complexfloating)):
     warnings.warn(f"coo_todense cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _coo_todense_lowering(ctx, data, row, col, spinfo=spinfo)
-  if spinfo.padded:
-    # GPU rule returns incorrect results with padded representation.
     return _coo_todense_lowering(ctx, data, row, col, spinfo=spinfo)
 
   if spinfo.rows_sorted:
@@ -282,12 +278,11 @@ def coo_fromdense(mat: Array, *, nse: Optional[int] = None, index_dtype: DTypeLi
   Returns:
     mat_coo : COO representation of the matrix.
   """
-  padded = nse is not None
   if nse is None:
     nse = int((mat != 0).sum())
   nse_int = core.concrete_or_error(operator.index, nse, "coo_fromdense nse argument")
   return COO(_coo_fromdense(mat, nse=nse_int, index_dtype=index_dtype),
-             shape=mat.shape, rows_sorted=True, padded=padded)
+             shape=mat.shape, rows_sorted=True)
 
 def _coo_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = jnp.int32) -> Tuple[Array, Array, Array]:
   """Create COO-format sparse matrix from a dense matrix.
@@ -456,9 +451,6 @@ def _coo_matvec_gpu_lowering(coo_matvec_hlo, ctx, data, row, col, v, *, spinfo,
     warnings.warn(f"coo_matvec cusparse/hipsparse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
     return _coo_matvec_lowering(ctx, data, row, col, v, spinfo=spinfo, transpose=transpose)
-  if spinfo.padded:
-    # GPU rule returns incorrect results with padded representation.
-    return _coo_matvec_lowering(ctx, data, row, col, v, spinfo=spinfo, transpose=transpose)
 
   if spinfo.rows_sorted:
     shape = spinfo.shape
@@ -580,9 +572,6 @@ def _coo_matmat_gpu_lowering(coo_matmat_hlo, ctx, data, row, col, B, *, spinfo,
   if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
     warnings.warn(f"coo_matmat cusparse/hipsprse lowering not available for {dtype=}. "
                   "Falling back to default implementation.", CuSparseEfficiencyWarning)
-    return _coo_matmat_lowering(ctx, data, row, col, B, spinfo=spinfo, transpose=transpose)
-  if spinfo.padded:
-    # GPU rule returns incorrect results with padded representation.
     return _coo_matmat_lowering(ctx, data, row, col, B, spinfo=spinfo, transpose=transpose)
 
   if spinfo.rows_sorted:

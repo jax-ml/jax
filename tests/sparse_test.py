@@ -508,7 +508,7 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertFalse(mat_cols_sorted._rows_sorted)
     self.assertTrue(mat_cols_sorted._cols_sorted)
 
-    mat_unsorted = sparse.COO(mat_rows_sorted._bufs, shape=mat_rows_sorted.shape, padded=False)
+    mat_unsorted = sparse.COO(mat_rows_sorted._bufs, shape=mat_rows_sorted.shape)
     self.assertFalse(mat_unsorted._rows_sorted)
     self.assertFalse(mat_unsorted._cols_sorted)
 
@@ -574,57 +574,6 @@ class cuSparseTest(sptu.SparseTestCase):
       self.assertTrue(gpu_sparse and gpu_sparse.rocm_is_supported)
       self.assertIn(sparse.csr_todense_p,
                     mlir._platform_specific_lowerings["rocm"])
-
-  @jtu.sample_product(
-    shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
-    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
-    mat_type=[sparse.CSR, sparse.COO],
-  )
-  def test_extra_nse(self, shape, dtype, mat_type):
-    rng = rand_sparse(self.rng())
-    rng_dense = jtu.rand_default(self.rng())
-    M = rng(shape, dtype)
-    nse = (M != 0).sum() + 5
-    M_sp = mat_type.fromdense(M, nse=nse)
-
-    with self.subTest("todense"):
-      def todense1(M, _):
-        assert isinstance(M, np.ndarray)
-        return M
-      def todense2(_, M):
-        assert isinstance(M, mat_type)
-        return M.todense()
-      args_maker = lambda: [M, M_sp]
-      self._CheckAgainstNumpy(todense1, todense2, args_maker)
-      self._CompileAndCheck(todense2, args_maker)
-
-    with self.subTest("matvec"):
-      v = rng_dense(M.shape[-1:], dtype)
-      args_maker = lambda: [M, M_sp, v]
-      def matvec1(M, _, v):
-        assert isinstance(M, np.ndarray)
-        return M @ v
-      def matvec2(_, M, v):
-        assert isinstance(M, mat_type)
-        return M @ v
-      self._CheckAgainstNumpy(matvec1, matvec2, args_maker)
-      self._CompileAndCheck(matvec2, args_maker)
-
-    with self.subTest("matmat"):
-      B = rng_dense(M.shape[::-1], dtype)
-      args_maker = lambda: [M, M_sp, B]
-      def matmat1(M, _, B):
-        assert isinstance(M, np.ndarray)
-        return M @ B
-      def matmat2(_, M, B):
-        assert isinstance(M, mat_type)
-        return M @ B
-      if dtype == np.dtype(np.float64):
-        tol = 1e-14  # Lower the precision a tiny bit to avoid flakiness.
-      else:
-        tol = None
-      self._CheckAgainstNumpy(matmat1, matmat2, args_maker, tol=tol)
-      self._CompileAndCheck(matmat2, args_maker, tol=tol)
 
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],
