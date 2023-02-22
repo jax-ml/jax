@@ -62,10 +62,12 @@ def make_device_array(
   """
   from jax._src import array
 
-  if (jax.config.jax_array and xla_extension_version >= 128 and
-      isinstance(device_buffer, (array.ArrayImpl, xc.Buffer))):
-    return array._single_device_array_from_buf(
-        device_buffer, False if device_buffer._device is None else True)
+  if jax.config.jax_array and xla_extension_version >= 128:
+    if isinstance(device_buffer, xc.Buffer):
+      return array._single_device_array_from_buf(
+          device_buffer, False if device_buffer._device is None else True)
+    elif isinstance(device_buffer, array.ArrayImpl):
+      return device_buffer
 
   if isinstance(device_buffer, xc.Buffer):
 
