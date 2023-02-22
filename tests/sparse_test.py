@@ -619,8 +619,12 @@ class cuSparseTest(sptu.SparseTestCase):
       def matmat2(_, M, B):
         assert isinstance(M, mat_type)
         return M @ B
-      self._CheckAgainstNumpy(matmat1, matmat2, args_maker)
-      self._CompileAndCheck(matmat2, args_maker)
+      if dtype == np.dtype(np.float64):
+        tol = 1e-14  # Lower the precision a tiny bit to avoid flakiness.
+      else:
+        tol = None
+      self._CheckAgainstNumpy(matmat1, matmat2, args_maker, tol=tol)
+      self._CompileAndCheck(matmat2, args_maker, tol=tol)
 
   @jtu.sample_product(
     shape=[(5, 8), (8, 5), (5, 5), (8, 8)],

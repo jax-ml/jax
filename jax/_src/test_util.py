@@ -953,7 +953,7 @@ class JaxTestCase(parameterized.TestCase):
       yield
     self.assertEmpty(caught_warnings)
 
-  def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True,
+  def _CompileAndCheck(self, fun, args_maker, *, check_dtypes=True, tol=None,
                        rtol=None, atol=None, check_cache_misses=True):
     """Helper method for running JAX compilation and allclose assertions."""
     args = args_maker()
@@ -985,9 +985,9 @@ class JaxTestCase(parameterized.TestCase):
     compiled_ans = cfun(*args)
 
     self.assertAllClose(python_ans, monitored_ans, check_dtypes=check_dtypes,
-                        atol=atol, rtol=rtol)
+                        atol=atol or tol, rtol=rtol or tol)
     self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
-                        atol=atol, rtol=rtol)
+                        atol=atol or tol, rtol=rtol or tol)
 
     args = args_maker()
 
@@ -998,7 +998,7 @@ class JaxTestCase(parameterized.TestCase):
     compiled_ans = cfun(*args)
 
     self.assertAllClose(python_ans, compiled_ans, check_dtypes=check_dtypes,
-                        atol=atol, rtol=rtol)
+                        atol=atol or tol, rtol=rtol or tol)
 
   def _CheckAgainstNumpy(self, numpy_reference_op, lax_op, args_maker,
                          check_dtypes=True, tol=None, atol=None, rtol=None,
