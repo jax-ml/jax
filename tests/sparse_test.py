@@ -1299,6 +1299,30 @@ class BCOOTest(sptu.SparseTestCase):
       self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=['rev'], argnums=[0, 1])
 
   @jtu.sample_product(
+    xshape=[(3,), (5,)],
+    yshape=[(3,), (5,)],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    n_batch=[0, 1, 2],
+  )
+  def test_bcoo_dot_general_sampled_fast(self, xshape, yshape, n_batch, dtype):
+    rng = jtu.rand_default(self.rng())
+    sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch)
+
+    dimension_numbers = (([], []), ([], []))
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype),
+                          sprng(xshape + yshape, dtype).indices]
+
+    def f1(x, y, indices):
+      mat_full = lax.dot_general(x, y, dimension_numbers=dimension_numbers)
+      return sparse_bcoo._bcoo_extract(indices, mat_full)
+
+    def f2(x, y, indices):
+      return sparse.bcoo_dot_general_sampled(x, y, indices, dimension_numbers=dimension_numbers)
+
+    self._CheckAgainstNumpy(f1, f2, args_maker)
+    self._CompileAndCheck(f2, args_maker)
+
+  @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
           rhs_shape=rhs_shape, dimension_numbers=dimension_numbers)
       for lhs_shape, rhs_shape, dimension_numbers, n_batch, n_dense in [
