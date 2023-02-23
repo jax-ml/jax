@@ -5127,25 +5127,6 @@ def _compress_method(a: ArrayLike, condition: ArrayLike,
   return compress(condition, a, axis, out)
 
 
-@core.stash_axis_env()
-@partial(jit, static_argnums=(1,2,3))
-def _multi_slice(arr: ArrayLike,
-                 start_indices: Tuple[Tuple[int, ...]],
-                 limit_indices: Tuple[Tuple[int, ...]],
-                 removed_dims: Tuple[Tuple[int, ...]]) -> List[Array]:
-  """Extracts multiple slices from `arr`.
-
-  This is used to shard DeviceArray arguments to pmap. It's implemented as a
-  DeviceArray method here to avoid circular imports.
-  """
-  results: List[Array] = []
-  for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
-    sliced = lax.slice(arr, starts, limits)
-    if removed:
-      sliced = lax.squeeze(sliced, removed)
-    results.append(sliced)
-  return results
-
 # The next two functions are related to iter(device_array), implemented here to
 # avoid circular imports.
 @jit
@@ -5522,7 +5503,6 @@ _array_methods = {
   "broadcast_in_dim": lax.broadcast_in_dim,
   "split": split,
   "compress": _compress_method,
-  "_multi_slice": _multi_slice,
 }
 
 _array_properties = {

@@ -49,6 +49,7 @@ import jax
 from jax.errors import JAXTypeError
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map
+from jax.typing import ArrayLike
 
 from jax._src import abstract_arrays
 from jax._src import api_util
@@ -436,10 +437,26 @@ for _t in array_types:
 def shard_device_array(x, devices, indices):
   start_indices, limit_indices, removed_dims = unzip3(
       as_slice_indices(x, idx) for idx in indices)
-  shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+  shards = jax.jit(_multi_slice, static_argnums=(1, 2, 3))(
+    x, start_indices, limit_indices, removed_dims)
   return device_put(shards, devices)
 for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
+
+
+@core.stash_axis_env()
+def _multi_slice(arr: ArrayLike,
+                 start_indices: Tuple[Tuple[int, ...]],
+                 limit_indices: Tuple[Tuple[int, ...]],
+                 removed_dims: Tuple[Tuple[int, ...]]) -> List[jax.Array]:
+  """Extracts multiple slices from `arr`."""
+  results: List[jax.Array] = []
+  for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
+    sliced = jax.lax.slice(arr, starts, limits)
+    if removed:
+      sliced = jax.lax.squeeze(sliced, removed)
+    results.append(sliced)
+  return results
 
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
