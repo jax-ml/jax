@@ -69,6 +69,8 @@ Remember to align the itemized text with the first line of an item within a list
     * Added {func}`jax.scipy.stats.rankdata`.
 
 ## jaxlib 0.4.3 (Feb 8, 2023)
+  * `jax.Array` now has the non-blocking `is_ready()` method, which returns `True`
+    if the array is ready (see also {func}`jax.block_until_ready`).
 
 ## jax 0.4.2 (Jan 24, 2023)
 
