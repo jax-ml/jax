@@ -693,11 +693,7 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
 
   @staticmethod
   def make_mesh(mesh_shape):
-    shape, axis_names = tuple(mesh_shape.values()), tuple(mesh_shape)
-    if len(jax.devices()) < prod(shape):
-      raise unittest.SkipTest("too few devices for test")
-    m = Mesh(np.array(jax.devices()[:prod(shape)]).reshape(shape), axis_names)
-    return m
+    return jtu.create_global_mesh(tuple(mesh_shape.values()), tuple(mesh_shape))
 
   @parameterized.named_parameters(
       sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
