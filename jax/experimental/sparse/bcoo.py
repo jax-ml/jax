@@ -1526,24 +1526,17 @@ def _unique_indices_unbatched(indices, *, shape, return_inverse=False,
     out = (*out[:-1], nse)
   return out
 
-def _bcoo_correct_out_of_bound_indices_unbatched(data, indices, rhs, *, shape):
+def _bcoo_correct_out_of_bound_indices(data, indices, rhs, *, shape):
   """Set out-of-bound (OOB) indices and the corresponding data to zeros."""
-  del rhs
-  n_batch, n_sparse, n_dense, _ = _validate_bcoo_indices(indices, shape)
-  assert n_dense == 0, "not implemented"
-  assert n_batch == 0
-  mask = indices >= jnp.array(shape[:n_sparse], dtype=indices.dtype)[None, :]
+  props = _validate_bcoo(data, indices, shape)
+  assert props.n_dense == 0, "not implemented"
+  if props.n_batch:
+    f = partial(_bcoo_correct_out_of_bound_indices, rhs=rhs, shape=shape[props.n_batch:])
+    return nfold_vmap(f, props.n_batch)(data, indices)
+  mask = indices >= jnp.array(shape[:props.n_sparse], dtype=indices.dtype)[None, :]
   new_indices = jnp.where(mask, 0, indices)
   new_data = jnp.where(mask.any(-1), 0, data)
   return new_data, new_indices
-
-def _bcoo_correct_out_of_bound_indices(data, indices, rhs, *, shape):
-  """Set out-of-bound (OOB) indices and the corresponding data to zeros."""
-  props = _validate_bcoo_indices(indices, shape)
-  f = partial(_bcoo_correct_out_of_bound_indices_unbatched,
-              shape=shape[props.n_batch:])
-  f = nfold_vmap(f, props.n_batch)
-  return f(data, indices, rhs)
 
 _bcoo_correct_out_of_bound_indices_lowered = mlir.lower_fun(
     _bcoo_correct_out_of_bound_indices, multiple_results=True)
