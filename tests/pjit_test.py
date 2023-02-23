@@ -3407,6 +3407,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
           out2.sharding._to_xla_op_sharding(out2.ndim))
       self.assertListEqual(ns2, [2, 2, 1, 1])
 
+  def test_device_put_sharding_nondivisible_sharding_error(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+
+    x = jnp.ones((1,))
+    with self.assertRaisesRegex(
+        ValueError, 'implies that the size of its dimension 0 should be '
+                    'divisible by 2, but it is equal to 1 '):
+      jax.device_put(x, s)
+
+    y = jnp.ones((2,))
+    with self.assertRaisesRegex(
+        ValueError, 'implies that the size of its dimension 0 should be '
+                    'divisible by 2, but it is equal to 1 '):
+      jax.device_put((y, x), s)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "The sharded dimension must be equal to the number of "
+        "devices passed to PmapSharding. Got sharded dimension 0 with value 1 "
+        r"in shape \(1,\) and the number of devices=2"):
+      s2 = jax.pmap(lambda x: x,
+                    devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
+      jax.device_put(x, s2)
+
 
 class TempSharding(Sharding):
 

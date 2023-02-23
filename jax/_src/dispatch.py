@@ -63,7 +63,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
                                GSPMDSharding, NamedSharding, PartitionSpec,
-                               Sharding)
+                               Sharding, XLACompatibleSharding)
 from jax._src.util import flatten, unflatten
 
 
@@ -1387,6 +1387,18 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
       committed=(device is not None))
 
 
+# TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
+# to check if shardings are compatible with the input.
+def _check_sharding(x, s):
+  from jax._src import pjit
+
+  if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
+    pjit.pjit_check_aval_sharding(
+        (s,), (x,), "device_put args", allow_uneven_sharding=False)
+
+  s.shard_shape(x.shape)  # should raise an Error if incompatible
+
+
 def _device_put_impl(
     x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
   from jax.interpreters import pxla
@@ -1409,6 +1421,9 @@ def _device_put_impl(
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {s}")
+
+    _check_sharding(x, s)
+
     if getattr(x, 'sharding', None) == s:
       return x
     # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
