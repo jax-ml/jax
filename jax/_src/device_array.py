@@ -29,7 +29,6 @@ from jax._src import profiler
 from jax._src import util
 from jax._src.config import config
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.typing import Array
 
 ### device-persistent data
@@ -60,14 +59,6 @@ def make_device_array(
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
-  from jax._src import array
-
-  if jax.config.jax_array and xla_extension_version >= 128:
-    if isinstance(device_buffer, xc.Buffer):
-      return array._single_device_array_from_buf(
-          device_buffer, False if device_buffer._device is None else True)
-    elif isinstance(device_buffer, array.ArrayImpl):
-      return device_buffer
 
   if isinstance(device_buffer, xc.Buffer):
 
@@ -134,6 +125,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
       assert npy_value.dtype == aval.dtype and npy_value.shape == aval.shape, (
           aval, npy_value.shape, npy_value.dtype)
       assert (device is None) or device is device_buffer.device()
+
 
   def _check_if_deleted(self):
     if self.device_buffer is deleted_buffer:
