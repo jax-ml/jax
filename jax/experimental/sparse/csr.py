@@ -48,6 +48,10 @@ class CSR(JAXSparse):
   Note: this class has minimal compatibility with JAX transforms such as
   grad and autodiff, and offers very little functionality. In general you
   should prefer :class:`jax.experimental.sparse.BCOO`.
+
+  Additionally, there are known failures in the case that `nse` is larger
+  than the true number of nonzeros in the represented matrix. This situation
+  is better handled in BCOO.
   """
   data: jax.Array
   indices: jax.Array
