@@ -192,6 +192,9 @@ class _ThreadLocalState(threading.local):
     # "{tf_outer_name_scope}/JAX_NAME_STACKS"
     self.tf_outer_name_scope = ""
 
+    # Keep track if we are inside a pjit.
+    self.inside_pjit = False
+
 _thread_local_state = _ThreadLocalState()
 
 def _get_current_name_stack() -> Union[NameStack, str]:
@@ -206,6 +209,15 @@ def inside_call_tf():
     yield
   finally:
     _thread_local_state.inside_call_tf = prev
+
+@contextlib.contextmanager
+def inside_pjit():
+  prev = _thread_local_state.inside_pjit
+  _thread_local_state.inside_pjit = True
+  try:
+    yield
+  finally:
+    _thread_local_state.inside_pjit = prev
 
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun_jax: Callable,
@@ -739,9 +751,13 @@ def _lower_native_and_run(fun_jax: Callable,
   # makes it easier for tools like the TPU inference converter to see the
   # sharding without digging into the `module` attribute of the `XlaCallModule`
   # op, in the same way as it is done for the legacy jax2tf conversion.
+  # Do not apply XlaSharding for REPLICATED, on inputs and outputs.
+  # This is an agreed convention, and also improves usability under TF eager.
+  # See b/255511660.
   if "in_shardings" in lowered.compile_args:
     args_tf = tuple(
-      map(_shard_value, args_tf, args_avals, lowered.compile_args["in_shardings"]))
+      map(partial(_shard_value, skip_replicated_sharding=True),
+          args_tf, args_avals, lowered.compile_args["in_shardings"]))
 
   call_module_attrs = dict(
       version=xla_call_module_version,
@@ -763,7 +779,8 @@ def _lower_native_and_run(fun_jax: Callable,
                  mlir_module_text)
   res = tfxla.call_module(args_tf, **call_module_attrs)
   if "out_shardings" in lowered.compile_args:
-    res = list(map(_shard_value, res, out_avals, lowered.compile_args["out_shardings"]))
+    res = list(map(partial(_shard_value, skip_replicated_sharding=True),
+                   res, out_avals, lowered.compile_args["out_shardings"]))
 
   # Convert the results to the needed TF types
   def _convert_res(res_val, res_jax_type):
@@ -3172,16 +3189,16 @@ def split_to_logical_devices(tensor: TfVal,
 
 def _shard_value(val: TfVal,
                  aval: core.ShapedArray,
-                 sd: sharding.XLACompatibleSharding) -> TfVal:
+                 sd: sharding.XLACompatibleSharding, *,
+                 skip_replicated_sharding: bool) -> TfVal:
   """Apply sharding to a TfVal."""
   if pxla._is_unspecified(sd):
     return val
 
   sharding_proto: xla_client.OpSharding = cast(
       xla_client.OpSharding, sd._to_xla_op_sharding(aval.ndim))
-  # Do not apply XlaSharding for REPLICATED. This is an agreed convention, and
-  # also improves usability under TF eager. See b/255511660.
-  if pxla.is_op_sharding_replicated(sharding_proto):
+
+  if skip_replicated_sharding and pxla.is_op_sharding_replicated(sharding_proto):
     return val
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.
@@ -3217,12 +3234,15 @@ def _pjit(*args: TfVal,
   del donated_invars
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
-      map(_shard_value, args, _in_avals, in_shardings))
-  results = _interpret_jaxpr(jaxpr, *sharded_args,
-                             extra_name_stack=util.wrap_name(name, "pjit"),
-                             fresh_constant_cache=False)
+      map(partial(_shard_value, skip_replicated_sharding=not _thread_local_state.inside_pjit),
+          args, _in_avals, in_shardings))
+  with inside_pjit():
+    results = _interpret_jaxpr(jaxpr, *sharded_args,
+                               extra_name_stack=util.wrap_name(name, "pjit"),
+                               fresh_constant_cache=False)
   sharded_results: Sequence[TfVal] = tuple(
-      map(_shard_value, results, _out_aval, out_shardings))
+      map(partial(_shard_value, skip_replicated_sharding=not _thread_local_state.inside_pjit),
+          results, _out_aval, out_shardings))
   return tuple(sharded_results)
 
 
@@ -3235,7 +3255,7 @@ def _pjit_sharding_constraint(arg: TfVal, *,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:
-  return _shard_value(arg, _in_avals[0], sharding)
+  return _shard_value(arg, _in_avals[0], sharding, skip_replicated_sharding=False)
 
 
 tf_impl_with_avals[pjit.sharding_constraint_p] = _pjit_sharding_constraint
