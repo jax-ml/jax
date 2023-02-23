@@ -1184,7 +1184,6 @@ for shape, idxs, dnums, slice_sizes, needs_xla in [
 # Test cases lax.gather with non-empty batch_dims. This is for instance
 # triggered when executing `jax.vmap(lax.dynamic_slice)`.
 # We currently only support the case where we have a single batch dimension.
-dtype = np.float32
 dnums_2d = lax.GatherDimensionNumbers(
     offset_dims=(1,),
     collapsed_slice_dims=(0,),  # Batch dimension.
@@ -1212,12 +1211,57 @@ for op_shape, start_indices, slice_sizes, dnums in [
         f"batchdims_shape={op_shape}_start_indices_shape={start_indices.shape}_{slice_sizes=}_{enable_xla=}",
         lambda op, idxs, dnums, slice_sizes: lax.gather(
                   op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes),
-        [RandArg(op_shape, dtype), start_indices,
+        [RandArg(op_shape, np.float32), start_indices,
         StaticArg(dnums),
         StaticArg(slice_sizes)],
-        dtype=dtype,
+        dtype=np.float32,
         enable_xla=enable_xla)
 
+
+# Test cases lax.gather with non-empty 2D batch_dims. This is for instance
+# triggered when executing `jax.vmap(jax.vmap(lax.dynamic_slice))`.
+gather_2d_bd = lax.GatherDimensionNumbers(
+    offset_dims=(2, 3, 4), collapsed_slice_dims=(), start_index_map=(1, 2)
+)
+
+gather_2d_bd_nid = lax.GatherDimensionNumbers(
+    offset_dims=(2, 3, 4), collapsed_slice_dims=(), start_index_map=(2, 1)
+)
+
+gather_3d_bd = lax.GatherDimensionNumbers(
+    offset_dims=(1, 2, 3, 4), collapsed_slice_dims=(), start_index_map=(1, 2, 3)
+)
+
+gather_2d_bd2 = lax.GatherDimensionNumbers(
+    offset_dims=(2, 3, 4), collapsed_slice_dims=(), start_index_map=(1, 2)
+)
+
+for op_shape, start_indices, slice_sizes, dnums in [
+    ((10, 10, 10), [[[0, 1], [1, 0], [0, 1], [1, 0]]], (2, 2, 2), gather_2d_bd,),  # non-contigous 2d batch dims
+    ((10, 10, 10), [[[-1, 1], [1, -1], [0, -1], [-1, 0]]], (2, 2, 3), gather_2d_bd,),  # negative indices
+    ((10, 10, 10), [[[1, 1], [1, 1], [0, 1], [2147483647, 0]]], (2, 3, 3), gather_2d_bd,),  # oob indices
+    ((10, 10, 10), [[[0, 1], [1, 0], [0, 1], [1, 0]]], (2, 2, 2), gather_2d_bd_nid,),  # start_index_map not identity
+    ((10, 10, 10), [[[0, 1], [1, 0], [0, 1], [1, 0]]], (10, 10, 10), gather_2d_bd,),  # oob behavior coming from slice_sizes
+    ((10,10,10,10),    [[[[0, 1,0], [1, 0,0], [0, 1,0], [1, 0,0]]]], (10,2,2,2),    gather_3d_bd),  # test 3d batch dims
+    ((10,10,10),    [[[0, 1], [1, 0], [0, 1], [1, 0]]], (10,2,2),    gather_2d_bd2),  # test contiguous 2d batch dims
+]:
+  start_indices = np.array(start_indices)
+  for enable_xla in [True, False]:
+    define(
+        "gather",
+        f"op_shape={op_shape}_offset_dims={dnums.offset_dims}_start_index_map={dnums.start_index_map}_start_indices_shape={start_indices.shape}_{slice_sizes=}_{enable_xla=}",
+        lambda op, idxs, dnums, slice_sizes: lax.gather(
+            op, idxs, dimension_numbers=dnums, slice_sizes=slice_sizes
+        ),
+        [
+            RandArg(op_shape, np.float32),
+            start_indices,
+            StaticArg(dnums),
+            StaticArg(slice_sizes),
+        ],
+        dtype=np.float32,
+        enable_xla=enable_xla,
+    )
 
 def _make_scatter_harness(name,
                           *,
@@ -2958,7 +3002,7 @@ for batch_group_count, feature_group_count in [
         feature_group_count=feature_group_count,
         batch_group_count=batch_group_count)
 
-#--- BEGIN Tests for conv_general_dilated with works_without_xla=True ---
+# --- BEGIN Tests for conv_general_dilated with works_without_xla=True ---
 
 # Validate Conv1D.
 _make_conv_harness(
@@ -3174,7 +3218,7 @@ for padding, lhs_dilation, rhs_dilation in [
         rhs_dilation=rhs_dilation,
         works_without_xla=True)
 
-#--- END Tests for conv_general_dilated with works_without_xla=True ---
+# --- END Tests for conv_general_dilated with works_without_xla=True ---
 
 for lhs_dilation, rhs_dilation in [
     # Note: LHS dilation does work for enable_xla=False, but only if

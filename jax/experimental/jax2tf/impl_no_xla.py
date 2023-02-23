@@ -755,7 +755,10 @@ class GatherArgs:
             f"start_indices={self.start_indices}, "
             f"dimension_numbes={self.dnums}, "
             f"slice_sizes={self.slice_sizes}")
-
+  @property
+  def batch_dims(self):
+    return tuple(x for x in range(len(self.out_aval.shape))
+                if x not in self.dnums.offset_dims)
 
 def gather_precondition(precondition_fn: Callable[[GatherArgs], None]):
   """Decorator for specifying a precondition function.
@@ -876,19 +879,14 @@ def _gather_for_multidim_indexing(args: GatherArgs):
   return tf.gather(args.operand, start_indices, axis=axis, batch_dims=0)
 
 
-def _pre_gather_with_batch_dims(args: GatherArgs):
+def _pre_gather_with_batch_dim(args: GatherArgs):
   """Returns True if this call to gather has non-empty batch dimensions.
 
   This is for instance triggered when doing jax.vmap(lax.dynamic_slice).
   """
-  # All dimensions in the output array and not in offset_dims are batch_dims.
-  batch_dims = tuple(
-      x for x in range(len(args.out_aval.shape))
-      if x not in args.dnums.offset_dims)
-
   # We assume exactly one batch (and one or more non-batch dimensions).
-  if len(batch_dims) != 1:
-    raise ValueError(f"batch_dims is {len(batch_dims)} but should be 1")
+  if len(args.batch_dims) != 1:
+    raise ValueError(f"batch_dims is {len(args.batch_dims)} but should be 1")
 
   # `start_index_map` maps indices in `start_indices` to indices in `operand`.
   # For simplicity, we currently only consider the case where this mapping is
@@ -903,8 +901,27 @@ def _pre_gather_with_batch_dims(args: GatherArgs):
                      "agree")
 
 
-@gather_precondition(_pre_gather_with_batch_dims)
-def _gather_with_batch_dims(args: GatherArgs):
+def _pre_gather_with_batch_dims(args: GatherArgs):
+  """Returns True if this call to gather has non-empty 2D batch dimensions.
+
+  This is for instance triggered when doing
+  jax.vmap(jax.vmap(lax.dynamic_slice)).
+  """
+  if len(args.dnums.collapsed_slice_dims) != 0:
+    # NOTE: this can be relaxed in _gather_with_batch_dims but we might
+    #   also need to re-work the output reshaping
+    raise ValueError("only len(collapsed_slice_dims) == 0 is supported")
+
+  # NOTE: This supports higher dimensions than listed (the highest dimenison
+  # in the tests is 3D so it is limited to that, but the implementation is
+  # designed to handle higher dimensions (N-Dimensional)).
+  if len(args.batch_dims) not in [1, 2, 3]:
+    raise ValueError(
+        f"Size of batch_dims is {len(args.batch_dims)} but should be up to 3"
+    )
+
+@gather_precondition(_pre_gather_with_batch_dim)
+def _gather_with_batch_dim(args: GatherArgs):
   """Implements call to gather with non-empty batch dimensions.
 
   E.g., when doing `jax.vmap(lax.dynamic_slice).
@@ -919,6 +936,102 @@ def _gather_with_batch_dims(args: GatherArgs):
   result = tf.reshape(result, jax2tf._eval_shape(args.out_aval.shape))
   return result
 
+
+def _gather_generate_indices(shape: Tuple[int, ...]):
+  """
+  Returns the indices of the according to `shape`:
+    each element in the output is the index of an element of an array
+    of the provided shape. The result's shape is (np.prod(shape), len(shape))
+
+  For example, given shape (2,2) it returns (0,0),(0,1),(1,0),(1,1)
+  """
+  return tf.reshape(
+      tf.stack(
+          tf.meshgrid(
+              *[tf.range(start=0, limit=x) for x in shape], indexing="ij"
+          ),
+          axis=-1,
+      ),
+      (-1, len(shape)),
+  )
+
+
+@gather_precondition(_pre_gather_with_batch_dims)
+def _gather_with_batch_dims(args: GatherArgs):
+  """Implements call to gather with non-empty 2D batch dimensions."""
+  op_shape = jax2tf._eval_shape(args.op_shape)
+  output_shape = jax2tf._eval_shape(args.out_aval.shape)
+  # Used to map the start_indices w.r.t start_index_map
+  indices = tf.expand_dims(args.dnums.start_index_map, 1)
+
+  # batch_indices is shaped (N,d) where N is the number of slices and d is
+  # the number of batch_dims; batch_indices_size equals to N
+  batch_indices = _gather_generate_indices(
+      tuple(output_shape[i] for i in args.batch_dims)
+  )
+  batch_indices_size = jax2tf._eval_shape(batch_indices.shape)[0]
+  # offset_indices is shaped (K,d) where K is the number of elements in each
+  # slice and d is the number of offset_dims; offset_indices_size equals to K
+  offset_indices = _gather_generate_indices(
+      tuple(output_shape[i] for i in args.dnums.offset_dims)
+  )
+  offset_indices_size = jax2tf._eval_shape(offset_indices.shape)[0]
+
+  # After we compute the result we need to reshape the axes with respect to
+  # the output batch_dims and offset_dims.
+  dim_mask = args.batch_dims + args.dnums.offset_dims
+  mask_output_shape = tuple(output_shape[x] for x in dim_mask)
+
+  def get_scatter_indices(indices, batch_indices_size, size_of_index_map):
+    """Generate the start indices of each slice, which index into the operand."""
+    # Tile indices batch_indices_size times
+    tiled_indices = tf.tile(
+        tf.expand_dims(indices, 0), [batch_indices_size, 1, 1]
+    )
+    # The above tiles need to index the proper element of batch_indices
+    # To do this generate a repeated sequence of numbers
+    temp_batch_indices = tf.repeat(
+        tf.range(start=0, limit=batch_indices_size), size_of_index_map
+    )
+    # Reshape the above sequence so it follows the same shape of tiled_indices
+    temp_batch_indices = tf.reshape(
+        temp_batch_indices, (batch_indices_size, size_of_index_map, 1)
+    )
+    # Now we concatenate to create indices offset by the temp_batch_indices
+    return tf.concat([temp_batch_indices, tiled_indices], axis=-1)
+
+  slice_start_indices = tf.gather_nd(args.start_indices, batch_indices)
+  # TODO: In the case where start_index_map is the identity we can skip this.
+  scatter_indices = get_scatter_indices(
+      indices, batch_indices_size, len(args.dnums.start_index_map)
+  )
+  # We map the scatter_indices w.r.t start_index_map
+  indices_in_operand = tf.scatter_nd(
+        scatter_indices, slice_start_indices, [batch_indices_size, len(op_shape)]
+  )
+
+  # We clip the indices as OOB cases are possible when offsetting past
+  # the operand boundaries
+  clipped_start_indices = _clip(op_shape, indices_in_operand, args.slice_sizes)
+  # Here we need to broadcast clipped_start_indices and add each of the offsets
+  # which will generate a large index tensor of shape (T,d) where T is the
+  # number of slices times the size of each slice (i.e total number of items
+  # across all sices); d is rank(operand)
+  slice_element_indices = tf.add(
+      tf.repeat(clipped_start_indices, offset_indices_size, axis=0),
+      tf.tile(offset_indices, (batch_indices_size, 1)),
+  )
+  results = tf.gather_nd(args.operand, slice_element_indices)
+
+  # Here results comes shaped as (N,1). Because collapsed_slice_dims is 0,
+  # offset_dims is effectviely slice_sizes.
+  # We reshape to mask_output_shape because if we directly reshape to the
+  # output shape and our batch_dims are non-contiguous we will produce the
+  # wrong shape. Reshaping to mask_output_shape gives (...,*slice_sizes),
+  # which we then transpose to permute the axes in the proper way.
+  # Note that if the batch_dims are contiguous this won't change the output.
+  temp = tf.reshape(results, shape=mask_output_shape)
+  return tf.transpose(temp, perm=tf.math.invert_permutation(dim_mask))
 
 def _gather(operand, start_indices, *, dimension_numbers,
             slice_sizes: core.Shape, indices_are_sorted, unique_indices, mode,
@@ -948,8 +1061,10 @@ def _gather(operand, start_indices, *, dimension_numbers,
   errors = []
 
   for gather_fn in [
-      _gather_for_scalar_indexing, _gather_for_multidim_indexing,
-      _gather_with_batch_dims
+      _gather_for_scalar_indexing,
+      _gather_for_multidim_indexing,
+      _gather_with_batch_dim,
+      _gather_with_batch_dims,
   ]:
     try:
       return gather_fn(gather_args)
