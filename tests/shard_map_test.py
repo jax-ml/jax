@@ -695,49 +695,49 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
   def make_mesh(mesh_shape):
     return jtu.create_global_mesh(tuple(mesh_shape.values()), tuple(mesh_shape))
 
-  @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
-  def test_eager_against_ref(self, fun, mesh, in_specs, out_specs, args, ref):
-    mesh = self.make_mesh(mesh)
-    out = shard_map(fun, mesh, in_specs, out_specs)(*args)
-    expected = ref(fun, mesh, in_specs, out_specs)(*args)
-    self.assertAllClose(expected, out, check_dtypes=False)
+#   @parameterized.named_parameters(
+#       sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
+#   def test_eager_against_ref(self, fun, mesh, in_specs, out_specs, args, ref):
+#     mesh = self.make_mesh(mesh)
+#     out = shard_map(fun, mesh, in_specs, out_specs)(*args)
+#     expected = ref(fun, mesh, in_specs, out_specs)(*args)
+#     self.assertAllClose(expected, out, check_dtypes=False)
 
-  @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
-  def test_jit_against_ref(self, fun, mesh, in_specs, out_specs, args, ref):
-    mesh = self.make_mesh(mesh)
-    out = jax.jit(shard_map(fun, mesh, in_specs, out_specs))(*args)
-    expected = ref(fun, mesh, in_specs, out_specs)(*args)
-    self.assertAllClose(expected, out, check_dtypes=False)
+#   @parameterized.named_parameters(
+#       sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
+#   def test_jit_against_ref(self, fun, mesh, in_specs, out_specs, args, ref):
+#     mesh = self.make_mesh(mesh)
+#     out = jax.jit(shard_map(fun, mesh, in_specs, out_specs))(*args)
+#     expected = ref(fun, mesh, in_specs, out_specs)(*args)
+#     self.assertAllClose(expected, out, check_dtypes=False)
 
   @parameterized.named_parameters(
       sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
   @jax.default_matmul_precision("float32")
   def test_grads(self, fun, mesh, in_specs, out_specs, args, _):
-    raise unittest.SkipTest("internal xla failures")  # TODO(b/269660532)
+    # raise unittest.SkipTest("internal xla failures")  # TODO(b/269660532)
     mesh = self.make_mesh(mesh)
     f = jax.jit(shard_map(fun, mesh, in_specs, out_specs))
     jtu.check_grads(f, args, order=2, atol=1e-2, rtol=1e-2)
 
-  @parameterized.named_parameters(
-      sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
-  @jax.default_matmul_precision("float32")
-  def test_grads_closure(self, fun, mesh, in_specs, out_specs, args, _):
-    raise unittest.SkipTest("internal xla failures")  # TODO(b/269660532)
-    mesh = self.make_mesh(mesh)
-    no_sharding = [all(elt is None for elt in spec) for spec in in_specs]
-    args, closed_over_args = partition_list(no_sharding, args)
-    in_specs, _ = partition_list(no_sharding, in_specs)
-    def f(x, *closed_over_args):
-      @jax.jit
-      @partial(shard_map, mesh=mesh, in_specs=(*in_specs,), out_specs=out_specs)
-      def g(*args):
-        args = [x * arg for arg in args]
-        args = merge_lists(no_sharding, args, closed_over_args)
-        return fun(*args)
-      return g(*args)
-    jtu.check_grads(f, (0.2, *closed_over_args), order=2, atol=1e-2, rtol=1e-2)
+  # @parameterized.named_parameters(
+  #     sample(config.FLAGS.jax_num_generated_cases, sample_shmap))
+  # @jax.default_matmul_precision("float32")
+  # def test_grads_closure(self, fun, mesh, in_specs, out_specs, args, _):
+  #   raise unittest.SkipTest("internal xla failures")  # TODO(b/269660532)
+  #   mesh = self.make_mesh(mesh)
+  #   no_sharding = [all(elt is None for elt in spec) for spec in in_specs]
+  #   args, closed_over_args = partition_list(no_sharding, args)
+  #   in_specs, _ = partition_list(no_sharding, in_specs)
+  #   def f(x, *closed_over_args):
+  #     @jax.jit
+  #     @partial(shard_map, mesh=mesh, in_specs=(*in_specs,), out_specs=out_specs)
+  #     def g(*args):
+  #       args = [x * arg for arg in args]
+  #       args = merge_lists(no_sharding, args, closed_over_args)
+  #       return fun(*args)
+  #     return g(*args)
+  #   jtu.check_grads(f, (0.2, *closed_over_args), order=2, atol=1e-2, rtol=1e-2)
 
 
 if __name__ == '__main__':

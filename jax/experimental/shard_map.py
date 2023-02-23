@@ -878,10 +878,8 @@ def _promote_scalar_residuals(*args, **kwargs):
 
 def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
                          check_rep):
-  mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [ad.Zero(_shard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
-             else mb_div(x, prod(map(mesh.shape.get, _unmentioned(mesh, ns))))
-             for ns, x in zip(out_names, out_cts)]
+             else x for ns, x in zip(out_names, out_cts)]
   args = [x if type(x) is not ad.UndefinedPrimal else
           ad.UndefinedPrimal(_shard_aval(mesh, ns, x.aval))
           for ns, x in zip(in_names, args)]
@@ -889,6 +887,10 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
 
   @lu.wrap_init
   def fun_trans(out_cts, args):
+    mb_div = lambda x, y: x / y if y != 1 else x
+    out_cts = [mb_div(ct, prod(map(mesh.shape.get, _unmentioned(mesh, ns))))
+               if type(ct) is not ad.Zero else ct
+               for ns, ct in zip(out_names, out_cts)]
     res, undefs = partition_list(map(ad.is_undefined_primal, args), args)
     jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
         pe.close_jaxpr(jaxpr), map(ad.is_undefined_primal, args), False)
