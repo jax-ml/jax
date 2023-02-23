@@ -20,6 +20,7 @@ from typing import Any, Sequence
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
@@ -120,9 +121,9 @@ def _log_sharding_annotations(test,
   else:
     f_tf = f_tf_base
   f_tf_fun = tf.function(f_tf, jit_compile=True, autograph=False)
+  f_tf_graph = f_tf_fun.get_concrete_function(*args).graph.as_graph_def()
   logging.info("[%s] Got TF graph %s",
-                test._testMethodName,
-                f_tf_fun.get_concrete_function(*args).graph.as_graph_def())
+                test._testMethodName, f_tf_graph)
   device_name = f"/device:{jtu.device_under_test().upper()}:0"
   tf_hlo = (f_tf_fun
             .experimental_get_compiler_ir(*args)(stage="hlo",
@@ -214,16 +215,47 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
         [x, y],
         num_partitions=4)
 
+  @parameterized.named_parameters(
+      dict( testcase_name=f"_nested_pjit={nested_pjit}", nested_pjit=nested_pjit)
+      for nested_pjit in (True, False)
+  )
   @jtu.with_mesh([("x", 2), ("y", 1)])
-  def test_pjit_ShardingConstraint(self):
+  def test_pjit_ShardingConstraint(self, nested_pjit=False):
     @partial(pjit.pjit, in_axis_resources=None,
                        out_axis_resources=None)
     def jax_func(x):  # x: f32[12, 8]
       y = jnp.tile(x, (2, 1))  # y: f32[24, 8]
-      y = pjit.with_sharding_constraint(y, P("x", "y"))
+      if nested_pjit:
+        y = pjit.pjit(lambda y: y, in_axis_resources=P("x", "y"),
+                      out_axis_resources=P("x", "y"))(y)
+      else:
+        y = pjit.with_sharding_constraint(y, P("x", "y"))
       return y[0:y.shape[0] // 4]  # res: f32[6, 8]
 
     shape = (12, 8)
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    _log_sharding_annotations(self,
+        jax_func, [x],
+        num_partitions=2)
+
+  @parameterized.named_parameters(
+      dict( testcase_name=f"_nested_pjit={nested_pjit}", nested_pjit=nested_pjit)
+      for nested_pjit in (True, False)
+  )
+  @jtu.with_mesh([("x", 2), ("y", 1)])
+  def test_pjit_ShardingConstraintReplicated(self, nested_pjit=True):
+    shape = (12, 8)
+    @partial(pjit.pjit, in_axis_resources=(P("x", "y"),),
+             out_axis_resources=P("x", "y"))
+    def jax_func(x):  # x: f32[6, 8]
+      y = x @ x.T  # y: f32[6, 6]
+      if nested_pjit:
+        y = pjit.pjit(lambda y: y, in_axis_resources=None,
+                      out_axis_resources=None)(y)
+      else:
+        y = pjit.with_sharding_constraint(y, None)
+      return jnp.sin(y)
+
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     _log_sharding_annotations(self,
         jax_func, [x],
