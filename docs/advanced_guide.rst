@@ -26,6 +26,7 @@ This section contains examples and tutorials on more advanced topics, such as Mu
 
    notebooks/autodiff_cookbook
    notebooks/Custom_derivative_rules_for_Python_code
+   notebooks/autodiff_remat
 
 .. toctree::
    :caption: JAX Internals
