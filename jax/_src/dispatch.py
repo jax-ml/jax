@@ -936,7 +936,9 @@ def _execute_replicated(name: str,
                         if i in kept_var_idx)
                 for device in compiled.local_devices()]
   input_bufs_flip = list(unsafe_zip(*input_bufs))
-  out_bufs_flat_rep = compiled.execute_sharded_on_local_devices(input_bufs_flip)
+  out_bufs_flat_rep, _ = compiled.execute_sharded_on_local_devices_with_tokens(
+      input_bufs_flip
+  )
   out_flat = [bufs[0] for bufs in out_bufs_flat_rep]  # type: ignore
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)

@@ -2127,8 +2127,11 @@ class ExecuteReplicated:
         self.has_host_callbacks):
       out_bufs = self._call_with_tokens(input_bufs)
     else:
-      out_bufs = self.xla_executable.execute_sharded_on_local_devices(
-          input_bufs)
+      out_bufs, _ = (
+          self.xla_executable.execute_sharded_on_local_devices_with_tokens(
+              input_bufs
+          )
+      )
     if dispatch.needs_check_special():
       for bufs in out_bufs:
         dispatch.check_special(self.name, bufs)
