@@ -162,7 +162,7 @@ from functools import reduce
 
 from jax.interpreters import mlir
 from jax.interpreters.mlir import ir
-from jaxlib.mhlo_helpers import custom_call
+from jaxlib.hlo_helpers import custom_call
 
 
 # Register functions defined in gpu_ops as custom call target for GPUs
@@ -783,7 +783,7 @@ from jax.interpreters import mlir, xla
 from jax.interpreters.mlir import ir
 from jax.lib import xla_client
 from jax.sharding import Mesh, PartitionSpec
-from jaxlib.mhlo_helpers import custom_call
+from jaxlib.hlo_helpers import custom_call
 
 
 # Create _rms_norm_fwd_p for forward operation.
