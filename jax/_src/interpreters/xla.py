@@ -41,7 +41,7 @@ from jax._src.util import (prod, safe_zip, safe_map, partition_list)
 
 from jax._src.typing import Shape
 
-from jax._src.lib import xla_bridge as xb
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 
 map, unsafe_map = safe_map, map

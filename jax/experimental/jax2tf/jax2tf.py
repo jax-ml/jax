@@ -53,6 +53,7 @@ from jax._src import prng
 from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.global_device_array import GlobalDeviceArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
@@ -62,7 +63,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.numpy.ufuncs import logaddexp
 

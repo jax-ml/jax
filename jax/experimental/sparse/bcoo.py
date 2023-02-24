@@ -40,6 +40,7 @@ import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
 from jax._src import api_util
 from jax._src import core
+from jax._src import xla_bridge
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.lax.lax import (
@@ -47,7 +48,6 @@ from jax._src.lax.lax import (
   DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode
 from jax._src.lib.mlir import ir
-from jax._src.lib import xla_bridge
 from jax._src.lib import gpu_sparse
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique

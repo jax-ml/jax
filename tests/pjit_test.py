@@ -49,7 +49,8 @@ import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
 from jax._src.interpreters import pxla
 from jax.interpreters import mlir
-from jax._src.lib import xla_client as xc, xla_bridge
+from jax._src import xla_bridge
+from jax._src.lib import xla_client as xc
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config

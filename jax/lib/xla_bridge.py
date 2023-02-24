@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # flake8: noqa: F401
-from jax._src.lib.xla_bridge import (
+from jax._src.xla_bridge import (
   default_backend as default_backend,
   get_backend as get_backend,
   get_compile_options as get_compile_options,

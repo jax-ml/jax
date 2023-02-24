@@ -522,7 +522,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import lib as jaxlib
 from jax._src.lib import pytree
-from jax._src.lib import xla_bridge as xb
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir.dialects import hlo

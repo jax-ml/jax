@@ -17,8 +17,8 @@ from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
 from jax._src import array
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_bridge
 
 SUPPORTED_DTYPES = frozenset({
     jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,

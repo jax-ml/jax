@@ -29,8 +29,9 @@ from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax._src.lib.mlir import ir
-from jax._src.lib import xla_bridge, xla_client
+from jax._src.lib import xla_client
 
 xc = xla_client
 xb = xla_bridge

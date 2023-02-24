@@ -45,6 +45,7 @@ from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable,
@@ -56,7 +57,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (prefix_errors, _generate_key_paths)

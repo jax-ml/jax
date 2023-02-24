@@ -30,7 +30,7 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, prod, partition_list, merge_lists
 import jax.numpy as jnp
 

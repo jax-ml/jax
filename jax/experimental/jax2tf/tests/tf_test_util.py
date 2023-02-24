@@ -30,7 +30,7 @@ from jax import tree_util
 
 from jax.config import config
 from jax.experimental import jax2tf
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 import numpy as np
 import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]

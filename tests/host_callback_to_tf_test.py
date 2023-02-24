@@ -28,7 +28,7 @@ import jax
 from jax.config import config
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax.experimental import host_callback as hcb
 
 import numpy as np

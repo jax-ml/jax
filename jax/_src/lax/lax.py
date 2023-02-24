@@ -63,7 +63,7 @@ from jax._src.lax.utils import (
 )
 from jax._src.lib import pmap_lib
 from jax._src.lib import pytree
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
