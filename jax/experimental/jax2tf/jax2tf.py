@@ -227,7 +227,7 @@ def convert(fun_jax: Callable,
             with_gradient=True,
             enable_xla=True,
             experimental_native_lowering="default",
-            experimental_native_lowering_strict_checks=True) -> Callable:
+            experimental_native_lowering_strict_checks=False) -> Callable:
   """Lowers `fun_jax` into a function that uses only TensorFlow ops.
 
   See
