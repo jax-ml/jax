@@ -1248,18 +1248,32 @@ class BCOOTest(sptu.SparseTestCase):
       self._CheckGradsSparse(dense_fun, sparse_fun, args_maker, modes=['rev'], argnums=[0, 1])
 
   @jtu.sample_product(
-    xshape=[(3,), (5,)],
-    yshape=[(3,), (5,)],
+    [{'xshape': xshape, 'yshape': yshape, 'lhs_contract': lhs_contract, 'rhs_contract': rhs_contract}
+     for (xshape, yshape, lhs_contract, rhs_contract) in [
+      [(4, 3), (4, 5), (0,), (0,)],
+      [(3, 4), (4, 5), (1,), (0,)],
+      [(4, 3), (5, 4), (0,), (1,)],
+      [(3, 4), (5, 4), (1,), (1,)],
+      [(3,), (3,), (), ()],
+      [(3,), (5,), (), ()],
+      [(5,), (3,), (), ()],
+      [(5,), (5,), (), ()],
+     ]],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     n_batch=[0, 1, 2],
   )
-  def test_bcoo_dot_general_sampled_fast(self, xshape, yshape, n_batch, dtype):
+  @jtu.skip_on_devices('tpu')  # TODO(jakevdp) adust precision/tolerances & enable on TPU
+  def test_bcoo_dot_general_sampled_fast_cases(
+      self, xshape, yshape, lhs_contract, rhs_contract, n_batch, dtype):
     rng = jtu.rand_default(self.rng())
     sprng = sptu.rand_bcoo(self.rng(), n_batch=n_batch)
+    dimension_numbers = ((lhs_contract, rhs_contract), ([], []))
 
-    dimension_numbers = (([], []), ([], []))
+    out_shape = jax.eval_shape(partial(lax.dot_general, dimension_numbers=dimension_numbers),
+                               jax.ShapeDtypeStruct(xshape, dtype), jax.ShapeDtypeStruct(yshape, dtype))
+
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype),
-                          sprng(xshape + yshape, dtype).indices]
+                          sprng(out_shape.shape, out_shape.dtype).indices]
 
     def f1(x, y, indices):
       mat_full = lax.dot_general(x, y, dimension_numbers=dimension_numbers)
