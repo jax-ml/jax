@@ -43,6 +43,7 @@ from jax.experimental.maps import xmap
 from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
+from jax.experimental.topology import lowering_topology
 from jax._src import array
 from jax._src.sharding import NamedSharding, Sharding, GSPMDSharding
 import jax._src.pjit as pjit_lib
@@ -955,6 +956,29 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
     self.assertIsInstance(f.as_text(dialect='mhlo'), str)
     self.assertIsInstance(f.as_text(dialect='stablehlo'), str)
+
+  def testLowerAsTextLoweringOnlyTopology(self):
+    def make_mesh(local_devices):
+      if len(local_devices) < 4:
+        raise unittest.SkipTest(f"Test requires 4 local devices")
+      mesh_devices = np.array(local_devices[:4])
+      return jax.sharding.Mesh(mesh_devices.reshape((2,2)), ('x', 'y'))
+
+    @partial(pjit, in_shardings=P(('x', 'y'),), out_shardings=P(('x', 'y'),))
+    def f(x, y):
+      return x @ y
+
+    shape = (8, 8)
+    x = jnp.arange(np.prod(shape)).reshape(shape)
+
+    with make_mesh(jax.local_devices()):
+      f_physical = f.lower(x, x + 1).as_text(dialect='stablehlo')
+
+    platform = jax.local_devices()[0].platform
+    with make_mesh(lowering_topology(4, platform).devices()):
+      f_abstract = f.lower(x, x + 1).as_text(dialect='stablehlo')
+
+    self.assertEqual(f_physical, f_abstract)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompilerIR(self):
