@@ -56,7 +56,6 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import xla
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import use_stablehlo
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
@@ -993,20 +992,12 @@ class XlaComputation(stages.XlaLowering):
         use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
-    if use_stablehlo:
-      return super().mhlo()
-    else:
-      if self.is_trivial():
-        raise ValueError("A trivial computation has no MHLO")
-      return self._hlo
+    return super().mhlo()
 
   def stablehlo(self) -> ir.Module:
-    if use_stablehlo:
-      if self.is_trivial():
-        raise ValueError("A trivial computation has no StableHLO")
-      return self._hlo
-    else:
-      return super().stablehlo()
+    if self.is_trivial():
+      raise ValueError("A trivial computation has no StableHLO")
+    return self._hlo
 
   def compile(self) -> XlaCompiledComputation:
     if self._executable is None:

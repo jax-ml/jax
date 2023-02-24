@@ -44,7 +44,6 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.lib.mlir import ir
-from jax._src.lib.mlir.dialects import use_stablehlo
 from jax._src.lib import xla_client as xc
 
 
@@ -287,30 +286,21 @@ class XlaLowering(Lowering):
 
   def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""
-    if use_stablehlo:
-      module_str = xla_extension.mlir.stablehlo_to_mhlo(
-          mlir.module_to_bytecode(self.stablehlo()))
-      with self.stablehlo().context:
-        return ir.Module.parse(module_str)
-    else:
-      raise NotImplementedError("must override")
+    module_str = xla_extension.mlir.stablehlo_to_mhlo(
+        mlir.module_to_bytecode(self.stablehlo()))
+    with self.stablehlo().context:
+      return ir.Module.parse(module_str)
 
   def stablehlo(self) -> ir.Module:
     """Return a StableHLO representation of this computation."""
-    if use_stablehlo:
-      raise NotImplementedError("must override")
-    else:
-      module_str = xla_extension.mlir.mhlo_to_stablehlo(
-          mlir.module_to_bytecode(self.mhlo()))
-      with self.mhlo().context:
-        return ir.Module.parse(module_str)
+    raise NotImplementedError("must override")
 
   def compile(self) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
     if dialect is None:
-      dialect = "stablehlo" if use_stablehlo else "mhlo"
+      dialect = "stablehlo"
     if dialect == "mhlo":
       return str(self.mhlo())
     elif dialect == "stablehlo":
@@ -322,7 +312,7 @@ class XlaLowering(Lowering):
 
   def compiler_ir(self, dialect: Optional[str] = None) -> Any:
     if dialect is None:
-      dialect = "stablehlo" if use_stablehlo else "mhlo"
+      dialect = "stablehlo"
     if dialect == "mhlo":
       return self.mhlo()
     elif dialect == "stablehlo":
