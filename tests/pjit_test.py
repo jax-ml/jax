@@ -3432,6 +3432,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
                     devices=list(mesh.devices.flat))(jnp.arange(2)).sharding
       jax.device_put(x, s2)
 
+    jax.device_put(2., NamedSharding(mesh, P()))  # doesn't crash
+
 
 class TempSharding(Sharding):
 

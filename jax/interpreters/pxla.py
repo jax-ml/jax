@@ -105,6 +105,7 @@ from jax._src.interpreters.pxla import (
   sda_array_result_handler as sda_array_result_handler,
   shard_arg_handlers as shard_arg_handlers,
   shard_args as shard_args,
+  shard_arg as shard_arg,
   shard_aval as shard_aval,
   shard_aval_handlers as shard_aval_handlers,
   shard_to_full_p as shard_to_full_p,

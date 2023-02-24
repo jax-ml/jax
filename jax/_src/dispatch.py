@@ -1389,22 +1389,20 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
 
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.
-def _check_sharding(x, s):
+def _check_sharding(aval, s):
   from jax._src import pjit
 
   if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
     pjit.pjit_check_aval_sharding(
-        (s,), (x,), "device_put args", allow_uneven_sharding=False)
+        (s,), (aval,), "device_put args", allow_uneven_sharding=False)
 
-  s.shard_shape(x.shape)  # should raise an Error if incompatible
+  s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
 
 def _device_put_impl(
     x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
-  from jax.interpreters import pxla
-
   try:
-    a = xla.abstractify(x)
+    aval = xla.abstractify(x)
   except TypeError as err:
     raise TypeError(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
@@ -1422,15 +1420,14 @@ def _device_put_impl(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {s}")
 
-    _check_sharding(x, s)
+    _check_sharding(aval, s)
 
     if getattr(x, 'sharding', None) == s:
       return x
     # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
-    arg_handler = pxla.shard_arg_handlers[type(x)]
-    result_handler = pxla.global_aval_to_result_handler(a, s, True, False)
-    map_ = s.devices_indices_map(x.shape)  # type: ignore
-    return result_handler(arg_handler(x, list(map_), list(map_.values())))
+    result_handler = pxla.global_aval_to_result_handler(aval, s, True, False)
+    map_ = s.devices_indices_map(aval.shape)  # type: ignore
+    return result_handler(pxla.shard_arg(x, list(map_), list(map_.values())))
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
@@ -1446,7 +1443,7 @@ def _device_put_impl(
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
 
-  return aval_to_result_handler(device, a)(None, *device_put(x, device))
+  return aval_to_result_handler(device, aval)(None, *device_put(x, device))
 
 
 device_put_p = core.Primitive('device_put')
