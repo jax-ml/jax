@@ -592,15 +592,22 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return x
 
-    self.assertRaisesRegex(
-        TypeError, r".* 'foo' of type <.*'str'> is not a valid JAX type",
-        lambda: self.jit(f)("foo"))
+    with self.assertRaisesRegex(
+        TypeError, r".* 'foo' of type <.*'str'> is not a valid JAX type"):
+      self.jit(f)("foo")
 
-    # Jax type objects aren't valid data arguments.
-    self.assertRaisesRegex(
-        TypeError,
-        ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type",
-        lambda: self.jit(f)(jnp.int32))
+    if xla_extension_version > 127:
+      # Jax type objects aren't valid data arguments.
+      if config.jax_jit_pjit_api_merge:
+        err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
+      else:
+        err_str = ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type"
+
+      with self.assertRaisesRegex(TypeError, err_str):
+        self.jit(f)(jnp.int32)
+    else:
+      with self.assertRaises(TypeError):
+        self.jit(f)(jnp.int32)
 
   def test_jit_masked_array(self):
     x = np.ma.array([1, 2, 3], mask=[True, False, True])
