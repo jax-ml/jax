@@ -1041,6 +1041,13 @@ config.define_bool_state(
     update_thread_local_hook=lambda val: \
       update_thread_local_jit_state(dynamic_shapes=val))
 
+# This flag is temporary during rollout of the remat barrier.
+# TODO(parkers): Remove if there are no complaints.
+config.define_bool_state(
+    name='jax_remat_opt_barrier',
+    default=(lib.version >= (0, 3, 6)),
+    help=('Enables using optimization-barrier op for lowering remat.'))
+
 # TODO(b/205307544): Remove flag once coordination service has rolled out.
 config.define_bool_state(
     name='jax_coordination_service',
