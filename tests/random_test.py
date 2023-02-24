@@ -1489,6 +1489,35 @@ class LaxRandomTest(jtu.JaxTestCase):
                                      axis=axis, shape=shape)
     self.assertEqual(samples.shape, shape)
 
+  @jtu.sample_product(
+      df = [0.2, 1., 10., 100.],
+      dtype=jtu.dtypes.floating)
+  def testChisquare(self, df, dtype):
+    key = self.seed_prng(0)
+
+    rand = lambda key, df: random.chisquare(key, df, shape=(10000, ), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key, df)
+    compiled_samples = crand(key, df)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.chi2(df).cdf)
+
+  @jtu.sample_product(
+      dfnum = [1., 2., 10. ,100.],
+      dfden = [1. ,2., 10., 100.],
+      dtype=jtu.dtypes.floating)
+  def testF(self, dfnum, dfden, dtype):
+    key = self.seed_prng(1)
+    rand = lambda key: random.f(key, dfnum, dfden, shape = (10000, ), dtype = dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.f(dfnum, dfden).cdf)
 
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
