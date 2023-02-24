@@ -61,7 +61,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import PmapSharding
 from jax._src.traceback_util import api_boundary
@@ -3572,9 +3571,8 @@ def clear_backends():
   jax_jit.CompiledFunctionCache.clear_all()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()
-  if xla_extension_version >= 124:
-    pjit._cpp_pjit_cache.clear()
-    xc._xla.PjitFunctionCache.clear_all()
+  pjit._cpp_pjit_cache.clear()
+  xc._xla.PjitFunctionCache.clear_all()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.

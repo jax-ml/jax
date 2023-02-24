@@ -58,7 +58,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (prefix_errors, _generate_key_paths)
 from jax._src.util import (
@@ -225,8 +224,7 @@ def _cpp_pjit_evict_fn(self):
   _create_pjit_jaxpr.evict_function(self._fun)  # type: ignore
 
 
-if xla_extension_version >= 124:
-  _cpp_pjit_cache = xc._xla.PjitFunctionCache()
+_cpp_pjit_cache = xc._xla.PjitFunctionCache()
 
 
 def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
@@ -263,19 +261,14 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
 
     return outs, fastpath_data
 
-  if xla_extension_version < 124:
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-        getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
-        fun, cache_miss, static_argnums, static_argnames)  # type: ignore
+  if pjit_has_explicit_sharding:
+    global_cache = xc._xla.PjitFunctionCache()
   else:
-    if pjit_has_explicit_sharding:
-      global_cache = xc._xla.PjitFunctionCache()
-    else:
-      global_cache = _cpp_pjit_cache
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-        getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
-        fun, cache_miss, static_argnums, static_argnames,  # type: ignore
-        donate_argnums, global_cache)  # type: ignore
+    global_cache = _cpp_pjit_cache
+  cpp_pjit_f = xc._xla.pjit(  # type: ignore
+      getattr(fun, "__name__", "<unnamed function>"),  # type: ignore
+      fun, cache_miss, static_argnums, static_argnames,  # type: ignore
+      donate_argnums, global_cache)  # type: ignore
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -1655,9 +1648,7 @@ def _pjit_partial_eval(trace, *in_tracers,
       keep_unused=keep_unused,
       inline=inline)
 
-  # TODO(yashkatariya): After xla_extension_version is bumped to >= 123, make
-  # this condition: `if not config.jax_array`.
-  if (resource_env is not None and xla_extension_version < 123) or not config.jax_array:
+  if not config.jax_array:
     if num_residuals:
       in_is_global = _calc_is_global_sequence(
           known_params['in_positional_semantics'], known_params['in_shardings'])

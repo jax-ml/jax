@@ -19,7 +19,7 @@ from absl.testing import absltest
 import jax
 from jax.config import config
 import jax.dlpack
-from jax._src.lib import xla_bridge, xla_client, xla_extension_version
+from jax._src.lib import xla_bridge, xla_client
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 
@@ -91,8 +91,6 @@ class DLPackTest(jtu.JaxTestCase):
 
 
   @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
-  @unittest.skipIf(xla_extension_version < 127,
-                   "Test requires jaxlib 0.4.4 or newer")
   def testTorchToJax(self, shape, dtype):
     if not config.x64_enabled and dtype in [jnp.int64, jnp.float64,
                                             jnp.complex128]:

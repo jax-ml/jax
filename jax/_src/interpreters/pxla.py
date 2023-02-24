@@ -74,7 +74,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -3509,13 +3508,8 @@ class UnloadedMeshExecutable:
 
     if _allow_propagation_to_outputs is None:
       _allow_propagation_to_outputs = [False] * len(out_shardings)
-    if xla_extension_version >= 123:
-      # Convert bools to int because that is what the compilation option expects.
-      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
-          _allow_propagation_to_outputs
-    else:
-      compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
-          all(_allow_propagation_to_outputs)
+    compile_options.executable_build_options.allow_spmd_sharding_propagation_to_output = \
+        _allow_propagation_to_outputs
 
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       return _compile_replicated_mesh_executable_from_hlo(
@@ -3554,7 +3548,7 @@ class UnloadedMeshExecutable:
             out_shardings.append(xla_s)
             are_out_shardings_from_xla.append(True)
           else:
-            if xla_extension_version >= 123 and not are_op_shardings_equal(
+            if not are_op_shardings_equal(
                 xla_s._to_xla_op_sharding(aval.ndim),  # type: ignore
                 orig._to_xla_op_sharding(aval.ndim)):  # type: ignore
               raise AssertionError(
@@ -3695,10 +3689,7 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    if xla_extension_version < 124:
-      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [])  # type: ignore
-    else:
-      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [])  # type: ignore
+    return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [])  # type: ignore
 
 
 def _out_shardings_for_trivial(

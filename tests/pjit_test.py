@@ -49,7 +49,7 @@ import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
 from jax._src.interpreters import pxla
 from jax.interpreters import mlir
-from jax._src.lib import xla_client as xc, xla_bridge, xla_extension_version
+from jax._src.lib import xla_client as xc, xla_bridge
 from jax._src.util import prod, curry, unzip2, safe_zip
 
 from jax.config import config
@@ -578,8 +578,6 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testAutodiffCache(self):
     if not jax.config.jax_array:
       self.skipTest('Does not work without jax.Array')
-    if xla_extension_version < 123:
-      self.skipTest('This test requires xla_extension_version >= 123.')
 
     f = pjit(
         lambda x: jnp.sin(x).sum(), in_shardings=P('x'), out_shardings=None
@@ -2848,9 +2846,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     if jax.device_count() <= 1:
       self.skipTest('Test requires more >1 device.')
 
-    if xla_extension_version < 125:
-      self.skipTest('This test requires xla_extension_version >= 125.')
-
     system_default_device = jnp.add(1, 1).device()
     test_device = jax.devices()[-1]
 
@@ -3287,9 +3282,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       jax.jit(_pmapped_fun)(inputs)  # doesn't crash
 
   def test_pjit_function_cache_cpp(self):
-    if xla_extension_version < 124 or not config.jax_array:
-      self.skipTest('This test requires xla_extension_version >= 124 and '
-                    'jax.Array')
+    if not config.jax_array:
+      self.skipTest('This test requires jax.Array')
     def f(x):
       return x * 2
 
@@ -3301,9 +3295,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 1)
 
   def test_pjit_no_global_cache_hit_axis_resources(self):
-    if xla_extension_version < 124 or not config.jax_array:
-      self.skipTest('This test requires xla_extension_version >= 124 and '
-                    'jax.Array')
+    if not config.jax_array:
+      self.skipTest('This test requires jax.Array')
 
     mesh = jtu.create_global_mesh((1,), ('x',))
     s = NamedSharding(mesh, P('x'))
@@ -3331,9 +3324,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 1)
 
   def test_jit_function_cache_cpp(self):
-    if xla_extension_version < 124 or not config.jax_array:
-      self.skipTest('This test requires xla_extension_version >= 124 and '
-                    'jax.Array')
+    if not config.jax_array:
+      self.skipTest('This test requires jax.Array')
     if jax.config.jax_jit_pjit_api_merge:
       self.skipTest("This test only works if jax_jit_pjit_api_merge is False "
                     "since it tests the old jit codepath.")

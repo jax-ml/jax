@@ -309,11 +309,10 @@ def register_pjrt_plugin_factories(plugins_from_env: str):
     )
 
 
-if lib.xla_extension_version >= 126:
-  # The plugin names and paths are set in env var PJRT_NAMES_AND_LIBRARY_PATHS,
-  # in the format of 'name1:path1,name2:path2' ('name1;path1,name2;path2' for
-  # windows).
-  register_pjrt_plugin_factories(os.getenv('PJRT_NAMES_AND_LIBRARY_PATHS', ''))
+# The plugin names and paths are set in env var PJRT_NAMES_AND_LIBRARY_PATHS,
+# in the format of 'name1:path1,name2:path2' ('name1;path1,name2;path2' for
+# windows).
+register_pjrt_plugin_factories(os.getenv('PJRT_NAMES_AND_LIBRARY_PATHS', ''))
 
 if iree is not None:
   register_backend_factory("iree", iree.iree_client_factory, priority=-100)
@@ -389,9 +388,6 @@ def backends():
           (platform, priority) for platform, (_, priority)
           in _backend_factories.items())
     default_priority = -1000
-    if lib.xla_extension_version < 126 and hasattr(xla_client,
-                                                   "maybe_load_pjrt_plugins"):
-      xla_client.maybe_load_pjrt_plugins()
     for platform, priority in platforms_and_priorites:
       try:
         backend = _init_backend(platform)

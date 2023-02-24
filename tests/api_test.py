@@ -66,7 +66,6 @@ from jax._src import device_array
 from jax._src import prng
 from jax._src.lib import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src import linear_util as lu
@@ -102,7 +101,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @property
   def jit(self):
-    if jax.config.jax_jit_pjit_api_merge and xla_extension_version >= 127:
+    if jax.config.jax_jit_pjit_api_merge:
       return jax.jit
     return functools.partial(api._jit, self.use_cpp_jit)
 
@@ -596,18 +595,14 @@ class CPPJitTest(jtu.BufferDonationTestCase):
         TypeError, r".* 'foo' of type <.*'str'> is not a valid JAX type"):
       self.jit(f)("foo")
 
-    if xla_extension_version > 127:
-      # Jax type objects aren't valid data arguments.
-      if config.jax_jit_pjit_api_merge:
-        err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
-      else:
-        err_str = ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type"
-
-      with self.assertRaisesRegex(TypeError, err_str):
-        self.jit(f)(jnp.int32)
+    # Jax type objects aren't valid data arguments.
+    if config.jax_jit_pjit_api_merge:
+      err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
     else:
-      with self.assertRaises(TypeError):
-        self.jit(f)(jnp.int32)
+      err_str = ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type"
+
+    with self.assertRaisesRegex(TypeError, err_str):
+      self.jit(f)(jnp.int32)
 
   def test_jit_masked_array(self):
     x = np.ma.array([1, 2, 3], mask=[True, False, True])

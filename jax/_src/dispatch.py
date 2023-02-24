@@ -60,7 +60,6 @@ from jax._src.lib.mlir.dialects import use_stablehlo
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
                                GSPMDSharding, NamedSharding, PartitionSpec,
                                Sharding, XLACompatibleSharding)
@@ -1305,11 +1304,8 @@ for t in device_array.device_array_types:
 
 def _device_put_jax_array(x, device: Optional[Device]):
   if is_single_device_sharding(x.sharding):
-    if xla_extension_version >= 128 and xla_extension_version <= 129:
-      return (_copy_array_to_device(x, device),)
-    else:
-      x = _copy_device_array_to_device(_set_aval(x._arrays[0]), device)
-      return (x,)
+    x = _copy_device_array_to_device(_set_aval(x._arrays[0]), device)
+    return (x,)
   else:
     # Round trip via host if x is sharded. SDA also does a round trip via host.
     return _device_put_array(x._value, device)
@@ -1331,16 +1327,10 @@ def _copy_device_array_to_device(
     # source and target platforms are the same
     if x.device_buffer.device() == device:
       # no copying to be done because source equals target
-      if xla_extension_version <= 129:
-        if x.device == device:
-          return x
-        else:
-          moved_buf = x.device_buffer  # We need to change stickyness
+      if x._device == device:
+        return x
       else:
-        if x._device == device:
-          return x
-        else:
-          moved_buf = x.device_buffer  # We need to change stickyness
+        moved_buf = x.device_buffer  # We need to change stickyness
     else:
       # move the buffer with a device-to-device copy
       moved_buf = x.device_buffer.copy_to_device(device)
@@ -1357,16 +1347,7 @@ def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Arra
     # no copying to be done because there's no target specified
     return x
 
-  arr = x._arrays[0]
-  if xla_extension_version >= 128 and isinstance(arr, array.ArrayImpl) and xla_extension_version <= 129:
-    # buffers from different XLA backends are passed through the host.
-    if xb.get_device_backend(device).platform != arr.platform():
-      backend = xb.get_device_backend(device)
-      arr = backend.buffer_from_pyval(np.asarray(arr), device)
-    # Always call copy_to_device in order to set stickiness.
-    return arr.copy_to_device(device)
-
-  buf = arr
+  buf = x._arrays[0]
   if xb.get_device_backend(device).platform == buf.platform():
     # source and target platforms are the same
     if x.device() == device:

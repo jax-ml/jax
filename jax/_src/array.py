@@ -28,7 +28,6 @@ from jax._src import dtypes
 from jax._src.config import config
 from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src import api
 from jax._src.typing import ArrayLike
 from jax.interpreters import mlir
@@ -351,7 +350,6 @@ class ArrayImpl(basearray.Array):
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
-  @use_cpp_method(xla_extension_version >= 128 and xla_extension_version <= 129)
   def unsafe_buffer_pointer(self):
     if len(self._arrays) != 1:
       raise ValueError("unsafe_buffer_pointer() is supported only for unsharded"
@@ -443,7 +441,6 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(global_d, self.sharding, self.shape, array))
     return out
 
-  @use_cpp_method(xla_extension_version >= 128 and xla_extension_version <= 129)
   def delete(self):
     if self._arrays is None:
       return
@@ -489,10 +486,7 @@ class ArrayImpl(basearray.Array):
 
       for s in self.addressable_shards:
         if not replica_id_exists or s.replica_id == 0:
-          if xla_extension_version >= 128 and xla_extension_version <= 129:
-            s.data.copy_to_host_async()  # pytype: disable=attribute-error
-          else:
-            s.data._arrays[0].copy_to_host_async()  # pytype: disable=attribute-error
+          s.data._arrays[0].copy_to_host_async()  # pytype: disable=attribute-error
 
   @property
   def _value(self) -> np.ndarray:
