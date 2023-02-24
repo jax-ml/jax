@@ -824,9 +824,6 @@ class TokenSet:
   def effects(self) -> Sequence[core.Effect]:
     return tuple(self._tokens.keys())
 
-  def tokens(self) -> Sequence[Token]:
-    return tuple(self._tokens.values())
-
   def subset(self, effects: Sequence[core.Effect]) -> TokenSet:
     """Return a subset of the `TokenSet` restricted to a set of `core.Effect`s."""
     return TokenSet((eff, self._tokens[eff]) for eff in effects)
@@ -1029,8 +1026,8 @@ def lower_jaxpr_to_fun(
       for _ in effects:
         outs.append(dummy_token())
     else:
-      for token in tokens_out.tokens():
-        outs.append(token)
+      for eff in effects:
+        outs.append(tokens_out.get(eff))
     for aval, out in zip(jaxpr.out_avals, out_vals):
       if replace_tokens_with_dummy and aval is core.abstract_token:
         outs.append(ir_constants(np.zeros((), np.bool_)))
@@ -1054,7 +1051,8 @@ def _emit_lowering_rule_as_fun(lowering_rule,
 
   input_types = map(aval_to_ir_types, ctx.avals_in)
   output_types = map(aval_to_ir_types, ctx.avals_out)
-  token_types = [token_type() for _ in ctx.tokens_in.items()]
+  effs = list(ctx.tokens_in.effects())
+  token_types = [token_type() for _ in effs]
   input_types = [*dim_var_types, *token_types, *input_types]
   output_types = [*token_types, *output_types]
 
@@ -1075,7 +1073,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
                           dim_var_values=dim_var_values)
     outs = lowering_rule(sub_ctx, *_unwrap_singleton_ir_values(unflattened_args))
     if sub_ctx.tokens_out:
-      outs = [*sub_ctx.tokens_out.tokens(), outs]
+      outs = [*[sub_ctx.tokens_out.get(eff) for eff in effs], outs]
     func_dialect.ReturnOp(util.flatten(map(wrap_singleton_ir_values, outs)))
   return func_op
 
@@ -1245,12 +1243,13 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = core.ClosedJaxpr(call_jaxpr, ())
   xla.check_backend_matches(backend, ctx.platform)
-  effects = tokens_in.effects()
+  effects = list(tokens_in.effects())
   output_types = map(aval_to_ir_types, avals_out)
   output_types = [token_type()] * len(effects) + output_types
   flat_output_types = util.flatten(output_types)
   symbol_name = _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects).name.value
-  args = tuple([*dim_var_values, *tokens_in.tokens(), *args])
+  tokens = [tokens_in.get(eff) for eff in effects]
+  args = tuple([*dim_var_values, *tokens, *args])
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(symbol_name),
                              flatten_lowering_ir_args(args))

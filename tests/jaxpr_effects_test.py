@@ -93,14 +93,16 @@ def function_effect_lowering(ctx, *, effect):
   func = mlir._emit_lowering_rule_as_fun(_f, ctx)
 
   output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
-  token_types = [mlir.token_type() for _ in ctx.tokens_in.items()]
+  effs = list(ctx.tokens_in.effects())
+  in_tokens = [ctx.tokens_in.get(eff) for eff in effs]
+  token_types = [mlir.token_type() for _ in effs]
   output_types = [*token_types, *output_types]
   flat_output_types = util.flatten(output_types)
   call = mlir.func_dialect.CallOp(flat_output_types,
                                   mlir.ir.FlatSymbolRefAttr.get(func.name.value),
-                                  mlir.flatten_lowering_ir_args(ctx.tokens_in.tokens()))
+                                  mlir.flatten_lowering_ir_args(in_tokens))
   tokens, out = util.split_list(call.results, [len(ctx.tokens_in)])
-  ctx.set_tokens_out(mlir.TokenSet(zip(ctx.tokens_in.effects(), tokens)))
+  ctx.set_tokens_out(mlir.TokenSet(zip(effs, tokens)))
   return out
 
 callback_p = core.Primitive('callback')

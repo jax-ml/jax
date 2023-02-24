@@ -1481,7 +1481,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                       (mlir.SPMDAxisContext, mlir.ShardingContext)):
       raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
 
-  effects = ctx.tokens_in.effects()
+  effects = list(ctx.tokens_in.effects())
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
   flat_output_types = util.flatten(output_types)
@@ -1498,7 +1498,8 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
       ctx.module_context, name, jaxpr, effects, arg_shardings=arg_shardings,
       result_shardings=result_shardings, use_sharding_annotations=False,
       api_name=('jit' if resource_env is None else 'pjit'))
-  args = (*ctx.dim_var_values, *ctx.tokens_in.tokens(), *args)
+  tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
+  args = (*ctx.dim_var_values, *tokens_in, *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))
