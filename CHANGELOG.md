@@ -11,6 +11,11 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * `jax.sharding.OpShardingSharding` has been renamed to `jax.sharding.GSPMDSharding`.
     `jax.sharding.OpShardingSharding` will be removed in 3 months from Feb 17, 2023.
+  * The following `jax.Array` methods are deprecated and will be removed 3 months from
+    Feb 23 2023:
+    * `jax.Array.broadcast`: use {func}`jax.lax.broadcast` instead.
+    * `jax.Array.broadcast_in_dim`: use {func}`jax.lax.broadcast_in_dim` instead.
+    * `jax.Array.split`: use {func}`jax.numpy.split` instead.
 
 ## jaxlib 0.4.5
 
