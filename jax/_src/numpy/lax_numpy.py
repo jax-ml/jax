@@ -5127,6 +5127,36 @@ def _compress_method(a: ArrayLike, condition: ArrayLike,
   return compress(condition, a, axis, out)
 
 
+@_wraps(lax.broadcast, lax_description="""
+Deprecated. Use :func:`jax.lax.broadcast` instead.
+""")
+def _deprecated_broadcast(*args, **kwargs):
+  warnings.warn(
+    "The arr.broadcast() method is deprecated. Use jax.lax.broadcast instead.",
+    category=FutureWarning)
+  return lax.broadcast(*args, **kwargs)
+
+
+@_wraps(lax.broadcast, lax_description="""
+Deprecated. Use :func:`jax.lax.broadcast_in_dim` instead.
+""")
+def _deprecated_broadcast_in_dim(*args, **kwargs):
+  warnings.warn(
+    "The arr.broadcast_in_dim() method is deprecated. Use jax.lax.broadcast_in_dim instead.",
+    category=FutureWarning)
+  return lax.broadcast_in_dim(*args, **kwargs)
+
+
+@_wraps(lax.broadcast, lax_description="""
+Deprecated. Use :func:`jax.numpy.split` instead.
+""")
+def _deprecated_split(*args, **kwargs):
+  warnings.warn(
+    "The arr.split() method is deprecated. Use jax.numpy.split instead.",
+    category=FutureWarning)
+  return split(*args, **kwargs)
+
+
 @core.stash_axis_env()
 @partial(jit, static_argnums=(1,2,3))
 def _multi_slice(arr: ArrayLike,
@@ -5487,6 +5517,7 @@ _array_methods = {
   "clip": _clip,
   "conj": conj,
   "conjugate": conjugate,
+  "compress": _compress_method,
   "copy": copy,
   "cumprod": cumprod,
   "cumsum": cumsum,
@@ -5516,13 +5547,15 @@ _array_methods = {
   "var": var,
   "view": _view,
 
-  # Extra methods handy for specializing dispatch
-  # TODO(jakevdp): find another mechanism for exposing these.
-  "broadcast": lax.broadcast,
-  "broadcast_in_dim": lax.broadcast_in_dim,
-  "split": split,
-  "compress": _compress_method,
-  "_multi_slice": _multi_slice,
+  # Methods exposed in order to avoid circular imports
+  "_split": split,  # used in jacfwd/jacrev
+  "_multi_slice": _multi_slice,  # used in pxla for sharding
+
+  # Deprecated methods.
+  # TODO(jakevdp): remove these after June 2023
+  "broadcast": _deprecated_broadcast,
+  "broadcast_in_dim": _deprecated_broadcast_in_dim,
+  "split": _deprecated_split,
 }
 
 _array_properties = {
