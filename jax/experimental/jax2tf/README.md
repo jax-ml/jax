@@ -1140,6 +1140,38 @@ f_tf = tf.function(
 self.assertEqual(1, f_tf(x45))
 ```
 
+### jax.jit function with static argments is not supported
+
+jax2tf.convert can not support jax.jit function with static arguments.
+
+This means that if you have a function like this:
+
+```python
+def f(x):
+  return x + 2
+
+f = jax.jit(f, static_argnums=(0,))
+
+f_tf = jax2tf.convert(f)
+
+# Raise ValueErorr: jax2tf.convert does not support jax jit function with static_argnums or static_argnames
+result = f_tf(100)
+```
+
+You cannot convert it to TF function, and calling it will raise a ValueError.
+
+To work around this issue, you can create a new jax function that does not have static arguments, like this:
+```python
+def f2():
+  return f(100)
+
+f2 = jax.jit(f2)
+f2_tf = jax2tf.convert(f2)
+result = f2_tf()
+```
+
+
+
 # Calling TensorFlow functions from JAX
 
 The function ```call_tf``` allows JAX functions to call

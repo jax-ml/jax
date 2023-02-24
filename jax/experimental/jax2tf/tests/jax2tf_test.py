@@ -356,7 +356,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(grad_jax.a, grad_tf[0])
     self.assertAllClose(grad_jax.b, grad_tf[1])
 
-
   @jtu.sample_product(with_function=[False, True])
   def test_gradients_with_ordered_dict_input(self, with_function=True):
     def f(inputs):
@@ -583,7 +582,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           print(f"Failed at {k}")
           raise
 
-
     # compare_with_overrides(g_jax, {},
     #   bool_passthrough=np.zeros(state["bool_passthrough"].shape, dtype=dtypes.float0),
     #   bool_unused=np.zeros(state["bool_unused"].shape, dtype=dtypes.float0),
@@ -594,7 +592,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     #   int_passthrough=np.zeros(state["int_passthrough"].shape, dtype=dtypes.float0),
     #   int_unused=np.zeros(state["int_unused"].shape, dtype=dtypes.float0),
     #   int_used=np.zeros(state["int_used"].shape, dtype=dtypes.float0))
-
 
     # Now native TF gradients, only to test how native TF AD works
     _, (grad_tf_0,) = tf_test_util.ComputeTfValueAndGrad(
@@ -663,7 +660,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       print(tape.gradient(f_tf(xv), xv,
                           unconnected_gradients=tf.UnconnectedGradients.ZERO))
       # returns 0 with the same shape and dtype as x
-
 
   def test_convert_argument_non_callable_error(self):
     with self.assertRaisesRegex(TypeError, "Expected a callable value"):
@@ -1045,7 +1041,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                          np.full_like(x[1], fill_value=2.)),
                         (grad_tf[0].numpy(), grad_tf[1].numpy()))
 
-
   @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
@@ -1370,6 +1365,21 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           self.fail(
               "tf graph has repeated name issue on when converting lax.while to tf.while."
               f"See op.name = : {op.name}")
+
+  def test_jax_static_argnums(self):
+    def f(x):
+      return x + 2
+
+    f = jax.jit(f, static_argnums=(0,))
+    with self.assertRaisesRegex(
+        ValueError,
+        (
+            "jax2tf.convert does not support jax jit function with"
+            " static_argnums or static_argnames"
+        ),
+    ):
+      self.ConvertAndCompare(f, 100)
+
 
 def get_serialized_computation(
     f_jax: Callable,

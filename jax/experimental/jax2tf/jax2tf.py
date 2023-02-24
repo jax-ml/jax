@@ -297,6 +297,16 @@ def convert(fun_jax: Callable,
     tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
     only TensorFlow ops.
   """
+  if hasattr(fun_jax, "__getstate__"):
+    if (
+        fun_jax.__getstate__()["static_argnums"]
+        or fun_jax.__getstate__()["static_argnames"]
+    ):
+      raise ValueError(
+          "jax2tf.convert does not support jax jit function with static_argnums"
+          " or static_argnames "
+      )
+
   if experimental_native_lowering == "default":
     experimental_native_lowering = config.jax2tf_default_experimental_native_lowering
 
