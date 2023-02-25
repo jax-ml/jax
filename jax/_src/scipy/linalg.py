@@ -14,6 +14,7 @@
 
 
 from functools import partial
+import operator
 
 import numpy as np
 import scipy.linalg
@@ -24,6 +25,7 @@ from typing import cast, overload, Any, Literal, Optional, Tuple, Union
 import jax
 from jax import jit, vmap, jvp
 from jax import lax
+from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
@@ -1041,3 +1043,46 @@ def toeplitz(c: ArrayLike, r: Optional[ArrayLike] = None) -> Array:
       (nrows,), (1,), 'VALID', dimension_numbers=('NTC', 'IOT', 'NTC'),
       precision=lax.Precision.HIGHEST)[0]
   return jnp.flip(patches, axis=0)
+
+
+_NULLSPACE_DOC = """\
+Because the size of the output of ``null_space`` is data-dependent, the function is not
+typically compatible with JIT. The JAX version adds the optional ``size`` argument which
+must be specified statically for ``jax.scipy.linalg.null_space`` to be used within some of JAX's
+transformations.
+"""
+_NULLSPACE_EXTRA_PARAMS = """
+size : int, optional
+    If specified, ``size`` elements of the null space are returned. If there are
+    fewer null space elements than ``size`` indicates, the return value will be padded with constant
+    0 vectors that belong by nature to the null space.
+"""
+
+@_wraps(scipy.linalg.null_space, lax_description=_NULLSPACE_DOC, extra_params=_NULLSPACE_EXTRA_PARAMS)
+def null_space(A: ArrayLike, rcond: Optional[Union[float, Array]] = None,
+               size: Optional[int] = None) -> Array:
+  u, s, vh = svd(A, full_matrices=True)
+  M, N = u.shape[0], vh.shape[1]
+  if rcond is None:
+    rcond = jnp.finfo(s.dtype).eps * max(M, N)
+  rcond = jnp.array(rcond).astype(s.dtype)
+  tol = jnp.amax(s) * rcond
+  n_null_space = vh.shape[0] - jnp.sum(s > tol, dtype=int)
+  size_int = core.concrete_or_error(
+    operator.index,
+    n_null_space if size is None else size,
+    "The size argument of null_space must be statically specified "
+    "to use null_space within jax.jit or other transformations.")
+  if size_int < 0:
+    raise ValueError("size must be positive")
+  max_size = min(size_int, vh.shape[0])
+  Q = vh[vh.shape[0] - max_size:]
+  # now we need to make sure to remove all vectors in Q that are not in the null space
+  # but were selected just because we need an array of size `size`
+  fill_value = 0
+  mask = (jnp.arange(Q.shape[0]) < max_size - n_null_space)[:, None]
+  Q = jnp.where(mask, fill_value, Q)
+  # we need to pad Q with 0s if size > max_size
+  Q = jnp.pad(Q, ((size_int - max_size, 0), (0, 0)), constant_values=fill_value)
+  Q = Q.T.conj()
+  return Q

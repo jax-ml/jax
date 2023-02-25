@@ -35,6 +35,7 @@ jax.scipy.linalg
    lu
    lu_factor
    lu_solve
+   null_space
    polar
    qr
    rsf2csf

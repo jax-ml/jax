@@ -1619,6 +1619,46 @@ class ScipyLinalgTest(jtu.JaxTestCase):
       [2, 1, 4, 5],
       [3, 2, 1, 4]], dtype=np.float32))
 
+  @jtu.sample_product(
+    shape=[[2, 1], [1, 2], [2, 5], [5, 2], [4, 20], [20, 4]],
+    dtype=float_types + complex_types,
+    size=[None, 2, 9])
+  def testNullSpace(self, shape, dtype, size):
+    # test compiled version
+    rng = jtu.rand_default(self.rng())
+    X = rng(shape, dtype)
+    def scipy_fun(x):
+      result = osp.linalg.null_space(x)
+      if size is None:
+        return result
+      elif size <= result.shape[1]:
+        return result[:, -size:]
+      else:
+        all_zeros = np.zeros((result.shape[0], size), dtype=x.dtype)
+        all_zeros[:, size-result.shape[1]:] = result
+        return all_zeros
+    args_maker = lambda: [X]
+    jnp_fun = partial(jsp.linalg.null_space, size=size)
+    self._CheckAgainstNumpy(scipy_fun, jnp_fun, args_maker, check_dtypes=False)
+    if size is not None:
+      self._CompileAndCheck(jnp_fun, args_maker)
+    else:
+      err, msg = jax.errors.ConcretizationTypeError, r"Abstract tracer value encountered where concrete value is expected"
+      with self.assertRaisesRegex(err, msg):
+        self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    base_shape=[10, 100],
+    dtype=float_types + complex_types,
+    rcond=[1e-3, 1e-6])
+  def testNullSpaceDifficult(self, base_shape, dtype, rcond):
+    rng = jtu.rand_default(self.rng())
+    X = rng((base_shape, 5), dtype) @ rng((5, base_shape), dtype)
+    X = X + 1e-4 * rng((base_shape, 1), dtype) @ rng((1, base_shape), dtype)
+    args_maker = lambda: [X, rcond]
+    self._CheckAgainstNumpy(osp.linalg.null_space,
+                            jsp.linalg.null_space, args_maker)
+
 
 class LaxLinalgTest(jtu.JaxTestCase):
   """Tests for lax.linalg primitives."""
