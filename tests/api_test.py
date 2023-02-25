@@ -4156,25 +4156,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, "applied to foo"):
       f_vjp(1.0, 1.0)
 
-  @unittest.skipIf(not sys.executable, "test requires sys.executable")
-  @jtu.skip_on_devices("gpu", "tpu")
-  def test_jax_reload_warning(self):
-    # Regression test for https://github.com/google/jax/issues/13857
-    should_not_warn = "import jax"
-    should_warn = (
-      "import jax;"
-      "import importlib;"
-      "importlib.reload(jax)")
-    expected = "The jax module appears to have been reloaded within the python process"
-
-    result = subprocess.run([sys.executable, '-c', should_not_warn],
-                            check=True, capture_output=True)
-    assert expected not in result.stderr.decode()
-
-    result = subprocess.run([sys.executable, '-c', should_warn],
-                            check=True, capture_output=True)
-    assert expected in result.stderr.decode()
-
   def test_shapedtypestruct_sharding_error(self):
     with self.assertRaisesRegex(
         ValueError,

@@ -173,11 +173,4 @@ from jax._src.array import Shard as Shard
 
 import jax.lib  # TODO(phawkins): remove this export.
 
-if hasattr(jax, '_src'):
-  del jax._src
-else:
-  from warnings import warn as _warn
-  _warn("The jax module appears to have been reloaded within the python process. "
-        "This is not well-supported and can cause unpredictable side-effects. "
-        "For information see https://github.com/google/jax/issues/13857.")
-  del _warn
+# trailer
