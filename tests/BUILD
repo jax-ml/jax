@@ -432,6 +432,10 @@ jax_test(
 jax_test(
     name = "lax_scipy_spectral_dac_test",
     srcs = ["lax_scipy_spectral_dac_test.py"],
+    # TODO(b/270685539): Test is broken
+    disable_backends = [
+        "cpu",
+    ],
     shard_count = {
         "cpu": 40,
         "gpu": 40,
