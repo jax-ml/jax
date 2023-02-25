@@ -821,8 +821,8 @@ class TokenSet:
   def items(self) -> Sequence[Tuple[core.Effect, Token]]:
     return tuple(self._tokens.items())
 
-  def effects(self) -> Sequence[core.Effect]:
-    return tuple(self._tokens.keys())
+  def effects(self) -> set[core.Effect]:
+    return set(self._tokens.keys())
 
   def subset(self, effects: Sequence[core.Effect]) -> TokenSet:
     """Return a subset of the `TokenSet` restricted to a set of `core.Effect`s."""
@@ -833,10 +833,10 @@ class TokenSet:
     new_tokens = []
     for eff in self.effects():
       if eff in tokens._tokens:
-        new_tokens.append(tokens._tokens[eff])
+        new_tokens.append((eff, tokens._tokens[eff]))
       else:
-        new_tokens.append(self._tokens[eff])
-    return TokenSet(zip(self.effects(), new_tokens))
+        new_tokens.append((eff, self._tokens[eff]))
+    return TokenSet(new_tokens)
 
 def dummy_token_type() -> Sequence[ir.Type]:
   return aval_to_ir_types(core.ShapedArray((0,), np.bool_))
@@ -1069,7 +1069,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
     unflattened_args = util.unflatten(entry_block.arguments,
                                       map(len, input_types))
     dim_var_values, token_args, unflattened_args = util.split_list(unflattened_args, [num_dim_vars, len(ctx.tokens_in)])
-    sub_ctx = ctx.replace(tokens_in=TokenSet(zip(ctx.tokens_in.effects(), token_args)),
+    sub_ctx = ctx.replace(tokens_in=TokenSet(zip(effs, token_args)),
                           dim_var_values=dim_var_values)
     outs = lowering_rule(sub_ctx, *_unwrap_singleton_ir_values(unflattened_args))
     if sub_ctx.tokens_out:
