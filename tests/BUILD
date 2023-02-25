@@ -394,13 +394,15 @@ jax_test(
 jax_test(
     name = "lax_scipy_test",
     srcs = ["lax_scipy_test.py"],
+    backend_tags = {
+        "tpu": ["noasan"],  # Test times out.
+    },
     shard_count = {
-        "cpu": 20,
-        "gpu": 20,
-        "tpu": 20,
+        "cpu": 40,
+        "gpu": 40,
+        "tpu": 40,
         "iree": 10,
     },
-    deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
 )
 
 jax_test(
@@ -415,32 +417,6 @@ jax_test(
         "tpu": 10,
         "iree": 10,
     },
-)
-
-jax_test(
-    name = "lax_scipy_special_functions_test",
-    srcs = ["lax_scipy_special_functions_test.py"],
-    shard_count = {
-        "cpu": 20,
-        "gpu": 20,
-        "tpu": 20,
-        "iree": 10,
-    },
-    deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
-)
-
-jax_test(
-    name = "lax_scipy_spectral_dac_test",
-    srcs = ["lax_scipy_spectral_dac_test.py"],
-    shard_count = {
-        "cpu": 40,
-        "gpu": 40,
-        "tpu": 40,
-        "iree": 40,
-    },
-    deps = [
-        "//jax:internal_test_util",
-    ] + py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
 )
 
 jax_test(
