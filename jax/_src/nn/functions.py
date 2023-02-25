@@ -431,6 +431,7 @@ def one_hot(x: Array, num_classes: int, *,
   return _one_hot(x, num_classes, dtype=dtype, axis=axis)
 
 
+@custom_jvp
 @jax.jit
 def relu6(x: Array) -> Array:
   r"""Rectified Linear Unit 6 activation function.
@@ -444,6 +445,9 @@ def relu6(x: Array) -> Array:
     x : input array
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
+
+relu6.defjvps(lambda g, ans, x: lax.select((6 > x) & (x > 0), g, lax.full_like(g, 0)))
+
 
 @jax.jit
 def hard_sigmoid(x: Array) -> Array:
