@@ -14,13 +14,13 @@
 """Module for state types."""
 from __future__ import annotations
 
-from typing import Any, List, Sequence, Set, Union
+from typing import Any, Generic, List, Sequence, Set, Tuple, TypeVar, Union
 
 from jax._src import core
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src.lib import xla_bridge, xla_client
-from jax._src.util import safe_map, safe_zip, tuple_insert, tuple_delete, prod
+from jax._src.util import safe_map, safe_zip, prod
 
 xc = xla_client
 xb = xla_bridge
@@ -74,22 +74,33 @@ StateEffect = Union[ReadEffect, WriteEffect, AccumEffect]
 
 # ## `Ref`s
 
-# We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
-# A `ShapedArrayRef` is a abstract value for mutable containers of array types
-class ShapedArrayRef(core.AbstractValue):
-  __slots__ = ["shape", "dtype"]
+Aval = TypeVar("Aval", bound=core.AbstractValue)
 
-  def __init__(self, shape, dtype):
-    self.shape = shape
-    self.dtype = dtype
+# We need an aval for `Ref`s so we can represent `get` and `swap` in Jaxprs.
+class AbstractRef(core.AbstractValue, Generic[Aval]):
+  __slots__ = ["inner_aval"]
+
+  def __init__(self, inner_aval: core.AbstractValue):
+    self.inner_aval = inner_aval
 
   def join(self, other):
-    assert core.symbolic_equal_shape(self.shape, other.shape)
-    assert self.dtype == other.dtype
-    return self
+    assert isinstance(other, AbstractRef)
+    return AbstractRef(self.inner_aval.join(other.inner_aval))
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self: prod(self.shape))
+
+  @property
+  def shape(self):
+    if not isinstance(self.inner_aval, core.ShapedArray):
+      raise ValueError(f"`Ref{{{self.inner_aval.str_short()}}} has no `shape`.")
+    return self.inner_aval.shape
+
+  @property
+  def dtype(self):
+    if not isinstance(self.inner_aval, core.UnshapedArray):
+      raise ValueError(f"`Ref{{{self.inner_aval.str_short()}}} has no `dtype`.")
+    return self.inner_aval.dtype
 
   @core.aval_method
   @staticmethod
@@ -116,35 +127,39 @@ class ShapedArrayRef(core.AbstractValue):
     return ref_set(tracer, idx, value)
 
   def __repr__(self) -> str:
-    a = core.ShapedArray(self.shape, self.dtype)
-    return f'Ref{{{a.str_short()}}}'
+    return f'Ref{{{self.inner_aval.str_short()}}}'
 
   def at_least_vspace(self):
-    return self
+    return AbstractRef(self.inner_aval.at_least_vspace())
 
   def __eq__(self, other):
-    return (type(self) is type(other)
-            and self.dtype == other.dtype and self.shape == other.shape)
+    return (type(self) is type(other) and self.inner_aval == other.inner_aval)
 
   def __hash__(self):
-    return hash((self.shape, self.dtype))
+    return hash((self.__class__, self.inner_aval))
 
+def _ref_raise_to_shaped(ref_aval: AbstractRef, weak_type):
+  return AbstractRef(core.raise_to_shaped(ref_aval.inner_aval, weak_type))
+core.raise_to_shaped_mappings[AbstractRef] = _ref_raise_to_shaped
 
-core.raise_to_shaped_mappings[ShapedArrayRef] = lambda aval, _: aval
+def _map_ref(size, axis, ref_aval):
+  return AbstractRef(core.mapped_aval(size, axis, ref_aval.inner_aval))
 
-def _map_ref(size, axis, aval):
-  if axis is None: return aval
-  return ShapedArrayRef(tuple_delete(aval.shape, axis), aval.dtype)
+def _unmap_ref(size, axis_name, axis, ref_aval):
+  return AbstractRef(core.unmapped_aval(size, axis_name, axis,
+                                        ref_aval.inner_aval))
 
-def _unmap_ref(size, axis_name, axis, aval):
-  if axis is None: return aval
-  return ShapedArrayRef(tuple_insert(aval.shape, axis, size), aval.dtype)
-
-core.aval_mapping_handlers[ShapedArrayRef] = (_map_ref, _unmap_ref)
+core.aval_mapping_handlers[AbstractRef] = (_map_ref, _unmap_ref)
 
 def get_ref_state_effects(
     avals: Sequence[core.AbstractValue],
     effects: core.Effects) -> List[Set[StateEffect]]:
   return [{eff for eff in effects
            if isinstance(eff, (ReadEffect, WriteEffect, AccumEffect))
-           and eff.input_index == i} for i, aval in enumerate(avals)]
+           and eff.input_index == i} for i, _ in enumerate(avals)]
+
+def shaped_array_ref(shape: Tuple[int, ...], dtype,
+                     weak_type: bool = False,
+                     named_shape = None) -> AbstractRef[core.AbstractValue]:
+  return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type,
+                                      named_shape=named_shape))

@@ -14,7 +14,7 @@
 """Module for state primitives."""
 from functools import partial
 
-from typing import Any, List, Protocol, Tuple, TypeVar, Union
+from typing import Any, List, Tuple, Union
 
 import numpy as np
 
@@ -27,23 +27,12 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import pretty_printer as pp
 from jax._src.typing import Array
-from jax._src.state.types import (ShapedArrayRef, ReadEffect, WriteEffect,
+from jax._src.state.types import (AbstractRef, ReadEffect, WriteEffect,
                                   AccumEffect)
 from jax._src.util import safe_map, safe_zip, partition_list, tuple_insert
 
 
 ## General utilities
-
-T = TypeVar('T')
-class Ref(Protocol):
-
-  @property
-  def shape(self) -> Tuple[int, ...]:
-    ...
-
-  @property
-  def ndim(self) -> int:
-    ...
 
 ## JAX utilities
 
@@ -57,11 +46,11 @@ zip, unsafe_zip = safe_zip, zip
 # or we can read using indices:
 # a = get_p.bind(x, 0, 1)
 # Staging out `a = get_p.bind(x)` where the aval of `x` is
-# `ShapedArrayRef((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
+# `Ref((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
 
-def _get_impl(ref: Ref, *idx: int, **_):
+def _get_impl(ref: AbstractRef, *idx: int, **_):
   del ref, idx
   raise ValueError("Cannot run stateful primitive.")
 get_p.def_impl(_get_impl)
@@ -69,9 +58,18 @@ get_p.def_impl(_get_impl)
 Indexer = Tuple[Union[int, slice, Array], ...]
 # or Ellipsis, but that can't be annotated until Python 3.10? (types.EllipsisType)
 
+def _is_trivial_indexer(idx: Indexer) -> bool:
+  if idx is ...:
+    return True
+  if type(idx) is tuple:
+    if len(idx) == 0:
+      return True
+    return len(idx) == 1 and idx[0] is ...
+  return False
+
 def _unpack_idx(idx: Indexer, ndim: int
                ) -> Tuple[Tuple[Array, ...], Tuple[bool, ...]]:
-  if idx is ... or (type(idx) is tuple and len(idx) == 1 and idx[0] is ...):
+  if _is_trivial_indexer(idx):
     idx = tuple(slice(None) for _ in range(ndim))
   indexed_dims_ = [type(i) != slice for i in idx]
   _, non_slice_idx = partition_list(indexed_dims_, idx)
@@ -88,9 +86,23 @@ def _get_slice_output_shape(in_shape: Tuple[int, ...],
   shape = (*shape_prefix, *shape_suffix)
   return shape
 
-def ref_get(ref: Ref, idx: Indexer) -> Array:
+def _get_indexer(ref: AbstractRef, idx: Indexer
+                ) -> Tuple[Indexer, Tuple[bool, ...]]:
+  if isinstance(ref.inner_aval, core.ShapedArray):
+    non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  else:
+    if not _is_trivial_indexer(idx):
+      raise ValueError(
+          f"Cannot use nontrivial slice on non-shaped `Ref`: {idx}.")
+    non_slice_idx, indexed_dims = (), ()
+  return non_slice_idx, indexed_dims
+
+def ref_get(ref: Any, idx: Indexer) -> Array:
   """Reads a value from a `Ref`, a.k.a. value <- ref[idx]."""
-  non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  ref_aval = core.get_aval(ref)
+  if not isinstance(ref_aval, AbstractRef):
+    raise ValueError(f"Can only call `get` on a `Ref`: {ref}")
+  non_slice_idx, indexed_dims = _get_indexer(ref, idx)
   return get_p.bind(ref, *non_slice_idx, indexed_dims=indexed_dims)
 
 # `swap` mutates a `Ref`, setting its value and returns its previous value.
@@ -101,27 +113,30 @@ def ref_get(ref: Ref, idx: Indexer) -> Array:
 # `swap_p` also takes in index arguments following the value, i.e.:
 # _ = swap_p.bind(x, a, 0, 1)
 # Staging out `b = swap_p.bind(x, a)` where the aval of `x` is
-# `ShapedArrayRef((3,), np.dtype('float32'))` and the aval of `a` is
+# `Ref((3,), np.dtype('float32'))` and the aval of `a` is
 # `ShapedArray((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   b:f32[3], x:Ref{f32[3]} <- x, a
 # Staging out `_ = swap_p.bind(x, a, i, j)` where the aval of `x` is
-# `ShapedArrayRef((3,), np.dtype('float32'))` , the aval of `a` is
+# `Ref((3,), np.dtype('float32'))` , the aval of `a` is
 # `ShapedArray((3,), np.dtype('float32'))`, and the avals of both `i` and `j`
 # are `ShapedArray((), np.dtype('int32'))` leads to a jaxpr eqn printed like
 #   x:Ref{f32[3]}[i, j] <- a
 swap_p = core.Primitive("swap")
 
-def _swap_impl(ref: Ref, value: Array, *idx: int, **_):
+def _swap_impl(ref: AbstractRef, value: Array, *idx: int, **_):
   del ref, value, idx
   raise ValueError("Cannot run stateful primitive.")
 swap_p.def_impl(_swap_impl)
 
-def ref_swap(ref: Ref, idx: Indexer, value: Array) -> Array:
+def ref_swap(ref: AbstractRef, idx: Indexer, value: Array) -> Array:
   """Sets a `Ref`'s value and returns the original value."""
-  non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  ref_aval = core.get_aval(ref)
+  if not isinstance(ref_aval, AbstractRef):
+    raise ValueError(f"Can only call `swap` on a `Ref`: {ref}")
+  non_slice_idx, indexed_dims = _get_indexer(ref, idx)
   return swap_p.bind(ref, value, *non_slice_idx, indexed_dims=indexed_dims)
 
-def ref_set(ref: Ref, idx: Indexer, value: Array) -> None:
+def ref_set(ref: AbstractRef, idx: Indexer, value: Array) -> None:
   """Sets a `Ref`'s value, a.k.a. ref[idx] <- value."""
   ref_swap(ref, idx, value)
 
@@ -139,81 +154,108 @@ def ref_set(ref: Ref, idx: Indexer, value: Array) -> None:
 addupdate_p = core.Primitive('addupdate')
 addupdate_p.multiple_results = True
 
-def _addupdate_impl(ref: Ref, value: Array, *idx: int):
+def _addupdate_impl(ref: AbstractRef, value: Array, *idx: int):
   del ref, idx, value
   raise ValueError("Can't evaluate `addupdate` outside a stateful context.")
 addupdate_p.def_impl(_addupdate_impl)
 
-def ref_addupdate(ref: Ref, idx: Indexer, x: Array) -> None:
+def ref_addupdate(ref: AbstractRef, idx: Indexer, x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""
-  non_slice_idx, indexed_dims = _unpack_idx(idx, ref.ndim)
+  ref_aval = core.get_aval(ref)
+  if not isinstance(ref_aval, AbstractRef):
+    raise ValueError(f"Can only call `addupdate` on a `Ref`: {ref}")
+  non_slice_idx, indexed_dims = _get_indexer(ref, idx)
   return addupdate_p.bind(ref, x, *non_slice_idx, indexed_dims=indexed_dims)
 
 ## get/set/addupdate abstract evaluation rules
 
-def _get_abstract_eval(ref_aval: ShapedArrayRef, *idx, indexed_dims):
-  if not isinstance(ref_aval, ShapedArrayRef):
+def _get_abstract_eval(ref_aval: AbstractRef, *idx,
+                       indexed_dims):
+  if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`get` must be called on `Ref` types: {ref_aval}.")
-  if len(indexed_dims) != len(ref_aval.shape):
-    raise ValueError("`indexed_dims` must be the same length as `Ref` shape.")
-  if sum(indexed_dims) != len(idx):
-    raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
-  idx_shapes = tuple(i.shape for i in idx)
-  shape = _get_slice_output_shape(ref_aval.shape, idx_shapes, indexed_dims)
-  return (core.ShapedArray(shape, ref_aval.dtype), {ReadEffect(0)})
+  if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    if not isinstance(ref_aval.inner_aval, core.ShapedArray):
+      raise ValueError("`get` with nontrivial indexing must be called "
+                       f"on `ShapedArray` `Ref`: {ref_aval}.")
+    if len(indexed_dims) != len(ref_aval.shape):
+      raise ValueError("`indexed_dims` must be the same length as `Ref` shape.")
+    if sum(indexed_dims) != len(idx):
+      raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
+    idx_shapes = tuple(i.shape for i in idx)
+    shape = _get_slice_output_shape(ref_aval.shape, idx_shapes, indexed_dims)
+    out_aval = ref_aval.inner_aval.update(shape=shape)
+  else:
+    if idx:
+      raise ValueError("Cannot index non-shaped array with nontrivial indices.")
+    out_aval = ref_aval.inner_aval
+  return (out_aval, {ReadEffect(0)})
 get_p.def_effectful_abstract_eval(_get_abstract_eval)
 
-
-def _swap_abstract_eval(ref_aval: ShapedArrayRef, val_aval: core.AbstractValue,
+def _swap_abstract_eval(ref_aval: AbstractRef,
+                        val_aval: core.AbstractValue,
                         *idx: core.ShapedArray, indexed_dims: Tuple[bool]):
-  if not isinstance(ref_aval, ShapedArrayRef):
+  out_aval: core.AbstractValue
+  if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`swap` must be called on `Ref` types: {ref_aval}.")
-  if len(indexed_dims) != len(ref_aval.shape):
-    raise ValueError("`indexed_dims` must be the same length as `Ref` shape.")
-  if sum(indexed_dims) != len(idx):
-    raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
-  val_aval = core.raise_to_shaped(val_aval)
-  assert isinstance(val_aval, core.ShapedArray)
-  idx_shapes = tuple(i.shape for i in idx)
-  expected_output_shape = _get_slice_output_shape(
-      ref_aval.shape, idx_shapes, indexed_dims)
-  if expected_output_shape != val_aval.shape:
-    raise ValueError("Invalid shape for `swap`. "
-                     f"Ref shape: {ref_aval.shape}. "
-                     f"Value shape: {val_aval.shape}. "
-                     f"Indices: {idx}. ")
-  if ref_aval.dtype != val_aval.dtype:
-    raise ValueError("Invalid dtype for `swap`. "
-                     f"Ref dtype: {ref_aval.dtype}. "
-                     f"Value shape: {val_aval.dtype}. ")
-  return (core.ShapedArray(expected_output_shape, ref_aval.dtype),
-          {WriteEffect(0)})
+  if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    if len(indexed_dims) != len(ref_aval.shape):
+      raise ValueError("`indexed_dims` must be the same length as `Ref` shape.")
+    if sum(indexed_dims) != len(idx):
+      raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
+    val_aval = core.raise_to_shaped(val_aval)
+    assert isinstance(val_aval, core.ShapedArray)
+    idx_shapes = tuple(i.shape for i in idx)
+    expected_output_shape = _get_slice_output_shape(
+        ref_aval.shape, idx_shapes, indexed_dims)
+    if expected_output_shape != val_aval.shape:
+      raise ValueError("Invalid shape for `swap`. "
+                       f"Ref shape: {ref_aval.shape}. "
+                       f"Value shape: {val_aval.shape}. "
+                       f"Indices: {idx}. ")
+    if ref_aval.dtype != val_aval.dtype:
+      raise ValueError("Invalid dtype for `swap`. "
+                       f"Ref dtype: {ref_aval.dtype}. "
+                       f"Value shape: {val_aval.dtype}. ")
+    out_aval = core.ShapedArray(expected_output_shape, ref_aval.dtype)
+  else:
+    if idx:
+      raise ValueError("`swap` with nontrivial indexing must be called "
+                       f"on `ShapedArray` `Ref`: {ref_aval}.")
+    out_aval = ref_aval.inner_aval
+  return (out_aval, {WriteEffect(0)})
 swap_p.def_effectful_abstract_eval(_swap_abstract_eval)
 
 
-def _addupdate_abstract_eval(ref_aval: ShapedArrayRef,
+def _addupdate_abstract_eval(ref_aval: AbstractRef,
                              val_aval: core.AbstractValue,
                              *idx: core.ShapedArray, indexed_dims: Tuple[bool]):
-  if not isinstance(ref_aval, ShapedArrayRef):
+  if not isinstance(ref_aval, AbstractRef):
     raise ValueError(f"`addupdate` must be called on `Ref` types: {ref_aval}.")
-  if len(indexed_dims) != len(ref_aval.shape):
-    raise ValueError("`indexed_dims` must be the same length as `Ref` shape.")
-  if sum(indexed_dims) != len(idx):
-    raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
-  val_aval = core.raise_to_shaped(val_aval)
-  assert isinstance(val_aval, core.ShapedArray)
-  idx_shapes = tuple(i.shape for i in idx)
-  slice_shape = _get_slice_output_shape(
-      ref_aval.shape, idx_shapes, indexed_dims)
-  if slice_shape != val_aval.shape:
-    raise ValueError("Invalid shape for `addupdate`. "
-                     f"Ref shape: {ref_aval.shape}. "
-                     f"Value shape: {val_aval.shape}. "
-                     f"Indices: {idx}. ")
-  if ref_aval.dtype != val_aval.dtype:
-    raise ValueError("Invalid dtype for `addupdate`. "
-                     f"Ref dtype: {ref_aval.dtype}. "
-                     f"Value shape: {val_aval.dtype}. ")
+  if idx and not isinstance(ref_aval.inner_aval, core.ShapedArray):
+    raise ValueError("`addupdate` with nontrivial indexing must be called "
+                     f"on `ShapedArray` `Ref`: {ref_aval}.")
+  if isinstance(ref_aval.inner_aval, core.ShapedArray):
+    if len(indexed_dims) != len(ref_aval.shape):
+      raise ValueError("`indexed_dims` must be the same length as `Ref` shape.")
+    if sum(indexed_dims) != len(idx):
+      raise ValueError(f"Invalid `idx` and `indexed_dims`: {idx}, {indexed_dims}")
+    val_aval = core.raise_to_shaped(val_aval)
+    assert isinstance(val_aval, core.ShapedArray)
+    idx_shapes = tuple(i.shape for i in idx)
+    slice_shape = _get_slice_output_shape(
+        ref_aval.shape, idx_shapes, indexed_dims)
+    if slice_shape != val_aval.shape:
+      raise ValueError("Invalid shape for `addupdate`. "
+                       f"Ref shape: {ref_aval.shape}. "
+                       f"Value shape: {val_aval.shape}. "
+                       f"Indices: {idx}. ")
+    if ref_aval.dtype != val_aval.dtype:
+      raise ValueError("Invalid dtype for `addupdate`. "
+                       f"Ref dtype: {ref_aval.dtype}. "
+                       f"Value shape: {val_aval.dtype}. ")
+  elif idx:
+    raise ValueError("`addupdate` with nontrivial indexing must be called "
+                     f"on `ShapedArray` `Ref`: {ref_aval}.")
   return [], {AccumEffect(0)}
 addupdate_p.def_effectful_abstract_eval(_addupdate_abstract_eval)
 
@@ -279,18 +321,18 @@ core.pp_eqn_rules[addupdate_p] = _addupdate_pp_rule
 
 def _get_jvp(primals: List[Any], tangents: List[Any], **params: Any):
   ref_primal, *idx = primals
-  assert isinstance(ref_primal.aval, ShapedArrayRef)
+  assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, *_ = tangents
-  assert isinstance(ref_tangent.aval, ShapedArrayRef)
+  assert isinstance(ref_tangent.aval, AbstractRef)
   return (get_p.bind(ref_primal, *idx, **params),
           get_p.bind(ref_tangent, *idx, **params))  # type: ignore[arg-type]
 ad.primitive_jvps[get_p] = _get_jvp
 
 def _swap_jvp(primals: List[Any], tangents: List[Any], **params: Any):
   ref_primal, x_primal, *idx = primals
-  assert isinstance(ref_primal.aval, ShapedArrayRef)
+  assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
-  assert isinstance(ref_tangent.aval, ShapedArrayRef)
+  assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
   return (swap_p.bind(ref_primal, x_primal, *idx, **params),  # type: ignore[arg-type]
           swap_p.bind(ref_tangent, x_tangent, *idx, **params))  # type: ignore[arg-type]

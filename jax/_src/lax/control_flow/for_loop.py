@@ -54,7 +54,7 @@ ReadEffect = state.ReadEffect
 WriteEffect = state.WriteEffect
 AccumEffect = state.AccumEffect
 StateEffect = state.StateEffect
-ShapedArrayRef = state.ShapedArrayRef
+AbstractRef = state.AbstractRef
 ref_set = state.ref_set
 ref_get = state.ref_get
 ref_addupdate = state.ref_addupdate
@@ -70,10 +70,10 @@ for_p.multiple_results = True
 
 def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
   all_const_avals = [var.aval for var in jaxpr.constvars]
-  is_const_ref = [isinstance(var.aval, ShapedArrayRef) for var in
+  is_const_ref = [isinstance(var.aval, AbstractRef) for var in
                   jaxpr.constvars]
   const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = [ShapedArrayRef(aval.shape, aval.dtype) for aval in const_avals]  # pytype: disable=attribute-error
+  const_avals = map(AbstractRef, const_avals)
   merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
   i_aval, *arg_avals = [var.aval for var in jaxpr.invars]
   in_avals = [i_aval, *merged_const_avals, *arg_avals]
@@ -100,11 +100,11 @@ def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
       f, state_avals)
   return jaxpr, consts, out_tree_thunk()
 
-def val_to_ref_aval(x) -> ShapedArrayRef:
+def val_to_ref_aval(x) -> AbstractRef:
   aval = core.raise_to_shaped(core.get_aval(x))
   if type(aval) is not core.ShapedArray:
     raise Exception(f"can't make ref from {x}")
-  return ShapedArrayRef(aval.shape, aval.dtype)
+  return AbstractRef(aval)
 
 def for_loop(nsteps: Union[int, Sequence[int]],
              body: Callable[[Array, Ref[S]], None], init_state: S,
@@ -252,7 +252,7 @@ def _for_abstract_eval(*avals, jaxpr, **__):
   aval_effects = [set(eff.replace(input_index=eff.input_index - 1)
                       for eff in effs) for aval, effs
                   in zip(avals, jaxpr_aval_effects)
-                  if isinstance(aval, ShapedArrayRef)]
+                  if isinstance(aval, AbstractRef)]
   nonlocal_state_effects = core.join_effects(*aval_effects)
   return list(avals), nonlocal_state_effects
 
@@ -266,7 +266,7 @@ def _for_discharge_rule(in_avals, _, *args: Any, jaxpr: core.Jaxpr,
                         unroll=unroll)
   new_invals = []
   for aval, out_val in zip(in_avals, out_vals):
-    new_invals.append(out_val if isinstance(aval, ShapedArrayRef) else None)
+    new_invals.append(out_val if isinstance(aval, AbstractRef) else None)
   return new_invals, out_vals
 
 def _for_impl(*args, jaxpr, nsteps, reverse, which_linear, unroll):
@@ -661,14 +661,15 @@ def _convert_outputs_to_writes(
         res_ref[i] = res_val
     return []
   # TODO(mattjj, sharadmv): better handling of tokens, which don't have shape/dtype
-  res_ref_avals = [ShapedArrayRef(v.aval.shape, v.aval.dtype)  # pytype: disable=attribute-error
-                   if loop_invar else
-                   ShapedArrayRef((nsteps, *v.aval.shape), v.aval.dtype)  # pytype: disable=attribute-error
-                   for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
+  res_ref_avals: List[core.AbstractValue] = [
+      AbstractRef(v.aval) if loop_invar else  # pytype: disable=attribute-error
+      AbstractRef(core.ShapedArray((nsteps, *v.aval.shape),  # pytype: disable=attribute-error
+                  v.aval.dtype))  # pytype: disable=attribute-error
+      for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
   assert not consts
-  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]
+  return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]  # pytype: disable=attribute-error
 
 def _convert_inputs_to_reads(
     nsteps: int, num_res: int, jaxpr: core.Jaxpr,
@@ -685,9 +686,11 @@ def _convert_inputs_to_reads(
 
   res_val_avals, (i_aval,), orig_ref_avals = \
       split_list([v.aval for v in jaxpr.invars], [num_res, 1])
-  res_ref_avals = [ShapedArrayRef(aval.shape, aval.dtype) if loop_invar else
-                   ShapedArrayRef((nsteps, *aval.shape), aval.dtype)  # pytype: disable=attribute-error
-                   for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
+  res_ref_avals: List[core.AbstractValue] = [
+      AbstractRef(aval) if loop_invar else  # pytype: disable=attribute-error
+      AbstractRef(core.ShapedArray((nsteps, *aval.shape),  # pytype: disable=attribute-error
+                  aval.dtype))  # pytype: disable=attribute-error
+      for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
 
   jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])
