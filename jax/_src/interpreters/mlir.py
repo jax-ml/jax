@@ -478,8 +478,6 @@ class ModuleContext:
 
   @property
   def backend(self) -> xb.XlaBackend:
-    if hasattr(self.backend_or_name, "lowering_only_client"):
-      raise NotImplementedError("backend property under lowering_platform_override")
     if self.backend_or_name is None or isinstance(self.backend_or_name, str):
       return xb.get_backend(self.backend_or_name)
     return self.backend_or_name

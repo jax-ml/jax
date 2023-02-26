@@ -38,9 +38,7 @@ import numpy.random as npr
 import jax
 from jax.config import config   # Must import before TF
 from jax.experimental import jax2tf  # Defines needed flags
-from jax._src.interpreters import mlir
-
-import tensorflow as tf
+from jax._src import test_util  # Defines needed flags
 
 config.parse_flags_with_absl()
 
@@ -138,11 +136,17 @@ def write_and_check_harness(harness: primitive_harness.Harness,
       with io.open(output_file, "r") as f:
         hlo = f.read()
     else:
-      # TODO: replace this with JAX cross-platform API, without going through
-      # jax2tf -> TF -> HLO
-      f_tf = jax2tf.convert(func_jax)
-      hlo = jax.jit(func_jax).lower(*args).compiler_ir(dialect="stablehlo")  # type: ignore
-      # TO BE CONTINUED
+      # For a tighter check, detect the native platform lowering and do not
+      # trigger cross-lowering
+      if for_platform == jax.default_backend():
+        lowered = jax.jit(func_jax).lower(*args)
+      else:
+        # TODO: replace this with JAX cross-platform API, without going through
+        # jax2tf
+        from jax.experimental.jax2tf.jax2tf import cross_platform_lowering
+        lowered = cross_platform_lowering(func_jax, args,
+                                          platforms=[for_platform])
+      hlo = lowered.compiler_ir(dialect="stablehlo")  # type: ignore
       with io.open(output_file, "w") as f:
         f.write(str(hlo))
 
@@ -167,9 +171,11 @@ def write_and_check_harness(harness: primitive_harness.Harness,
 
 def write_and_check_harnesses(io: Io,
                               save_directory: str,
+                              *,
                               filter_harness: Optional[Callable[[str], bool]] = None,
                               for_platforms: Sequence[str] = ("cpu", "tpu"),
                               verbose = False):
+  logging.info("Writing and checking harnesses at %s", save_directory)
   nr_harnesses = len(primitive_harness.all_harnesses)
   for i, harness in enumerate(primitive_harness.all_harnesses):
     if i % 100 == 0:
@@ -193,8 +199,12 @@ def write_and_check_harnesses(io: Io,
 def main(argv: Sequence[str]) -> None:
   if len(argv) > 1:
     raise app.UsageError("Too many command-line arguments.")
-
-  write_and_check_harnesses(Io(False), "./hlo_dumps")
+  def filter_harness(name: str) -> bool:
+    return "cummax" in name
+  for_platforms = ('cpu', 'tpu')
+  write_and_check_harnesses(Io(False), "./hlo_dumps",
+                            filter_harness=filter_harness,
+                            for_platforms=for_platforms)
 
 
 if __name__ == "__main__":

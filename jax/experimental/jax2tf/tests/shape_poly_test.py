@@ -732,7 +732,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(avals)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(get_dim_values_jax,
-                                                         args_tf, avals, "")
+                                                         args_tf, avals, "",
+                                                         lowering_params=jax2tf.jax2tf.non_native_lowering_params)
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
         return dict(zip(dim_vars, dim_values))

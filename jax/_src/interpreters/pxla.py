@@ -2848,21 +2848,14 @@ def _get_and_check_device_assignment(
     arr_device_assignment = list(i._device_assignment)  # type: ignore
     if not devices:
       if first_sharding_info[0] != arr_device_assignment:
-        # Perhaps the sharding info is the same modulo using lowering_only_client
-        if not all((d1.id == d2.id and
-                    (hasattr(d1.client, "lowering_only_client") or hasattr(d2.client, "lowering_only_client")))
-                   for d1, d2 in zip(first_sharding_info[0], arr_device_assignment)):
-          raise DeviceAssignmentMismatchError([
-              DeviceAssignmentMismatch(*first_sharding_info),
-              DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+        raise DeviceAssignmentMismatchError([
+            DeviceAssignmentMismatch(*first_sharding_info),
+            DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
     else:
       if devices != arr_device_assignment:
-        if not all((d1.id == d2.id and
-                    (hasattr(d1.client, "lowering_only_client") or hasattr(d2.client, "lowering_only_client")))
-                   for d1, d2 in zip(devices, arr_device_assignment)):
-          raise DeviceAssignmentMismatchError([
-              DeviceAssignmentMismatch(devices, MismatchType.CONTEXT_DEVICES, None),
-              DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+        raise DeviceAssignmentMismatchError([
+            DeviceAssignmentMismatch(devices, MismatchType.CONTEXT_DEVICES, None),
+            DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:

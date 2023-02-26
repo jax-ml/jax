@@ -15,6 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
+import contextlib
 import os
 from typing import Callable, Dict, Optional, Tuple
 import unittest
@@ -34,6 +35,7 @@ import jax._src.lib.xla_bridge
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
+from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
 from jax.experimental import pjit
 from jax.interpreters import mlir
@@ -1373,64 +1375,100 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
               f"See op.name = : {op.name}")
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_wrapper={wrapper}_shard={shard}",
-           wrapper=wrapper, shard=shard)
-      for wrapper in ["none", "jit", "pjit", "shard_map"]
-      for shard in ["unspecified", "None", "P", "Sharding"])
-  def test_cross_platform(self, wrapper="shard_map", shard="P"):
-    def f_jax(x):
-      # cummax has distinctive lowering for TPU, using a reduce-window op
-      return lax.cummax(x, axis=0, reverse=False)
-
+      dict(testcase_name=f"{'with_mesh_' if with_mesh else ''}{'nullary_' if nullary else ''}{transform}_pjit_sharding={pjit_sharding}",
+           with_mesh=with_mesh, transform=transform, nullary=nullary, pjit_sharding=pjit_sharding)
+      # The inner transformation to apply to the lowered function
+      for transform in ["base",
+                      "jit",
+                      "pjit", "pjit_in_shardings_None", "pjit_in_shardings_P", "pjit_in_shardings_Sharding",
+                      "shard_map", "xmap", "pmap"]
+      # The sharding to be used for the outer pjit
+      for pjit_sharding in (
+          ["unspecified"] if transform == "pmap" else
+          ["unspecified", "none", "P", "Sharding"])
+      # Whether the function can be nullary
+      for nullary in (
+          [False] if (pjit_sharding != "unspecified") else
+          [True, False]
+      )
+      # Whether we use a "with mesh"
+      for with_mesh in (
+          [True] if (transform not in ["base", "jit", "pjit"] or
+                     pjit_sharding != "unspecified") else
+          [False, True])
+  )
+  def test_cross_platform(self, with_mesh=False, transform="jit", nullary=False, pjit_sharding="unspecified"):
+    # Tests cross-lowering for
+    #  with mesh:
+    #   pjit(transform(func), in_sharding=pjit_sharding)
+    if not config.jax_array:
+      raise unittest.SkipTest("cross_platform test work only with jax.Array")
+    if not config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("cross_platform test work only with jax.Array")
+    x = np.ones((4, 6), dtype=np.float32)
     mesh = sharding.Mesh(jax.devices()[:1], ("a",))
-    if wrapper == "none":
-      to_convert = f_jax
-    elif wrapper == "jit":
-      to_convert = jax.jit(f_jax)
-    elif wrapper == "pjit":
-      to_convert = pjit.pjit(f_jax)
-    elif wrapper == "shard_map":
-      # TODO: I wish I could use the same cummax but it has no replication rule
-      def f_jax(x):
-        axis_size = lax.psum(1, 'a')
-        perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
-        return lax.ppermute(x, 'a', perm=perm)
-      to_convert = shard_map(f_jax, mesh,
-                             in_specs=(P("a", None),), out_specs=P("a", None))
+    # cummax has distinctive lowering for TPU, using a reduce-window op
+    func = lambda x: lax.cummax(x, axis=0, reverse=False)
+    # For shard_map we cannot use cummax :-( because it does not have a replication rule
+    # But we use lax.all_gather which on TPU is lowered with a all-gather op
+    func_shard_map = lambda x: lax.all_gather(x, 'a', axis=1, tiled=True)
+
+    transformed_func = dict(
+        base=func,
+        jit=jax.jit(func),
+        jit_in_shardings_None=jax.jit(func, in_shardings=None),
+        jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),
+        jit_in_shardings_Sharding=jax.jit(func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
+        pjit=pjit.pjit(func),
+        pjit_in_shardings_None=pjit.pjit(func, in_shardings=None),
+        pjit_in_shardings_P=pjit.pjit(func, in_shardings=(P("a"),)),
+        pjit_in_shardings_Sharding=pjit.pjit(func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
+        shard_map=(
+            shard_map(func_shard_map, mesh, in_specs=(P("a", None),), out_specs=P("a", None))),
+        xmap=xmap(func, in_axes=({0: 'axis'},), out_axes={0: 'axis'}, axis_resources={'axis': 'a'}),
+        pmap=jax.pmap(func, in_axes=0, out_axes=0),
+    )[transform]
+    pjit_transformed_func = dict(
+        unspecified=pjit.pjit(transformed_func),
+        none=pjit.pjit(transformed_func, in_shardings=None),
+        P=pjit.pjit(transformed_func, in_shardings=(P("a"),)),
+        Sharding=pjit.pjit(transformed_func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
+    )[pjit_sharding]
+    if pjit_sharding == "unspecified":
+      if transform == "xmap":
+        raise unittest.SkipTest("TODO: pjit(xmap) with unspecified shardings crashes")
+
+    if not nullary:
+      func_to_convert = pjit_transformed_func
+      args = [x]
     else:
-      assert False
+      func_to_convert = lambda: pjit_transformed_func(jnp.ones(x.shape, dtype=x.dtype))
+      args = []
 
-    params = dict(experimental_native_lowering=True)
-    needs_with_mesh = True
+    if transform == "pmap":
+      if nullary:
+        raise unittest.SkipTest("Cannot lower nested pmap: jit-of-pmap warning")
+      raise unittest.SkipTest("TODO: pmap picks the devices from jax.devices() and will lower for CPU")
 
-    if shard == "unspecified":
-      pass
-    elif shard == "None":
-      params["in_shardings"] = (None,)
-    elif shard == "P":
-      params["in_shardings"] = (P("a"),)
-    elif shard == "Sharding":
-      params["in_shardings"] = (sharding.NamedSharding(mesh, P("a")),)
-      needs_with_mesh = False
-    else:
-      assert False
+    if transform == "xmap":
+      raise unittest.SkipTest("TODO: xmap does not pick up the overriden mesh and will lower for CPU")
 
-    x = np.ones((3, 5), dtype=np.float32)
-    f_tf = jax2tf.convert(to_convert,
-                          experimental_native_lowering_platforms=('tpu',),
-                          **params)
+    f_tf = jax2tf.convert(func_to_convert,
+                          experimental_native_lowering=True,
+                          experimental_native_lowering_platforms=('tpu',))
     f_tf = tf.function(f_tf, jit_compile=True, autograph=False)
-    if needs_with_mesh:
-      with mesh:
-        tf_hlo = f_tf.experimental_get_compiler_ir(x)(stage="hlo")
+    with contextlib.ExitStack() as stack:
+      if with_mesh:
+        stack.enter_context(mesh)
+      # Run the JAX native version, to check it works, and to fill caches.
+      _ = func_to_convert(*args)
+      tf_hlo = f_tf.experimental_get_compiler_ir(*args)(stage="hlo")
+
+    if transform == "shard_map":
+      self.assertIn("all-gather(f32[4,6]", tf_hlo)
     else:
-      tf_hlo = f_tf.experimental_get_compiler_ir(x)(stage="hlo")
-    if wrapper == "shard_map":
-      # TODO: find something to lower in shard_map that is different on TPU
-      # cummax does not have a replication rule
-      pass
-    else:
-      self.assertIn("reduce-window(f32[3,5]", tf_hlo)
+      self.assertIn("reduce-window(f32[4,6]", tf_hlo)
+
 
 def get_serialized_computation(
     f_jax: Callable,
