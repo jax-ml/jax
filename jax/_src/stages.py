@@ -36,9 +36,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
 import itertools as it
-from typing import Any, Generic, NamedTuple, Protocol, TypeVar, Union, runtime_checkable
+from typing import (Any, Generic, NamedTuple, Protocol, TypeVar, Union, runtime_checkable, 
+                    TYPE_CHECKING)
 
-from typing_extensions import ParamSpec
+if TYPE_CHECKING:
+  from typing_extensions import ParamSpec
 
 from jax._src import core
 from jax._src import config
@@ -873,7 +875,10 @@ def _apply_himut(final_qdds, hi_args, out_mut):
 
 
 V_co = TypeVar("V_co", covariant=True)
-P = ParamSpec("P")
+if TYPE_CHECKING:
+  P = ParamSpec("P")
+else:
+  P = TypeVar("P")
 
 
 @runtime_checkable

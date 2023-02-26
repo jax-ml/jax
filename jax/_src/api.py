@@ -30,7 +30,7 @@ from functools import partial
 import inspect
 import typing
 from typing import (Any, Literal, NamedTuple, Optional, TypeVar, overload,
-                    cast)
+                    cast, TYPE_CHECKING)
 import weakref
 
 import numpy as np
@@ -100,7 +100,10 @@ F = TypeVar("F", bound=Callable)
 T = TypeVar("T")
 U = TypeVar("U")
 V_co = TypeVar("V_co", covariant=True)
-P = ParamSpec("P")
+if TYPE_CHECKING:
+  P = ParamSpec("P")
+else:
+  P = TypeVar("P")
 
 
 map, unsafe_map = safe_map, map
