@@ -16,10 +16,12 @@
 from functools import partial
 import logging
 import os
+import re
 from typing import Any, Sequence
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
@@ -44,9 +46,6 @@ config.parse_flags_with_absl()
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
-skip_eager_for_partitioning = Jax2TfLimitation(
-    "pjit functions with partitioning must be under tf.function",
-    modes="eager", skip_tf_run=True)
 
 prev_xla_flags = None
 def setUpModule():
@@ -71,14 +70,15 @@ def tearDownModule():
   jtu.restore_spmd_lowering_flag()
 
 
-def _log_sharding_annotations(test,
+def check_sharding_annotations(test,
                               f_jax,
                               args: Sequence[Any],
                               *,
                               num_replicas=1,
                               num_partitions=2,
                               num_variables=0,
-                              experimental_native_lowering="default"):
+                              experimental_native_lowering="default",
+                              checks=()):
   """Log the HLO generated from f_jax and its conversion.
 
   Ideally this would check the sharding of intermediate results in JAX and
@@ -86,6 +86,10 @@ def _log_sharding_annotations(test,
   StableHLO lowering (the sharding annotation are now binary-encoded
   attributes). We kept the logging aspect of this function, which should
   help some debugging.
+
+  Args:
+    checks: a list of tuples, with a regular expression and a number of times
+      it is expected to occur in the TF-generated HLO.
   """
   if jtu.device_under_test() == "gpu":
     raise unittest.SkipTest("Sharding HLO tests not useful for GPU")
@@ -124,16 +128,20 @@ def _log_sharding_annotations(test,
                 test._testMethodName,
                 f_tf_fun.get_concrete_function(*args).graph.as_graph_def())
   device_name = f"/device:{jtu.device_under_test().upper()}:0"
-  tf_hlo = (f_tf_fun
-            .experimental_get_compiler_ir(*args)(stage="hlo",
-                                                  device_name=device_name))
+  tf_hlo_generator = f_tf_fun.experimental_get_compiler_ir(*args)
+  tf_hlo = tf_hlo_generator(stage="hlo", device_name=device_name)
   logging.info("[%s] got TF HLO %s", test._testMethodName, tf_hlo)
-  tf_optimized_hlo = (
-      tf.function(f_tf, jit_compile=True, autograph=False)
-      .experimental_get_compiler_ir(*args)(stage="optimized_hlo",
-                                            device_name=device_name))
+  tf_optimized_hlo = tf_hlo_generator(stage="optimized_hlo",
+                                      device_name=device_name)
   logging.info("[%s] got TF optimized HLO for %s: %s", test._testMethodName,
                 device_name, tf_optimized_hlo)
+
+  for check_re, check_count in checks:
+    count = len(re.findall(check_re, tf_hlo))
+    test.assertEqual(
+        count, check_count,
+        (f"regular expression `{check_re}` expected to occur {check_count}"
+         f" but occurs {count} times in the TF HLO.\nThis is the TF HLO:\n{tf_hlo}"))
 
 
 class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
@@ -147,8 +155,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   def test_pjit_basic1D(self):
 
     @partial(pjit.pjit,
-                       in_axis_resources=(P("x"), P("x")),
-                       out_axis_resources=None)
+                       in_shardings=(P("x"), P("x")),
+                       out_shardings=None)
     def jax_func(x, y):
       return x + y
 
@@ -157,7 +165,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     hlo = jax_func.lower(x, x).compiler_ir(dialect="hlo").as_hlo_text()
     logging.info("HLO is %s", hlo)
     logging.info("JAXPR is %s", jax.make_jaxpr(jax_func)(x, x))
-    _log_sharding_annotations(self,
+    check_sharding_annotations(self,
         jax_func, [x, x],
         num_partitions=2)
 
@@ -165,8 +173,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   def test_pjit_basic1D_variable(self):
     # The first argument is a tf.Variable
     @partial(pjit.pjit,
-                       in_axis_resources=(P("x"), P("x")),
-                       out_axis_resources=None)
+                       in_shardings=(P("x"), P("x")),
+                       out_shardings=None)
     def jax_func(x, y):
       return x + y
 
@@ -175,7 +183,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     hlo = jax_func.lower(x, x).compiler_ir(dialect="hlo").as_hlo_text()
     logging.info("HLO is %s", hlo)
     logging.info("JAXPR is %s", jax.make_jaxpr(jax_func)(x, x))
-    _log_sharding_annotations(self,
+    check_sharding_annotations(self,
         jax_func, [x, x],
         num_partitions=2,
         num_variables=1)
@@ -183,8 +191,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   @jtu.with_mesh([("x", 2), ("y", 2)])
   def test_pjit_basic2D(self):
     @partial(pjit.pjit,
-                       in_axis_resources=(P(None, "x", "y"), P("y")),
-                       out_axis_resources=P("x"))
+                       in_shardings=(P(None, "x", "y"), P("y")),
+                       out_shardings=P("x"))
     def jax_func(x, y):
       return x @ y
 
@@ -192,7 +200,7 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     y_shape = (4, 2)
     x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
-    _log_sharding_annotations(self,
+    check_sharding_annotations(self,
         jax_func,
         [x, y],
         num_partitions=4)
@@ -200,8 +208,8 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
   @jtu.with_mesh([("x", 2), ("y", 2)])
   def test_pjit_TwoMeshAxisSharding(self):
     @partial(pjit.pjit,
-             in_axis_resources=P(("x", "y"),),
-             out_axis_resources=P(("x", "y"),))
+             in_shardings=P(("x", "y"),),
+             out_shardings=P(("x", "y"),))
     def jax_func(x, y):
       return x @ y
 
@@ -209,25 +217,67 @@ class ShardedJitHloTest(tf_test_util.JaxToTfTestCase):
     y_shape = (8, 2)
     x = jnp.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
     y = jnp.arange(np.prod(y_shape), dtype=np.float32).reshape(y_shape)
-    _log_sharding_annotations(self,
+    check_sharding_annotations(self,
         jax_func,
         [x, y],
         num_partitions=4)
 
+  @parameterized.named_parameters(
+      dict( testcase_name=f"_nested_pjit={nested_pjit}", nested_pjit=nested_pjit)
+      for nested_pjit in (True, False)
+  )
   @jtu.with_mesh([("x", 2), ("y", 1)])
-  def test_pjit_ShardingConstraint(self):
-    @partial(pjit.pjit, in_axis_resources=None,
-                       out_axis_resources=None)
+  def test_pjit_ShardingConstraint(self, nested_pjit=True):
+    @partial(pjit.pjit, in_shardings=None,
+                       out_shardings=None)
     def jax_func(x):  # x: f32[12, 8]
-      y = jnp.tile(x, (2, 1))  # y: f32[24, 8]
-      y = pjit.with_sharding_constraint(y, P("x", "y"))
-      return y[0:y.shape[0] // 4]  # res: f32[6, 8]
+      y = jnp.cos(x)
+      if nested_pjit:
+        y = pjit.pjit(lambda y: y, in_shardings=P("x", "y"),
+                      out_shardings=P("x", "y"))(y)
+      else:
+        y = pjit.with_sharding_constraint(y, P("x", "y"))
+      return jnp.sin(y)  # res: f32[6, 8]
 
     shape = (12, 8)
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-    _log_sharding_annotations(self,
+    count_sharding = 2 if nested_pjit else 1
+    check_sharding_annotations(self,
         jax_func, [x],
-        num_partitions=2)
+        num_partitions=2,
+        checks=[
+            (r"custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_sharding),
+            (r"custom_call_target.*Sharding.*sharding.*replicated", 2),
+        ])
+
+  @parameterized.named_parameters(
+      dict( testcase_name=f"_nested_pjit={nested_pjit}", nested_pjit=nested_pjit)
+      for nested_pjit in (True, False)
+  )
+  @jtu.with_mesh([("x", 2), ("y", 1)])
+  def test_pjit_ShardingConstraintReplicated(self, nested_pjit=True):
+    shape = (12, 8)
+    @partial(pjit.pjit, in_shardings=(P("x", "y"),),
+             out_shardings=P("y", "x"))
+    def jax_func(x):
+      y = jnp.cos(x)
+      if nested_pjit:
+        y = pjit.pjit(lambda y: y, in_shardings=None, out_shardings=None)(y)
+      else:
+        y = pjit.with_sharding_constraint(y, None)
+      return jnp.sin(y)
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    count_replicated = 2 if nested_pjit else 1
+    check_sharding_annotations(
+        self,
+        jax_func, [x],
+        num_partitions=2,
+        checks=[
+            (r"custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", 1),
+            (r"custom_call_target.*Sharding.*sharding.*replicated", count_replicated),
+            (r"custom_call_target.*Sharding.*sharding.*devices=\[1,2\]", 1)
+        ])
 
 
 class ShardingTest(tf_test_util.JaxToTfTestCase):
@@ -259,8 +309,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       num_replicas=num_replicas)
 
   def test_pjit_basic1D(self):
-    @partial(pjit.pjit, in_axis_resources=(P("x"),),
-             out_axis_resources=None)
+    @partial(pjit.pjit, in_shardings=(P("x"),),
+             out_shardings=None)
     def f_jax(a):
       return a + a
 
@@ -291,8 +341,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     const = jnp.full((4, 3), 7, dtype=np.float32)
     a = np.ones((4, 3), dtype=np.float32)
     b = np.ones((1, 1), dtype=np.float32)
-    @partial(pjit.pjit, in_axis_resources=(P("x"), None),
-             out_axis_resources=None)
+    @partial(pjit.pjit, in_shardings=(P("x"), None),
+             out_shardings=None)
     def f_jax(a, b):
       return a + b * const
 
@@ -344,6 +394,52 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       res_tf = f_tf(a)
       self.assertAllClose(res_tf, res_jax)
 
+  @parameterized.named_parameters(
+      dict( testcase_name=f"_func={func}", func=func)
+      for func in ("pjit_sharded", "pjit_replicated",
+                   "nested_pjit_sharded", "nested_pjit_replicated")
+  )
+  def test_pjit_eager_error(self, func="pjit_sharded"):
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("There is no error in eager mode for native serialization")
+    # Define some test functions
+    @partial(pjit.pjit, in_shardings=(P("x"),),
+             out_shardings=None)
+    def f_pjit_sharded(a):
+      return a + a
+
+    @partial(pjit.pjit, in_shardings=None,
+             out_shardings=None)
+    def f_pjit_replicated(a):
+      return a + a
+
+    def f_nested_pjit_sharded(a):
+      return a + pjit.pjit(jnp.sin, in_shardings=(P("x"),), out_shardings=None)(a)
+
+    def f_nested_pjit_replicated(a):
+      return a + pjit.pjit(jnp.sin, in_shardings=None, out_shardings=None)(a)
+
+    shape = (8, 10)
+    a = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+
+    if func == "pjit_sharded":
+      f_jax = f_pjit_sharded
+    elif func == "pjit_replicated":
+      f_jax = f_pjit_replicated
+    elif func == "nested_pjit_sharded":
+      f_jax = f_nested_pjit_sharded
+    elif func == "nested_pjit_replicated":
+      f_jax = f_nested_pjit_replicated
+    else:
+      assert False
+
+    with Mesh(self.devices, axis_names=("x",)):
+      _ = f_jax(a)
+      with self.assertRaisesRegex(
+          ValueError,
+          "function with sharded arguments or results must be used under a `tf.function` context"):
+        jax2tf.convert(f_jax)(a)
+
   def test_xmap_basic(self):
     devices = np.reshape(self.devices, (1, 2))
 
@@ -376,8 +472,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(res_jax, (a * 2, b * 4))
 
       # jax2tf for xmap works only with native lowering
-      _log_sharding_annotations(self, f_jax, [a, b],
-                                experimental_native_lowering=True)
+      check_sharding_annotations(self, f_jax, [a, b],
+                                 experimental_native_lowering=True)
       res_tf = f_tf(a, b)
       self.assertAllClose(res_tf, res_jax)
 
@@ -411,8 +507,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       res_jax = f_jax(a, b)
       self.assertAllClose(res_jax, ((a * 2).sum(0), b * 4))
 
-      _log_sharding_annotations(self, f_jax, [a, b],
-                                experimental_native_lowering=True)
+      check_sharding_annotations(self, f_jax, [a, b],
+                                 experimental_native_lowering=True)
       res_tf = f_tf(a, b)
       self.assertAllClose(res_tf, res_jax)
 
@@ -424,7 +520,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     mesh = Mesh(self.devices, axis_names=('x'))
 
     @partial(pjit.pjit,
-             in_axis_resources=(P('x', None),), out_axis_resources=P(None, 'x'))
+             in_shardings=(P('x', None),), out_shardings=P(None, 'x'))
     @partial(shard_map, mesh=mesh,
              in_specs=(P('x', None),), out_specs=P(None, 'x'))
     def f_jax(b):  # b: f32[2, 4]
@@ -461,7 +557,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     mesh = Mesh(self.devices, axis_names=('x'))
 
     @partial(pjit.pjit,
-             in_axis_resources=(P('x', None),), out_axis_resources=P('x', None))
+             in_shardings=(P('x', None),), out_shardings=P('x', None))
     @partial(shard_map, mesh=mesh,
              in_specs=(P('x', None),), out_specs=P('x', None))
     def f_jax(b):  # b: f32[2, 4]
@@ -477,9 +573,9 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       expected = np.concatenate([b0, b1], axis=0)  # out_specs concatenates on axis 0
       self.assertAllClose(res_jax, expected)
 
-      _log_sharding_annotations(self, f_jax, [a],
-                                experimental_native_lowering=True,
-                                num_partitions=2, num_replicas=1)
+      check_sharding_annotations(self, f_jax, [a],
+                                 experimental_native_lowering=True,
+                                 num_partitions=2, num_replicas=1)
       # XLA bug: invoke the f_tf without tpu.replicate
       f_tf = tf.function(
           jax2tf.convert(f_jax, experimental_native_lowering=True),
@@ -494,7 +590,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     mesh = Mesh(self.devices, axis_names=('x'))
 
     @partial(pjit.pjit,
-             in_axis_resources=(P('x', None),), out_axis_resources=P('x', None))
+             in_shardings=(P('x', None),), out_shardings=P('x', None))
     @partial(shard_map, mesh=mesh,
              in_specs=(P('x', None),), out_specs=P('x', None))
     def f_jax(b):  # b: f32[2, 4]

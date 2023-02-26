@@ -193,9 +193,6 @@ class _ThreadLocalState(threading.local):
     # "{tf_outer_name_scope}/JAX_NAME_STACKS"
     self.tf_outer_name_scope = ""
 
-    # Keep track if we are inside a pjit.
-    self.inside_pjit = False
-
 _thread_local_state = _ThreadLocalState()
 
 def _get_current_name_stack() -> Union[NameStack, str]:
@@ -211,14 +208,6 @@ def inside_call_tf():
   finally:
     _thread_local_state.inside_call_tf = prev
 
-@contextlib.contextmanager
-def inside_pjit():
-  prev = _thread_local_state.inside_pjit
-  _thread_local_state.inside_pjit = True
-  try:
-    yield
-  finally:
-    _thread_local_state.inside_pjit = prev
 
 @partial(api_util.api_hook, tag="jax2tf_convert")
 def convert(fun_jax: Callable,
@@ -757,7 +746,7 @@ def _lower_native_and_run(fun_jax: Callable,
   # See b/255511660.
   if "in_shardings" in lowered.compile_args:
     args_tf = tuple(
-      map(partial(_shard_value, skip_replicated_sharding=True),
+      map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
           args_tf, args_avals, lowered.compile_args["in_shardings"]))
 
   call_module_attrs = dict(
@@ -780,7 +769,7 @@ def _lower_native_and_run(fun_jax: Callable,
                  mlir_module_text)
   res = tfxla.call_module(args_tf, **call_module_attrs)
   if "out_shardings" in lowered.compile_args:
-    res = list(map(partial(_shard_value, skip_replicated_sharding=True),
+    res = list(map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
                    res, out_avals, lowered.compile_args["out_shardings"]))
 
   # Convert the results to the needed TF types
@@ -3215,7 +3204,7 @@ def _shard_value(val: TfVal,
           last_tile_dims=sharding_proto.last_tile_dims))
   if tf_context.executing_eagerly():
     raise ValueError(
-        "A jit function with sharded (not replicated) arguments or results must be used under a `tf.function` context. "
+        "A jit function with sharded arguments or results must be used under a `tf.function` context. "
         "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion")
 
   return xla_sharding.Sharding(proto=xla_sharding_proto).apply_to_tensor(
@@ -3238,14 +3227,15 @@ def _pjit(*args: TfVal,
   del donated_invars
   # Apply sharding annotation to the arguments
   sharded_args: Sequence[TfVal] = tuple(
-      map(partial(_shard_value, skip_replicated_sharding=not _thread_local_state.inside_pjit),
+      map(partial(_shard_value,
+                  skip_replicated_sharding=not _thread_local_state.enable_xla),
           args, _in_avals, in_shardings))
-  with inside_pjit():
-    results = _interpret_jaxpr(jaxpr, *sharded_args,
-                               extra_name_stack=util.wrap_name(name, "pjit"),
-                               fresh_constant_cache=False)
+  results = _interpret_jaxpr(jaxpr, *sharded_args,
+                              extra_name_stack=util.wrap_name(name, "pjit"),
+                              fresh_constant_cache=False)
   sharded_results: Sequence[TfVal] = tuple(
-      map(partial(_shard_value, skip_replicated_sharding=not _thread_local_state.inside_pjit),
+      map(partial(_shard_value,
+                  skip_replicated_sharding=not _thread_local_state.enable_xla),
           results, _out_aval, out_shardings))
   return tuple(sharded_results)
 
