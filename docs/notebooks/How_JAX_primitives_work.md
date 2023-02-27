@@ -367,7 +367,8 @@ def multiply_add_xla_translation(ctx, avals_in, avals_out, xc, yc, zc):
   return [xla_client.ops.Add(xla_client.ops.Mul(xc, yc), zc)]
 
 # Now we register the XLA compilation rule with JAX
-# TODO: for GPU? and TPU?
+# For GPU see the [Custom operations for GPUs](https://jax.readthedocs.io/en/latest/Custom_Operation_for_GPUs.html)
+# TODO: TPU?
 from jax.interpreters import xla
 xla.register_translation(multiply_add_p, multiply_add_xla_translation, platform='cpu')
 ```
