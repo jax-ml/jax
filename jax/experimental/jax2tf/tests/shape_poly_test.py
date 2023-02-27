@@ -1855,6 +1855,19 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: lax_control_flow.cummax(x, axis=1, reverse=False),
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
                 poly_axes=[0]),
+    PolyHarness("jnp.cumsum", "reduce_axis=poly",
+                lambda x: jnp.cumsum(x, axis=0),
+                arg_descriptors=[RandArg((3, 5), _f32)],
+                poly_axes=[0],
+                expect_error=(
+                  (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+                                   jtu.device_under_test() == "tpu") else
+                  (NotImplementedError,
+                   "associative scan over axis of non-constant size"))),
+    PolyHarness("jnp.cumsum", "reduce_axis=static",
+                lambda x: jnp.cumsum(x, axis=1),
+                arg_descriptors=[RandArg((3, 5), _f32)],
+                poly_axes=[0]),
     PolyHarness("delta", "0",
                 lambda x: lax_internal._delta(_f32, x.shape, axes=(0, 1)) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
@@ -2567,6 +2580,10 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
 
+      if harness.fullname == "jnp.cumsum_reduce_axis=poly" and jtu.device_under_test() == "tpu":
+        # https://github.com/openxla/stablehlo/issues/1258
+        raise unittest.SkipTest(
+            "native lowering with shape polymorphism not implemented for window_reductions on TPU")
     harness.run_test(self)
 
 
