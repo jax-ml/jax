@@ -749,8 +749,9 @@ def _create_sharding_for_array(mesh, x):
     return x
   if mesh is None:
     raise RuntimeError(
-        "jit does not support using the mesh context manager. Please pass in "
-        "the sharding explicitly via in_shardings or out_shardings.")
+        "jit does not support using the mesh context manager and passing "
+        "PartitionSpecs to in_shardings or out_shardings. Please pass in "
+        "the `Sharding` explicitly via in_shardings or out_shardings.")
   if mesh.empty:
     raise RuntimeError("pjit requires a non-empty mesh! Is a mesh defined at "
                        "the call site? Alternatively, provide a "
