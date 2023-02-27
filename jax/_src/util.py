@@ -330,18 +330,6 @@ def get_module_functions(module):
 def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
-def new_name_stack(name: str = ''):
-  from jax._src import source_info_util
-  name_stack = source_info_util.NameStack()
-  if name:
-    name_stack = name_stack.extend(name)
-  return name_stack
-
-def extend_name_stack(stack, name: str):
-  from jax._src import source_info_util
-  assert isinstance(stack, source_info_util.NameStack), stack
-  return stack.extend(name)
-
 def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)

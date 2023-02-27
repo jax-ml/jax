@@ -95,7 +95,6 @@ from jax._src.interpreters.pxla import (
   mesh_sharding_specs as mesh_sharding_specs,
   multi_host_supported_collectives as multi_host_supported_collectives,
   new_mesh_sharding_specs as new_mesh_sharding_specs,
-  new_name_stack as new_name_stack,
   op_sharding_to_indices as op_sharding_to_indices,
   parallel_callable as parallel_callable,
   partitioned_sharding_spec as partitioned_sharding_spec,

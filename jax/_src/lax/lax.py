@@ -3638,7 +3638,8 @@ def _reduce_lower(ctx, *values, computation, jaxpr, consts, dimensions):
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
-    reducer_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
+    reducer_ctx = ctx.module_context.replace(
+        name_stack=source_info_util.new_name_stack())
     if jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `reduce`.')
     out_nodes, _ = mlir.jaxpr_subcomp(reducer_ctx, jaxpr, mlir.TokenSet(), consts,

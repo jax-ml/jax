@@ -39,8 +39,7 @@ from jax._src import state
 from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (safe_map, extend_name_stack, split_list,
-                           partition_list)
+from jax._src.util import (safe_map, split_list, partition_list)
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 import numpy as np
@@ -832,12 +831,12 @@ def _cond_lowering(ctx, index, *args, branches, linear):
   # captures.
   case_op = hlo.CaseOp(flat_output_types, index=index,
                        num_branches=len(branches))
-  name_stack = extend_name_stack(ctx.module_context.name_stack, 'cond')
+  name_stack = ctx.module_context.name_stack.extend('cond')
   for i, jaxpr in enumerate(branches):
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       sub_ctx = ctx.module_context.replace(
-          name_stack=extend_name_stack(name_stack, f'branch_{i}_fun'))
+          name_stack=name_stack.extend(f'branch_{i}_fun'))
       out_vals, tokens_out = mlir.jaxpr_subcomp(
           sub_ctx, jaxpr.jaxpr, tokens_in,
           map(mlir.ir_constants, jaxpr.consts),

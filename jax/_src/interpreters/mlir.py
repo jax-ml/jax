@@ -1014,8 +1014,7 @@ def lower_jaxpr_to_fun(
         args.append(hlo.CreateTokenOp().results)
       else:
         args.append(arg)
-    callee_name_stack = util.extend_name_stack(
-        ctx.name_stack, util.wrap_name(name, api_name))
+    callee_name_stack = ctx.name_stack.extend(util.wrap_name(name, api_name))
     out_vals, tokens_out = jaxpr_subcomp(ctx.replace(name_stack=callee_name_stack),
                                          jaxpr.jaxpr, tokens_in, map(ir_constants, jaxpr.consts),
                                          *args, dim_var_values=dim_var_values)

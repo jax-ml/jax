@@ -102,6 +102,14 @@ class NameStack:
       scope = elem.wrap(scope)
     return '/'.join(scope)
 
+
+def new_name_stack(name: str = '') -> NameStack:
+  name_stack = NameStack()
+  if name:
+    name_stack = name_stack.extend(name)
+  return name_stack
+
+
 class SourceInfo(NamedTuple):
   traceback: Optional[Traceback]
   name_stack: NameStack

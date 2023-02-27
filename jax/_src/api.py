@@ -66,8 +66,8 @@ from jax._src.sharding import PmapSharding
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix, _generate_key_paths
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
-                           extend_name_stack, new_name_stack, wrap_name, cache,
-                           wraps, HashableFunction, weakref_lru_cache)
+                           wrap_name, cache, wraps, HashableFunction,
+                           weakref_lru_cache)
 
 
 # Unused imports to be exported
@@ -1083,7 +1083,8 @@ def xla_computation(fun: Callable,
           backend_or_name=backend,
           platform=platform,
           axis_context=mlir.ReplicaAxisContext(axis_env_),
-          name_stack=new_name_stack(wrap_name(fun_name, "xla_computation")),
+          name_stack=source_info_util.new_name_stack(
+              wrap_name(fun_name, "xla_computation")),
           donated_args=donated_invars,
           arg_shardings=(None if in_parts_flat is None else map(
               xla.sharding_to_proto, in_parts_flat)),

@@ -25,6 +25,7 @@ from jax.interpreters import partial_eval as pe
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
+from jax._src import source_info_util
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -2016,7 +2017,8 @@ def _scatter_lower(ctx, operand, indices, updates, *,
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    update_ctx = ctx.module_context.replace(name_stack=util.new_name_stack())
+    update_ctx = ctx.module_context.replace(
+        name_stack=source_info_util.new_name_stack())
     if update_jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(

@@ -46,7 +46,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.ufuncs import logaddexp
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (
-    extend_name_stack,
     partition_list,
     safe_map,
     safe_zip,
@@ -1480,7 +1479,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
 
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(*flat_loop_carry_types)
-  name_stack = extend_name_stack(ctx.module_context.name_stack, 'while')
+  name_stack = ctx.module_context.name_stack.extend('while')
   with ir.InsertionPoint(cond_block):
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
@@ -1489,8 +1488,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     # Remove tokens from cond args
     cond_args = cond_args[num_tokens:]
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
-    cond_ctx = ctx.module_context.replace(
-        name_stack=extend_name_stack(name_stack, 'cond'))
+    cond_ctx = ctx.module_context.replace(name_stack=name_stack.extend('cond'))
     ((pred,),), _ = mlir.jaxpr_subcomp(cond_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
                                        _map(mlir.ir_constants, cond_jaxpr.consts),
                                        *(x + z), dim_var_values=ctx.dim_var_values)
@@ -1521,15 +1519,14 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     token_args, body_args = util.split_list(body_args, [num_tokens])
     tokens_in = mlir.TokenSet(zip(body_effects, token_args))
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
-    body_ctx = ctx.module_context.replace(
-        name_stack=extend_name_stack(name_stack, 'body'))
+    body_ctx = ctx.module_context.replace(name_stack=name_stack.extend('body'))
     new_z, tokens_out = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
         tokens_in, _map(mlir.ir_constants, body_jaxpr.consts),
         *(y + z), dim_var_values=ctx.dim_var_values)
     out_tokens = [tokens_out.get(eff) for eff in body_effects]
     if batched:
       body_pred_ctx = ctx.module_context.replace(
-          name_stack=extend_name_stack(name_stack, 'body_pred'))
+          name_stack=name_stack.extend('body_pred'))
       ((body_pred,),), _ = mlir.jaxpr_subcomp(
           body_pred_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
           _map(mlir.ir_constants, cond_jaxpr.consts),

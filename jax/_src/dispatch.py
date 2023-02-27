@@ -499,7 +499,7 @@ def lower_xla_callable(
   # pass long arg lists as tuple for TPU
   tuple_args = should_tuple_args(len(abstract_args), backend.platform)
   axis_env = xla.AxisEnv(nreps, (), ())
-  name_stack = util.new_name_stack(util.wrap_name(name, 'jit'))
+  name_stack = source_info_util.new_name_stack(util.wrap_name(name, 'jit'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   closed_out_type = [
       (a.update(shape=tuple(pe.InDBIdx(d.val - len(consts))

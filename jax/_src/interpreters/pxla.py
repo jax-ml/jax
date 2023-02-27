@@ -78,7 +78,7 @@ from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
-                           new_name_stack, wrap_name, assert_unreachable,
+                           wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction)
 
@@ -1478,7 +1478,7 @@ def lower_parallel_callable(
 
   axis_env = xla.AxisEnv(
       replicas.num_global_replicas, (axis_name,), (global_axis_size,))
-  name_stack = new_name_stack(wrap_name(name, 'pmap'))
+  name_stack = source_info_util.new_name_stack(wrap_name(name, 'pmap'))
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   replicated_args = [axis is None for axis in in_axes]
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
@@ -2311,8 +2311,8 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sub_ctx = ctx.module_context.replace(
         axis_context=mlir.ReplicaAxisContext(new_env),
-        name_stack=util.extend_name_stack(ctx.module_context.name_stack,
-                                          util.wrap_name(name, 'pmap')))
+        name_stack=ctx.module_context.name_stack.extend(
+            util.wrap_name(name, 'pmap')))
     sharded_outs, _ = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, mlir.TokenSet(), (),
                                          *in_nodes_sharded,
                                          dim_var_values=ctx.dim_var_values)
@@ -2852,7 +2852,7 @@ def lower_sharding_computation(
   the singleton _UNSPECIFIED to all out_avals.
   """
   # 1. Trace to jaxpr and preprocess/verify it
-  name_stack = new_name_stack(wrap_name(fun_name, api_name))
+  name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {name_stack} "
                                  "in {elapsed_time} sec",
@@ -3068,7 +3068,7 @@ def lower_mesh_computation(
     in_is_global: Sequence[bool]) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
-  name_stack = new_name_stack(wrap_name(fun_name, api_name))
+  name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
   auto_spmd_lowering = check_if_any_auto(in_shardings + out_shardings)  # type: ignore
 
