@@ -413,7 +413,7 @@ pip install --upgrade "jax[cpu]"
 ```
 
 On Linux, it is often necessary to first update `pip` to a version that supports
-`manylinux2014` wheels. Also note that for Linux, we currently release wheels for `x86_64` architectures only, other architectures require building from source. Trying to pip install with other Linux architectures may lead to `jaxlib` not being installed alongside `jax`, although `jax` may successfully install (but fail at runtime). 
+`manylinux2014` wheels. Also note that for Linux, we currently release wheels for `x86_64` architectures only, other architectures require building from source. Trying to pip install with other Linux architectures may lead to `jaxlib` not being installed alongside `jax`, although `jax` may successfully install (but fail at runtime).
 **These `pip` installations do not work with Windows, and may fail silently; see
 [above](#installation).**
 
@@ -502,8 +502,7 @@ JAX also provides pre-built wheels for
 To install JAX along with appropriate versions of `jaxlib` and `libtpu`, you can run
 the following in your cloud TPU VM:
 ```bash
-pip install --upgrade pip
-pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install jax[tpu] -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 ### pip installation: Colab TPU
