@@ -469,31 +469,31 @@ jax.numpy.linalg
   tensorinv
   tensorsolve
 
-JAX DeviceArray
----------------
-The JAX :class:`~jax.numpy.DeviceArray` is the core array object in JAX: you can
-think of it as the equivalent of a :class:`numpy.ndarray` backed by a memory buffer
-on a single device. Like :class:`numpy.ndarray`, most users will not need to
-instantiate :class:`DeviceArray` objects manually, but rather will create them via
+JAX Array
+---------
+The JAX :class:`~jax.Array` (along with its alias, :class:`jax.numpy.ndarray`) is
+the core array object in JAX: you can think of it as JAX's equivalent of a
+:class:`numpy.ndarray`. Like :class:`numpy.ndarray`, most users will not need to
+instantiate :class:`~jax.Array` objects manually, but rather will create them via
 :mod:`jax.numpy` functions like :func:`~jax.numpy.array`, :func:`~jax.numpy.arange`,
 :func:`~jax.numpy.linspace`, and others listed above.
 
 Copying and Serialization
 ~~~~~~~~~~~~~~~~~~~~~~~~~
-:class:`~jax.numpy.DeviceArray`` objects are designed to work seamlessly with Python
+JAX :class:`~jax.Array`` objects are designed to work seamlessly with Python
 standard library tools where appropriate.
 
 With the built-in :mod:`copy` module, when :func:`copy.copy` or :func:`copy.deepcopy`
-encounder a :class:`~jax.numpy.DeviceArray`, it is equivalent to calling the
-:meth:`~jaxlib.xla_extension.DeviceArray.copy` method, which will create a copy of
+encounder an :class:`~jax.Array`, it is equivalent to calling the
+:meth:`~jax.Array.copy` method, which will create a copy of
 the buffer on the same device as the original array. This will work correctly within
 traced/JIT-compiled code, though copy operations may be elided by the compiler
 in this context.
 
-When the built-in :mod:`pickle` module encounters a :class:`~jax.numpy.DeviceArray`,
+When the built-in :mod:`pickle` module encounters an :class:`~jax.Array`,
 it will be serialized via a compact bit representation in a similar manner to pickled
 :class:`numpy.ndarray` objects. When unpickled, the result will be a new
-:class:`~jax.numpy.DeviceArray` object *on the default device.*
+:class:`~jax.Array` object *on the default device.*
 This is because in general, pickling and unpickling may take place in different runtime
 environments, and there is no general way to map the device IDs of one runtime
 to the device IDs of another. If :mod:`pickle` is used in traced/JIT-compiled code,
