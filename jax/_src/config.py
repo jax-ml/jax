@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# TODO(phawkins): this file triggers a pytype bug.
-# pytype: skip-file
-
 import contextlib
 import functools
 import itertools
@@ -102,7 +99,7 @@ class Config:
       raise AttributeError(f"Unrecognized config option: {name}")
 
   def add_option(self, name, default, opt_type, meta_args, meta_kwargs,
-                 update_hook=None):
+                 update_hook: Optional[Callable[[Any], None]] = None):
     if name in self.values:
       raise Exception(f"Config option {name} already defined")
     self.values[name] = default
@@ -139,7 +136,7 @@ class Config:
   def config_with_absl(self):
     # Run this before calling `app.run(main)` etc
     import absl.flags as absl_FLAGS  # noqa: F401
-    from absl import app, flags as absl_flags
+    from absl import app, flags as absl_flags  # pytype: disable=import-error
 
     self.use_absl = True
     self.absl_flags = absl_flags
