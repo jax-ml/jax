@@ -308,6 +308,9 @@ class _HashableCallableShim:
       return self.fun == other.fun
     return self.fun == other
 
+  def __repr__(self):
+    return f'_HashableCallableShim({repr(self.fun)})'
+
 
 class Partial(functools.partial):
   """A version of functools.partial that works in pytrees.

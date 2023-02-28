@@ -8385,6 +8385,18 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(f)(A([1.]))  # doesn't crash
 
+  def test_vmap_vjp_called_twice(self):
+    # https://github.com/google/jax/pull/14728
+    @jax.custom_vjp
+    def f(x):
+      return x
+    f.defvjp(lambda x: (x, None), lambda _, y_bar: (y_bar,))
+
+    _, f_vjp = jax.vjp(jax.vmap(f), jnp.array([3.]))
+    f_vjp(jnp.array([3.]))
+    f_vjp(jnp.array([3.]))  # doesn't crash
+
+
 def transpose_unary(f, x_example):
   def transposed(y):
     x, = api.linear_transpose(f, x_example)(y)

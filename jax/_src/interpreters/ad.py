@@ -748,7 +748,7 @@ custom_lin_p.def_impl(raise_custom_vjp_error_on_jvp)
 def _custom_lin_transpose(cts_out, *invals, num_res, bwd, out_avals):
   res, _ = split_list(invals, [num_res])
   cts_out = map(instantiate_zeros_aval, out_avals, cts_out)
-  cts_in = bwd.call_wrapped(*res, *cts_out)
+  cts_in = bwd(*res, *cts_out)
   return [None] * num_res + list(cts_in)
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
 

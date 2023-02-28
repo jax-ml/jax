@@ -560,7 +560,7 @@ class custom_vjp(Generic[ReturnValue]):
       flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
       flat_fwd, out_trees = _flatten_fwd(fwd, primal_name, fwd_name, in_tree,
                                          out_type)
-      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees)
+      flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
@@ -680,7 +680,7 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     fwd, env_trace_todo2 = process_env_traces_fwd(
       fwd, top_trace and top_trace.level, out_trees)
     tracers = map(top_trace.full_raise, args)  # type: ignore
-    bwd_ = lu.wrap_init(lambda *args: bwd.call_wrapped(*args))
+    bwd_ = lambda *args: bwd(*args)
     outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd_, tracers,
                                              out_trees=out_trees)
     fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
@@ -749,7 +749,7 @@ mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
-    bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
+    bwd: Callable, out_trees: Callable, num_consts: int):
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
   if any(type(t) is not Zero for t in consts_dot):
@@ -772,7 +772,7 @@ ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
     axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
-    bwd: lu.WrappedFun, out_trees: Callable, num_consts: int):
+    bwd: Callable, out_trees: Callable, num_consts: int):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
