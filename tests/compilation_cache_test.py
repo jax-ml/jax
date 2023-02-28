@@ -14,6 +14,7 @@
 
 from functools import partial
 import hashlib
+import math
 import os
 import random
 import sys
@@ -29,7 +30,6 @@ from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
 import jax
 from jax import jit, lax, pmap
-from jax._src.util import prod
 import jax._src.test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
@@ -284,11 +284,11 @@ class CompilationCacheTest(jtu.JaxTestCase):
         return x + y
 
       shape = (8, 8)
-      x = np.arange(prod(shape), dtype=np.int64).reshape(shape)
+      x = np.arange(math.prod(shape), dtype=np.int64).reshape(shape)
       f(x, x + 1)
       files_in_directory = len(os.listdir(tmpdir))
       self.assertEqual(files_in_directory, 1)
-      x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+      x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
       f(x, x + 1)
       files_in_directory = len(os.listdir(tmpdir))
       self.assertEqual(files_in_directory, 2)

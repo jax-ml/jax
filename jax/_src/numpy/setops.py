@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import math
 import operator
 from textwrap import dedent as _dedent
 from typing import Optional, Tuple, Union
@@ -31,7 +32,6 @@ from jax._src.numpy.lax_numpy import (
     sort, where, zeros)
 from jax._src.numpy.util import _check_arraylike, _wraps
 from jax._src.typing import Array, ArrayLike
-from jax._src.util import prod as _prod
 
 
 _lax_const = lax_internal._const
@@ -230,11 +230,11 @@ def _unique_sorted_mask(ar: Array, axis: int) -> Tuple[Array, Array, Array]:
     # is fixed to match numpy.
     aux = where(isnan(aux), _lax_const(aux, np.nan), aux)
   size, *out_shape = aux.shape
-  if _prod(out_shape) == 0:
+  if math.prod(out_shape) == 0:
     size = 1
     perm = zeros(1, dtype=int)
   else:
-    perm = lexsort(aux.reshape(size, _prod(out_shape)).T[::-1])
+    perm = lexsort(aux.reshape(size, math.prod(out_shape)).T[::-1])
   aux = aux[perm]
   if aux.size:
     if dtypes.issubdtype(aux.dtype, np.inexact):

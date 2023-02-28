@@ -13,9 +13,8 @@
 # limitations under the License.
 
 
-import functools
 from functools import partial
-import operator
+import math
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
@@ -60,8 +59,6 @@ def _real_type(dtype):
   """Returns the real equivalent of 'dtype'."""
   return np.finfo(dtype).dtype
 
-_prod = lambda xs: functools.reduce(operator.mul, xs, 1)
-
 
 def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   """LU decomposition."""
@@ -71,7 +68,7 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, dtype, a):
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
+  batch = math.prod(batch_dims)
 
   if batch > 1 and m == n and m // batch <= 128:
     lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
@@ -118,7 +115,7 @@ def _geqrf_hlo(platform, gpu_solver, dtype, a):
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
+  batch = math.prod(batch_dims)
 
   lwork, opaque = gpu_solver.build_geqrf_descriptor(
       np.dtype(dtype), batch, m, n)
@@ -156,7 +153,7 @@ def _geqrf_batched_hlo(platform, gpu_blas, dtype, a):
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
+  batch = math.prod(batch_dims)
 
   lwork, opaque = gpu_blas.build_geqrf_batched_descriptor(
       np.dtype(dtype), batch, m, n)
@@ -220,7 +217,7 @@ def _orgqr_hlo(platform, gpu_solver, dtype, a, tau):
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
+  batch = math.prod(batch_dims)
 
   tau_dims = ir.RankedTensorType(tau.type).shape
   assert tau_dims[:-1] == dims[:-2]
@@ -266,7 +263,7 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   assert m == n
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  batch = _prod(batch_dims)
+  batch = math.prod(batch_dims)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
   if have_jacobi_solver and n <= 32:
@@ -317,7 +314,7 @@ def _gesvd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a,
   m, n = dims[-2:]
   batch_dims = tuple(dims[:-2])
   num_bd = len(batch_dims)
-  b = _prod(batch_dims)
+  b = math.prod(batch_dims)
   if ir.ComplexType.isinstance(a_type.element_type):
     singular_vals_type = ir.ComplexType(a_type.element_type).element_type
   else:

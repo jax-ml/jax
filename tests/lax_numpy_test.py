@@ -19,6 +19,7 @@ from functools import partial
 import inspect
 import io
 import itertools
+import math
 from typing import cast, Iterator, Optional, List, Tuple
 import unittest
 from unittest import SkipTest
@@ -46,7 +47,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
-from jax._src.util import prod, safe_zip
+from jax._src.util import safe_zip
 from jax._src import array
 
 from jax.config import config
@@ -1358,7 +1359,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if shape in scalar_shapes or len(shape) == 0:
       cond_shape = (0,)
     elif axis is None:
-      cond_shape = (prod(shape),)
+      cond_shape = (math.prod(shape),)
     else:
       cond_shape = (shape[axis],)
 
@@ -1394,7 +1395,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if shape in scalar_shapes or len(shape) == 0:
       cond_shape = (0,)
     elif axis is None:
-      cond_shape = (prod(shape),)
+      cond_shape = (math.prod(shape),)
     else:
       cond_shape = (shape[axis],)
 
@@ -1488,7 +1489,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     [dict(shape=shape, axis=axis, idx=idx)
       for shape in nonempty_nonscalar_array_shapes
       for axis in [None] + list(range(-len(shape), len(shape)))
-      for idx in (range(-prod(shape), prod(shape))
+      for idx in (range(-math.prod(shape), math.prod(shape))
                   if axis is None else
                   range(-shape[axis], shape[axis]))],
     dtype=all_dtypes,
@@ -3372,7 +3373,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     idx_shape=all_shapes,
   )
   def testUnravelIndex(self, shape, idx_shape, dtype):
-    size = prod(shape)
+    size = math.prod(shape)
     rng = jtu.rand_int(self.rng(), low=-((2 * size) // 3), high=(2 * size) // 3)
 
     def np_fun(index, shape):

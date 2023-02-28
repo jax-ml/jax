@@ -171,7 +171,6 @@ from jax._src.lax.lax import (
   population_count_p as population_count_p,
   pow as pow,
   pow_p as pow_p,
-  prod as prod,
   random_gamma_grad as random_gamma_grad,
   random_gamma_grad_p as random_gamma_grad_p,
   real as real,
@@ -369,3 +368,5 @@ from jax.lax import linalg as linalg
 
 from jax._src.pjit import with_sharding_constraint
 from jax._src.dispatch import device_put_p
+
+from math import prod  # TODO(phawkins): remove this accidental export

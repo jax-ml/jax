@@ -17,6 +17,7 @@ import enum
 from functools import partial, lru_cache
 import inspect
 import itertools as it
+import math
 import operator as op
 from typing import (Any, Callable, Dict, Hashable, List, Optional, Sequence,
                     Set, Tuple, TypeVar, Union, Protocol)
@@ -37,7 +38,7 @@ from jax._src import util
 from jax._src.core import Tracer
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, fft, linalg)
-from jax._src.util import (prod, HashableFunction, unzip2, as_hashable_function,
+from jax._src.util import (HashableFunction, unzip2, as_hashable_function,
                            memoize, partition_list, merge_lists)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax.interpreters import batching
@@ -150,7 +151,7 @@ def _check_specs_vs_args(
     msg = _spec_rank_error(SpecErrorType.input, f, in_tree, in_specs, fail)
     raise ValueError(msg)
   in_names_flat = tuple(map(_canonicalize_spec, in_specs_flat))
-  fail = [a if any(a.shape[d] % prod(mesh.shape[n] for n in ns)
+  fail = [a if any(a.shape[d] % math.prod(mesh.shape[n] for n in ns)
                    for d, ns in names.items()) else no_fail
           for a, names in zip(in_avals, in_names_flat)]
   if any(f is not no_fail for f in fail):
@@ -201,10 +202,10 @@ def _spec_divisibility_error(
                f"parameter '{list(ba.arguments.keys())[arg_key.key]}',")
     names = _canonicalize_spec(spec)
     for d, ns in names.items():
-      if aval.shape[d] % prod(mesh.shape[n] for n in ns):
+      if aval.shape[d] % math.prod(mesh.shape[n] for n in ns):
         axis = f"axes {ns}" if len(ns) > 1 else f"axis '{ns[0]}'"
         total = 'total ' if len(ns) > 1 else ''
-        sz = prod(mesh.shape[n] for n in ns)
+        sz = math.prod(mesh.shape[n] for n in ns)
         msgs.append(
             f"args{fail_key.pprint()} of shape {aval.str_short()}{extra} "
             f"corresponds to in_specs{spec_key.pprint()} of value {spec}, "
@@ -382,7 +383,7 @@ pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
 def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                 ) -> core.AbstractValue:
   if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
+    return aval.update(tuple(sz // math.prod(mesh.shape[n] for n in names.get(i, ()))
                              for i, sz in enumerate(aval.shape)))
   else:
     raise NotImplementedError  # TODO(mattjj): add table with handlers
@@ -390,7 +391,7 @@ def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
 def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                  ) -> core.AbstractValue:
   if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
+    return aval.update(tuple(sz * math.prod(mesh.shape[n] for n in names.get(i, ()))
                              for i, sz in enumerate(aval.shape)),
                        named_shape={k: v for k, v in aval.named_shape.items()
                                     if k not in mesh.shape})
@@ -880,7 +881,7 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
                          check_rep):
   mb_div = lambda x, y: x / y if y != 1 else x
   out_cts = [ad.Zero(_shard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
-             else mb_div(x, prod(map(mesh.shape.get, _unmentioned(mesh, ns))))
+             else mb_div(x, math.prod(map(mesh.shape.get, _unmentioned(mesh, ns))))
              for ns, x in zip(out_names, out_cts)]
   args = [x if type(x) is not ad.UndefinedPrimal else
           ad.UndefinedPrimal(_shard_aval(mesh, ns, x.aval))

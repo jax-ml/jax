@@ -17,6 +17,7 @@ import inspect
 import io
 import functools
 from functools import partial
+import math
 import re
 import os
 import tempfile
@@ -46,7 +47,7 @@ from jax._src.config import (flags, bool_env, config,
                              raise_persistent_cache_errors,
                              persistent_cache_min_compile_time_secs)
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
-from jax._src.util import prod, unzip2
+from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
@@ -668,7 +669,7 @@ def rand_int(rng, low=0, high=None):
 
 def rand_unique_int(rng, high=None):
   def fn(shape, dtype):
-    return rng.choice(np.arange(high or prod(shape), dtype=dtype),
+    return rng.choice(np.arange(high or math.prod(shape), dtype=dtype),
                       size=shape, replace=False)
   return fn
 
@@ -755,7 +756,7 @@ def sample_product_testcases(*args, **kw):
   """Non-decorator form of sample_product."""
   args = [list(arg) for arg in args]
   kw = [(k, list(v)) for k, v in kw.items()]
-  n = prod(len(a) for a in args) * prod(len(v) for _, v in kw)
+  n = math.prod(len(a) for a in args) * math.prod(len(v) for _, v in kw)
   testcases = []
   for i in _choice(n, min(n, FLAGS.jax_num_generated_cases)):
     testcase = {}
@@ -1054,7 +1055,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   """Test utility for setting up meshes given mesh data from `schedules`."""
   # This is similar to the `with_mesh` function above, but isn't a decorator.
   axis_names, shape = unzip2(named_shape)
-  size = prod(shape)
+  size = math.prod(shape)
   local_devices = list(api.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
@@ -1094,7 +1095,7 @@ def restore_spmd_manual_lowering_flag():
   config.update('experimental_xmap_spmd_lowering_manual', old_spmd_manual_lowering_flag)
 
 def create_global_mesh(mesh_shape, axis_names):
-  size = prod(mesh_shape)
+  size = math.prod(mesh_shape)
   if len(api.devices()) < size:
     raise unittest.SkipTest(f"Test requires {size} global devices.")
   devices = sorted(api.devices(), key=lambda d: d.id)

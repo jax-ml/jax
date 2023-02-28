@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from functools import partial
 import itertools
+import math
 import operator
 import types
 import unittest
@@ -44,7 +45,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import lax_reference
-from jax._src.util import prod
 from jax._src.lax import lax as lax_internal
 from jax._src.internal_test_util import lax_test_util
 
@@ -1998,7 +1998,7 @@ class LaxTest(jtu.JaxTestCase):
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
     def args_maker():
-      flat_keys = np.arange(prod(shape), dtype=key_dtype)
+      flat_keys = np.arange(math.prod(shape), dtype=key_dtype)
       keys = self.rng().permutation(flat_keys).reshape(shape)
       values = rng(shape, val_dtype)
       return keys, values
@@ -2035,7 +2035,7 @@ class LaxTest(jtu.JaxTestCase):
     # too, since we don't guarantee the same ordering of values with equal keys.
     # To avoid that case, we generate unique keys (globally in the key array).
     def args_maker():
-      flat_keys = np.arange(prod(shape), dtype=key_dtype)
+      flat_keys = np.arange(math.prod(shape), dtype=key_dtype)
       keys = self.rng().permutation(flat_keys).reshape(shape)
       values = rng(shape, val_dtype)
       return keys, values
@@ -2051,7 +2051,7 @@ class LaxTest(jtu.JaxTestCase):
   )
   def testTopK(self, shape, dtype, k):
     def args_maker():
-      flat_values = np.arange(prod(shape), dtype=dtype)
+      flat_values = np.arange(math.prod(shape), dtype=dtype)
       values = self.rng().permutation(flat_values).reshape(shape)
       return [values]
     def reference_top_k(x):

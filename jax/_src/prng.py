@@ -15,6 +15,7 @@
 
 import abc
 from functools import partial, reduce
+import math
 import operator as op
 from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
 
@@ -44,7 +45,7 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
 from jax._src.sharding import (
     NamedSharding, PmapSharding, GSPMDSharding)
-from jax._src.util import canonicalize_axis, prod, safe_map, safe_zip
+from jax._src.util import canonicalize_axis, safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1141,7 +1142,7 @@ def threefry_random_bits(key: jax.Array, bit_width, shape):
     return _threefry_random_bits_original(key, bit_width, shape)
 
 def _threefry_random_bits_partitionable(key: jax.Array, bit_width, shape):
-  if all(core.is_constant_dim(d) for d in shape) and prod(shape) > 2 ** 64:
+  if all(core.is_constant_dim(d) for d in shape) and math.prod(shape) > 2 ** 64:
     raise NotImplementedError('random bits array of size exceeding 2 ** 64')
 
   k1, k2 = key
@@ -1160,7 +1161,7 @@ def _threefry_random_bits_partitionable(key: jax.Array, bit_width, shape):
 
 @partial(jit, static_argnums=(1, 2), inline=True)
 def _threefry_random_bits_original(key: jax.Array, bit_width, shape):
-  size = prod(shape)
+  size = math.prod(shape)
   # Compute ceil(bit_width * size / 32) in a way that is friendly to shape
   # polymorphism
   max_count, r = divmod(bit_width * size, 32)

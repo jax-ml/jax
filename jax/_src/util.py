@@ -269,12 +269,6 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   """
   return xc.weakref_lru_cache(config._trace_context, call, maxsize)
 
-def prod(xs):
-  out = 1
-  for x in xs:
-    out *= x
-  return out
-
 class Unhashable:
   __slots__ = ["val"]
 

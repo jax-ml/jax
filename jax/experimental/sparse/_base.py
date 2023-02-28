@@ -14,11 +14,11 @@
 
 """Base JAX Sparse object."""
 import abc
+import math
 from typing import Sequence, Tuple
 
 import jax
 from jax._src import core
-from jax._src import util
 from jax._src.typing import Array
 
 
@@ -37,7 +37,7 @@ class JAXSparse(abc.ABC):
 
   @property
   def size(self) -> int:
-    return util.prod(self.shape)
+    return math.prod(self.shape)
 
   @property
   def ndim(self) -> int:

@@ -19,6 +19,7 @@ import dataclasses
 import functools
 from functools import partial
 import itertools as it
+import math
 import operator
 import re
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Protocol,
@@ -37,7 +38,7 @@ from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ConcreteArray, ShapedArray
 from jax._src.interpreters import ad
-from jax._src.util import (prod, safe_zip, safe_map, partition_list)
+from jax._src.util import (safe_zip, safe_map, partition_list)
 
 from jax._src.typing import Shape
 
@@ -311,7 +312,7 @@ def axis_groups(axis_env: AxisEnv, name) -> Tuple[Tuple[int, ...]]:
   if not isinstance(name, (list, tuple)):
     name = (name,)
   mesh_axes = tuple(unsafe_map(partial(axis_read, axis_env), name))
-  trailing_size, ragged = divmod(axis_env.nreps, prod(axis_env.sizes))
+  trailing_size, ragged = divmod(axis_env.nreps, math.prod(axis_env.sizes))
   assert not ragged
   mesh_spec = axis_env.sizes + (trailing_size,)
   return _axis_groups(mesh_spec, mesh_axes)
@@ -326,10 +327,10 @@ def _axis_groups(mesh_spec, mesh_axes):
   Returns:
     A tuple of replica groups (i.e. tuples containing replica ids).
   """
-  iota = np.arange(prod(mesh_spec)).reshape(mesh_spec)
+  iota = np.arange(math.prod(mesh_spec)).reshape(mesh_spec)
   groups = np.reshape(
       np.moveaxis(iota, mesh_axes, np.arange(len(mesh_axes))),
-      (prod(np.take(mesh_spec, mesh_axes)), -1))
+      (math.prod(np.take(mesh_spec, mesh_axes)), -1))
   return tuple(unsafe_map(tuple, groups.T))
 
 

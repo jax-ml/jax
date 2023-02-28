@@ -26,6 +26,7 @@ import collections
 import functools
 from functools import partial
 import inspect
+import math
 import typing
 from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
                     NamedTuple, Optional, Sequence, Tuple, TypeVar, Union, overload)
@@ -65,7 +66,7 @@ from jax._src.lib import pmap_lib
 from jax._src.sharding import PmapSharding
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix, _generate_key_paths
-from jax._src.util import (unzip2, curry, safe_map, safe_zip, prod, split_list,
+from jax._src.util import (unzip2, curry, safe_map, safe_zip, split_list,
                            wrap_name, cache, wraps, HashableFunction,
                            weakref_lru_cache)
 
@@ -1034,7 +1035,7 @@ def xla_computation(fun: Callable,
     if axis_env is None:
       return xla.AxisEnv(nreps, (), ())
     else:
-      nreps = nreps * prod(size for name, size in axis_env)
+      nreps = nreps * math.prod(size for name, size in axis_env)
       names, sizes = unzip2(axis_env)
       return xla.AxisEnv(nreps, names, sizes)
 
@@ -3232,7 +3233,7 @@ class ShapeDtypeStruct:
       self.sharding = sharding
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
-  size = property(lambda self: prod(self.shape))
+  size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
 
   def __len__(self):

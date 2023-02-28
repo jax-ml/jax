@@ -13,15 +13,17 @@
 # limitations under the License.
 """Tests for GlobalDeviceArray."""
 
-from absl.testing import absltest
-from absl.testing import parameterized
+import math
 import unittest
 import numpy as np
+
+from absl.testing import absltest
+from absl.testing import parameterized
 
 import jax
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src.util import prod, safe_zip
+from jax._src.util import safe_zip
 
 from jax.sharding import PartitionSpec as P
 from jax.sharding import Mesh
@@ -34,7 +36,7 @@ config.parse_flags_with_absl()
 
 def create_gda(global_shape, global_mesh, mesh_axes, global_data=None):
   if global_data is None:
-    global_data = np.arange(prod(global_shape)).reshape(global_shape)
+    global_data = np.arange(math.prod(global_shape)).reshape(global_shape)
 
   return GlobalDeviceArray.from_callback(
       global_shape, global_mesh, mesh_axes, lambda idx: global_data[idx]), global_data
@@ -75,7 +77,7 @@ class GDATest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
 
@@ -128,7 +130,7 @@ class GDATest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
     global_input_shape = (8, 4, 2)
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
 
@@ -163,7 +165,7 @@ class GDATest(jtu.JaxTestCase):
                          expected_replica_ids):
     global_mesh = jtu.create_global_mesh((8,), ('x'))
     global_input_shape = (16,)
-    global_input_data = np.arange(prod(global_input_shape)).reshape(-1)
+    global_input_data = np.arange(math.prod(global_input_shape)).reshape(-1)
     def cb(index):
       return global_input_data[index]
 
@@ -214,7 +216,7 @@ class GDATest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
 
@@ -240,7 +242,7 @@ class GDATest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P(('x', 'y'))
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
 
     def cb(indices):
       self.assertEqual(len(indices), len(global_mesh.local_devices))
@@ -260,7 +262,7 @@ class GDATest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x')
     global_input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     def cb(cb_inp):
       self.assertLen(cb_inp, 4)
@@ -288,7 +290,7 @@ class GDATest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P(('x', 'y'))
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
     gda = GlobalDeviceArray.from_callback(
@@ -307,7 +309,7 @@ class GDATest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P(None,)
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
     input_gda = GlobalDeviceArray.from_callback(
@@ -340,7 +342,7 @@ class GDATest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     indices = get_shard_indices(global_input_shape, global_mesh, mesh_axes)
 
     dbs = [
@@ -358,7 +360,7 @@ class GDATest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P(('x', 'y'))
     global_input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
 
     def cb(index):
       return global_input_data[index]

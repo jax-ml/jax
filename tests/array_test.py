@@ -14,6 +14,7 @@
 """Tests for GlobalDeviceArray."""
 
 import contextlib
+import math
 import os
 import unittest
 from absl.testing import absltest
@@ -27,7 +28,7 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.util import prod, safe_zip
+from jax._src.util import safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
@@ -72,7 +73,7 @@ def tearDownModule():
 
 def create_array(shape, sharding, global_data=None):
   if global_data is None:
-    global_data = np.arange(prod(shape)).reshape(shape)
+    global_data = np.arange(math.prod(shape)).reshape(shape)
 
   return array.make_array_from_callback(
       shape, sharding, lambda idx: global_data[idx]), global_data
@@ -310,7 +311,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     s = sharding.NamedSharding(mesh, P('x', 'y'))
-    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     di_map = s.devices_indices_map(shape)
     bufs = [jax.device_put(inp_data[di_map[d]], d)
             for d in jax.local_devices()]
@@ -333,7 +334,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     # sharding device ids = {0, 1}
     s = sharding.NamedSharding(mesh, P('x'))
-    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     # _arrays device ids = {2, 3}
     bufs = [jax.device_put(inp_data, d) for d in jax.devices()[2:4]]
     with self.assertRaisesRegex(
@@ -349,7 +350,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     # Sharding device ids = {0, 1}
     s = sharding.NamedSharding(mesh, P('x'))
-    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     # _arrays device ids = {0, 0}
     bufs = [jax.device_put(inp_data, jax.devices()[0]) for _ in range(2)]
     with self.assertRaisesRegex(
@@ -366,7 +367,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(np.array([jax.devices()[1], jax.devices()[2]]), ('x'))
     # sharding device ids = {1, 2}
     s = sharding.NamedSharding(mesh, P('x'))
-    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     # _arrays device ids = {0, 1}
     bufs = [jax.device_put(inp_data, d) for d in jax.devices()[:2]]
     with self.assertRaisesRegex(
@@ -389,7 +390,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     mps = sharding.NamedSharding(mesh, pspec)
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
 
     str_expected_shard_shape = str(expected_shard_shape).replace(
         r"(", r"\(").replace(r")", r"\)")
@@ -403,7 +404,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1, 2), ('x', 'y'))
     s = sharding.NamedSharding(mesh, P('x', 'y'))
-    inp_data = np.arange(prod(shape), dtype=np.int32).reshape(shape)
+    inp_data = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     indices = s.devices_indices_map(shape)
     bufs = [jax.device_put(inp_data[indices[d]], d) for d in mesh.local_devices]
     with self.assertRaisesRegex(
@@ -725,7 +726,7 @@ class ShardingTest(jtu.JaxTestCase):
       self.skipTest('Test needs >= 2 devices.')
 
     shape = (2, 2)
-    num_elements = prod(shape)
+    num_elements = math.prod(shape)
     inp_data = np.arange(num_elements).reshape(shape)
     out = jax.pmap(lambda x: x)(inp_data)
     self.assertIsInstance(out.sharding, sharding.PmapSharding)
@@ -954,7 +955,7 @@ class RngShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
     s = sharding.NamedSharding(mesh, pspec)
 
-    n = prod(global_shape)
+    n = math.prod(global_shape)
     global_x = jnp.arange(n).astype('uint32').reshape(global_shape)
     x = array.make_array_from_callback(global_x.shape, s, lambda i: global_x[i])
 

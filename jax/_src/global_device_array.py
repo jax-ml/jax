@@ -15,6 +15,7 @@
 from collections import Counter
 import dataclasses
 import functools
+import math
 import numpy as np
 from typing import Callable, Sequence, Tuple, Union, Mapping, Optional, List, Dict, NamedTuple
 
@@ -26,7 +27,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.config import config
 from jax._src.interpreters import pxla
 from jax.interpreters import xla, mlir
-from jax._src.util import prod, safe_zip
+from jax._src.util import safe_zip
 from jax._src.interpreters.pxla import PartitionSpec
 
 Shape = Tuple[int, ...]
@@ -87,7 +88,7 @@ def _get_shard_indices_replica_ids_uncached(
     out[device] = (index, replica_id)
 
   shard_shape = get_shard_shape(global_shape, global_mesh, mesh_axes)
-  expected_unique_shards = prod(
+  expected_unique_shards = math.prod(
       [g // s for g, s in safe_zip(global_shape, shard_shape) if g != 0 or s != 0])
   if expected_unique_shards != unique_shards:
     raise RuntimeError(
@@ -104,7 +105,7 @@ def get_shard_shape(global_shape, global_mesh, mesh_axes) -> Shape:
     if not mesh_axis:
       chunk_size.append(size)
     elif isinstance(mesh_axis, tuple):
-      m = prod([global_mesh.shape[ma] for ma in mesh_axis])
+      m = math.prod([global_mesh.shape[ma] for ma in mesh_axis])
       chunk_size.append(size // m)
     else:
       chunk_size.append(size // global_mesh.shape[mesh_axis])
@@ -323,7 +324,7 @@ class GlobalDeviceArray:
 
   @property
   def size(self):
-    return prod(self.shape)
+    return math.prod(self.shape)
 
   @property
   def mesh(self):
@@ -455,7 +456,7 @@ class GlobalDeviceArray:
       >>> global_input_shape = (8, 8)
       >>> mesh_axes = P('x', 'y')
       >>> global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
-      >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
+      >>> global_input_data = np.arange(math.prod(global_input_shape)).reshape(global_input_shape)
       ...
       >>> def cb(index):
       ...  return global_input_data[index]
@@ -505,7 +506,7 @@ class GlobalDeviceArray:
       >>> global_input_shape = (8, 2)
       >>> mesh_axes = P('x')
       >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
-      >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
+      >>> global_input_data = np.arange(math.prod(global_input_shape)).reshape(global_input_shape)
       ...
       >>> def batched_cb(indices):
       ...   assert len(indices) == len(global_mesh.local_devices)
@@ -555,7 +556,7 @@ class GlobalDeviceArray:
       >>> global_input_shape = (8, 2)
       >>> mesh_axes = P(('x', 'y'))
       >>> global_mesh = Mesh(np.array(jax.devices()).reshape(4, 2), ('x', 'y'))
-      >>> global_input_data = np.arange(prod(global_input_shape)).reshape(global_input_shape)
+      >>> global_input_data = np.arange(math.prod(global_input_shape)).reshape(global_input_shape)
       ...
       >>> def cb(cb_inp):
       ...  dbs = []

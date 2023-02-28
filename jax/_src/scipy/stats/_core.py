@@ -14,6 +14,7 @@
 
 from collections import namedtuple
 from functools import partial
+import math
 from typing import Optional, Tuple
 
 import jax
@@ -24,7 +25,7 @@ from jax._src.api import vmap
 from jax._src.numpy.lax_numpy import _check_arraylike
 from jax._src.numpy.util import _wraps
 from jax._src.typing import ArrayLike, Array
-from jax._src.util import canonicalize_axis, prod
+from jax._src.util import canonicalize_axis
 
 import scipy
 
@@ -80,7 +81,7 @@ def mode(a: ArrayLike, axis: Optional[int] = 0, nan_policy: str = "propagate", k
 
   axis = canonicalize_axis(axis, x.ndim)
   x = jnp.moveaxis(x, axis, 0)
-  x = x.reshape(x.shape[0], prod(x.shape[1:]))
+  x = x.reshape(x.shape[0], math.prod(x.shape[1:]))
   vals, counts = vmap(_mode_helper, in_axes=1)(x)
   return ModeResult(vals.reshape(output_shape), counts.reshape(output_shape))
 

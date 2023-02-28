@@ -14,6 +14,7 @@
 
 import functools
 import itertools as it
+import math
 import os
 import re
 from itertools import product, permutations
@@ -45,7 +46,7 @@ from jax._src import config as jax_config
 from jax._src.nn import initializers as nn_initializers
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.util import unzip2, prod, safe_zip
+from jax._src.util import unzip2, safe_zip
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax.parallel import pgather
 from jax.interpreters import batching, pxla
@@ -80,7 +81,7 @@ def tearDownModule():
 def create_array(global_shape, global_mesh, mesh_axes, global_data=None):
   if global_data is None:
     global_data = np.arange(
-        prod(global_shape), dtype=np.float32).reshape(global_shape)
+        math.prod(global_shape), dtype=np.float32).reshape(global_shape)
 
   sharding = NamedSharding(global_mesh, mesh_axes)
 
@@ -1118,7 +1119,7 @@ class XMapGDATest(XMapTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1146,7 +1147,7 @@ class XMapGDATest(XMapTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x')
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1185,7 +1186,7 @@ class XMapGDATest(XMapTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1224,7 +1225,7 @@ class XMapGDATest(XMapTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1248,7 +1249,7 @@ class XMapGDATest(XMapTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         global_input_shape, global_mesh, mesh_axes, lambda idx: input_data[idx])
     with jax_config.parallel_functions_output_gda(True):

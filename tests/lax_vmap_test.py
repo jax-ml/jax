@@ -15,6 +15,7 @@
 
 from functools import partial
 import itertools
+import math
 from typing import Optional, cast
 import unittest
 
@@ -32,7 +33,7 @@ from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
-from jax._src.util import prod, safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -667,7 +668,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   # Note also that we chose 3 * 5 * 3 * 5 such that it fits in the range of
   # values a bfloat16 can represent exactly to avoid ties.
   def testTopK(self, shape, dtype, k, bdims):
-    rng = jtu.rand_int(self.rng(), high=prod(shape))
+    rng = jtu.rand_int(self.rng(), high=math.prod(shape))
     # _CheckBatching doesn't work with tuple outputs, so test outputs separately.
     op1 = lambda x: lax.top_k(x, k=k)[0]
     self._CheckBatching(op1, 5, bdims, (shape,), (dtype,), rng)

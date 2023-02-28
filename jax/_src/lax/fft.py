@@ -14,6 +14,7 @@
 
 
 from functools import partial
+import math
 from typing import Union, Sequence
 
 import numpy as np
@@ -30,7 +31,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
 from jax._src.numpy.util import _promote_dtypes_complex, _promote_dtypes_inexact
-from jax._src.util import prod
 
 __all__ = [
   "fft",
@@ -150,7 +150,7 @@ def _irfft_transpose(t, fft_lengths):
        full(2.0, shape=(n - 2 + is_odd,)),
        full(1.0, shape=(1 - is_odd,))],
       dimension=0)
-  scale = 1 / prod(fft_lengths)
+  scale = 1 / math.prod(fft_lengths)
   out = scale * lax.expand_dims(mask, range(x.ndim - 1)) * x
   assert out.dtype == _complex_dtype(t.dtype), (out.dtype, t.dtype)
   # Use JAX's convention for complex gradients

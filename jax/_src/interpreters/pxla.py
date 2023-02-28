@@ -37,6 +37,7 @@ import dataclasses
 from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
+import math
 import operator as op
 import sys
 import threading
@@ -78,7 +79,7 @@ from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.util import (unzip3, prod, safe_map, safe_zip, partition_list,
+from jax._src.util import (unzip3, safe_map, safe_zip, partition_list,
                            wrap_name, assert_unreachable,
                            tuple_insert, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction)
@@ -284,7 +285,8 @@ def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
   if not has_unstacked:
     op_sharding_proto = sharding_spec_sharding_proto(self)
     return _op_sharding_to_numpy_indices(
-        op_sharding_proto, shape, prod(self.mesh_shape)).reshape(self.mesh_shape)
+        op_sharding_proto, shape, math.prod(self.mesh_shape)
+    ).reshape(self.mesh_shape)
 
   axis_indices: List[Sequence[Index]] = []
   shard_indices_shape = []
@@ -312,7 +314,7 @@ def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
   # with each dimension having size equal to the number of shards across the corresponding
   # logical array dimension, and each element containing the multi-dimensional index that
   # is used to extract the corresponding shard of the logical array.
-  shard_indices = np.empty([prod(shard_indices_shape)], dtype=np.object_)
+  shard_indices = np.empty([math.prod(shard_indices_shape)], dtype=np.object_)
   for i, idxs in enumerate(it.product(*axis_indices)):
     shard_indices[i] = idxs
   shard_indices = shard_indices.reshape(shard_indices_shape)
@@ -766,7 +768,7 @@ class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
 
   @property
   def size(self):
-    return prod(self.aval.shape)
+    return math.prod(self.aval.shape)
 
   @property
   def ndim(self):
@@ -2252,7 +2254,7 @@ core.axis_substitution_rules[xla_pmap_p] = _pmap_axis_subst
 
 def _unravel_index_hlo(axis_env):
   div = mlir.ir_constant(
-      np.array(axis_env.nreps // util.prod(axis_env.sizes), np.uint32))
+      np.array(axis_env.nreps // math.prod(axis_env.sizes), np.uint32))
   mod = mlir.ir_constant(np.array(axis_env.sizes[-1], np.uint32))
   return hlo.RemOp(
       hlo.DivOp(hlo.ReplicaIdOp().result, div).result, mod).result
@@ -4035,7 +4037,7 @@ class DynamicAxisEnv(list):
 
   @property
   def nreps(self):
-    return prod(frame.hard_size for frame in self)
+    return math.prod(frame.hard_size for frame in self)
 
 class _ThreadLocalState(threading.local):
   def __init__(self):

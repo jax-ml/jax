@@ -14,8 +14,9 @@
 
 
 from functools import partial
-from typing import Optional, Sequence, Union
+import math
 from operator import index
+from typing import Optional, Sequence, Union
 import warnings
 
 import numpy as np
@@ -40,7 +41,7 @@ from jax._src.numpy.lax_numpy import (
     _arraylike, _check_arraylike, _convert_and_clip_integer,
     _promote_dtypes_inexact)
 from jax._src.typing import Array, ArrayLike, DTypeLike
-from jax._src.util import prod, canonicalize_axis
+from jax._src.util import canonicalize_axis
 
 
 RealArray = ArrayLike
@@ -507,7 +508,7 @@ def choice(key: KeyArray,
   else:
     axis = canonicalize_axis(axis, arr.ndim)
     n_inputs = arr.shape[axis]
-  n_draws = prod(shape)
+  n_draws = math.prod(shape)
   if n_draws == 0:
     return jnp.zeros(shape, dtype=arr.dtype)
   if n_inputs <= 0:
@@ -1025,7 +1026,7 @@ def _gamma_grad(sample, a, *, log_space):
 def _gamma_impl(key, a, *, log_space, use_vmap=False):
   # split key to match the shape of a
   a_shape = jnp.shape(a)
-  split_count = prod(a_shape[key.ndim:])
+  split_count = math.prod(a_shape[key.ndim:])
   keys = key.flatten()
   keys = vmap(_split, in_axes=(0, None))(keys, split_count)
   keys = keys.flatten()

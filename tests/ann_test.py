@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import math
 
 from absl.testing import absltest
 
@@ -21,7 +22,6 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src import test_util as jtu
-from jax._src.util import prod
 
 from jax.config import config
 
@@ -104,7 +104,7 @@ class AnnTest(jtu.JaxTestCase):
     is_max_k=[True, False],
   )
   def test_autodiff(self, shape, dtype, k, is_max_k):
-    vals = np.arange(prod(shape), dtype=dtype)
+    vals = np.arange(math.prod(shape), dtype=dtype)
     vals = self.rng().permutation(vals).reshape(shape)
     if is_max_k:
       fn = lambda vs: lax.approx_max_k(vs, k=k)[0]

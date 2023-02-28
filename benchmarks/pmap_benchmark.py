@@ -18,13 +18,15 @@ python3 pmap_benchmark.py
 
 To make it run faster, set env var TARGET_TOTAL_SECS to a low number (e.g. 2).
 """
+
+import math
+
 from absl import app
 
 import jax
 from jax import numpy as jnp
 from jax import pmap
 from jax.config import config
-from jax._src.util import prod
 
 from benchmarks import benchmark
 
@@ -118,7 +120,7 @@ def sharded_device_array_indexing_benchmark():
     nshards = min(8, jax.local_device_count())
     shape = (nshards, 8, 8)
     def benchmark_fn():
-      arr = pmap(lambda x: x)(jnp.arange(prod(shape)).reshape(shape))
+      arr = pmap(lambda x: x)(jnp.arange(math.prod(shape)).reshape(shape))
       indices = indices_fn()
       for idx in indices:
         arr[idx]

@@ -27,6 +27,7 @@ rules for the underlying :code:`lax` primitives.
 import builtins
 import collections
 from functools import partial
+import math
 import operator
 import types
 from typing import (
@@ -82,7 +83,7 @@ from jax._src.numpy.util import (  # noqa: F401
 from jax._src.numpy.vectorize import vectorize
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
-from jax._src.util import (unzip2, prod as _prod, subvals, safe_zip,
+from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
 from jax._src.array import ArrayImpl
@@ -534,7 +535,7 @@ def histogramdd(sample: ArrayLike, bins: Union[ArrayLike, List[ArrayLike]] = 10,
   dedges = [diff(bin_edges) for bin_edges in bin_edges_by_dim]
 
   xy = ravel_multi_index(tuple(bin_idx_by_dim), nbins, mode='clip')
-  hist = bincount(xy, weights, length=_prod(nbins))
+  hist = bincount(xy, weights, length=math.prod(nbins))
   hist = reshape(hist, nbins)
   core = D*(slice(1, -1),)
   hist = hist[core]
@@ -914,7 +915,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
 
   arr = ravel(a)
 
-  new_size = _prod(new_shape)
+  new_size = math.prod(new_shape)
   if arr.size == 0 or new_size == 0:
     return zeros_like(arr, shape=new_shape)
 

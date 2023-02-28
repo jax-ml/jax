@@ -22,6 +22,7 @@ from functools import partial, partialmethod, total_ordering
 import gc
 import inspect
 import itertools as it
+import math
 import operator
 from operator import attrgetter
 import threading
@@ -44,7 +45,7 @@ from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
 from jax._src import linear_util as lu
 
 from jax._src import source_info_util
-from jax._src.util import (safe_zip, safe_map, curry, prod, tuple_insert,
+from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
                            HashableFunction, HashableWrapper, weakref_lru_cache)
 import jax._src.pretty_printer as pp
@@ -1481,7 +1482,7 @@ class ShapedArray(UnshapedArray):
     return ShapedArray(shape, dtype, weak_type, named_shape)
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: prod(self.shape))
+  size = property(lambda self: math.prod(self.shape))
 
   broadcast: ClassVar[Optional[aval_method]] = None
   transpose: ClassVar[Optional[aval_method]] = None
@@ -1628,7 +1629,7 @@ class DShapedArray(UnshapedArray):
     self.weak_type = weak_type
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: prod(self.shape))
+  size = property(lambda self: math.prod(self.shape))
 
   def str_short(self, short_dtypes=False) -> str:
     del short_dtypes  # ignored

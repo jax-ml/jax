@@ -17,6 +17,7 @@ Parallelization primitives.
 
 from functools import partial
 import itertools
+import math
 import string
 from typing import Sequence, Union
 import warnings
@@ -40,7 +41,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
 from jax._src.util import (
-    unzip2, prod, canonicalize_axis, safe_map, safe_zip, moveaxis)
+    unzip2, canonicalize_axis, safe_map, safe_zip, moveaxis)
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -828,7 +829,7 @@ def psum_bind(*args, axes, axis_index_groups):
       assert not pos_axes
       size = len(axis_index_groups[0])
     else:
-      size = prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
+      size = math.prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
     return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
   return core.AxisPrimitive.bind(
       psum_p, *args, axes=axes, axis_index_groups=axis_index_groups)
@@ -1563,9 +1564,12 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
           '`axis_index` translation rule does not support multiple axis names.')
     axis_name, = axis_name
   axis_pos = list(axis_env.names).index(axis_name)
-  nreplicas = axis_env.nreps // prod(axis_env.sizes)
-  div = mlir.ir_constant(np.array(nreplicas * prod(axis_env.sizes[axis_pos+1:]),
-                                  dtype=np.uint32))
+  nreplicas = axis_env.nreps // math.prod(axis_env.sizes)
+  div = mlir.ir_constant(
+      np.array(
+          nreplicas * math.prod(axis_env.sizes[axis_pos + 1 :]), dtype=np.uint32
+      )
+  )
   mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
   axis_context = ctx.module_context.axis_context
   is_spmd = isinstance(axis_context,

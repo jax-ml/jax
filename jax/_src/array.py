@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import operator as op
 import numpy as np
 import functools
@@ -26,7 +27,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.config import config
-from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
+from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src import api
@@ -208,7 +209,7 @@ class ArrayImpl(basearray.Array):
 
   @property
   def size(self):
-    return prod(self.shape)
+    return math.prod(self.shape)
 
   @property
   def sharding(self):
@@ -552,12 +553,13 @@ def make_array_from_callback(
 
   Example:
 
+    >>> import math
     >>> from jax.sharding import Mesh
     >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
     ...
     >>> input_shape = (8, 8)
-    >>> global_input_data = np.arange(prod(input_shape)).reshape(input_shape)
+    >>> global_input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> inp_sharding = jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
     ...
@@ -601,6 +603,7 @@ def make_array_from_single_device_arrays(
 
   Example:
 
+    >>> import math
     >>> from jax.sharding import Mesh
     >>> from jax.sharding import PartitionSpec as P
     >>> import numpy as np
@@ -608,7 +611,7 @@ def make_array_from_single_device_arrays(
     >>> shape = (8, 8)
     >>> global_mesh = Mesh(np.array(jax.devices()).reshape(2, 4), ('x', 'y'))
     >>> sharding = jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
-    >>> inp_data = np.arange(prod(shape)).reshape(shape)
+    >>> inp_data = np.arange(math.prod(shape)).reshape(shape)
     ...
     >>> arrays = [
     ...     jax.device_put(inp_data[index], d)

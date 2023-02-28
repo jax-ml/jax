@@ -83,6 +83,7 @@ TODO:
   - Support RNNs other than LSTM.
 """
 from functools import partial
+import math
 from typing import Any, Dict, List, Tuple
 
 import jax
@@ -92,7 +93,6 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax._src.custom_derivatives import custom_vjp
 from jax._src.typing import Array, Shape
-from jax._src.util import prod
 import jax.numpy as jnp
 try:
   from jax._src.lib import gpu_rnn
@@ -161,7 +161,7 @@ def get_num_params_in_lstm(input_size: int, hidden_size: int, num_layers: int,
   """Get param count in LSTM."""
   layer_shapes = _get_params_shapes_in_lstm(input_size, hidden_size, num_layers,
                                             bidirectional)
-  param_count = sum([prod(shape) for shape in layer_shapes])
+  param_count = sum([math.prod(shape) for shape in layer_shapes])
   return param_count
 
 
@@ -201,7 +201,7 @@ def unpack_lstm_weights(
     for w_kind in [W_ih, W_hh]:
       shape = flat_shapes[flat_shapes_offset]
       flat_shapes_offset += 1
-      num_elems = prod(shape)
+      num_elems = math.prod(shape)
       w_kind[l] = weights[w_offsets:w_offsets + num_elems].reshape(shape)
       w_offsets += num_elems
 
@@ -211,7 +211,7 @@ def unpack_lstm_weights(
     for w_kind in [b_ih, b_hh]:
       shape = flat_shapes[flat_shapes_offset]
       flat_shapes_offset += 1
-      num_elems = prod(shape)
+      num_elems = math.prod(shape)
       w_kind[l] = weights[w_offsets:w_offsets + num_elems].reshape(shape)
       w_offsets += num_elems
   return W_ih, W_hh, b_ih, b_hh

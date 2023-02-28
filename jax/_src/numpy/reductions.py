@@ -14,6 +14,7 @@
 
 import builtins
 from functools import partial
+import math
 import operator
 from typing import overload, Any, Callable, Literal, Optional, Sequence, Tuple, Union
 import warnings
@@ -31,7 +32,7 @@ from jax._src.numpy.util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import (
-    canonicalize_axis as _canonicalize_axis, maybe_named_axis, prod as _prod)
+    canonicalize_axis as _canonicalize_axis, maybe_named_axis)
 
 
 _all = builtins.all
@@ -371,7 +372,7 @@ def _average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = Non
     if axis is None:
       weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
     elif isinstance(axis, tuple):
-      weights_sum = lax.full_like(avg, _prod(core.dimension_as_value(a.shape[d]) for d in axis))
+      weights_sum = lax.full_like(avg, math.prod(core.dimension_as_value(a.shape[d]) for d in axis))
     else:
       weights_sum = lax.full_like(avg, core.dimension_as_value(a.shape[axis]))  # type: ignore[index]
   else:

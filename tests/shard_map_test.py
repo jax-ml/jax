@@ -11,8 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from functools import partial
 import itertools as it
+import math
 import os
 from types import SimpleNamespace
 from typing import (Any, Sequence, Set, Iterable, Iterator, NamedTuple,
@@ -31,7 +33,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.util import safe_zip, safe_map, prod, partition_list, merge_lists
+from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 import jax.numpy as jnp
 
 from jax.experimental.shard_map import shard_map
@@ -552,13 +554,13 @@ def shmap_reference(
 
 def make_indexer(mesh: Mesh, spec: P, x: Any
                  ) -> Callable[[Tuple[int, ...]], Tuple[slice, ...]]:
-  block_shape = [d // prod(mesh.shape[ax] for ax in (elt or ()))
+  block_shape = [d // math.prod(mesh.shape[ax] for ax in (elt or ()))
                  for d, elt in zip(x.shape, spec)]
   def indexer(idx):
     starts = [0 if el is None else
               idx[list(mesh.shape).index(el)] if type(el) is not tuple else
               sum(idx[list(mesh.shape).index(el[i])]
-                  * prod(mesh.shape[e] for e in el[i+1:]) for i in range(len(el)))
+                  * math.prod(mesh.shape[e] for e in el[i+1:]) for i in range(len(el)))
               for el in spec]
     return tuple(slice(start * size, (start + 1) * size)
                  for start, size in zip(starts, block_shape))
@@ -647,7 +649,7 @@ def make_in_spec(mesh: Mesh, in_type_base: ShapeDtypeDuck) -> Chooser:
   return new_type, partition_spec
 
 def dilate(mesh: Mesh, spec: P, shape: ShapeDtypeDuck) -> ShapeDtypeDuck:
-  new_shape = tuple(d * prod(mesh.shape[ax] for ax in (elt or ()))
+  new_shape = tuple(d * math.prod(mesh.shape[ax] for ax in (elt or ()))
                     for d, elt in zip(shape.shape, spec))
   return jax.ShapeDtypeStruct(new_shape, shape.dtype)
 

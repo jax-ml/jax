@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import itertools as it
 import gc
+import math
 import os
 from random import shuffle
 from typing import Optional, cast
@@ -44,7 +45,7 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
 from jax._src import config as jax_config
 from jax._src import device_array
 from jax._src import xla_bridge
-from jax._src.util import prod, safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import array
@@ -119,7 +120,7 @@ def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
   aval = ShapedArray(input_shape, dtype)
 
   if input_data is None:
-    input_data = np.arange(prod(input_shape)).reshape(input_shape)
+    input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
 
   sharding_spec = pxla._create_pmap_sharding_spec(aval, in_axes, sharded_dim_size)
 
@@ -167,9 +168,9 @@ class PythonPmapTest(jtu.JaxTestCase):
         msg = "device mesh shape {} not compatible with device count {}"
         raise SkipTest(msg.format(device_mesh_shape, device_count)) from err
     else:
-      if device_count % prod(device_mesh_shape):
+      if device_count % math.prod(device_mesh_shape):
         msg = "device mesh size {} does not divide available device count {}"
-        raise SkipTest(msg.format(prod(device_mesh_shape), device_count))
+        raise SkipTest(msg.format(math.prod(device_mesh_shape), device_count))
       else:
         return device_mesh_shape
 
@@ -177,7 +178,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.sum(x, 0)
 
     ans = f(x)
@@ -193,7 +194,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompile(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = f(x)
     lowered = f.lower(x)
     compiled = lowered.compile()
@@ -210,7 +211,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompileInTreeMismatch(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f_exe = f.lower(x).compile()
     self.assertRaisesRegex(
         TypeError, "function compiled for .*, called with .*",
@@ -235,7 +236,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompileArgTypeMismatch(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=int).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=int).reshape(shape)
     x_f32 = x.astype(jnp.float32)
     x_i32 = x.astype(jnp.int32)
     f_exe = f.lower(x_f32).compile()
@@ -250,7 +251,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompileMultiArg(self):
     f = self.pmap(lambda x, y: x - lax.pmean(y, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = y = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = y = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = f(x, y)
     f_exe = f.lower(x, y).compile()
     ans = f_exe(x, y)
@@ -267,7 +268,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerAsText(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x)
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
@@ -277,7 +278,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompilerIR(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
@@ -289,14 +290,14 @@ class PythonPmapTest(jtu.JaxTestCase):
     # TODO(frostig): remove (deprecated)
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     self.assertIsNotNone(f.compiler_ir())
 
   def testLowerCompileAsText(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
 
@@ -304,7 +305,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCostAnalysis(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x)
     f.cost_analysis()  # doesn't raise
 
@@ -312,7 +313,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompileCostAnalysis(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     f.cost_analysis()  # doesn't raise
 
@@ -320,21 +321,21 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testLowerCompileMemoryAnalysis(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     f.memory_analysis()  # doesn't raise
 
   def testLowerCompileExecutable(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     self.assertIsNotNone(f.runtime_executable())
 
   def testLowerShapedArray(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     x_shape = core.ShapedArray(x.shape, x.dtype)
     self.assertAllClose(f.lower(x_shape).compile()(x), f(x))
 
@@ -342,7 +343,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.broadcast_to(np.mean(x, 0), x.shape)
 
     ans = f(x)
@@ -352,7 +353,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.array([x] * jax.device_count())
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -361,7 +362,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: lax.all_gather(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     x = (x % 2).astype(np.bool_)
     expected = np.array([x] * jax.device_count())
     ans = f(x)
@@ -371,7 +372,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: lax.all_gather(x, 'i', axis=-1), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.array([x.T] * jax.device_count())
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -381,7 +382,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     device_count = jax.device_count()
     shape = (device_count, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.array([x] * device_count).reshape(device_count, -1)
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -392,7 +393,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     device_count = jax.device_count()
     shape = (device_count, 4, 3)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.array([x.transpose(1, 0, 2).reshape(4, -1)] * device_count)
     ans = f(x)
     self.assertAllClose(ans, expected, check_dtypes=False)
@@ -406,7 +407,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     device_count = jax.device_count()
     shape = (4, device_count, device_count)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     self.assertAllClose(vmap(f)(x), jnp.stack([f(xs) for xs in x], axis=0))
 
   def testReduceScatter(self):
@@ -414,7 +415,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     device_count = jax.device_count()
     shape = (device_count, device_count)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.sum(x, axis=0)
     ans = f(x)
     for i, actual in enumerate(ans):
@@ -425,7 +426,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     device_count = jax.device_count()
     shape = (device_count, 4 * device_count)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.sum(x, axis=0)
     ans = f(x)
     scatter_len = len(expected) // device_count
@@ -444,7 +445,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, axis_name='i')
 
     shape = (replicas, 4 * replicas)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     ans = f(x)
 
     group_1_result = np.sum(x[0::2,:], axis=0)
@@ -504,7 +505,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4 * 2)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape).view(np.complex64)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape).view(np.complex64)
     expected = x - np.sum(x, 0)
 
     ans = f(x)
@@ -566,7 +567,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return np.repeat(np.sum(x, axis, keepdims=True), x.shape[axis], axis)
 
     shape = (jax.device_count(), 1, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = f(x)
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
@@ -591,7 +592,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(self.pmap(f, 'i'), 'j')
 
     shape = mesh_shape + (4,)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = f(x)
     expected = x
@@ -605,7 +606,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     mesh_shape = (jax.device_count(),)
     shape = mesh_shape + (4,)
     x = np.array(3., dtype=np.float32)
-    y = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    y = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     f_expected = np.broadcast_to(x, mesh_shape)
     f_ans = f(x, y)
@@ -657,7 +658,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, axis_name='j', in_axes=(None, 0))
 
     x = 3.
-    y = np.arange(prod(mesh_shape), dtype=np.float32).reshape(mesh_shape)
+    y = np.arange(math.prod(mesh_shape), dtype=np.float32).reshape(mesh_shape)
     expected = np.broadcast_to(x - np.sum(y, 1, keepdims=True), mesh_shape)
 
     ans = f(x, y)
@@ -673,7 +674,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return jvp(jnp.ones_like(x))
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = np.cos(x)
 
     ans = splitjvp(x)
@@ -687,7 +688,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return jnp.sin(x)
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = grad(lambda x: jnp.sum(jnp.sin(x)))(x)
     expected = grad(lambda x: jnp.sum(f(x)))(x)
@@ -699,7 +700,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return lax.psum(x, axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testGradOfJvp(self):
@@ -714,7 +715,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     fun = lambda x: jnp.sum(jvp(jnp.sin, (x,), (jnp.ones_like(x),))[1])
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = grad(lambda x: jnp.sum(splitjvp(x)))(x)
     expected = grad(fun)(x)
@@ -730,7 +731,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return tot * jnp.ones_like(x)  # broadcast to map like pjit does
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     y = 4 + x
     ans = grad(lambda x, y: jnp.sum(g(x, y)))(x, y)
     expected = grad(lambda x, y: jnp.sum(g(x, y)))(x, y)
@@ -764,7 +765,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return grad(lambda w: jnp.sum(g(w)))(x)
 
     shape = mesh_shape + (4,)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = grad(lambda x: jnp.sum(test_fun(x)))(x)
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
@@ -775,7 +776,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     # test that we can pass in and out ShardedDeviceArrays
     y = f(x)
@@ -840,7 +841,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     if jax.device_count() < max(in_shape[:1] + out_shape[:1]):
       raise SkipTest("not enough devices")
 
-    x = np.arange(prod(in_shape)).reshape(in_shape)
+    x = np.arange(math.prod(in_shape)).reshape(in_shape)
     sharded_x = self.pmap(lambda x: x)(x)
     self.assertAllClose(sharded_x.reshape(out_shape), x.reshape(out_shape),
                         check_dtypes=False)
@@ -858,7 +859,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       shape = (num_pairs, 2, 4)
     else:
       shape = (device_count, 1, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = f(x)
     expected = sum_and_broadcast(sum_and_broadcast(x, 0), 1)
@@ -874,7 +875,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected_psum = 2. * replicas // 2
     expected = x - expected_psum
 
@@ -891,7 +892,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper(a):
       return np.broadcast_to(a.sum(0, keepdims=True),
                               (len(a), x.shape[1]))
@@ -913,7 +914,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper(a):
       return np.broadcast_to(a.sum(0, keepdims=True),
                               (replicas // 2, x.shape[1]))
@@ -938,7 +939,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = f(x)
 
@@ -963,7 +964,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, 'i')
 
     shape = (replicas, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = f(x)
 
@@ -999,7 +1000,7 @@ class PythonPmapTest(jtu.JaxTestCase):
                   axis_index_groups=axis_index_groups)
 
     shape = (len(devices), 2 if axis_index_groups else jax.device_count())
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     jtu.check_grads(f, (x,), 2, ["fwd", "rev"], 1e-2, 1e-2, eps=1.)
 
   def testNestedPmapReplicaGroups(self):
@@ -1014,7 +1015,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f3 = self.pmap(self.pmap(f, 'j'), 'i')
 
     shape = (2, replicas // 2, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper_f1(a):
       return np.broadcast_to(a.sum(1, keepdims=True),
                               (shape[0], shape[1] // 2, shape[2]))
@@ -1030,7 +1031,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
     shape = (replicas // 2, 2, 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     def sum_helper_f3(a):
       return np.broadcast_to(a.sum(0, keepdims=True),
                               (shape[0] // 2, shape[1], shape[2]))
@@ -1197,7 +1198,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: x - lax.pmax(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.max(x, 0)
 
     ans = f(x)
@@ -1207,7 +1208,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(lambda x: x - lax.pmin(x, 'i'), axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.min(x, 0)
 
     ans = f(x)
@@ -1291,7 +1292,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2, 3)
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
@@ -1330,7 +1331,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     shuffle(devices)
     f = self.pmap(self.pmap(lambda x: 3), devices=devices)
     shape = (2, len(devices) // 2, 3)
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
@@ -1352,7 +1353,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       raise SkipTest("error test doesn't apply with disable_jit")
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2 + 1, 3)
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertRaisesRegex(
         ValueError,
         (r"compiling computation that requires \d+ logical devices, "
@@ -1363,7 +1364,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # if jax.device_count() > 1:
     #   f = pmap(pmap(lambda x: 3), devices=jax.devices()[:-1])
     #   shape = (2, jax.device_count() // 2, 3)
-    #   x = jnp.arange(prod(shape)).reshape(shape)
+    #   x = jnp.arange(math.prod(shape)).reshape(shape)
     #   self.assertRaisesRegex(
     #       ValueError,
     #       (r"compiling computation that requires \d+ replicas, "
@@ -1392,7 +1393,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       return g(x)
 
     shape = (device_count, 1, 4)
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     a, b, c = f(x)
 
     self.assertEqual(a.shape, shape[:-1])
@@ -1525,7 +1526,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testPswapaxes(self):
     device_count = jax.device_count()
     shape = (device_count, 3, device_count, 5)
-    x = np.arange(prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
 
     ans = self.pmap(lambda x: lax.pswapaxes(x, 'i', 1), axis_name='i')(x)
     expected = np.swapaxes(x, 0, 2)
@@ -1535,7 +1536,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testGradOfPswapaxes(self):
     device_count = jax.device_count()
     shape = (device_count, 1, device_count)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     w = np.arange(device_count, dtype=np.float32)
 
     @partial(self.pmap, axis_name='i')
@@ -1561,7 +1562,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     if device_count % 2 != 0:
       raise SkipTest('test requires an even number of devices')
     shape = (device_count, device_count // 2)
-    x = np.arange(prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
 
     axis_index_groups = np.arange(device_count, dtype=np.int32)
     axis_index_groups = axis_index_groups.reshape((device_count // 2, 2)).T
@@ -1582,7 +1583,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     if device_count % 2 != 0:
       raise SkipTest('test requires an even number of devices')
     shape = (device_count, device_count // 2, 1)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     w = np.arange(device_count, dtype=np.float32)
 
     axis_index_groups = np.arange(device_count, dtype=np.int32)
@@ -1610,7 +1611,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = lambda x: x - lax.psum(x, 'i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.sum(x, 0)
 
     ans = jit(self.pmap(f, 'i'))(x)
@@ -1656,7 +1657,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(f, axis_name='i')
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     y = f(x)
     self.assertIsInstance(y, jax.Array)
@@ -2363,7 +2364,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i',
              devices=jax.devices())
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     expected = x - np.sum(x, 0)
     ans = f(x)
     self.assertAllClose(ans, expected)
@@ -2387,7 +2388,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
   def testNoDevicesError(self):
     f = pmap(lambda x: x - lax.psum(x, 'i'), axis_name='i', devices=[])
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     with self.assertRaisesRegex(
         ValueError, "'devices' argument to pmap must be non-empty, or None."):
       f(x)
@@ -2508,7 +2509,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return jnp.sin(x)
 
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     ans = grad(lambda x: jnp.sum(jnp.sin(x)))(x)
     expected = grad(lambda x: jnp.sum(f(x)))(x)
@@ -2519,7 +2520,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x + y())
     shape = (jax.device_count(), 4)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     y = lambda: 3.
 
     ans = f(x, y)
@@ -2531,9 +2532,9 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x + y)
     xshape = (2, jax.device_count(), 4)
-    x = np.arange(prod(xshape)).reshape(xshape)
+    x = np.arange(math.prod(xshape)).reshape(xshape)
     yshape = (2, 4, jax.device_count())
-    y = np.arange(prod(yshape)).reshape(yshape)
+    y = np.arange(math.prod(yshape)).reshape(yshape)
 
     self.assertAllClose(f(x, y),
                         jnp.sin(x.transpose((1, 0, 2)) + y.transpose((2, 0, 1))))
@@ -2544,11 +2545,11 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     fp = pmap(f, in_axes=(1, 2, None))
     fv = vmap(f, in_axes=(1, 2, None))
     xshape = (5, jax.device_count(), 7)
-    x = np.arange(prod(xshape), dtype=np.float32).reshape(xshape)
+    x = np.arange(math.prod(xshape), dtype=np.float32).reshape(xshape)
     yshape = (5, 7, jax.device_count())
-    y = np.arange(prod(yshape), dtype=np.float32).reshape(yshape)
+    y = np.arange(math.prod(yshape), dtype=np.float32).reshape(yshape)
     zshape = (5, 7)
-    z = np.arange(prod(zshape), dtype=np.float32).reshape(zshape)
+    z = np.arange(math.prod(zshape), dtype=np.float32).reshape(zshape)
 
     dx, dy, dz = jax.grad(lambda args: fp(*args).sum())((x, y, z))
     assert dx.shape == xshape
@@ -2563,9 +2564,9 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     def f(x, y):
       return jnp.sin(x + y), y * 2
     xshape = (2, jax.device_count(), 4)
-    x = np.arange(prod(xshape)).reshape(xshape)
+    x = np.arange(math.prod(xshape)).reshape(xshape)
     yshape = (2, 4)
-    y = np.arange(prod(yshape)).reshape(yshape)
+    y = np.arange(math.prod(yshape)).reshape(yshape)
 
     self.assertAllClose(f(x, y),
                         (jnp.sin(x.transpose((1, 0, 2)) + y).transpose((1, 2, 0)), y * 2))
@@ -2606,9 +2607,9 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return f
 
     xshape = (5, 7)
-    x = np.arange(prod(xshape), dtype=np.float32).reshape(xshape)
+    x = np.arange(math.prod(xshape), dtype=np.float32).reshape(xshape)
     yshape = (5, jax.device_count(), 7)
-    y = np.arange(prod(yshape), dtype=np.float32).reshape(yshape)
+    y = np.arange(math.prod(yshape), dtype=np.float32).reshape(yshape)
     self.assertAllClose(jax.grad(mk_case(pmap))(x, y),
                         jax.grad(mk_case(vmap))(x, y))
 
@@ -2624,7 +2625,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     if jax.device_count() < shape[0]:
       raise SkipTest(f"requires {shape[0]} devices")
 
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
 
     num_threads = 10
@@ -2650,7 +2651,7 @@ class ShardedDeviceArrayTest(jtu.JaxTestCase):
     if jax.device_count() < shape[0]:
       raise SkipTest(f"requires {shape[0]} devices")
 
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     sharded_x = pmap(lambda x: x)(x)
     self.assertIsNone(sharded_x._npy_value)
 
@@ -2941,7 +2942,7 @@ class ShardArgsTest(jtu.JaxTestCase):
     nshards = len(indices)
     if jax.device_count() < nshards:
       raise SkipTest
-    x = np.arange(prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     bufs = pxla.shard_args(jax.devices()[:nshards], [indices], [arg])
     self.assertEqual(len(bufs), 1)

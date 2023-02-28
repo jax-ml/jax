@@ -16,6 +16,7 @@ import os
 import re
 from functools import partial, lru_cache
 import logging
+import math
 import threading
 import unittest
 from collections import OrderedDict, namedtuple
@@ -51,7 +52,7 @@ from jax._src.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.util import prod, curry, unzip2, safe_zip
+from jax._src.util import curry, unzip2, safe_zip
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -85,7 +86,7 @@ def create_gda(global_shape, global_mesh, mesh_axes, global_data=None,
                dtype=np.float32):
   if global_data is None:
     global_data = np.arange(
-        prod(global_shape), dtype=dtype).reshape(global_shape)
+        math.prod(global_shape), dtype=dtype).reshape(global_shape)
 
   if isinstance(mesh_axes, Sharding):
     mesh_axes = mesh_axes.spec
@@ -98,7 +99,7 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
                  dtype=np.float32):
   if global_data is None:
     global_data = np.arange(
-        prod(global_shape), dtype=dtype).reshape(global_shape)
+        math.prod(global_shape), dtype=dtype).reshape(global_shape)
 
   if isinstance(mesh_axes, Sharding):
     sharding = mesh_axes
@@ -144,7 +145,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x
 
     shape = (2, 2)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     actual = f(x)
     expected = x
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -164,7 +165,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x + y
 
     shape = (8, 8)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     actual = f(x, x + 1)
     expected = x + (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -182,7 +183,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x + y
 
     shape = (8, 8)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     if config.jax_array:
       out = jax.jit(f)(x, x + 1)
       self.assertArraysEqual(out, x + x + 1)
@@ -205,7 +206,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return jnp.pad(out, [[0, 1]])
 
     shape = (4,)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     actual = f(x, x + 1)
     expected = x + (x + 1)
     self.assertAllClose(actual[:3], expected[:3], check_dtypes=False)
@@ -222,7 +223,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x + y
 
     shape = (8, 8)
-    x = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     with jtu.create_global_mesh((2,), ('x')) as mesh:
       actual = f(x, x + 1)
     expected = x + (x + 1)
@@ -281,7 +282,7 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testMeshDecorator(self):
     x = jnp.arange(8)
     mesh_shape = (2, 2)
-    size = prod(mesh_shape)
+    size = math.prod(mesh_shape)
     if len(jax.devices()) < size:
       raise unittest.SkipTest(f"Test requires {size} global devices.")
     mesh_devices = np.array(jax.devices()[:size]).reshape(mesh_shape)
@@ -347,7 +348,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return y * 2
 
     shape = (8, 8)
-    x = np.arange(prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
     expected = (x + 1) * 2
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -374,7 +375,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return y * 2
 
     shape = (8, 8)
-    x = np.arange(prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
     expected = (x + 1) * 2
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -402,7 +403,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       y = with_sharding_constraint(y, ops)
       return y * 2
 
-    x = np.arange(prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
     expected = (x + 1) * 2
     actual = f(x)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -426,7 +427,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x
 
     shape = (8, 8)
-    v = np.arange(prod(shape)).reshape(shape)
+    v = np.arange(math.prod(shape)).reshape(shape)
     x = [{"a": v, "b": v * 2}, v * 3]
     actual = f(x)
 
@@ -458,7 +459,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x
 
     shape = (8, 8)
-    v = np.arange(prod(shape)).reshape(shape)
+    v = np.arange(math.prod(shape)).reshape(shape)
     x = [{"a": v, "b": v * 2}, v * 3]
     actual = f(x)
 
@@ -487,7 +488,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x
 
     shape = (2, 8, 8)
-    v = np.arange(prod(shape)).reshape(shape)
+    v = np.arange(math.prod(shape)).reshape(shape)
     x = [{'a': v, 'b': v * 2}, v * 3]
     actual = f(x)
 
@@ -513,7 +514,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x
 
     shape = (2, 8, 8)
-    v = np.arange(prod(shape)).reshape(shape)
+    v = np.arange(math.prod(shape)).reshape(shape)
     x = [{'a': v, 'b': v * 2}, v * 3]
 
     mlir_str = str(f.lower(x).compiler_ir())
@@ -1084,7 +1085,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     input_shape = (8, 4)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     seeds = jnp.arange(
-        prod(input_shape), dtype=np.uint32).reshape(input_shape)
+        math.prod(input_shape), dtype=np.uint32).reshape(input_shape)
 
     with mesh:
       def make_keys(seeds):
@@ -1179,7 +1180,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1214,7 +1215,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1288,7 +1289,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1321,7 +1322,7 @@ class GDAPjitTest(jtu.JaxTestCase):
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_pjit_gda_non_gda_inputs(self):
     input_shape = (8, 2)
-    input_data = np.arange(prod(input_shape)).reshape(input_shape)
+    input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
 
     with parallel_functions_output_gda(True):
       @partial(pjit,
@@ -1353,7 +1354,8 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     global_input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32
+    ).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
 
@@ -1374,7 +1376,8 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P('x')
     global_input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32
+    ).reshape(global_input_shape)
     def cb(index):
       return global_input_data[index]
 
@@ -1400,7 +1403,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     input_shape = (8, 2)
     mesh_axes = P('x', 'y')
     input_data = np.arange(
-        prod(input_shape), dtype=np.float32).reshape(input_shape)
+        math.prod(input_shape), dtype=np.float32).reshape(input_shape)
     def cb(index):
       return input_data[index]
 
@@ -1439,7 +1442,8 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P(None)
     global_input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32
+    ).reshape(global_input_shape)
 
     def cb(index):
       return global_input_data[index]
@@ -1500,7 +1504,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 2)
     mesh_axes = P(None)
     global_data = np.arange(
-        prod(global_input_shape)).reshape(global_input_shape)
+        math.prod(global_input_shape)).reshape(global_input_shape)
 
     with parallel_functions_output_gda(True):
       f = pjit(lambda x: x, in_shardings=mesh_axes, out_shardings=mesh_axes)
@@ -1584,7 +1588,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
       raise unittest.SkipTest('GDA and Array cannot be together.')
     global_mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with parallel_functions_output_gda(True):
       with global_mesh:
@@ -1610,7 +1614,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
       raise unittest.SkipTest('AutoSharding is not supported on stream_executor yet.')
     global_mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with jax_array(True):
       with global_mesh:
@@ -1634,7 +1638,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (4, 2)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with ctx(True):
       with global_mesh:
@@ -1662,7 +1666,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (4, 2)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with global_mesh:
       f = pjit(lambda x, y, z: (x, y, z), in_shardings=AUTO, out_shardings=AUTO)
@@ -1685,7 +1689,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     global_input_shape = (8, 4)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     in_resource = pspec
 
@@ -1718,7 +1722,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
     global_input_shape = (8, 4)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     in_resource = NamedSharding(global_mesh, pspec)
 
@@ -1748,7 +1752,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     input_data = np.arange(
-        prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
     with jax_array(True):
       with global_mesh:
@@ -1835,7 +1839,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_data = np.arange(
-        prod(input_shape), dtype=np.float32).reshape(input_shape)
+        math.prod(input_shape), dtype=np.float32).reshape(input_shape)
     with jax_array(True):
       with global_mesh:
         f = pjit(lambda x: x,
@@ -1854,7 +1858,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_data = np.arange(
-        prod(input_shape), dtype=np.float32).reshape(input_shape)
+        math.prod(input_shape), dtype=np.float32).reshape(input_shape)
     with jax_array(True):
       with global_mesh:
         f = pjit(
@@ -2026,7 +2030,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_globally_sharded_key_array_result_8x4_single_device(self):
     input_shape = (8, 4)
     seeds = jnp.arange(
-        prod(input_shape), dtype=np.uint32).reshape(input_shape)
+        math.prod(input_shape), dtype=np.uint32).reshape(input_shape)
 
     @pjit
     def make_keys(seeds):
@@ -2080,7 +2084,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     m2 = jtu.create_global_mesh((2, 2), ('x', 'y'))
     spec = P('x', 'y')
 
-    a1 = jnp.arange(prod(input_shape)).reshape(input_shape)
+    a1 = jnp.arange(math.prod(input_shape)).reshape(input_shape)
 
     with jax_array(True):
       with m1:
@@ -2096,7 +2100,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     m2 = jtu.create_global_mesh((2, 2), ('x', 'y'))
     spec = P('x', 'y')
 
-    a1 = jnp.arange(prod(input_shape)).reshape(input_shape)
+    a1 = jnp.arange(math.prod(input_shape)).reshape(input_shape)
 
     with jax_array(True):
       with m1:
@@ -2250,7 +2254,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jax.sharding.Mesh(mesh_devices, ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
-    inp_data = np.arange(prod(shape), dtype=np.float32).reshape(shape)
+    inp_data = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     # Explicitly put on the ordering of devices which does not match the mesh
     # ordering to make sure we reorder them in the constructor and the output
@@ -2271,7 +2275,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   @jax_array(True)
   def test_not_xlacompatible_sharding_error(self):
     shape = (8, 2)
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
     ts = TempSharding(jax.devices())
     arr = array.make_array_from_callback(
         shape, ts, lambda idx: inp_data[idx])
@@ -2333,7 +2337,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   @jax_array(True)
   def test_pjit_uncommitted_array_and_committed_array(self):
     shape = (8, 2)
-    uarr = jnp.arange(prod(shape), dtype=np.float32).reshape(shape)
+    uarr = jnp.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     carr, inp_data = create_array(shape, mesh, P('x', 'y'))
     with mesh:
@@ -2357,7 +2361,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_uncommitted_array_multi_devices(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    inp = np.arange(prod(shape), dtype=np.int32).reshape(shape)
+    inp = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
     arr = array.ArrayImpl(
         core.ShapedArray(shape, np.int32), NamedSharding(mesh, P(None)),
         [jax.device_put(inp, d) for d in mesh.devices.flat], committed=False)
@@ -2602,7 +2606,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(inp_data, s)
     out = pjit(lambda x: x)(arr)
     self.assertArraysEqual(out, inp_data)
@@ -2640,7 +2644,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_multi_device_pjit_mul(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
     arr1 = jax.device_put(inp_data, NamedSharding(mesh, P('x', 'y')))
     arr2 = jax.device_put(inp_data, NamedSharding(mesh, P(None, 'y')))
 
@@ -2655,7 +2659,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_single_device_pjit_cpp_dispatch(self):
     shape = (8, 2)
     mesh = jtu.create_global_mesh((1,), ('x',))
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
 
     f = pjit(lambda x: x @ x.T, in_shardings=None, out_shardings=None)
     with jtu.count_pjit_cache_miss() as count:
@@ -3379,7 +3383,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_with_sharding_constraint_spmd_axis_name(self):
     mesh = jtu.create_global_mesh((2, 2, 2), ('replica', 'data', 'mdl'))
     shape = (8, 4, 2, 2)
-    x = jnp.arange(prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
 
     def f(inp):
       return with_sharding_constraint(inp, P('data', None, None))
@@ -3723,7 +3727,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def test_pjit_with_deleted_input_at_first_call(self, committed):
     shape = (8,)
     mesh = jtu.create_global_mesh((1,), ('x',))
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
     if committed:
       s = NamedSharding(mesh, P('x',))
       x = jax.device_put(inp_data, s)
@@ -3742,7 +3746,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def test_pjit_with_deleted_input_at_subsequent_call(self, committed):
     shape = (8,)
     mesh = jtu.create_global_mesh((1,), ('x',))
-    inp_data = np.arange(prod(shape)).reshape(shape)
+    inp_data = np.arange(math.prod(shape)).reshape(shape)
     if committed:
       s = NamedSharding(mesh, P('x',))
       x = jax.device_put(inp_data, s)

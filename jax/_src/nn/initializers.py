@@ -17,7 +17,7 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
-
+import math
 from typing import Any, Literal, Protocol, Sequence, Tuple, Union
 
 import numpy as np
@@ -27,7 +27,6 @@ from jax import lax
 from jax import random
 from jax._src import core
 from jax._src import dtypes
-from jax._src.util import prod
 
 KeyArray = random.KeyArray
 Array = Any
@@ -549,7 +548,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     dtype = dtypes.canonicalize_dtype(dtype)
     if len(shape) < 2:
       raise ValueError("orthogonal initializer requires at least a 2D shape")
-    n_rows, n_cols = prod(shape) // shape[column_axis], shape[column_axis]
+    n_rows, n_cols = math.prod(shape) // shape[column_axis], shape[column_axis]
     matrix_shape = (n_cols, n_rows) if n_rows < n_cols else (n_rows, n_cols)
     A = random.normal(key, matrix_shape, dtype)
     Q, R = jnp.linalg.qr(A)

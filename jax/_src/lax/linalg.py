@@ -15,6 +15,7 @@
 import inspect
 import functools
 from functools import partial
+import math
 from typing import cast, Any, Callable, List, Literal, Optional, Tuple, TypeVar, Union, overload
 import warnings
 
@@ -50,7 +51,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike
-from jax._src.util import prod
 
 xops = xla_client.ops
 
@@ -1313,7 +1313,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
     raise NotImplementedError("Shape polymorphism for custom call is not implemented (geqrf); b/261671778")
   a_aval, taus_aval = ctx.avals_out
   *batch_dims, m, n = a_aval.shape
-  batch = prod(batch_dims)
+  batch = math.prod(batch_dims)
 
   if batch == 0 or m == 0 or n == 0:
     return mlir.full_like_aval(ctx, 0, a_aval), mlir.full_like_aval(ctx, 0, taus_aval)

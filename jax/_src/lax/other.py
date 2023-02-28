@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import math
 from typing import Any, Optional, Sequence, Tuple, Union, cast as type_cast
+
 import jax
 from jax._src.numpy import lax_numpy as jnp
-from jax._src.util import prod
 from jax._src.lax import lax
 from jax._src.lax import convolution
 
@@ -92,7 +92,7 @@ def conv_general_dilated_patches(
 
   lhs_spec, rhs_spec, out_spec = dimension_numbers
 
-  spatial_size = prod(filter_shape)
+  spatial_size = math.prod(filter_shape)
   n_channels = lhs_array.shape[lhs_spec[1]]
 
   # Move separate `lhs` spatial locations into separate `rhs` channels.

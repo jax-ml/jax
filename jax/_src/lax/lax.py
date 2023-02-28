@@ -17,6 +17,7 @@ import enum
 import functools
 from functools import partial
 import itertools
+import math
 import operator
 from typing import (Any, Callable, Optional, Sequence, Tuple, List,
                     TypeVar, Union, cast as type_cast, overload)
@@ -70,7 +71,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import PmapSharding
 from jax._src.typing import Array, ArrayLike, DTypeLike, Shape
-from jax._src.util import (cache, prod, safe_zip, safe_map, canonicalize_axis,
+from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list)
 
 xb = xla_bridge
@@ -1422,7 +1423,7 @@ def collapse(operand: Array, start_dimension: int,
     collapsed (raveled) into a single dimension.
   """
   lo, hi = start_dimension, stop_dimension
-  size = prod(operand.shape[lo:hi])
+  size = math.prod(operand.shape[lo:hi])
   new_shape = operand.shape[:lo] + (size,) + operand.shape[hi:]
   return reshape(operand, new_shape)
 
