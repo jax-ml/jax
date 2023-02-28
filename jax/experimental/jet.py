@@ -245,7 +245,8 @@ class JetTrace(core.Trace):
       return map(partial(JetTracer, trace), primals, series)
     return out, todo
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
+                              symbolic_zeros):
     # TODO(mattjj): don't just ignore custom jvp rules?
     del primitive, jvp  # Unused.
     return fun.call_wrapped(*tracers)

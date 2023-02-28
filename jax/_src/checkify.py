@@ -921,8 +921,8 @@ def custom_jvp_call_rule(in_err, enabled_errors, *in_vals, num_consts,
     return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
 
   jvp, jvp_out_tree = flatten_fun_output(jvp)
-  all_outs = custom_derivatives.custom_jvp_call_p.bind(partial_checkify, jvp,
-                                                       *err_vals, *in_vals)
+  all_outs = custom_derivatives.custom_jvp_call_p.bind(
+      partial_checkify, jvp, *err_vals, *in_vals, **params)
   fst, out_metadata = lu.merge_linear_aux(f_metadata, jvp_out_tree)
   if fst:
     err_and_out_tree, _ = out_metadata

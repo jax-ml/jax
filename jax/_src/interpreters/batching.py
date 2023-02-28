@@ -29,7 +29,8 @@ from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
 from jax._src.tree_util import (tree_unflatten, tree_flatten,
                                 register_pytree_node)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
-                              zeros_like_p, Zero)
+                              zeros_like_p, Zero, SymbolicZero,
+                              replace_rule_output_symbolic_zeros, instantiate)
 from jax._src import linear_util as lu
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
@@ -445,11 +446,11 @@ class BatchTrace(Trace):
       todo = (todo, out_axes_transform)
     return vals, todo
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.main, in_dims)
-    out_vals = prim.bind(fun, jvp, *in_vals)
+    out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       assert out_dims == out_dims[:len(out_dims) // 2] * 2
@@ -756,9 +757,14 @@ def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims * 2)
            if d is not not_mapped}
   trace = main.with_cur_sublevel()
-  in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
+  in_tracers = [val if dim is None else
+                SymbolicZero(core.mapped_aval(size, dim, val.aval))
+                if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
                 for val, dim in zip(in_vals, in_dims * 2)]
   outs = yield in_tracers, {}
+  # TODO(mattjj,frostig): instantiating any SymbolicZero output is easy, but can
+  # be wasteful in the rare case it actually triggers; handle symbolically!
+  outs = [instantiate(replace_rule_output_symbolic_zeros(x)) for x in outs]
   out_tracers = map(trace.full_raise, outs)
   out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
