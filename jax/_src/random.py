@@ -1068,6 +1068,11 @@ def gamma(key: KeyArray,
           dtype: DTypeLikeFloat = dtypes.float_) -> Array:
   """Sample Gamma random values with given shape and float dtype.
 
+  This implements the standard gamma density, with a unit scale/rate parameter.
+  Dividing the sample output by the rate is equivalent to sampling from
+  *gamma(a, rate)*, and multiplying the sample output by the scale is equivalent
+  to sampling from *gamma(a, scale)*.
+
   Args:
     key: a PRNG key used as the random key.
     a: a float or array of floats broadcast-compatible with ``shape``
