@@ -20,6 +20,8 @@ from jax.numpy import linalg as linalg
 
 from jax._src.device_array import DeviceArray as DeviceArray
 
+from jax._src.basearray import Array as ndarray
+
 from jax._src.numpy.lax_numpy import (
     ComplexWarning as ComplexWarning,
     NINF as NINF,
@@ -178,7 +180,6 @@ from jax._src.numpy.lax_numpy import (
     nanmedian as nanmedian,
     nanpercentile as nanpercentile,
     nanquantile as nanquantile,
-    ndarray as ndarray,
     ndim as ndim,
     newaxis as newaxis,
     nonzero as nonzero,

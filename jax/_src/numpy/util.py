@@ -25,7 +25,6 @@ from jax._src import api
 from jax._src import core
 from jax._src.config import config
 from jax._src.lax import lax
-from jax._src.numpy.ndarray import ndarray
 from jax._src.util import safe_zip, safe_map
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike, Shape
 
@@ -324,7 +323,7 @@ def _complex_elem_type(dtype: DTypeLike) -> DType:
 
 
 def _arraylike(x: ArrayLike) -> bool:
-  return (isinstance(x, np.ndarray) or isinstance(x, ndarray) or
+  return (isinstance(x, np.ndarray) or isinstance(x, Array) or
           hasattr(x, '__jax_array__') or np.isscalar(x))
 
 
@@ -393,7 +392,7 @@ def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
   if hasattr(arr, "broadcast_to"):
     return arr.broadcast_to(shape)  # type: ignore[union-attr]
   _check_arraylike("broadcast_to", arr)
-  arr = arr if isinstance(arr, ndarray) else _asarray(arr)
+  arr = arr if isinstance(arr, Array) else _asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   shape = core.canonicalize_shape(shape)  # check that shape is concrete

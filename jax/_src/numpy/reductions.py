@@ -25,7 +25,6 @@ from jax import lax
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
-from jax._src.numpy.ndarray import ndarray
 from jax._src.numpy.util import (
     _broadcast_to, _check_arraylike, _complex_elem_type,
     _promote_dtypes_inexact, _promote_dtypes_numeric, _where, _wraps)
@@ -44,7 +43,7 @@ Axis = Union[None, int, Sequence[int]]
 
 def _asarray(a: ArrayLike) -> Array:
   # simplified version of jnp.asarray() for local use.
-  return a if isinstance(a, ndarray) else api.device_put(a)
+  return a if isinstance(a, Array) else api.device_put(a)
 
 def _isscalar(element: Any) -> bool:
   if hasattr(element, '__jax_array__'):
@@ -92,7 +91,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
     raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
                      f"where mask one has to specify 'initial'")
 
-  a = a if isinstance(a, ndarray) else _asarray(a)
+  a = a if isinstance(a, Array) else _asarray(a)
   a = preproc(a) if preproc else a
   pos_dims, dims = _reduction_dims(a, axis)
 
