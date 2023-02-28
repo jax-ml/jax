@@ -247,7 +247,7 @@ class GlobalDeviceArray:
     # Allow pjit to output GDAs
     jax.config.update('jax_parallel_functions_output_gda', True)
 
-    f = pjit(lambda x: x @ x.T, in_axis_resources=P('x', 'y'), out_axis_resources = P('x', 'y'))
+    f = pjit(lambda x: x @ x.T, in_shardings=P('x', 'y'), out_axis_resources = P('x', 'y'))
     with global_mesh:
       out = f(gda)
 
@@ -303,7 +303,7 @@ class GlobalDeviceArray:
         "Implement desired functionality explicitly, e.g. to check if all "
         "values are equal: "
         "pjit(lambda x, y: x == y, "
-        "in_axis_resources=FROM_GDA, out_axis_resources=None)"
+        "in_shardings=FROM_GDA, out_shardings=None)"
     )
 
   def __str__(self):

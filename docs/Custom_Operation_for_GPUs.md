@@ -488,9 +488,9 @@ ref = rms_norm(x, weight)
 pjitted = pjit(
     rms_norm,
     # Shard x by batch dimension and replicate weight on all devices.
-    in_axis_resources=(PartitionSpec("x", None, None), PartitionSpec(None, None)),
+    in_shardings=(PartitionSpec("x", None, None), PartitionSpec(None, None)),
     # Shard the output by batch dimension.
-    out_axis_resources=PartitionSpec("x", None, None),
+    out_shardings=PartitionSpec("x", None, None),
 )
 
 with mesh:
@@ -567,12 +567,12 @@ with mesh:
     pjitted = pjit(
         partial(xmap_rms_norm, device_count=jax.local_device_count()),
         # Shard x by batch dimension and replicate weight on all devices.
-        in_axis_resources=(
+        in_shardings=(
             PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
         # Shard the output by batch dimension.
-        out_axis_resources=PartitionSpec("x", None, None),
+        out_shardings=PartitionSpec("x", None, None),
     )
     print(pjitted.lower(x, weight).compile().runtime_executable().hlo_modules()[0].to_string())
     out = pjitted(x, weight)
@@ -623,12 +623,12 @@ with mesh:
     pjitted = pjit(
         jax.grad(partial(loss, device_count=jax.local_device_count()), argnums=(0, 1)),
         # Shard x by batch dimension and replicate weight on all devices.
-        in_axis_resources=(
+        in_shardings=(
             PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
         # Shard the output by batch dimension and replicate weight grad on all devices.
-        out_axis_resources=(
+        out_shardings=(
             PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
@@ -1047,12 +1047,12 @@ with Mesh(jax.local_devices(), ("x",)):
     pjitted = pjit(
         jax.grad(partial(loss, device_count=jax.local_device_count()), argnums=(0, 1)),
         # Shard x by batch dimension and replicate weight on all devices.
-        in_axis_resources=(
+        in_shardings=(
             PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),
         # Shard the output by batch dimension and replicate weight grad on all devices.
-        out_axis_resources=(
+        out_shardings=(
             PartitionSpec("x", None, None),
             PartitionSpec(None, None),
         ),

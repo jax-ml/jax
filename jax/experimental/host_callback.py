@@ -210,8 +210,8 @@ same device that issued the outfeed. This device is then responsible for
 sending the required shards to the other devices::
 
   with jax.sharding.Mesh(jax.local_devices()[:2], ["d"]):
-    pjit.pjit(power3, in_axis_resources=(P("d"),),
-              out_axis_resources=(P("d"),))(np.array([3., 4.]))
+    pjit.pjit(power3, in_shardings=(P("d"),),
+              out_shardings=(P("d"),))(np.array([3., 4.]))
 
   # device=TPU:0 what=x,x^2: ( [3., 4.],
   #                            [9., 16.] )

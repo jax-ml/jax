@@ -255,9 +255,9 @@ class custom_partitioning:
 
       with Mesh(np.array(jax.devices()), ('x',)):
         x = np.asarray(np.random.randn(32*1024, 1024), dtype=np.complex64)
-        y = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=P('x'))(x)
-        pjit_my_fft = pjit(my_fft, in_axis_resources=P('x'), out_axis_resources=P('x'))
-        pjit_fft    = pjit(fft,    in_axis_resources=P('x'), out_axis_resources=P('x'))
+        y = pjit(lambda x: x, in_shardings=None, out_shardings=P('x'))(x)
+        pjit_my_fft = pjit(my_fft, in_shardings=P('x'), out_shardings=P('x'))
+        pjit_fft    = pjit(fft,    in_shardings=P('x'), out_shardings=P('x'))
         print(pjit_my_fft(y))
         print(pjit_fft(y))
         # dynamic-slice or all-gather are not present in the HLO for my_fft, because x is a 2D array
@@ -286,9 +286,9 @@ class custom_partitioning:
 
       with Mesh(np.array(jax.devices()), ('x',)):
         x = np.asarray(np.random.randn(32*1024*1024), dtype=np.complex64)
-        y = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=P('x'))(x)
-        pjit_my_fft = pjit(my_fft, in_axis_resources=P('x'), out_axis_resources=P('x'))
-        pjit_fft    = pjit(fft,    in_axis_resources=P('x'), out_axis_resources=P('x'))
+        y = pjit(lambda x: x, in_shardings=None, out_shardings=P('x'))(x)
+        pjit_my_fft = pjit(my_fft, in_shardings=P('x'), out_shardings=P('x'))
+        pjit_fft    = pjit(fft,    in_shardings=P('x'), out_shardings=P('x'))
         print(pjit_my_fft(y))
         print(pjit_fft(y))
         # dynamic-slice or all-gather are present in the HLO for my_fft, because x is a 1D array

@@ -98,7 +98,7 @@ def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
     reps = sharding.GSPMDSharding(inp.sharding._device_assignment,
                                        sharding._get_replicated_op_sharding())
-    out = pjit(_identity_fn, out_axis_resources=reps)(inp)
+    out = pjit(_identity_fn, out_shardings=reps)(inp)
   else:
     # All inputs here will be fully addressable.
     if jax.process_count() == 1:
@@ -122,7 +122,7 @@ def _handle_array_process_allgather(inp, tiled):
     global_arr = array.make_array_from_single_device_arrays(
         global_aval.shape, s, bufs)
     with global_mesh:
-      out = pjit(_identity_fn, out_axis_resources=None)(global_arr)
+      out = pjit(_identity_fn, out_shardings=None)(global_arr)
 
   return np.asarray(out.addressable_data(0))
 

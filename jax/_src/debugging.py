@@ -575,8 +575,8 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
   ...   x = jnp.sin(x)
   ...   jax.debug.inspect_array_sharding(x, callback=print)
   ...   return jnp.square(x)
-  >>> f = pjit(f_, in_axis_resources=PartitionSpec('dev'),
-  ...          out_axis_resources=PartitionSpec('dev'))
+  >>> f = pjit(f_, in_shardings=PartitionSpec('dev'),
+  ...          out_shardings=PartitionSpec('dev'))
   >>> with Mesh(jax.devices(), ('dev',)):
   ...   f.lower(x).compile()  # doctest: +SKIP
   ...

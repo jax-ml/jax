@@ -223,8 +223,8 @@ def f(x):
 f = checkify.checkify(f, errors=checkify.float_checks)
 f = pjit(
   f,
-  in_axis_resources=PartitionSpec('x', None),
-  out_axis_resources=(None, PartitionSpec('x', None)))
+  in_shardings=PartitionSpec('x', None),
+  out_shardings=(None, PartitionSpec('x', None)))
 
 with jax.sharding.Mesh(mesh.devices, mesh.axis_names):
  err, data = f(input_data)

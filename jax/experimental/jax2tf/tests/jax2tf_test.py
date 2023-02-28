@@ -1592,8 +1592,8 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
         x,
         x,
         use_pjit=True,
-        in_axis_resources=in_axis_resources,
-        out_axis_resources=out_axis_resources)
+        in_shardings=in_axis_resources,
+        out_shardings=out_axis_resources)
 
     def f_tf(x_tf, y_tf):
       return tfxla.call_module([x_tf, y_tf],

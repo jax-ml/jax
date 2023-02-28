@@ -352,8 +352,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       @functools.partial(
           pjit.pjit,
           # `FROM_GDA` will be replicated for all the inputs.
-          in_axis_resources=pjit.FROM_GDA,
-          out_axis_resources=(mesh_axes1, None, mesh_axes2))
+          in_shardings=pjit.FROM_GDA,
+          out_shardings=(mesh_axes1, None, mesh_axes2))
       def f(x, y, z):
         return x @ x.T, y, z
 
@@ -560,8 +560,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     with jtu.create_global_mesh((16,), ("x")):
 
       @functools.partial(pjit.pjit,
-                         in_axis_resources=experimental.PartitionSpec(None),
-                         out_axis_resources=experimental.PartitionSpec("x"))
+                         in_shardings=experimental.PartitionSpec(None),
+                         out_shardings=experimental.PartitionSpec("x"))
       def f():
         return jnp.zeros([32, 10])
 

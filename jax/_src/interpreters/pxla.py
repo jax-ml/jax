@@ -2399,20 +2399,20 @@ class Mesh(ContextDecorator):
     >>> global_mesh = Mesh(devices, ('x', 'y'))
     >>> # Use the mesh object directly as a context manager.
     >>> with global_mesh:
-    ...   out = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
+    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
 
     >>> # Initialize the Mesh and use the mesh as the context manager.
     >>> with Mesh(devices, ('x', 'y')) as global_mesh:
-    ...   out = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
+    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
 
     >>> # Also you can use it as `with ... as ...`.
     >>> global_mesh = Mesh(devices, ('x', 'y'))
     >>> with global_mesh as m:
-    ...   out = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
+    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
 
     >>> # You can also use it as `with Mesh(...)`.
     >>> with Mesh(devices, ('x', 'y')):
-    ...   out = pjit(lambda x: x, in_axis_resources=None, out_axis_resources=None)(inp)
+    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
   """
 
   devices: np.ndarray

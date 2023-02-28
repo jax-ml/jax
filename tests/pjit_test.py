@@ -140,7 +140,7 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 1)])
   def testDeviceBufferAval(self):
 
-    @partial(pjit, in_axis_resources=None, out_axis_resources=P('x'))
+    @partial(pjit, in_shardings=None, out_shardings=P('x'))
     def f(x):
       return x
 
@@ -159,8 +159,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2)])
   def testBasic1D(self):
     @partial(pjit,
-             in_axis_resources=(P('x'), P('x')),
-             out_axis_resources=None)
+             in_shardings=(P('x'), P('x')),
+             out_shardings=None)
     def f(x, y):
       return x + y
 
@@ -177,8 +177,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2)])
   def testJitOfPjitDisallowed(self):
     @partial(pjit,
-             in_axis_resources=(P('x'), P('x')),
-             out_axis_resources=None)
+             in_shardings=(P('x'), P('x')),
+             out_shardings=None)
     def f(x, y):
       return x + y
 
@@ -195,8 +195,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2)])
   def testUnevenShardingConstraint(self):
     @partial(pjit,
-             in_axis_resources=(P('x'), P('x')),
-             out_axis_resources=None)
+             in_shardings=(P('x'), P('x')),
+             out_shardings=None)
     def f(x, y):
       x = x[:3]
       y = y[:3]
@@ -217,8 +217,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   def testBasic1DWithMeshContextManager(self):
     @partial(pjit,
-             in_axis_resources=(P('x'), P('x')),
-             out_axis_resources=None)
+             in_shardings=(P('x'), P('x')),
+             out_shardings=None)
     def f(x, y):
       return x + y
 
@@ -237,8 +237,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testBasic2D(self):
     @partial(pjit,
-             in_axis_resources=(P(None, 'x', 'y'), P('y')),
-             out_axis_resources=P('x'))
+             in_shardings=(P(None, 'x', 'y'), P('y')),
+             out_shardings=P('x'))
     def f(x, y):
       return x @ y
 
@@ -296,8 +296,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testTwoMeshAxisSharding(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=jax.sharding.PartitionSpec(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=jax.sharding.PartitionSpec(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -325,8 +325,8 @@ class PJitTest(jtu.BufferDonationTestCase):
       raise unittest.SkipTest('Buffer donation only supported on GPU and TPU')
 
     @partial(pjit,
-             in_axis_resources=P('x'),
-             out_axis_resources=P('x'),
+             in_shardings=P('x'),
+             out_shardings=P('x'),
              donate_argnums=0)
     def f(x, y):
       return x + y
@@ -341,7 +341,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraint(self):
-    @partial(pjit, in_axis_resources=None, out_axis_resources=None)
+    @partial(pjit, in_shardings=None, out_shardings=None)
     def f(x):
       y = x + 1
       y = with_sharding_constraint(y, P('x', 'y'))
@@ -368,7 +368,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P(None))
 
-    @partial(pjit, in_axis_resources=s, out_axis_resources=s)
+    @partial(pjit, in_shardings=s, out_shardings=s)
     def f(x):
       y = x + 1
       y = with_sharding_constraint(y, NamedSharding(mesh, P('x', 'y')))
@@ -397,7 +397,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     ops = pjit_lib.to_gspmd_sharding(
         NamedSharding(mesh, P('x', 'y')), len(shape))
 
-    @partial(pjit, in_axis_resources=s, out_axis_resources=s)
+    @partial(pjit, in_shardings=s, out_shardings=s)
     def f(x):
       y = x + 1
       y = with_sharding_constraint(y, ops)
@@ -419,7 +419,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraintPyTree(self):
-    @partial(pjit, in_axis_resources=None, out_axis_resources=None)
+    @partial(pjit, in_shardings=None, out_shardings=None)
     def f(x):
       x = jax.lax.with_sharding_constraint(x, [P('x', 'y'), P('y', 'x')])
       x = x.copy()
@@ -448,7 +448,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P(None))
 
-    @partial(pjit, in_axis_resources=s, out_axis_resources=s)
+    @partial(pjit, in_shardings=s, out_shardings=s)
     def f(x):
       x = with_sharding_constraint(x, [
           NamedSharding(mesh, P('x', 'y')),
@@ -478,7 +478,7 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testShardingConstraintPyTreeWithUnconstrainedDims(self):
 
-    @partial(pjit, in_axis_resources=None, out_axis_resources=None)
+    @partial(pjit, in_shardings=None, out_shardings=None)
     def f(x):
       x = with_sharding_constraint(
           x, [P(P.UNCONSTRAINED, 'y', None),
@@ -504,7 +504,7 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testShardingConstraintPyTreeVmapWithUnconstrainedDims(self):
 
-    @partial(pjit, in_axis_resources=None, out_axis_resources=None)
+    @partial(pjit, in_shardings=None, out_shardings=None)
     def f(x):
       x = jax.vmap(lambda x: with_sharding_constraint(
           x, [P(P.UNCONSTRAINED, 'y'),
@@ -732,7 +732,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       x, *_ = args
       return x
     f_low = pjit(f, donate_argnums=(0,),
-                 in_axis_resources=P('x'), out_axis_resources=P('x')).lower(x)
+                 in_shardings=P('x'), out_shardings=P('x')).lower(x)
     f_com = f_low.compile()
     f_low.donate_argnums == f_com.donate_argnums == (0,)
 
@@ -856,8 +856,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompile(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -906,8 +906,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileInTreeMismatch(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -922,8 +922,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileArgTypeMismatch(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -943,8 +943,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerAsText(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -959,8 +959,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompilerIR(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -977,8 +977,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testLowerCompileCompilerIR(self):
     # TODO(frostig): remove (deprecated)
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -990,8 +990,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileAsText(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -1004,8 +1004,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.skip_on_xla_cpu_mlir
   def testLowerCostAnalysis(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -1018,8 +1018,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileCostAnalysis(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -1032,8 +1032,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.skip_on_xla_cpu_mlir
   def testLowerCompileMemoryAnalysis(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -1045,8 +1045,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileExecutable(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -1058,7 +1058,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def test_static_argnums(self):
-    @partial(pjit, in_axis_resources=None, out_axis_resources=None,
+    @partial(pjit, in_shardings=None, out_shardings=None,
              static_argnums=(1,))
     def f(x, y):
       return x + (3 if y == 'hi' else 4)
@@ -1069,8 +1069,8 @@ class PJitTest(jtu.BufferDonationTestCase):
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def testLowerCompileWithAvals(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),))
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),))
     def f(x, y):
       return x @ y
 
@@ -1189,7 +1189,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
     with parallel_functions_output_gda(True):
       with global_mesh:
-        @partial(pjit, in_axis_resources=FROM_GDA, out_axis_resources=P('x', 'y'))
+        @partial(pjit, in_shardings=FROM_GDA, out_shardings=P('x', 'y'))
         def f(x):
           return x @ x.T
         expected_matrix_mul = input_data @ input_data.T
@@ -1236,8 +1236,8 @@ class GDAPjitTest(jtu.JaxTestCase):
       @partial(
           pjit,
           # `FROM_GDA` will be replicated for all the inputs.
-          in_axis_resources=FROM_GDA,
-          out_axis_resources=(mesh_axes1, mesh_axes4, mesh_axes2, mesh_axes3))
+          in_shardings=FROM_GDA,
+          out_shardings=(mesh_axes1, mesh_axes4, mesh_axes2, mesh_axes3))
       def f(x, y, z, a):
         return x @ x.T, y, z, a
       out1, out2, out3, out4 = f(gda1, gda2, gda3, gda4)
@@ -1298,8 +1298,8 @@ class GDAPjitTest(jtu.JaxTestCase):
 
     with parallel_functions_output_gda(True):
       @partial(pjit,
-               in_axis_resources=(FROM_GDA, P('x', 'y')),
-               out_axis_resources=(P('x', 'y'), P(('x', 'y'))))
+               in_shardings=(FROM_GDA, P('x', 'y')),
+               out_shardings=(P('x', 'y'), P(('x', 'y'))))
       def f(x, y):
         return x @ x.T, y @ y.T
       expected_matrix_mul = input_data @ input_data.T
@@ -1326,8 +1326,8 @@ class GDAPjitTest(jtu.JaxTestCase):
 
     with parallel_functions_output_gda(True):
       @partial(pjit,
-               in_axis_resources=(None, P('x', 'y')),
-               out_axis_resources=(P('x', 'y'), P(('x', 'y'))))
+               in_shardings=(None, P('x', 'y')),
+               out_shardings=(P('x', 'y'), P(('x', 'y'))))
       def f(x, y):
         return x @ x.T, y @ y.T
 
@@ -1364,7 +1364,7 @@ class GDAPjitTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(ValueError,
                                 "Pjit's mesh and GDA's mesh should be equal."):
-      @partial(pjit, in_axis_resources=FROM_GDA, out_axis_resources=P('x', 'y'))
+      @partial(pjit, in_shardings=FROM_GDA, out_shardings=P('x', 'y'))
       def f(x):
         return x
 
@@ -1391,7 +1391,7 @@ class GDAPjitTest(jtu.JaxTestCase):
         r'use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. '
         r"Got GDA sharding.*PartitionSpec\('x',\).*and "
         r"pjit sharding.*PartitionSpec\('x', 'y'\).*"):
-      @partial(pjit, in_axis_resources=P('x', 'y'), out_axis_resources=P('x', 'y'))
+      @partial(pjit, in_shardings=P('x', 'y'), out_shardings=P('x', 'y'))
       def f(x):
         return x
 
@@ -1410,7 +1410,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     gda_obj = global_device_array.GlobalDeviceArray.from_callback(
         input_shape, global_mesh, mesh_axes, cb)
 
-    @partial(pjit, in_axis_resources=mesh_axes, out_axis_resources=P('x', 'y'))
+    @partial(pjit, in_shardings=mesh_axes, out_shardings=P('x', 'y'))
     def f(x, y):
       return x @ y.T
 
@@ -1452,7 +1452,7 @@ class GDAPjitTest(jtu.JaxTestCase):
       gda_obj = global_device_array.GlobalDeviceArray.from_callback(
           global_input_shape, global_mesh, mesh_axes, cb)
 
-      @partial(pjit, in_axis_resources=P(None), out_axis_resources=P(None))
+      @partial(pjit, in_shardings=P(None), out_shardings=P(None))
       def f(x):
         return x
 
@@ -1484,7 +1484,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     input_gda, _ = create_gda(global_input_shape, global_mesh, mesh_axes)
 
     with parallel_functions_output_gda(True):
-      @partial(pjit, in_axis_resources=mesh_axes, out_axis_resources=mesh_axes)
+      @partial(pjit, in_shardings=mesh_axes, out_shardings=mesh_axes)
       def f(x):
         return x
 
@@ -1551,7 +1551,7 @@ class GDAPjitTest(jtu.JaxTestCase):
     seeds, _ = create_gda(input_shape, mesh, spec, dtype=np.uint32)
 
     with mesh:
-      @partial(pjit, in_axis_resources=spec, out_axis_resources=spec)
+      @partial(pjit, in_shardings=spec, out_shardings=spec)
       def make_keys(seeds):
         make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
         return make_key(seeds)
@@ -1794,7 +1794,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     input_array, input_data = create_array(global_input_shape, global_mesh, mesh_axes)
 
-    f = pjit(lambda x: x @ x.T, out_axis_resources=NamedSharding(
+    f = pjit(lambda x: x @ x.T, out_shardings=NamedSharding(
         global_mesh, out_axis_resources))
     expected_matrix_mul = input_data @ input_data.T
 
@@ -1822,7 +1822,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     input_array, input_data = create_array(global_input_shape, global_mesh, mesh_axes)
 
     with global_mesh:
-      f = pjit(lambda x: x @ x.T, out_axis_resources=NamedSharding(
+      f = pjit(lambda x: x @ x.T, out_shardings=NamedSharding(
           global_mesh, out_axis_resources))
       expected_matrix_mul = input_data @ input_data.T
 
@@ -1843,7 +1843,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jax_array(True):
       with global_mesh:
         f = pjit(lambda x: x,
-                 out_axis_resources=NamedSharding(
+                 out_shardings=NamedSharding(
                      global_mesh, P('x', 'y')))
         # Since no in_axis_resources is provided, pjit will assume that
         # the numpy input is fully replicated over the mesh.
@@ -1961,7 +1961,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jax_array(True):
       with global_mesh:
         f = pjit(lambda x: x,
-                 in_axis_resources=NamedSharding(global_mesh, P('x')))
+                 in_shardings=NamedSharding(global_mesh, P('x')))
         err_msg = re.compile(
             "Sharding passed to pjit does not match the sharding on the "
             r"respective arg.*arg shape.*\(8, 2\)", re.M | re.S)
@@ -1979,7 +1979,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       with global_mesh:
         out = pjit(
             lambda x: x,
-            in_axis_resources=NamedSharding(global_mesh, P('x' ,'y')))(input_array)
+            in_shardings=NamedSharding(global_mesh, P('x' ,'y')))(input_array)
         self.assertIsInstance(out, array.ArrayImpl)
 
   def test_no_input_output(self):
@@ -2016,7 +2016,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       with global_mesh:
         f = pjit(
             lambda x, y: x @ y.T,
-            in_axis_resources=NamedSharding(global_mesh, P('x' ,'y')))
+            in_shardings=NamedSharding(global_mesh, P('x' ,'y')))
         compiled = f.lower(aval, aval).compile()
         out = compiled(a1, a1)
         self.assertIsInstance(out, array.ArrayImpl)
@@ -2050,7 +2050,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
 
-    @partial(pjit, out_axis_resources=NamedSharding(mesh, P('x', 'y')))
+    @partial(pjit, out_shardings=NamedSharding(mesh, P('x', 'y')))
     def make_keys(seeds):
       make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
       return make_key(seeds)
@@ -2091,7 +2091,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         with self.assertRaisesRegex(
             ValueError, "Received incompatible devices for pjitted computation"):
           pjit(lambda x, y: (x, y),
-                out_axis_resources=(NamedSharding(m1, spec),
+                out_shardings=(NamedSharding(m1, spec),
                                     NamedSharding(m2, spec)))(a1, a1)
 
   def test_array_device_assignment_mismatch_in_and_out_shardings(self):
@@ -2122,7 +2122,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jax_array(True):
       with global_mesh:
         f = pjit(lambda x, y: (x, y),
-                 in_axis_resources=NamedSharding(global_mesh, P(None)))
+                 in_shardings=NamedSharding(global_mesh, P(None)))
         with self.assertRaisesRegex(
             ValueError,
             ('Sharding passed to pjit does not match the sharding on the '
@@ -2135,7 +2135,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     a1, _ = create_array(input_shape, global_mesh, P(None,))
     with jax_array(True):
       with global_mesh:
-        f = pjit(lambda x: x, in_axis_resources=NamedSharding(global_mesh, P(None,)))
+        f = pjit(lambda x: x, in_shardings=NamedSharding(global_mesh, P(None,)))
         compiled = f.lower(core.ShapedArray(input_shape, jnp.float32)).compile()
         compiled(a1)  # no error
 
@@ -2264,7 +2264,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
             for d in jax.local_devices()]
     arr = array.ArrayImpl(core.ShapedArray(shape, np.float32), s, bufs, committed=True)
 
-    f = pjit(lambda x: x, out_axis_resources=s)
+    f = pjit(lambda x: x, out_shardings=s)
     out = f(arr)
     self.assertTrue(out.sharding.is_equivalent_to(arr.sharding, arr.ndim))
     self.assertArraysEqual(out, inp_data)
@@ -2289,13 +2289,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         'One of in_shardings leaf specifications got sharding.*which is '
         'not a subclass of XLACompatibleSharding.'):
-      pjit(lambda x: x, in_axis_resources=ts)(arr)
+      pjit(lambda x: x, in_shardings=ts)(arr)
 
     with self.assertRaisesRegex(
         ValueError,
         'One of out_shardings leaf specifications got sharding.*which is '
         'not a subclass of XLACompatibleSharding.'):
-      pjit(lambda x: x, out_axis_resources=ts)(arr)
+      pjit(lambda x: x, out_shardings=ts)(arr)
 
   @jax_array(True)
   def test_array_enabled_non_empty_mesh_with_pspec(self):
@@ -2305,13 +2305,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
         "pjit requires a non-empty mesh!.*Alternatively, provide a "
         "XLACompatibleSharding to pjit and then the mesh context manager is "
         "not required."):
-      pjit(lambda x: x, in_axis_resources=P('x'))(arr)
+      pjit(lambda x: x, in_shardings=P('x'))(arr)
 
     with self.assertRaisesRegex(
         TypeError,
         "in_shardings leaf specifications are expected to be PartitionSpec "
         "instances or None, but got x"):
-      pjit(lambda x: x, in_axis_resources='x')
+      pjit(lambda x: x, in_shardings='x')
 
   @jax_array(True)
   def test_pjit_uncommitted_array_reshard(self):
@@ -2327,7 +2327,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jnp.arange(16).reshape(8, 2)
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     with mesh:
-      out = pjit(lambda x: x, in_axis_resources=P('x', 'y'))(arr)
+      out = pjit(lambda x: x, in_shardings=P('x', 'y'))(arr)
       self.assertArraysEqual(out, arr)
       self.assertLen(out.addressable_shards, 8)
       for s in out.addressable_shards:
@@ -2544,8 +2544,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     @pjit
     def my_nested_pjit(inp1, inp2, inp3):
-      @partial(pjit, in_axis_resources=(s, s, s),
-               out_axis_resources=(s, s, s))
+      @partial(pjit, in_shardings=(s, s, s),
+               out_shardings=(s, s, s))
       def f(x, y, z):
         return x * 2, y * 2, z * 2
       return f(inp1, inp2, inp3)
@@ -2697,8 +2697,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
   @jax_array(True)
   def testLowerCompileWithStaticArguments(self):
     @partial(pjit,
-             in_axis_resources=P(('x', 'y'),),
-             out_axis_resources=P(('x', 'y'),), static_argnums=0)
+             in_shardings=P(('x', 'y'),),
+             out_shardings=P(('x', 'y'),), static_argnums=0)
     def f(c, x):
       return x if c == 0 else x + 1
 
@@ -2946,7 +2946,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "pjit does not support kwargs when in_shardings is specified."):
-      pjit(lambda x: x, in_axis_resources=None)(x=jnp.arange(8.))
+      pjit(lambda x: x, in_shardings=None)(x=jnp.arange(8.))
 
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
@@ -3070,13 +3070,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         'If backend or device is specified on jit, then '
         'in_shardings should not be specified.'):
-      pjit(lambda x: x, in_axis_resources=None, backend='cpu')
+      pjit(lambda x: x, in_shardings=None, backend='cpu')
 
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
         'out_shardings should not be specified.'):
-      pjit(lambda x: x, out_axis_resources=None, device=jax.devices()[0])
+      pjit(lambda x: x, out_shardings=None, device=jax.devices()[0])
 
   def test_pjit_device_backend_both_error(self):
     with self.assertRaisesRegex(
@@ -3114,12 +3114,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         r"One of in_shardings.*got sharding.*which is not allowed."):
-      pjit(lambda x: x, in_axis_resources=pmap_out.sharding)
+      pjit(lambda x: x, in_shardings=pmap_out.sharding)
 
     with self.assertRaisesRegex(
         ValueError,
         r"One of out_shardings.*got sharding.*which is not allowed."):
-      pjit(lambda x: x, out_axis_resources=pmap_out.sharding)
+      pjit(lambda x: x, out_shardings=pmap_out.sharding)
 
   def test_pmap_sharding_input_to_pjit_single_device(self):
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
@@ -3157,7 +3157,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     pmap_out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
     self.assertIsInstance(pmap_out.sharding, jax.sharding.PmapSharding)
 
-    out = pjit(lambda x: x * 2, in_axis_resources=NamedSharding(mesh, P('x')))(pmap_out)
+    out = pjit(lambda x: x * 2, in_shardings=NamedSharding(mesh, P('x')))(pmap_out)
     self.assertArraysEqual(out, pmap_out * 2)
     self.assertLen(out.devices(), 4)
 
@@ -3706,10 +3706,10 @@ class PJitErrorTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 2)])
   def testNestedDifferentResources(self):
-    @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
+    @partial(pjit, in_shardings=P('x'), out_shardings=None)
     def f(x):
       with jax.sharding.Mesh(np.array([jax.local_devices()[0]]), ('x')):
-        @partial(pjit, in_axis_resources=P('x'), out_axis_resources=None)
+        @partial(pjit, in_shardings=P('x'), out_shardings=None)
         def h(x):
           return x
         return h(x)

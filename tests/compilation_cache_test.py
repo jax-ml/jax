@@ -278,8 +278,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
       @partial(pjit,
-               in_axis_resources=(P('x'), P('x')),
-               out_axis_resources=None)
+               in_shardings=(P('x'), P('x')),
+               out_shardings=None)
       def f(x, y):
         return x + y
 

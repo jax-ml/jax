@@ -175,8 +175,8 @@ class DebugNaNsTest(jtu.JaxTestCase):
 
     p = jax.sharding.PartitionSpec('x')
     f = pjit.pjit(lambda x: 0. / x,
-                  in_axis_resources=p,
-                  out_axis_resources=p,
+                  in_shardings=p,
+                  out_shardings=p,
                   donate_argnums=(0,))
 
     with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
