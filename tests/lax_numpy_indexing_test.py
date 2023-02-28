@@ -1412,6 +1412,8 @@ class IndexedUpdateTest(jtu.JaxTestCase):
       self._CompileAndCheck(jnp_fun, args_maker)
 
   def testIndexDtypeError(self):
+    if not jax.config.jax_array:
+      self.skipTest("This test only works with jax.Array")
     # https://github.com/google/jax/issues/2795
     jnp.array(1)  # get rid of startup warning
     with warnings.catch_warnings(record=True) as w:

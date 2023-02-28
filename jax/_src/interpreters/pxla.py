@@ -39,6 +39,7 @@ import itertools as it
 import logging
 import operator as op
 import sys
+import warnings
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
@@ -661,6 +662,11 @@ def make_sharded_device_array(
       be returned, for JAX extensions not implementing the C++ API.
     indices: For caching purposes, will be computed if `None`.
   """
+  warnings.warn(
+        "ShardedDeviceArray has been deprecated. Please migrate to jax.Array. "
+        "See https://jax.readthedocs.io/en/latest/jax_array_migration.html#jax-array-migration "
+        "on how to migrate to jax.Array.", DeprecationWarning)
+
   from jax._src import pjit
 
   if sharding_spec is None:

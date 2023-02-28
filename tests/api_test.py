@@ -409,6 +409,8 @@ class CPPJitTest(jtu.BufferDonationTestCase):
   # Jit and Donate arguments
 
   def test_jit_donate_argnums_warning_raised(self):
+    if not jax.config.jax_array:
+      self.skipTest("This test only works with jax.Array")
     x = jnp.array([1.0, 2.0], jnp.float32)
     y = jnp.array([1, 2], jnp.int32)
     f = self.jit(lambda x, y: x.sum() + jnp.float32(y.sum()), donate_argnums=(0, 1))
@@ -2754,6 +2756,8 @@ class APITest(jtu.JaxTestCase):
       self.assertAllClose(x, y)
 
   def test_dtype_from_builtin_types(self):
+    if not jax.config.jax_array:
+      self.skipTest("This test only works with jax.Array")
     for dtype in [bool, int, float, complex]:
       with warnings.catch_warnings(record=True) as caught_warnings:
         x = jnp.array(0, dtype=dtype)

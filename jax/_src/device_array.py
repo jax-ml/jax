@@ -59,6 +59,10 @@ def make_device_array(
   This is to be used only within JAX. It will return either a PythonDeviceArray
   or a C++ equivalent implementation.
   """
+  warnings.warn(
+        "DeviceArray has been deprecated. Please migrate to jax.Array. "
+        "See https://jax.readthedocs.io/en/latest/jax_array_migration.html#jax-array-migration "
+        "on how to migrate to jax.Array.", DeprecationWarning)
 
   if isinstance(device_buffer, xc.Buffer):
 
