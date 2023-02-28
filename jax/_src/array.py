@@ -28,6 +28,7 @@ from jax._src import dtypes
 from jax._src.config import config
 from jax._src.util import prod, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src import api
 from jax._src.typing import ArrayLike
 from jax.interpreters import mlir
@@ -667,6 +668,10 @@ def _array_global_result_handler(global_aval, out_sharding, committed,
   if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed, is_out_sharding_from_xla)
+  if xla_extension_version >= 131:
+    return xc.array_result_handler(
+        global_aval, out_sharding, committed=committed, _skip_checks=True
+    )
   return lambda bufs: ArrayImpl(global_aval, out_sharding, bufs,
                                 committed=committed, _skip_checks=True)
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
@@ -681,6 +686,10 @@ def _array_local_result_handler(aval, sharding, indices):
   if core.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
+  if xla_extension_version >= 131:
+    return xc.array_result_handler(
+        aval, sharding, committed=True, _skip_checks=True
+    )
   return lambda bufs: ArrayImpl(aval, sharding, bufs, committed=True,
                                 _skip_checks=True)
 pxla.local_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_local_result_handler
