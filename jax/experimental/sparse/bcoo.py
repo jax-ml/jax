@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import functools
 from functools import partial
+import math
 import operator
 from typing import Any, List, NamedTuple, Optional, Protocol, Sequence, Tuple, Union
 import warnings
@@ -53,6 +54,10 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.setops import _unique
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import canonicalize_axis
+
+
+CUSPARSE_DATA_DTYPES = [np.float32, np.float64, np.complex64, np.complex128]
+CUSPARSE_INDEX_DTYPES = [np.int32]
 
 
 def _bcoo_batch_dims_to_front(batched_args, batch_dims, spinfo, batch_size=None):
@@ -740,16 +745,42 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
 _bcoo_dot_general_default_lowering = mlir.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
 
-def _collapse_hlo(x, start, end):
+
+def _hlo_reshape(x, shape):
   x_type = ir.RankedTensorType(x.type)
-  shape = x_type.shape
-  shape = (shape[:start]
-           + [functools.reduce(operator.mul, shape[start:end + 1])]
-           + shape[end + 1:])
   return hlo.ReshapeOp(
       ir.RankedTensorType.get(shape, x_type.element_type), x).result
 
-def _bcoo_dot_general_cuda_lowering(
+def _bcoo_get_row_col(ctx, indices):
+  shape = ir.RankedTensorType(indices.type).shape
+  assert len(shape) == 2
+  if shape[1] == 1:
+    col = _hlo_reshape(indices, shape[:1])
+    row = mlir.full_like_aval(
+        ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
+                                 np.dtype(np.int32)))
+  elif shape[1] == 2:
+    row = _hlo_reshape(
+        hlo.SliceOp(
+            indices,
+            start_indices=mlir.dense_int_elements([0, 0]),
+            limit_indices=mlir.dense_int_elements([shape[0], 1]),
+            strides=mlir.dense_int_elements([1, 1])).result,
+        shape[:1])
+    col = _hlo_reshape(
+        hlo.SliceOp(
+            indices,
+            start_indices=mlir.dense_int_elements([0, 1]),
+            limit_indices=mlir.dense_int_elements([shape[0], 2]),
+            strides=mlir.dense_int_elements([1, 1])).result,
+        shape[:1])
+  else:
+    raise ValueError(f"expected shape[1] in (1, 2), got {shape=}")
+
+  return row, col
+
+
+def _bcoo_dot_general_cuda_unbatched1d(
     coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
     *, dimension_numbers, lhs_spinfo: SparseInfo):
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
@@ -757,219 +788,213 @@ def _bcoo_dot_general_cuda_lowering(
   props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
   rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
 
-  # Checks the shapes of lhs and rhs.
-  assert props.n_dense == 0
-  assert (props.n_batch, props.n_sparse, rhs_ndim) in [
-      (0, 1, 1), (0, 1, 2), (0, 2, 1), (0, 2, 2), (1, 2, 2)]
+  if _bcoo_dot_general_fallback(lhs_data_aval.dtype, lhs_indices_aval.dtype, lhs_spinfo.indices_sorted):
+    return _bcoo_dot_general_default_lowering(
+        ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
-  # Checks the operation dimensions.
-  assert len(lhs_batch) == 0
-  assert len(rhs_batch) == 0
-  assert len(lhs_contract) == 1
+  # These quantities should have been checked in the caller; we use bare
+  # assertions here because they're better than errors from CUDA.
+  assert (props.n_batch, props.n_sparse, props.n_dense) == (0, 1, 0)
+  assert len(lhs_batch) == len(rhs_batch) == 0
+  assert len(lhs_contract) == len(rhs_contract) == 1
+  assert rhs_ndim in (1, 2)
 
-  # Checks the dtype.
-  assert lhs_data_aval.dtype in [np.float32, np.float64, np.complex64,
-                                 np.complex128]
   assert lhs_data_aval.dtype == rhs_aval.dtype
-  assert lhs_indices_aval.dtype == np.int32
+  assert lhs_data_aval.dtype in CUSPARSE_DATA_DTYPES
+  assert lhs_indices_aval.dtype in CUSPARSE_INDEX_DTYPES
 
-  if rhs_ndim == 1:
-    bcoo_dot_general_fn = coo_matvec_lowering
-  elif rhs_ndim == 2:
-    bcoo_dot_general_fn = coo_matmat_lowering
-    if rhs_contract[0] == 1:
-      rhs = hlo.TransposeOp(
-          rhs, permutation=mlir.dense_int_elements([1, 0])).result
-  else:
-    raise ValueError(f"rhs has to be 1d or 2d; get {rhs_ndim}d.")
+  # Zero-out out-of-bound indices. Prevents segfaults, but fails in corner cases.
+  # TODO(jakevdp, tianjianlu): use a better strategy
+  (lhs_data,), (lhs_indices,) = _bcoo_correct_out_of_bound_indices_lowered(
+      ctx, lhs_data, lhs_indices, rhs, shape=lhs_spinfo.shape)
 
-  if props.n_batch == 0:
-    # non-batch mode.
-    lhs_transpose = False
-    if props.n_sparse == 1:
-      # Converts lhs to a row vector.
-      col = _collapse_hlo(lhs_indices, start=0, end=1)
-      row = mlir.full_like_aval(
-          ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
-                              np.dtype(np.int32)))
-      lhs_shape = (1, lhs_spinfo.shape[0])
-      dot_product = bcoo_dot_general_fn(
-          lhs_data, row, col, rhs, shape=lhs_shape, transpose=lhs_transpose,
-          data_dtype=lhs_data_aval.dtype, index_dtype=lhs_indices_aval.dtype,
+  if rhs_ndim == 2 and rhs_contract[0] == 1:
+    rhs = hlo.TransposeOp(rhs, permutation=mlir.dense_int_elements([1, 0])).result
+
+  dot_general_fn = coo_matmat_lowering if rhs_ndim == 2 else coo_matvec_lowering
+  row, col = _bcoo_get_row_col(ctx, lhs_indices)
+
+  result = dot_general_fn(
+          lhs_data, row, col, rhs,
+          shape=(1, lhs_spinfo.shape[0]),
+          transpose=False,
+          data_dtype=lhs_data_aval.dtype,
+          index_dtype=lhs_indices_aval.dtype,
           x_dtype=rhs_aval.dtype)
 
-      if rhs_ndim == 1:
-        # Transforms a single-element array to a scalar.
-        return [hlo.ReshapeOp(
-            ir.RankedTensorType.get(
-                [], ir.RankedTensorType(dot_product.type).element_type),
-            dot_product).result]
-      else:
-        return [_collapse_hlo(dot_product, start=0, end=1)]
-    elif props.n_sparse == 2:
-      lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
-      row = _collapse_hlo(
-          hlo.SliceOp(
-              lhs_indices,
-              start_indices=mlir.dense_int_elements([0, 0]),
-              limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 1]),
-              strides=mlir.dense_int_elements([1, 1])).result,
-          start=0, end=1)
-      col = _collapse_hlo(
-          hlo.SliceOp(
-              lhs_indices,
-              start_indices=mlir.dense_int_elements([0, 1]),
-              limit_indices=mlir.dense_int_elements([lhs_indices_shape[0], 2]),
-              strides=mlir.dense_int_elements([1, 1])).result,
-          start=0, end=1)
+  # squeeze the length-1 dimension from the front.
+  return [_hlo_reshape(result, ir.RankedTensorType(result.type).shape[1:])]
 
-      if lhs_contract[0] == 0:
-        lhs_transpose = True
+def _bcoo_dot_general_cuda_unbatched2d(
+    coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
+    *, dimension_numbers, lhs_spinfo: SparseInfo):
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
+  props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
+  rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
 
-      return [bcoo_dot_general_fn(
-          lhs_data, row, col, rhs, shape=lhs_spinfo.shape,
-          transpose=lhs_transpose, data_dtype=lhs_data_aval.dtype,
+  if _bcoo_dot_general_fallback(lhs_data_aval.dtype, lhs_indices_aval.dtype, lhs_spinfo.indices_sorted):
+    return _bcoo_dot_general_default_lowering(
+        ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
+  # These quantities should have been checked in the caller; we use bare
+  # assertions here because they're better than errors from CUDA.
+  assert (props.n_batch, props.n_sparse, props.n_dense) == (0, 2, 0)
+  assert len(lhs_batch) == len(rhs_batch) == 0
+  assert len(lhs_contract) == len(rhs_contract) == 1
+  assert rhs_ndim in (1, 2)
+
+  # Zero-out out-of-bound indices. Prevents segfaults, but fails in corner cases.
+  # TODO(jakevdp, tianjianlu): use a better strategy
+  (lhs_data,), (lhs_indices,) = _bcoo_correct_out_of_bound_indices_lowered(
+      ctx, lhs_data, lhs_indices, rhs, shape=lhs_spinfo.shape)
+
+  assert lhs_data_aval.dtype == rhs_aval.dtype
+  assert lhs_data_aval.dtype in CUSPARSE_DATA_DTYPES
+  assert lhs_indices_aval.dtype in CUSPARSE_INDEX_DTYPES
+
+  if rhs_ndim == 2 and rhs_contract[0] == 1:
+    rhs = hlo.TransposeOp(rhs, permutation=mlir.dense_int_elements([1, 0])).result
+
+  dot_general_fn = coo_matmat_lowering if rhs_ndim == 2 else coo_matvec_lowering
+  row, col = _bcoo_get_row_col(ctx, lhs_indices)
+
+  return [dot_general_fn(
+          lhs_data, row, col, rhs,
+          shape=lhs_spinfo.shape,
+          transpose=(lhs_contract[0] == 0),
+          data_dtype=lhs_data_aval.dtype,
           index_dtype=lhs_indices_aval.dtype,
           x_dtype=rhs_aval.dtype)]
-    else:
-      raise ValueError(f"lhs has to be 1d or 2d; get {props.n_sparse}d.")
-  elif props.n_batch == 1:
-    # batch mode.
-    lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
-    lhs_data_shape = ir.RankedTensorType(lhs_data.type).shape
-    batch_count, _, _ = lhs_indices_shape
-    rhs_shape = ir.RankedTensorType(rhs.type).shape
 
-    # Squeeze the batch dimension for both indices and data.
-    lhs_indices_2d_shape = (np.prod(np.array(lhs_indices_shape)[:-1]),
-                            lhs_indices_shape[-1])
-    lhs_data_1d_shape = (np.prod(np.array(lhs_data_shape)), )
+def _bcoo_dot_general_cuda_batched2d(
+    coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
+    *, dimension_numbers, lhs_spinfo: SparseInfo):
+  # The support for batched computation in cusparseSpMM COO was added in
+  # 11.6.1: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cusparse-11.6.1
+  cuda_version = int(xla_bridge.get_backend().platform_version.split()[-1])
+  if cuda_version < 11061:
+    return _bcoo_dot_general_default_lowering(
+        ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
-    lhs_indices_2d = hlo.ReshapeOp(
-        ir.RankedTensorType.get(
-            lhs_indices_2d_shape,
-            ir.RankedTensorType(lhs_indices.type).element_type),
-        lhs_indices).result
+  (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
+  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
+  props = _validate_bcoo_indices(lhs_indices_aval, lhs_spinfo.shape)
+  rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
 
-    lhs_data_1d = hlo.ReshapeOp(
-        ir.RankedTensorType.get(
-            lhs_data_1d_shape,
-            ir.RankedTensorType(lhs_data.type).element_type),
-        lhs_data).result
+  if _bcoo_dot_general_fallback(lhs_data_aval.dtype, lhs_indices_aval.dtype, lhs_spinfo.indices_sorted):
+    return _bcoo_dot_general_default_lowering(
+        ctx, lhs_data, lhs_indices, rhs,
+        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
 
-    row = _collapse_hlo(
-        hlo.SliceOp(
-            lhs_indices_2d,
-            start_indices=mlir.dense_int_elements([0, 0]),
-            limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 1]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        start=0, end=1)
+  # These quantities should have been checked in the caller; we use bare
+  # assertions here because they're better than errors from CUDA.
+  assert (props.n_batch, props.n_sparse, props.n_dense) == (1, 2, 0)
+  assert len(lhs_batch) == len(rhs_batch) == 0
+  assert len(lhs_contract) == len(rhs_contract) == 1
+  assert rhs_ndim == 2  # TODO(jakevdp, tianjianlu) add batched matvec
 
-    col = _collapse_hlo(
-        hlo.SliceOp(
-            lhs_indices_2d,
-            start_indices=mlir.dense_int_elements([0, 1]),
-            limit_indices=mlir.dense_int_elements([lhs_indices_2d_shape[0], 2]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        start=0, end=1)
+  assert lhs_data_aval.dtype == rhs_aval.dtype
+  assert lhs_data_aval.dtype in CUSPARSE_DATA_DTYPES
+  assert lhs_indices_aval.dtype in CUSPARSE_INDEX_DTYPES
 
-    # Broadcast rhs to have the same batch size as lhs.
-    # TODO(tianjianlu): remove broadcasting.
-    # Use batch_stride = 0 for non-batch.
-    # The issue (https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643)
-    # in cusparse library does not allow batch_stride = 0 for a non-batched rhs.
-    batched_rhs_shape = (batch_count,) + tuple(rhs_shape)
-    batched_rhs = hlo.BroadcastInDimOp(
-        ir.RankedTensorType.get(batched_rhs_shape,
-                                ir.RankedTensorType(rhs.type).element_type),
-        rhs,
-        broadcast_dimensions=mlir.dense_int_elements([1, 2])).result
-    batched_rhs_2d_shape = (np.prod(np.array(batched_rhs_shape)[:-1]), batched_rhs_shape[-1])
-    batched_rhs_2d = hlo.ReshapeOp(
-        ir.RankedTensorType.get(
-            batched_rhs_2d_shape,
-            ir.RankedTensorType(batched_rhs.type).element_type),
-        batched_rhs).result
+  # Zero-out out-of-bound indices. Prevents segfaults, but fails in corner cases.
+  # TODO(jakevdp, tianjianlu): use a better strategy
+  (lhs_data,), (lhs_indices,) = _bcoo_correct_out_of_bound_indices_lowered(
+      ctx, lhs_data, lhs_indices, rhs, shape=lhs_spinfo.shape)
 
-    lhs_transpose = True if lhs_contract[0] == props.n_batch else False
+  if rhs_ndim == 2 and rhs_contract[0] == 1:
+    rhs = hlo.TransposeOp(rhs, permutation=mlir.dense_int_elements([1, 0])).result
 
-    return [bcoo_dot_general_fn(
-        lhs_data_1d, row, col, batched_rhs_2d, shape=lhs_spinfo.shape,
-        transpose=lhs_transpose, data_dtype=lhs_data_aval.dtype,
-        index_dtype=lhs_indices_aval.dtype,
-        x_dtype=rhs_aval.dtype)]
+  lhs_indices_shape = ir.RankedTensorType(lhs_indices.type).shape
+  batch_count, nse, n_sparse = lhs_indices_shape
+  rhs_shape = ir.RankedTensorType(rhs.type).shape
+
+  # Squeeze the batch dimension for both indices and data.
+  lhs_indices_flat = _hlo_reshape(lhs_indices, (batch_count * nse, n_sparse))
+  lhs_data_flat = _hlo_reshape(lhs_data, (batch_count * nse,))
+
+  row, col = _bcoo_get_row_col(ctx, lhs_indices_flat)
+  dot_general_fn = coo_matmat_lowering if rhs_ndim == 2 else coo_matvec_lowering
+
+  # Broadcast rhs to have the same batch size as lhs.
+  # TODO(tianjianlu): remove broadcasting.
+  # Use batch_stride = 0 for non-batch.
+  # The issue (https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643)
+  # in cusparse library does not allow batch_stride = 0 for a non-batched rhs.
+  batched_rhs_shape = (batch_count,) + tuple(rhs_shape)
+  batched_rhs = hlo.BroadcastInDimOp(
+      ir.RankedTensorType.get(batched_rhs_shape,
+                              ir.RankedTensorType(rhs.type).element_type),
+      rhs,
+      broadcast_dimensions=mlir.dense_int_elements([1, 2])).result
+  batched_rhs_2d_shape = (math.prod(batched_rhs_shape[:-1]), batched_rhs_shape[-1])
+  batched_rhs_2d = _hlo_reshape(batched_rhs, batched_rhs_2d_shape)
+
+  return [dot_general_fn(
+      lhs_data_flat, row, col, batched_rhs_2d,
+      shape=lhs_spinfo.shape,
+      transpose=True if lhs_contract[0] == props.n_batch else False,
+      data_dtype=lhs_data_aval.dtype,
+      index_dtype=lhs_indices_aval.dtype,
+      x_dtype=rhs_aval.dtype)]
+
+def _bcoo_dot_general_fallback(data_dtype, index_dtype, indices_sorted):
+  if data_dtype not in CUSPARSE_DATA_DTYPES:
+    warnings.warn('bcoo_dot_general cusparse/hipsparse lowering not available '
+                  f'for {data_dtype=}. Falling back to default implementation.',
+                  CuSparseEfficiencyWarning)
+    return True
+  elif index_dtype not in CUSPARSE_INDEX_DTYPES:
+    warnings.warn('bcoo_dot_general cusparse/hipsparse lowering not available '
+                  f'for {index_dtype=}. Falling back to default implementation.',
+                  CuSparseEfficiencyWarning)
+    return True
+  elif not indices_sorted:
+    warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
+                  "sorted indices. To sort the rows in your matrix, use e.g. "
+                  "mat = mat.sort_indices(). Falling back to the default "
+                  "implementation.", CuSparseEfficiencyWarning)
+    return True
   else:
-    raise ValueError(f"n_batch has to be 0 or 1; get {props.n_batch}.")
+    return False
 
 def _bcoo_dot_general_gpu_lowering(
     coo_matvec_lowering, coo_matmat_lowering,
     ctx, lhs_data, lhs_indices, rhs, *, dimension_numbers,
     lhs_spinfo: SparseInfo):
 
+  args = (lhs_data, lhs_indices, rhs)
+  kwargs = dict(dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+
   if not config.jax_bcoo_cusparse_lowering:
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+    return _bcoo_dot_general_default_lowering(ctx, *args, **kwargs)
 
   (lhs_contract, rhs_contract), (lhs_batch, rhs_batch) = dimension_numbers
-  lhs_data_aval, lhs_indices_aval, rhs_aval, = ctx.avals_in
+  lhs_data_aval, lhs_indices_aval, _ = ctx.avals_in
   n_batch, n_sparse, n_dense, _ = _validate_bcoo(
       lhs_data_aval, lhs_indices_aval, lhs_spinfo.shape)
+  rhs_ndim = len(ir.RankedTensorType(rhs.type).shape)
 
-  dtype = lhs_data_aval.dtype
-  if dtype not in [np.float32, np.float64, np.complex64, np.complex128]:
-    warnings.warn(f'bcoo_dot_general cusparse/hipsparse lowering not available '
-                  f'for {dtype=}. Falling back to default implementation.',
-                  CuSparseEfficiencyWarning)
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
-
-  if (n_batch > 1 or n_dense or
-      n_sparse not in [1, 2] or rhs_aval.ndim not in [1, 2] or
-      lhs_batch or rhs_batch or len(lhs_contract) != 1):
-    return _bcoo_dot_general_default_lowering(
-      ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
-  else:
-    if not lhs_spinfo.indices_sorted:
-      warnings.warn("bcoo_dot_general GPU lowering requires matrices with "
-                    "sorted indices. To sort the rows in your matrix, use e.g. "
-                    "mat = mat.sort_indices(). Falling back to the default "
-                    "implementation.", CuSparseEfficiencyWarning)
-      return _bcoo_dot_general_default_lowering(
-        ctx, lhs_data, lhs_indices, rhs,
-        dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
-
-    if n_batch == 1:
-      # The support for batched computation in cusparseSpMM COO was added in
-      # 11.6.1: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cusparse-11.6.1
-      cuda_version = int(xla_bridge.get_backend().platform_version.split()[-1])
-
-      # TODO(tianjianlu): enable the batch mode of cusparseSpMv.
-      cuda_supported_batch_mode = (
-          n_sparse == 2 and rhs_aval.ndim == 2 and
-          len(lhs_contract) == 1 and lhs_contract[0] in [1, 2] and
-          len(rhs_contract) == 1 and rhs_contract[0] in [0, 1] and
-          cuda_version >= 11061)
-      if not cuda_supported_batch_mode:
-        warnings.warn("bcoo_dot_general GPU lowering currently does not "
-                      "support this batch-mode computation. Falling back to "
-                      "the default implementation.", CuSparseEfficiencyWarning)
-        return _bcoo_dot_general_default_lowering(
-          ctx, lhs_data, lhs_indices, rhs,
-          dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
-
-    # BCOO allows padded sparse representations to comply with the requirement
-    # of static array size. However, paddings create out-of-bound (OOB) indices
-    # which are not supported in any cuSparse routines.
-    # Set the OOB indices and their correpsonding data to zeros as a correction.
-    (lhs_data,), (lhs_indices,) = _bcoo_correct_out_of_bound_indices_lowered(
-        ctx, lhs_data, lhs_indices, rhs, shape=lhs_spinfo.shape)
-
-    return _bcoo_dot_general_cuda_lowering(
-      coo_matvec_lowering, coo_matmat_lowering, ctx, lhs_data, lhs_indices, rhs,
-      dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
+  if lhs_batch or rhs_batch or len(lhs_contract) != len(rhs_contract) != 1:
+    return _bcoo_dot_general_default_lowering(ctx, *args, **kwargs)
+  elif (n_batch, n_sparse, n_dense) == (0, 1, 0) and rhs_ndim in (1, 2):
+    return _bcoo_dot_general_cuda_unbatched1d(
+        coo_matvec_lowering, coo_matmat_lowering, ctx, *args, **kwargs)
+  elif (n_batch, n_sparse, n_dense) == (0, 2, 0) and rhs_ndim in (1, 2):
+    return _bcoo_dot_general_cuda_unbatched2d(
+        coo_matvec_lowering, coo_matmat_lowering, ctx, *args, **kwargs)
+  elif (n_batch, n_sparse, n_dense) == (1, 2, 0) and rhs_ndim == 2:
+    return _bcoo_dot_general_cuda_batched2d(
+        coo_matvec_lowering, coo_matmat_lowering, ctx, *args, **kwargs)
+  elif n_batch > 0 and n_sparse in (1, 2) and n_dense == 0 and rhs_ndim in (1, 2):
+    warnings.warn("bcoo_dot_general GPU lowering currently does not "
+                  "support this batch-mode computation. Falling back to "
+                  "the default implementation.", CuSparseEfficiencyWarning)
+  return _bcoo_dot_general_default_lowering(ctx, *args, **kwargs)
 
 def _bcoo_dot_general_jvp_lhs(lhs_data_dot, lhs_data, lhs_indices, rhs, *, dimension_numbers, lhs_spinfo: SparseInfo):
   return _bcoo_dot_general(lhs_data_dot, lhs_indices, rhs, dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
