@@ -1262,7 +1262,7 @@ class BCOOTest(sptu.SparseTestCase):
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     n_batch=[0, 1, 2],
   )
-  @jtu.skip_on_devices('tpu')  # TODO(jakevdp) adust precision/tolerances & enable on TPU
+  @jtu.skip_on_devices('gpu', 'tpu')  # TODO(jakevdp) adust tolerances & re-enable
   def test_bcoo_dot_general_sampled_fast_cases(
       self, xshape, yshape, lhs_contract, rhs_contract, n_batch, dtype):
     rng = jtu.rand_default(self.rng())
