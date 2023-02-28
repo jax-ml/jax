@@ -682,6 +682,8 @@ isneginf: UnOp = _wraps(np.isneginf, skip_params=['out'])(
 @jit
 def isnan(x: ArrayLike, /) -> Array:
   _check_arraylike("isnan", x)
+  if not dtypes.issubdtype(dtypes.dtype(x), np.floating):
+    return False
   return lax.ne(x, x)
 
 

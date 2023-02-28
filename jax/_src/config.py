@@ -1069,8 +1069,13 @@ config.define_bool_state(
           'on CPU and GPU. These errors are async, might get lost and are not '
           'very readable. But, they crash the computation and enable you '
           'to write jittable checks without needing to checkify. Does not '
-          'work under pmap/pjit.')
-)
+          'work under pmap/pjit.'))
+
+config.define_bool_state(
+    name='jax_debug_mode',
+    default=True,
+    help='safe but slow mode')
+
 
 @contextlib.contextmanager
 def explicit_device_put_scope() -> Iterator[None]:

@@ -624,12 +624,14 @@ def _device_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat):
       all(device_array.type_is_device_array(x) for x in out_flat) and
       # Not supported: dynamic shapes
       not jax.config.jax_dynamic_shapes
-      and type(execute.args[4]) is dispatch.SimpleResultHandler)
+      and type(execute.args[4]) is dispatch.SimpleResultHandler
+      and execute.args[9] is None
+  )
 
   ### If we can use the fastpath, we return required info to the caller.
   if use_fastpath:
     (_, xla_executable, _, _, result_handlers, _, _, kept_var_idx,
-     _) = execute.args  # pytype: disable=attribute-error
+     _, _) = execute.args  # pytype: disable=attribute-error
     sticky_device = None
     avals = []
     lazy_exprs = [None] * len(result_handlers)

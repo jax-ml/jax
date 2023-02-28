@@ -1182,6 +1182,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     def jit_impl_and_count(*args, **kwargs):
       nonlocal count
+      __import__('pdb').set_trace()
       count += 1
       return jit_impl(*args, **kwargs)
 
