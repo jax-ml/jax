@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
+import dataclasses
 from functools import partial
 import contextlib
+import itertools
 import operator
 import os
 import re
@@ -32,10 +34,10 @@ from jax import custom_derivatives
 from jax import random
 from jax import numpy as jnp
 from jax import tree_util
+from jax import sharding
 from jax.experimental import maps
 from jax.experimental.jax2tf import shape_poly
 from jax.experimental.jax2tf import impl_no_xla
-from jax.interpreters import pxla
 from jax.interpreters import xla
 
 from jax._src import ad_checkpoint
@@ -49,12 +51,12 @@ from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
-from jax._src import sharding
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.global_device_array import GlobalDeviceArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
+from jax._src.interpreters import pxla
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
@@ -216,7 +218,8 @@ def convert(fun_jax: Callable,
             with_gradient=True,
             enable_xla=True,
             experimental_native_lowering="default",
-            experimental_native_lowering_strict_checks=True) -> Callable:
+            experimental_native_lowering_platforms=(),
+            experimental_native_lowering_strict_checks=False) -> Callable:
   """Lowers `fun_jax` into a function that uses only TensorFlow ops.
 
   See
@@ -276,6 +279,11 @@ def convert(fun_jax: Callable,
       function and aborts if this is not possible.
     experimental_native_lowering: DO NOT USE, for experimental purposes only.
       The value "default" defers to --jax2tf_default_experimental_native_lowering.
+    experimental_native_lowering_platforms: DO NOT USE, for experimental purposes only.
+      In conjunction with `experimental_native_lowering`, specify the platform
+      for which to lower the code. Must be a tuple with one element, one of
+      'cpu', 'gpu', 'tpu'. The default (empty tuple), specifies the JAX default
+      backend on the machine where the lowering is done.
     experimental_native_lowering_strict_checks: DO NOT USE, for experimental purposes only.
       In conjunction with `experimental_native_lowering`, enable the following
       checks: the lowered computation is executed on a platform for which it
@@ -292,6 +300,28 @@ def convert(fun_jax: Callable,
   if experimental_native_lowering and not enable_xla:
     raise ValueError(
         "experimental_native_lowering is not supported with enable_xla=False")
+
+  if experimental_native_lowering_platforms:
+    if not experimental_native_lowering:
+      raise ValueError(
+          "experimental_native_lowering_platforms is not supported without "
+          "experimental_native_lowering")
+    if (not isinstance(experimental_native_lowering_platforms, (list, tuple)) or
+        not all(p in ["tpu", "cpu", "gpu"] for p in experimental_native_lowering_platforms)):
+      raise ValueError(
+          "experimental_native_lowering_platforms must be a sequence "
+          "containing a subset of {'cpu', 'gpu', 'tpu'}. "
+          f"Got: {experimental_native_lowering_platforms}")
+    experimental_native_lowering_platforms = tuple(experimental_native_lowering_platforms)
+    if len(experimental_native_lowering_platforms) > 1:
+      raise NotImplementedError(
+          "experimental_native_lowering_platforms is not implemented for multiple platforms")
+
+  params = LoweringParameters(
+      experimental_native_lowering=experimental_native_lowering,
+      experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks,
+      experimental_native_lowering_platforms=experimental_native_lowering_platforms,
+  )
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
   name_stack = util.wrap_name(fun_name, "jax2tf")
@@ -345,7 +375,8 @@ def convert(fun_jax: Callable,
       dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
           args_avals_flat)
       dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
-                                         args_avals_flat, name_stack)
+                                         args_avals_flat, name_stack,
+                                         lowering_params=non_native_lowering_params)
       shape_env = zip(dim_vars, dim_values)
 
       assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
@@ -370,8 +401,7 @@ def convert(fun_jax: Callable,
               args_flat_tf, args_avals_flat,
               name_stack,
               fresh_constant_cache=True,
-              experimental_native_lowering=experimental_native_lowering,
-              experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
+              lowering_params=params)
           return (tuple(outs_tf),
                   make_custom_gradient_fn_tf(
                       fun_flat_jax=fun_flat_jax,
@@ -387,8 +417,7 @@ def convert(fun_jax: Callable,
             args_flat_tf, args_avals_flat,
             name_stack,
             fresh_constant_cache=True,
-            experimental_native_lowering=experimental_native_lowering,
-            experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
+            lowering_params=params)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
         # We use PreventGradient, which is propagated through a SavedModel.
@@ -408,6 +437,14 @@ def convert(fun_jax: Callable,
 
   return converted_fun_tf
 
+
+@dataclasses.dataclass
+class LoweringParameters:
+  experimental_native_lowering: bool
+  experimental_native_lowering_strict_checks: bool = False
+  experimental_native_lowering_platforms: Tuple[str, ...] = ()
+
+non_native_lowering_params = LoweringParameters(experimental_native_lowering=False)
 
 def dtype_of_val(val: TfVal) -> DType:
   """Computes the TensorFlow dtype using JAX's typing rules.
@@ -576,15 +613,14 @@ def _interpret_fun_jax(
     args_tf: Sequence[TfVal],
     args_avals: Sequence[core.ShapedArray],
     extra_name_stack: Optional[str],
-    fresh_constant_cache: bool = False,
-    experimental_native_lowering: bool = False,
-    experimental_native_lowering_strict_checks: bool = True,
+    fresh_constant_cache: bool = False, *,
+    lowering_params: LoweringParameters,
 ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
-  if experimental_native_lowering:
+  if lowering_params.experimental_native_lowering:
     del extra_name_stack
     return _lower_native_and_run(
         fun_jax, args_avals, args_tf,
-        experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks)
+        lowering_params=lowering_params)
   else:
     with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
       subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
@@ -601,8 +637,7 @@ def _interpret_fun_jax(
 def _lower_native_and_run(fun_jax: Callable,
                           args_avals: Sequence[core.ShapedArray],
                           args_tf: Sequence[TfVal],
-                          *,
-                          experimental_native_lowering_strict_checks: bool,
+                          lowering_params: LoweringParameters
                           ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   """Lowers the function using native lowering and then invokes it.
 
@@ -641,16 +676,26 @@ def _lower_native_and_run(fun_jax: Callable,
     jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
     for aval in args_avals
   ]
-  # TODO: specify the backend for experimental_native_lowering
-  if not hasattr(fun_jax, "lower") or abstracted_axes:
-    # We support convert(pjit(f_jax, ...)) and convert(jit(f_jax)) but also
-    # convert(f_jax), in which case a "jit" is implied. We also add a jit when
-    # we need to pass the abstracted axes.
-    fun_jax_lower = jax.jit(fun_jax,
-                            abstracted_axes=abstracted_axes).lower
+
+  if lowering_params.experimental_native_lowering_platforms:
+    lowered = cross_platform_lowering(
+        fun_jax, arg_specs_jax,  # type: ignore[arg-type]
+        platforms=lowering_params.experimental_native_lowering_platforms
+    )._lowering  # type: ignore
   else:
-    fun_jax_lower = fun_jax.lower
-  lowered = fun_jax_lower(*arg_specs_jax)._lowering
+    if not hasattr(fun_jax, "lower") or abstracted_axes:
+      # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
+      # convert(f_jax), in which case a "jit" is implied. We also add a jit when
+      # we need to pass the abstracted axes.
+      # TODO(necula): Will clean this when we clean the native lowering jax2tf API
+      fun_jax_lower = jax.jit(fun_jax,
+                              abstracted_axes=abstracted_axes).lower
+    else:
+      # If we have a pjit or pmap already we do not wrap with another
+      fun_jax_lower = fun_jax.lower
+
+    lowered = fun_jax_lower(*arg_specs_jax)._lowering  # type: ignore
+
   if config.jax2tf_use_stablehlo:
     mlir_module = lowered.stablehlo()
     xla_call_module_version = 3
@@ -680,7 +725,11 @@ def _lower_native_and_run(fun_jax: Callable,
     return jax_type
   out_types = tuple(_out_type(out_aval.dtype) for out_aval in out_avals)
 
-  module_kept_var_idx = lowered.compile_args["kept_var_idx"]
+  if "kept_var_idx" in lowered.compile_args:
+    module_kept_var_idx = lowered.compile_args["kept_var_idx"]
+  else:
+    # For pmap
+    module_kept_var_idx = tuple(range(len(args_avals)))
   # We must compute the dim_args_spec: for each dimension variable, encode how
   # to compute its value from the shape of the explicit arguments. E.g., "2.1"
   # denotes args_tf[2].shape[1]. The order of the dimension variables must match
@@ -757,7 +806,7 @@ def _lower_native_and_run(fun_jax: Callable,
       dim_args_spec=dim_args_spec)
   log_msg = f"version={xla_call_module_version} dim_args_spec=" + ", ".join(dim_args_spec)
   if xla_call_module_version == 3:
-    if experimental_native_lowering_strict_checks:
+    if lowering_params.experimental_native_lowering_strict_checks:
       call_module_attrs["platforms"] = (default_jax_backend().upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking
@@ -784,6 +833,137 @@ def _lower_native_and_run(fun_jax: Callable,
       _convert_res(res_val, out_aval.dtype)
       for res_val, out_aval in zip(res, out_avals))
   return res, out_avals
+
+def cross_platform_lowering(fun_jax, arg_specs: Sequence[jax.Array],
+                            *,
+                            platforms: Sequence[str] = ()):
+
+  context_mesh = pxla.thread_resources.env.physical_mesh
+  if not context_mesh.empty:
+    # What devices we need
+    if context_mesh.is_multi_process:
+      raise NotImplementedError("cross_platform lowering is not supported for multi-host lowering")
+    devices = np.array(context_mesh.devices).reshape((-1,))
+    devices_shape = np.shape(context_mesh.devices)
+    axis_names = context_mesh.axis_names
+  else:
+    devices = [config.jax_default_device or jax.local_devices()[0]]  # type: ignore
+    devices_shape = (1,)
+    axis_names = ("_no_axis",)
+
+  lowering_client = LoweringOnlyClient(platforms[0],
+                                       1 + max(d.id for d in devices))
+  lowering_devices = [lowering_client.devices[d.id] for d in devices]
+  lowering_mesh = sharding.Mesh(
+      np.array(lowering_devices).reshape(devices_shape),  # type: ignore
+      axis_names)
+
+  try:
+    orig_jax_default_device = config.jax_default_device
+    config.update("jax_default_device", lowering_devices[0])  #  For nullary functions
+    prev_get_and_check_device_assignment = pxla._get_and_check_device_assignment
+    pxla._get_and_check_device_assignment = partial(_get_and_check_device_assignment,
+                                                    lowering_client)
+    with lowering_mesh:
+      if not hasattr(fun_jax, "lower"):
+        # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
+        # convert(f_jax), in which case a "jit" is implied. We also add a jit when
+        # we need to pass the abstracted axes or shardings.
+        # TODO(necula): Will clean this when we clean the native lowering jax2tf API
+        fun_jax_lower = jax.jit(fun_jax).lower
+      else:
+        fun_jax_lower = fun_jax.lower
+      lowered = fun_jax_lower(*arg_specs)
+      return lowered
+  finally:
+    config.update("jax_default_device", orig_jax_default_device)
+    pxla._get_and_check_device_assignment = prev_get_and_check_device_assignment
+
+class LoweringOnlyClient:
+  """A Client that overrides the platform, for cross-platform lowering only."""
+  def __init__(self, platform: str, nr_devices: int):
+    self.platform = platform
+    self._process_index = 0
+    self.devices = [LoweringOnlyDevice(self, i) for i in range(nr_devices)]
+    self.lowering_only_client = True
+
+  def __str__(self):
+    return f"LoweringOnlyClient({self.platform})"
+
+  def process_index(self):
+    return self._process_index
+
+  def device_count(self):
+    return len(self.devices)
+
+class LoweringOnlyDevice:
+  """A Device that overrides the platform, for cross-platform lowering only."""
+  def __init__(self, client: LoweringOnlyClient, id: int):
+    self.client = client
+    self.process_index = client.process_index()
+    self.id = id
+
+  def __str__(self):
+    return f"LoweringOnlyDevice({self.platform}, id={self.id})"
+
+
+# This is a copy of pxla._get_and_check_device_assignment, because we need
+# to change its behavior for cross-platform lowering.
+# The changes are marked below with "CHANGED:".
+# This function reconciles the device assignment from shardings and from
+# the mesh context. Some JAX primitives (xmap, shard_map) carry their own
+# mesh of devices, instead of relying on the mesh context manager, which would
+# conflict with the lowering-only devices. We must now only avoid raising
+# errors in the case, but we must also pick the lowering devices.
+def _get_and_check_device_assignment(
+    lowering_client: LoweringOnlyClient,  #  CHANGED: we pass the overriding client
+    shardings: Iterable[pxla.ShardingInfo],
+    devices: Optional[Sequence[xla_client.Device]],
+) -> Tuple[xla_client.Client, Sequence[xla_client.Device]]:
+  from jax._src.api import local_devices
+
+  first_sharding_info = None
+  if devices is None:
+    devices = []
+  else:
+    devices = list(devices)
+
+  for i, s_type, source_info in shardings:
+    if pxla.is_auto(i) or pxla._is_unspecified(i):
+      continue
+    # Assign `first_sharding_info` after `AUTO` and `UNSPECIFIED` have been
+    # skipped.
+    if first_sharding_info is None:
+      first_sharding_info = (list(i._device_assignment), s_type, source_info)  # type: ignore
+    arr_device_assignment = list(i._device_assignment)  # type: ignore
+    if not devices:
+      if first_sharding_info[0] != arr_device_assignment:
+        # CHANGED: do not error if the only difference is in lowering_only_client
+        if not all((d1.id == d2.id and
+                    (hasattr(d1.client, "lowering_only_client") or hasattr(d2.client, "lowering_only_client")))
+                   for d1, d2 in zip(first_sharding_info[0], arr_device_assignment)):
+          raise pxla.DeviceAssignmentMismatchError([
+              pxla.DeviceAssignmentMismatch(*first_sharding_info),
+              pxla.DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+    else:
+      if devices != arr_device_assignment:
+        # CHANGED: do not error if the only difference is in lowering_only_client
+        if not all((d1.id == d2.id and
+                    (hasattr(d1.client, "lowering_only_client") or hasattr(d2.client, "lowering_only_client")))
+                   for d1, d2 in zip(devices, arr_device_assignment)):
+          raise pxla.DeviceAssignmentMismatchError([
+              pxla.DeviceAssignmentMismatch(devices, pxla.MismatchType.CONTEXT_DEVICES, None),
+              pxla.DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
+  if first_sharding_info is None and devices:
+    final_device_assignment = devices
+  elif first_sharding_info is None:
+    final_device_assignment = [config.jax_default_device or local_devices()[0]]
+  else:
+    final_device_assignment = first_sharding_info[0]  # type: ignore
+
+  # CHANGED: override the device assignment
+  final_device_assignment = tuple(lowering_client.devices[d.id] for d in final_device_assignment)  # type: ignore
+  return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
                                           in_vals: Sequence[TfVal],
@@ -844,7 +1024,7 @@ def _convert_jax_impl(impl_jax: Callable, *,
 
     results_tf, _ = _interpret_fun_jax(
         impl_multiple_results_jax, args_tf, _in_avals,
-        extra_name_stack)
+        extra_name_stack, lowering_params=non_native_lowering_params)
     return results_tf if multiple_results else results_tf[0]
 
   return wrapped_tf
@@ -877,7 +1057,8 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
   """
   outs_tf, _ = _interpret_fun_jax(core.jaxpr_as_fun(jaxpr),
                                   args_tf, jaxpr.in_avals, extra_name_stack,
-                                  fresh_constant_cache=fresh_constant_cache)
+                                  fresh_constant_cache=fresh_constant_cache,
+                                  lowering_params=non_native_lowering_params)
   return outs_tf
 
 
@@ -1021,7 +1202,8 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
   eval_shape_jax = shape_poly.get_shape_evaluator(dim_vars, shape)
   dim_aval = shape_poly.dim_as_value_abstract(1)
   shape_values_tf, _ = _interpret_fun_jax(eval_shape_jax,
-                                          dim_values, [dim_aval] * len(dim_values), "")  # type: ignore
+                                          dim_values, [dim_aval] * len(dim_values), "",  # type: ignore
+                                          lowering_params=non_native_lowering_params)  # type: ignore
   # Keep only the non-constant dimensions
   return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf
                for d, d_tf in zip(shape, shape_values_tf))
