@@ -28,6 +28,7 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
@@ -658,6 +659,22 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, x.shape)
     self.assertArraysEqual(out, x)
 
+  @jtu.sample_product(
+    dtype=[dt for dt in jtu.dtypes.all if dt != jax.dtypes.bfloat16],
+    shape=[(), (10), (2, 3)],
+  )
+  @unittest.skipIf(xla_extension_version < 132, "Test requires jaxlib >= 0.4.5")
+  def test_buffer_protocol(self, dtype, shape):
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("Buffer protocol only works on CPU")
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    y = jax.device_put(x)
+    print(y.sharding)
+    x_bytes = memoryview(x).tobytes()
+    y_bytes = memoryview(y).tobytes()
+    self.assertEqual(x_bytes, y_bytes)
+
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
@@ -1006,6 +1023,7 @@ class RngShardingTest(jtu.JaxTestCase):
     verify_serialization(
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
