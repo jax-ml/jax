@@ -497,9 +497,12 @@ def flatten_fun_jax(fun_jax: Callable, args_tf: Sequence[TfVal],
     # preserve the lowering function. This will be used in the _lower_native_and_run.
     # We rely on the fact that the lowering is the same for the function
     # taking pytrees, and the one taking flat args.
-    def fun_flat_jax_lower(*args_flat_jax):
+    def fun_flat_jax_lower(*args_flat_jax, _experimental_lowering_platform):
       tree_args, tree_kwargs = tree_util.tree_unflatten(in_tree, args_flat_jax)
-      lowered = fun_jax.lower(*tree_args, **tree_kwargs)
+      lowered = fun_jax.lower(
+          *tree_args,
+          _experimental_lowering_platform=_experimental_lowering_platform,
+          **tree_kwargs)
       out_tree = lowered.out_tree
       nonlocal out_tree_ref
       assert out_tree_ref is None or out_tree_ref == out_tree
@@ -678,23 +681,24 @@ def _lower_native_and_run(fun_jax: Callable,
   ]
 
   if lowering_params.experimental_native_lowering_platforms:
-    lowered = cross_platform_lowering(
-        fun_jax, arg_specs_jax,  # type: ignore[arg-type]
-        platforms=lowering_params.experimental_native_lowering_platforms
-    )._lowering  # type: ignore
+    lowering_platform = lowering_params.experimental_native_lowering_platforms[0]
   else:
-    if not hasattr(fun_jax, "lower") or abstracted_axes:
-      # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
-      # convert(f_jax), in which case a "jit" is implied. We also add a jit when
-      # we need to pass the abstracted axes.
-      # TODO(necula): Will clean this when we clean the native lowering jax2tf API
-      fun_jax_lower = jax.jit(fun_jax,
-                              abstracted_axes=abstracted_axes).lower
-    else:
-      # If we have a pjit or pmap already we do not wrap with another
-      fun_jax_lower = fun_jax.lower
+    lowering_platform = None
 
-    lowered = fun_jax_lower(*arg_specs_jax)._lowering  # type: ignore
+  if not hasattr(fun_jax, "lower") or abstracted_axes:
+    # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
+    # convert(f_jax), in which case a "jit" is implied. We also add a jit when
+    # we need to pass the abstracted axes.
+    # TODO(necula): Will clean this when we clean the native lowering jax2tf API
+    fun_jax_lower = jax.jit(fun_jax,
+                            abstracted_axes=abstracted_axes).lower
+  else:
+    # If we have a pjit or pmap already we do not wrap with another
+    fun_jax_lower = fun_jax.lower
+
+  lowered = fun_jax_lower(
+      *arg_specs_jax,
+      _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
 
   if config.jax2tf_use_stablehlo:
     mlir_module = lowered.stablehlo()
@@ -708,6 +712,8 @@ def _lower_native_and_run(fun_jax: Callable,
   if "global_out_avals" in lowered.compile_args:
     # This is currently the case for pjit
     out_avals = lowered.compile_args["global_out_avals"]
+  elif "shards" in lowered.compile_args:  # for PmapComputation
+    out_avals = lowered.compile_args["shards"].out_sharded_avals
   else:
     out_avals = lowered.compile_args["out_avals"]
   if lowered.compile_args["host_callbacks"]:
@@ -834,136 +840,6 @@ def _lower_native_and_run(fun_jax: Callable,
       for res_val, out_aval in zip(res, out_avals))
   return res, out_avals
 
-def cross_platform_lowering(fun_jax, arg_specs: Sequence[jax.Array],
-                            *,
-                            platforms: Sequence[str] = ()):
-
-  context_mesh = pxla.thread_resources.env.physical_mesh
-  if not context_mesh.empty:
-    # What devices we need
-    if context_mesh.is_multi_process:
-      raise NotImplementedError("cross_platform lowering is not supported for multi-host lowering")
-    devices = np.array(context_mesh.devices).reshape((-1,))
-    devices_shape = np.shape(context_mesh.devices)
-    axis_names = context_mesh.axis_names
-  else:
-    devices = [config.jax_default_device or jax.local_devices()[0]]  # type: ignore
-    devices_shape = (1,)
-    axis_names = ("_no_axis",)
-
-  lowering_client = LoweringOnlyClient(platforms[0],
-                                       1 + max(d.id for d in devices))
-  lowering_devices = [lowering_client.devices[d.id] for d in devices]
-  lowering_mesh = sharding.Mesh(
-      np.array(lowering_devices).reshape(devices_shape),  # type: ignore
-      axis_names)
-
-  try:
-    orig_jax_default_device = config.jax_default_device
-    config.update("jax_default_device", lowering_devices[0])  #  For nullary functions
-    prev_get_and_check_device_assignment = pxla._get_and_check_device_assignment
-    pxla._get_and_check_device_assignment = partial(_get_and_check_device_assignment,
-                                                    lowering_client)
-    with lowering_mesh:
-      if not hasattr(fun_jax, "lower"):
-        # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
-        # convert(f_jax), in which case a "jit" is implied. We also add a jit when
-        # we need to pass the abstracted axes or shardings.
-        # TODO(necula): Will clean this when we clean the native lowering jax2tf API
-        fun_jax_lower = jax.jit(fun_jax).lower
-      else:
-        fun_jax_lower = fun_jax.lower
-      lowered = fun_jax_lower(*arg_specs)
-      return lowered
-  finally:
-    config.update("jax_default_device", orig_jax_default_device)
-    pxla._get_and_check_device_assignment = prev_get_and_check_device_assignment
-
-class LoweringOnlyClient:
-  """A Client that overrides the platform, for cross-platform lowering only."""
-  def __init__(self, platform: str, nr_devices: int):
-    self.platform = platform
-    self._process_index = 0
-    self.devices = [LoweringOnlyDevice(self, i) for i in range(nr_devices)]
-    self.lowering_only_client = True
-
-  def __str__(self):
-    return f"LoweringOnlyClient({self.platform})"
-
-  def process_index(self):
-    return self._process_index
-
-  def device_count(self):
-    return len(self.devices)
-
-class LoweringOnlyDevice:
-  """A Device that overrides the platform, for cross-platform lowering only."""
-  def __init__(self, client: LoweringOnlyClient, id: int):
-    self.client = client
-    self.process_index = client.process_index()
-    self.id = id
-
-  def __str__(self):
-    return f"LoweringOnlyDevice({self.platform}, id={self.id})"
-
-
-# This is a copy of pxla._get_and_check_device_assignment, because we need
-# to change its behavior for cross-platform lowering.
-# The changes are marked below with "CHANGED:".
-# This function reconciles the device assignment from shardings and from
-# the mesh context. Some JAX primitives (xmap, shard_map) carry their own
-# mesh of devices, instead of relying on the mesh context manager, which would
-# conflict with the lowering-only devices. We must now only avoid raising
-# errors in the case, but we must also pick the lowering devices.
-def _get_and_check_device_assignment(
-    lowering_client: LoweringOnlyClient,  #  CHANGED: we pass the overriding client
-    shardings: Iterable[pxla.ShardingInfo],
-    devices: Optional[Sequence[xla_client.Device]],
-) -> Tuple[xla_client.Client, Sequence[xla_client.Device]]:
-  from jax._src.api import local_devices
-
-  first_sharding_info = None
-  if devices is None:
-    devices = []
-  else:
-    devices = list(devices)
-
-  for i, s_type, source_info in shardings:
-    if pxla.is_auto(i) or pxla._is_unspecified(i):
-      continue
-    # Assign `first_sharding_info` after `AUTO` and `UNSPECIFIED` have been
-    # skipped.
-    if first_sharding_info is None:
-      first_sharding_info = (list(i._device_assignment), s_type, source_info)  # type: ignore
-    arr_device_assignment = list(i._device_assignment)  # type: ignore
-    if not devices:
-      if first_sharding_info[0] != arr_device_assignment:
-        # CHANGED: do not error if the only difference is in lowering_only_client
-        if not all((d1.id == d2.id and
-                    (hasattr(d1.client, "lowering_only_client") or hasattr(d2.client, "lowering_only_client")))
-                   for d1, d2 in zip(first_sharding_info[0], arr_device_assignment)):
-          raise pxla.DeviceAssignmentMismatchError([
-              pxla.DeviceAssignmentMismatch(*first_sharding_info),
-              pxla.DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
-    else:
-      if devices != arr_device_assignment:
-        # CHANGED: do not error if the only difference is in lowering_only_client
-        if not all((d1.id == d2.id and
-                    (hasattr(d1.client, "lowering_only_client") or hasattr(d2.client, "lowering_only_client")))
-                   for d1, d2 in zip(devices, arr_device_assignment)):
-          raise pxla.DeviceAssignmentMismatchError([
-              pxla.DeviceAssignmentMismatch(devices, pxla.MismatchType.CONTEXT_DEVICES, None),
-              pxla.DeviceAssignmentMismatch(arr_device_assignment, s_type, source_info)])
-  if first_sharding_info is None and devices:
-    final_device_assignment = devices
-  elif first_sharding_info is None:
-    final_device_assignment = [config.jax_default_device or local_devices()[0]]
-  else:
-    final_device_assignment = first_sharding_info[0]  # type: ignore
-
-  # CHANGED: override the device assignment
-  final_device_assignment = tuple(lowering_client.devices[d.id] for d in final_device_assignment)  # type: ignore
-  return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,
                                           in_vals: Sequence[TfVal],

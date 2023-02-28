@@ -603,7 +603,7 @@ def xmap(fun: Callable,
     return verify_outputs(out_flat, out_tree, params)
 
   @decorate_serial
-  def lower(*args):
+  def lower(*args, _experimental_lowering_platform: Optional[str] = None):
     fun_flat, args_flat, params, in_tree, out_tree = infer_params(*args)
     avals_flat = [shaped_abstractify(arg) for arg in args_flat]
     computation = make_xmap_callable(
@@ -611,12 +611,13 @@ def xmap(fun: Callable,
         params['donated_invars'], params['global_axis_sizes'], params['axis_resources'],
         params['resource_env'], params['backend'], params['spmd_in_axes'],
         params['spmd_out_axes_thunk'], params['in_positional_semantics'],
-        params['out_positional_semantics'], *avals_flat)
+        params['out_positional_semantics'],
+        _experimental_lowering_platform, *avals_flat)
 
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
     return stages.Lowered.from_flat_info(
-        computation, in_tree, in_avals, donate_argnums, out_tree(),
+        computation, in_tree, in_avals, donate_argnums, out_tree(),  # type: ignore
         no_kwargs=True)
 
   fun_mapped.lower = lower
@@ -631,7 +632,7 @@ def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_
       fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
       axis_resources, resource_env, backend,
       spmd_in_axes, spmd_out_axes_thunk, in_positional_semantics, out_positional_semantics,
-      *in_avals).compile().unsafe_call
+      None, *in_avals).compile().unsafe_call
   distributed_debug_log(("Running xmapped function", name),
                         ("python function", fun.f),
                         ("mesh", resource_env.physical_mesh),
@@ -644,7 +645,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
                        in_axes, out_axes_thunk, donated_invars,
                        global_axis_sizes, axis_resources, resource_env, backend,
                        spmd_in_axes, spmd_out_axes_thunk, in_positional_semantics,
-                       out_positional_semantics, *in_avals):
+                       out_positional_semantics,
+                       lowering_platform: Optional[str],
+                       *in_avals):
   plan = EvaluationPlan.from_axis_resources(
       axis_resources, resource_env, global_axis_sizes, in_positional_semantics)
 
@@ -702,16 +705,17 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tiling_method=tiling_method, in_is_global=in_is_global)
+        tiling_method=tiling_method, in_is_global=in_is_global,
+        lowering_platform=lowering_platform)
   else:
     if config.jax_array:
       return dispatch.sharded_lowering(
           f, None, backend, name, donated_invars, False, True,
-          *[(a, None) for a in in_avals])
+          *[(a, None) for a in in_avals], lowering_platform=lowering_platform)
     else:
       return dispatch.lower_xla_callable(
           f, None, backend, name, donated_invars, False, True,
-          *[(a, None) for a in in_avals])
+          *[(a, None) for a in in_avals], lowering_platform=lowering_platform)
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""
