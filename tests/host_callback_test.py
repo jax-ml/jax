@@ -37,8 +37,8 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax import tree_util
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_bridge
 
 xops = xla_client.ops
 

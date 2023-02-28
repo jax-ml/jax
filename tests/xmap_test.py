@@ -43,7 +43,7 @@ from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
 from jax._src import config as jax_config
 from jax._src.nn import initializers as nn_initializers
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.util import unzip2, prod, safe_zip
 from jax._src.lax import parallel as lax_parallel

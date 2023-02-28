@@ -65,7 +65,7 @@ from jax._src import custom_derivatives
 from jax import custom_derivatives as custom_derivatives_public
 from jax._src import device_array
 from jax._src import prng
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
 from jax import tree_util

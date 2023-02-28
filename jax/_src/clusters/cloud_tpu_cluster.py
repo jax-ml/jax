@@ -14,8 +14,8 @@
 
 import os
 from typing import Optional
+from jax._src import xla_bridge
 from jax._src.clusters import ClusterEnv
-from jax._src.lib import xla_bridge
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 

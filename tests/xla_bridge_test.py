@@ -18,7 +18,7 @@ import warnings
 from absl import logging
 from absl.testing import absltest
 from jax._src import test_util as jtu
-from jax._src.lib import xla_bridge as xb
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax.interpreters import xla
 

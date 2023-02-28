@@ -50,6 +50,7 @@ from jax._src import source_info_util
 from jax._src import stages
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config, flags
 from jax._src.interpreters import ad
@@ -57,7 +58,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib import pmap_lib
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
                                GSPMDSharding, NamedSharding, PartitionSpec,

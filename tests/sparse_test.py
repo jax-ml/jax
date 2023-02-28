@@ -35,8 +35,8 @@ from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse import util as sparse_util
 from jax.experimental.sparse import test_util as sptu
 from jax import lax
+from jax._src import xla_bridge
 from jax._src.lib import gpu_sparse
-from jax._src.lib import xla_bridge
 from jax._src.util import unzip2
 from jax import jit
 from jax import tree_util

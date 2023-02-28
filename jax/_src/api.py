@@ -49,6 +49,7 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
+from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
@@ -59,7 +60,6 @@ from jax._src.api_util import (
     FLAGS)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
-from jax._src.lib import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import PmapSharding
@@ -92,10 +92,10 @@ from jax._src.core import ShapedArray, raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import pxla
-from jax._src.lib.xla_bridge import (device_count, local_device_count, devices,
-                                     local_devices, process_index,
-                                     process_count, host_id, host_ids,
-                                     host_count, default_backend)
+from jax._src.xla_bridge import (device_count, local_device_count, devices,
+                                 local_devices, process_index,
+                                 process_count, host_id, host_ids,
+                                 host_count, default_backend)
 
 
 traceback_util.register_exclusion(__file__)

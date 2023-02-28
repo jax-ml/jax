@@ -47,7 +47,7 @@ from jax._src.dispatch import (
   device_put as device_put,
 )
 
-from jax._src.lib import xla_bridge as xb
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc  # type: ignore
 
 _deprecated_Device = xc.Device

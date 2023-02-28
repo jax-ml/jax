@@ -118,7 +118,7 @@ def trace(name):
     def pp(v):
         """Print certain values more succinctly"""
         vtype = str(type(v))
-        if "jax._src.lib.xla_bridge._JaxComputationBuilder" in vtype:
+        if "jax._src.xla_bridge._JaxComputationBuilder" in vtype:
             return "<JaxComputationBuilder>"
         elif "jaxlib.xla_extension.XlaOp" in vtype:
             return "<XlaOp at 0x{:x}>".format(id(v))

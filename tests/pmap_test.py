@@ -43,7 +43,7 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
 from jax._src import device_array
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax._src.util import prod, safe_map, safe_zip
 from jax.interpreters import pxla
 from jax.interpreters import xla

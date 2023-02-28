@@ -1551,7 +1551,7 @@ class IDHashable:
 Next, we'll define the evaluation rule for `xla_call`:
 
 ```{code-cell}
-from jax._src.lib import xla_bridge as xb
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 xe = xc._xla
 xops = xc._xla.ops

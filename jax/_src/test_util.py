@@ -47,10 +47,10 @@ from jax._src.config import (flags, bool_env, config,
                              persistent_cache_min_compile_time_secs)
 from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.util import prod, unzip2
-from jax._src.lib import xla_bridge
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
     check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, device_under_test, tolerance)
+from jax._src import xla_bridge
 
 
 # This submodule includes private test utilities that are not exported to

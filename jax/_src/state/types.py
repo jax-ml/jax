@@ -19,7 +19,8 @@ from typing import Any, Generic, List, Sequence, Set, Tuple, TypeVar, Union
 from jax._src import core
 from jax._src import effects
 from jax._src import pretty_printer as pp
-from jax._src.lib import xla_bridge, xla_client
+from jax._src import xla_bridge
+from jax._src.lib import xla_client
 from jax._src.util import safe_map, safe_zip, prod
 
 xc = xla_client

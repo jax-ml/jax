@@ -25,8 +25,8 @@ import jax.numpy as jnp
 from jax._src import core
 from jax._src import dispatch
 from jax._src import test_util as jtu
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_bridge as xb
 from jax._src.util import prod, safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit

@@ -34,7 +34,7 @@ from jax._src import ad_checkpoint
 from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 import numpy as np
 
 config.parse_flags_with_absl()

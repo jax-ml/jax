@@ -24,7 +24,7 @@ from jax.config import config
 from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 import jax.numpy as jnp
 import numpy as np
 

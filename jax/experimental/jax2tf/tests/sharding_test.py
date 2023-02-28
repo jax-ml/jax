@@ -34,7 +34,7 @@ from jax.experimental.shard_map import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 import jax.numpy as jnp
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 
 import numpy as np
 

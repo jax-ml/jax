@@ -31,7 +31,7 @@ import jax
 from jax import jit, lax, pmap
 from jax._src.util import prod
 import jax._src.test_util as jtu
-from jax._src.lib import xla_bridge
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 import numpy as np
 
