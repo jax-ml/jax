@@ -2,11 +2,25 @@
 FROM rocm/dev-ubuntu-20.04:5.4-complete as rt_build
 MAINTAINER Rahul Batra<rahbatra@amd.com>
 ################################################################################
-ARG ROCM_PATH=/opt/rocm-5.4.0
+ARG ROCM_DEB_REPO=http://repo.radeon.com/rocm/apt/5.5/
+ARG ROCM_BUILD_NAME=ubuntu
+ARG ROCM_BUILD_NUM=main
+ARG ROCM_PATH=/opt/rocm-5.5.0
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG PYTHON_VERSION=3.9.0
 ENV HOME /root/
 ENV ROCM_PATH=$ROCM_PATH
+
+RUN apt-get --allow-unauthenticated update && apt install -y wget software-properties-common
+RUN apt-get clean all
+RUN wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | apt-key add -;
+RUN bin/bash -c 'if [[ $ROCM_DEB_REPO == http://repo.radeon.com/rocm/*  ]] ; then \
+      echo "deb [arch=amd64] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/rocm.list; \
+    else \
+      echo "deb [arch=amd64 trusted=yes] $ROCM_DEB_REPO $ROCM_BUILD_NAME $ROCM_BUILD_NUM" > /etc/apt/sources.list.d/rocm.list ; \
+    fi'
+
 
 RUN apt-get update --allow-insecure-repositories && DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential \
@@ -21,10 +35,34 @@ RUN apt-get update --allow-insecure-repositories && DEBIAN_FRONTEND=noninteracti
   virtualenv \
   python3-pip \
   pciutils \
+  python-is-python3 \
+  libffi-dev \
+  libssl-dev \
+  build-essential \
+  zlib1g-dev \
+  libbz2-dev \
+  libreadline-dev \
+  libsqlite3-dev curl \
+  libncursesw5-dev \
+  xz-utils \
+  tk-dev \
+  libxml2-dev \
+  libxmlsec1-dev \
+  libffi-dev \
+  liblzma-dev \
   wget && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 
+# Add to get ppa
+RUN apt-get update
+RUN apt-get install -y software-properties-common
+# Install rocm pkgs
+RUN apt-get update --allow-insecure-repositories && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
+    rocm-dev rocm-libs rccl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set up paths
 ENV HCC_HOME=$ROCM_PATH/hcc
@@ -55,26 +93,14 @@ ENV PATH="/root/bin:/root/.local/bin:$PATH"
 
 
 # Install python3.9
-RUN add-apt-repository ppa:deadsnakes/ppa && \
-  apt update && \
-  apt install -y python3.9-dev \
-    python3-pip \
-    python3.9-distutils \
-    python-is-python3
+# Install pyenv with different python versions
+RUN git clone https://github.com/pyenv/pyenv.git /pyenv
 
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+ENV PYENV_ROOT /pyenv
+ENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
 
-RUN pip3 install --upgrade --force-reinstall setuptools pip
+RUN pyenv install $PYTHON_VERSION
 
-RUN pip3 install absl-py numpy==1.20.0 scipy wheel six setuptools pytest pytest-rerunfailures matplotlib
+RUN eval "$(pyenv init -)" && pyenv local ${PYTHON_VERSION} && pip3 install --upgrade --force-reinstall setuptools pip==22.0 && pip install numpy==1.21.0 setuptools wheel six auditwheel scipy pytest pytest-rerunfailures matplotlib absl-py
+ 
 
-# Get jax and build it with ROCm
-RUN git clone https://github.com/google/jax.git 
-
-################################################################################
-FROM rt_build as ci_build
-################################################################################
-WORKDIR /jax
-RUN ./build/rocm/build_rocm.sh 
-RUN ./build/rocm/run_single_gpu.py 
-RUN ./build/rocm/run_multi_gpu.sh
