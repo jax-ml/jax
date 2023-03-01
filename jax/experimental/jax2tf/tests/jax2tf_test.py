@@ -1475,13 +1475,13 @@ def get_serialized_computation(
     *args,
     abstracted_axes: Optional[Tuple[Dict[int, str]]] = None,
     use_pjit: bool = False,
-    in_axis_resources = None,
-    out_axis_resources = None) -> str:
+    in_shardings = None,
+    out_shardings = None) -> str:
   if use_pjit:
     assert not abstracted_axes
     lowered = pjit.pjit(
-        f_jax, in_shardings=in_axis_resources, out_shardings=out_axis_resources
-    ).lower(*args)
+        f_jax, in_shardings=in_shardings, out_shardings=out_shardings
+  ).lower(*args)
   else:
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
