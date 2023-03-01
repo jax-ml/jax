@@ -13,12 +13,12 @@
 # limitations under the License.
 """Tests for serialization and deserialization of GDA."""
 
+import math
 import pathlib
 
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src import util
 from jax._src import config as jax_config
 from jax.config import config
 from jax._src import array
@@ -38,7 +38,7 @@ class CheckpointTest(jtu.JaxTestCase):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
     pspec = P('x', 'y')
-    num = util.prod(inp_shape)
+    num = math.prod(inp_shape)
 
     # First Array
     global_input_data1 = np.arange(num).reshape(inp_shape)
@@ -100,7 +100,7 @@ class CheckpointTest(jtu.JaxTestCase):
   def test_checkpointing_with_bigger_shape_jax_array(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
-    num = util.prod(global_input_shape)
+    num = math.prod(global_input_shape)
 
     global_input_data1 = np.arange(num, dtype=np.int32).reshape(global_input_shape)
     def cb1(index):
