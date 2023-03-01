@@ -1393,10 +1393,6 @@ def _pjit_lower_cached(
   if resource_env is not None:
     pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
 
-  f = core.jaxpr_as_fun(jaxpr)
-  f.__name__ = name
-  fun = lu.wrap_init(f)
-
   if resource_env is not None:
     mesh = resource_env.physical_mesh
     api_name = 'pjit'
@@ -1427,18 +1423,14 @@ def _pjit_lower_cached(
 
   # For `pjit(xmap)` cases, it needs to take the `lower_mesh_computation` path
   # because `xmap` only supports SPMDAxisContext right now.
-  if (any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap')):
+  if any_auto or dispatch.jaxpr_has_primitive(jaxpr.jaxpr, 'xmap'):
     return pxla.lower_mesh_computation(
-      fun, api_name, name, mesh,
+      jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
   else:
-    # Pass `in_is_global` here because this path is taken by both host local
-    # avals and global avals.
-    # TODO(yashkatariya): Don't set committed to True always. Infer that from
-    # the arguments just like dispatch.py in `sharded_lowering`.
     return pxla.lower_sharding_computation(
-        fun, api_name, name, in_shardings, out_shardings, donated_invars,
+        jaxpr, api_name, name, in_shardings, out_shardings, donated_invars,
         jaxpr.in_avals, in_is_global=in_is_global, keep_unused=keep_unused,
         always_lower=always_lower,
         devices_from_context=(
