@@ -69,59 +69,61 @@ from jax._src.config import (
 )
 from jax._src.core import ensure_compile_time_eval as ensure_compile_time_eval
 from jax._src.environment_info import print_environment_info as print_environment_info
-from jax._src.api import (
-  Device as Device,
-  effects_barrier,
-  block_until_ready as block_until_ready,
-  checkpoint as checkpoint,
-  checkpoint_policies as checkpoint_policies,
-  clear_backends as clear_backends,
-  closure_convert as closure_convert,
-  curry,  # TODO(phawkins): update users to avoid this.
-  custom_gradient as custom_gradient,
-  custom_jvp as custom_jvp,
-  custom_vjp as custom_vjp,
-  default_backend as default_backend,
-  device_count as device_count,
-  device_get as device_get,
-  device_put as device_put,
-  device_put_sharded as device_put_sharded,
-  device_put_replicated as device_put_replicated,
-  devices as devices,
-  disable_jit as disable_jit,
-  eval_shape as eval_shape,
-  flatten_fun_nokwargs,  # TODO(phawkins): update users to avoid this.
-  float0 as float0,
-  grad as grad,
-  hessian as hessian,
-  host_count as host_count,
-  host_id as host_id,
-  host_ids as host_ids,
-  jacobian as jacobian,
-  jacfwd as jacfwd,
-  jacrev as jacrev,
-  jit as jit,
-  jvp as jvp,
-  local_device_count as local_device_count,
-  local_devices as local_devices,
-  linearize as linearize,
-  linear_transpose as linear_transpose,
-  live_arrays as live_arrays,
-  make_jaxpr as make_jaxpr,
-  named_call as named_call,
-  named_scope as named_scope,
-  pmap as pmap,
-  process_count as process_count,
-  process_index as process_index,
-  pure_callback as pure_callback,
-  remat as remat,
-  ShapedArray,  # TODO(jakevdp): update users to avoid this.
-  ShapeDtypeStruct as ShapeDtypeStruct,
-  value_and_grad as value_and_grad,
-  vjp as vjp,
-  vmap as vmap,
-  xla_computation as xla_computation,
-)
+
+from jax._src.lib import xla_client as _xc
+Device = _xc.Device
+del _xc
+
+from jax._src.api import effects_barrier
+from jax._src.api import block_until_ready as block_until_ready
+from jax._src.api import checkpoint as checkpoint
+from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
+from jax._src.api import clear_backends as clear_backends
+from jax._src.custom_derivatives import closure_convert as closure_convert
+from jax._src.util import curry  # TODO(phawkins): update users to avoid this.
+from jax._src.custom_derivatives import custom_gradient as custom_gradient
+from jax._src.custom_derivatives import custom_jvp as custom_jvp
+from jax._src.custom_derivatives import custom_vjp as custom_vjp
+from jax._src.xla_bridge import default_backend as default_backend
+from jax._src.xla_bridge import device_count as device_count
+from jax._src.api import device_get as device_get
+from jax._src.api import device_put as device_put
+from jax._src.api import device_put_sharded as device_put_sharded
+from jax._src.api import device_put_replicated as device_put_replicated
+from jax._src.xla_bridge import devices as devices
+from jax._src.api import disable_jit as disable_jit
+from jax._src.api import eval_shape as eval_shape
+from jax._src.api_util import flatten_fun_nokwargs  # TODO(phawkins): update users to avoid this.
+from jax._src.dtypes import float0 as float0
+from jax._src.api import grad as grad
+from jax._src.api import hessian as hessian
+from jax._src.xla_bridge import host_count as host_count
+from jax._src.xla_bridge import host_id as host_id
+from jax._src.xla_bridge import host_ids as host_ids
+from jax._src.api import jacobian as jacobian
+from jax._src.api import jacfwd as jacfwd
+from jax._src.api import jacrev as jacrev
+from jax._src.api import jit as jit
+from jax._src.api import jvp as jvp
+from jax._src.xla_bridge import local_device_count as local_device_count
+from jax._src.xla_bridge import local_devices as local_devices
+from jax._src.api import linearize as linearize
+from jax._src.api import linear_transpose as linear_transpose
+from jax._src.api import live_arrays as live_arrays
+from jax._src.api import make_jaxpr as make_jaxpr
+from jax._src.api import named_call as named_call
+from jax._src.api import named_scope as named_scope
+from jax._src.api import pmap as pmap
+from jax._src.xla_bridge import process_count as process_count
+from jax._src.xla_bridge import process_index as process_index
+from jax._src.api import pure_callback as pure_callback
+from jax._src.api import remat as remat
+from jax._src.core import ShapedArray  # TODO(jakevdp): update users to avoid this.
+from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
+from jax._src.api import value_and_grad as value_and_grad
+from jax._src.api import vjp as vjp
+from jax._src.api import vmap as vmap
+from jax._src.api import xla_computation as xla_computation
 
 from jax.interpreters import ad # TODO(phawkins): update users to avoid this.
 from jax.interpreters import pxla # TODO(phawkins): update users to avoid this.

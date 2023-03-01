@@ -1650,9 +1650,9 @@ class APITest(jtu.JaxTestCase):
 
   @parameterized.parameters([(3,)], [(2, 0)])
   def test_device_put_across_devices(self, shape):
-    if len(api.local_devices()) < 2:
+    if len(jax.local_devices()) < 2:
       raise unittest.SkipTest("this test requires multiple devices")
-    d1, d2 = api.local_devices()[:2]
+    d1, d2 = jax.local_devices()[:2]
     data = self.rng().randn(*shape).astype(np.float32)
     x = api.device_put(data, device=d1)
     if config.jax_array:
@@ -2726,7 +2726,7 @@ class APITest(jtu.JaxTestCase):
       return y * lax.axis_index(axis_name).astype(jnp.float32)
 
     input_x = jnp.ones((5,6,4), dtype=jnp.float32)
-    axis_env = [(axis_name, api.local_device_count())]
+    axis_env = [(axis_name, jax.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
   def test_xla_computation_axis_env(self):
@@ -3727,8 +3727,8 @@ class APITest(jtu.JaxTestCase):
         jax.vmap(sketch)(x)
 
   def test_default_backend(self):
-    first_local_device = api.local_devices()[0]
-    self.assertEqual(first_local_device.platform, api.default_backend())
+    first_local_device = jax.local_devices()[0]
+    self.assertEqual(first_local_device.platform, jax.default_backend())
 
   @jtu.skip_on_devices("cpu")
   def test_default_device(self):
@@ -8221,7 +8221,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_closure_convert(self):
     def cos_after(fn, x):
-      converted_fn, aux_args = api.closure_convert(fn, x)
+      converted_fn, aux_args = jax.closure_convert(fn, x)
       self.assertLessEqual(len(aux_args), 1)
       return _cos_after(converted_fn, x, *aux_args)
 
@@ -8262,7 +8262,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     # See https://github.com/google/jax/issues/6415
 
     def cos_after(fn, x):
-      converted_fn, aux_args = api.closure_convert(fn, x)
+      converted_fn, aux_args = jax.closure_convert(fn, x)
       self.assertLessEqual(len(aux_args), 1)
       return _cos_after(converted_fn, x, *aux_args)
 

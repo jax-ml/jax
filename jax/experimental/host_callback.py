@@ -1014,7 +1014,7 @@ def _outside_call_impl(*args, **params):
   assert "has_token" not in params
   if _inline_host_callback():
     device_index = params["device_index"]
-    device = api.devices()[device_index]
+    device = xb.devices()[device_index]
     results = _outside_call_run_callback(args, device, send_infeed=False, **params)
     return results
   else:

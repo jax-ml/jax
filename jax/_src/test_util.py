@@ -1056,7 +1056,7 @@ def with_mesh(named_shape: MeshSpec) -> Generator[None, None, None]:
   # This is similar to the `with_mesh` function above, but isn't a decorator.
   axis_names, shape = unzip2(named_shape)
   size = math.prod(shape)
-  local_devices = list(api.local_devices())
+  local_devices = list(jax.local_devices())
   if len(local_devices) < size:
     raise unittest.SkipTest(f"Test requires {size} local devices")
   mesh_devices = np.array(local_devices[:size]).reshape(shape)  # type: ignore
@@ -1096,9 +1096,9 @@ def restore_spmd_manual_lowering_flag():
 
 def create_global_mesh(mesh_shape, axis_names):
   size = math.prod(mesh_shape)
-  if len(api.devices()) < size:
+  if len(jax.devices()) < size:
     raise unittest.SkipTest(f"Test requires {size} global devices.")
-  devices = sorted(api.devices(), key=lambda d: d.id)
+  devices = sorted(jax.devices(), key=lambda d: d.id)
   mesh_devices = np.array(devices[:size]).reshape(mesh_shape)
   global_mesh = jax.sharding.Mesh(mesh_devices, axis_names)
   return global_mesh

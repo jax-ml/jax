@@ -14,7 +14,7 @@
 
 from functools import update_wrapper, reduce, partial
 import inspect
-from typing import (Callable, Generic, Optional, Sequence, Tuple, TypeVar, Any)
+from typing import (Callable, Generic, List, Optional, Sequence, Tuple, TypeVar, Any)
 
 from jax.custom_transpose import custom_transpose
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map,
@@ -917,7 +917,7 @@ class Residuals:
     return cls(jaxpr, in_tree, out_tree, consts)
 
 
-def closure_convert(fun, *example_args):
+def closure_convert(fun: Callable, *example_args) -> Tuple[Callable, List[Any]]:
   """Closure conversion utility, for use with higher-order custom derivatives.
 
   To define custom derivatives such as with ``jax.custom_vjp(f)``, the target

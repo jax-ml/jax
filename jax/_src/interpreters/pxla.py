@@ -2832,8 +2832,6 @@ def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     devices: Optional[Sequence[xc.Device]],
 ) -> Tuple[xc.Client, Sequence[xc.Device]]:
-  from jax._src.api import local_devices
-
   first_sharding_info = None
   if devices is None:
     devices = []
@@ -2861,7 +2859,7 @@ def _get_and_check_device_assignment(
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
-    final_device_assignment = [config.jax_default_device or local_devices()[0]]
+    final_device_assignment = [config.jax_default_device or xb.local_devices()[0]]
   else:
     final_device_assignment = first_sharding_info[0]
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment

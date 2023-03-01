@@ -596,7 +596,7 @@ def process_index(backend: Optional[Union[str, XlaBackend]] = None) -> int:
 
 
 # TODO: remove this sometime after jax 0.2.13 is released
-def host_id(backend=None):
+def host_id(backend=None) -> int:
   warnings.warn(
       "jax.host_id has been renamed to jax.process_index. This alias "
       "will eventually be removed; please update your code.")
@@ -609,7 +609,7 @@ def process_count(backend: Optional[Union[str, XlaBackend]] = None) -> int:
 
 
 # TODO: remove this sometime after jax 0.2.13 is released
-def host_count(backend=None):
+def host_count(backend=None) -> int:
   warnings.warn(
       "jax.host_count has been renamed to jax.process_count. This alias "
       "will eventually be removed; please update your code.")
@@ -617,7 +617,7 @@ def host_count(backend=None):
 
 
 # TODO: remove this sometime after jax 0.2.13 is released
-def host_ids(backend=None):
+def host_ids(backend=None) -> List[int]:
   warnings.warn(
       "jax.host_ids has been deprecated; please use range(jax.process_count()) "
       "instead. jax.host_ids will eventually be removed; please update your "

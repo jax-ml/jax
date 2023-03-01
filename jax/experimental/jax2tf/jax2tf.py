@@ -920,7 +920,7 @@ def _get_and_check_device_assignment(
     shardings: Iterable[pxla.ShardingInfo],
     devices: Optional[Sequence[xla_client.Device]],
 ) -> Tuple[xla_client.Client, Sequence[xla_client.Device]]:
-  from jax._src.api import local_devices
+  from jax._src.xla_bridge import local_devices
 
   first_sharding_info = None
   if devices is None:
