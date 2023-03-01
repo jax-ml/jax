@@ -15,7 +15,7 @@ kernelspec:
 
 # JAX As Accelerated NumPy
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/01-jax-basics.ipynb)
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/01-jax-basics.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/jax-101/01-jax-basics.ipynb)
 
 *Authors: Rosalia Schneider & Vladimir Mikulik*
 
