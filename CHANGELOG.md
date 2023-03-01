@@ -8,6 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.6
 
+* Changes
+  * {func}`jax2tf.call_tf` has a new parameter `output_shape_dtype` (default `None`)
+    that can be used to declare the output shape and type of the result. This enables
+    {func}`jax2tf.call_tf` to work in the presence of shape polymorphism. ({jax-issue}`#14734`).
+
 ## jaxlib 0.4.6
 
 ## jax 0.4.5 (Mar 2, 2023)
