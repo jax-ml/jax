@@ -1100,27 +1100,9 @@ class BCOOTest(sptu.SparseTestCase):
       return sparse_bcoo.bcoo_dot_general(lhs_bcoo, rhs,
                                           dimension_numbers=dimension_numbers)
 
-    cuda_version_11061_and_beyond = _is_required_cuda_version_satisfied(
-        cuda_version=11061)
-    if cuda_version_11061_and_beyond:
-      # TODO(tianjianlu): In some cases, this fails python_should_be_executing.
-      # self._CompileAndCheck(f_sparse, args_maker)
-      self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
-      # if dtype == np.complex128:
-      #   atol = 1E-1
-      # else:
-      #   atol = 1E-2
-      # TODO(tianjianlu): this test fails on GPU.
-      # self._CheckAgainstNumpy(f_dense, jit(f_sparse), args_maker, atol=atol,
-      #                         rtol=1E-6)
-    else:
-      lhs_bcoo, lhs, rhs = args_maker()
-      matmat_expected = f_dense(lhs_bcoo, lhs, rhs)
-      with self.gpu_matmul_warning_context(
-          "bcoo_dot_general GPU lowering currently does not support this batch-mode computation.*"):
-        matmat_default_lowering_fallback = jit(f_sparse)(lhs_bcoo, lhs, rhs)
-      self.assertAllClose(matmat_expected, matmat_default_lowering_fallback,
-                          atol=1E-6, rtol=1E-6)
+    # TODO(tianjianlu): In some cases, this fails python_should_be_executing.
+    # self._CompileAndCheck(f_sparse, args_maker)
+    self._CheckAgainstNumpy(f_dense, f_sparse, args_maker)
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
   @unittest.skipIf(jtu.device_under_test() != "gpu", "test requires GPU")
