@@ -34,6 +34,7 @@ from jax.experimental.sparse import bcoo as sparse_bcoo
 from jax.experimental.sparse import bcsr as sparse_bcsr
 from jax.experimental.sparse import util as sparse_util
 from jax.experimental.sparse import test_util as sptu
+from jax.experimental.sparse import _lowerings
 from jax import lax
 from jax._src import xla_bridge
 from jax._src.lib import gpu_sparse
@@ -678,6 +679,51 @@ class cuSparseTest(sptu.SparseTestCase):
     self.assertAllClose(primals_dense[0], primals_sparse[0], atol=tol, rtol=tol)
     self.assertAllClose(out_dense, out_sparse, atol=tol, rtol=tol)
 
+  @jtu.sample_product(
+    shape=[(4, 5), (3, 4), (5, 4)],
+    dtype=_lowerings.SUPPORTED_DATA_DTYPES,
+    transpose=[True, False],
+  )
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  def test_coo_spmv(self, shape, dtype, transpose):
+    rng_sparse = rand_sparse(self.rng())
+    rng_dense = jtu.rand_default(self.rng())
+
+    mat = rng_sparse(shape, dtype)
+    vec = rng_dense(shape[0] if transpose else shape[1], dtype)
+
+    row, col = jnp.where(mat != 0)
+    data = mat[row, col]
+
+    expected = (mat.T if transpose else mat) @ vec
+    actual = _lowerings.coo_spmv_p.bind(
+        data, row.astype('int32'), col.astype('int32'), vec,
+        transpose=transpose,
+        shape=mat.shape)
+    self.assertArraysAllClose(actual, expected)
+
+  @jtu.sample_product(
+    shape=[(4, 5), (3, 4), (5, 4)],
+    dtype=_lowerings.SUPPORTED_DATA_DTYPES,
+    transpose=[True, False],
+  )
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  def test_coo_spmm(self, shape, dtype, transpose):
+    rng_sparse = rand_sparse(self.rng())
+    rng_dense = jtu.rand_default(self.rng())
+
+    mat = rng_sparse(shape, dtype)
+    vec = rng_dense((shape[0] if transpose else shape[1], 3), dtype)
+
+    row, col = jnp.where(mat != 0)
+    data = mat[row, col]
+
+    expected = (mat.T if transpose else mat) @ vec
+    actual = _lowerings.coo_spmm_p.bind(
+        data, row.astype('int32'), col.astype('int32'), vec,
+        transpose=transpose,
+        shape=mat.shape)
+    self.assertArraysAllClose(actual, expected)
 
 class BCOOTest(sptu.SparseTestCase):
 
