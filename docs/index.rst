@@ -10,21 +10,21 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
 
    .. grid-item-card:: Familiar API
       :columns: 12 6 6 4
-      :class-card: key-ideas
+      :class-card: sd-border-0
       :shadow: None
 
       JAX provides a familiar NumPy-style API for ease of adoption by researchers and engineers. 
 
    .. grid-item-card:: Transformations
       :columns: 12 6 6 4
-      :class-card: key-ideas
+      :class-card: sd-border-0
       :shadow: None
 
       JAX includes composable function transformations for compilation, batching, automatic differentiation, and parallelization.
 
    .. grid-item-card:: Run Anywhere
       :columns: 12 6 6 4
-      :class-card: key-ideas
+      :class-card: sd-border-0
       :shadow: None
 
       The same code executes on multiple backends, including CPU, GPU, & TPU
