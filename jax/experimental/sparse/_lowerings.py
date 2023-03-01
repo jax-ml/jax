@@ -21,6 +21,8 @@ from jax import core
 from jax._src import dispatch
 from jax._src.interpreters import mlir
 from jax._src.lib import gpu_sparse
+from jax._src import xla_bridge
+
 import numpy as np
 
 
@@ -77,9 +79,11 @@ if gpu_sparse.rocm_is_supported:
 coo_spmm_p = core.Primitive("coo_spmm")
 
 def _coo_spmm_abstract_eval(data, row, col, x, *, transpose, shape):
-  # TODO(jakevdp) support for batched matmat.
+  assert len(shape) in (2, 3)
+  batch_mode = len(shape) == 3
+
+  assert data.ndim == 1
   assert data.shape == row.shape == col.shape
-  assert row.ndim == 1
   assert x.ndim == 2
 
   assert row.dtype == col.dtype
@@ -88,12 +92,24 @@ def _coo_spmm_abstract_eval(data, row, col, x, *, transpose, shape):
   assert data.dtype == x.dtype
   assert x.dtype in SUPPORTED_DATA_DTYPES
 
-  assert len(shape) == 2
-  assert x.shape[0] == (shape[0] if transpose else shape[1])
+  if batch_mode:
+    # The support for batched computation in cusparseSpMM COO was added in
+    # 11.6.1: https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html#cusparse-11.6.1
+    cuda_version = int(xla_bridge.get_backend().platform_version.split()[-1])
+    assert cuda_version >= 11061, cuda_version
 
-  return core.ShapedArray(
-    shape=(shape[1] if transpose else shape[0], x.shape[1]),
-    dtype=x.dtype)
+    # In batch mode, batch size must divide the shape evenly.
+    # TODO(jakevdp, tianjianlu): add support for batch_stride=0
+    # The issue (https://github.com/NVIDIA/CUDALibrarySamples/issues/81#issuecomment-1205562643)
+    # in cusparse library does not allow batch_stride = 0 for a non-batched x.
+    assert data.shape[0] % shape[0] == 0
+    assert x.shape[0] % shape[0] == 0
+    assert x.shape[0] // shape[0] == (shape[1] if transpose else shape[2])
+    out_shape = (shape[0], shape[2] if transpose else shape[1], x.shape[1])
+  else:
+    assert x.shape[0] == (shape[0] if transpose else shape[1])
+    out_shape = (shape[1] if transpose else shape[0], x.shape[1])
+  return core.ShapedArray(shape=out_shape, dtype=x.dtype)
 
 def _coo_spmm_gpu_lowering(ctx, data, row, col, x, *, transpose, shape):
   data_aval, row_aval, _, x_aval = ctx.avals_in

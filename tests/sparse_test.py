@@ -15,6 +15,7 @@
 import contextlib
 from functools import partial
 import itertools
+import math
 import operator
 import random
 import unittest
@@ -681,10 +682,11 @@ class cuSparseTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
     shape=[(4, 5), (3, 4), (5, 4)],
-    dtype=_lowerings.SUPPORTED_DATA_DTYPES,
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     transpose=[True, False],
   )
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jax.default_matmul_precision("float32")
   def test_coo_spmv(self, shape, dtype, transpose):
     rng_sparse = rand_sparse(self.rng())
     rng_dense = jtu.rand_default(self.rng())
@@ -704,10 +706,11 @@ class cuSparseTest(sptu.SparseTestCase):
 
   @jtu.sample_product(
     shape=[(4, 5), (3, 4), (5, 4)],
-    dtype=_lowerings.SUPPORTED_DATA_DTYPES,
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     transpose=[True, False],
   )
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jax.default_matmul_precision("float32")
   def test_coo_spmm(self, shape, dtype, transpose):
     rng_sparse = rand_sparse(self.rng())
     rng_dense = jtu.rand_default(self.rng())
@@ -723,6 +726,49 @@ class cuSparseTest(sptu.SparseTestCase):
         data, row.astype('int32'), col.astype('int32'), vec,
         transpose=transpose,
         shape=mat.shape)
+    self.assertArraysAllClose(actual, expected)
+
+  @jtu.sample_product(
+    shape=[(3, 4, 5), (5, 3, 4), (4, 5, 3)],
+    dtype=jtu.dtypes.floating + jtu.dtypes.complex,
+    transpose=[True, False],
+  )
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  @jax.default_matmul_precision("float32")
+  def test_coo_spmm_batched(self, shape, dtype, transpose):
+    version = xla_bridge.get_backend().platform_version.split()
+    if version[0] == "cuda" and int(version[1]) < 11061:
+      self.skipTest("CUDA version too old for batched matmat")
+
+    nnz_per_batch = math.prod(shape[1:]) // 2
+    rng_dense = jtu.rand_default(self.rng())
+    rng_sparse = rand_sparse(self.rng(), nse=nnz_per_batch)
+    def rng_sparse_batched(shape, dtype):
+      assert len(shape) == 3
+      return np.stack([rng_sparse(shape[1:], dtype) for i in range(shape[0])])
+
+    # Take real part for easier debugging
+    mat = rng_sparse_batched(shape, dtype)
+    x = rng_dense((shape[0], shape[1] if transpose else shape[2], 3), dtype)
+
+    row, col = vmap(lambda mat: jnp.where(mat != 0, size=nnz_per_batch))(mat)
+    data = vmap(lambda mat, row, col: mat[row, col])(mat, row, col)
+
+    if transpose:
+      expected = jnp.einsum('ijk,ijl->ikl', mat, x)
+    else:
+      expected = jnp.einsum('ijk,ikl->ijl', mat, x)
+
+    data_flat = data.ravel()
+    row_flat = row.ravel().astype('int32')
+    col_flat = col.ravel().astype('int32')
+    x_flat = x.reshape(-1, x.shape[-1])
+
+    actual = _lowerings.coo_spmm_p.bind(
+        data_flat, row_flat, col_flat, x_flat,
+        transpose=transpose,
+        shape=mat.shape)
+
     self.assertArraysAllClose(actual, expected)
 
 class BCOOTest(sptu.SparseTestCase):
@@ -1449,19 +1495,19 @@ class BCOOTest(sptu.SparseTestCase):
     B_shape = (3, 4)
 
     def sp_sp_product(v1, v2):
-        A = sparse.BCOO((v1, A_indices), shape=A_shape)
-        B = sparse.BCOO((v2, B_indices), shape=B_shape)
-        return (A @ B).todense()
+      A = sparse.BCOO((v1, A_indices), shape=A_shape)
+      B = sparse.BCOO((v2, B_indices), shape=B_shape)
+      return (A @ B).todense()
 
     def sp_de_product(v1, v2):
-        A = sparse.BCOO((v1, A_indices), shape=A_shape)
-        B = sparse.BCOO((v2, B_indices), shape=B_shape).todense()
-        return A @ B
+      A = sparse.BCOO((v1, A_indices), shape=A_shape)
+      B = sparse.BCOO((v2, B_indices), shape=B_shape).todense()
+      return A @ B
 
     def de_de_product(v1, v2):
-        sparse1 = sparse.BCOO((v1, A_indices), shape=A_shape).todense()
-        dense2 = sparse.BCOO((v2, B_indices), shape=B_shape).todense()
-        return sparse1 @ dense2
+      sparse1 = sparse.BCOO((v1, A_indices), shape=A_shape).todense()
+      dense2 = sparse.BCOO((v2, B_indices), shape=B_shape).todense()
+      return sparse1 @ dense2
 
     sp_sp_jac = jax.jacfwd(sp_sp_product, argnums=1)(A_values, B_values)
     sp_de_jac = jax.jacfwd(sp_de_product, argnums=1)(A_values, B_values)
@@ -1941,7 +1987,7 @@ class BCOOTest(sptu.SparseTestCase):
     # `bcoo_dot_general` cusparse lowering is not able to handle out-of-bound
     # indices right now.
     if jtu.device_under_test() == "gpu" and lhs_dtype != rhs_dtype:
-      raise self.skipTest("Disable gpu test when type promotion is required")
+      self.skipTest("Disable gpu test when type promotion is required")
 
     # Note: currently, batch dimensions in matmul must correspond to batch
     # dimensions in the sparse representation.
