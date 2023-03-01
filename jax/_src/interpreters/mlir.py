@@ -964,8 +964,7 @@ def lower_jaxpr_to_fun(
     if use_sharding_annotations and ir_arg_shardings is not None:
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
-          attrs["mhlo.sharding"] = ir.StringAttr.get(
-              sharding.SerializeToString())
+          attrs["mhlo.sharding"] = get_sharding_attr(sharding)
 
     if input_output_aliases is not None:
       output_ids = util.unflatten(list(range(len(flat_output_types))),
@@ -986,9 +985,9 @@ def lower_jaxpr_to_fun(
 
   if use_sharding_annotations and ir_result_shardings is not None:
     func_op.result_attrs = ir.ArrayAttr.get([
-        ir.DictAttr.get(
+            ir.DictAttr.get(
             {} if sharding is None else
-            {"mhlo.sharding": ir.StringAttr.get(sharding.SerializeToString())}
+            {"mhlo.sharding": get_sharding_attr(sharding)}
         ) for sharding in ir_result_shardings
     ])
 
@@ -1490,8 +1489,7 @@ def _wrap_with_spmd_op(name: str,
                         called_computations=ir.ArrayAttr.get([]),
                         operand_layouts=None,
                         result_layouts=None)
-  op.attributes["mhlo.sharding"] = ir.StringAttr.get(
-      sharding_proto.SerializeToString())
+  set_sharding(op, sharding_proto)
   return op.result
 
 def wrap_with_sharding_op(x: ir.Value,
@@ -1504,8 +1502,15 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 def set_sharding(op, sharding_proto: xc.OpSharding):
-  op.attributes["mhlo.sharding"] = ir.StringAttr.get(
-      sharding_proto.SerializeToString())
+  op.attributes["mhlo.sharding"] = get_sharding_attr(sharding_proto)
+
+
+def get_sharding_attr(sharding_proto: xc.OpSharding):
+  if xc.mlir_api_version >= 44:
+    return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding_proto)))
+  else:
+    return ir.StringAttr.get(sharding_proto.SerializeToString())
+
 
 # MLIR lowerings for lax primitives
 
@@ -1541,7 +1546,6 @@ def cache_lowering(f):
                                flatten_lowering_ir_args(args))
     return util.unflatten(call.results, map(len, output_types))
   return cached_lowering
-
 
 
 def xla_computation_to_mlir_module(xla_computation: xc.XlaComputation

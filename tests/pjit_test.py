@@ -340,6 +340,31 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
+  def testShardingConstraintStablehlo(self):
+    @partial(pjit, in_shardings=None, out_shardings=None)
+    def f(x):
+      y = x + 1
+      y = with_sharding_constraint(y, P('x', 'y'))
+      return y * 2
+
+    shape = (8, 8)
+    x = np.arange(math.prod(shape)).reshape(shape)
+    expected = (x + 1) * 2
+    actual = f(x)
+    self.assertAllClose(actual, expected, check_dtypes=False)
+    _check_instance(self, actual)
+    self.assertLen(actual.device_buffers, 2)
+    self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
+                        check_dtypes=False)
+
+    if xc.mlir_api_version >= 44:
+      hlo = f.lower(np.ones(shape)).compiler_ir()
+      # Annotation from with_sharding_constraint
+      self.assertIn('sharding = "{devices=[2,1]0,1}"', str(hlo))
+      # Annotation from pjit
+      self.assertIn('sharding = "{replicated}"', str(hlo))
+
+  @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraint(self):
     @partial(pjit, in_shardings=None, out_shardings=None)
     def f(x):
