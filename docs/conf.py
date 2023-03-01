@@ -149,7 +149,6 @@ html_theme = 'sphinx_book_theme'
 # further.  For a list of options available for each theme, see the
 # documentation.
 html_theme_options = {
-    'logo_only': True,
     'show_toc_level': 2,
     'repository_url': 'https://github.com/google/jax',
     'use_repository_button': True,     # add a "link to repository" button
