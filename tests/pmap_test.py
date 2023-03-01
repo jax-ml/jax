@@ -2115,6 +2115,12 @@ class CppPmapTest(PythonPmapTest):
     pmaped_f(inputs)
     self.assertEqual(pmaped_f._cache_size, 1)
 
+  def test_constants_fallback(self):
+    fn = pmap(lambda x, y: x + y, in_axes=(0, None))
+
+    for _ in range(2):
+      fn(np.zeros((jax.device_count(), 5), dtype=np.float32), 2.0)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class VmapOfPmapTest(jtu.JaxTestCase):
