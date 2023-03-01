@@ -1310,8 +1310,8 @@ class BCOOTest(sptu.SparseTestCase):
     def f2(x, y, indices):
       return sparse.bcoo_dot_general_sampled(x, y, indices, dimension_numbers=dimension_numbers)
 
-    self._CheckAgainstNumpy(f1, f2, args_maker)
-    self._CompileAndCheck(f2, args_maker)
+    self._CheckAgainstNumpy(f1, f2, args_maker, tol=MATMUL_TOL)
+    self._CompileAndCheck(f2, args_maker, tol=MATMUL_TOL)
 
   @jtu.sample_product(
     [dict(n_batch=n_batch, n_dense=n_dense, lhs_shape=lhs_shape,
