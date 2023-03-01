@@ -231,7 +231,7 @@ def main(_):
   print_ir(np.float32(0))(lax.erfc)
 
   # CHECK-LABEL: TEST: erf_inv float32[]
-  # CHECK: xla_fallback_erf_inv
+  # CHECK: chlo.erf_inv
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.erf_inv)
 

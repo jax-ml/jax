@@ -1988,7 +1988,10 @@ mlir.register_lowering(erfc_p, partial(_nary_lower_hlo, chlo.ErfcOp))
 erf_inv_p = standard_unop(_float, 'erf_inv')
 ad.defjvp2(erf_inv_p, lambda g, ans, x: mul(_const(x, np.sqrt(np.pi) / 2.),
                                             mul(g, exp(square(ans)))))
-xla.register_translation(erf_inv_p, standard_translate(erf_inv_p))
+if xla_client.mlir_api_version >= 45:
+  mlir.register_lowering(erf_inv_p, partial(_nary_lower_hlo, chlo.ErfInvOp))
+else:
+  xla.register_translation(erf_inv_p, standard_translate(erf_inv_p))
 
 real_p = unop(_complex_basetype, _complex, 'real')
 ad.deflinear2(real_p, lambda t, _: [complex(t, np.zeros((), _dtype(t)))])
