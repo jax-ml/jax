@@ -21,10 +21,12 @@ List of Available Functions
     beta
     categorical
     cauchy
+    chisquare
     choice
     dirichlet
     double_sided_maxwell
     exponential
+    f
     fold_in
     gamma
     generalized_normal
