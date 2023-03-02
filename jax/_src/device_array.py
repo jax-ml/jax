@@ -15,6 +15,7 @@
 # On-device arrays.
 
 from functools import partial, partialmethod
+import math
 import operator
 from typing import (Any, List, Optional, Union)
 import weakref
@@ -26,7 +27,6 @@ import jax
 from jax._src import core
 from jax._src import abstract_arrays
 from jax._src import profiler
-from jax._src import util
 from jax._src.config import config
 from jax._src.lib import xla_client as xc
 from jax._src.typing import Array
@@ -163,7 +163,7 @@ class _DeviceArray(DeviceArray):  # type: ignore
 
   @property
   def size(self):
-    return util.prod(self.aval.shape)
+    return math.prod(self.aval.shape)
 
   @property
   def ndim(self):

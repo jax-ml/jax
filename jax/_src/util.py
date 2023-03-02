@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import functools
-from functools import partial, cached_property
+from functools import partial
 import itertools as it
 import logging
 import operator
@@ -496,7 +496,7 @@ class HashableWrapper:
 def _original_func(f):
   if isinstance(f, property):
     return cast(property, f).fget
-  elif isinstance(f, cached_property):
+  elif isinstance(f, functools.cached_property):
     return f.func
   return f
 
