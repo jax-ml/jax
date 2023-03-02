@@ -1145,6 +1145,22 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(f.runtime_executable())
     self.assertIsNotNone(g.runtime_executable())
 
+  def test_jit_lower_arg_info(self):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, *args, **kwargs):
+      return y['hi'] + args[1] + sum(kwargs.values())
+
+    lowered = jax.jit(f).lower({'hi': 1.}, {'hi': 2.}, 3., 4., z=5., w=6.)
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertNotIn("\"x\"", mhlo_str)
+    self.assertIn("y['hi']", mhlo_str)
+    self.assertNotIn("args[0]", mhlo_str)
+    self.assertIn("args[1]", mhlo_str)
+    self.assertIn("kwargs['z']", mhlo_str)
+    self.assertIn("kwargs['w']", mhlo_str)
+
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):
       A = 0
@@ -3389,7 +3405,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return 0
 
-    msg = r"on the value of the argument 'x'"
+    msg = r"on the value of the argument x"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1)
 
@@ -3401,7 +3417,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"on the values of the arguments 'x' and 'y'"
+    msg = r"on the values of the arguments x and y"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1, 2)
 
@@ -3413,7 +3429,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"on the values of the arguments 'x' and 'z'"
+    msg = r"on the values of the arguments x and z"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1, 2, 3)
 
@@ -3432,7 +3448,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"on the values of the argument 'args'"
+    msg = r"on the values of the arguments args"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(1, 2, 3)
 
@@ -3445,7 +3461,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"on the values of the argument 'kwargs'"
+    msg = r"on the values of the arguments kwargs"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f(x=1, y=2, z=3)
 
@@ -3458,7 +3474,7 @@ class APITest(jtu.JaxTestCase):
       else:
         return y
 
-    msg = r"on the value of the argument 'xy'"
+    msg = r"on the value of the argument xy"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       f((1, 2), z=3)
 
@@ -3491,7 +3507,7 @@ class APITest(jtu.JaxTestCase):
     def g(x):
       return f(x, True)
 
-    msg = r"on the value of the argument 'y'"
+    msg = r"on the value of the argument y"
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
       g(1)
 
@@ -5184,11 +5200,11 @@ class RematTest(jtu.JaxTestCase):
     self.assertEqual(res[0][0].shape, (1,))
     self.assertEqual(res[0][1], "from a constant")
     self.assertEqual(res[1][0].shape, ())
-    self.assertEqual(res[1][1], "from the argument 'x'")
+    self.assertEqual(res[1][1], "from the argument x[0]")
     self.assertEqual(res[2][0].shape, ())
-    self.assertEqual(res[2][1], "from the argument 'x'")
+    self.assertEqual(res[2][1], "from the argument x[1]")
     self.assertEqual(res[3][0].shape, ())
-    self.assertEqual(res[3][1], "from the argument 'y'")
+    self.assertEqual(res[3][1], "from the argument y")
     self.assertEqual(res[4][0].shape, ())
     self.assertStartsWith(res[4][1], "named 'z'")
     self.assertEqual(res[5][0].shape, ())

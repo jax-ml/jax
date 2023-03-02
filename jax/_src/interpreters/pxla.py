@@ -3047,6 +3047,10 @@ def lower_sharding_computation(
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
+  arg_info = jaxpr.debug_info and pe.arg_info_all(jaxpr.debug_info)
+  arg_names = None if arg_info is None else [
+      f'{name}{path.pprint("")}' for i, (name, path) in enumerate(arg_info)
+      if i in kept_var_idx]
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
@@ -3059,7 +3063,8 @@ def lower_sharding_computation(
       donated_invars,
       replicated_args=replicated_args,
       arg_shardings=in_op_shardings,
-      result_shardings=out_op_shardings)
+      result_shardings=out_op_shardings,
+      arg_names=arg_names)
 
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,
