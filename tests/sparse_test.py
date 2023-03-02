@@ -1745,36 +1745,6 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertArraysEqual(x.indices, y.indices)
     self.assertArraysEqual(x.data, y.data)
 
-  def test_bcoo_correct_out_of_bound_indices(self):
-    data = jnp.array([1, 2, 3, 4, 0, 0])
-    indices = jnp.array([1, 3, 0, 2, 2, 4])[:, None]
-    x1 = sparse.BCOO((data, indices), shape=(2,))
-    data_unbatched, indices_unbatched = sparse_bcoo._bcoo_correct_out_of_bound_indices(
-        x1.data, x1.indices, x1._info.shape)
-    expected_data_unbatched = jnp.array([1, 0, 3, 0, 0, 0])
-    expected_indices_unbatched = jnp.array([[1], [0], [0], [0], [0], [0]])
-    with self.subTest('unbatched data'):
-      self.assertArraysEqual(data_unbatched, expected_data_unbatched)
-    with self.subTest('unbatched indices'):
-      self.assertArraysEqual(indices_unbatched, expected_indices_unbatched)
-
-    data = jnp.array([[0, 1, 2, 3],
-                      [4, 5, 6, 7]])
-    indices = jnp.array([[[0, 0], [1, 1], [3, 4], [4, 5]],
-                         [[2, 1], [1, 0], [2, 3], [1, 1]]])
-    x2 = sparse.BCOO((data, indices), shape=(2, 3, 2))
-    data_batched, indices_batched = sparse_bcoo._bcoo_correct_out_of_bound_indices(
-        x2.data, x2.indices, x2._info.shape)
-    expected_data_batched = jnp.array([[0, 1, 0, 0],
-                                       [4, 5, 0, 7]])
-    expected_indices_batched = jnp.array(
-        [[[0, 0], [1, 1], [0, 0], [0, 0]],
-         [[2, 1], [1, 0], [2, 0], [1, 1]]])
-    with self.subTest('batched data'):
-      self.assertArraysEqual(data_batched, expected_data_batched)
-    with self.subTest('batched indices'):
-      self.assertArraysEqual(indices_batched, expected_indices_batched)
-
   @jtu.sample_product(
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, axes=axes)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
@@ -1935,14 +1905,6 @@ class BCOOTest(sptu.SparseTestCase):
   @jax.default_matmul_precision("float32")
   @jtu.ignore_warning(category=sparse.CuSparseEfficiencyWarning)
   def test_bcoo_matmul(self, lhs_shape, lhs_dtype, rhs_shape, rhs_dtype):
-    # TODO(b/259538729): Disable gpu test when type promotion is required.
-    # BCOO type promotion calls `convert_element_type`, which further calls
-    # `sum_duplicates` and creates padding with out-of-bound indices.
-    # `bcoo_dot_general` cusparse lowering is not able to handle out-of-bound
-    # indices right now.
-    if jtu.device_under_test() == "gpu" and lhs_dtype != rhs_dtype:
-      raise self.skipTest("Disable gpu test when type promotion is required")
-
     # Note: currently, batch dimensions in matmul must correspond to batch
     # dimensions in the sparse representation.
     n_batch_lhs = max(0, len(lhs_shape) - 2)

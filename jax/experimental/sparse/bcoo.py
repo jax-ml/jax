@@ -813,22 +813,25 @@ def _bcoo_dot_general_gpu_impl(lhs_data, lhs_indices, rhs, *,
   if (len(lhs_contract) == 1 and len(lhs_batch) == 0 and rhs.ndim in (1, 2)
       and (n_batch, n_sparse, n_dense) == (0, 1, 0)
       and not _bcoo_dot_general_fallback(lhs_data, lhs_indices, lhs_spinfo)):
-    data, indices = _bcoo_correct_out_of_bound_indices(lhs_data, lhs_indices, lhs_spinfo.shape)
-    row, col = jnp.zeros(indices.shape[0], indices.dtype), indices.ravel()
-    out = coo_matmul_p.bind(data, row, col,
+    row, col = jnp.zeros(lhs_indices.shape[0], lhs_indices.dtype), lhs_indices.ravel()
+    transpose = False
+    shape = (1, *lhs_spinfo.shape)
+    row, col, shape = _coo_correct_out_of_bound_indices(row, col, shape, transpose)
+    out = coo_matmul_p.bind(lhs_data, row, col,
                             rhs.T if rhs_contract[0] == 1 else rhs,
-                            transpose=False,
-                            shape=(1, *lhs_spinfo.shape))
-    return lax.squeeze(out, (0,))
+                            transpose=transpose, shape=shape)
+    return out[0]
   elif (len(lhs_contract) == 1 and len(lhs_batch) == 0 and rhs.ndim in (1, 2)
         and (n_batch, n_sparse, n_dense) == (0, 2, 0)
         and not _bcoo_dot_general_fallback(lhs_data, lhs_indices, lhs_spinfo)):
-    data, indices = _bcoo_correct_out_of_bound_indices(lhs_data, lhs_indices, lhs_spinfo.shape)
-    row, col = indices[:, 0], indices[:, 1]
-    return coo_matmul_p.bind(lhs_data, row, col,
-                             rhs.T if rhs_contract[0] == 1 else rhs,
-                             transpose=(lhs_contract[0] == 0),
-                             shape=lhs_spinfo.shape)
+    row, col = lhs_indices[:, 0], lhs_indices[:, 1]
+    transpose = (lhs_contract[0] == 0)
+    shape = lhs_spinfo.shape
+    row, col, shape = _coo_correct_out_of_bound_indices(row, col, shape, transpose)
+    out = coo_matmul_p.bind(lhs_data, row, col,
+                            rhs.T if rhs_contract[0] == 1 else rhs,
+                            transpose=transpose, shape=shape)
+    return out[:-1]
   else:
     return _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs,
         dimension_numbers=dimension_numbers, lhs_spinfo=lhs_spinfo)
@@ -1428,17 +1431,26 @@ def _unique_indices_unbatched(indices, *, shape, return_inverse=False,
     out = (*out[:-1], nse)
   return out
 
-def _bcoo_correct_out_of_bound_indices(data, indices, shape):
-  """Set out-of-bound (OOB) indices and the corresponding data to zeros."""
-  props = _validate_bcoo(data, indices, shape)
-  assert props.n_dense == 0, "not implemented"
-  if props.n_batch:
-    f = partial(_bcoo_correct_out_of_bound_indices, shape=shape[props.n_batch:])
-    return nfold_vmap(f, props.n_batch)(data, indices)
-  mask = indices >= jnp.array(shape[:props.n_sparse], dtype=indices.dtype)[None, :]
-  new_indices = jnp.where(mask, 0, indices)
-  new_data = jnp.where(mask.any(-1), 0, data)
-  return new_data, new_indices
+def _coo_correct_out_of_bound_indices(row, col, shape, transpose):
+  # Since cusparse does not have any well-tested support for padded indices,
+  # we push them into an extra row/col of the matrix, which will then be
+  # sliced away in the output.
+  assert row.ndim == col.ndim, f"{row.ndim} != {col.ndim}"
+  assert len(shape) == row.ndim + 1, f"{len(shape)} != {row.ndim + 1}"
+  if row.ndim > 1:
+    f = partial(_coo_correct_out_of_bound_indices,
+                shape=shape[row.ndim:], transpose=transpose)
+    return nfold_vmap(f, row.ndim)(row, col)
+  mask = (row > shape[0]) | (col > shape[1])
+  if transpose:
+    row = jnp.where(mask, 0, row)
+    col = jnp.where(mask, shape[1], col)
+    shape = (shape[0], shape[1] + 1)
+  else:
+    row = jnp.where(mask, shape[0], row)
+    col = jnp.where(mask, 0, col)
+    shape = (shape[0] + 1, shape[1])
+  return row, col, shape
 
 @bcoo_sum_duplicates_p.def_abstract_eval
 def _bcoo_sum_duplicates_abstract_eval(data, indices, *, spinfo, nse):
