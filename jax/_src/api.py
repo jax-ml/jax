@@ -2978,10 +2978,12 @@ def make_jaxpr(fun: Callable,
     in_type = tuple(zip(in_avals, keep_inputs))
     f, out_tree = flatten_fun(f, in_tree)
     f = lu.annotate(f, in_type)
+    debug_info = pe.debug_info(fun, in_tree, True, 'make_jaxpr')
     with ExitStack() as stack:
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
-      jaxpr, out_type, consts = pe.trace_to_jaxpr_dynamic2(f)
+      jaxpr, out_type, consts = pe.trace_to_jaxpr_dynamic2(
+          f, debug_info=debug_info)
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
       out_avals, _ = unzip2(out_type)

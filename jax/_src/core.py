@@ -45,6 +45,7 @@ from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
 from jax._src import linear_util as lu
 
 from jax._src import source_info_util
+from jax._src.tree_util import PyTreeDef
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
                            HashableFunction, HashableWrapper, weakref_lru_cache)
@@ -66,24 +67,36 @@ Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
+class DebugInfo(NamedTuple):
+  func_src_info: Optional[str]  # f'{fun.__name__} at {filename}:{lineno}'
+  signature: Optional[inspect.Signature]  # inspect.signature(fun)
+  in_tree: Optional[PyTreeDef]  # caller/constructor might not have this info
+  has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
+  traced_for: str  # "jit", "scan", "make_jaxpr", etc
+  # TODO(mattjj): add input type signature
+
+
 class Jaxpr:
-  __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns', '_effects']
+  __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns', '_effects', '_debug_info']
 
   _constvars: List[Var]
   _invars: List[Var]
   _outvars: List[Atom]
   _eqns: List[JaxprEqn]
   _effects: Effects
+  _debug_info: Optional[DebugInfo]
 
   constvars = property(lambda self: self._constvars)
   invars = property(lambda self: self._invars)
   outvars = property(lambda self: self._outvars)
   eqns = property(lambda self: self._eqns)
   effects = property(lambda self: self._effects)
+  debug_info = property(lambda self: self._debug_info)
 
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
-               effects: Effects = no_effects):
+               effects: Effects = no_effects,
+               debug_info: Optional[DebugInfo] = None):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
@@ -100,6 +113,7 @@ class Jaxpr:
     self._outvars = list(outvars)
     self._eqns = list(eqns)
     self._effects = effects
+    self._debug_info = debug_info
 
   def __str__(self):
     return str(pp_jaxpr(self, JaxprPpContext(), JaxprPpSettings()))
