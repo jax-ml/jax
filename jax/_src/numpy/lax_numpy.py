@@ -1157,7 +1157,7 @@ def bincount(x: ArrayLike, weights: Optional[ArrayLike] = None,
       "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
     length = _max(minlength, x_arr.size and int(x_arr.max()) + 1)
-  else:
+  elif not core.is_special_dim_size(length):
     length = core.concrete_or_error(operator.index, length,
         "The error occurred because of argument 'length' of jnp.bincount.")
   if weights is None:
@@ -1374,9 +1374,10 @@ def nonzero(a: ArrayLike, *, size: Optional[int] = None,
   mask = arr if arr.dtype == bool else (arr != 0)
   if size is None:
     size = mask.sum()
-  size = core.concrete_or_error(operator.index, size,
-    "The size argument of jnp.nonzero must be statically specified "
-    "to use jnp.nonzero within JAX transformations.")
+  if not core.is_special_dim_size(size):
+    size = core.concrete_or_error(operator.index, size,
+      "The size argument of jnp.nonzero must be statically specified "
+      "to use jnp.nonzero within JAX transformations.")
   if arr.size == 0 or size == 0:
     return tuple(zeros(size, int) for dim in arr.shape)
   flat_indices = cumsum(bincount(cumsum(mask), length=size))
@@ -3551,7 +3552,7 @@ def argsort(a, axis: Optional[int] = -1, kind='stable', order=None):
     return argsort(a.ravel(), 0)
   else:
     axis_num = _canonicalize_axis(axis, ndim(a))
-    use_64bit_index = a.shape[axis_num] >= (1 << 31)
+    use_64bit_index = core.is_special_dim_size(a.shape[axis_num]) or a.shape[axis_num] >= (1 << 31)
     iota = lax.broadcasted_iota(int64 if use_64bit_index else int_, shape(a), axis_num)
     _, perm = lax.sort_key_val(a, iota, dimension=axis_num)
     return perm
