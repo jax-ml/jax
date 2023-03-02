@@ -2868,9 +2868,7 @@ class APITest(jtu.JaxTestCase):
     value_tree = jnp.ones(3)
     self.assertRaisesRegex(
         ValueError,
-        "vmap in_axes specification must be a tree prefix of the corresponding "
-        r"value, got specification \(0, 0\) for value tree "
-        + re.escape(f"{tree_util.tree_structure((value_tree,))}."),
+        "Got vmap in_axes with length 2, but 1 positional argument",
         lambda: api.vmap(lambda x: x, in_axes=(0, 0))(value_tree)
     )
 
@@ -2957,8 +2955,14 @@ class APITest(jtu.JaxTestCase):
     # Error is: TypeError: only integer scalar arrays can be converted to a scalar index
     with self.assertRaisesRegex(
         ValueError,
-        "vmap out_axes specification must be a tree prefix of the "
-        "corresponding value.*"):
+        "pytree structure error: different types at key path\n"
+        "    vmap out_axes tree root\n"
+        "At that key path, the prefix pytree vmap out_axes has a subtree of "
+        "type\n"
+        "    tuple\n"
+        "but at the same key path the full pytree has a subtree of different "
+        "type\n"
+        r"    JAX array of shape float32\[\]\."):
       api.vmap(lambda x: x, in_axes=0, out_axes=(2, 3))(jnp.array([1., 2.]))
 
     with self.assertRaisesRegex(

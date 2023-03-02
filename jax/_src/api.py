@@ -54,8 +54,8 @@ from jax._src import xla_bridge as xb
 from jax._src.core import eval_jaxpr
 from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
-    argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
-    rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
+    argnums_partial, argnums_partial_except, flatten_axes, flatten_axes2,
+    donation_vector, rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, argnames_partial_except,
     validate_argnames, validate_argnums, check_callable, resolve_argnums,
     FLAGS)
@@ -1761,16 +1761,18 @@ def vmap(fun: F,
   def vmap_f(*args, **kwargs):
     args_flat, in_tree  = tree_flatten((args, kwargs), is_leaf=batching.is_vmappable)
     f = lu.wrap_init(fun)
-    flat_fun, out_tree = batching.flatten_fun_for_vmap(f, in_tree)
-    in_axes_flat = flatten_axes("vmap in_axes", in_tree, (in_axes, 0), kws=True)
+    flat_fun, aux = batching.flatten_fun_for_vmap(f, in_tree, out_axes)
+    in_axes_flat = flatten_axes2("vmap in_axes", (args, kwargs), (in_axes, 0),
+                                 kws=True, tupled_args=True,
+                                 is_leaf=batching.is_vmappable)
+    assert len(args_flat) == len(in_axes_flat)
     axis_size_ = (axis_size if axis_size is not None else
                   _mapped_axis_size(fun, in_tree, args_flat, in_axes_flat, "vmap"))
     out_flat = batching.batch(
-        flat_fun, axis_name, axis_size_, in_axes_flat,
-        lambda: flatten_axes("vmap out_axes", out_tree(), out_axes),
+        flat_fun, axis_name, axis_size_, in_axes_flat, lambda: aux()[1],
         spmd_axis_name=spmd_axis_name
     ).call_wrapped(*args_flat)
-    return tree_unflatten(out_tree(), out_flat)
+    return tree_unflatten(aux()[0], out_flat)
 
   return vmap_f
 

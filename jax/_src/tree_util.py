@@ -389,7 +389,7 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
   # ValueError; use prefix_errors to find disagreements and raise more precise
   # error messages.
   result = []
-  num_leaves = lambda t: tree_structure(t).num_leaves
+  num_leaves = lambda t: tree_structure(t, is_leaf).num_leaves
   add_leaves = lambda x, subtree: result.extend([x] * num_leaves(subtree))
   tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
   return result
@@ -483,13 +483,16 @@ def _prefix_error(key_path: KeyPath, prefix_tree: Any, full_tree: Any,
 
   # The subtrees may disagree because their roots are of different types:
   if type(prefix_tree) != type(full_tree):
+    prefix_ty = getattr(type(prefix_tree), '__name__', str(type(prefix_tree)))
+    full_ty = getattr(type(full_tree), '__name__', str(type(full_tree)))
     yield lambda name: ValueError(
       "pytree structure error: different types at key path\n"
       f"    {{name}}{key_path.pprint()}\n"
       f"At that key path, the prefix pytree {{name}} has a subtree of type\n"
-      f"    {type(prefix_tree)}\n"
-      f"but at the same key path the full pytree has a subtree of different type\n"
-      f"    {type(full_tree)}.".format(name=name))
+      f"    {prefix_ty}\n"
+      f"but at the same key path the full pytree has a subtree of different "
+      "type\n"
+      f"    {full_ty}.".format(name=name))
     return  # don't look for more errors in this subtree
 
   # Or they may disagree if their roots have different numbers or keys of

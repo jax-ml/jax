@@ -26,12 +26,13 @@ from jax.config import config
 from jax._src import core
 from jax._src import source_info_util
 from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
-from jax._src.tree_util import (tree_unflatten, tree_flatten,
+from jax._src.tree_util import (tree_unflatten, tree_flatten, tree_map,
                                 register_pytree_node)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero, SymbolicZero,
                               replace_rule_output_symbolic_zeros, instantiate)
 from jax._src import linear_util as lu
+from jax._src.api_util import flatten_axes2
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
@@ -237,10 +238,21 @@ def is_vmappable(x: Any) -> bool:
   return type(x) is Pile or type(x) in vmappables
 
 @lu.transformation_with_aux
-def flatten_fun_for_vmap(in_tree, *args_flat):
+def flatten_fun_for_vmap(in_tree, out_axes, *args_flat):
   py_args, py_kwargs = tree_unflatten(in_tree, args_flat)
   ans = yield py_args, py_kwargs
-  yield tree_flatten(ans, is_leaf=is_vmappable)
+  ans_ = tree_map(_replace_tracers, ans, is_leaf=is_vmappable)
+  out_axes_flat = flatten_axes2("vmap out_axes", ans_, out_axes,
+                                is_leaf=is_vmappable)
+  ans_flat, out_tree = tree_flatten(ans, is_leaf=is_vmappable)
+  yield ans_flat, (out_tree, out_axes_flat)
+
+# TODO(mattjj): improve this workaround for error messages
+def _replace_tracers(x):
+  if isinstance(x, core.Tracer):
+    return type(f'JAX array of shape {x.aval.str_short()}', (),
+                {'ndim': x.ndim, 'shape': x.shape, 'dtype': x.dtype})()
+  return x
 
 ### tracer
 

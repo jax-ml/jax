@@ -25,8 +25,8 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
-    treedef_children)
-from jax._src.tree_util import _replace_nones
+    treedef_children, _replace_nones, broadcast_prefix, prefix_errors,
+    treedef_is_strict_leaf)
 from jax._src import linear_util as lu
 from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
 from jax._src.config import flags, bool_env
@@ -400,44 +400,108 @@ def is_hashable(arg):
     return False
 
 
-def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
-  # given an axis spec tree axis_tree (a pytree with integers and Nones at the
-  # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
-  # the given treedef, build a complete axis spec tree with the same structure
-  # and return the flattened result
-  # TODO(mattjj,phawkins): improve this implementation
+# def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
+#   # given an axis spec tree axis_tree (a pytree with integers and Nones at the
+#   # leaves, i.e. the Nones are to be considered leaves) that is a tree prefix of
+#   # the given treedef, build a complete axis spec tree with the same structure
+#   # and return the flattened result
+#   # TODO(mattjj,phawkins): improve this implementation
 
-  proxy = object()
-  dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
-  axes = []
-  add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+#   proxy = object()
+#   dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
+#   axes = []
+#   add_leaves = lambda i, x: axes.extend([i] * len(tree_flatten(x)[0]))
+#   try:
+#     tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
+#   except ValueError:
+#     if kws:
+#       # if keyword arguments are included in the tree, we make adapt the error
+#       # message only to be about the positional arguments
+#       treedef, _ = treedef_children(treedef)
+#       axis_tree, _ = axis_tree
+#     hint = ""
+#     if tupled_args:
+#       hint += (f" Note that {name} that are non-trivial pytrees should always be "
+#                f"wrapped in a tuple representing the argument list.")
+#       if len(treedef.children()) == 1:
+#         try:
+#           flatten_axes(name, treedef, (axis_tree,))
+#         except ValueError:
+#           pass  # That's not the issue.
+#         else:
+#           hint += (f" In particular, you're passing in a single argument which "
+#                    f"means that {name} might need to be wrapped in "
+#                    f"a singleton tuple.")
+#     raise ValueError(f"{name} specification must be a tree prefix of the "
+#                      f"corresponding value, got specification {axis_tree} "
+#                      f"for value tree {treedef}.{hint}") from None
+#   axes = [None if a is proxy else a for a in axes]
+#   assert len(axes) == treedef.num_leaves
+#   return axes
+
+def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   try:
-    tree_map(add_leaves, _replace_nones(proxy, axis_tree), dummy)
-  except ValueError:
-    if kws:
-      # if keyword arguments are included in the tree, we make adapt the error
-      # message only to be about the positional arguments
-      treedef, _ = treedef_children(treedef)
-      axis_tree, _ = axis_tree
-    hint = ""
-    if tupled_args:
-      hint += (f" Note that {name} that are non-trivial pytrees should always be "
-               f"wrapped in a tuple representing the argument list.")
+    dummy = tree_unflatten(treedef, [object()] * treedef.num_leaves)
+  except Exception as e:
+    raise ValueErrror(
+        f"{name} contains pytree types which are not fully polymorphic in the "
+        "types they contain, so cannot be used as a tree prefix.") from e
+  return flatten_axes2(name, dummy, axis_tree, kws=kws, tupled_args=tupled_args)
+
+def flatten_axes2(name, full_tree, axis_tree, *, kws=False, tupled_args=False,
+                  is_leaf: Optional[Callable] = None):
+  treedef = tree_structure(full_tree, is_leaf)
+
+  # If the tree structure of axis_tree is already the same as treedef, use it.
+  flat_axes, axis_treedef = tree_flatten(axis_tree, is_leaf=lambda x: x is None)
+  if treedef == axis_treedef: return flat_axes
+  # Or if the tree structure is a leaf, we can trivially broadcast it.
+  if axis_tree is None or treedef_is_strict_leaf(axis_treedef):
+    return [axis_tree] * treedef.num_leaves
+  del flat_axes, axis_treedef
+
+  # Otherwise, axis_tree's structure must be a prefix of treedef.
+  proxy = object()
+  try:
+    axes = broadcast_prefix(_replace_nones(proxy, axis_tree), full_tree,
+                            is_leaf)
+  except ValueError: pass  # error handling below
+  else:
+    assert treedef.num_leaves == len(axes)
+    return [None if a is proxy else a for a in axes]
+
+  # If keyword arguments are included in the tree, we adapt the error message to
+  # be only about the positional arguments.
+  if kws:
+    treedef, _ = treedef_children(treedef)
+    full_tree, _ = full_tree
+    axis_tree, _ = axis_tree
+
+  # Special-case handling of errors at the root of axis_tree if we're dealing
+  # with tupled arguments (rather than e.g. an output pytree).
+  if tupled_args:
+    if not isinstance(axis_tree, (list, tuple)):
+      msg = (f"Got {name} of type {type(axis_tree)}, but it must be a None, int"
+             ", or tuple corresponding to the tuple of positional arguments.")
       if len(treedef.children()) == 1:
-        try:
-          flatten_axes(name, treedef, (axis_tree,))
-        except ValueError:
-          pass  # That's not the issue.
-        else:
-          hint += (f" In particular, you're passing in a single argument which "
-                   f"means that {name} might need to be wrapped in "
-                   f"a singleton tuple.")
-    raise ValueError(f"{name} specification must be a tree prefix of the "
-                     f"corresponding value, got specification {axis_tree} "
-                     f"for value tree {treedef}.{hint}") from None
-  axes = [None if a is proxy else a for a in axes]
-  assert len(axes) == treedef.num_leaves
-  return axes
+        try: flatten_axes(name, treedef, (axis_tree,))
+        except ValueError: pass  # that's not the issue
+      else:
+        msg += ("In particular, because there's a single argument, maybe "
+                f"the value of {name} should be wrapped in a singleton tuple.")
+      raise ValueError(msg)
+
+    assert isinstance(axis_tree, (list, tuple))
+    if len(axis_tree) != len(treedef.children()):
+      msg = (f"Got {name} with length {len(axis_tree)}, but "
+             f"{len(treedef.children())} positional arguments. The {name} tuple "
+             "must correspond to the tuple of positional arguments, and in "
+             "particular must have the same length.")
+      raise ValueError(msg)
+
+  # At this point, just provide a pytree prefix structure error.
+  e, *_ = prefix_errors(axis_tree, full_tree)
+  raise e(name)
 
 
 def _isgeneratorfunction(fun):

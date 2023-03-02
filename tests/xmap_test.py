@@ -2019,11 +2019,7 @@ class XMapErrorTest(jtu.JaxTestCase):
     xmap(lambda x: x, (p,), p)([x, x, x])  # OK
     xmap(lambda x: x, [p], p)([x, x, x])  # OK
     error = re.escape(
-        r"xmap in_axes specification must be a tree prefix of the "
-        r"corresponding value, got specification (['x'], ['x'], ['x']) for value "
-        r"tree PyTreeDef((*, *)). Note that xmap in_axes that are "
-        r"non-trivial pytrees should always be wrapped in a tuple representing "
-        r"the argument list.")
+        "Got xmap in_axes with length 3, but 2 positional arguments.")
     with self.assertRaisesRegex(ValueError, error):
       xmap(lambda x, y: x, p, p)(x, x)  # Error, but make sure we hint at tupling
     # TODO(apaszke): Disable implicit list casts and enable this
@@ -2038,9 +2034,14 @@ class XMapErrorTest(jtu.JaxTestCase):
     # with self.assertRaisesRegex(ValueError, error):
     # xmap(lambda x: x, p, p)([x, x, x])  # Error, but make sure we hint at singleton tuple
     error = re.escape(
-        r"xmap out_axes specification must be a tree prefix of the "
-        r"corresponding value, got specification ([['x'], ['x'], ['x']], ['x']) for "
-        r"value tree PyTreeDef([*, *, *]).")
+        "pytree structure error: different types at key path\n"
+        "    xmap out_axes tree root\n"
+        "At that key path, the prefix pytree xmap out_axes has a subtree of "
+        "type\n"
+        "    tuple\n"
+        "but at the same key path the full pytree has a subtree of different "
+        "type\n"
+        "    list.")
     with self.assertRaisesRegex(ValueError, error):
       xmap(lambda x: x, (p,), (p, ['x']))([x, x, x])  # Error, we raise a generic tree mismatch message
 
