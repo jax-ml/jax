@@ -1063,6 +1063,11 @@ config.define_bool_state(
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
 config.define_bool_state(
+    name='jax_debug_mode',
+    default=True,
+    help='slow but safe mode')
+
+config.define_bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
     help=('Enable XLA runtime errors for jax.experimental.checkify.checks '

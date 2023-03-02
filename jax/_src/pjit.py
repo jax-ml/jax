@@ -357,7 +357,8 @@ def pre_infer_params(fun, in_shardings, out_shardings,
 def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
                       donate_argnums, abstracted_axes,
                       pjit_has_explicit_sharding):
-  if FLAGS.experimental_cpp_pjit and abstracted_axes is None:
+  if (FLAGS.experimental_cpp_pjit and abstracted_axes is None
+      and not config.jax_debug_mode):
     wrapped = _cpp_pjit(fun, infer_params_fn, static_argnums, static_argnames,
                         donate_argnums, pjit_has_explicit_sharding)
   else:
@@ -1286,10 +1287,20 @@ def _pjit_call_impl(*args, jaxpr,
     _allow_propagation_to_outputs = [_is_unspecified(o) for o in out_shardings]
   else:
     _allow_propagation_to_outputs = [False] * len(out_shardings)
-  compiled = _pjit_lower(
+  if config.jax_debug_mode:
+    from jax._src import checkify
+    err_vals, err_tree = tree_flatten(checkify.init_error)
+    jaxpr, err_out_tree, _ = checkify.jaxpr_to_checkify_jaxpr(
+        jaxpr, checkify.all_checks, err_tree, *err_vals, *jaxpr.in_avals)
+    if not _is_unspecified(out_shardings):
+      num_out_error_vals = err_out_tree.num_leaves - len(out_shardings)
+      out_shardings = [*(_UNSPECIFIED,)*num_out_error_vals, *out_shardings]
+  
+  lowered = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, in_is_global, keep_unused,
-      always_lower=False).compile(
+      always_lower=False)
+  compiled = lowered.compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
@@ -1309,7 +1320,7 @@ def _pjit_call_impl(*args, jaxpr,
                           ("abstract args", list(map(xla.abstractify, args))),
                           ("fingerprint", fingerprint))
   try:
-    return compiled.unsafe_call(*args)
+    outs = compiled.unsafe_call(*args)
   except FloatingPointError:
     assert config.jax_debug_nans or config.jax_debug_infs  # compiled_fun can only raise in this case
 
@@ -1334,6 +1345,14 @@ def _pjit_call_impl(*args, jaxpr,
            "If you see this error, consider opening a bug report at "
            "https://github.com/google/jax.")
     raise FloatingPointError(msg)
+  if config.jax_debug_mode:
+    from jax._src import checkify
+    err, outs = tree_unflatten(err_out_tree, outs)
+    checkify.check_error(err)
+    return outs
+  else:
+    return outs
+
 
 pjit_p.def_impl(_pjit_call_impl)
 
@@ -1368,7 +1387,7 @@ def _pjit_lower(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
-    *args, **kwargs):
+    *args, **kwargs) -> pxla.MeshComputation:
   da = _fast_path_get_device_assignment(it.chain(in_shardings, out_shardings))
   in_shardings = SameDeviceAssignmentTuple(in_shardings, da)
   out_shardings = SameDeviceAssignmentTuple(out_shardings, da)
@@ -1385,7 +1404,7 @@ def _pjit_lower_cached(
     name: str,
     in_is_global: Sequence[bool],
     keep_unused: bool,
-    always_lower: bool):
+    always_lower: bool) -> pxla.MeshComputation:
   in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
