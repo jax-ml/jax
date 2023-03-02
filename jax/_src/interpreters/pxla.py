@@ -499,7 +499,8 @@ def is_auto(x):
 
 
 class UnspecifiedValue:
-  pass
+  def __repr__(self):
+    return "UnspecifiedValue"
 _UNSPECIFIED = UnspecifiedValue()
 
 def _is_unspecified(x):
