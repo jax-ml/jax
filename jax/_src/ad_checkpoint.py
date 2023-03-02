@@ -401,15 +401,9 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
       results.append((v.aval, 'from a constant'))
 
   assert len(jaxpr.invars) == len(in_leaves)
-  dbg = pe.debug_info(f, in_tree, True, "saved_residuals")
-  arg_info = pe.arg_info_all(dbg)
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
-      if arg_info is not None:
-        arg_name, arg_path = arg_info[i]
-        src = f'from the argument {arg_name}{arg_path.pprint("")}'
-      else:
-        src = 'from the argument at flattened index {i}'
+      src = f'from {pe.arg_info_pytree(f, in_tree, True, [i])}'
       results.append((v.aval, src))
 
   for eqn in jaxpr.eqns:

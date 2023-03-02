@@ -14,7 +14,6 @@
 
 import functools
 from functools import partial
-import inspect
 import itertools as it
 import logging
 import operator
@@ -536,15 +535,3 @@ def use_cpp_method(is_enabled=True):
         "Decorator got wrong type: @use_cpp_method(is_enabled: bool=True)"
     )
   return decorator
-
-
-def fun_sourceinfo(fun: Callable) -> Optional[str]:
-  while isinstance(fun, partial):
-    fun = fun.func
-  fun = inspect.unwrap(fun)
-  try:
-    filename = fun.__code__.co_filename
-    lineno = fun.__code__.co_firstlineno
-    return f"{fun.__name__} at {filename}:{lineno}"
-  except AttributeError:
-    return None
