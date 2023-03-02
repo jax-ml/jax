@@ -1133,9 +1133,10 @@ class BCOOTest(sptu.SparseTestCase):
     sp_matmat = jit(partial(sparse_bcoo.bcoo_dot_general,
                             dimension_numbers=dimension_numbers))
 
-    with self.gpu_matmul_warning_context(
-        "bcoo_dot_general GPU lowering currently does not support this batch-mode computation.*"):
-      matmat_default_lowering_fallback = sp_matmat(lhs_bcoo, rhs)
+    # TODO(jakevdp): uncomment once batching is supported again.
+    # with self.gpu_matmul_warning_context(
+    #     "bcoo_dot_general GPU lowering currently does not support this batch-mode computation.*"):
+    matmat_default_lowering_fallback = sp_matmat(lhs_bcoo, rhs)
     self.assertArraysEqual(matmat_expected, matmat_default_lowering_fallback)
 
   @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
@@ -1748,9 +1749,8 @@ class BCOOTest(sptu.SparseTestCase):
     data = jnp.array([1, 2, 3, 4, 0, 0])
     indices = jnp.array([1, 3, 0, 2, 2, 4])[:, None]
     x1 = sparse.BCOO((data, indices), shape=(2,))
-    rhs = jnp.zeros((2), dtype=data.dtype)
     data_unbatched, indices_unbatched = sparse_bcoo._bcoo_correct_out_of_bound_indices(
-        x1.data, x1.indices, rhs, shape=x1._info.shape)
+        x1.data, x1.indices, x1._info.shape)
     expected_data_unbatched = jnp.array([1, 0, 3, 0, 0, 0])
     expected_indices_unbatched = jnp.array([[1], [0], [0], [0], [0], [0]])
     with self.subTest('unbatched data'):
@@ -1764,7 +1764,7 @@ class BCOOTest(sptu.SparseTestCase):
                          [[2, 1], [1, 0], [2, 3], [1, 1]]])
     x2 = sparse.BCOO((data, indices), shape=(2, 3, 2))
     data_batched, indices_batched = sparse_bcoo._bcoo_correct_out_of_bound_indices(
-        x2.data, x2.indices, rhs, shape=x2._info.shape)
+        x2.data, x2.indices, x2._info.shape)
     expected_data_batched = jnp.array([[0, 1, 0, 0],
                                        [4, 5, 0, 7]])
     expected_indices_batched = jnp.array(
