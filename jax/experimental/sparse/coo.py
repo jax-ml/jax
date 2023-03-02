@@ -29,6 +29,7 @@ from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import _coo_extract, CuSparseEfficiencyWarning
 from jax import tree_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import hlo
@@ -193,7 +194,6 @@ def _coo_todense(data: Array, row: Array, col: Array, *, spinfo: COOInfo) -> Arr
   """
   return coo_todense_p.bind(data, row, col, spinfo=spinfo)
 
-@coo_todense_p.def_impl
 def _coo_todense_impl(data, row, col, *, spinfo):
   return jnp.zeros(spinfo.shape, data.dtype).at[row, col].add(data)
 
@@ -249,6 +249,8 @@ def _coo_todense_transpose(ct, data, row, col, *, spinfo):
 ad.defjvp(coo_todense_p, _coo_todense_jvp, None, None)
 ad.primitive_transposes[coo_todense_p] = _coo_todense_transpose
 mlir.register_lowering(coo_todense_p, _coo_todense_lowering)
+dispatch.simple_impl(coo_todense_p)
+
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_todense_p,
@@ -301,7 +303,6 @@ def _coo_fromdense(mat: Array, *, nse: int, index_dtype: DTypeLike = jnp.int32) 
   nse = core.concrete_or_error(operator.index, nse, "nse argument of coo_fromdense()")
   return coo_fromdense_p.bind(mat, nse=nse, index_dtype=index_dtype)
 
-@coo_fromdense_p.def_impl
 def _coo_fromdense_impl(mat, *, nse, index_dtype):
   mat = jnp.asarray(mat)
   assert mat.ndim == 2
@@ -365,8 +366,8 @@ def _coo_fromdense_transpose(ct, M, *, nse, index_dtype):
 
 ad.primitive_jvps[coo_fromdense_p] = _coo_fromdense_jvp
 ad.primitive_transposes[coo_fromdense_p] = _coo_fromdense_transpose
-
 mlir.register_lowering(coo_fromdense_p, _coo_fromdense_lowering)
+dispatch.simple_impl(coo_fromdense_p)
 
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
@@ -420,7 +421,6 @@ def _coo_matvec(data: Array, row: Array, col: Array, v: Array, *, spinfo: COOInf
   """
   return coo_matvec_p.bind(data, row, col, v, spinfo=spinfo, transpose=transpose)
 
-@coo_matvec_p.def_impl
 def _coo_matvec_impl(data, row, col, v, *, spinfo, transpose):
   v = jnp.asarray(v)
   if transpose:
@@ -491,6 +491,8 @@ def _coo_matvec_transpose(ct, data, row, col, v, *, spinfo, transpose):
 ad.defjvp(coo_matvec_p, _coo_matvec_jvp_mat, None, None, _coo_matvec_jvp_vec)
 ad.primitive_transposes[coo_matvec_p] = _coo_matvec_transpose
 mlir.register_lowering(coo_matvec_p, _coo_matvec_lowering)
+dispatch.simple_impl(coo_matvec_p)
+
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_matvec_p,
@@ -544,7 +546,6 @@ def _coo_matmat(data: Array, row: Array, col: Array, B: Array, *, spinfo: COOInf
   """
   return coo_matmat_p.bind(data, row, col, B, spinfo=spinfo, transpose=transpose)
 
-@coo_matmat_p.def_impl
 def _coo_matmat_impl(data, row, col, B, *, spinfo, transpose):
   B = jnp.asarray(B)
   if transpose:
@@ -611,6 +612,8 @@ def _coo_matmat_transpose(ct, data, row, col, B, *, spinfo, transpose):
 ad.defjvp(coo_matmat_p, _coo_matmat_jvp_left, None, None, _coo_matmat_jvp_right)
 ad.primitive_transposes[coo_matmat_p] = _coo_matmat_transpose
 mlir.register_lowering(coo_matmat_p, _coo_matmat_lowering)
+dispatch.simple_impl(coo_matmat_p)
+
 if gpu_sparse.cuda_is_supported:
   mlir.register_lowering(
       coo_matmat_p,
