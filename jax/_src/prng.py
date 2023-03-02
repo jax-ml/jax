@@ -279,6 +279,29 @@ def base_arr_shape_to_keys_shape(impl, base_arr_shape):
   base_ndim = len(impl.key_shape)
   return base_arr_shape[:-base_ndim]
 
+def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
+  if dispatch.is_single_device_sharding(sharding):
+    return sharding
+  elif isinstance(sharding, PmapSharding):
+    key_shape = aval.dtype.impl.key_shape
+    trailing_sharding = [pxla.NoSharding()] * len(key_shape)
+    phys_sharding_spec = pxla.ShardingSpec(
+        sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
+        mesh_mapping=sharding.sharding_spec.mesh_mapping)
+    return PmapSharding(devices=sharding.devices,
+                        sharding_spec=phys_sharding_spec)
+  elif isinstance(sharding, NamedSharding):
+    key_shape = aval.dtype.impl.key_shape
+    trailing_spec = [None] * len(key_shape)
+    return NamedSharding(
+        sharding.mesh,
+        pxla.PartitionSpec(*sharding.spec, *trailing_spec))
+  elif is_sharding_from_xla:
+    return sharding
+  else:
+    return GSPMDSharding(
+        sharding._device_assignment,
+        KeyTyRules.physical_op_sharding(aval, sharding))
 
 class KeyTyRules:
 
@@ -321,18 +344,9 @@ class KeyTyRules:
         (core.ShapedArray, output_type)]
 
     # set up a grounded sharding (with a grounded sharding spec)
-    if isinstance(sharding, PmapSharding):
-      trailing_sharding = [pxla.NoSharding()] * len(key_shape)
-      phys_sharding_spec = pxla.ShardingSpec(
-          sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
-          mesh_mapping=sharding.sharding_spec.mesh_mapping)
-      phys_sharding = PmapSharding(devices=sharding.devices,
-                                   sharding_spec=phys_sharding_spec)
-    elif isinstance(sharding, NamedSharding):
-      trailing_spec = [None] * len(key_shape)
-      phys_sharding = NamedSharding(
-          sharding.mesh,
-          pxla.PartitionSpec(*sharding.spec, *trailing_spec))
+    if isinstance(sharding, (PmapSharding, NamedSharding)):
+      phys_sharding = make_key_array_phys_sharding(
+          aval, sharding, is_sharding_from_xla=False)
     else:
       assert False, f'impossible sharding {sharding} in local sharded result handler'
 
@@ -353,7 +367,6 @@ class KeyTyRules:
   def global_sharded_result_handler(aval, out_sharding, committed,
                                     is_out_sharding_from_xla):
     phys_aval, = KeyTyRules.physical_avals(aval)
-    key_shape = aval.dtype.impl.key_shape
 
     # TODO(yashkatariya,frostig): remove this conditional and inline it when
     # the transient config ever settles
@@ -365,20 +378,8 @@ class KeyTyRules:
     phys_handler_maker = pxla.global_result_handlers[
         (core.ShapedArray, output_type)]
 
-    if dispatch.is_single_device_sharding(out_sharding):
-      phys_sharding = out_sharding
-    elif isinstance(out_sharding, NamedSharding):
-      trailing_spec = [None] * len(key_shape)
-      phys_sharding = NamedSharding(
-          out_sharding.mesh,
-          pxla.PartitionSpec(*out_sharding.spec, *trailing_spec))
-    else:
-      if is_out_sharding_from_xla:
-        phys_sharding = out_sharding
-      else:
-        phys_sharding = GSPMDSharding(
-            out_sharding._device_assignment,
-            KeyTyRules.physical_op_sharding(aval, out_sharding))
+    phys_sharding = make_key_array_phys_sharding(
+        aval, out_sharding, is_out_sharding_from_xla)
 
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
                                       is_out_sharding_from_xla)
@@ -499,16 +500,24 @@ def device_put_key_array(x: PRNGKeyArray, device):
   return dispatch.device_put(x.unsafe_raw_array(), device)
 dispatch.device_put_handlers[PRNGKeyArray] = device_put_key_array
 
-def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices):
+
+def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices, sharding):
   # TODO(frostig): Remove the need for `core.get_aval`.
-  key_shape = core.get_aval(x).dtype.impl.key_shape
+  aval = core.get_aval(x)
+  key_shape = aval.dtype.impl.key_shape
   arr = x.unsafe_raw_array()
 
   # TODO(yashkatariya,frostig): This assumes that the last dimensions are not
   # sharded. This is only true when enable_custom_prng is True.
   trailing_inds = [slice(None)] * len(key_shape)
   phys_indices = [(*inds, *trailing_inds) for inds in indices]
-  return pxla.shard_arg_handlers[type(arr)](arr, devices, phys_indices)
+  phys_sharding = make_key_array_phys_sharding(
+      aval, sharding, is_sharding_from_xla=False)
+  return pxla.shard_arg_handlers[type(arr)](
+      arr, devices, phys_indices, phys_sharding
+  )
+
+
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
 
 

@@ -2977,7 +2977,7 @@ def device_put_foo_array(x: FooArray, device):
     return array._device_put_array(x.data, device)
   return dispatch._device_put_array(x.data, device)
 
-def shard_foo_array_handler(x, devices, indices):
+def shard_foo_array_handler(x, devices, indices, sharding):
   device, = devices
   if isinstance(x.data, array.ArrayImpl):
     return dispatch._device_put_jax_array(x.data, device)

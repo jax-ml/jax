@@ -620,7 +620,7 @@ def _gda_mlir_constant_handler(val, canonicalize_types=True):
 mlir.register_constant_handler(GlobalDeviceArray, _gda_mlir_constant_handler)
 
 
-def _gda_shard_arg(x, devices, indices):
+def _gda_shard_arg(x, devices, indices, sharding):
   x._check_if_deleted()
   return x._device_buffers
 pxla.shard_arg_handlers[GlobalDeviceArray] = _gda_shard_arg

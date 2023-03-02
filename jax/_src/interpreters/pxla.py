@@ -371,7 +371,7 @@ def spec_to_indices(shape: Sequence[int],
 
 def identity(x): return x
 
-def shard_arg(arg, devices, arg_indices):
+def shard_arg(arg, devices, arg_indices, sharding):
   """Returns a list of size len(devices) containing per-device buffers.
 
   For the C++ pmap path, we fallback to Python (this function) to shard
@@ -393,13 +393,16 @@ def shard_arg(arg, devices, arg_indices):
     ]
   else:
     arg = xla.canonicalize_dtype(arg)
-    return shard_arg_handlers[type(arg)](arg, devices, arg_indices)
+    return shard_arg_handlers[type(arg)](arg, devices, arg_indices, sharding)
 
 
 @profiler.annotate_function
-def shard_args(devices: Sequence[xb.xla_client.Device],
-               indices: Sequence[Sequence[Index]],
-               args) -> Sequence[Sequence[xb.xla_client.Buffer]]:
+def shard_args(
+    devices: Sequence[xb.xla_client.Device],
+    indices: Sequence[Sequence[Index]],
+    shardings: Sequence[sharding_internal.XLACompatibleSharding],
+    args,
+) -> Sequence[Sequence[xb.xla_client.Buffer]]:
   """Shard each argument data array along its leading axis.
 
   Args:
@@ -414,28 +417,28 @@ def shard_args(devices: Sequence[xb.xla_client.Device],
     A list of length matching args, containing lists of per-device buffers
     for each argument.
   """
-  return [shard_arg(arg, devices, indices[i]) for i, arg in enumerate(args)]
+  return [shard_arg(arg, devices, indices[i], shardings[i])
+          for i, arg in enumerate(args)]
 
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, Any], Sequence[Any]]] = {}
 
-shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any], Sequence[Any]]] = {}
-
-def _shard_token(x, devices, indices):
+def _shard_token(x, devices, indices, sharding):
   return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
 shard_arg_handlers[core.Token] = _shard_token
 
-def _masked_array_error(x, devices, indices):
+def _masked_array_error(x, devices, indices, sharding):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
-def _shard_array(x, devices, indices):
+def _shard_array(x, devices, indices, sharding):
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def shard_device_array(x, devices, indices):
+def shard_device_array(x, devices, indices, sharding):
   start_indices, limit_indices, removed_dims = unzip3(
       as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
@@ -915,7 +918,7 @@ def _hashable_index(idx):
 # The fast path is handled directly in shard_args().
 # TODO(yashkatariya): Move this to array.py when SDA is deleted. The local
 # import of Array should go away at that time.
-def shard_sharded_device_array_slow_path(x, devices, indices):
+def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   from jax._src.array import ArrayImpl
 
   candidates = defaultdict(list)
@@ -935,7 +938,8 @@ def shard_sharded_device_array_slow_path(x, devices, indices):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return shard_arg_handlers[type(x._value)](x._value, devices, indices)
+      return shard_arg_handlers[type(x._value)](
+          x._value, devices, indices, sharding)
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1895,7 +1899,8 @@ class InputsHandler:
   __slots__ = ("handler", "local_devices", "in_shardings", "input_indices")
 
   def __init__(self, local_devices, in_shardings, input_indices):
-    self.handler = partial(shard_args, local_devices, input_indices)
+    self.handler = partial(
+        shard_args, local_devices, input_indices, in_shardings)
     self.local_devices = local_devices
     self.in_shardings = in_shardings
     self.input_indices = input_indices

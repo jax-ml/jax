@@ -1399,7 +1399,7 @@ def _device_put_impl(
     # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
     result_handler = pxla.global_aval_to_result_handler(aval, s, True, False)
     map_ = s.devices_indices_map(aval.shape)  # type: ignore
-    return result_handler(pxla.shard_arg(x, list(map_), list(map_.values())))
+    return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):

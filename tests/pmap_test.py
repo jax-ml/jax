@@ -2950,7 +2950,12 @@ class ShardArgsTest(jtu.JaxTestCase):
       raise SkipTest
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
-    bufs = pxla.shard_args(jax.devices()[:nshards], [indices], [arg])
+    sharding = None
+    if config.jax_array:
+      sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
+    bufs = pxla.shard_args(
+        jax.devices()[:nshards], [indices], [sharding], [arg]
+    )
     self.assertEqual(len(bufs), 1)
     self.assertEqual(len(bufs[0]), nshards)
     for buf, idx in zip(bufs[0], indices):
