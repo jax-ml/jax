@@ -787,7 +787,8 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
       return aval, device
 
   @api_boundary
-  def lower(*args, **kwargs) -> stages.Lowered:
+  def lower(*args, _experimental_lowering_platform: Optional[str] = None,
+            **kwargs) -> stages.Lowered:
     """Lower this function for the given arguments.
 
     A lowered function is staged out of Python and translated to a
@@ -821,13 +822,15 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
     if jax.config.jax_array:
       computation = dispatch.sharded_lowering(
           flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
-          keep_unused, *arg_specs_and_devices)
+          keep_unused, lowering_platform=_experimental_lowering_platform,
+          *arg_specs_and_devices)
       return stages.Lowered.from_flat_info(
           computation, in_tree, in_avals, donate_argnums, out_tree())
     else:
       computation = dispatch.lower_xla_callable(
           flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
-          keep_unused, *arg_specs_and_devices)
+          keep_unused, lowering_platform=_experimental_lowering_platform,
+          *arg_specs_and_devices)
       return stages.Lowered.from_flat_info(
           computation, in_tree, in_avals, donate_argnums, out_tree())
 
@@ -2474,7 +2477,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
   # this might naturally be a method, with ``fun`` as a ``self`` and
   # all the other arguments stored as attributes.
   @api_boundary
-  def lower(*args, **kwargs) -> stages.Lowered:
+  def lower(*args, _experimental_lowering_platform: Optional[str] = None,
+            **kwargs) -> stages.Lowered:
     """Lower a parallel-mapped form of this function for the given arguments.
 
     A parallel-mapped and lowered function is staged out of Python and
@@ -2500,7 +2504,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         donated_invars=p.donated_invars,
         global_arg_shapes=p.global_arg_shapes_flat,
         is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-        avals=abstract_args)
+        avals=abstract_args,
+        lowering_platform=_experimental_lowering_platform)
     return stages.Lowered.from_flat_info(
         computation, p.in_tree, abstract_args, donate_tuple, p.out_tree())
 

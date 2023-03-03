@@ -326,7 +326,8 @@ def not_none_device_or_backend_on_jit(backend, device, num_ins):
 
 
 def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
-                     keep_unused, *arg_specs):
+                     keep_unused, *arg_specs,
+                     lowering_platform: Optional[str]):
   in_avals, in_shardings = util.unzip2(arg_specs)
 
   da = None
@@ -334,7 +335,7 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
     da, in_shardings = not_none_device_or_backend_on_jit(
         backend, device, len(in_shardings))
 
-  in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]
+  in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]  # type: ignore
 
   # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
   # the number of output avals at this stage. lower_sharding_computation will
@@ -342,19 +343,22 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings, pxla._UNSPECIFIED, donated_invars,
       in_avals, in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      always_lower=always_lower, devices_from_context=da)
+      always_lower=always_lower, devices_from_context=da,
+      lowering_platform=lowering_platform)
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                            donated_invars, keep_unused, *arg_specs):
   if config.jax_array:
     computation = sharded_lowering(fun, device, backend, name, donated_invars,
-                                   False, keep_unused, *arg_specs)
+                                   False, keep_unused, *arg_specs,
+                                   lowering_platform=None)
     allow_prop = [True] * len(computation.compile_args['global_out_avals'])
     return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
   else:
     return lower_xla_callable(fun, device, backend, name, donated_invars, False,
-                              keep_unused, *arg_specs).compile().unsafe_call
+                              keep_unused, *arg_specs,
+                              lowering_platform=None).compile().unsafe_call
 
 xla_callable = lu.cache(_xla_callable_uncached)
 
@@ -414,7 +418,8 @@ def raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, name, jaxpr):
 @profiler.annotate_function
 def lower_xla_callable(
     fun: lu.WrappedFun, device, backend, name, donated_invars,
-    always_lower: bool, keep_unused: bool, *arg_specs):
+    always_lower: bool, keep_unused: bool, *arg_specs,
+    lowering_platform: Optional[str]):
   """Lower into XLA.
 
   Args:
@@ -512,7 +517,8 @@ def lower_xla_callable(
     effects.ordered_effects.filter_in(closed_jaxpr.effects))
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name, closed_jaxpr, unordered_effects,
-      ordered_effects, backend, backend.platform,
+      ordered_effects, backend,
+      lowering_platform or backend.platform,
       mlir.ReplicaAxisContext(axis_env), name_stack, donated_invars)
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,

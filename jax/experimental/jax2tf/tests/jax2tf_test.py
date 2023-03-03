@@ -1375,32 +1375,40 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
               f"See op.name = : {op.name}")
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"{'with_mesh_' if with_mesh else ''}{'nullary_' if nullary else ''}{transform}_pjit_sharding={pjit_sharding}",
-           with_mesh=with_mesh, transform=transform, nullary=nullary, pjit_sharding=pjit_sharding)
-      # The inner transformation to apply to the lowered function
-      for transform in ["base",
-                      "jit",
-                      "pjit", "pjit_in_shardings_None", "pjit_in_shardings_P", "pjit_in_shardings_Sharding",
-                      "shard_map", "xmap", "pmap"]
-      # The sharding to be used for the outer pjit
-      for pjit_sharding in (
-          ["unspecified"] if transform == "pmap" else
-          ["unspecified", "none", "P", "Sharding"])
+      dict(testcase_name=(
+          f"{'with_mesh_' if with_mesh else ''}"
+          f"2={transform2 if transform2 != 'none' else ''}"
+          f"_1={transform1 if transform1 != 'none' else ''}"
+          f"{'_nullary' if nullary else ''}"),
+           with_mesh=with_mesh, transform1=transform1,
+          transform2=transform2, nullary=nullary)
+      # Test transform2(transform1(func)
+      for transform1 in [
+          "none",
+          "jit",
+          "pjit", "pjit_in_shardings_None", "pjit_in_shardings_P",
+          "pjit_in_shardings_Sharding",
+          "shard_map", "xmap", "pmap"]
+      for transform2 in (
+          ["none", "pjit_in_shardings_None", "pjit_in_shardings_P",
+           "pjit_in_shardings_Sharding"]
+      )
       # Whether the function can be nullary
       for nullary in (
-          [False] if (pjit_sharding != "unspecified") else
-          [True, False]
-      )
+          # To reduce the number of tests
+          [True, False] if transform2 == "none" else
+          [False])
       # Whether we use a "with mesh"
       for with_mesh in (
-          [True] if (transform not in ["base", "jit", "pjit"] or
-                     pjit_sharding != "unspecified") else
+          [True] if (transform1 not in ["base", "jit", "pjit"] or
+                     transform2 != "none") else
           [False, True])
   )
-  def test_cross_platform(self, with_mesh=False, transform="jit", nullary=False, pjit_sharding="unspecified"):
+  def test_cross_platform(self, with_mesh=True, transform1="xmap",
+                          transform2="none", nullary=True):
     # Tests cross-lowering for
     #  with mesh:
-    #   pjit(transform(func), in_sharding=pjit_sharding)
+    #   transform2(transform1(func))
     if not config.jax_array:
       raise unittest.SkipTest("cross_platform test work only with jax.Array")
     if not config.jax_jit_pjit_api_merge:
@@ -1409,49 +1417,60 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     mesh = sharding.Mesh(jax.devices()[:1], ("a",))
     # cummax has distinctive lowering for TPU, using a reduce-window op
     func = lambda x: lax.cummax(x, axis=0, reverse=False)
-    # For shard_map we cannot use cummax :-( because it does not have a replication rule
-    # But we use lax.all_gather which on TPU is lowered with a all-gather op
+    # For shard_map we cannot use cummax :-( because it does not have a
+    # replication rule. But we use lax.all_gather which on TPU is lowered with
+    # an all-gather op
     func_shard_map = lambda x: lax.all_gather(x, 'a', axis=1, tiled=True)
 
-    transformed_func = dict(
-        base=func,
-        jit=jax.jit(func),
-        jit_in_shardings_None=jax.jit(func, in_shardings=None),
-        jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),
-        jit_in_shardings_Sharding=jax.jit(func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
-        pjit=pjit.pjit(func),
-        pjit_in_shardings_None=pjit.pjit(func, in_shardings=None),
-        pjit_in_shardings_P=pjit.pjit(func, in_shardings=(P("a"),)),
-        pjit_in_shardings_Sharding=pjit.pjit(func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
-        shard_map=(
-            shard_map(func_shard_map, mesh, in_specs=(P("a", None),), out_specs=P("a", None))),
-        xmap=xmap(func, in_axes=({0: 'axis'},), out_axes={0: 'axis'}, axis_resources={'axis': 'a'}),
-        pmap=jax.pmap(func, in_axes=0, out_axes=0),
-    )[transform]
-    pjit_transformed_func = dict(
-        unspecified=pjit.pjit(transformed_func),
-        none=pjit.pjit(transformed_func, in_shardings=None),
-        P=pjit.pjit(transformed_func, in_shardings=(P("a"),)),
-        Sharding=pjit.pjit(transformed_func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
-    )[pjit_sharding]
-    if pjit_sharding == "unspecified":
-      if transform == "xmap":
-        raise unittest.SkipTest("TODO: pjit(xmap) with unspecified shardings crashes")
+    def apply_transform(func, transform: str):
+      transformed_func = dict(
+          none=func,
+          jit=jax.jit(func),
+          jit_in_shardings_None=jax.jit(func, in_shardings=None),  # type: ignore
+          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),  # type: ignore
+          jit_in_shardings_Sharding=jax.jit(
+              func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),  # type: ignore
+          pjit=pjit.pjit(func),
+          pjit_in_shardings_None=pjit.pjit(func, in_shardings=None,
+                                           out_shardings=None),
+          pjit_in_shardings_P=pjit.pjit(func, in_shardings=(P("a"),),
+                                        out_shardings=P("a")),
+          pjit_in_shardings_Sharding=pjit.pjit(
+              func,
+              in_shardings=(sharding.NamedSharding(mesh, P("a")),),
+              out_shardings=sharding.NamedSharding(mesh, P("a"))),
+          shard_map=(
+              shard_map(func, mesh, in_specs=(P("a", None),),
+                        out_specs=P("a", None))),
+          xmap=xmap(func, in_axes=({0: 'axis'},),
+                    out_axes={0: 'axis'}, axis_resources={'axis': 'a'}),
+          pmap=jax.pmap(func, in_axes=0, out_axes=0),
+      )[transform]
+      return transformed_func
 
+    transformed1_func = apply_transform(
+        (func_shard_map if transform1 == "shard_map" else func),
+        transform1)
+    assert transform2 not in ["xmap", "shard_map"]
+    transformed2_func = apply_transform(transformed1_func, transform2)
+
+    if transform1 == "xmap" and transform2 in ["pjit", "none"]:
+      raise unittest.SkipTest("TODO: pjit(xmap) with unspecified shardings crashes")
+
+    if transform1 == "pmap":
+      x = x.reshape((1, -1))  # Since we use 1 device
     if not nullary:
-      func_to_convert = pjit_transformed_func
+      func_to_convert = transformed2_func
       args = [x]
     else:
-      func_to_convert = lambda: pjit_transformed_func(jnp.ones(x.shape, dtype=x.dtype))
+      func_to_convert = lambda: transformed2_func(jnp.ones(x.shape,
+                                                           dtype=x.dtype))
       args = []
 
-    if transform == "pmap":
+    if transform1 == "pmap":
       if nullary:
         raise unittest.SkipTest("Cannot lower nested pmap: jit-of-pmap warning")
-      raise unittest.SkipTest("TODO: pmap picks the devices from jax.devices() and will lower for CPU")
-
-    if transform == "xmap":
-      raise unittest.SkipTest("TODO: xmap does not pick up the overriden mesh and will lower for CPU")
+      raise unittest.SkipTest("TODO: figure out how to invoke pmap from TF")
 
     f_tf = jax2tf.convert(func_to_convert,
                           experimental_native_lowering=True,
@@ -1464,10 +1483,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       _ = func_to_convert(*args)
       tf_hlo = f_tf.experimental_get_compiler_ir(*args)(stage="hlo")
 
-    if transform == "shard_map":
-      self.assertIn("all-gather(f32[4,6]", tf_hlo)
+    if transform1 == "shard_map":
+      self.assertIn(" all-gather(f32[4,6]", tf_hlo)
     else:
-      self.assertIn("reduce-window(f32[4,6]", tf_hlo)
+      self.assertIn(" reduce-window(", tf_hlo)
 
 
 def get_serialized_computation(

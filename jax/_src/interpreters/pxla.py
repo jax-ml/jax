@@ -1278,7 +1278,7 @@ def parallel_callable(fun: lu.WrappedFun,
   pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
-      is_explicit_global_axis_size, avals)
+      is_explicit_global_axis_size, avals, lowering_platform=None)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
@@ -1402,7 +1402,9 @@ def lower_parallel_callable(
     donated_invars: Sequence[bool],
     global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
     is_explicit_global_axis_size: bool,
-    avals: Sequence[core.AbstractValue]):
+    avals: Sequence[core.AbstractValue],
+    *,
+    lowering_platform: Optional[str]):
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -1507,7 +1509,7 @@ def lower_parallel_callable(
         unordered_effects,
         ordered_effects,
         backend,
-        backend.platform,
+        lowering_platform or backend.platform,
         mlir.ReplicaAxisContext(axis_env),
         name_stack,
         donated_invars,
@@ -2880,10 +2882,12 @@ def lower_sharding_computation(
     out_shardings: Union[Sequence[Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue]], UnspecifiedValue],
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
+    *,
     in_is_global: Sequence[bool],
     keep_unused: bool,
     always_lower: bool,
-    devices_from_context: Optional[Sequence[xc.Device]] = None
+    devices_from_context: Optional[Sequence[xc.Device]] = None,
+    lowering_platform: Optional[str],
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -3062,7 +3066,8 @@ def lower_sharding_computation(
       unordered_effects,
       ordered_effects,
       backend,
-      backend.platform,
+      # Optionally, override the lowering platform
+      lowering_platform or backend.platform,
       axis_ctx,
       name_stack,
       donated_invars,
@@ -3118,7 +3123,8 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_global: Sequence[bool]) -> MeshComputation:
+    in_is_global: Sequence[bool],
+    lowering_platform: Optional[str]) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
@@ -3250,7 +3256,7 @@ def lower_mesh_computation(
         unordered_effects,
         ordered_effects,
         backend,
-        backend.platform,
+        lowering_platform or backend.platform,
         axis_ctx,
         name_stack,
         donated_invars,

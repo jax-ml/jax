@@ -364,7 +364,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     wrapped = _python_pjit(fun, infer_params_fn)
 
   @api_boundary
-  def lower(*args, **kwargs):
+  def lower(*args, _experimental_lowering_platform: Optional[str] = None,
+            **kwargs):
     (args_flat, flat_local_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params_fn(*args, **kwargs)
     if jax.config.jax_array:
@@ -379,7 +380,8 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     lowering = _pjit_lower(
         params['jaxpr'], in_shardings, params['out_shardings'],
         params['resource_env'], params['donated_invars'], params['name'],
-        in_is_global, params['keep_unused'], always_lower=True)
+        in_is_global, params['keep_unused'], always_lower=True,
+        lowering_platform=_experimental_lowering_platform)
 
     if kwargs:
       args_kwargs_in_tree = in_tree
@@ -1289,7 +1291,7 @@ def _pjit_call_impl(*args, jaxpr,
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, in_is_global, keep_unused,
-      always_lower=False).compile(
+      always_lower=False, lowering_platform=None).compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
@@ -1385,7 +1387,9 @@ def _pjit_lower_cached(
     name: str,
     in_is_global: Sequence[bool],
     keep_unused: bool,
-    always_lower: bool):
+    always_lower: bool,
+    *,
+    lowering_platform: Optional[str]):
   in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings
@@ -1427,14 +1431,16 @@ def _pjit_lower_cached(
     return pxla.lower_mesh_computation(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
-      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
+      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global,
+      lowering_platform=lowering_platform)
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings, donated_invars,
         jaxpr.in_avals, in_is_global=in_is_global, keep_unused=keep_unused,
         always_lower=always_lower,
         devices_from_context=(
-            None if mesh is None or mesh.empty else list(mesh.devices.flat)))
+            None if mesh is None or mesh.empty else list(mesh.devices.flat)),
+        lowering_platform=lowering_platform)
 
 
 def pjit_staging_rule(trace, *args, **params):
@@ -1649,7 +1655,8 @@ def _pjit_partial_eval(trace, *in_tracers,
           known_params["jaxpr"], known_params["in_shardings"],
           known_params["out_shardings"], known_params["resource_env"],
           known_params["donated_invars"], known_params["name"],
-          in_is_global, known_params['keep_unused'], always_lower=False).compile(
+          in_is_global, known_params['keep_unused'], always_lower=False,
+          lowering_platform=None).compile(
               _allow_propagation_to_outputs=[True] * len(known_params['out_shardings']),
               _allow_compile_replicated=False)
       da = compiled._device_assignment
