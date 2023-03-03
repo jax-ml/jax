@@ -26,14 +26,14 @@ from jaxlib import xla_client
 from .hlo_helpers import custom_call
 
 try:
-  from .cuda import _prng as _cuda_prng
+  from .cuda import _prng as _cuda_prng  # pytype: disable=import-error
   for _name, _value in _cuda_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   _cuda_prng = None
 
 try:
-  from .rocm import _prng as _hip_prng
+  from .rocm import _prng as _hip_prng  # pytype: disable=import-error
   for _name, _value in _hip_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:

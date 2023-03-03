@@ -20,7 +20,7 @@ import numpy as np
 from jaxlib import xla_client
 
 try:
-  from .cuda import _rnn as _rnn
+  from .cuda import _rnn  # pytype: disable=import-error
   for _name, _value in _rnn.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform='CUDA')
 except ImportError:
