@@ -3456,6 +3456,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     jax.device_put(2., NamedSharding(mesh, P()))  # doesn't crash
 
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def test_jit_nested_xmap_lower_arg_info(self):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, *args):
+      out = xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
+               axis_resources={'i': 'y'})(jnp.arange(8.))
+      return y['hi'] + args[1], out
+
+    lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
+        {'hi': 1.}, {'hi': 2.}, 3., 4.)
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertNotIn("\"x\"", mhlo_str)
+    self.assertIn("y['hi']", mhlo_str)
+    self.assertNotIn("args[0]", mhlo_str)
+    self.assertIn("args[1]", mhlo_str)
+
 
 class TempSharding(Sharding):
 
