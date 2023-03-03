@@ -29,7 +29,8 @@ import inspect
 import math
 import typing
 from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
-                    NamedTuple, Optional, Sequence, Tuple, TypeVar, Union, overload)
+                    NamedTuple, Optional, Sequence, Tuple, TypeVar, Union,
+                    overload, cast)
 
 import numpy as np
 from contextlib import contextmanager, ExitStack
@@ -542,7 +543,7 @@ def _python_jit(
     dispatch.xla_callable.evict_function(fun)
   f_jitted.clear_cache = clear_cache
 
-  return f_jitted
+  return cast(stages.Wrapped, f_jitted)
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
                      ) -> List[pe.AbstractedAxesSpec]:
@@ -755,7 +756,7 @@ def _cpp_jit(
   f_jitted._fun = fun
   type(f_jitted).clear_cache = _cpp_jit_clear_cache
 
-  return f_jitted
+  return cast(stages.Wrapped, f_jitted)
 
 
 def _jit_lower(fun, static_argnums, static_argnames, device, backend,
@@ -1368,10 +1369,10 @@ def jacfwd(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                                           require_static_args_hashable=False)
     tree_map(partial(_check_input_dtype_jacfwd, holomorphic), dyn_args)
     if not has_aux:
-      pushfwd = partial(_jvp, f_partial, dyn_args)
+      pushfwd: Callable = partial(_jvp, f_partial, dyn_args)
       y, jac = vmap(pushfwd, out_axes=(None, -1))(_std_basis(dyn_args))
     else:
-      pushfwd = partial(_jvp, f_partial, dyn_args, has_aux=True)
+      pushfwd: Callable = partial(_jvp, f_partial, dyn_args, has_aux=True)
       y, jac, aux = vmap(pushfwd, out_axes=(None, -1, None))(_std_basis(dyn_args))
     tree_map(partial(_check_output_dtype_jacfwd, holomorphic), y)
     example_args = dyn_args[0] if isinstance(argnums, int) else dyn_args
@@ -1773,7 +1774,7 @@ def vmap(fun: F,
     ).call_wrapped(*args_flat)
     return tree_unflatten(out_tree(), out_flat)
 
-  return vmap_f
+  return cast(F, vmap_f)
 
 def _mapped_axis_size(fn, tree, vals, dims, name):
   if not vals:
@@ -2321,7 +2322,7 @@ def _python_pmap(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
       backend, axis_size, global_arg_shapes, donate_tuple)
 
-  return pmap_f
+  return cast(stages.Wrapped, pmap_f)
 
 
 class _PmapFastpathData(NamedTuple):

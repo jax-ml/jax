@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 import os
 import traceback
 import types
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 import jax
 from jax._src.lib import xla_extension
@@ -156,7 +157,7 @@ def api_boundary(fun: C) -> C:
   traceback that excludes the frames specific to JAX's implementation.
   '''
 
-  @util.wraps(fun)
+  @functools.wraps(fun)
   def reraise_with_filtered_traceback(*args, **kwargs):
     __tracebackhide__ = True
     try:
@@ -198,4 +199,4 @@ def api_boundary(fun: C) -> C:
         del filtered_tb
         del unfiltered
         del mode
-  return reraise_with_filtered_traceback
+  return cast(C, reraise_with_filtered_traceback)
