@@ -1427,8 +1427,7 @@ def _pjit_lower_cached(
     return pxla.lower_mesh_computation(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
-      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global,
-      keep_unused=keep_unused)
+      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global)
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings, donated_invars,

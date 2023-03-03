@@ -702,8 +702,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tiling_method=tiling_method, in_is_global=in_is_global,
-        keep_unused=True)
+        tiling_method=tiling_method, in_is_global=in_is_global)
   else:
     if config.jax_array:
       return dispatch.sharded_lowering(

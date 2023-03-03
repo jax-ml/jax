@@ -3118,8 +3118,7 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_global: Sequence[bool],
-    keep_unused: bool) -> MeshComputation:
+    in_is_global: Sequence[bool]) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
@@ -3190,18 +3189,6 @@ def lower_mesh_computation(
     global_out_avals = [untile_aval_nd(global_axis_sizes, get_array_mapping(o.spec), aval)  # type: ignore
                         for aval, o in safe_zip(out_jaxpr_avals, out_shardings)]
 
-  if keep_unused:
-    kept_var_idx = set(range(len(global_in_avals)))
-  else:
-    jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
-    consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
-    global_in_avals = tuple(a for i, a in enumerate(global_in_avals) if i in kept_var_idx)
-    in_jaxpr_avals = tuple(a for i, a in enumerate(in_jaxpr_avals) if i in kept_var_idx)
-    in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
-    in_is_global = tuple(g for i, g in enumerate(in_is_global) if i in kept_var_idx)
-    donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
-    del kept_const_idx
-
   _sanitize_mesh_jaxpr(jaxpr)
   if mesh.is_multi_process:
     check_multihost_collective_allowlist(jaxpr)
@@ -3256,8 +3243,7 @@ def lower_mesh_computation(
       closed_jaxpr.effects))
     arg_info = jaxpr.debug_info and pe.arg_info_all(jaxpr.debug_info)
     arg_names = None if arg_info is None else [
-        f'{name}{path.pprint("")}' for i, (name, path) in enumerate(arg_info)
-        if i in kept_var_idx]
+        f'{name}{path.pprint("")}' for i, (name, path) in enumerate(arg_info)]
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -3293,7 +3279,7 @@ def lower_mesh_computation(
       ordered_effects=ordered_effects,
       host_callbacks=host_callbacks,
       keepalive=keepalive,
-      kept_var_idx=kept_var_idx,
+      kept_var_idx=set(range(len(global_in_avals))),
       backend=backend,
       device_assignment=list(mesh.devices.flat),
       committed=True)
