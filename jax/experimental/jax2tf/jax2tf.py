@@ -2281,15 +2281,20 @@ def _common_reduce_window(operand, init_val, reducer, window_dimensions,
 
   if not isinstance(init_val, (tf.Tensor, tf.Variable)):
     init_val = tf.constant(init_val, operand.dtype)
+  window_dimensions_tf = _eval_shape(window_dimensions)
+  window_strides_tf = _eval_shape(window_strides)
+  window_dilation_tf = _eval_shape(window_dilation)
+  base_dilation_tf = _eval_shape(base_dilation)
+  padding_tf = [_eval_shape(p) for p in padding]
   out = tfxla.reduce_window(
       operand,
       init_val,
       reducer_fn,
-      window_dimensions,
-      window_strides,
-      base_dilations=base_dilation,
-      window_dilations=window_dilation,
-      padding=padding)
+      window_dimensions_tf,
+      window_strides_tf,
+      base_dilations=base_dilation_tf,
+      window_dilations=window_dilation_tf,
+      padding=padding_tf)
   # TODO: implement shape inference for XlaReduceWindow
   out = _ensure_tf_shape_if_dynamic(out, _aval_to_tf_shape(_out_aval))
   if _WRAP_JAX_JIT_WITH_TF_FUNCTION:

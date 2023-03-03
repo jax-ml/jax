@@ -467,6 +467,9 @@ def _reduce_window_lower(
   operand_aval, = ctx.avals_in
   scalar_aval = operand_aval.update(shape=())
   scalar_type = mlir.aval_to_ir_type(scalar_aval)
+  if any(not core.is_constant_shape(s)
+         for s in [window_dimensions, window_dilation, window_strides, base_dilation, *padding]):
+    raise NotImplementedError("ReduceWindowOp for dynamic shapes")
   rw = hlo.ReduceWindowOp(
       mlir.aval_to_ir_types(aval_out), [operand],
       [mlir.full_like_aval(ctx, init_value(scalar_aval.dtype), scalar_aval)],
