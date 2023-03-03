@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.5
+## jax 0.4.6
+
+## jaxlib 0.4.6
+
+## jax 0.4.5 (Mar 2, 2023)
 
 * Deprecations
   * `jax.sharding.OpShardingSharding` has been renamed to `jax.sharding.GSPMDSharding`.
@@ -16,8 +20,6 @@ Remember to align the itemized text with the first line of an item within a list
     * `jax.Array.broadcast`: use {func}`jax.lax.broadcast` instead.
     * `jax.Array.broadcast_in_dim`: use {func}`jax.lax.broadcast_in_dim` instead.
     * `jax.Array.split`: use {func}`jax.numpy.split` instead.
-
-## jaxlib 0.4.5
 
 ## jax 0.4.4 (Feb 16, 2023)
 
