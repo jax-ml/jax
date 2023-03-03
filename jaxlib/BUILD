@@ -19,13 +19,14 @@ load(
     "//jaxlib:jax.bzl",
     "if_windows",
     "pybind_extension",
+    "pytype_library",
 )
 
 licenses(["notice"])
 
 package(default_visibility = ["//:__subpackages__"])
 
-py_library(
+pytype_library(
     name = "jaxlib",
     srcs = [
         "ducc_fft.py",

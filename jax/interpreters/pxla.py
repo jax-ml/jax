@@ -90,7 +90,6 @@ from jax._src.interpreters.pxla import (
   lower_mesh_computation as lower_mesh_computation,
   lower_parallel_callable as lower_parallel_callable,
   lower_sharding_computation as lower_sharding_computation,
-  make_sharded_device_array as make_sharded_device_array,
   maybe_extend_axis_env as maybe_extend_axis_env,
   mesh_sharding_specs as mesh_sharding_specs,
   multi_host_supported_collectives as multi_host_supported_collectives,
@@ -132,6 +131,7 @@ from jax._src.interpreters.pxla import (
 from jax._src.interpreters.pxla import (
   Mesh as _deprecated_Mesh,
   PartitionSpec as _deprecated_PartitionSpec,
+  make_sharded_device_array as _deprecated_make_sharded_device_array,
 )
 
 import typing
@@ -139,20 +139,32 @@ if typing.TYPE_CHECKING:
   from jax._src.interpreters.pxla import (
     Mesh as Mesh,
     PartitionSpec as PartitionSpec,
+    make_sharded_device_array as make_sharded_device_array,
   )
 del typing
 
 _deprecations = {
-  # Added Feb 8, 2023:
-  "Mesh": (
-    "jax.interpreters.pxla.Mesh is deprecated. Use jax.sharding.Mesh.",
-    _deprecated_Mesh,
-  ),
-  "PartitionSpec": (
-    ("jax.interpreters.pxla.PartitionSpec is deprecated. Use "
-     "jax.sharding.PartitionSpec."),
-     _deprecated_PartitionSpec,
-  ),
+    # Added Feb 8, 2023:
+    "Mesh": (
+        "jax.interpreters.pxla.Mesh is deprecated. Use jax.sharding.Mesh.",
+        _deprecated_Mesh,
+    ),
+    "PartitionSpec": (
+        (
+            "jax.interpreters.pxla.PartitionSpec is deprecated. Use "
+            "jax.sharding.PartitionSpec."
+        ),
+        _deprecated_PartitionSpec,
+    ),
+    # make_sharded_device_array is deprecated as of March 3, 2023. jax.Array
+    # is the default since November 2022.
+    "make_sharded_device_array": (
+        (
+            "jax.interpreters.pxla.make_sharded_device_array is deprecated as"
+            " of March 3, 2023. Use jax.make_array_from_single_device_arrays."
+        ),
+        _deprecated_make_sharded_device_array,
+    ),
 }
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr

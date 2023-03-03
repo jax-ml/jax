@@ -26,7 +26,7 @@ from jaxlib import xla_client
 from .hlo_helpers import custom_call
 
 try:
-  from .cuda import _sparse as _cusparse
+  from .cuda import _sparse as _cusparse  # pytype: disable=import-error
 except ImportError:
   _cusparse = None
 else:
@@ -34,7 +34,7 @@ else:
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
 try:
-  from .rocm import _sparse as _hipsparse
+  from .rocm import _sparse as _hipsparse  # pytype: disable=import-error
 except ImportError:
   _hipsparse = None
 else:

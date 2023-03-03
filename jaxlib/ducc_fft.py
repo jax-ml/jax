@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
+from typing import List, Tuple
 
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
@@ -34,12 +34,13 @@ _C2C = 0
 _C2R = 1
 _R2C = 2
 
-def _ducc_fft_descriptor(shape: List[int], dtype, fft_type: FftType,
-                          fft_lengths: List[int]) -> bytes:
+
+def _ducc_fft_descriptor(
+    shape: List[int], dtype, fft_type: FftType, fft_lengths: List[int]
+) -> Tuple[bytes, np.dtype, List[int]]:
   n = len(shape)
   assert len(fft_lengths) >= 1
   assert len(fft_lengths) <= n, (fft_lengths, n)
-
 
   forward = fft_type in (FftType.FFT, FftType.RFFT)
   is_double = np.finfo(dtype).dtype == np.float64
