@@ -116,7 +116,7 @@ def minimize(
 
   if method.lower() == 'l-bfgs-experimental-do-not-rely-on-this':
     results = _minimize_lbfgs(fun_with_args, x0, **options)
-    success = results.converged & (~results.failed)
+    success = results.converged & jnp.logical_not(results.failed)
     return OptimizeResults(x=results.x_k,
                            success=success,
                            status=results.status,
