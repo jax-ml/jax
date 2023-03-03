@@ -666,7 +666,8 @@ def lower_jaxpr_to_module(
     donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
-    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None
+    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    arg_names: Optional[Sequence[str]] = None,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
 
@@ -743,7 +744,8 @@ def lower_jaxpr_to_module(
         num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
-        input_output_aliases=input_output_aliases)
+        input_output_aliases=input_output_aliases,
+        arg_names=arg_names)
 
   if not ctx.module.operation.verify():
     module_string = module_to_string(ctx.module)
@@ -860,6 +862,7 @@ def lower_jaxpr_to_fun(
     input_output_aliases: Optional[Sequence[Optional[int]]] = None,
     num_output_tokens: int = 0,
     api_name: str = 'jit',
+    arg_names: Optional[Sequence[str]] = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -979,6 +982,12 @@ def lower_jaxpr_to_fun(
       for attrs, alias in zip(arg_attrs, aliases):
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
+
+    if config.jax_jit_pjit_api_merge and arg_names:
+      named_arg_attrs = arg_attrs[num_dim_vars + num_tokens:]
+      if len(named_arg_attrs) == len(arg_names):
+        for attrs, name_ in zip(named_arg_attrs, arg_names):
+          attrs['jax.arg_info'] = ir.StringAttr.get(name_)
 
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
