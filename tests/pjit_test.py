@@ -3745,7 +3745,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     error = re.escape(
         "pytree structure error: different lengths of list at "
         "key path\n"
-        "    pjit out_shardings tree root\n")
+        "    pjit out_shardings\n")
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 

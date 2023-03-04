@@ -40,7 +40,7 @@ from jax._src import linear_util as lu
 from jax import stages
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_transpose, tree_leaves,
-                           Partial, PyTreeDef, all_leaves)
+                           Partial, PyTreeDef, all_leaves, keystr)
 from jax._src import callback as jcb
 from jax._src import core
 from jax._src import device_array
@@ -1815,15 +1815,15 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
   except (TypeError, ValueError):
     ba = None
   if ba is None:
-    args_paths = [f'args{p.pprint("")} '
+    args_paths = [f'args{keystr(p)} '
                   f'of type {shaped_abstractify(x).str_short()}'
                   for p, x in _generate_key_paths(args)]
-    kwargs_paths = [f'kwargs{p.pprint("")} '
+    kwargs_paths = [f'kwargs{keystr(p)} '
                     f'of type {shaped_abstractify(x).str_short()}'
                     for p, x in _generate_key_paths(kwargs)]
     key_paths = [*args_paths, *kwargs_paths]
   else:
-    key_paths = [f'argument {name}{p.pprint("")} '
+    key_paths = [f'argument {name}{keystr(p)} '
                  f'of type {shaped_abstractify(x).str_short()}'
                  for name, arg in ba.arguments.items()
                  for p, x in _generate_key_paths(arg)]

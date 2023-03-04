@@ -23,14 +23,14 @@ from .hlo_helpers import custom_call
 from jaxlib import xla_client
 
 try:
-  from .cuda import _linalg as _cuda_linalg
+  from .cuda import _linalg as _cuda_linalg  # pytype: disable=import-error
   for _name, _value in _cuda_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 except ImportError:
   _cuda_linalg = None
 
 try:
-  from .rocm import _linalg as _hip_linalg
+  from .rocm import _linalg as _hip_linalg  # pytype: disable=import-error
   for _name, _value in _hip_linalg.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:
