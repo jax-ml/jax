@@ -44,6 +44,12 @@ def _maybe_jit(with_jit: bool, func: Callable) -> Callable:
   else:
     return func
 
+def _maybe_tf_jit(with_jit: bool, func: Callable) -> Callable:
+  if with_jit:
+    return tf.function(func, autograph=False, jit_compile=True)
+  else:
+    return func
+
 def _named_test(**kwargs):
   return dict(kwargs,
               testcase_name = "_".join([f"{k}={kwargs[k]}" for k in sorted(kwargs.keys())]))
@@ -53,8 +59,7 @@ _parameterized_jit = parameterized.named_parameters(
     for with_jit in [True, False])
 
 _call_tf_non_compileable_error = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compileable functions"
-_call_tf_dynamic_shape_error = "Compiled TensorFlow function has dynamic output shape.* call_tf can used in a staged context .* only with compileable functions"
-
+_call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has dynamic shape"
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
 
@@ -171,8 +176,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     x = np.array([True, False], dtype=np.bool_)
     self.assertAllClose(f_tf_non_compileable(x), f_jax(x))  # Works in eager mode
 
-    with self.assertRaisesRegex(ValueError,
-                                _call_tf_dynamic_shape_error):
+    with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       jax.jit(f_jax)(x)
 
   def test_error_bad_result_tensorarray(self):
@@ -569,9 +573,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(x[0:x[1]], res1)
 
     # Now under jit, should fail because the function is not compileable
-    with self.assertRaisesRegex(
-        ValueError, "Compiled TensorFlow function has dynamic output shape"
-    ):
+    with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
       fun_jax(x)
 
@@ -1099,29 +1101,143 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(expected, res1, check_dtypes=False)
 
     # Now under jit, should fail because the function is not compileable
-    with self.assertRaisesRegex(ValueError,
-                                _call_tf_dynamic_shape_error):
+    with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
       fun_jax(x)
 
     # TODO(necula): this should work in op-by-op mode, but it fails because
     # jax2tf.convert does abstract evaluation.
-    with self.assertRaisesRegex(ValueError,
-                                _call_tf_dynamic_shape_error):
+    with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       fun_tf_rt = jax2tf.convert(jax2tf.call_tf(fun_tf))
       fun_tf_rt(x)
 
-  def test_shape_polymorphism_error(self):
-    x = np.array([.7, .8], dtype=np.float32)
+  @_parameterized_jit
+  def test_shape_poly_static_output_shape(self, with_jit=True):
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native lowering.")
+    x = np.array([0.7, 0.8], dtype=np.float32)
+
     def fun_tf(x):
-      return tf.math.sin(x)
+      return tf.math.reduce_sum(tf.math.sin(x))
 
     fun_jax = jax2tf.call_tf(fun_tf)
+    fun_tf_rt = _maybe_tf_jit(with_jit,
+        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
+    self.assertAllClose(fun_tf(x), fun_tf_rt(x))
 
-    fun_tf_rt = jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])
+  @_parameterized_jit
+  def test_shape_poly(self, with_jit=False):
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native lowering.")
+    x = np.array([7, 8, 9, 10], dtype=np.float32)
+    def fun_jax(x):
+      y = jax2tf.call_tf(tf.math.sin,
+                         output_shape_dtype=jax.ShapeDtypeStruct(x.shape, x.dtype))(x)
+      z = jnp.cos(y)
+      w = jax2tf.call_tf(lambda z: tf.concat([z, z], axis=0),
+                         output_shape_dtype=jax.ShapeDtypeStruct((2 * z.shape[0],), z.dtype))(z)
+      assert w.shape[0] == 2 * x.shape[0]
+      return w
+
+    fun_tf_rt = _maybe_tf_jit(with_jit,
+        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
+    res_tf = fun_tf_rt(x)
+    self.assertAllClose(fun_jax(x), res_tf)
+
+  @_parameterized_jit
+  def test_shape_poly_pytree_result(self, with_jit=True):
+    if config.jax2tf_default_experimental_native_lowering:
+      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native lowering.")
+    x = np.array([7, 8, 9, 10], dtype=np.float32)
+    def fun_jax(x):
+      # Returns a tuple
+      y = jax2tf.call_tf(lambda x: (x, tf.concat([x, x], axis=0)),
+          output_shape_dtype=(jax.ShapeDtypeStruct(x.shape, x.dtype),
+                              jax.ShapeDtypeStruct((2 * x.shape[0],), x.dtype)))(x)
+      assert y[0].shape[0] == x.shape[0]
+      assert y[1].shape[0] == 2 * x.shape[0]
+      return y
+
+    fun_tf_rt = _maybe_tf_jit(with_jit,
+        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
+    res_tf = fun_tf_rt(x)
+    self.assertAllClose(fun_jax(x), res_tf)
+
+  @_parameterized_jit
+  def test_shape_poly_error_no_output_shape_dtype(self, with_jit=True):
+    x = np.array([7, 8, 9, 10], dtype=np.float32)
+    def fun_jax(x):
+      return jax2tf.call_tf(tf.math.sin)(x)
+
+    fun_tf_rt = _maybe_tf_jit(with_jit,
+        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
+    with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
+      fun_tf_rt(x)
+
+  @_parameterized_jit
+  def test_shape_poly_error_mismatch_output_shape_dtype_tree(self, with_jit=False):
+    x = np.array([7, 8, 9, 10], dtype=np.float32)
+    def fun_jax(x):
+      return jax2tf.call_tf(tf.math.sin,
+          output_shape_dtype=(jax.ShapeDtypeStruct(x.shape, x.dtype),
+                              jax.ShapeDtypeStruct(x.shape, x.dtype)))(x)
+
+    fun_tf_rt = _maybe_tf_jit(with_jit,
+        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
+
     with self.assertRaisesRegex(
-        ValueError, "call_tf cannot be applied to shape-polymorphic arguments"
-    ):
+        ValueError,
+        "The pytree of the TensorFlow function results does not match the pytree of the declared output_shape_dtype"):
+      fun_tf_rt(x)
+
+  @parameterized.named_parameters(
+      _named_test(with_jit=with_jit, kind=kind)
+      for with_jit in [True, False]
+      for kind in ["bad_rank", "bad_dim", "bad_dtype", "bad_dtype_x64"])
+  def test_shape_poly_error_mismatch_output_shape_dtype(self, with_jit=False, kind="bad_rank"):
+    x = np.array([7, 8, 9, 10], dtype=np.float32)
+
+    if kind == "bad_rank":
+      def fun_jax(x):
+        return jax2tf.call_tf(lambda x: x,
+                              # Wrong shape rank
+                              output_shape_dtype=jax.ShapeDtypeStruct((), x.dtype))(x)
+    elif kind == "bad_dim":
+      def fun_jax(x):
+        bad_shape = (5 + x.shape[0],)
+        y = jax2tf.call_tf(lambda x: x,
+                           # Wrong dimension
+                           output_shape_dtype=jax.ShapeDtypeStruct(bad_shape, x.dtype))(x)
+        # JAX will believe that the following is Ok, leading to downstream error in TF
+        return y + jnp.ones(bad_shape, dtype=x.dtype)
+    elif kind == "bad_dtype":
+      def fun_jax(x):
+        return jax2tf.call_tf(lambda x: x,
+                              output_shape_dtype=jax.ShapeDtypeStruct(x.shape, np.int32))(x)
+    elif kind == "bad_dtype_x64":
+      def fun_jax(x):
+        return jax2tf.call_tf(lambda x: x * np.float64(3.),
+                              output_shape_dtype=jax.ShapeDtypeStruct(x.shape, np.float64))(x)
+    else:
+      assert False
+    expect_ex = ValueError
+    expect_error = r"The shapes or dtypes returned by the TensorFlow function do not match the declared output_shape_dtype"
+
+    # Call without shape polymorphism
+    fun_tf_rt = _maybe_tf_jit(with_jit, jax2tf.convert(fun_jax))
+    with self.assertRaisesRegex(expect_ex, expect_error):
+      fun_tf_rt(x)
+
+    # Now with shape polymorphism
+    if kind == "bad_dim" and with_jit:
+      # TODO: in jit more the error pops up later, at AddV2
+      expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
+    if kind == "bad_dim" and config.jax2tf_default_experimental_native_lowering:
+      # TODO(b/268386622): call_tf with shape polymorphism and native lowering.
+      expect_error = "Error compiling TensorFlow function. call_tf can used .* only with compileable functions with static output shapes"
+    fun_tf_rt = _maybe_tf_jit(with_jit,
+        jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
+    with self.assertRaisesRegex(expect_ex, expect_error):
       fun_tf_rt(x)
 
   def test_inner_native_lowering(self):
@@ -1141,22 +1257,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertIn('op: "Cos"', f_outer_graph)
     self.assertIn('op: "XlaCallModule"', f_outer_graph)
     self.assertNotIn('op: "Sin"', f_outer_graph)
-
-  @_parameterized_jit
-  def test_shape_polymorphism_static_output_shape(self, with_jit=True):
-    # TODO(b/268386622) Dynamic shapes not yet supported.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Skip test because of dynamic shapes.")
-    x = np.array([0.7, 0.8], dtype=np.float32)
-
-    def fun_tf(x):
-      return tf.math.reduce_sum(tf.math.sin(x))
-
-    fun_jax = jax2tf.call_tf(fun_tf)
-    fun_tf_rt = jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])
-    if with_jit:
-      fun_tf_rt = tf.function(jit_compile=True, autograph=False)(fun_tf_rt)
-    self.assertAllClose(fun_tf(x), fun_tf_rt(x))
 
   @parameterized.named_parameters(
       _named_test(f2_function=f2_function, f2_saved_model=f2_saved_model,

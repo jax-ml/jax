@@ -1229,6 +1229,57 @@ DeviceArray data or for np.ndarray that are aligned on 16-byte
 boundaries) and on GPU (for DeviceArray).
 The zero-copy does not yet work on TPU.
 
+`call_tf` works even with shape polymorphism, but in that case
+the user must pass the `output_shape_dtype` parameter to `call_tf` to declare
+the expected output shapes. This allows JAX tracing to know the shape and
+dtype of the results so that it can continue tracing the rest of the program.
+When `output_shape_dtype` is not given (the default case), `call_tf` will
+form a `tf.Graph` for the called TF function and will use the inferred
+type and shape. However, in presence of dynamic shape the inferred TF
+type will contain `None` for the dynamic dimensions, which is not enough
+information for JAX shape polymorphism.
+
+For example:
+
+```python
+def fun_jax(x):
+  y_shape = (x.shape[0] * 2, y.shape[1:])
+  y = jax2tf.call_tf(
+      lambda x: tf.concat([x, x], axis=0),
+      output_shape_dype=jax.ShapeDtypeStruct(y_shape, x.dtype))(x)
+  # JAX will know the y.shape
+  return jnp.ones(y.shape, dtype=y.dtype) + y
+
+jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
+```
+
+An even simpler example for a function that returns the same shape as the input:
+
+```python
+def fun_jax(x):
+  return jax2tf.call_tf(tf.math.sin,
+                        output_shape_dtype=x)
+  )(x)
+
+jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
+```
+
+If all the output shapes of the TF function are static, JAX does not need the
+`output_shape_dtype` argument:
+
+```python
+def fun_tf(x):
+  return tf.math.reduce_sum(tf.math.sin(x))
+
+def fun_jax(x):
+  return jax2tf.call_tf(fun_tf)(x)
+
+# The following will not throw an error because the output shape of fun_tf is static.
+jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
+```
+
+The shape polymorphism support for `call_tf` does not yet work for native lowering.
+
 ### Limitations of call_tf
 
 The TF function must be compileable (`tf.function(func, jit_compile=True)`)
@@ -1312,38 +1363,6 @@ JAX computation runs on TPU. This will fail if the computation captures
 variables on some other devices. It is best to use ``call_tf``
 with TF functions that do not capture variables.
 
-A TF function wrapped with `call_tf` cannot be applied to inputs whose
-shapes are not constants, unless all the output shapes of the TF function
-are static. The may arise when you try to apply `jax2tf.convert` with
-polymorphic shapes on the result of `call_tf`:
-
-```python
-def fun_jax(x):
-  return jax2tf.call_tf(tf.math.sin)(x)
-
-# The following will throw an error.
-jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
-```
-
-This is unsatisfying, because the result of the above conversion
-could be simply `tf.math.sin`, which is batch polymorphic. But
-JAX cannot keep track of shapes through a `call_tf` call, and it
-cannot be sure that the shape-polymorphic conversion is safe.
-
-If all the output shapes of the TF function are static, JAX does not need to
-keep track of shapes after a `call_tf` call, hence allows shape-polymorphic
-inputs in such cases:
-
-```python
-def fun_tf(x):
-  return tf.math.reduce_sum(tf.math.sin(x))
-
-def fun_jax(x):
-  return jax2tf.call_tf(fun_tf)(x)
-
-# The following will not throw an error because the output shape of fun_tf is static.
-jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
-```
 
 # Misc notes
 
