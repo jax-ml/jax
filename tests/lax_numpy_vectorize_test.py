@@ -32,6 +32,7 @@ class VectorizeTest(jtu.JaxTestCase):
       for left_shape, right_shape, result_shape in [
           ((2, 3), (3, 4), (2, 4)),
           ((2, 3), (1, 3, 4), (1, 2, 4)),
+          ((1, 2, 3), (1, 3, 4), (1, 2, 4)),
           ((5, 2, 3), (1, 3, 4), (5, 2, 4)),
           ((6, 5, 2, 3), (3, 4), (6, 5, 2, 4)),
       ]
@@ -215,6 +216,14 @@ class VectorizeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, r"inconsistent size for core dimension 'n'"):
       f(jnp.zeros((2, 3)), jnp.zeros((3, 4)))
+
+  def test_expand_dims_multiple_outputs_no_signature(self):
+    f = jnp.vectorize(lambda x: (x, x))
+    x = jnp.arange(1)
+    xx = f(x)
+    self.assertAllClose(xx[0], x)
+    self.assertAllClose(xx[1], x)
+    self.assertIsInstance(xx, tuple)
 
 
 if __name__ == "__main__":
