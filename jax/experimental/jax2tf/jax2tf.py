@@ -335,7 +335,8 @@ def convert(fun_jax: Callable,
       _thread_local_state.tf_outer_name_scope = tf.get_current_name_scope()
 
       # TODO: is there a better way to check if we are inside a transformation?
-      if not core.trace_state_clean() and not _thread_local_state.inside_call_tf:
+      if not core.trace_state_clean(
+      ) and not _thread_local_state.inside_call_tf:
         # It is Ok to nest convert when we are inside a call_tf
         raise ValueError(
             "convert must be used outside all JAX transformations." +
