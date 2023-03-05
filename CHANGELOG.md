@@ -9,7 +9,7 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.6
 
 * Changes
-  * `jax.tree_utils` now contain a set of APIs that allow user to define keys for their
+  * `jax.tree_util` now contain a set of APIs that allow user to define keys for their
     custom pytree node. This includes:
     * `tree_flatten_with_path` that flattens a tree and return not only each leaf but 
       also their key paths.
@@ -21,7 +21,7 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * The old key-path APIs in `jax.tree_util` are deprecated and will be removed 3 months
     from Mar 10 2023:
-    * `register_keypaths`: use {func}`jax.lax.register_pytree_with_keys` instead.
+    * `register_keypaths`: use {func}`jax.tree_util.register_pytree_with_keys` instead.
     * `AttributeKeyPathEntry` : use `GetAttrKey` instead.
     * `GetitemKeyPathEntry` : use `SequenceKey` or `DictKey` instead.
 
