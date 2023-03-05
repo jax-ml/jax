@@ -158,7 +158,7 @@ def unflatten(xs: Iterable[T], ns: Sequence[int]) -> List[List[T]]:
   return unflattened
 
 
-def curry(f):
+def curry(f: Callable[..., T]) -> Callable[..., Callable[..., T]]:
   """Curries arguments of f, returning a function on any remaining arguments.
 
   For example:
