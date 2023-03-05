@@ -172,7 +172,7 @@ def curry(f: Callable[..., T]) -> Callable[..., Callable[..., T]]:
   >>> curry(f)(2, 3, 4, 5)()
   26
   """
-  return partial(partial, f)
+  return cast(Callable[..., Callable[..., T]], partial(partial, f))
 
 def toposort(end_nodes):
   if not end_nodes: return []
