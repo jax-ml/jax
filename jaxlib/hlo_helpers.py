@@ -21,7 +21,7 @@ import numpy as np
 
 
 def custom_call(
-    call_target_name: str,
+    call_target_name: Union[str, bytes],
     out_types: Sequence[ir.Type],
     operands: Sequence[ir.Value],
     operand_layouts: Sequence[Sequence[int]],

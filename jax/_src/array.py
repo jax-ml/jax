@@ -475,11 +475,8 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
     if self._npy_value is None:
       if self.is_fully_replicated:
-        arr = self._arrays[0]  # type: ignore
-        # copy_to_host_async implemented in c++ only for single device arrays.
-        if hasattr(arr, "_copy_single_device_array_to_host_async"):
-          arr._copy_single_device_array_to_host_async()  # type: ignore
-          return
+        self._arrays[0].copy_to_host_async()
+        return
       try:
         self.addressable_shards[0].replica_id
         replica_id_exists = True
@@ -496,12 +493,7 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       if self.is_fully_replicated:
-        arr = self._arrays[0]  # type: ignore
-        # Conversion to numpy implemented only for single device arrays.
-        if hasattr(arr, "_single_device_array_to_np_array"):
-          self._npy_value = arr._single_device_array_to_np_array()  # type: ignore
-        else:
-          self._npy_value = np.asarray(arr)  # type: ignore
+        self._npy_value = np.asarray(self._arrays[0])  # type: ignore
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
