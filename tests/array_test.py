@@ -196,7 +196,8 @@ class JaxArrayTest(jtu.JaxTestCase):
   def test_device_put(self):
     numpy_array = np.array([1, 2, 3])
     arr = jax.device_put(numpy_array, jax.devices()[0])
-    self.assertIsInstance(arr.sharding, sharding.SingleDeviceSharding)
+    self.assertTrue(pxla.is_op_sharding_replicated(
+        arr.sharding._to_xla_op_sharding(arr.ndim)))
     self.assertArraysEqual(arr, numpy_array)
     self.assertEqual(arr._committed, True)
     for i in arr.addressable_shards:

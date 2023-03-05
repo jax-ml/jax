@@ -45,7 +45,8 @@ from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import NamedSharding, Sharding, GSPMDSharding
+from jax._src.sharding import (NamedSharding, Sharding, GSPMDSharding,
+                               PositionalSharding)
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
 from jax._src.interpreters import pxla
@@ -2502,6 +2503,11 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(a, s2)
     self.assertEqual(b.sharding, s2)
 
+    s3 = PositionalSharding(jax.devices()).reshape(4, 2)
+    c = jax.device_put(b, s3)
+    # There will be no transfers because s3 and s2 are equivalent.
+    self.assertEqual(c.sharding, s2)
+
   # TODO(yashkatariya): Remove this test once jax_array is enabled globally.
   def test_device_put_sharding_error(self):
     if config.jax_array:
@@ -3393,17 +3399,28 @@ class ArrayPjitTest(jtu.JaxTestCase):
       pjit(lambda x: x, out_shardings=P('x'), out_axis_resources=P('x'))
 
   def test_set_none_wsc_axis_resources_and_shardings(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "Not specifying shardings to `with_sharding_constraint` is not allowed."):
-      pjit(jax.lax.with_sharding_constraint(jnp.arange(8)))
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    inp = jnp.arange(8)
+    with mesh:
+      out = pjit(lambda x: jax.lax.with_sharding_constraint(x))(inp)
+      self.assertArraysEqual(out, inp)
+      self.assertTrue(pxla.is_op_sharding_replicated(
+          out.sharding._to_xla_op_sharding(out.ndim)))
+      self.assertListEqual(sorted([d.id for d in out.devices()]), [0, 1])
 
-  def test_set_both_wsc_axis_resources_and_shardings(self):
+  def test_wsc_with_device(self):
+    inp = np.arange(8)
+    out = pjit(lambda x: jax.lax.with_sharding_constraint(
+        x, jax.devices()[0]))(inp)
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.device(), jax.devices()[0])
+
+  def test_set_all_wsc_axis_resources_shardings_and_device(self):
     with self.assertRaisesRegex(
         ValueError,
-        "Setting both axis_resources and shardings is not allowed"):
+        "Setting all axis_resources, shardings and device is not allowed"):
       pjit(jax.lax.with_sharding_constraint(
-          jnp.arange(8), axis_resources=P('x'), shardings=P('x')))
+          jnp.arange(8), axis_resources=P('x'), shardings=P('x'), device=P('x')))
 
   def test_with_sharding_constraint_spmd_axis_name(self):
     mesh = jtu.create_global_mesh((2, 2, 2), ('replica', 'data', 'mdl'))

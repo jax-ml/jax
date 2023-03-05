@@ -78,6 +78,28 @@ from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+prev_xla_flags = None
+
+def setUpModule():
+  global prev_xla_flags
+  prev_xla_flags = os.getenv("XLA_FLAGS")
+  flags_str = prev_xla_flags or ""
+  # Don't override user-specified device count, or other XLA flags.
+  if "xla_force_host_platform_device_count" not in flags_str:
+    os.environ["XLA_FLAGS"] = (flags_str +
+                               " --xla_force_host_platform_device_count=8")
+  # Clear any cached backends so new CPU backend will pick up the env var.
+  xla_bridge.get_backend.cache_clear()
+
+def tearDownModule():
+  if prev_xla_flags is None:
+    del os.environ["XLA_FLAGS"]
+  else:
+    os.environ["XLA_FLAGS"] = prev_xla_flags
+  xla_bridge.get_backend.cache_clear()
+
+  jtu.restore_spmd_lowering_flag()
+
 
 python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = jtu.numpy_version()
@@ -1538,7 +1560,7 @@ class APITest(jtu.JaxTestCase):
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     s = sharding.NamedSharding(mesh, P('x'))
-    x = jnp.arange(len(jax.devices()))
+    x = np.arange(len(jax.devices()))
 
     y = jax.device_put(x, s)
     self.assertEqual(y.sharding, s)
@@ -1556,6 +1578,9 @@ class APITest(jtu.JaxTestCase):
     u = jax.device_put(y, jax.devices()[0])
     self.assertArraysAllClose(u, y)
     self.assertEqual(u.device(), jax.devices()[0])
+
+    out = jax.pmap(lambda x: x)(jnp.arange(jax.device_count()))
+    jax.device_put(np.arange(jax.device_count()), out.sharding)  # doesn't crash
 
   @jax_config.jax_array(True)
   def test_device_put_sharding_tree(self):
@@ -1616,10 +1641,15 @@ class APITest(jtu.JaxTestCase):
     y = jnp.arange(2) + 10
     z = jnp.arange(2) + 100
 
+    if jax.config.jax_array:
+      pmsg = 'with_sharding_constraint shardings'
+    else:
+      pmsg = 'device_put device'
+
     with self.assertRaisesRegex(
         ValueError,
-        "device_put device specification must be a tree prefix of the "
-        r"corresponding value, got specification \(\(NamedSharding\(.*\), "
+        f"{pmsg} specification must be a tree prefix "
+        r"of the corresponding value, got specification \(\(NamedSharding\(.*\), "
         r"NamedSharding\(.*\)\), NamedSharding\(.*\)\) for value tree "
         r"PyTreeDef\(\(\*, \(\*, \*\)\)\)."
     ):
@@ -1638,10 +1668,15 @@ class APITest(jtu.JaxTestCase):
     y = jnp.arange(2) + 10
     z = jnp.arange(2) + 100
 
+    if jax.config.jax_array:
+      pmsg = 'with_sharding_constraint shardings'
+    else:
+      pmsg = 'device_put device'
+
     with self.assertRaisesRegex(
         ValueError,
-        "device_put device specification must be a tree prefix of the "
-        r"corresponding value, got specification \(NamedSharding\(.*\), "
+        f"{pmsg} specification must be a tree prefix "
+        r"of the corresponding value, got specification \(NamedSharding\(.*\), "
         r"NamedSharding\(.*\)\) for value tree PyTreeDef\(\(\*, \*, \*\)\)."
     ):
       jax.device_put((x, y, z), device=(s1, s2))
@@ -1651,7 +1686,8 @@ class APITest(jtu.JaxTestCase):
     x = np.arange(12.).reshape((3, 4)).astype("float32")
     x = api.device_put(x)
     _check_instance(self, x)
-    self.assertIsInstance(x.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertTrue(pxla.is_op_sharding_replicated(
+        x.sharding._to_xla_op_sharding(x.ndim)))
     for s in x.addressable_shards:
       self.assertArraysEqual(s.data, x)
       self.assertEqual(s.replica_id, 0)

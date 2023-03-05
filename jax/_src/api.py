@@ -3032,6 +3032,12 @@ def device_put(
   This function is always asynchronous, i.e. returns immediately without
   blocking the calling Python thread until any transfers are completed.
   """
+  if config.jax_array:
+    if device is None:
+      return pjit.with_sharding_constraint(x)
+    else:
+      return pjit.with_sharding_constraint(x, device)
+
   with config_explicit_device_put_scope():
     if device is None or isinstance(device, (xc.Device, jax.sharding.Sharding)):
       return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)

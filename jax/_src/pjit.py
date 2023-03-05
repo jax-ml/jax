@@ -51,6 +51,7 @@ from jax._src.api_util import (
     donation_vector, shaped_abstractify, check_callable,
     argnames_partial_except, resolve_argnums, FLAGS)
 from jax._src.config import config
+from jax._src.config import explicit_device_put_scope as config_explicit_device_put_scope
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1126,7 +1127,8 @@ class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
 
 def _prepare_axis_resources(axis_resources,
                             arg_name,
-                            allow_unconstrained_dims=False):
+                            allow_unconstrained_dims=False,
+                            allow_pmap_sharding=False):
   # PyTrees don't treat None values as leaves, so we use an is_leaf function.
   entries, treedef = tree_flatten(axis_resources, is_leaf=lambda x: x is None)
   what = f"{arg_name} leaf specifications"
@@ -1138,8 +1140,11 @@ def _prepare_axis_resources(axis_resources,
   for entry in entries:
     if _is_unspecified_or_from_gda_or_auto(entry):
       new_entries.append(entry)
+    # Handle device for with_sharding_constraint which is merged with device_put
+    elif isinstance(entry, xc.Device):
+      new_entries.append(entry)
     elif isinstance(entry, Sharding):
-      if isinstance(entry, PmapSharding):
+      if isinstance(entry, PmapSharding) and not allow_pmap_sharding:
         raise ValueError(f'One of {what} got sharding {entry} which is not '
                          'allowed.')
       if not isinstance(entry, XLACompatibleSharding):
@@ -1163,6 +1168,9 @@ def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
     if (_is_unspecified_or_from_gda_or_auto(arg_axis_resources) or
+        # Handle device for with_sharding_cosntraint which is merged with
+        # device_put
+        isinstance(arg_axis_resources, xc.Device) or
         isinstance(arg_axis_resources, XLACompatibleSharding)):
       continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
@@ -1991,72 +1999,135 @@ core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
 
 # -------------------- with_sharding_constraint --------------------
 
-def _resolve_wsc_args(axis_resources, shardings):
-  if not _is_unspecified(axis_resources) and not _is_unspecified(shardings):
+def _resolve_wsc_args(axis_resources, shardings, device, mesh):
+  if (not _is_unspecified(axis_resources) and
+      not _is_unspecified(shardings) and
+      not _is_unspecified(device)):
     raise ValueError(
-        'Setting both axis_resources and shardings is not '
+        'Setting all axis_resources, shardings and device is not '
         'allowed. axis_resources is deprecated. Please use shardings.')
-  if _is_unspecified(axis_resources) and _is_unspecified(shardings):
-    raise ValueError(
-        'Not specifying shardings to `with_sharding_constraint` is not allowed. '
-        'Please specify the shardings argument with a concrete sharding. Note '
-        'that axis_resources is deprecated, so use the shardings argument.')
 
+  if (_is_unspecified(axis_resources) and _is_unspecified(shardings) and
+      _is_unspecified(device)):
+    return shardings
+
+  # Only device, axis_resources or shardings should be specified below.
+  if not _is_unspecified(device):
+    return device
   if not _is_unspecified(axis_resources):
-    final_shardings = axis_resources
-  else:
-    final_shardings = shardings
-  return final_shardings
+    return axis_resources
+  assert not _is_unspecified(shardings)
+  return shardings
+
+
+def _resolve_device_put_shardings(mesh, s):
+  if _is_unspecified(s):
+    return s
+  elif isinstance(s, xc.Device):
+    return SingleDeviceSharding(s)
+  return _create_sharding_for_array(mesh, s)
 
 
 # TODO(yashkatariya): Remove the axis_resources argument and make the signature
 # `with_sharding_constraint(x, shardings)` with no defaults after deprecation
 # period is finished. The deprecation period expires 3 months from Feb 13, 2023.
-def with_sharding_constraint(x, axis_resources=_UNSPECIFIED,
+def with_sharding_constraint(x, device=_UNSPECIFIED,
+                             axis_resources=_UNSPECIFIED,
                              shardings=_UNSPECIFIED):
-  final_shardings = _resolve_wsc_args(axis_resources, shardings)
-  x_flat, tree = tree_flatten(x)
-  user_shardings, _, _ = _prepare_axis_resources(
-      final_shardings, "shardings", allow_unconstrained_dims=True)
-  del final_shardings
+  with config_explicit_device_put_scope():
+    resource_env = pxla.thread_resources.env
+    mesh = resource_env.physical_mesh
 
-  user_shardings_flat = tuple(
-      flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
-  del user_shardings
+    final_shardings = _resolve_wsc_args(axis_resources, shardings, device, mesh)
+    x_flat, tree = tree_flatten(x)
+    user_shardings, _, _ = _prepare_axis_resources(
+        final_shardings, "shardings", allow_unconstrained_dims=True,
+        allow_pmap_sharding=True)
+    del final_shardings
 
-  resource_env = pxla.thread_resources.env
-  mesh = resource_env.physical_mesh
+    user_shardings_flat = tuple(
+        flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
+    del user_shardings
 
-  if config.jax_array:
-    shardings_flat = [_create_sharding_for_array(mesh, a)
-                      for a in user_shardings_flat]
-    unconstrained_dims = [get_unconstrained_dims(s)
-                          if isinstance(s, NamedSharding) else {}
-                          for s in shardings_flat]
-  else:
-    shardings_flat = [pxla.create_mesh_pspec_sharding(mesh, a.user_spec, a)
-                      for a in user_shardings_flat]
-    # Calculate unconstrained_dims from NamedSharding because that information
-    # is lost when converted to OpSharding. Bind unconstrained_dims to
-    # with_sharding_constraint primitive.
-    unconstrained_dims = [get_unconstrained_dims(s) for s in shardings_flat]
+    if config.jax_array:
+      shardings_flat = [_resolve_device_put_shardings(mesh, s)
+                        for s in user_shardings_flat]
+      unconstrained_dims = [get_unconstrained_dims(s)
+                            if isinstance(s, NamedSharding) else {}
+                            for s in shardings_flat]
+    else:
+      shardings_flat = [pxla.create_mesh_pspec_sharding(mesh, a.user_spec, a)
+                        for a in user_shardings_flat]
+      # Calculate unconstrained_dims from NamedSharding because that information
+      # is lost when converted to OpSharding. Bind unconstrained_dims to
+      # with_sharding_constraint primitive.
+      unconstrained_dims = [get_unconstrained_dims(s) for s in shardings_flat]
 
-  del user_shardings_flat
+    del user_shardings_flat
 
-  pjit_check_aval_sharding(shardings_flat, x_flat, "with_sharding_constraint arguments",
-                           allow_uneven_sharding=True)
+    aval_flat = [shaped_abstractify(x) for x in x_flat]
 
-  outs = [sharding_constraint_p.bind(xf, sharding=to_gspmd_sharding(i, xf.ndim),
-                                     resource_env=resource_env,
-                                     unconstrained_dims=ud)
-          for xf, i, ud in safe_zip(x_flat, shardings_flat, unconstrained_dims)]
-  return tree_unflatten(tree, outs)
+    for a, s in safe_zip(aval_flat, shardings_flat):
+      # DO_NOT_SUBMIT without figuring these checks out.
+      if _is_unspecified(s):
+        continue
+      elif isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
+        pjit_check_aval_sharding(
+            shardings_flat, aval_flat, "with_sharding_constraint arguments",
+            allow_uneven_sharding=True)
+      else:
+        s.shard_shape(a.shape)
+
+    outs = [
+        sharding_constraint_p.bind(
+            xf,
+            sharding=(s if _is_unspecified(s) or isinstance(s, PmapSharding)
+                      else to_gspmd_sharding(s, aval.ndim)),
+            resource_env=resource_env, unconstrained_dims=ud)
+        for xf, aval, s, ud in safe_zip(
+            x_flat, aval_flat, shardings_flat, unconstrained_dims)
+    ]
+    return tree_unflatten(tree, outs)
+
 
 def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
-  # TODO(skye): can we also prevent this from being called in other
-  # non-pjit contexts? (e.g. pmap, control flow)
-  raise NotImplementedError(
-      "with_sharding_constraint() should only be called inside pjit()")
+  try:
+    aval = xla.abstractify(x)
+  except TypeError as err:
+    raise TypeError(
+        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+
+  committed = True
+  if _is_unspecified(sharding):
+    if isinstance(x, array.ArrayImpl):
+      return x
+    else:
+      mesh = resource_env.physical_mesh
+      _, d = pxla._get_and_check_device_assignment(
+          [], None if mesh.empty else list(mesh.devices.flat))
+      sharding = GSPMDSharding.get_replicated(d)
+      committed = False
+
+  dispatch._check_sharding(aval, sharding)
+
+  if not sharding.is_fully_addressable:  # type: ignore
+    raise ValueError(
+        "device_put's second argument must be a Device or a Sharding which "
+        f"represents addressable devices, but got {sharding}")
+
+  if (isinstance(x, array.ArrayImpl) and x._committed and
+      x.sharding.is_equivalent_to(sharding, aval.ndim)):
+    return x
+
+  # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
+  orig_sharding = (sharding._original_sharding
+                   if hasattr(sharding, '_original_sharding') else sharding)
+  result_handler = pxla.global_aval_to_result_handler(
+      aval, orig_sharding, committed, False)
+  map_ = sharding.devices_indices_map(aval.shape)  # type: ignore
+  return result_handler(
+      pxla.shard_arg(x, list(map_), list(map_.values()), sharding))
+
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
@@ -2066,6 +2137,8 @@ ad.deflinear2(sharding_constraint_p,
 
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
                                       resource_env, unconstrained_dims):
+  if _is_unspecified(sharding):
+    return [x_node]
   aval, = ctx.avals_in
   axis_ctx = ctx.module_context.axis_context
   # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
@@ -2116,7 +2189,10 @@ pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(
 def _resource_typing_sharding_constraint(avals, params, source_info,
                                          resource_env, named_axis_resources):
   aval, = avals
-  if hasattr(params['sharding'], '_original_sharding'):
+  if _is_unspecified(params['sharding']):
+    return
+  if hasattr(params['sharding'], '_original_sharding') and hasattr(
+      params['sharding']._original_sharding, '_parsed_pspec'):
     parsed_pspec = params['sharding']._original_sharding._parsed_pspec
   else:
     parsed_pspec = parse_flatten_op_sharding(
