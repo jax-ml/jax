@@ -30,6 +30,7 @@ from jax._src.sharding import (
     # Feb 17, 2023.
     OpShardingSharding as OpShardingSharding,
     PositionalSharding as PositionalSharding,
+    OpSharding as OpSharding,
 )
 
 from jax._src.interpreters.pxla import Mesh as Mesh

@@ -35,6 +35,10 @@ Device = xc.Device
 Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
+# Export `OpSharding` as an API via jax.sharding namespace.
+OpSharding = xc.OpSharding
+
+
 @use_cpp_class(xc.Sharding)
 class Sharding(metaclass=abc.ABCMeta):
   """Abstract ``Sharding`` interface which describes how a ``jax.Array`` is laid out

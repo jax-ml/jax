@@ -694,7 +694,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
     op = constraint_eqn.params['sharding']._op_sharding
-    self.assertEqual(op.type, xc.OpSharding.Type.OTHER)
+    self.assertEqual(op.type, jax.sharding.OpSharding.Type.OTHER)
     self.assertListEqual(op.tile_assignment_dimensions, [1, 2])
     self.assertListEqual(op.tile_assignment_devices, [0, 1])
     self.assertFalse(pxla.is_op_sharding_replicated(op))
@@ -714,7 +714,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
     op = constraint_eqn.params['sharding']._op_sharding
-    self.assertEqual(op.type, xc.OpSharding.Type.OTHER)
+    self.assertEqual(op.type, jax.sharding.OpSharding.Type.OTHER)
     self.assertListEqual(op.tile_assignment_dimensions, [2, 1])
     self.assertListEqual(op.tile_assignment_devices, [0, 1])
     self.assertFalse(pxla.is_op_sharding_replicated(op))
@@ -3935,18 +3935,18 @@ class UtilTest(jtu.JaxTestCase):
       pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')
 
   def test_op_sharding_equality_and_hash_equality(self):
-    op1 = xc.OpSharding()
-    op1.type = xc.OpSharding.Type.OTHER
+    op1 = jax.sharding.OpSharding()
+    op1.type = jax.sharding.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [2, 2]
     op1.tile_assignment_devices = [0, 1, 2, 3]
 
-    op2 = xc.OpSharding()
-    op2.type = xc.OpSharding.Type.OTHER
+    op2 = jax.sharding.OpSharding()
+    op2.type = jax.sharding.OpSharding.Type.OTHER
     op2.tile_assignment_dimensions = [2, 2]
     op2.tile_assignment_devices = [0, 1, 2, 3]
 
-    op3 = xc.OpSharding()
-    op3.type = xc.OpSharding.Type.OTHER
+    op3 = jax.sharding.OpSharding()
+    op3.type = jax.sharding.OpSharding.Type.OTHER
     op3.tile_assignment_dimensions = [4, 2]
     op3.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
 
@@ -3963,17 +3963,17 @@ class UtilTest(jtu.JaxTestCase):
     self.assertNotEqual(hash(hs2), hash(hs3))
 
   def test_op_sharding_partial_sharding(self):
-    op1 = xc.OpSharding()
-    op1.type = xc.OpSharding.Type.OTHER
+    op1 = jax.sharding.OpSharding()
+    op1.type = jax.sharding.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [4, 1]
     op1.tile_assignment_devices = [0, 1, 2, 3]
-    op1.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+    op1.last_tile_dims = [jax.sharding.OpSharding.Type.REPLICATED]
 
-    op2 = xc.OpSharding()
-    op2.type = xc.OpSharding.Type.OTHER
+    op2 = jax.sharding.OpSharding()
+    op2.type = jax.sharding.OpSharding.Type.OTHER
     op2.tile_assignment_dimensions = [4, 1]
     op2.tile_assignment_devices = [0, 1, 2, 3]
-    op2.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+    op2.last_tile_dims = [jax.sharding.OpSharding.Type.REPLICATED]
 
     self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
 
@@ -3982,24 +3982,24 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(hash(hs1), hash(hs2))
 
   def test_op_sharding_tuple_shardings(self):
-    top1 = xc.OpSharding()
-    top1.type = xc.OpSharding.Type.OTHER
+    top1 = jax.sharding.OpSharding()
+    top1.type = jax.sharding.OpSharding.Type.OTHER
     top1.tile_assignment_dimensions = [4, 1]
     top1.tile_assignment_devices = [0, 1, 2, 3]
     top1.replicate_on_last_tile_dim = True
 
-    top2 = xc.OpSharding()
-    top2.type = xc.OpSharding.Type.OTHER
+    top2 = jax.sharding.OpSharding()
+    top2.type = jax.sharding.OpSharding.Type.OTHER
     top2.tile_assignment_dimensions = [2, 2]
     top2.tile_assignment_devices = [0, 1, 2, 3]
     top2.replicate_on_last_tile_dim = True
 
-    op1 = xc.OpSharding()
-    op1.type = xc.OpSharding.Type.TUPLE
+    op1 = jax.sharding.OpSharding()
+    op1.type = jax.sharding.OpSharding.Type.TUPLE
     op1.tuple_shardings = [top1, top2]
 
-    op2 = xc.OpSharding()
-    op2.type = xc.OpSharding.Type.TUPLE
+    op2 = jax.sharding.OpSharding()
+    op2.type = jax.sharding.OpSharding.Type.TUPLE
     op2.tuple_shardings = [top2, top1]
 
     self.assertFalse(pxla.are_op_shardings_equal(op1, op2))
@@ -4009,14 +4009,14 @@ class UtilTest(jtu.JaxTestCase):
     self.assertNotEqual(hash(hs1), hash(hs2))
 
   def test_device_indices_cache(self):
-    op1 = xc.OpSharding()
-    op1.type = xc.OpSharding.Type.OTHER
+    op1 = jax.sharding.OpSharding()
+    op1.type = jax.sharding.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [1, 1, 2, 1]
     op1.tile_assignment_devices = [0, 1]
-    op1.last_tile_dims = [xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL]
+    op1.last_tile_dims = [jax.sharding.OpSharding.Type.REPLICATED, jax.sharding.OpSharding.Type.MANUAL]
 
-    op2 = xc.OpSharding()
-    op2.type = xc.OpSharding.Type.REPLICATED
+    op2 = jax.sharding.OpSharding()
+    op2.type = jax.sharding.OpSharding.Type.REPLICATED
 
     shape = (8, 4)
     devices = jax.devices()
@@ -4040,23 +4040,23 @@ class UtilTest(jtu.JaxTestCase):
 
 
   def test_op_sharding_semantically_replicated(self):
-    op1 = xc.OpSharding()
-    op1.type = xc.OpSharding.Type.OTHER
+    op1 = jax.sharding.OpSharding()
+    op1.type = jax.sharding.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [1, 1, 2]
     op1.tile_assignment_devices = [0, 1]
-    op1.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+    op1.last_tile_dims = [jax.sharding.OpSharding.Type.REPLICATED]
 
-    op2 = xc.OpSharding()
-    op2.type = xc.OpSharding.Type.REPLICATED
+    op2 = jax.sharding.OpSharding()
+    op2.type = jax.sharding.OpSharding.Type.REPLICATED
 
-    op3 = xc.OpSharding()
-    op3.type = xc.OpSharding.Type.OTHER
+    op3 = jax.sharding.OpSharding()
+    op3.type = jax.sharding.OpSharding.Type.OTHER
     op3.tile_assignment_dimensions = [1, 1, 1, 1]
     op3.tile_assignment_devices = [0]
-    op3.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
+    op3.last_tile_dims = [jax.sharding.OpSharding.Type.REPLICATED]
 
-    op4 = xc.OpSharding()
-    op4.type = xc.OpSharding.Type.OTHER
+    op4 = jax.sharding.OpSharding()
+    op4.type = jax.sharding.OpSharding.Type.OTHER
     op4.tile_assignment_dimensions = [1]
     op4.tile_assignment_devices = [0]
 
@@ -4069,20 +4069,20 @@ class UtilTest(jtu.JaxTestCase):
     self.assertTrue(pxla.are_op_shardings_equal(op3, op4))
 
   def test_op_sharding_manual_replicated(self):
-    op1 = xc.OpSharding()
-    op1.type = xc.OpSharding.Type.OTHER
+    op1 = jax.sharding.OpSharding()
+    op1.type = jax.sharding.OpSharding.Type.OTHER
     op1.tile_assignment_dimensions = [1, 1, 2, 1]
     op1.tile_assignment_devices = [0, 1]
-    op1.last_tile_dims = [xc.OpSharding.Type.REPLICATED, xc.OpSharding.Type.MANUAL]
+    op1.last_tile_dims = [jax.sharding.OpSharding.Type.REPLICATED, jax.sharding.OpSharding.Type.MANUAL]
 
-    op2 = xc.OpSharding()
-    op2.type = xc.OpSharding.Type.OTHER
+    op2 = jax.sharding.OpSharding()
+    op2.type = jax.sharding.OpSharding.Type.OTHER
     op2.tile_assignment_dimensions = [1, 1, 1, 2]
     op2.tile_assignment_devices = [0, 1]
-    op2.last_tile_dims = [xc.OpSharding.Type.MANUAL, xc.OpSharding.Type.REPLICATED]
+    op2.last_tile_dims = [jax.sharding.OpSharding.Type.MANUAL, jax.sharding.OpSharding.Type.REPLICATED]
 
-    op3 = xc.OpSharding()
-    op3.type = xc.OpSharding.Type.REPLICATED
+    op3 = jax.sharding.OpSharding()
+    op3.type = jax.sharding.OpSharding.Type.REPLICATED
 
     self.assertTrue(pxla.is_op_sharding_replicated(op1))
     self.assertTrue(pxla.is_op_sharding_replicated(op2))
