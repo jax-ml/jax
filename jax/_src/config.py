@@ -460,13 +460,17 @@ class Config:
     the C++ JIT state, which is handled separately."""
     tls = jax_jit.thread_local_state()
     axis_env_state = ()
+    mesh_context_manager = ()
     context = tls.extra_jit_context
     if context and context.axis_env_state is not None:
       axis_env_state = context.axis_env_state
-    return (axis_env_state, self.x64_enabled, self.jax_numpy_rank_promotion,
-            self.jax_default_matmul_precision, self.jax_dynamic_shapes,
-            self.jax_numpy_dtype_promotion, self.jax_default_device,
-            self.jax_array, self.jax_threefry_partitionable,
+    if context and context.mesh_context_manager:
+      mesh_context_manager = context.mesh_context_manager
+    return (axis_env_state, mesh_context_manager, self.x64_enabled,
+            self.jax_numpy_rank_promotion, self.jax_default_matmul_precision,
+            self.jax_dynamic_shapes, self.jax_numpy_dtype_promotion,
+            self.jax_default_device, self.jax_array,
+            self.jax_threefry_partitionable,
             # Technically this affects jaxpr->MHLO lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
@@ -577,6 +581,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   """
   dynamic_trace_state: Optional[Any] = None
   axis_env_state: Hashable = ()
+  mesh_context_manager: Hashable = ()
   numpy_rank_promotion: Optional[str] = None
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None

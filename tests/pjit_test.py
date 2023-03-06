@@ -3476,6 +3476,33 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # self.assertNotIn("args[0]", mhlo_str)
     self.assertIn("args[1]", mhlo_str)
 
+  def test_with_sharding_constraint_with_two_meshes(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+
+    dev0 = jax.devices()[:2]
+    mesh0 = jax.sharding.Mesh(dev0, ('x'))
+
+    dev1 = jax.devices()[2:4]
+    mesh1 = jax.sharding.Mesh(dev1, ('x'))
+
+    def f(x):
+      y = x * 2
+      y = jax.lax.with_sharding_constraint(y, P('x'))
+      return y + 2
+
+    with mesh0:
+      x = np.ones((32, 4))
+      out0 = pjit(f)(x)
+      self.assertListEqual(sorted([d.id for d in out0.devices()]),
+                           [d.id for d in dev0])
+
+    with mesh1:
+      x = np.ones((32, 4))
+      out1 = pjit(f)(x)
+      self.assertListEqual(sorted([d.id for d in out1.devices()]),
+                           [d.id for d in dev1])
+
 
 class TempSharding(Sharding):
 
