@@ -84,7 +84,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
   _check_arraylike(name, a)
-  lax_internal._check_user_dtype_supported(dtype, name)
+  dtypes.check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
   if initial is None and not has_identity and where_ is not None:
@@ -327,7 +327,7 @@ def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
           out: None = None, keepdims: bool = False, *,
           where: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("mean", a)
-  lax_internal._check_user_dtype_supported(dtype, "mean")
+  dtypes.check_user_dtype_supported(dtype, "mean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
 
@@ -428,7 +428,7 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
          out: None = None, ddof: int = 0, keepdims: bool = False, *,
          where: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("var", a)
-  lax_internal._check_user_dtype_supported(dtype, "var")
+  dtypes.check_user_dtype_supported(dtype, "var")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
@@ -488,7 +488,7 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
          out: None = None, ddof: int = 0, keepdims: bool = False, *,
          where: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("std", a)
-  lax_internal._check_user_dtype_supported(dtype, "std")
+  dtypes.check_user_dtype_supported(dtype, "std")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
   return lax.sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
@@ -557,7 +557,7 @@ def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
 def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None = None,
            keepdims: bool = False, initial: Optional[ArrayLike] = None,
            where: Optional[ArrayLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "nanprod")
+  dtypes.check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
@@ -571,7 +571,7 @@ if nansum.__doc__ is not None:
 def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None = None,
             keepdims: bool = False, initial: Optional[ArrayLike] = None,
             where: Optional[ArrayLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "nanprod")
+  dtypes.check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
@@ -581,7 +581,7 @@ def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None 
 def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None = None,
             keepdims: bool = False, where: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("nanmean", a)
-  lax_internal._check_user_dtype_supported(dtype, "nanmean")
+  dtypes.check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
   if dtypes.issubdtype(dtypes.dtype(a), np.bool_) or dtypes.issubdtype(dtypes.dtype(a), np.integer):
@@ -601,7 +601,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None =
            ddof: int = 0, keepdims: bool = False,
            where: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("nanvar", a)
-  lax_internal._check_user_dtype_supported(dtype, "nanvar")
+  dtypes.check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
@@ -632,7 +632,7 @@ def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None =
            ddof: int = 0, keepdims: bool = False,
            where: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("nanstd", a)
-  lax_internal._check_user_dtype_supported(dtype, "nanstd")
+  dtypes.check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
   return lax.sqrt(nanvar(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
@@ -653,7 +653,7 @@ def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array
     if out is not None:
       raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
                                 f"is not supported.")
-    lax_internal._check_user_dtype_supported(dtype, np_reduction.__name__)
+    dtypes.check_user_dtype_supported(dtype, np_reduction.__name__)
 
     if axis is None or _isscalar(a):
       a = lax.reshape(a, (np.size(a),))

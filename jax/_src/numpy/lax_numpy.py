@@ -2001,7 +2001,7 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
     raise NotImplementedError("Only implemented for order='K'")
 
   # check if the given dtype is compatible with JAX
-  lax_internal._check_user_dtype_supported(dtype, "array")
+  dtypes.check_user_dtype_supported(dtype, "array")
 
   # Here we make a judgment call: we only return a weakly-typed array when the
   # input object itself is weakly typed. That ensures asarray(x) is a no-op
@@ -2081,7 +2081,7 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
 
 @_wraps(np.asarray, lax_description=_ARRAY_DOC)
 def asarray(a: Any, dtype: Optional[DTypeLike] = None, order: Optional[str] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "asarray")
+  dtypes.check_user_dtype_supported(dtype, "asarray")
   dtype = dtypes.canonicalize_dtype(dtype) if dtype is not None else dtype
   return array(a, dtype=dtype, copy=False, order=order)  # type: ignore
 
@@ -2096,7 +2096,7 @@ def copy(a: ArrayLike, order: Optional[str] = None) -> Array:
 def zeros_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
                shape: Any = None) -> Array:
   _check_arraylike("zeros_like", a)
-  lax_internal._check_user_dtype_supported(dtype, "zeros_like")
+  dtypes.check_user_dtype_supported(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(a, 0, dtype, shape)
@@ -2106,7 +2106,7 @@ def zeros_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
 def ones_like(a: ArrayLike, dtype: Optional[DTypeLike] = None,
               shape: Any = None) -> Array:
   _check_arraylike("ones_like", a)
-  lax_internal._check_user_dtype_supported(dtype, "ones_like")
+  dtypes.check_user_dtype_supported(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
   return lax.full_like(a, 1, dtype, shape)
@@ -2118,14 +2118,14 @@ return an array initialized with zeros.""")
 def empty_like(prototype: ArrayLike, dtype: Optional[DTypeLike] = None,
                shape: Any = None) -> Array:
   _check_arraylike("empty_like", prototype)
-  lax_internal._check_user_dtype_supported(dtype, "empty_like")
+  dtypes.check_user_dtype_supported(dtype, "empty_like")
   return zeros_like(prototype, dtype=dtype, shape=shape)
 
 
 @_wraps(np.full)
 def full(shape: Any, fill_value: ArrayLike,
          dtype: Optional[DTypeLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "full")
+  dtypes.check_user_dtype_supported(dtype, "full")
   _check_arraylike("full", fill_value)
   if ndim(fill_value) == 0:
     shape = canonicalize_shape(shape)
@@ -2137,7 +2137,7 @@ def full(shape: Any, fill_value: ArrayLike,
 @_wraps(np.full_like)
 def full_like(a: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = None,
               shape: Any = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "full_like")
+  dtypes.check_user_dtype_supported(dtype, "full_like")
   _check_arraylike("full_like", a, fill_value)
   if shape is not None:
     shape = canonicalize_shape(shape)
@@ -2153,7 +2153,7 @@ def full_like(a: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = 
 def zeros(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
-  lax_internal._check_user_dtype_supported(dtype, "zeros")
+  dtypes.check_user_dtype_supported(dtype, "zeros")
   shape = canonicalize_shape(shape)
   return lax.full(shape, 0, _jnp_dtype(dtype))
 
@@ -2162,7 +2162,7 @@ def ones(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   shape = canonicalize_shape(shape)
-  lax_internal._check_user_dtype_supported(dtype, "ones")
+  dtypes.check_user_dtype_supported(dtype, "ones")
   return lax.full(shape, 1, _jnp_dtype(dtype))
 
 
@@ -2170,7 +2170,7 @@ def ones(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
 def empty(shape: Any, dtype: Optional[DTypeLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "empty")
+  dtypes.check_user_dtype_supported(dtype, "empty")
   return zeros(shape, dtype)
 
 
@@ -2268,7 +2268,7 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
 @_wraps(np.eye)
 def eye(N: DimSize, M: Optional[DimSize] = None, k: int = 0,
         dtype: Optional[DTypeLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "eye")
+  dtypes.check_user_dtype_supported(dtype, "eye")
   N_int = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
   M_int = N_int if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
   if N_int < 0 or M_int < 0:
@@ -2279,14 +2279,14 @@ def eye(N: DimSize, M: Optional[DimSize] = None, k: int = 0,
 
 @_wraps(np.identity)
 def identity(n: DimSize, dtype: Optional[DTypeLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "identity")
+  dtypes.check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
 @_wraps(np.arange)
 def arange(start: DimSize, stop: Optional[DimSize] = None,
            step: Optional[DimSize] = None, dtype: Optional[DTypeLike] = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "arange")
+  dtypes.check_user_dtype_supported(dtype, "arange")
   require = partial(core.concrete_or_error, None)
   msg = "It arose in jax.numpy.arange argument `{}`.".format
   if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
@@ -2353,7 +2353,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               dtype: Optional[DTypeLike] = None,
               axis: int = 0) -> Union[Array, Tuple[Array, Array]]:
   """Implementation of linspace differentiable in start and stop args."""
-  lax_internal._check_user_dtype_supported(dtype, "linspace")
+  dtypes.check_user_dtype_supported(dtype, "linspace")
   if num < 0:
     raise ValueError(f"Number of samples, {num}, must be non-negative.")
   _check_arraylike("linspace", start, stop)
@@ -2418,7 +2418,7 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
               endpoint: bool = True, base: ArrayLike = 10.0,
               dtype: Optional[DTypeLike] = None, axis: int = 0) -> Array:
   """Implementation of logspace differentiable in start and stop args."""
-  lax_internal._check_user_dtype_supported(dtype, "logspace")
+  dtypes.check_user_dtype_supported(dtype, "logspace")
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
@@ -2442,7 +2442,7 @@ def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool =
 def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
                dtype: Optional[DTypeLike] = None, axis: int = 0) -> Array:
   """Implementation of geomspace differentiable in start and stop args."""
-  lax_internal._check_user_dtype_supported(dtype, "geomspace")
+  dtypes.check_user_dtype_supported(dtype, "geomspace")
   if dtype is None:
     dtype = dtypes.to_inexact_dtype(result_type(start, stop))
   dtype = _jnp_dtype(dtype)
@@ -2638,7 +2638,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = None, *,
 
 @_wraps(np.tri)
 def tri(N: int, M: Optional[int] = None, k: int = 0, dtype: DTypeLike = None) -> Array:
-  lax_internal._check_user_dtype_supported(dtype, "tri")
+  dtypes.check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
   dtype = dtype or float32
   return lax_internal._tri(dtype, (N, M), k)
@@ -2675,7 +2675,7 @@ def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
   _check_arraylike("trace", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.trace is not supported.")
-  lax_internal._check_user_dtype_supported(dtype, "trace")
+  dtypes.check_user_dtype_supported(dtype, "trace")
 
   a_shape = shape(a)
   if dtype is None:
@@ -4954,7 +4954,7 @@ def _astype(arr: ArrayLike, dtype: DTypeLike) -> Array:
   """
   if dtype is None:
     dtype = dtypes.canonicalize_dtype(float_)
-  lax_internal._check_user_dtype_supported(dtype, "astype")
+  dtypes.check_user_dtype_supported(dtype, "astype")
   return lax.convert_element_type(arr, dtype)
 
 
@@ -5017,7 +5017,7 @@ def _view(arr: Array, dtype: DTypeLike = None, type: None = None) -> Array:
   _check_arraylike("view", arr)
   arr = asarray(arr)
 
-  lax_internal._check_user_dtype_supported(dtype, "view")
+  dtypes.check_user_dtype_supported(dtype, "view")
   dtype = dtypes.canonicalize_dtype(dtype)
 
   if arr.ndim == 0:

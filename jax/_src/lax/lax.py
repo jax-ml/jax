@@ -4816,10 +4816,6 @@ def _abstractify(x):
   return raise_to_shaped(core.get_aval(x))
 
 
-# TODO(zhangqiaorjc): Update caller and remove this alias.
-_check_user_dtype_supported = dtypes.check_user_dtype_supported
-
-
 def empty(dtype):
   return empty_p.bind(dtype=dtype)
 empty_p = core.Primitive('empty')
