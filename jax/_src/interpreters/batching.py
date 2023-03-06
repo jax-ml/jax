@@ -815,7 +815,7 @@ def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False)
 
 ### utilities for defining primitives' batching rules
 
-BatchingRule = Callable[..., Tuple[Any, Union[int, Tuple[int, ...]]]]
+BatchingRule = Callable[..., Tuple[Any, Union[None, int, Tuple[Union[None, int], ...]]]]
 primitive_batchers : Dict[core.Primitive, BatchingRule] = {}
 axis_primitive_batchers: Dict[core.Primitive, Callable] = {}
 spmd_axis_primitive_batchers: Dict[core.Primitive, Callable] = {}
