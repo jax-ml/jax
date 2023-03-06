@@ -725,6 +725,49 @@ class cuSparseTest(sptu.SparseTestCase):
         shape=mat.shape)
     self.assertArraysAllClose(actual, expected)
 
+  @jtu.sample_product(
+    shape=[(4, 5), (3, 4), (5, 4)],
+    dtype=_lowerings.SUPPORTED_DATA_DTYPES,
+    transpose=[True, False],
+  )
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  def test_csr_spmv(self, shape, dtype, transpose):
+    rng_sparse = rand_sparse(self.rng())
+    rng_dense = jtu.rand_default(self.rng())
+
+    mat = rng_sparse(shape, dtype)
+    data, indices, indptr = sparse_csr._csr_fromdense(mat, nse=(mat != 0).sum())
+    vec = rng_dense(shape[0] if transpose else shape[1], dtype)
+
+    expected = (mat.T if transpose else mat) @ vec
+    actual = _lowerings.csr_spmv_p.bind(
+        data, indices.astype('int32'), indptr.astype('int32'), vec,
+        transpose=transpose,
+        shape=mat.shape)
+    self.assertArraysAllClose(actual, expected)
+
+  @jtu.sample_product(
+    shape=[(4, 5), (3, 4), (5, 4)],
+    dtype=_lowerings.SUPPORTED_DATA_DTYPES,
+    transpose=[True, False],
+  )
+  @unittest.skipIf(not GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse")
+  def test_csr_spmm(self, shape, dtype, transpose):
+    rng_sparse = rand_sparse(self.rng())
+    rng_dense = jtu.rand_default(self.rng())
+
+    mat = rng_sparse(shape, dtype)
+    data, indices, indptr = sparse_csr._csr_fromdense(mat, nse=(mat != 0).sum())
+    vec = rng_dense((shape[0] if transpose else shape[1], 3), dtype)
+
+    expected = (mat.T if transpose else mat) @ vec
+    actual = _lowerings.csr_spmm_p.bind(
+        data, indices.astype('int32'), indptr.astype('int32'), vec,
+        transpose=transpose,
+        shape=mat.shape)
+    self.assertArraysAllClose(actual, expected)
+
+
 class BCOOTest(sptu.SparseTestCase):
 
   def gpu_matmul_warning_context(self, msg):
