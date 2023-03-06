@@ -162,6 +162,8 @@ def _dtype(x: Any) -> DType:
 # types return JAX arrays when instantiated.
 
 class _ScalarMeta(type):
+  dtype: np.dtype
+
   def __hash__(self) -> int:
     return hash(self.dtype.type)
 
