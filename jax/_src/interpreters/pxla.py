@@ -3643,6 +3643,13 @@ class UnloadedMeshExecutable:
           _get_normalized_avals_and_shardings(
               global_in_avals, in_shardings, in_is_global))  # type: ignore # arg-type
 
+      if pmap_nreps > 1:
+        local_devices = xla_executable.local_devices()
+        # Create replicated in_shardings for jit(pmap) path with local devices
+        # because multihost jit(pmap) is not allowed.
+        input_shardings = [sharding_internal.GSPMDSharding.get_replicated(
+            local_devices) for _ in input_shardings]
+
       return UnloadedMeshExecutable(
           xla_executable=xla_executable,
           device_assignment=device_assignment,
@@ -3702,7 +3709,7 @@ class MeshExecutable(stages.XlaExecutable):
     if hasattr(backend, "compile_replicated"):
       return _compile_replicated_mesh_executable_from_trivial_jaxpr(
           jaxpr, consts, global_in_avals, global_out_avals, in_shardings,
-          backend, device_assignment, committed, kept_var_idx)
+          backend, device_assignment, committed, kept_var_idx, 1)
 
     out_shardings = _out_shardings_for_trivial(
         jaxpr, consts, in_shardings, device_assignment)
@@ -3842,7 +3849,7 @@ def _compile_replicated_mesh_executable_from_hlo(
       in_indices=input_indices, in_shardings=in_shardings,
       kept_var_idx=kept_var_idx,
       out_avals=global_out_avals, out_shardings=out_shardings,
-      committed=committed)
+      committed=committed, pmap_nreps=pmap_nreps)
   xla_executable = None
   return MeshExecutable(xla_executable, unsafe_call, input_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
@@ -3851,7 +3858,7 @@ def _compile_replicated_mesh_executable_from_hlo(
 
 def _compile_replicated_mesh_executable_from_trivial_jaxpr(
     jaxpr, consts, global_in_avals, global_out_avals, in_shardings, backend,
-    device_assignment, committed, kept_var_idx):
+    device_assignment, committed, kept_var_idx, pmap_nreps):
   out_shardings = _out_shardings_for_trivial(
       jaxpr, consts, in_shardings, device_assignment)
 
@@ -3870,7 +3877,7 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
       device_assignment=device_assignment, in_avals=input_avals,
       in_indices=input_indices, in_shardings=in_shardings,
       kept_var_idx=kept_var_idx, out_handler=handle_outs,
-      out_shardings=out_shardings)
+      out_shardings=out_shardings, pmap_nreps=pmap_nreps)
   return MeshExecutable(None, unsafe_call, global_in_avals, in_shardings,
                         out_shardings, False, kept_var_idx,
                         device_assignment)
