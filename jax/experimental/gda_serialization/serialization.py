@@ -18,6 +18,7 @@ import asyncio
 import itertools
 import logging
 from functools import partial
+import os
 import re
 import threading
 from typing import Callable, Sequence, Optional, Dict, Any
@@ -115,13 +116,24 @@ def _get_kvstore_for_gcs(ckpt_path: str):
   path_without_bucket = m.group(2)
   return {'driver': 'gcs', 'bucket': gcs_bucket, 'path': path_without_bucket}
 
-def get_tensorstore_spec(ckpt_path: str):
+def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
+  is_gcs_path = ckpt_path.startswith('gs://')
+  # Normalize path to exclude trailing '/'. In GCS path case, we will need to
+  # fix the path prefix to add back the stripped '/'.
+  ckpt_path = os.path.normpath(ckpt_path).replace('gs:/', 'gs://')
   spec = {'driver': 'zarr', 'kvstore': {}}
-
-  if ckpt_path.startswith('gs://'):
-    spec['kvstore'] = _get_kvstore_for_gcs(ckpt_path)
+  if ocdbt:
+    prefix = 'gs' if is_gcs_path else 'file'
+    spec['kvstore'] = {
+        'driver': 'ocdbt',
+        'base': f'{prefix}://{os.path.dirname(ckpt_path)}',
+        'path': os.path.basename(ckpt_path),
+    }
   else:
-    spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
+    if is_gcs_path:
+      spec['kvstore'] = _get_kvstore_for_gcs(ckpt_path)
+    else:
+      spec['kvstore'] = {'driver': 'file', 'path': ckpt_path}
 
   return spec
 
