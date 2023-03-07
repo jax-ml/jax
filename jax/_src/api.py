@@ -2909,7 +2909,8 @@ def make_jaxpr(fun: Callable,
                axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
                return_shape: bool = False,
                abstracted_axes: Optional[Any] = None,
-               ) -> Callable[..., core.ClosedJaxpr]:
+               ) -> Callable[..., Union[core.ClosedJaxpr,
+                                        Tuple[core.ClosedJaxpr, Any]]]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
@@ -2990,7 +2991,7 @@ def make_jaxpr(fun: Callable,
     in_type = tuple(zip(in_avals, keep_inputs))
     f, out_tree = flatten_fun(f, in_tree)
     f = lu.annotate(f, in_type)
-    debug_info = pe.debug_info(fun, in_tree, True, 'make_jaxpr')
+    debug_info = pe.debug_info(fun, in_tree, out_tree, True, 'make_jaxpr')
     with ExitStack() as stack:
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
@@ -3342,7 +3343,7 @@ def eval_shape(fun: Callable, *args, **kwargs):
   """
   args_flat, in_tree = tree_flatten((args, kwargs))
   wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  debug_info = pe.debug_info(fun, in_tree, True, "eval_shape")
+  debug_info = pe.debug_info(fun, in_tree, out_tree, True, "eval_shape")
   out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
                              *map(shaped_abstractify, args_flat),
                              debug_info=debug_info)

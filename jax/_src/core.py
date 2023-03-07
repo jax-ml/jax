@@ -71,6 +71,7 @@ class DebugInfo(NamedTuple):
   func_src_info: Optional[str]  # f'{fun.__name__} at {filename}:{lineno}'
   signature: Optional[inspect.Signature]  # inspect.signature(fun)
   in_tree: Optional[PyTreeDef]  # caller/constructor might not have this info
+  out_tree: Optional[Callable[[], PyTreeDef]]  # lazy, not avail at trace time
   has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
   traced_for: str  # "jit", "scan", "make_jaxpr", etc
   # TODO(mattjj): add input type signature

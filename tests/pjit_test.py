@@ -3476,6 +3476,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     # self.assertNotIn("args[0]", mhlo_str)
     self.assertIn("args[1]", mhlo_str)
 
+  @jtu.with_mesh([('x', 2), ('y', 1)])
+  def test_jit_nested_xmap_lower_result_info(self):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, z):
+      _ = xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
+               axis_resources={'i': 'y'})(jnp.arange(8.))
+      return {'a': x, 'b': [y]}
+
+    lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
+        1., (2.,), [3.])
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
+    self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
+
   def test_with_sharding_constraint_with_two_meshes(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")

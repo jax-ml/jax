@@ -3063,10 +3063,7 @@ def lower_sharding_computation(
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
-  arg_info = jaxpr.debug_info and pe.arg_info_all(jaxpr.debug_info)
-  arg_names = None if arg_info is None else [
-      f'{name}{keystr(path)}' for i, (name, path) in enumerate(arg_info)
-      if i in kept_var_idx]
+  arg_names, result_names = _debug_names(jaxpr.debug_info, kept_var_idx)
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
@@ -3081,7 +3078,7 @@ def lower_sharding_computation(
       replicated_args=replicated_args,
       arg_shardings=in_op_shardings,
       result_shardings=out_op_shardings,
-      arg_names=arg_names)
+      arg_names=arg_names, result_names=result_names)
 
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,
@@ -3254,9 +3251,7 @@ def lower_mesh_computation(
       closed_jaxpr.effects))
     ordered_effects = list(effects.ordered_effects.filter_in(
       closed_jaxpr.effects))
-    arg_info = jaxpr.debug_info and pe.arg_info_all(jaxpr.debug_info)
-    arg_names = None if arg_info is None else [
-        f'{name}{keystr(path)}' for i, (name, path) in enumerate(arg_info)]
+    arg_names, result_names = _debug_names(jaxpr.debug_info)
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -3270,7 +3265,8 @@ def lower_mesh_computation(
         replicated_args=replicated_args,
         arg_shardings=in_partitions,
         result_shardings=out_partitions,
-        arg_names=arg_names)
+        arg_names=arg_names,
+        result_names=result_names)
     module, keepalive, host_callbacks = (
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)
@@ -3297,6 +3293,17 @@ def lower_mesh_computation(
       device_assignment=list(mesh.devices.flat),
       committed=True)
 
+def _debug_names(
+    dbg: Optional[core.DebugInfo], kept_var_idx: Optional[Set] = None
+) -> Tuple[Optional[List[str]], Optional[List[str]]]:
+  if dbg is None: return (None, None)
+  arg_info = pe.arg_info_all(dbg)
+  arg_names = None if arg_info is None else [
+      f'{name}{keystr(path)}' for i, (name, path) in enumerate(arg_info)
+      if kept_var_idx is None or i in kept_var_idx]
+  result_info = pe.result_info(dbg)
+  result_names = None if result_info is None else map(keystr, result_info)
+  return arg_names, result_names
 
 class MeshComputation(stages.XlaLowering):
   _hlo: Optional[ir.Module]
