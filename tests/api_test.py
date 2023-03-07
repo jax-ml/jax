@@ -1161,6 +1161,18 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['z']", mhlo_str)
     self.assertIn("kwargs['w']", mhlo_str)
 
+  def test_jit_lower_result_info(self):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, z):
+      return {'a': x, 'b': [y]}
+
+    lowered = jax.jit(f).lower(1., (2,), [3])
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
+    self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
+
   def test_jit_enum_as_dict_keys_fails(self):
     class E(enum.Enum):
       A = 0

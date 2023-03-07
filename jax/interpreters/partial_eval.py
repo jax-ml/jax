@@ -1976,17 +1976,19 @@ def _memoize(thunk):
   return memoized
 
 
-def debug_info(fn: Callable, in_tree: Optional[PyTreeDef], has_kwargs: bool,
-               traced_for: str) -> DebugInfo:
+def debug_info(fn: Callable, in_tree: Optional[PyTreeDef],
+               out_tree_thunk: Optional[Callable[[], PyTreeDef]],
+               has_kwargs: bool, traced_for: str) -> DebugInfo:
   try: sig = inspect.signature(fn)
   except (ValueError, TypeError): sig = None
   src_info = fun_sourceinfo(fn)
-  return DebugInfo(src_info, sig, in_tree, has_kwargs, traced_for)
+  return DebugInfo(src_info, sig, in_tree, out_tree_thunk, has_kwargs,
+                   traced_for)
 
 def debug_info_final(fn: lu.WrappedFun, traced_for: str) -> DebugInfo:
   "Make a DebugInfo from data available to final-style primitives like pmap."
-  in_tree, has_kwargs = flattened_fun_in_tree(fn) or (None, False)
-  return debug_info(fn.f, in_tree, has_kwargs, traced_for)
+  in_tree, out_tree, has_kws = flattened_fun_in_tree(fn) or (None, None, False)
+  return debug_info(fn.f, in_tree, out_tree, has_kws, traced_for)
 
 def arg_info_all(dbg: DebugInfo) -> Optional[List[Tuple[str, KeyPath]]]:
   ba = None if dbg.in_tree is None else sig_info(dbg)
@@ -2005,6 +2007,16 @@ def sig_info(dbg: DebugInfo) -> Optional[inspect.BoundArguments]:
     return dbg.signature.bind(*args, **kwargs)
   except (TypeError, ValueError):
     return None
+
+def result_info(dbg: DebugInfo) -> Optional[List[KeyPath]]:
+  if dbg.out_tree is None: return None
+  try:
+    num_leaves = dbg.out_tree().num_leaves
+    dummy_result = tree_unflatten(dbg.out_tree(), [False] * num_leaves)
+  except:
+    return None
+  else:
+    return [path for path, _ in _generate_key_paths(dummy_result)]
 
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(fun: lu.WrappedFun,

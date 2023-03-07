@@ -23,7 +23,7 @@ import jax
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
-from jax.tree_util import tree_flatten, tree_unflatten, keystr
+from jax.tree_util import tree_flatten, tree_unflatten, tree_structure, keystr
 from jax._src import ad_util
 from jax._src import core
 from jax._src import linear_util as lu
@@ -357,8 +357,8 @@ def _dyn_args_fun(fun: Callable, static_argnums: FrozenSet[int],
 # remat-specific errors.
 @weakref_lru_cache
 def _trace_to_jaxpr(fun, in_tree, in_avals):
-  debug = pe.debug_info(fun, in_tree, True, "checkpoint")
   flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
+  debug = pe.debug_info(fun, in_tree, out_tree, True, "checkpoint")
   try:
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
   except core.ConcretizationTypeError as e:
@@ -386,8 +386,12 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     args, kwargs = tree_unflatten(in_tree, args)
     return f(*args, **kwargs)
 
-  jaxpr = jax.make_jaxpr(lambda *args: jax.linearize(f_, *args)[1])(
-      *in_leaves).jaxpr
+  out = jax.make_jaxpr(lambda *args: jax.linearize(f_, *args)[1],
+                       return_shape=True)(*in_leaves)
+  assert isinstance(out, tuple)
+  jaxpr_, out_shape = out
+  jaxpr = jaxpr_.jaxpr
+  out_tree = lambda: tree_structure(out_shape)
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -401,7 +405,7 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
       results.append((v.aval, 'from a constant'))
 
   assert len(jaxpr.invars) == len(in_leaves)
-  dbg = pe.debug_info(f, in_tree, True, "saved_residuals")
+  dbg = pe.debug_info(f, in_tree, out_tree, True, "saved_residuals")
   arg_info = pe.arg_info_all(dbg)
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:

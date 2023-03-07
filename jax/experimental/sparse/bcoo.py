@@ -2311,7 +2311,7 @@ def bcoo_conv_general_dilated(lhs, rhs, *, window_strides, padding,
       precision=precision, preferred_element_type=preferred_element_type)
   jaxpr = jax.make_jaxpr(func)(jax.ShapeDtypeStruct(lhs.shape, lhs.dtype),
                                jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
-  assert len(jaxpr.eqns) == 1
+  assert isinstance(jaxpr, core.ClosedJaxpr) and len(jaxpr.eqns) == 1
   params = jaxpr.eqns[0].params
 
   if params['lhs_dilation'] !=  (1,) * (lhs.ndim - 2):

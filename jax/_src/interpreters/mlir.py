@@ -668,6 +668,7 @@ def lower_jaxpr_to_module(
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     arg_names: Optional[Sequence[str]] = None,
+    result_names: Optional[Sequence[str]] = None,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
 
@@ -745,7 +746,7 @@ def lower_jaxpr_to_module(
         replicated_args=replicated_args,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
         input_output_aliases=input_output_aliases,
-        arg_names=arg_names)
+        arg_names=arg_names, result_names=result_names)
 
   if not ctx.module.operation.verify():
     module_string = module_to_string(ctx.module)
@@ -863,6 +864,7 @@ def lower_jaxpr_to_fun(
     num_output_tokens: int = 0,
     api_name: str = 'jit',
     arg_names: Optional[Sequence[str]] = None,
+    result_names: Optional[Sequence[str]] = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -992,13 +994,29 @@ def lower_jaxpr_to_fun(
     func_op.arg_attrs = ir.ArrayAttr.get(
         [ir.DictAttr.get(attrs) for attrs in arg_attrs])
 
+  result_attrs: List[Dict[str, ir.Attribute]] = [
+      {} for _ in range(len(flat_output_types))]
+
+  if config.jax_jit_pjit_api_merge and result_names:
+    named_result_attrs = result_attrs[num_tokens:]
+    if len(named_result_attrs) == len(result_names):
+      for attrs, name_ in zip(named_result_attrs, result_names):
+        attrs['jax.result_info'] = ir.StringAttr.get(name_)
+
   if use_sharding_annotations and ir_result_shardings is not None:
-    func_op.result_attrs = ir.ArrayAttr.get([
-            ir.DictAttr.get(
-            {} if sharding is None else
-            {"mhlo.sharding": get_sharding_attr(sharding)}
-        ) for sharding in ir_result_shardings
-    ])
+    for attrs, sharding in zip(result_attrs, ir_result_shardings):
+      if sharding is not None:
+        attrs['mhlo.sharding'] = get_sharding_attr(sharding)
+
+    # func_op.result_attrs = ir.ArrayAttr.get([
+    #         ir.DictAttr.get(
+    #         {} if sharding is None else
+    #         {"mhlo.sharding": get_sharding_attr(sharding)}
+    #     ) for sharding in ir_result_shardings
+    # ])
+
+  func_op.result_attrs = ir.ArrayAttr.get(
+      [ir.DictAttr.get(attrs) for attrs in result_attrs])
 
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
