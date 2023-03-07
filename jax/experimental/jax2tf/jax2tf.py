@@ -685,16 +685,17 @@ def _lower_native_and_run(fun_jax: Callable,
   else:
     lowering_platform = None
 
-  if not hasattr(fun_jax, "lower") or abstracted_axes:
+  if not hasattr(fun_jax, "lower"):
     # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
-    # convert(f_jax), in which case a "jit" is implied. We also add a jit when
-    # we need to pass the abstracted axes.
-    # TODO(necula): Will clean this when we clean the native lowering jax2tf API
-    fun_jax_lower = jax.jit(fun_jax,
-                            abstracted_axes=abstracted_axes).lower
+    # convert(f_jax), in which case a "jit" is implied. In that case we raise
+    # an error if the lowered function contains non-replicated sharding annotations.
+    fun_jax_lower = jax.jit(fun_jax).lower
+    allow_non_replicated_sharding = False
   else:
-    # If we have a pjit or pmap already we do not wrap with another
+    # If we have a pjit or pmap already we do not wrap with another, and we
+    # allow shardings.
     fun_jax_lower = fun_jax.lower
+    allow_non_replicated_sharding = True
 
   lowered = fun_jax_lower(
       *arg_specs_jax,
@@ -822,6 +823,11 @@ def _lower_native_and_run(fun_jax: Callable,
     logging.vlog(3, "XlaCallModule (%s)\n%s",
                  log_msg,
                  mlir_module_text)
+
+  if not allow_non_replicated_sharding:
+    check_module(mlir_module,
+                allow_non_replicated_sharding=allow_non_replicated_sharding)
+
   res = tfxla.call_module(args_tf, **call_module_attrs)
   if "out_shardings" in lowered.compile_args:
     res = list(map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
@@ -839,6 +845,47 @@ def _lower_native_and_run(fun_jax: Callable,
       _convert_res(res_val, out_aval.dtype)
       for res_val, out_aval in zip(res, out_avals))
   return res, out_avals
+
+
+def check_module(mod: mlir.ir.Module, *,
+                 allow_non_replicated_sharding: bool):
+  """Run a number of checks on the module.
+
+  TODO: check for custom calls.
+
+  Args:
+    allow_non_replicated_sharding: whether the module is allowed to contain
+      non_replicated sharding annotations.
+  """
+  sharding_attr = mlir.ir.StringAttr.get("Sharding", mod.context)
+  def check_sharding(op_str: str, loc: mlir.ir.Location):
+    # Check the shardings in an operation or attribute (`op_str`)
+    if not allow_non_replicated_sharding:
+      m = re.search(r'mhlo.sharding\s*=\s*"([^"]+)"', op_str)
+      if m and m.group(1) not in ["{replicated}", ""]:
+        raise ValueError(
+            "Lowered function does not have a top-level pjit but it has "
+            f"non-replicated sharding annotations, e.g., {op_str} at {loc}.")
+
+  def check_op(op: mlir.ir.Operation):
+    op_name = op.operation.name
+    if op_name == "func.func":
+      for a in op.operation.attributes:
+        # TODO: figure out how to parse the attributes properly
+        check_sharding(str(a), op.location)
+
+    elif op_name == "stablehlo.custom_call":
+      if op.operation.attributes["call_target_name"] == sharding_attr:
+        check_sharding(str(op), op.location )
+
+  def walk_operations(op):
+    check_op(op)
+    for region in op.operation.regions:
+      for block in region:
+        for op in block:
+          walk_operations(op)
+
+  walk_operations(mod)
 
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,

@@ -1380,7 +1380,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           f"2={transform2 if transform2 != 'none' else ''}"
           f"_1={transform1 if transform1 != 'none' else ''}"
           f"{'_nullary' if nullary else ''}"),
-           with_mesh=with_mesh, transform1=transform1,
+          with_mesh=with_mesh, transform1=transform1,
           transform2=transform2, nullary=nullary)
       # Test transform2(transform1(func)
       for transform1 in [
@@ -1412,7 +1412,12 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     if not config.jax_array:
       raise unittest.SkipTest("cross_platform test work only with jax.Array")
     if not config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("cross_platform test work only with jax.Array")
+      raise unittest.SkipTest("cross_platform test work only with jit==pjit")
+    if transform2 == "none" and (
+        transform1 == "shard_map" or
+        transform1 in ["pjit_in_shardings_P", "pjit_in_shardings_Sharding"] and nullary):
+      raise unittest.SkipTest("Skip because must have pjit at top level")
+
     x = np.ones((4, 6), dtype=np.float32)
     mesh = sharding.Mesh(jax.devices()[:1], ("a",))
     # cummax has distinctive lowering for TPU, using a reduce-window op

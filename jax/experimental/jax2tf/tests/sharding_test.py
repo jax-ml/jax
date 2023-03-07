@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for the jax2tf conversion of pjit."""
-
+import contextlib
 from functools import partial
 import logging
 import os
@@ -364,35 +364,53 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       res_tf = f_tf(a, b)
       self.assertAllClose(res_tf, res_jax)
 
-  def test_nested_pjit(self):
+  @parameterized.named_parameters(
+      dict( testcase_name=f"_kind={kind}_in_shardings={in_shardings}_out_shardings={out_shardings}",
+            kind=kind, in_shardings=in_shardings, out_shardings=out_shardings)
+      for kind in ("pjit", "jit", "sharding_constraint")
+      for in_shardings in (
+          ("none", "P") if kind == "sharding_constraint" else
+          ("unspecified",) if kind == "jit" else
+          ("unspecified", "none", "P"))
+      for out_shardings in (
+          ("unspecified",) if kind in ["sharding_constraint", "jit"] else
+          ("unspecified", "none", "P"))
+  )
+  def test_pjit_error_inner_sharding(self, kind="pjit", in_shardings="P",
+                                     out_shardings="none"):
     if not config.jax_array:
-      raise unittest.SkipTest("Test works only with jax_array")
-    a = np.arange(16., dtype=np.float32).reshape(2, 8)
-
+      raise unittest.SkipTest("Test not intended to work without jax.Array")
+    # Check that we raise an error if there is no top-level pjit but we convert
+    # a function with non-replicated shardings (with native lowering).
+    shardings_map = dict(none=None, P=P("x"))
     def f_jax(a):
-      # We have a pjit nested inside the function to be converted
-      inner_func = pjit.pjit(
-          jnp.sin, in_shardings=(P("x"),), out_shardings=None
-      )
-      return jnp.cos(inner_func(a))
-
-    @tf.function(autograph=False, jit_compile=True)
-    def f_tf(a):
-      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
-      if jtu.device_under_test() == "tpu":
-        res = tf.compat.v1.tpu.rewrite(
-            f_converted, [tf.convert_to_tensor(a)],
-            device_assignment=self.device_assignment(
-                computation_shape=[1, 1, 1, 2])
-            )[0]
+      if kind == "pjit":
+        pjit_kwargs = {}
+        if in_shardings != "unspecified":
+          pjit_kwargs["in_shardings"] = shardings_map[in_shardings]
+        if out_shardings != "unspecified":
+          pjit_kwargs["out_shardings"] = shardings_map[out_shardings]
+        res = pjit.pjit(lambda a: a * 2., **pjit_kwargs)(a)
+      elif kind == "jit":
+        res = jax.jit(lambda a: a * 2.)(a)
+      elif kind == "sharding_constraint":
+        res = pjit.with_sharding_constraint(a * 2., shardings_map[in_shardings])
       else:
-        res = f_converted(a)
+        assert False
       return res
 
+    expect_error = (in_shardings == "P" or out_shardings == "P")
+    shape = (8, 10)
+    a = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+
+    f_tf = tf.function(jax2tf.convert(f_jax, experimental_native_lowering=True),
+                       autograph=False, jit_compile=False)
     with Mesh(self.devices, axis_names=("x",)):
-      res_jax = f_jax(a)
-      res_tf = f_tf(a)
-      self.assertAllClose(res_tf, res_jax)
+      with contextlib.ExitStack() as stack:
+        if expect_error:
+          stack.enter_context(self.assertRaisesRegex(ValueError,
+              "Lowered function does not have a top-level pjit but it has non-replicated sharding annotations"))
+        f_tf(a)
 
   @parameterized.named_parameters(
       dict( testcase_name=f"_func={func}", func=func)
