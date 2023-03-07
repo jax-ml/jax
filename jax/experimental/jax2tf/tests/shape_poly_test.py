@@ -54,6 +54,14 @@ from jax.experimental.jax2tf.tests.jax2tf_limitations import Jax2TfLimitation
 
 PS = jax2tf.PolyShape
 _f32 = np.float32
+_i32 = np.int32
+
+expect_error_associative_scan = (
+    (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+                                         jtu.device_under_test() == "tpu") else
+    (NotImplementedError,
+     "associative scan over axis of non-constant size"))
+
 
 class DimExprTest(tf_test_util.JaxToTfTestCase):
 
@@ -1722,6 +1730,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda op: lax.argmax(op, axis=1, index_dtype=np.int32),
                 arg_descriptors=[RandArg((3, 4, 5), _f32)],
                 poly_axes=[0]).both_enable_and_disable_xla(),
+    PolyHarness("jnp.argsort", "",
+                lambda op: jnp.argsort(op),
+                arg_descriptors=[RandArg((3, 4, 5), _f32)],
+                poly_axes=[0]),
     [
         PolyHarness("average",
                     f"{axis=}_weights=None",
@@ -1738,6 +1750,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                     poly_axes=[0, 0])
         for axis in [None, 0, 1]
     ],
+    PolyHarness("jnp.bincount", "length=constant",
+                lambda x: jnp.bincount(x % 2, length=4),
+                arg_descriptors=[RandArg((12,), np.int32)],
+                poly_axes=[0]),
+    PolyHarness("jnp.bincount", "length=poly",
+                lambda x: jnp.bincount(x % 4, length=x.shape[0]),
+                arg_descriptors=[RandArg((12,), np.int32)],
+                poly_axes=[0]),
     PolyHarness("broadcast_to", "",
                 lambda x: jnp.broadcast_to(x, [x.shape[0], x.shape[0], 4]),
                 arg_descriptors=[RandArg((3, 4), _f32)],
@@ -2055,6 +2075,16 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: lax.index_in_dim(x, x.shape[0] - 1, axis=0, keepdims=False),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 poly_axes=[0]),
+    PolyHarness("jnp.insert", "insert=constant",
+                lambda x: jnp.insert(x, jnp.arange(3, dtype=_i32), np.array([3, 4, 5], dtype=_i32)),
+                arg_descriptors=[RandArg((12,), _i32)],
+                poly_axes=[0],
+                expect_error=expect_error_associative_scan),
+    PolyHarness("jnp.insert", "insert=poly",
+                lambda x: jnp.insert(x, jnp.arange(x.shape[0], dtype=_i32), x, axis=0),
+                arg_descriptors=[RandArg((12, 3), _i32)],
+                poly_axes=[(0, 1)],
+                expect_error=expect_error_associative_scan),
     PolyHarness("iota", "",
                 lambda x: x + lax.iota(_f32, x.shape[0]),
                 arg_descriptors=[RandArg((3,), _f32)],
@@ -2088,6 +2118,16 @@ _POLY_SHAPE_TEST_HARNESSES = [
         for keepdims in [False, True]
         for axis in [None, (0,), (0, 1), (1,)]
     ],
+    PolyHarness("jnp.nonzero", "size=constant",
+                lambda x: jnp.nonzero(x % 3, size=10, fill_value=100),
+                arg_descriptors=[RandArg((3, 2, 4), _i32)],
+                poly_axes=[0],
+                expect_error=expect_error_associative_scan),
+    PolyHarness("jnp.nonzero", "size=poly",
+                lambda x: jnp.nonzero(x % 3, size=x.shape[0] * 2, fill_value=100),
+                arg_descriptors=[RandArg((3, 2, 4), _i32)],
+                poly_axes=[0],
+                expect_error=expect_error_associative_scan),
     PolyHarness("ones", "",
                 lambda x: jnp.ones(x.shape, dtype=_f32) + x,
                 arg_descriptors=[RandArg((3, 2, 4), _f32)],
@@ -2580,7 +2620,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
 
-      if harness.fullname == "jnp.cumsum_reduce_axis=poly" and jtu.device_under_test() == "tpu":
+      if (jtu.device_under_test() == "tpu" and
+          harness.fullname in [
+              "jnp.cumsum_reduce_axis=poly",
+              "jnp.insert_insert=constant", "jnp.insert_insert=poly",
+              "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
         # https://github.com/openxla/stablehlo/issues/1258
         raise unittest.SkipTest(
             "native lowering with shape polymorphism not implemented for window_reductions on TPU")
