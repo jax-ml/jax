@@ -894,8 +894,9 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
     jaxpr_known, jaxpr_unknown, _, _ = pe.partial_eval_jaxpr_nounits(
         pe.close_jaxpr(jaxpr), map(ad.is_undefined_primal, args), False)
     res_reshaped = core.jaxpr_as_fun(jaxpr_known)(*res)
-    out = ad.backward_pass(jaxpr_unknown.jaxpr, set(), False, (),
-                           (*res_reshaped, *undefs), out_cts)
+    out = ad.backward_pass(
+        jaxpr_unknown.jaxpr, (), False, (), (*res_reshaped, *undefs), out_cts
+    )
     return [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
             else jax.lax.psum(x, tuple(_unmentioned(mesh, ns)))
             for ns, x in zip(in_names, out)]
