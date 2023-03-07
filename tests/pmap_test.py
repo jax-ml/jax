@@ -2926,9 +2926,6 @@ class ShardArgsTest(jtu.JaxTestCase):
           # partitioned, 2 axes, permuted
           [(4, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.Chunked([2])),
                                      mesh_mapping=map(pxla.ShardedAxis, (1, 0)))],
-          # partitioned + sharding
-          [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
-                                     mesh_mapping=map(pxla.ShardedAxis, (0, 1)))],
           # replication + sharding
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
                                      mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))],
@@ -2936,7 +2933,7 @@ class ShardArgsTest(jtu.JaxTestCase):
           [(2, 8), pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
                                      mesh_mapping=(pxla.Replicated(3),))],
           # multiple replicated axes
-          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Unstacked(1), pxla.Chunked([2])),
+          [(1, 8), pxla.ShardingSpec(sharding=(pxla.Chunked([1]), pxla.Chunked([2])),
                                      mesh_mapping=(pxla.Replicated(2), pxla.ShardedAxis(0),
                                                    pxla.Replicated(2), pxla.ShardedAxis(1)))],
           # replicated scalar
@@ -2952,7 +2949,12 @@ class ShardArgsTest(jtu.JaxTestCase):
     arg = make_arg(x)
     sharding = None
     if config.jax_array:
-      sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
+      if any(isinstance(s, pxla.Unstacked) for s in spec.sharding):
+        sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
+      else:
+        sharding = jax.sharding.GSPMDSharding(
+            jax.devices()[:nshards], pxla.sharding_spec_sharding_proto(spec))
+
     bufs = pxla.shard_args(
         jax.devices()[:nshards], [indices], [sharding], [arg]
     )
