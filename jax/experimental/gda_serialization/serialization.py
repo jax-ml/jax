@@ -36,7 +36,7 @@ import numpy as np
 import tensorstore as ts
 
 
-TS_CONTEXT = ts.Context({'file_io_concurrency': {'limit': 128}})
+_TS_CONTEXT = {'file_io_concurrency': {'limit': 128}}
 _REMOVED_VALUE = 'Value removed'
 _CHECKPOINT_SUCCESS = 'checkpoint_write_success'
 _module_unique_count = itertools.count()
@@ -175,7 +175,11 @@ async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
 
   if jax.process_index() == 0:
     open_future = ts.open(
-        ts.Spec(tensorstore_spec), create=True, open=True, context=TS_CONTEXT)
+        ts.Spec(tensorstore_spec),
+        create=True,
+        open=True,
+        context=ts.Context(_TS_CONTEXT),
+    )
     # Asynchronous case.
     if commit_future is not None:
       assert isinstance(commit_future, list)
@@ -189,7 +193,11 @@ async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
   # tensorstore object.
   # For every process other than `0`, we open with `assume_metadata=True`.
   t = await ts.open(
-      ts.Spec(tensorstore_spec), open=True, assume_metadata=True, context=TS_CONTEXT)
+      ts.Spec(tensorstore_spec),
+      open=True,
+      assume_metadata=True,
+      context=ts.Context(_TS_CONTEXT),
+  )
 
   async def _write_array(shard):
     if shard.replica_id == 0:
@@ -249,7 +257,9 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
 async def async_deserialize(in_sharding, tensorstore_spec,
                             global_shape=None, dtype=None,
                             byte_limiter: Optional[_LimitInFlightBytes] = None):
-  t = await ts.open(ts.Spec(tensorstore_spec), open=True, context=TS_CONTEXT)
+  t = await ts.open(
+      ts.Spec(tensorstore_spec), open=True, context=ts.Context(_TS_CONTEXT)
+  )
   shape = t.shape if global_shape is None else global_shape
   new_shard_shape = in_sharding.shard_shape(tuple(shape))
 
@@ -381,13 +391,25 @@ class GlobalAsyncCheckpointManagerBase(metaclass=abc.ABCMeta):
 
 class AsyncManager:
 
-  def __init__(self, timeout_secs=300):
+  def __init__(
+      self, timeout_secs: int = 300, enable_coordinator_server: bool = False
+  ):
     self._timeout_secs = timeout_secs
     self._timeout_in_ms = self._timeout_secs * 1000
 
     self._commit_futures = None
     self._thread = None
     self._exception = None
+
+    if enable_coordinator_server:
+      coordinator_address = distributed.global_state.coordinator_address
+      # Port 0 instructs TS to pick an available port on the server.
+      self._coordinator_server = ts.ocdbt.DistributedCoordinatorServer(
+          {'bind_addresses': [f'{coordinator_address}:0']}
+      )
+      _TS_CONTEXT['ocdbt_coordinator'] = {
+          'address': f'{coordinator_address}:{self._coordinator_server.port}'
+      }
 
     if distributed.global_state.client is None:
       raise ValueError('Please initialize the distributed system via '

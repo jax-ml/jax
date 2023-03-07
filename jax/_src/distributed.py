@@ -54,6 +54,8 @@ class State:
     if process_id is None:
       raise ValueError('The process id of the current process must be defined.')
 
+    self.coordinator_address = coordinator_address
+
     if local_device_ids:
       visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]
       logger.info('JAX distributed initialized with visible devices: %s', visible_devices)
