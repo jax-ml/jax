@@ -79,7 +79,9 @@ py_library(
     testonly = 1,
     srcs = glob(["_src/internal_test_util/*.py"]),
     visibility = [":internal"],
-    deps = [":jax"] + py_deps("numpy"),
+    deps = [
+        ":jax",
+    ] + py_deps("numpy"),
 )
 
 py_library_providing_imports_info(

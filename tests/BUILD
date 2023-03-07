@@ -470,16 +470,25 @@ jax_test(
 jax_test(
     name = "lax_vmap_test",
     srcs = ["lax_vmap_test.py"],
-    backend_tags = {
-        "tpu": ["noasan"],  # Test times out.
-    },
     shard_count = {
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
         "iree": 40,
     },
-    deps = ["//jax:internal_test_util"] + py_deps("numpy"),
+    deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
+)
+
+jax_test(
+    name = "lax_vmap_op_test",
+    srcs = ["lax_vmap_op_test.py"],
+    shard_count = {
+        "cpu": 40,
+        "gpu": 40,
+        "tpu": 40,
+        "iree": 40,
+    },
+    deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
 py_test(
