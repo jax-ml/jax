@@ -84,7 +84,7 @@ def broadcast_one_to_all(in_tree: PyTreeDef,
 
 def sync_global_devices(name: str):
   """Creates a barrier across all hosts/devices."""
-  h = np.int32(zlib.crc32(name.encode()))
+  h = np.uint32(zlib.crc32(name.encode()))
   assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
 
 
