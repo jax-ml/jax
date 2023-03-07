@@ -847,6 +847,16 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
     self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
+  def test_chunked_pmap_sharding(self):
+    if jax.device_count() < 4:
+      self.skipTest('Test needs >= 4 devices.')
+    ss = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
+                           mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
+    ps = sharding.PmapSharding(jax.devices()[:4], ss)
+    self.assertEqual(ps.shard_shape((2, 8)), (4,))
+
+
+
   def test_mesh_repr(self):
     mesh = jtu.create_global_mesh((1, 1), ('x', 'y'))
     mesh_repr = repr(mesh)

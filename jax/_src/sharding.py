@@ -22,7 +22,8 @@ from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
 
 import jax
 from jax._src import core
-from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
+from jax._src.util import (safe_map, safe_zip, use_cpp_class, use_cpp_method,
+                           assert_unreachable)
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax.interpreters import mlir
@@ -517,22 +518,30 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
-    sharded_dim = None
-    sharded_dim_size = None
-    for i, s in enumerate(self.sharding_spec.sharding):
-      if isinstance(s, pxla.Unstacked):
-        sharded_dim = i
-        sharded_dim_size = s.size
-        break
-    if sharded_dim is None:
-      return global_shape
-    if global_shape[sharded_dim] != sharded_dim_size:
-      raise ValueError(
-          f'The sharded dimension must be equal to the number of '
-          f'devices passed to PmapSharding. Got sharded dimension {sharded_dim} '
-          f'with value {global_shape[sharded_dim]} in shape {global_shape} and '
-          f'the number of devices={len(self._device_assignment)}')
-    return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
+    shard_shape = []
+    for i, (s, dim_size) in enumerate(safe_zip(self.sharding_spec.sharding, global_shape)):
+      if isinstance(s, pxla.NoSharding):
+        shard_shape.append(dim_size)
+      elif isinstance(s, pxla.Unstacked):
+        if dim_size != s.size:
+          raise ValueError(
+            f'The sharded dimension must be equal to the number of '
+            f'devices passed to PmapSharding. Got sharded dimension {i} '
+            f'with value {global_shape[i]} in shape {global_shape} and '
+            f'the number of devices={len(self._device_assignment)}')
+      elif isinstance(s, pxla.Chunked):
+        total_chunks = int(np.prod(s.chunks))
+        shard_size, ragged = divmod(dim_size, total_chunks)
+        if ragged != 0:
+          raise ValueError(
+            f'The chunked dimension must be evenly divided by the number of '
+            f'devices passed to PmapSharding. Got chunked dimension {i} '
+            f'with value {global_shape[i]} in shape {global_shape} and '
+            f'the number of devices={len(self._device_assignment)}')
+        shard_shape.append(shard_size)
+      else:
+        assert_unreachable(s)
+    return tuple(shard_shape)
 
 
 class PositionalSharding(XLACompatibleSharding):
