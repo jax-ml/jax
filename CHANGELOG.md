@@ -11,12 +11,16 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * `jax.tree_util` now contain a set of APIs that allow user to define keys for their
     custom pytree node. This includes:
-    * `tree_flatten_with_path` that flattens a tree and return not only each leaf but 
+    * `tree_flatten_with_path` that flattens a tree and return not only each leaf but
       also their key paths.
     * `tree_map_with_paths` that can map a function that takes the key path as argument.
-    * `register_pytree_with_keys`` to register how the key path and leaves should looks 
+    * `register_pytree_with_keys`` to register how the key path and leaves should looks
       like in a custom pytree node.
     * `keystr` that pretty-prints a key path.
+
+  * {func}`jax2tf.call_tf` has a new parameter `output_shape_dtype` (default `None`)
+    that can be used to declare the output shape and type of the result. This enables
+    {func}`jax2tf.call_tf` to work in the presence of shape polymorphism. ({jax-issue}`#14734`).
 
 * Deprecations
   * The old key-path APIs in `jax.tree_util` are deprecated and will be removed 3 months

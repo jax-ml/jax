@@ -55,13 +55,15 @@ map = util.safe_map
 zip = util.safe_zip
 
 TfConcreteFunction = Any
+TfVal = jax2tf_internal.TfVal
 
 # The platforms for which to use DLPack to avoid copying (only works on GPU
 # and CPU at the moment, and only for DeviceArray). For CPU we don't need
 # DLPack, if we are careful.
 _DLPACK_PLATFORMS = ("gpu",)
 
-def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
+def call_tf(callable_tf: Callable, has_side_effects=True,
+            output_shape_dtype=None) -> Callable:
   """Calls a TensorFlow function from JAX, with support for reverse autodiff.
 
   The ``callable_tf`` will be called with TensorFlow-compatible arguments (
@@ -90,6 +92,14 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
     has_side_effects: if True then it ensures that instances of this primitive
       are not removed or replicated by JAX optimizations such as dead-code
       elimination.
+    output_shape_dtype: An optional declaration of the expected shapes and dtypes
+      from the called TensorFlow function. If given it will be used during JAX
+      tracing to form the abstract values of the results of the `call_tf`. If
+      not given then we form a `tf.Graph` for the called TensorFlow function and
+      we use the TensorFlow-inferred shapes and types. Must be a pytree matching the
+      structure of the nested structure returned from the TensorFlow function,
+      containing objects with `.shape` and `.dtype` attributes,
+      e.g., `jax.ShapeDtypeStruct` or `jax.Array`.
 
   Returns: a JAX callable that can be invoked with JAX pytree arguments, in
     op-by-op mode or in a staged context. This callable can be used with
@@ -113,58 +123,47 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
     def make_tensorspec(a_jax):
       a_tf_dtype = jax2tf_internal._to_tf_dtype(a_jax.dtype)
       a_tf_shape = [
-          d if core.is_constant_dim(d) else None for d in a_jax.shape
-      ]
+          d if core.is_constant_dim(d) else None for d in a_jax.shape]
       return tf.TensorSpec(a_tf_shape, a_tf_dtype)
     args_flat_sig_tf = tuple(map(make_tensorspec, args_flat_jax))
 
-    def check_tf_result(r_tf):
-      # Check that the TF function returns values of expected types. This
-      # improves error reporting, preventing hard-to-diagnose errors downstream
-      try:
-        jax2tf_internal._tfval_to_tensor_jax_dtype(r_tf)
-      except Exception as e:
-        msg = ("The called TF function returns a result that is not "
-               f"convertible to JAX: {r_tf}.")
-        raise ValueError(msg) from e
+    if output_shape_dtype is not None:
+      output_shape_dtype_flat, output_shape_dtype_tree = tree_util.tree_flatten(output_shape_dtype)
+      output_avals = tuple(core.ShapedArray(st.shape, st.dtype) for st in output_shape_dtype_flat)
+    else:
+      output_avals, output_shape_dtype_tree = None, None
 
     res_treedef = None  # We'll store here the result treedef
     res_tf_flat = None  # For error reporting
     # The function below will be called at least once, either in eager
-    # or in graph mode.
+    # mode during jax2tf_call_tf or in graph mode during _get_concrete_function_tf()
     def callable_flat_tf(*args_tf_flat: TfVal) -> Sequence[TfVal]:
       args_tf = args_treedef.unflatten(args_tf_flat)
       res_tf = callable_tf(*args_tf)
       nonlocal res_treedef, res_tf_flat
       res_tf_flat, res_treedef_now = tree_util.tree_flatten(res_tf)
-      for r_tf in res_tf_flat:
-        check_tf_result(r_tf)
-      assert res_treedef is None or res_treedef == res_treedef_now, f"Subsequent calls had different results. Previous {res_treedef} and now {res_treedef_now}"
+      assert res_treedef is None or res_treedef == res_treedef_now, (
+          f"Subsequent calls had different results. Previous {res_treedef} and now {res_treedef_now}")
       res_treedef = res_treedef_now
-      return res_tf_flat
+      if output_avals is not None:
+        if res_treedef != output_shape_dtype_tree:
+          raise ValueError(
+              "The pytree of the TensorFlow function results does not match the "
+              "pytree of the declared output_shape_dtype:\n"
+              f"results pytree: {res_treedef}\noutput_shape_dtype tree: {output_shape_dtype_tree}")
+        assert len(output_avals) == len(res_tf_flat)
+
+      checked_res_tf_flat = [
+          check_tf_result(i, r_tf, r_aval)
+          for i, (r_tf, r_aval) in enumerate(
+              zip(res_tf_flat,
+                  (output_avals if output_avals is not None
+                   else (None,) * len(res_tf_flat))))]
+      return checked_res_tf_flat
 
     # Prepare a tf.function ahead of time, to cache the concrete functions. This
     # won't be used in op-by-op execution mode.
     function_flat_tf = tf.function(callable_flat_tf, autograph=False, jit_compile=True)
-
-    input_shapes_tf = [s.shape for s in args_flat_sig_tf]
-    output_shapes_tf = _get_concrete_function_tf(
-        function_flat_tf, args_flat_sig_tf
-    ).output_shapes
-
-    if not all(s.is_fully_defined() for s in input_shapes_tf) and not all(
-        s.is_fully_defined() for s in output_shapes_tf
-    ):
-      for a_jax, a_tf_shape in zip(args_flat_jax, input_shapes_tf):
-        if not a_tf_shape.is_fully_defined():
-          msg = (
-              "call_tf cannot be applied to shape-polymorphic arguments unless"
-              " all the output shapes are static. Found argument shape:"
-              f" {a_jax.shape}. See"
-              " https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf"
-              " for a discussion."
-          )
-          raise ValueError(msg)
 
     res_jax_flat = call_tf_p.bind(
         *args_flat_jax,
@@ -172,8 +171,10 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
         callable_flat_tf=callable_flat_tf,
         function_flat_tf=function_flat_tf,
         args_flat_sig_tf=args_flat_sig_tf,
+        output_avals=output_avals,
         has_side_effects=has_side_effects)
 
+    # We must have called callable_flat_tf by nοw
     assert res_treedef is not None
     # Sometimes, in compiled mode, we get a different number of results than we
     # got when tracing the TF function (and building the res_treedef). This
@@ -248,6 +249,44 @@ def call_tf(callable_tf: Callable, has_side_effects=True) -> Callable:
   return util.wraps(callable_tf)(make_call)
 
 
+def check_tf_result(idx: int, r_tf: TfVal, r_aval: Optional[core.ShapedArray]) -> TfVal:
+  # Check that the TF function returns values of expected types. This
+  # improves error reporting, preventing hard-to-diagnose errors downstream
+  try:
+    jax2tf_internal._tfval_to_tensor_jax_dtype(r_tf)
+  except Exception as e:
+    msg = ("The called TF function returns a result that is not "
+           f"convertible to JAX: {r_tf}.")
+    raise ValueError(msg) from e
+
+  if r_aval is None:
+    return r_tf
+  # We convert to TF type, and canonicalize to 32-bit if necessary
+  r_aval_dtype_tf = jax2tf_internal._to_tf_dtype(r_aval.dtype)
+  # Checking shapes is trickier in presence of dynamic shapes. I wish we could
+  # check at runtime that the returned shape matches the declared shape. I wish
+  # that tf.ensure_shape did this, but it can only take shapes that contain None
+  # not computed shapes. However, in eager mode we should be able to resolve
+  # the declared shapes to constants and we get better checking.
+  if tf.executing_eagerly():
+    r_aval_shape_tf = jax2tf_internal._eval_shape(r_aval.shape)
+  else:
+    r_aval_shape_tf = jax2tf_internal._aval_to_tf_shape(r_aval)
+  # We do as much checking as we can here, instead of relying on tf.ensure_shape
+  # because the latter gives different errors in eager vs. compiled mode.
+  if (r_tf.dtype != r_aval_dtype_tf or
+      len(r_tf.shape) != len(r_aval_shape_tf) or
+      any(r_aval_d is not None and r_tf_d is not None and r_aval_d != r_tf_d
+          for r_tf_d, r_aval_d in zip(r_tf.shape, r_aval_shape_tf))):
+    msg = ("The shapes or dtypes returned by the TensorFlow function "
+           "do not match the declared output_shape_dtype:\n"
+           f"Result[{idx}] is {r_tf.dtype}[{r_tf.shape}] vs. expected {r_aval_dtype_tf}[{r_aval_shape_tf}]")
+    raise ValueError(msg)
+  # At this point tf.ensure_shape does not do much, it should never throw an
+  # error, albeit it may refine the shape a bit.
+  return tf.ensure_shape(r_tf, r_aval_shape_tf)
+
+
 call_tf_p = core.Primitive("call_tf")
 call_tf_p.multiple_results = True
 
@@ -309,39 +348,42 @@ effects.remat_allowed_effects.add_type(CallTfEffect)
 effects.custom_derivatives_allowed_effects.add_type(CallTfEffect)
 
 
-def _call_tf_abstract_eval(*_,
+def _call_tf_abstract_eval(*args_flat_avals,
                            function_flat_tf,
                            args_flat_sig_tf,
-                           has_side_effects, **__):
+                           has_side_effects,
+                           output_avals, **__):
   # Called only when we form a Jaxpr, i.e., under jit, scan, etc.
+  effects = {call_tf_effect} if has_side_effects else set()
 
+  # If not output_avals is given, then we ask TF to infer the output shapes.
+  # We call this even if output_avals is given because it will ensure that
+  # callable_flat_tf is called. Since _get_concrete_function_tf is cached
+  # there is a small cost of calling it more often than needed.
   concrete_function_flat_tf = _get_concrete_function_tf(function_flat_tf,
                                                         args_flat_sig_tf)
 
+  if output_avals is not None:
+    return output_avals, effects
+
   def is_fully_known_shape(s):
     return s.rank is not None and all([d is not None for d in s])
-  effects = {call_tf_effect} if has_side_effects else set()
-  if all([is_fully_known_shape(s)
-          for s in concrete_function_flat_tf.output_shapes]):
-    return (
-        tuple([
-            # We convert to JAX type, and canonicalize to 32-bit if necessary
-            core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
-            for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
-                                    concrete_function_flat_tf.output_shapes)
-        ]),
-        effects)
 
-  # There are some cases when TF shape inference is not powerful enough to
-  # figure out the output shapes (e.g., b/128924522), even in situations where
-  # XLA can compile the code, from which we can get the shapes.
+  if all(is_fully_known_shape(s)
+        for s in concrete_function_flat_tf.output_shapes):
+    avals_from_tf = tuple(
+        # We convert to JAX type, and canonicalize to 32-bit if necessary
+        core.ShapedArray(shape, jax2tf_internal._to_jax_dtype(dtype))
+        for dtype, shape in zip(concrete_function_flat_tf.output_dtypes,
+                                concrete_function_flat_tf.output_shapes))
+    return avals_from_tf, effects
 
-  # We use the "cpu" as the platform, since JAX abstract eval is not platform
-  # specific; the "cpu" backend is always available and for abstract evaluation
-  # it should not matter which platform we use.
-  _, result_avals = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,
-                                              "CPU")
-  return tuple(result_avals), effects
+  msg = ("call_tf cannot call functions whose output has dynamic shape. "
+    f"Found output shapes: {concrete_function_flat_tf.output_shapes}. "
+    "Consider using the `output_shape_dtype` argument to call_tf. "
+    "\nSee https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf"
+      " for a discussion.")
+  raise ValueError(msg)
 
 call_tf_p.def_effectful_abstract_eval(_call_tf_abstract_eval)
 
@@ -372,6 +414,11 @@ def _code_generator_and_avals(
 ) -> Tuple[Optional[Callable[[mlir.ModuleContext, Sequence[ir.Value]],
                              Sequence[ir.Value]]],
            Sequence[core.ShapedArray]]:
+  # TODO(necula): we have refactored the code to not need to lower the code
+  # just in order to get the avals, so in fact the returned avals from this
+  # function are never used. We keep it here for now in case we detect
+  # a regressions, but if not we should simplify this function.
+
   # Returns and caches a code generator (taking a builder and the
   # XlaOps for the arguments) and a sequence of result abstract shapes.
 
@@ -478,8 +525,7 @@ def _register_call_lowering(platform):
 for platform in ("cpu", "cuda", "tpu"):
   _register_call_lowering(platform)
 
-# Support the call_tf under jax2tf.convert
-TfVal = jax2tf_internal.TfVal
+# Support the call_tf under jax2tf.convert in eager mode
 def _jax2tf_call_tf(*args: TfVal,
                     callable_flat_tf: Callable,
                     **_) -> TfVal:
