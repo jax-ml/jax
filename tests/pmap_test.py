@@ -2071,6 +2071,37 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' sin '), 1)
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
+  def test_pmap_lower_arg_info(self):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, *args, **kwargs):
+      return y['hi'] + args[1] + sum(kwargs.values())
+
+    lowered = jax.pmap(f).lower(
+      {'hi': jnp.array([1.])}, {'hi': jnp.array([2.])}, jnp.array([3.]),
+      jnp.array([4.]), z=jnp.array([5.]), w=jnp.array([6.]))
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertNotIn("\"x\"", mhlo_str)
+    self.assertIn("y['hi']", mhlo_str)
+    self.assertIn("args[0]", mhlo_str)
+    self.assertIn("args[1]", mhlo_str)
+    self.assertIn("kwargs['z']", mhlo_str)
+    self.assertIn("kwargs['w']", mhlo_str)
+
+  def test_pmap_lower_result_info(self):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, z):
+      return {'a': x, 'b': [y]}
+
+    lowered = jax.pmap(f).lower(jnp.array([1.]), (jnp.array([2]),),
+                                [jnp.array([3])])
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
+    self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):

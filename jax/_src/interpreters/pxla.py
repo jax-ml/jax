@@ -1442,7 +1442,6 @@ def lower_parallel_callable(
       in_axes, out_axes_thunk, avals)
   jaxpr, consts, replicas, parts, shards = stage_parallel_callable(
       pci, fun, global_arg_shapes)
-
   if logger.isEnabledFor(logging.DEBUG):
     logger.debug("sharded_avals: %s", shards.sharded_avals)
     logger.debug("global_sharded_avals: %s", shards.global_sharded_avals)
@@ -1504,6 +1503,7 @@ def lower_parallel_callable(
       raise ValueError("Ordered effects not supported in `pmap`.")
     unordered_effects = list(
         effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
+    arg_names, result_names = _debug_names(jaxpr.debug_info, None)
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -1516,7 +1516,8 @@ def lower_parallel_callable(
         donated_invars,
         replicated_args=replicated_args,
         arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
-        result_shardings=_shardings_to_mlir_shardings(parts.out_parts))
+        result_shardings=_shardings_to_mlir_shardings(parts.out_parts),
+        arg_names=arg_names, result_names=result_names)
     module, keepalive, host_callbacks = (
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)
