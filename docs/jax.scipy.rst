@@ -172,9 +172,6 @@ jax.scipy.stats.beta
 
    logpdf
    pdf
-   cdf
-   logcdf
-   sf
 
 jax.scipy.stats.betabinom
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -195,11 +192,6 @@ jax.scipy.stats.cauchy
 
    logpdf
    pdf
-   cdf
-   logcdf
-   sf
-   isf
-   ppf
 
 jax.scipy.stats.chi2
 ~~~~~~~~~~~~~~~~~~~~
@@ -210,9 +202,7 @@ jax.scipy.stats.chi2
 
    logpdf
    pdf
-   cdf
-   logcdf
-   sf
+
 
 
 jax.scipy.stats.dirichlet
@@ -242,9 +232,6 @@ jax.scipy.stats.gamma
 
    logpdf
    pdf
-   cdf
-   logcdf
-   sf
 
 jax.scipy.stats.gennorm
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -309,8 +296,6 @@ jax.scipy.stats.norm
    logpdf
    pdf
    ppf
-   sf
-   isf
 
 jax.scipy.stats.pareto
 ~~~~~~~~~~~~~~~~~~~~~~

@@ -37,7 +37,6 @@ def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1
   quadratic = lax.div(lax.mul(scaled_x, scaled_x), df)
   return lax.neg(lax.add(normalize_term, lax.mul(df_plus_one_over_two, lax.log1p(quadratic))))
 
-
 @_wraps(osp_stats.t.pdf, update_doc=False)
 def pdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, df, loc, scale))

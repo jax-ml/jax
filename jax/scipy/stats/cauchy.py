@@ -18,9 +18,4 @@
 from jax._src.scipy.stats.cauchy import (
   logpdf as logpdf,
   pdf as pdf,
-  cdf as cdf,
-  logcdf as logcdf,
-  sf as sf,
-  isf as isf,
-  ppf as ppf,
 )

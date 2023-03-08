@@ -25,7 +25,6 @@ from jax._src.numpy.lax_numpy import _promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax.scipy import special
 
-
 @_wraps(osp_stats.norm.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = _promote_args_inexact("norm.logpdf", x, loc, scale)
@@ -56,13 +55,3 @@ def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 @_wraps(osp_stats.norm.ppf, update_doc=False)
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return jnp.asarray(special.ndtri(q) * scale + loc, float)
-
-
-@_wraps(osp_stats.norm.sf, update_doc=False)
-def sf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  return lax.sub(_lax_const(x, 1), cdf(x, loc, scale))
-
-
-@_wraps(osp_stats.norm.isf, update_doc=False)
-def isf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  return ppf(lax.sub(_lax_const(q, 1), q), loc, scale)
