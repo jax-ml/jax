@@ -3,7 +3,7 @@ from typing import Callable, Tuple
 import scipy.linalg
 
 from jax import jit, lax
-from jax._src.numpy import lax_numpy as jnp
+import jax.numpy as jnp
 from jax._src.numpy.linalg import norm
 from jax._src.numpy.util import _wraps
 from jax._src.scipy.linalg import rsf2csf, schur

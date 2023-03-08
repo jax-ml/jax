@@ -22,8 +22,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax._src import dtypes
 from jax._src.api import vmap
-from jax._src.numpy.lax_numpy import _check_arraylike
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _check_arraylike, _wraps
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
 

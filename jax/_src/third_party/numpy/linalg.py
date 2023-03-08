@@ -1,7 +1,7 @@
 import numpy as np
 
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy import linalg as la
+import jax.numpy as jnp
+import jax.numpy.linalg as la
 from jax._src.numpy.util import _check_arraylike, _wraps
 
 

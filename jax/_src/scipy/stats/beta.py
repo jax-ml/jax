@@ -15,9 +15,9 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
+from jax._src.numpy.util import _wraps, _promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import betaln, xlogy, xlog1py
 
@@ -32,8 +32,8 @@ def logpdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
   log_linear_term = lax.add(xlogy(lax.sub(a, one), y),
                             xlog1py(lax.sub(b, one), lax.neg(y)))
   log_probs = lax.sub(lax.add(shape_term, log_linear_term), lax.log(scale))
-  return where(logical_or(lax.gt(x, lax.add(loc, scale)),
-                          lax.lt(x, loc)), -inf, log_probs)
+  return jnp.where(jnp.logical_or(lax.gt(x, lax.add(loc, scale)),
+                                  lax.lt(x, loc)), -jnp.inf, log_probs)
 
 
 @_wraps(osp_stats.beta.pdf, update_doc=False)

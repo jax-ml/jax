@@ -27,6 +27,8 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import reductions
+from jax._src.numpy.util import _check_arraylike, _promote_dtypes
 
 
 Array = Any
@@ -98,7 +100,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   if core.is_empty_shape(indexer.slice_shape):
     return x
 
-  x, y = jnp._promote_dtypes(x, y)
+  x, y = _promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
@@ -155,7 +157,7 @@ def _segment_update(name: str,
                     bucket_size: Optional[int] = None,
                     reducer: Optional[Callable] = None,
                     mode: Optional[lax.GatherScatterMode] = None) -> Array:
-  jnp._check_arraylike(name, data, segment_ids)
+  _check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
   segment_ids = jnp.asarray(segment_ids)
@@ -239,7 +241,7 @@ def segment_sum(data: Array,
   """
   return _segment_update(
       "segment_sum", data, segment_ids, lax.scatter_add, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.sum, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.sum, mode=mode)
 
 
 def segment_prod(data: Array,
@@ -295,7 +297,7 @@ def segment_prod(data: Array,
   """
   return _segment_update(
       "segment_prod", data, segment_ids, lax.scatter_mul, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.prod, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.prod, mode=mode)
 
 
 def segment_max(data: Array,
@@ -350,7 +352,7 @@ def segment_max(data: Array,
   """
   return _segment_update(
       "segment_max", data, segment_ids, lax.scatter_max, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.max, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.max, mode=mode)
 
 
 def segment_min(data: Array,
@@ -405,4 +407,4 @@ def segment_min(data: Array,
   """
   return _segment_update(
       "segment_min", data, segment_ids, lax.scatter_min, num_segments,
-      indices_are_sorted, unique_indices, bucket_size, jnp.min, mode=mode)
+      indices_are_sorted, unique_indices, bucket_size, reductions.min, mode=mode)

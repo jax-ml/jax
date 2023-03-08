@@ -22,15 +22,15 @@ import warnings
 from typing import cast, overload, Any, Literal, Optional, Tuple, Union
 
 import jax
+import jax.numpy as jnp
 from jax import jit, vmap, jvp
 from jax import lax
 from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
-from jax._src.numpy.lax_numpy import _check_arraylike
-from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
-from jax._src.numpy import lax_numpy as jnp
-from jax._src.numpy import linalg as np_linalg
+from jax._src.numpy.util import (
+    _check_arraylike, _wraps, _promote_dtypes, _promote_dtypes_inexact,
+    _promote_dtypes_complex)
 from jax._src.typing import Array, ArrayLike
 
 
@@ -125,7 +125,7 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def det(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
   del overwrite_a, check_finite  # unused
-  return np_linalg.det(a)
+  return jnp.linalg.det(a)
 
 
 @overload
@@ -210,7 +210,7 @@ def schur(a: ArrayLike, output: str = 'real') -> Tuple[Array, Array]:
         lax_description=_no_overwrite_and_chkfinite_doc, skip_params=('overwrite_a', 'check_finite'))
 def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Array:
   del overwrite_a, check_finite  # unused
-  return np_linalg.inv(a)
+  return jnp.linalg.inv(a)
 
 
 @_wraps(scipy.linalg.lu_factor,
@@ -332,7 +332,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
 @partial(jit, static_argnames=('assume_a', 'lower'))
 def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':
-    return np_linalg.solve(a, b)
+    return jnp.linalg.solve(a, b)
 
   a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
@@ -453,7 +453,7 @@ def _calc_P_Q(A: ArrayLike) -> Tuple[Array, Array, Array]:
   A = jnp.asarray(A)
   if A.ndim != 2 or A.shape[0] != A.shape[1]:
     raise ValueError('expected A to be a square matrix')
-  A_L1 = np_linalg.norm(A,1)
+  A_L1 = jnp.linalg.norm(A,1)
   n_squarings: Array
   U: Array
   V: Array
@@ -484,7 +484,7 @@ def _solve_P_Q(P: ArrayLike, Q: ArrayLike, upper_triangular: bool = False) -> Ar
   if upper_triangular:
     return solve_triangular(Q, P)
   else:
-    return np_linalg.solve(Q, P)
+    return jnp.linalg.solve(Q, P)
 
 def _precise_dot(A: ArrayLike, B: ArrayLike) -> Array:
   return jnp.dot(A, B, precision=lax.Precision.HIGHEST)
@@ -609,7 +609,7 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 def block_diag(*arrs: ArrayLike) -> Array:
   if len(arrs) == 0:
     arrs = cast(Tuple[ArrayLike], (jnp.zeros((1, 0)),))
-  arrs = cast(Tuple[ArrayLike], jnp._promote_dtypes(*arrs))
+  arrs = cast(Tuple[ArrayLike], _promote_dtypes(*arrs))
   bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
@@ -948,8 +948,8 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> Tuple[Arra
     return T, Z
 
   def _update_T_Z(m, T, Z):
-    mu = np_linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
-    r = np_linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
+    mu = jnp.linalg.eigvals(lax.dynamic_slice(T, (m-1, m-1), (2, 2))) - T[m, m]
+    r = jnp.linalg.norm(jnp.array([mu[0], T[m, m-1]])).astype(T.dtype)
     c = mu[0] / r
     s = T[m, m-1] / r
     G = jnp.array([[c.conj(), s], [-s, c]], dtype=T.dtype)

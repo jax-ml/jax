@@ -24,9 +24,11 @@ from jax import lax
 from jax._src import dtypes
 from jax._src import core
 from jax._src.numpy.lax_numpy import (
-    all, arange, argmin, array, asarray, atleast_1d, concatenate, convolve,
-    diag, dot, finfo, full, maximum, ones, outer, roll, sqrt, trim_zeros,
-    trim_zeros_tol, true_divide, vander, zeros)
+    arange, argmin, array, asarray, atleast_1d, concatenate, convolve,
+    diag, dot, finfo, full, ones, outer, roll, trim_zeros,
+    trim_zeros_tol, vander, zeros)
+from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
+from jax._src.numpy.reductions import all
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
     _check_arraylike, _promote_dtypes, _promote_dtypes_inexact, _where, _wraps)

@@ -22,13 +22,13 @@ import scipy.signal as osp_signal
 
 import jax
 import jax.numpy.fft
+import jax.numpy as jnp
 from jax import lax
 from jax._src import dtypes
 from jax._src.lax.lax import PrecisionLike
-from jax._src.numpy.lax_numpy import _check_arraylike
-from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import linalg
-from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _promote_dtypes_complex
+from jax._src.numpy.util import (
+    _check_arraylike, _wraps, _promote_dtypes_inexact, _promote_dtypes_complex)
 from jax._src.third_party.scipy import signal_helper
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert

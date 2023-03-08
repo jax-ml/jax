@@ -34,7 +34,7 @@ from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import gpu_sparse
-from jax._src.numpy.lax_numpy import _promote_dtypes
+from jax._src.numpy.util import _promote_dtypes
 from jax._src.typing import Array, ArrayLike, DTypeLike
 import jax.numpy as jnp
 

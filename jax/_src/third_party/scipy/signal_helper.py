@@ -4,7 +4,7 @@ import scipy.signal as osp_signal
 from typing import Any, Optional, Tuple, Union
 import warnings
 
-from jax._src.numpy import lax_numpy as jnp
+import jax.numpy as jnp
 from jax._src.typing import Array, ArrayLike, DTypeLike
 
 
