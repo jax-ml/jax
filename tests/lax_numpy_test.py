@@ -564,6 +564,33 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol)
       self._CompileAndCheck(jnp_fun, args_maker)
+  
+    # test shuffled
+    x, y = args_maker()
+    
+    if isinstance(axes, int):
+      axes_x = axes_y = axes
+    elif isinstance(axes, list):
+      axes_x = axes_y = axes
+      
+    if isinstance(axes_x, int):
+      axes_x = [axes_x]
+    if isinstance(axes_y, int):
+      axes_y = [axes_y]
+      
+    x2 = x
+    for axis in axes_x:
+      i = np.arange(x.shape[axis])
+      self.rng().shuffle(i)
+      x2 = np.take_along_axis(x2, i, axis)
+      
+    y2 = y
+    for axis in axes_y:
+      i = np.arange(y.shape[axis])
+      self.rng().shuffle(i)
+      y2 = np.take_along_axis(y2, i, axis)
+
+    self.assertAllClose(f(x, y), f(x2, y2))
 
   def testTensordotErrors(self):
     a = self.rng().random((3, 2, 2))
