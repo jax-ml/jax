@@ -21,8 +21,7 @@ import scipy.stats as osp_stats
 
 import jax.numpy as jnp
 from jax import jit, lax, random, vmap
-from jax._src.numpy.lax_numpy import _check_arraylike, _promote_dtypes_inexact
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _check_arraylike, _promote_dtypes_inexact, _wraps
 from jax._src.tree_util import register_pytree_node_class
 from jax.scipy import linalg, special
 

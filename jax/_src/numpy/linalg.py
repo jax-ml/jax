@@ -27,6 +27,7 @@ from jax import lax
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import reductions, ufuncs
 from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _check_arraylike
 from jax._src.util import canonicalize_axis
 from jax._src.typing import ArrayLike, Array
@@ -37,7 +38,7 @@ def _T(x: ArrayLike) -> Array:
 
 
 def _H(x: ArrayLike) -> Array:
-  return jnp.conjugate(jnp.swapaxes(x, -1, -2))
+  return ufuncs.conjugate(jnp.swapaxes(x, -1, -2))
 
 
 def _symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
@@ -136,12 +137,12 @@ def matrix_rank(M: ArrayLike, tol: Optional[ArrayLike] = None) -> Array:
   _check_arraylike("jnp.linalg.matrix_rank", M)
   M, = _promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim < 2:
-    return jnp.any(M != 0).astype(jnp.int32)
+    return (M != 0).any().astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
   if tol is None:
     tol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
   tol = jnp.expand_dims(tol, np.ndim(tol))
-  return jnp.sum(S > tol, axis=-1)
+  return reductions.sum(S > tol, axis=-1)
 
 
 @custom_jvp
@@ -149,22 +150,22 @@ def _slogdet_lu(a: Array) -> Tuple[Array, Array]:
   dtype = lax.dtype(a)
   lu, pivot, _ = lax_linalg.lu(a)
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
-  is_zero = jnp.any(diag == jnp.array(0, dtype=dtype), axis=-1)
+  is_zero = reductions.any(diag == jnp.array(0, dtype=dtype), axis=-1)
   iota = lax.expand_dims(jnp.arange(a.shape[-1], dtype=pivot.dtype),
                          range(pivot.ndim - 1))
-  parity = jnp.count_nonzero(pivot != iota, axis=-1)
+  parity = reductions.count_nonzero(pivot != iota, axis=-1)
   if jnp.iscomplexobj(a):
-    sign = jnp.prod(diag / jnp.abs(diag).astype(diag.dtype), axis=-1)
+    sign = reductions.prod(diag / ufuncs.abs(diag).astype(diag.dtype), axis=-1)
   else:
     sign = jnp.array(1, dtype=dtype)
-    parity = parity + jnp.count_nonzero(diag < 0, axis=-1)
+    parity = parity + reductions.count_nonzero(diag < 0, axis=-1)
   sign = jnp.where(is_zero,
                   jnp.array(0, dtype=dtype),
                   sign * jnp.array(-2 * (parity % 2) + 1, dtype=dtype))
   logdet = jnp.where(
       is_zero, jnp.array(-jnp.inf, dtype=dtype),
-      jnp.sum(jnp.log(jnp.abs(diag)).astype(dtype), axis=-1))
-  return sign, jnp.real(logdet)
+      reductions.sum(ufuncs.log(ufuncs.abs(diag)).astype(dtype), axis=-1))
+  return sign, ufuncs.real(logdet)
 
 @custom_jvp
 def _slogdet_qr(a: Array) -> Tuple[Array, Array]:
@@ -179,11 +180,11 @@ def _slogdet_qr(a: Array) -> Tuple[Array, Array]:
   # The determinant of a triangular matrix is the product of its diagonal
   # elements. We are working in log space, so we compute the magnitude as the
   # the trace of the log-absolute values, and we compute the sign separately.
-  log_abs_det = jnp.trace(jnp.log(jnp.abs(a)), axis1=-2, axis2=-1)
-  sign_diag = jnp.prod(jnp.sign(jnp.diagonal(a, axis1=-2, axis2=-1)), axis=-1)
+  log_abs_det = jnp.trace(ufuncs.log(ufuncs.abs(a)), axis1=-2, axis2=-1)
+  sign_diag = reductions.prod(ufuncs.sign(jnp.diagonal(a, axis1=-2, axis2=-1)), axis=-1)
   # The determinant of a Householder reflector is -1. So whenever we actually
   # made a reflection (tau != 0), multiply the result by -1.
-  sign_taus = jnp.prod(jnp.where(taus[..., :(n-1)] != 0, -1, 1), axis=-1).astype(sign_diag.dtype)
+  sign_taus = reductions.prod(jnp.where(taus[..., :(n-1)] != 0, -1, 1), axis=-1).astype(sign_diag.dtype)
   return sign_diag * sign_taus, log_abs_det
 
 @_wraps(
@@ -217,8 +218,8 @@ def _slogdet_jvp(primals, tangents):
   sign, ans = slogdet(x)
   ans_dot = jnp.trace(solve(x, g), axis1=-1, axis2=-2)
   if jnp.issubdtype(jnp._dtype(x), jnp.complexfloating):
-    sign_dot = (ans_dot - jnp.real(ans_dot).astype(ans_dot.dtype)) * sign
-    ans_dot = jnp.real(ans_dot)
+    sign_dot = (ans_dot - ufuncs.real(ans_dot).astype(ans_dot.dtype)) * sign
+    ans_dot = ufuncs.real(ans_dot)
   else:
     sign_dot = jnp.zeros_like(sign)
   return (sign, ans), (sign_dot, ans_dot)
@@ -292,18 +293,18 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> Tuple[Array, Array]:
   diag = jnp.diagonal(lu, axis1=-2, axis2=-1)
   iota = lax.expand_dims(jnp.arange(a_shape[-1], dtype=pivots.dtype),
                          range(pivots.ndim - 1))
-  parity = jnp.count_nonzero(pivots != iota, axis=-1)
+  parity = reductions.count_nonzero(pivots != iota, axis=-1)
   sign = jnp.asarray(-2 * (parity % 2) + 1, dtype=dtype)
   # partial_det[:, -1] contains the full determinant and
   # partial_det[:, -2] contains det(u) / u_{nn}.
-  partial_det = jnp.cumprod(diag, axis=-1) * sign[..., None]
+  partial_det = reductions.cumprod(diag, axis=-1) * sign[..., None]
   lu = lu.at[..., -1, -1].set(1.0 / partial_det[..., -2])
   permutation = jnp.broadcast_to(permutation, (*batch_dims, a_shape[-1]))
   iotas = jnp.ix_(*(lax.iota(jnp.int32, b) for b in (*batch_dims, 1)))
   # filter out any matrices that are not full rank
   d = jnp.ones(x.shape[:-1], x.dtype)
   d = lax_linalg.triangular_solve(lu, d, left_side=True, lower=False)
-  d = jnp.any(jnp.logical_or(jnp.isnan(d), jnp.isinf(d)), axis=-1)
+  d = reductions.any(ufuncs.logical_or(ufuncs.isnan(d), ufuncs.isinf(d)), axis=-1)
   d = jnp.tile(d[..., None, None], d.ndim*(1,) + x.shape[-2:])
   x = jnp.where(d, jnp.zeros_like(x), x)  # first filter
   x = x[iotas[:-1] + (permutation, slice(None))]
@@ -344,7 +345,7 @@ def det(a: ArrayLike) -> Array:
     return _det_3x3(a)
   elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
     sign, logdet = slogdet(a)
-    return sign * jnp.exp(logdet).astype(sign.dtype)
+    return sign * ufuncs.exp(logdet).astype(sign.dtype)
   else:
     msg = "Argument to _det() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
@@ -424,7 +425,7 @@ def pinv(a: ArrayLike, rcond: Optional[ArrayLike] = None,
   m, n = arr.shape[-2:]
   if m == 0 or n == 0:
     return jnp.empty(arr.shape[:-2] + (n, m), arr.dtype)
-  arr = jnp.conj(arr)
+  arr = ufuncs.conj(arr)
   if rcond is None:
     max_rows_cols = max(arr.shape[-2:])
     rcond = 10. * max_rows_cols * jnp.array(jnp.finfo(arr.dtype).eps)
@@ -435,7 +436,7 @@ def pinv(a: ArrayLike, rcond: Optional[ArrayLike] = None,
   rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
   cutoff = rcond * s[..., 0:1]
   s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
-  res = jnp.matmul(_T(vh), jnp.divide(_T(u), s[..., jnp.newaxis]),
+  res = jnp.matmul(_T(vh), ufuncs.divide(_T(u), s[..., jnp.newaxis]),
                    precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
@@ -495,7 +496,7 @@ def norm(x: ArrayLike, ord: Union[int, str, None] = None,
     # NumPy has an undocumented behavior that admits arbitrary rank inputs if
     # `ord` is None: https://github.com/numpy/numpy/issues/14215
     if ord is None:
-      return jnp.sqrt(jnp.sum(jnp.real(x * jnp.conj(x)), keepdims=keepdims))
+      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), keepdims=keepdims))
     axis = tuple(range(ndim))
   elif isinstance(axis, tuple):
     axis = tuple(canonicalize_axis(x, ndim) for x in axis)
@@ -505,21 +506,21 @@ def norm(x: ArrayLike, ord: Union[int, str, None] = None,
   num_axes = len(axis)
   if num_axes == 1:
     if ord is None or ord == 2:
-      return jnp.sqrt(jnp.sum(jnp.real(x * jnp.conj(x)), axis=axis,
-                            keepdims=keepdims))
+      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+                                        keepdims=keepdims))
     elif ord == jnp.inf:
-      return jnp.amax(jnp.abs(x), axis=axis, keepdims=keepdims)
+      return reductions.amax(ufuncs.abs(x), axis=axis, keepdims=keepdims)
     elif ord == -jnp.inf:
-      return jnp.amin(jnp.abs(x), axis=axis, keepdims=keepdims)
+      return reductions.amin(ufuncs.abs(x), axis=axis, keepdims=keepdims)
     elif ord == 0:
-      return jnp.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
-                    axis=axis, keepdims=keepdims)
+      return reductions.sum(x != 0, dtype=jnp.finfo(lax.dtype(x)).dtype,
+                            axis=axis, keepdims=keepdims)
     elif ord == 1:
       # Numpy has a special case for ord == 1 as an optimization. We don't
       # really need the optimization (XLA could do it for us), but the Numpy
       # code has slightly different type promotion semantics, so we need a
       # special case too.
-      return jnp.sum(jnp.abs(x), axis=axis, keepdims=keepdims)
+      return reductions.sum(ufuncs.abs(x), axis=axis, keepdims=keepdims)
     elif isinstance(ord, str):
       msg = f"Invalid order '{ord}' for vector norm."
       if ord == "inf":
@@ -528,46 +529,46 @@ def norm(x: ArrayLike, ord: Union[int, str, None] = None,
         msg += "Use '-jax.numpy.inf' instead."
       raise ValueError(msg)
     else:
-      abs_x = jnp.abs(x)
+      abs_x = ufuncs.abs(x)
       ord_arr = lax_internal._const(abs_x, ord)
       ord_inv = lax_internal._const(abs_x, 1. / ord_arr)
-      out = jnp.sum(abs_x ** ord_arr, axis=axis, keepdims=keepdims)
-      return jnp.power(out, ord_inv)
+      out = reductions.sum(abs_x ** ord_arr, axis=axis, keepdims=keepdims)
+      return ufuncs.power(out, ord_inv)
 
   elif num_axes == 2:
     row_axis, col_axis = cast(Tuple[int, ...], axis)
     if ord is None or ord in ('f', 'fro'):
-      return jnp.sqrt(jnp.sum(jnp.real(x * jnp.conj(x)), axis=axis,
-                            keepdims=keepdims))
+      return ufuncs.sqrt(reductions.sum(ufuncs.real(x * ufuncs.conj(x)), axis=axis,
+                                        keepdims=keepdims))
     elif ord == 1:
       if not keepdims and col_axis > row_axis:
         col_axis -= 1
-      return jnp.amax(jnp.sum(jnp.abs(x), axis=row_axis, keepdims=keepdims),
-                     axis=col_axis, keepdims=keepdims)
+      return reductions.amax(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                             axis=col_axis, keepdims=keepdims)
     elif ord == -1:
       if not keepdims and col_axis > row_axis:
         col_axis -= 1
-      return jnp.amin(jnp.sum(jnp.abs(x), axis=row_axis, keepdims=keepdims),
-                     axis=col_axis, keepdims=keepdims)
+      return reductions.amin(reductions.sum(ufuncs.abs(x), axis=row_axis, keepdims=keepdims),
+                             axis=col_axis, keepdims=keepdims)
     elif ord == jnp.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
-      return jnp.amax(jnp.sum(jnp.abs(x), axis=col_axis, keepdims=keepdims),
+      return reductions.amax(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
                      axis=row_axis, keepdims=keepdims)
     elif ord == -jnp.inf:
       if not keepdims and row_axis > col_axis:
         row_axis -= 1
-      return jnp.amin(jnp.sum(jnp.abs(x), axis=col_axis, keepdims=keepdims),
+      return reductions.amin(reductions.sum(ufuncs.abs(x), axis=col_axis, keepdims=keepdims),
                      axis=row_axis, keepdims=keepdims)
     elif ord in ('nuc', 2, -2):
       x = jnp.moveaxis(x, axis, (-2, -1))
       if ord == 2:
-        reducer = jnp.amax
+        reducer = reductions.amax
       elif ord == -2:
-        reducer = jnp.amin
+        reducer = reductions.amin
       else:
         # `sum` takes an extra dtype= argument, unlike `amax` and `amin`.
-        reducer = jnp.sum  # type: ignore[assignment]
+        reducer = reductions.sum  # type: ignore[assignment]
       y = reducer(svd(x, compute_uv=False), axis=-1)
       if keepdims:
         y = jnp.expand_dims(y, axis)

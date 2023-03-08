@@ -16,9 +16,9 @@
 import scipy.stats as osp_stats
 
 from jax import lax
-from jax._src.numpy.util import _wraps
-from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf, logical_or
+from jax.numpy import where, inf, logical_or
 from jax._src.typing import Array, ArrayLike
+from jax._src.numpy.util import _wraps, _promote_args_inexact
 
 
 @_wraps(osp_stats.uniform.logpdf, update_doc=False)

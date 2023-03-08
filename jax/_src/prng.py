@@ -42,7 +42,8 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy import lax_numpy
+from jax._src.numpy.lax_numpy import _set_device_array_base_attributes
+from jax._src.numpy.util import _register_stackable
 from jax._src.sharding import (
     NamedSharding, PmapSharding, GSPMDSharding)
 from jax._src.util import canonicalize_axis, safe_map, safe_zip
@@ -256,10 +257,10 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   def flatten(self, *_, **__)   -> 'PRNGKeyArray': assert False
 
 
-lax_numpy._set_device_array_base_attributes(PRNGKeyArray, include=[
+_set_device_array_base_attributes(PRNGKeyArray, include=[
     '__getitem__', 'ravel', 'squeeze', 'swapaxes', 'take', 'reshape',
     'transpose', 'flatten', 'T'])
-lax_numpy._register_stackable(PRNGKeyArray)
+_register_stackable(PRNGKeyArray)
 basearray.Array.register(PRNGKeyArray)
 
 

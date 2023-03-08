@@ -16,9 +16,11 @@ import abc
 from typing import Any, Iterable, List, Tuple, Union
 
 import jax
-import jax._src.numpy.lax_numpy as jnp
 from jax._src import core
 from jax._src.numpy.util import _promote_dtypes
+from jax._src.numpy.lax_numpy import (
+  arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
+)
 from jax._src.typing import Array, ArrayLike
 
 import numpy as np
@@ -35,9 +37,9 @@ def _make_1d_grid_from_slice(s: slice, op_name: str) -> Array:
   step = core.concrete_or_error(None, s.step,
                                 f"slice step of jnp.{op_name}") or 1
   if np.iscomplex(step):
-    newobj = jnp.linspace(start, stop, int(abs(step)))
+    newobj = linspace(start, stop, int(abs(step)))
   else:
-    newobj = jnp.arange(start, stop, step)
+    newobj = arange(start, stop, step)
 
   return newobj
 
@@ -53,12 +55,12 @@ class _IndexGrid(abc.ABC):
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name=self.op_name) for k in key)
     with jax.numpy_dtype_promotion('standard'):
       output = _promote_dtypes(*output)
-    output_arr = jnp.meshgrid(*output, indexing='ij', sparse=self.sparse)
+    output_arr = meshgrid(*output, indexing='ij', sparse=self.sparse)
     if self.sparse:
       return output_arr
     if len(output_arr) == 0:
-      return jnp.arange(0)
-    return jnp.stack(output_arr, 0)
+      return arange(0)
+    return stack(output_arr, 0)
 
 
 class _Mgrid(_IndexGrid):
@@ -178,10 +180,10 @@ class _AxisConcat(abc.ABC):
       elif isinstance(item, str):
         raise ValueError("string directive must be placed at the beginning")
       else:
-        newobj = jnp.array(item, copy=False)
+        newobj = array(item, copy=False)
         item_ndim = newobj.ndim
 
-      newobj = jnp.array(newobj, copy=False, ndmin=ndmin)
+      newobj = array(newobj, copy=False, ndmin=ndmin)
 
       if trans1d != -1 and ndmin - item_ndim > 0:
         shape_obj = tuple(range(ndmin))
@@ -189,15 +191,15 @@ class _AxisConcat(abc.ABC):
         num_lshifts = ndmin - abs(ndmin + trans1d + 1) % ndmin
         shape_obj = tuple(shape_obj[num_lshifts:] + shape_obj[:num_lshifts])
 
-        newobj = jnp.transpose(newobj, shape_obj)
+        newobj = transpose(newobj, shape_obj)
 
       output.append(newobj)
 
-    res = jnp.concatenate(tuple(output), axis=axis)
+    res = concatenate(tuple(output), axis=axis)
 
     if matrix != -1 and res.ndim == 1:
       # insert 2nd dim at axis 0 or 1
-      res = jnp.expand_dims(res, matrix)
+      res = expand_dims(res, matrix)
 
     return res
 

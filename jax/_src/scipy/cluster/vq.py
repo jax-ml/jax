@@ -18,9 +18,8 @@ import scipy.cluster.vq
 import textwrap
 
 from jax import vmap
+import jax.numpy as jnp
 from jax._src.numpy.util import _wraps, _check_arraylike, _promote_dtypes_inexact
-from jax._src.numpy.lax_numpy import argmin
-from jax._src.numpy.linalg import norm
 
 
 _no_chkfinite_doc = textwrap.dedent("""
@@ -41,7 +40,7 @@ def vq(obs, code_book, check_finite=True):
         raise ValueError("ndim different than 1 or 2 are not supported")
 
     # explicitly rank promotion
-    dist = vmap(lambda ob: norm(ob[None] - code_book, axis=-1))(obs)
-    code = argmin(dist, axis=-1)
+    dist = vmap(lambda ob: jnp.linalg.norm(ob[None] - code_book, axis=-1))(obs)
+    code = jnp.argmin(dist, axis=-1)
     dist_min = vmap(operator.getitem)(dist, code)
     return code, dist_min

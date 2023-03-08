@@ -17,7 +17,8 @@ from typing import overload, Literal, Optional, Tuple, Union
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax._src.numpy.lax_numpy import _reduction_dims, _promote_args_inexact
+from jax._src.numpy.reductions import _reduction_dims
+from jax._src.numpy.util import _promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 import numpy as np
 

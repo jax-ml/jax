@@ -23,6 +23,7 @@ from jax._src.lib import xla_client
 from jax._src.util import safe_zip
 from jax._src.numpy.util import _check_arraylike, _wraps
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import ufuncs, reductions
 from jax._src.typing import Array, ArrayLike
 
 Shape = Sequence[int]
@@ -31,9 +32,9 @@ def _fft_norm(s: Array, func_name: str, norm: str) -> Array:
   if norm == "backward":
     return jnp.array(1)
   elif norm == "ortho":
-    return jnp.sqrt(jnp.prod(s)) if func_name.startswith('i') else 1/jnp.sqrt(jnp.prod(s))
+    return ufuncs.sqrt(reductions.prod(s)) if func_name.startswith('i') else 1/ufuncs.sqrt(reductions.prod(s))
   elif norm == "forward":
-    return jnp.prod(s) if func_name.startswith('i') else 1/jnp.prod(s)
+    return reductions.prod(s) if func_name.startswith('i') else 1/reductions.prod(s)
   raise ValueError(f'Invalid norm value {norm}; should be "backward",'
                     '"ortho" or "forward".')
 
@@ -175,7 +176,7 @@ def irfft(a: ArrayLike, n: Optional[int] = None,
 @_wraps(np.fft.hfft)
 def hfft(a: ArrayLike, n: Optional[int] = None,
          axis: int = -1, norm: Optional[str] = None) -> Array:
-  conj_a = jnp.conj(a)
+  conj_a = ufuncs.conj(a)
   _axis_check_1d('hfft', axis)
   nn = (conj_a.shape[axis] - 1) * 2 if n is None else n
   return _fft_core_1d('hfft', xla_client.FftType.IRFFT, conj_a, n=n, axis=axis,
@@ -189,7 +190,7 @@ def ihfft(a: ArrayLike, n: Optional[int] = None,
   nn = arr.shape[axis] if n is None else n
   output = _fft_core_1d('ihfft', xla_client.FftType.RFFT, arr, n=n, axis=axis,
                         norm=norm)
-  return jnp.conj(output) * (1 / nn)
+  return ufuncs.conj(output) * (1 / nn)
 
 
 def _fft_core_2d(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,

@@ -29,8 +29,7 @@ from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.lax_numpy import (
-    moveaxis, _promote_args_inexact, _promote_dtypes_inexact)
+from jax._src.numpy.util import _promote_args_inexact, _promote_dtypes_inexact
 from jax._src.numpy.util import _wraps
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
@@ -725,7 +724,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
   bessel_jn_fun = partial(_bessel_jn, v=v, n_iter=n_iter)
   for _ in range(z.ndim):
     bessel_jn_fun = vmap(bessel_jn_fun)
-  return moveaxis(bessel_jn_fun(z), -1, 0)
+  return jnp.moveaxis(bessel_jn_fun(z), -1, 0)
 
 
 def _gen_recurrence_mask(

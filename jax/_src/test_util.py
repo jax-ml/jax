@@ -46,7 +46,7 @@ from jax._src import dtypes as _dtypes
 from jax._src.config import (flags, bool_env, config,
                              raise_persistent_cache_errors,
                              persistent_cache_min_compile_time_secs)
-from jax._src.numpy.lax_numpy import _promote_dtypes, _promote_dtypes_inexact
+from jax._src.numpy.util import _promote_dtypes, _promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,

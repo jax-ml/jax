@@ -49,6 +49,8 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy as jnp
+from jax._src.numpy import reductions
+from jax._src.numpy import ufuncs
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import Array, ArrayLike
 
@@ -375,7 +377,7 @@ def _solve(a: Array, b: Array) -> Array:
     return api.vmap(custom_solve, b.ndim - 1, max(a.ndim, b.ndim) - 1)(b)
 
 def _T(x: Array) -> Array: return jnp.swapaxes(x, -1, -2)
-def _H(x: Array) -> Array: return jnp.conj(_T(x))
+def _H(x: Array) -> Array: return ufuncs.conj(_T(x))
 def symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 
 # primitives
@@ -551,7 +553,7 @@ def eig_jvp_rule(primals, tangents, *, compute_left_eigenvectors,
   a, = primals
   da, = tangents
   l, v = eig(a, compute_left_eigenvectors=False)
-  return [l], [jnp.sum(_solve(v, da.astype(v.dtype)) * _T(v), -1)]
+  return [l], [reductions.sum(_solve(v, da.astype(v.dtype)) * _T(v), -1)]
 
 eig_p = Primitive('eig')
 eig_p.multiple_results = True
@@ -679,13 +681,13 @@ def _eigh_tpu_impl(x, *, lower, sort_eigenvalues):
     if lower:
       mask = jnp.tri(n, k=0, dtype=bool)
     else:
-      mask = jnp.logical_not(jnp.tri(n, k=-1, dtype=bool))
+      mask = ufuncs.logical_not(jnp.tri(n, k=-1, dtype=bool))
     if dtypes.issubdtype(x.dtype, jnp.complexfloating):
       re = lax.select(mask, lax.real(x), _T(lax.real(x)))
       if lower:
         im_mask = jnp.tri(n, k=-1, dtype=bool)
       else:
-        im_mask = jnp.logical_not(jnp.tri(n, k=0, dtype=bool))
+        im_mask = ufuncs.logical_not(jnp.tri(n, k=0, dtype=bool))
       im = lax.select(im_mask, lax.imag(x), jnp.zeros_like(lax.imag(x)))
       im = lax.select(mask, im, -_T(im))
       x = lax.complex(re, im)
@@ -717,13 +719,13 @@ def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
   w = w_real.astype(a.dtype)
   eye_n = jnp.eye(a.shape[-1], dtype=a.dtype)
   # carefully build reciprocal delta-eigenvalue matrix, avoiding NaNs.
-  Fmat = jnp.reciprocal(eye_n + w[..., jnp.newaxis, :] - w[..., jnp.newaxis]) - eye_n
+  Fmat = ufuncs.reciprocal(eye_n + w[..., jnp.newaxis, :] - w[..., jnp.newaxis]) - eye_n
   # eigh impl doesn't support batch dims, but future-proof the grad.
   dot = partial(lax.dot if a.ndim == 2 else lax.batch_matmul,
                 precision=lax.Precision.HIGHEST)
   vdag_adot_v = dot(dot(_H(v), a_dot), v)
-  dv = dot(v, jnp.multiply(Fmat, vdag_adot_v))
-  dw = jnp.real(jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1))
+  dv = dot(v, ufuncs.multiply(Fmat, vdag_adot_v))
+  dw = ufuncs.real(jnp.diagonal(vdag_adot_v, axis1=-2, axis2=-1))
   return (v, w_real), (dv, dw)
 
 def _eigh_batching_rule(batched_args, batch_dims, *, lower, sort_eigenvalues):
@@ -789,7 +791,7 @@ def _triangular_solve_jvp_rule_a(
   g_a = jnp.tril(g_a, k=-k) if lower else jnp.triu(g_a, k=k)
   g_a = lax.neg(g_a)
   g_a = jnp.swapaxes(g_a, -1, -2) if transpose_a else g_a
-  g_a = jnp.conj(g_a) if conjugate_a else g_a
+  g_a = ufuncs.conj(g_a) if conjugate_a else g_a
   dot = partial(lax.dot if g_a.ndim == 2 else lax.batch_matmul,
                 precision=lax.Precision.HIGHEST)
 
@@ -1029,9 +1031,9 @@ def _lu_unblocked(a):
 
     if jnp.issubdtype(a.dtype, jnp.complexfloating):
       t = a[:, k]
-      magnitude = jnp.abs(jnp.real(t)) + jnp.abs(jnp.imag(t))
+      magnitude = ufuncs.abs(ufuncs.real(t)) + ufuncs.abs(ufuncs.imag(t))
     else:
-      magnitude = jnp.abs(a[:, k])
+      magnitude = ufuncs.abs(a[:, k])
     i = jnp.argmax(jnp.where(m_idx >= k, magnitude, -jnp.inf))
     pivot = pivot.at[k].set(i)
     a = a.at[[k, i],].set(a[[i, k],])
@@ -1553,7 +1555,7 @@ def _svd_jvp_rule(primals, tangents, *, full_matrices, compute_uv):
   Ut, V = _H(U), _H(Vt)
   s_dim = s[..., None, :]
   dS = Ut @ dA @ V
-  ds = jnp.real(jnp.diagonal(dS, 0, -2, -1))
+  ds = ufuncs.real(jnp.diagonal(dS, 0, -2, -1))
 
   if not compute_uv:
     return (s,), (ds,)

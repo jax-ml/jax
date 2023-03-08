@@ -27,9 +27,11 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import (
-    any, append, arange, array, asarray, concatenate, cumsum, diff,
-    empty, full_like, isnan, lexsort, moveaxis, nonzero, ones, ravel,
+    append, arange, array, asarray, concatenate, diff,
+    empty, full_like, lexsort, moveaxis, nonzero, ones, ravel,
     sort, where, zeros)
+from jax._src.numpy.reductions import any, cumsum
+from jax._src.numpy.ufuncs import isnan
 from jax._src.numpy.util import _check_arraylike, _wraps
 from jax._src.typing import Array, ArrayLike
 

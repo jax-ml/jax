@@ -33,6 +33,7 @@ from typing import NamedTuple
 import jax
 import jax._src.numpy.lax_numpy as jnp
 import jax._src.numpy.linalg as jnp_linalg
+from jax._src.numpy import ufuncs
 from jax import lax
 from jax._src.lax import qdwh
 from jax._src.lax import linalg as lax_linalg
@@ -163,7 +164,7 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
     _, _, j, error = args
     still_counting = j < maxiter
     unconverged = error > thresh
-    return jnp.logical_and(still_counting, unconverged)[0]
+    return ufuncs.logical_and(still_counting, unconverged)[0]
 
   def body_f(args):
     V1, _, j, _ = args
@@ -204,7 +205,7 @@ def split_spectrum(H, n, split_point, V0=None):
   H_shift = H - (split_point * jnp.eye(N, dtype=split_point.dtype)).astype(H.dtype)
   U, _, _, _ = qdwh.qdwh(H_shift, is_hermitian=True, dynamic_shape=(n, n))
   P = -0.5 * (U - _mask(jnp.eye(N, dtype=H.dtype), (n, n)))
-  rank = jnp.round(jnp.trace(jnp.real(P))).astype(jnp.int32)
+  rank = jnp.round(jnp.trace(ufuncs.real(P))).astype(jnp.int32)
 
   V_minus, V_plus = _projector_subspace(P, H, n, rank)
   H_minus = (V_minus.conj().T @ H) @ V_minus
@@ -359,7 +360,7 @@ def _eigh_work(H, n, termination_size=256):
     def default_case(agenda, blocks, eigenvectors):
       V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
       # TODO: Improve this?
-      split_point = jnp.nanmedian(_mask(jnp.diag(jnp.real(H)), (b,), jnp.nan))
+      split_point = jnp.nanmedian(_mask(jnp.diag(ufuncs.real(H)), (b,), jnp.nan))
       H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(
           H, b, split_point, V0=V)
 
@@ -381,7 +382,7 @@ def _eigh_work(H, n, termination_size=256):
     norm = jnp_linalg.norm(H)
     tol = jnp.asarray(10 * jnp.finfo(H.dtype).eps / 2, dtype=norm.dtype)
     off_diag_norm = jnp_linalg.norm(
-        H - jnp.diag(jnp.diag(jnp.real(H)).astype(H.dtype)))
+        H - jnp.diag(jnp.diag(ufuncs.real(H)).astype(H.dtype)))
     # We also handle nearly-all-zero matrices matrices here.
     nearly_diagonal = (norm < tol) | (off_diag_norm / norm < tol)
     return lax.cond(nearly_diagonal, nearly_diagonal_case, default_case,
@@ -450,7 +451,7 @@ def eigh(H, *, precision="float32", termination_size=256, n=None,
   n = N if n is None else n
   with jax.default_matmul_precision(precision):
     eig_vals, eig_vecs = _eigh_work(H, n, termination_size=termination_size)
-  eig_vals = _mask(jnp.real(eig_vals), (n,), jnp.nan)
+  eig_vals = _mask(ufuncs.real(eig_vals), (n,), jnp.nan)
   if sort_eigenvalues:
     sort_idxs = jnp.argsort(eig_vals)
     eig_vals = eig_vals[sort_idxs]

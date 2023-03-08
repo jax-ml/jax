@@ -16,9 +16,9 @@
 import scipy.stats as osp_stats
 
 from jax import lax
+import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.lax_numpy import _promote_args_inexact, where, inf
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import _wraps, _promote_args_inexact
 from jax._src.scipy.special import gammaln, xlogy
 from jax._src.typing import Array, ArrayLike
 
@@ -34,7 +34,7 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
     )
     log_linear_term = lax.add(xlogy(n, p), xlogy(y, lax.sub(one, p)))
     log_probs = lax.add(comb_term, log_linear_term)
-    return where(lax.lt(k, loc), -inf, log_probs)
+    return jnp.where(lax.lt(k, loc), -jnp.inf, log_probs)
 
 
 @_wraps(osp_stats.nbinom.pmf, update_doc=False)
