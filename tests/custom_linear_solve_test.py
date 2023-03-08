@@ -467,6 +467,23 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
       return matrix_free_solve(partial(high_precision_dot, a), b)
     jtu.check_grads(linear_solve, (a, b), order=1, rtol=3e-3, modes=['rev'])
 
+  def test_custom_linear_solve_batching_with_aux(self):
+    def solve(mv, b):
+      aux = (np.array(1.), True, 0)
+      return mv(b), aux
+
+    def solve_aux(x):
+      matvec = lambda y: tree_util.tree_map(partial(jnp.dot, A), y)
+      return lax.custom_linear_solve(matvec, (x, x), solve, solve, symmetric=True, has_aux=True)
+
+    rng = self.rng()
+    A = rng.randn(3, 3)
+    A = A + A.T
+    b = rng.randn(3, 3)
+
+    # doesn't crash
+    jax.vmap(solve_aux)(b)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
