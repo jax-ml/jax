@@ -1472,18 +1472,22 @@ class BCOOTest(sptu.SparseTestCase):
       if jnp.issubdtype(dtype, jnp.floating):
         self._CheckGradsSparse(f_dense, f_sparse, args_maker, modes=['fwd'])
 
-  def test_bcoo_spdot_general_nse(self):
-    # vector-vector product -> nse=1
-    x = sparse.BCOO.fromdense(jnp.arange(3))
-    self.assertEqual((x @ x).nse, 1)
+  @jtu.sample_product(
+    lhs_shape=[(5,), (4, 5)],
+    rhs_shape=[(5,), (5, 4)])
+  @jax.default_matmul_precision("float32")
+  def test_bcoo_spdot_general_nse(self, lhs_shape, rhs_shape):
+    rng = sptu.rand_bcoo(self.rng())
+    dtype = jnp.float32
+    lhs = rng(lhs_shape, dtype)
+    rhs = rng(rhs_shape, dtype)
+    out = lhs @ rhs
 
-    # matrix-vector product -> nse matches matrix
-    M = sparse.BCOO.fromdense(jnp.arange(6).reshape(2, 3))
-    self.assertEqual((M @ x).nse, M.nse)
+    expected_out = lhs.todense() @ rhs.todense()
+    expected_nse = min(lhs.nse * rhs.nse, out.size)
 
-    # matrix-matrix product -> product of nse
-    N = sparse.BCOO.fromdense(jnp.arange(12).reshape(3, 4))
-    self.assertEqual((M @ N).nse, M.nse * N.nse)
+    self.assertArraysAllClose(out.todense(), expected_out)
+    self.assertEqual(out.nse, expected_nse)
 
   def test_bcoo_spdot_general_ad_bug(self):
     # Regression test for https://github.com/google/jax/issues/10163
