@@ -1053,6 +1053,11 @@ jax_test(
 jax_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
 )
 
 jax_test(
