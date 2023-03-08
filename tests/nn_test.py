@@ -68,6 +68,13 @@ class NNFunctionsTest(jtu.JaxTestCase):
     jaxpr = jax.make_jaxpr(jax.grad(nn.relu))(0.)
     self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 2)
 
+  def testRelu6Grad(self):
+    rtol = 1e-2 if jtu.device_under_test() == "tpu" else None
+    check_grads(nn.relu6, (1.,), order=3, rtol=rtol)
+    check_grads(nn.relu6, (-1.,), order=3, rtol=rtol)
+    self.assertAllClose(jax.grad(nn.relu6)(0.), 0., check_dtypes=False)
+    self.assertAllClose(jax.grad(nn.relu6)(6.), 0., check_dtypes=False)
+
   def testSoftplusValue(self):
     val = nn.softplus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)

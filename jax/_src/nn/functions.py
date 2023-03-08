@@ -431,6 +431,7 @@ def one_hot(x: Array, num_classes: int, *,
   return _one_hot(x, num_classes, dtype=dtype, axis=axis)
 
 
+@jax.custom_jvp
 @jax.jit
 def relu6(x: Array) -> Array:
   r"""Rectified Linear Unit 6 activation function.
@@ -440,10 +441,23 @@ def relu6(x: Array) -> Array:
   .. math::
     \mathrm{relu6}(x) = \min(\max(x, 0), 6)
 
+  except under differentiation, we take:
+
+  .. math::
+    \nabla \mathrm{relu}(0) = 0
+
+  and
+
+  .. math::
+    \nabla \mathrm{relu}(6) = 0
+
+
   Args:
     x : input array
   """
   return jnp.minimum(jnp.maximum(x, 0), 6.)
+relu6.defjvps(lambda g, ans, x:
+              lax.select((x > 0) & (x < 6), g, lax.full_like(g, 0)))
 
 @jax.jit
 def hard_sigmoid(x: Array) -> Array:
