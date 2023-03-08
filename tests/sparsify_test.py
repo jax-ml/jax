@@ -262,6 +262,19 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(out.todense(), x.todense() - y.todense())
 
+  def testSparsePow(self):
+    x = jnp.arange(20.0).reshape(4, 5)
+    xsp = BCOO.fromdense(x)
+
+    result_dense = x ** 2
+    result_sparse = xsp ** 2
+
+    self.assertAllClose(result_dense, result_sparse.todense())
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "sparse rule for integer_pow with non-positive exponent"):
+      _ = xsp ** -1
+
   def testSparseSum(self):
     x = jnp.arange(20).reshape(4, 5)
     xsp = BCOO.fromdense(x)
@@ -573,7 +586,8 @@ class SparsifyTest(jtu.JaxTestCase):
         (lax.sqrt, jnp.float32, {}),
         (lax.tan, jnp.float32, {}),
         (lax.tanh, jnp.float32, {}),
-        (lax.convert_element_type, jnp.float32, {"new_dtype": np.dtype('complex64')})])
+        (lax.convert_element_type, jnp.float32, {"new_dtype": np.dtype('complex64')}),
+        (lax.integer_pow, jnp.float32, {'y': 2})])
   def testUnaryOperationsNonUniqueIndices(self, fmt, op, dtype, kwds):
     shape = (4, 5)
 

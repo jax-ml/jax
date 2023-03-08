@@ -560,6 +560,16 @@ _BCSR_STANDARD_PRIMITIVES = {
 for prim, bcsr_impl in _BCSR_STANDARD_PRIMITIVES.items():
   sparse_rules_bcsr[prim] = _standard_sparse_rule(prim, bcsr_impl)
 
+def _integer_pow_sparse(spenv, *spvalues, y):
+  if y <= 0:
+    raise NotImplementedError(f"sparse rule for {lax.integer_pow_p} with non-positive exponent {y} is "
+                              "not implemented because it would result in dense output. If this is your "
+                              "intent, use sparse.todense() to convert your argument to a dense array.")
+  return _zero_preserving_unary_op(lax.integer_pow_p, False)(spenv, *spvalues, y=y)
+
+sparse_rules_bcoo[lax.integer_pow_p] = _integer_pow_sparse
+sparse_rules_bcsr[lax.integer_pow_p] = _integer_pow_sparse
+
 def _transpose_sparse(spenv, *spvalues, permutation):
   permutation = tuple(permutation)
   args = spvalues_to_arrays(spenv, spvalues)
@@ -883,6 +893,8 @@ _bcoo_methods = {
   "__radd__": sparsify(_swap_args(jnp.add)),
   "__sub__": sparsify(jnp.subtract),
   "__rsub__": sparsify(_swap_args(jnp.subtract)),
+  "__pow__": lambda x, y: sparsify(lambda x: jnp.power(x, y))(x),
+  "__rpow__": sparsify(_swap_args(jnp.power)),
   "__getitem__": _bcoo_rewriting_take,
   "__iter__": _sparse_iter,
   "__gt__": sparsify(jnp.greater),
