@@ -32,6 +32,7 @@ from jax import numpy as jnp
 
 from jax._src import dtypes
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -498,7 +499,10 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     other = othertype(data)
 
     if config.jax_array:
-      val_str = 'Array'
+      if xla_extension_version < 135:
+        val_str = 'Array'
+      else:
+        val_str = 'ArrayImpl'
     else:
       val_str = 'DeviceArray'
     msg = f"unsupported operand type.* '{val_str}' and '{othertype.__name__}'"
@@ -517,7 +521,10 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     other = othertype(data)
 
     if config.jax_array:
-      val_str = 'Array'
+      if xla_extension_version < 135:
+        val_str = 'Array'
+      else:
+        val_str = 'ArrayImpl'
     else:
       val_str = 'DeviceArray'
     msg = f"unsupported operand type.* '{othertype.__name__}' and '{val_str}'"
