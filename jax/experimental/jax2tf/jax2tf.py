@@ -100,6 +100,10 @@ _INVALID_SCOPE_CHAR = re.compile("[^A-Za-z0-9_.\\/-]")
 map = util.safe_map
 zip = util.safe_zip
 
+# These are the JAX custom call target names that are guaranteed to be stable.
+_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
+    "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape"
+]
 
 def _sanitize_scope_name(name):
   scope_name = _INVALID_SCOPE_CHAR.sub("_", name)
@@ -219,7 +223,7 @@ def convert(fun_jax: Callable,
             enable_xla=True,
             experimental_native_lowering="default",
             experimental_native_lowering_platforms=(),
-            experimental_native_lowering_strict_checks=False) -> Callable:
+            experimental_native_lowering_strict_checks=True) -> Callable:
   """Lowers `fun_jax` into a function that uses only TensorFlow ops.
 
   See
@@ -287,7 +291,8 @@ def convert(fun_jax: Callable,
     experimental_native_lowering_strict_checks: DO NOT USE, for experimental purposes only.
       In conjunction with `experimental_native_lowering`, enable the following
       checks: the lowered computation is executed on a platform for which it
-      was lowered, (more to come).
+      was lowered, the serialized computation contains only custom calls with
+      targets that are guaranteed to be stable, (more to come).
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or
@@ -823,9 +828,10 @@ def _lower_native_and_run(fun_jax: Callable,
                  log_msg,
                  mlir_module_text)
 
-  if not allow_non_replicated_sharding:
-    check_module(mlir_module,
-                allow_non_replicated_sharding=allow_non_replicated_sharding)
+  # Check the module after we logged it.
+  check_module(mlir_module,
+               allow_non_replicated_sharding=allow_non_replicated_sharding,
+               allow_all_custom_calls=not lowering_params.experimental_native_lowering_strict_checks)
 
   res = tfxla.call_module(args_tf, **call_module_attrs)
   if "out_shardings" in lowered.compile_args:
@@ -847,7 +853,8 @@ def _lower_native_and_run(fun_jax: Callable,
 
 
 def check_module(mod: mlir.ir.Module, *,
-                 allow_non_replicated_sharding: bool):
+                 allow_non_replicated_sharding: bool,
+                 allow_all_custom_calls: bool):
   """Run a number of checks on the module.
 
   TODO: check for custom calls.
@@ -855,8 +862,14 @@ def check_module(mod: mlir.ir.Module, *,
   Args:
     allow_non_replicated_sharding: whether the module is allowed to contain
       non_replicated sharding annotations.
+    allow_all_custom_calls: whether we should allow all custom calls, or
+      only those who we have explicitly marked as stable.
   """
   sharding_attr = mlir.ir.StringAttr.get("Sharding", mod.context)
+  allowed_custom_call_targets_attrs = [
+      mlir.ir.StringAttr.get(target, mod.context)
+      for target in _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE]
+  disallowed_custom_call_ops: List[str] = []
   def check_sharding(op_str: str, loc: mlir.ir.Location):
     # Check the shardings in an operation or attribute (`op_str`)
     if not allow_non_replicated_sharding:
@@ -874,8 +887,12 @@ def check_module(mod: mlir.ir.Module, *,
         check_sharding(str(a), op.location)
 
     elif op_name == "stablehlo.custom_call":
-      if op.operation.attributes["call_target_name"] == sharding_attr:
-        check_sharding(str(op), op.location )
+      call_target_name_attr = op.operation.attributes["call_target_name"]
+      if (not allow_all_custom_calls and
+          call_target_name_attr not in allowed_custom_call_targets_attrs):
+        disallowed_custom_call_ops.append(str(op))
+      if call_target_name_attr == sharding_attr:
+        check_sharding(str(op), op.location)
 
   def walk_operations(op):
     check_op(op)
@@ -885,6 +902,15 @@ def check_module(mod: mlir.ir.Module, *,
           walk_operations(op)
 
   walk_operations(mod)
+  if disallowed_custom_call_ops:
+    disallowed_custom_call_ops_str = "\n".join(disallowed_custom_call_ops)
+    msg = ("Cannot serialize code with custom calls whose targets have no "
+           "compatibility guarantees. Examples are:\n"
+           f"{disallowed_custom_call_ops_str}.\n"
+           "If you know what you are doing you can disable this check by "
+           "setting `experimental_native_lowering_strict_checks` to "
+           "`False`.")
+    raise ValueError(msg)
 
 
 def _call_wrapped_with_new_constant_cache(fun: lu.WrappedFun,

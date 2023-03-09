@@ -132,6 +132,59 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         "lu" in harness.fullname):
       raise unittest.SkipTest("b/269388847: lu failures on GPU")
 
+    def skipCustomCallTest(target: str):
+      raise unittest.SkipTest(
+          f"TODO(b/272239584): custom call target not guaranteed stable: {target}")
+    if config.jax2tf_default_experimental_native_lowering:
+      if device == "cpu":
+        if "cholesky_shape" in harness.fullname:
+          skipCustomCallTest("lapack_spotrf, lapack_dpotrf, lapack_zpotrf, lapack_cpotrf")
+        if "eig_shape" in harness.fullname:
+          skipCustomCallTest("lapack_cgeev, lapack_sgeev, lapack_dgeev, lapack_zgeev")
+        if "eigh_shape" in harness.fullname:
+          skipCustomCallTest("lapack_cheevd, lapack_ssyevd, lapack_zheevd")
+        if "lu_shape" in harness.fullname:
+          skipCustomCallTest("lapack_zgetrf, lapack_sgetrf")
+        if "svd_shape" in harness.fullname:
+          skipCustomCallTest("lapack_sgesdd, lapack_zgesdd, lapack_cgesdd")
+        if "qr_" in harness.fullname:
+          skipCustomCallTest("lapack_dgeqrf, lapack_cgeqrf, lapack_zgeqrf")
+        if "triangular_solve_" in harness.fullname:
+          skipCustomCallTest("blas_ctrsm, blas_dtrsm, blas_ztrsm, blas_strsm")
+        if "fft_" in harness.fullname:
+          skipCustomCallTest("ducc_fft")
+        if "custom_linear_solve" in harness.fullname:
+          skipCustomCallTest("lapack_sgetrf, lapack_dgetrf")
+
+      elif device == "tpu":
+        if "qr_" in harness.fullname:
+          skipCustomCallTest("Qr")
+        if "svd_shape" in harness.fullname:
+          skipCustomCallTest("Qr")
+        if "lu_shape" in harness.fullname:
+          skipCustomCallTest("LuDecomposition")
+        if "custom_linear_solve_" in harness.fullname:
+          skipCustomCallTest("LuDecomposition")
+        if "eigh_shape" in harness.fullname:
+          skipCustomCallTest("Eigh")
+
+      elif device == "gpu":
+        if "eigh_shape" in harness.fullname:
+          skipCustomCallTest("cusolver_syevj")
+        if ("qr_" in harness.fullname or
+            "custom_linear_solve_" in harness.fullname):
+          skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
+        if "svd_shape" in harness.fullname:
+          skipCustomCallTest("cusolver_gesvdj")
+        if ("random_split_" in harness.fullname or
+            "random_gamma_" in harness.fullname or
+            "random_uniform_" in harness.fullname or
+            "random_categorical_" in harness.fullname or
+            "random_randint" in harness.fullname):
+          skipCustomCallTest("cu_threefry2x32")
+        if "tridiagonal_solve_shape" in harness.fullname:
+          skipCustomCallTest("cusparse_gtsv2_f32, cusparse_gtsv2_f64")
+
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
       with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):

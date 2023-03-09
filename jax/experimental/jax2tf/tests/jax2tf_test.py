@@ -1083,14 +1083,17 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.ConvertAndCompare(jnp.sin, jnp.zeros((2, 3), jnp.float32))
 
   def test_randint(self):
-    if jtu.device_under_test() == "gpu" and config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("randint on GPU uses custom calls; not supported")
-
     def randint():
       return jax.random.randint(
           jax.random.PRNGKey(42), shape=(), minval=0, maxval=1)
 
-    self.ConvertAndCompare(randint)
+    with contextlib.ExitStack() as stack:
+      if (jtu.device_under_test() == "gpu" and
+          config.jax2tf_default_experimental_native_lowering):
+        stack.enter_context(
+            self.assertRaisesRegex(ValueError,
+                "Cannot serialize code with custom calls whose targets .*"))
+      self.ConvertAndCompare(randint)
 
   def test_op_metadata_simple(self):
     self.skipTest("include_xla_op_metadata not yet enabled")
