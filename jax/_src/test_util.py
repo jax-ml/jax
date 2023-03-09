@@ -43,6 +43,7 @@ from jax._src import pjit as pjit_lib
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes as _dtypes
+from jax._src.interpreters import pxla
 from jax._src.config import (flags, bool_env, config,
                              raise_persistent_cache_errors,
                              persistent_cache_min_compile_time_secs)
@@ -178,25 +179,35 @@ def capture_stdout() -> Generator[Callable[[], str], None, None]:
 @contextmanager
 def count_device_put():
   device_put = dispatch.device_put
+  batched_device_put = pxla.batched_device_put
   count = [0]
 
-  def device_put_and_count(*args, **kwargs):
-    count[0] += 1
-    # device_put handlers might call `dispatch.device_put` (e.g. on an
-    # underlying payload or several). We only want to count these
-    # recursive puts once, so we skip counting more than the outermost
-    # one in such a call stack.
-    dispatch.device_put = device_put
-    try:
-      return device_put(*args, **kwargs)
-    finally:
-      dispatch.device_put = device_put_and_count
+  def make_fn_and_count(fn):
+    def fn_and_count(*args, **kwargs):
+      count[0] += 1
+      # device_put handlers might call `dispatch.device_put` (e.g. on an
+      # underlying payload or several). We only want to count these
+      # recursive puts once, so we skip counting more than the outermost
+      # one in such a call stack.
+      dispatch.device_put = device_put
+      pxla.batched_device_put = batched_device_put
+      try:
+        return fn(*args, **kwargs)
+      finally:
+        dispatch.device_put = device_put_and_count
+        pxla.batched_device_put = batched_device_put_and_count
+    return fn_and_count
+
+  device_put_and_count = make_fn_and_count(device_put)
+  batched_device_put_and_count = make_fn_and_count(batched_device_put)
 
   dispatch.device_put = device_put_and_count
+  pxla.batched_device_put = batched_device_put_and_count
   try:
     yield count
   finally:
     dispatch.device_put = device_put
+    pxla.batched_device_put = batched_device_put
 
 
 @contextmanager

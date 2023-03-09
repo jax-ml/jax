@@ -23,6 +23,8 @@ import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src.abstract_arrays import numpy_scalar_types
+from jax._src.core import ShapedArray
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
     treedef_children)
@@ -566,6 +568,20 @@ def _str_abstractify(x):
   raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid JAX type")
 _shaped_abstractify_handlers[str] = _str_abstractify
 
+def _numpy_array_abstractify(x: np.ndarray) -> ShapedArray:
+  dtype = x.dtype
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(x.shape,
+      dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True))
+_shaped_abstractify_handlers[np.ndarray] = _numpy_array_abstractify
+
+def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
+  dtype = np.dtype(x)
+  dtypes.check_valid_dtype(dtype)
+  return ShapedArray(np.shape(x),
+      dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True))
+_shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
+                                    for t in numpy_scalar_types)
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

@@ -2986,12 +2986,16 @@ class ShardArgsTest(jtu.JaxTestCase):
         sharding = jax.sharding.GSPMDSharding(
             jax.devices()[:nshards], pxla.sharding_spec_sharding_proto(spec))
 
-    bufs = pxla.shard_args(
+    results = pxla.shard_args(
         jax.devices()[:nshards], [indices], [sharding], [arg]
     )
-    self.assertEqual(len(bufs), 1)
-    self.assertEqual(len(bufs[0]), nshards)
-    for buf, idx in zip(bufs[0], indices):
+    self.assertEqual(len(results), 1)
+    if isinstance(results[0], array.ArrayImpl):
+      bufs = results[0]._arrays
+    else:
+      bufs = results[0]
+    self.assertEqual(len(bufs), nshards)
+    for buf, idx in zip(bufs, indices):
       self.assertAllClose(np.asarray(buf), x[idx], check_dtypes=False)
 
 

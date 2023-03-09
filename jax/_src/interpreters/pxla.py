@@ -421,9 +421,13 @@ def shard_args(
   return [shard_arg(arg, devices, indices[i], shardings[i])
           for i, arg in enumerate(args)]
 
-shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, Any], Sequence[Any]]] = {}
+shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, Any], Any]] = {}
 
 def _shard_token(x, devices, indices, sharding):
+  if jax.config.jax_array:
+    zeros = np.zeros((), dtype=np.dtype(np.bool_))
+    aval = api_util.shaped_abstractify(zeros)
+    return batched_device_put(aval, sharding, [zeros for i in indices], devices)
   return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
 shard_arg_handlers[core.Token] = _shard_token
 
@@ -435,6 +439,9 @@ shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 def _shard_array(x, devices, indices, sharding):
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
+  if jax.config.jax_array:
+    aval = api_util.shaped_abstractify(x)
+    return batched_device_put(aval, sharding, [x[i] for i in indices], devices)
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
@@ -443,10 +450,20 @@ def shard_device_array(x, devices, indices, sharding):
   start_indices, limit_indices, removed_dims = unzip3(
       as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
+  if jax.config.jax_array:
+    aval = api_util.shaped_abstractify(x)
+    return batched_device_put(aval, sharding, shards, devices)
   return device_put(shards, devices)
 for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
 
+
+if xla_extension_version >= 136:
+  batched_device_put = xc.batched_device_put  # pytype: disable=module-attr
+else:
+  def batched_device_put(aval, sharding, xs, devices, committed=True):
+    return [
+        d.client.buffer_from_pyval(x, d) for x, d in safe_zip(xs, devices)]
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
@@ -949,6 +966,8 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         break
     else:
       bufs.append(buf.copy_to_device(device))
+  if isinstance(x, ArrayImpl) and xla_extension_version >= 136:
+    return ArrayImpl(x.aval, sharding, bufs, committed=False)
   return bufs
 
 
@@ -2147,6 +2166,11 @@ class ExecuteReplicated:
   def __call__(self, *args):
     args = [x for i, x in enumerate(args) if i in self.kept_var_idx]
     input_bufs = self.in_handler(args)
+    if jax.config.jax_array:
+      # TODO: Remove once fastpath_enabled is no longer needed.
+      if (xla_extension_version >= 136 and
+          batched_device_put != xc.batched_device_put):
+        input_bufs = [buf._arrays for buf in input_bufs]
     if xla_extension_version >= 131:
       if (self.ordered_effects or self.has_unordered_effects
           or self.has_host_callbacks):
@@ -3817,7 +3841,15 @@ def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
           for v in jaxpr.outvars]
-  return out_handler(in_handler(outs))
+  if jax.config.jax_array:
+    # TODO(parkers): Do not unpack _arrays and let out_handler handle
+    # List[Array] rather than List[List[Array]]
+    tmps = in_handler(outs)
+    if xla_extension_version >= 136:
+      tmps = [arr._arrays for arr in tmps]
+    return out_handler(tmps)
+  else:
+    return out_handler(in_handler(outs))
 
 
 def _compile_replicated_pmap_executable_from_hlo(

@@ -45,6 +45,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import lax_reference
+from jax._src.lib import xla_extension_version
 from jax._src.lax import lax as lax_internal
 from jax._src.internal_test_util import lax_test_util
 
@@ -2980,8 +2981,12 @@ def device_put_foo_array(x: FooArray, device):
 def shard_foo_array_handler(x, devices, indices, sharding):
   device, = devices
   if isinstance(x.data, array.ArrayImpl):
-    return dispatch._device_put_jax_array(x.data, device)
-  return dispatch._device_put_array(x.data, device)
+    bufs = dispatch._device_put_jax_array(x.data, device)
+  bufs = dispatch._device_put_array(x.data, device)
+  if config.jax_array and xla_extension_version >= 136:
+    aval = core.raise_to_shaped(core.get_aval(x.data))
+    return array.ArrayImpl(aval, sharding, list(bufs), committed=True)
+  return bufs
 
 def foo_array_constant_handler(x, c):
   if config.jax_array:
