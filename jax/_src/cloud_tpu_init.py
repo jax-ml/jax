@@ -14,7 +14,7 @@
 
 import os
 
-running_in_cloud_tpu_vm = False
+running_in_cloud_tpu_vm: bool = False
 
 
 def maybe_import_libtpu():
@@ -35,7 +35,7 @@ def jax_force_tpu_init() -> bool:
   return 'JAX_FORCE_TPU_INIT' in os.environ
 
 
-def cloud_tpu_init():
+def cloud_tpu_init() -> None:
   """Automatically sets Cloud TPU topology and other env vars.
 
   **This must be called before the TPU runtime is loaded, which happens as soon

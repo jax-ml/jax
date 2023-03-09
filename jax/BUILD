@@ -102,7 +102,11 @@ py_library_providing_imports_info(
             "third_party/**/*.py",
         ],
         exclude = [
+            "_src/cloud_tpu_init.py",
             "_src/config.py",
+            "_src/lazy_loader.py",
+            "_src/monitoring.py",
+            "_src/path.py",
             "_src/pretty_printer.py",
             "_src/util.py",
             "_src/lib/**",
@@ -129,7 +133,11 @@ py_library_providing_imports_info(
     pytype_srcs = glob(["_src/**/*.pyi"]),
     visibility = ["//visibility:public"],
     deps = [
+        ":cloud_tpu_init",
         ":config",
+        ":lazy_loader",
+        ":monitoring",
+        ":path",
         ":pretty_printer",
         ":traceback_util",
         ":util",
@@ -139,11 +147,32 @@ py_library_providing_imports_info(
 )
 
 pytype_library(
+    name = "cloud_tpu_init",
+    srcs = ["_src/cloud_tpu_init.py"],
+)
+
+pytype_library(
     name = "config",
     srcs = ["_src/config.py"],
     deps = [
         "//jax/_src/lib",
     ],
+)
+
+pytype_library(
+    name = "lazy_loader",
+    srcs = ["_src/lazy_loader.py"],
+)
+
+pytype_library(
+    name = "monitoring",
+    srcs = ["_src/monitoring.py"],
+)
+
+pytype_library(
+    name = "path",
+    srcs = ["_src/path.py"],
+    deps = py_deps("epath"),
 )
 
 pytype_library(

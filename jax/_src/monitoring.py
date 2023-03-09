@@ -25,21 +25,22 @@ from typing import Callable, List
 _event_listeners: List[Callable[[str], None]] = []
 _event_duration_secs_listeners: List[Callable[[str, float], None]] = []
 
-def record_event(event: str):
+def record_event(event: str) -> None:
   """Record an event."""
   for callback in _event_listeners:
     callback(event)
 
-def record_event_duration_secs(event: str, duration: float):
+def record_event_duration_secs(event: str, duration: float) -> None:
   """Record an event duration in seconds (float)."""
   for callback in _event_duration_secs_listeners:
     callback(event, duration)
 
-def register_event_listener(callback: Callable[[str], None]):
+def register_event_listener(callback: Callable[[str], None]) -> None:
   """Register a callback to be invoked during record_event()."""
   _event_listeners.append(callback)
 
-def register_event_duration_secs_listener(callback : Callable[[str, float], None]):
+def register_event_duration_secs_listener(
+    callback : Callable[[str, float], None]) -> None:
   """Register a callback to be invoked during record_event_duration_secs()."""
   _event_duration_secs_listeners.append(callback)
 
