@@ -59,7 +59,6 @@ from jax._src.interpreters import xla
 from jax._src.lib.mlir import ir
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
                                GSPMDSharding, NamedSharding, PartitionSpec,
                                Sharding, XLACompatibleSharding)
@@ -1406,13 +1405,7 @@ def _device_put_impl(
     # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
     result_handler = pxla.global_aval_to_result_handler(aval, s, True, False)
     map_ = s.devices_indices_map(aval.shape)  # type: ignore
-    result = pxla.shard_arg(x, list(map_), list(map_.values()), s)
-    if jax.config.jax_array and xla_extension_version >= 136:
-      # TODO(parkers): Delete this check when result_handler can take Array.
-      if result.sharding == s:
-        return result
-      return result_handler(result._arrays)
-    return result_handler(result)
+    return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):

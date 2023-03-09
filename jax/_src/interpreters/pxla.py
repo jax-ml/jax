@@ -3841,15 +3841,7 @@ def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args
   map(env.setdefault, jaxpr.constvars, consts)
   outs = [xla.canonicalize_dtype(v.val) if type(v) is core.Literal else env[v]
           for v in jaxpr.outvars]
-  if jax.config.jax_array:
-    # TODO(parkers): Do not unpack _arrays and let out_handler handle
-    # List[Array] rather than List[List[Array]]
-    tmps = in_handler(outs)
-    if xla_extension_version >= 136:
-      tmps = [arr._arrays for arr in tmps]
-    return out_handler(tmps)
-  else:
-    return out_handler(in_handler(outs))
+  return out_handler(in_handler(outs))
 
 
 def _compile_replicated_pmap_executable_from_hlo(
