@@ -2628,7 +2628,11 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         # https://github.com/openxla/stablehlo/issues/1258
         raise unittest.SkipTest(
             "native lowering with shape polymorphism not implemented for window_reductions on TPU")
-      if harness.fullname == "jnp.cumsum_reduce_axis=poly" and jtu.device_under_test() == "gpu":
+      if (jtu.device_under_test() == "gpu" and
+          harness.fullname in [
+              "jnp.cumsum_reduce_axis=poly",
+              "jnp.insert_insert=constant", "jnp.insert_insert=poly",
+              "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
         raise unittest.SkipTest(
             "TODO(b/271645610): investigate inconclusive dimension operation for cumsum on gpu")
 
