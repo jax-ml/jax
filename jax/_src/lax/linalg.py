@@ -1044,7 +1044,7 @@ def _lu_unblocked(a):
     a = a.at[:, k].set(jnp.where(m_idx > k, a[:, k] / x, a[:, k]))
 
     # a[k+1:, k+1:] -= jnp.outer(a[k+1:, k], a[k, k+1:])
-    a = a - jnp.where((m_idx[:, None] > k) & (n_idx > k),
+    a = a - jnp.where((m_idx[:, None] > k) & (n_idx[None, :] > k),
                      jnp.outer(a[:, k], a[k, :]), jnp.array(0, dtype=a.dtype))
     return pivot, perm, a
 
