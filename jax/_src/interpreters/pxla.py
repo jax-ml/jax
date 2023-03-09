@@ -403,7 +403,7 @@ def shard_args(
     indices: Sequence[Sequence[Index]],
     shardings: Sequence[sharding_internal.XLACompatibleSharding],
     args,
-) -> Sequence[Sequence[xb.xla_client.Buffer]]:
+) -> Sequence[Union[Sequence[xb.xla_client.Buffer], jax.Array]]:
   """Shard each argument data array along its leading axis.
 
   Args:
