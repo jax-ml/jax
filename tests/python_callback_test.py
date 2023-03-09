@@ -43,8 +43,6 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
-debug_print = debugging.debug_print
-
 
 def _format_multiline(text):
   return textwrap.dedent(text).lstrip()

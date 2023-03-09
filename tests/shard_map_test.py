@@ -486,6 +486,44 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertIn('out_names', e.params)
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
 
+  def test_debug_print_jit(self):
+    mesh = Mesh(jax.devices(), ('i',))
+
+    @jax.jit  # NOTE: axis_index requires jit (at time of writing)
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      idx = jax.lax.axis_index('i')
+      jax.debug.print("instance {i} has value x={x}", i=idx, x=x)
+      y = jnp.cos(x)
+      jax.debug.print("instance {i} has value y={y}", i=idx, y=y)
+      return y
+
+    x = jnp.arange(2 * len(jax.devices()))
+
+    with jtu.capture_stdout() as output:
+      f(x)
+      jax.effects_barrier()
+    for i in range(len(jax.devices())):
+      self.assertIn(f'instance {i} has value', output())
+
+  def test_debug_print_eager(self):
+    mesh = Mesh(jax.devices(), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      jax.debug.print("x={x}", x=x)
+      y = jnp.cos(x)
+      jax.debug.print("y={y}", y=y)
+      return y
+
+    x = jnp.arange(2 * len(jax.devices()))
+
+    with jtu.capture_stdout() as output:
+      f(x)
+      jax.effects_barrier()
+    for i in range(len(jax.devices())):
+      self.assertIn(f'x=[{2*i} {2*i+1}]', output())
+
 
 class FunSpec(NamedTuple):
   name: str
