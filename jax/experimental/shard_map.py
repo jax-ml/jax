@@ -29,6 +29,7 @@ from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import core
 from jax._src import ad_util
 from jax._src import custom_derivatives
+from jax._src import debugging
 from jax._src import linear_util as lu
 from jax._src import ops
 from jax._src import pjit
@@ -564,11 +565,15 @@ class ShardMapTrace(core.Trace):
 
   def process_primitive(self, prim, tracers, params):
     in_vals, in_rep = unzip2((t.val, t.rep) for t in tracers)
-    f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
-    with core.eval_context(), jax.disable_jit(False):
-      out_vals = jax.jit(f)(*in_vals)
-    rule = _rep_rules.get(prim, partial(_rep_rule, prim))
-    out_rep = rule(self.mesh, *in_rep, **params) if self.check else set()
+    eager_rule = eager_rules.get(prim)
+    if eager_rule:
+      out_vals = eager_rule(self.mesh, *in_vals, **params)
+    else:
+      f = HashablePartial(_prim_applier, prim, tuple(params.items()), self.mesh)
+      with core.eval_context(), jax.disable_jit(False):
+        out_vals = jax.jit(f)(*in_vals)
+    rep_rule = _rep_rules.get(prim, partial(_rep_rule, prim))
+    out_rep = rep_rule(self.mesh, *in_rep, **params) if self.check else set()
     if prim.multiple_results:
       out_rep = [out_rep] * len(out_vals) if type(out_rep) is set else out_rep
       return map(partial(ShardMapTracer, self), out_rep, out_vals)
@@ -634,6 +639,19 @@ def _prim_applier(prim, params_tup, mesh, *args):
   spec = P(mesh.axis_names)
   return shard_map(apply, mesh, spec, spec, False)(*args)
 
+eager_rules: Dict[core.Primitive, Callable] = {}
+
+# TODO(mattjj): working around an apparent XLA or PjRt bug, remove eventually
+def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
+                               effect: debugging.DebugEffect):
+  del effect
+  with core.eval_context():
+    all_blocks = zip(*map(list, args))
+  for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
+    callback(*blocks)
+  return []
+eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
+
 # Static replication checking
 
 def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: Set[AxisName],
@@ -695,6 +713,10 @@ def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
 @register_rule(xla.xla_call_p)
 def _jit_rule(mesh, *in_rep, jaxpr, **kwargs):
   return _output_rep(mesh, jaxpr, in_rep)
+
+@register_rule(debugging.debug_callback_p)
+def _debug_callback_rule(mesh, *in_rep, **_):
+  return []
 
 # Batching
 

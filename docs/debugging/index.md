@@ -24,7 +24,7 @@ Table of contents:
     jax.debug.breakpoint()
     jax.debug.print("🤯 {y} 🤯", y=y)
     return y
-    
+
   f(2.)
 # Prints:
 # 🤯 2.0 🤯
