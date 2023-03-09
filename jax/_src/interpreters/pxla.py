@@ -462,8 +462,7 @@ if xla_extension_version >= 136:
   batched_device_put = xc.batched_device_put  # pytype: disable=module-attr
 else:
   def batched_device_put(aval, sharding, xs, devices, committed=True):
-    return [
-        d.client.buffer_from_pyval(x, d) for x, d in safe_zip(xs, devices)]
+    return [d.client.buffer_from_pyval(x, d) for x, d in safe_zip(xs, devices)]
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
@@ -966,8 +965,8 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         break
     else:
       bufs.append(buf.copy_to_device(device))
-  if isinstance(x, ArrayImpl) and xla_extension_version >= 136:
-    return ArrayImpl(x.aval, sharding, bufs, committed=False)
+  if xla_extension_version >= 136 and isinstance(x, ArrayImpl):
+    return ArrayImpl(x.aval, sharding, bufs, committed=True)
   return bufs
 
 
@@ -2166,11 +2165,6 @@ class ExecuteReplicated:
   def __call__(self, *args):
     args = [x for i, x in enumerate(args) if i in self.kept_var_idx]
     input_bufs = self.in_handler(args)
-    if jax.config.jax_array:
-      # TODO: Remove once fastpath_enabled is no longer needed.
-      if (xla_extension_version >= 136 and
-          batched_device_put != xc.batched_device_put):
-        input_bufs = [buf._arrays for buf in input_bufs]
     if xla_extension_version >= 131:
       if (self.ordered_effects or self.has_unordered_effects
           or self.has_host_callbacks):
@@ -2180,10 +2174,8 @@ class ExecuteReplicated:
         )
         self._handle_token_bufs(
             results.disassemble_prefix_into_single_device_arrays(
-                len(self.ordered_effects)
-            ),
-            results.consume_token(),
-        )
+                len(self.ordered_effects)),
+            results.consume_token())
       else:
         results = self.xla_executable.execute_sharded(input_bufs)
       if dispatch.needs_check_special():
@@ -2197,9 +2189,7 @@ class ExecuteReplicated:
           or self.has_host_callbacks):
         out_bufs = self._call_with_tokens(input_bufs)
       else:
-        out_bufs = self.xla_executable.execute_sharded_on_local_devices(
-            input_bufs
-        )
+        out_bufs = self.xla_executable.execute_sharded_on_local_devices(input_bufs)
       if dispatch.needs_check_special():
         for bufs in out_bufs:
           dispatch.check_special(self.name, bufs)

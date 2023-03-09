@@ -649,11 +649,11 @@ def _array_shard_arg(x, devices, indices, sharding):
   else:
     if tuple(x_indices) == tuple(indices):
       if xla_extension_version >= 136:
-        return xc.copy_array_to_devices_with_sharding(x, list(devices),
-                                                      sharding)
+        return xc.copy_array_to_devices_with_sharding(
+            x, list(devices), sharding)
       else:
         return [buf if buf.device() == d else buf.copy_to_device(d)
-               for buf, d in safe_zip(x._arrays, devices)]
+                for buf, d in safe_zip(x._arrays, devices)]
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
       return pxla.shard_device_array(x, devices, indices, sharding)
