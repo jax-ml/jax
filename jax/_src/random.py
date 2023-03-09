@@ -389,7 +389,7 @@ def _randint(key, shape, minval, maxval, dtype) -> Array:
 
 
 def shuffle(seed: Int, x: ArrayLike, axis: int = 0) -> Array:
-  """Shuffle the elements of an array uniformly at random along an axis.
+  """Shuffle the elements of an array uniformly at random along an axis. This is not a stateful algorithm.
 
   Args:
     seed: the seed for the random number generation.
@@ -411,7 +411,7 @@ def permutation(seed: Int,
                 x: Union[int, ArrayLike],
                 axis: int = 0,
                 independent: bool = False) -> Array:
-  """Returns a randomly permuted array or range.
+  """Returns a randomly permuted array or range. This is not a stateful algorithm.
 
   Args:
     seed: the seed for the random number generation.
@@ -473,7 +473,7 @@ def choice(seed: Int,
            replace: bool = True,
            p: Optional[RealArray] = None,
            axis: int = 0) -> Array:
-  """Generates a random sample from a given array.
+  """Generates a random sample from a given array. This is not a stateful algorithm.
 
   .. warning::
     If ``p`` has fewer non-zero elements than the requested number of samples,
@@ -551,7 +551,7 @@ def normal(seed: Int,
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
-    seed: the seed for the random number generation.
+    seed: the seed for the random number generation. This is not a stateful algorithm.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
@@ -597,7 +597,7 @@ def multivariate_normal(seed: Int,
                         shape: Optional[Shape] = None,
                         dtype: DTypeLikeFloat = None,
                         method: str = 'cholesky') -> Array:
-  """Sample multivariate normal random values with given mean and covariance.
+  """Sample multivariate normal random values with given mean and covariance. This is not a stateful algorithm.
 
   Args:
     seed: the seed for the random number generation.
@@ -671,7 +671,7 @@ def truncated_normal(seed: Int,
                      upper: RealArray,
                      shape: Optional[Union[Shape, NamedShape]] = None,
                      dtype: DTypeLikeFloat = dtypes.float_) -> Array:
-  """Sample truncated standard normal random values with given shape and dtype.
+  """Sample truncated standard normal random values with given shape and dtype. This is not a stateful algorithm.
 
   Args:
     seed: the seed for the random number generation.
@@ -728,7 +728,7 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
 def bernoulli(seed: Int,
               p: RealArray = np.float32(0.5),
               shape: Optional[Union[Shape, NamedShape]] = None) -> Array:
-  """Sample Bernoulli random values with given shape and mean.
+  """Sample Bernoulli random values with given shape and mean. This is not a stateful algorithm.
 
   Args:
     seed: the seed for the random number generation.
