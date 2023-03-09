@@ -102,9 +102,8 @@ py_library_providing_imports_info(
             "third_party/**/*.py",
         ],
         exclude = [
-            # TODO(phawkins): exclude these files after fixing up users.
-            # "_src/config.py",
-            # "_src/util.py",
+            "_src/config.py",
+            "_src/util.py",
             "_src/lib/**",
             "_src/test_util.py",
             "*_test.py",
