@@ -705,12 +705,8 @@ def _lower_native_and_run(fun_jax: Callable,
       *arg_specs_jax,
       _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
 
-  if config.jax2tf_use_stablehlo:
-    mlir_module = lowered.stablehlo()
-    xla_call_module_version = 3
-  else:
-    mlir_module = lowered.mhlo()
-    xla_call_module_version = 1
+  mlir_module = lowered.stablehlo()
+  xla_call_module_version = 3
 
   mlir_serialized_module = mlir.module_to_bytecode(mlir_module)
   # Figure out the result types and shapes
