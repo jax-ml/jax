@@ -18,8 +18,7 @@
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
-from jax._src.device_array import DeviceArray as DeviceArray
-
+from jax._src.basearray import Array as DeviceArray
 from jax._src.basearray import Array as ndarray
 
 from jax._src.numpy.lax_numpy import (
