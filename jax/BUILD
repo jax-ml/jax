@@ -107,6 +107,7 @@ py_library_providing_imports_info(
             "_src/util.py",
             "_src/lib/**",
             "_src/test_util.py",
+            "_src/traceback_util.py",
             "*_test.py",
             "**/*_test.py",
             "_src/internal_test_util/**",
@@ -130,6 +131,7 @@ py_library_providing_imports_info(
     deps = [
         ":config",
         ":pretty_printer",
+        ":traceback_util",
         ":util",
         ":version",
         "//jax/_src/lib",
@@ -148,6 +150,16 @@ pytype_library(
     name = "pretty_printer",
     srcs = ["_src/pretty_printer.py"],
     deps = [":config"] + py_deps("colorama"),
+)
+
+pytype_library(
+    name = "traceback_util",
+    srcs = ["_src/traceback_util.py"],
+    deps = [
+        ":config",
+        ":util",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_library(

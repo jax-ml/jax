@@ -16,18 +16,18 @@ import functools
 import os
 import traceback
 import types
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, Callable, List, Optional, TypeVar, cast
 
-import jax
+from jax._src.config import config
 from jax._src.lib import xla_extension
 from jax._src import util
 
 
 C = TypeVar("C", bound=Callable[..., Any])
 
-_exclude_paths = [__file__, util.__file__]
+_exclude_paths: List[str] = [__file__, util.__file__]
 
-def register_exclusion(path):
+def register_exclusion(path: str):
   _exclude_paths.append(path)
 
 _jax_message_append = (
@@ -35,7 +35,7 @@ _jax_message_append = (
     'The preceding is the original exception that occurred, unmodified.\n'
     '\n--------------------')
 
-def path_starts_with(path, path_prefix):
+def _path_starts_with(path: str, path_prefix: str) -> bool:
   path = os.path.abspath(path)
   path_prefix = os.path.abspath(path_prefix)
   try:
@@ -51,31 +51,31 @@ def path_starts_with(path, path_prefix):
     # One of the paths may not exist.
     return False
 
-def include_frame(f):
-  return not any(path_starts_with(f.f_code.co_filename, path)
+def include_frame(f: types.FrameType) -> bool:
+  return not any(_path_starts_with(f.f_code.co_filename, path)
                  for path in _exclude_paths)
 
 # When scanning stack traces, we might encounter frames from cpython that are
 # removed from printed stack traces, such as frames from parts of importlib. We
 # ignore these frames heuristically based on source and name match.
-def ignore_known_hidden_frame(f):
+def _ignore_known_hidden_frame(f: types.FrameType) -> bool:
   return 'importlib._bootstrap' in f.f_code.co_filename
 
-def add_tracebackhide_to_hidden_frames(tb):
-  for f, lineno in traceback.walk_tb(tb):
+def _add_tracebackhide_to_hidden_frames(tb: types.TracebackType):
+  for f, _lineno in traceback.walk_tb(tb):
     if not include_frame(f):
       f.f_locals["__tracebackhide__"] = True
 
-def filter_traceback(tb):
+def filter_traceback(tb: types.TracebackType) -> Optional[types.TracebackType]:
   out = None
   # Scan the traceback and collect relevant frames.
   frames = list(traceback.walk_tb(tb))
   for f, lineno in reversed(frames):
     if include_frame(f):
-      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = types.TracebackType(out, f, f.f_lasti, lineno)
   return out
 
-def add_call_stack_frames(tb):
+def _add_call_stack_frames(tb: types.TracebackType) -> types.TracebackType:
   # Continue up the call stack.
   #
   # We would like to avoid stepping too far up, e.g. past the exec/eval point of
@@ -89,30 +89,32 @@ def add_call_stack_frames(tb):
 
   reached_module_level = False
   for f, lineno in traceback.walk_stack(tb.tb_frame):
-    if ignore_known_hidden_frame(f):
+    if _ignore_known_hidden_frame(f):
       continue
     if reached_module_level and f.f_code.co_name != '<module>':
       break
     if include_frame(f):
-      out = types.TracebackType(out, f, f.f_lasti, lineno)  # pytype: disable=wrong-arg-count
+      out = types.TracebackType(out, f, f.f_lasti, lineno)
     if f.f_code.co_name == '<module>':
       reached_module_level = True
   return out
 
-def is_reraiser_frame(f):
+def _is_reraiser_frame(f: traceback.FrameSummary) -> bool:
   return (f.filename == __file__ and
           f.name == 'reraise_with_filtered_traceback')
 
-def is_under_reraiser(e):
+def _is_under_reraiser(e: BaseException) -> bool:
+  if e.__traceback__ is None:
+    return False
   tb = traceback.extract_stack(e.__traceback__.tb_frame)
-  return any(is_reraiser_frame(f) for f in tb[:-1])
+  return any(_is_reraiser_frame(f) for f in tb[:-1])
 
-def format_exception_only(e):
+def format_exception_only(e: BaseException) -> str:
   return ''.join(traceback.format_exception_only(type(e), e)).strip()
 
 class UnfilteredStackTrace(Exception): pass
 
-def running_under_ipython():
+def _running_under_ipython() -> bool:
   """Returns true if we appear to be in an IPython session."""
   try:
     get_ipython()  # type: ignore
@@ -120,15 +122,15 @@ def running_under_ipython():
   except NameError:
     return False
 
-def ipython_supports_tracebackhide():
+def _ipython_supports_tracebackhide() -> bool:
   """Returns true if the IPython version supports __tracebackhide__."""
   import IPython  # type: ignore
   return IPython.version_info[:2] >= (7, 17)
 
-def filtering_mode():
-  mode = jax.config.jax_traceback_filtering
+def _filtering_mode() -> str:
+  mode = config.jax_traceback_filtering
   if mode is None or mode == "auto":
-    if (running_under_ipython() and ipython_supports_tracebackhide()):
+    if (_running_under_ipython() and _ipython_supports_tracebackhide()):
       mode = "tracebackhide"
     else:
       mode = "remove_frames"
@@ -163,11 +165,11 @@ def api_boundary(fun: C) -> C:
     try:
       return fun(*args, **kwargs)
     except Exception as e:
-      mode = filtering_mode()
-      if is_under_reraiser(e) or mode == "off":
+      mode = _filtering_mode()
+      if _is_under_reraiser(e) or mode == "off":
         raise
       if mode == "tracebackhide":
-        add_tracebackhide_to_hidden_frames(e.__traceback__)
+        _add_tracebackhide_to_hidden_frames(e.__traceback__)
         raise
       assert mode == "remove_frames", mode
 
@@ -177,7 +179,7 @@ def api_boundary(fun: C) -> C:
         msg = format_exception_only(e)
         msg = f'{msg}\n\n{_jax_message_append}'
         unfiltered = UnfilteredStackTrace(msg)
-        unfiltered.with_traceback(add_call_stack_frames(e.__traceback__))
+        unfiltered.with_traceback(_add_call_stack_frames(e.__traceback__))
         unfiltered.__context__ = e.__context__
         unfiltered.__cause__ = e.__cause__
         unfiltered.__suppress_context__ = e.__suppress_context__
