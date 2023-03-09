@@ -30,7 +30,7 @@ import enum
 import sys
 from functools import partial
 from typing import List, NamedTuple, Optional, Sequence, Tuple, Union
-from jax.config import config
+from jax._src.config import config
 
 try:
   import colorama  # pytype: disable=import-error

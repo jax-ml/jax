@@ -103,6 +103,7 @@ py_library_providing_imports_info(
         ],
         exclude = [
             "_src/config.py",
+            "_src/pretty_printer.py",
             "_src/util.py",
             "_src/lib/**",
             "_src/test_util.py",
@@ -128,6 +129,7 @@ py_library_providing_imports_info(
     visibility = ["//visibility:public"],
     deps = [
         ":config",
+        ":pretty_printer",
         ":util",
         ":version",
         "//jax/_src/lib",
@@ -143,6 +145,12 @@ pytype_library(
 )
 
 pytype_library(
+    name = "pretty_printer",
+    srcs = ["_src/pretty_printer.py"],
+    deps = [":config"] + py_deps("colorama"),
+)
+
+pytype_library(
     name = "util",
     srcs = ["_src/util.py"],
     deps = [
@@ -155,6 +163,8 @@ pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
 )
+
+# Public JAX libraries below this point.
 
 py_library_providing_imports_info(
     name = "experimental",
