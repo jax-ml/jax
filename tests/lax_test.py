@@ -2852,8 +2852,12 @@ class FooTyRules:
   @staticmethod
   def global_sharded_result_handler(aval, out_sharding, committed,
                                     is_out_sharding_from_xla):
-    def handler(bufs):
-      buf, = bufs
+    def handler(arr):
+      from jax._src.array import ArrayImpl
+      if isinstance(arr, ArrayImpl):
+        buf, = arr._arrays
+      else:
+        buf, = arr
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
