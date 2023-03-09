@@ -1054,7 +1054,7 @@ jax_test(
     name = "shard_map_test",
     srcs = ["shard_map_test.py"],
     shard_count = {
-        "cpu": 10,
+        "cpu": 20,
         "gpu": 10,
         "tpu": 10,
     },
