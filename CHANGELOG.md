@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.6
+## jax 0.4.7
+
+## jaxlib 0.4.7
+
+## jax 0.4.6 (Mar 9, 2023)
 
 * Changes
   * `jax.tree_util` now contain a set of APIs that allow user to define keys for their
@@ -29,7 +33,7 @@ Remember to align the itemized text with the first line of an item within a list
     * `AttributeKeyPathEntry` : use `GetAttrKey` instead.
     * `GetitemKeyPathEntry` : use `SequenceKey` or `DictKey` instead.
 
-## jaxlib 0.4.6
+## jaxlib 0.4.6 (Mar 9, 2023)
 
 ## jax 0.4.5 (Mar 2, 2023)
 
