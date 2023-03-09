@@ -299,7 +299,7 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
       lax.reshape(floats * (maxval - minval) + minval, shape.positional))
 
 
-def randint(key: KeyArray,
+def randint(seed: Int,
             shape: Shape,
             minval: IntegerArray,
             maxval: IntegerArray,
@@ -307,7 +307,7 @@ def randint(key: KeyArray,
   """Sample uniform random values in [minval, maxval) with given shape/dtype.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation. Is an int
     shape: a tuple of nonnegative integers representing the shape.
     minval: int or array of ints broadcast-compatible with ``shape``, a minimum
       (inclusive) value for the range.
@@ -319,6 +319,7 @@ def randint(key: KeyArray,
   Returns:
     A random array with the specified shape and dtype.
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.canonicalize_shape(shape)
@@ -387,17 +388,18 @@ def _randint(key, shape, minval, maxval, dtype) -> Array:
   return lax.add(minval, lax.convert_element_type(random_offset, dtype))
 
 
-def shuffle(key: KeyArray, x: ArrayLike, axis: int = 0) -> Array:
+def shuffle(seed: Int, x: ArrayLike, axis: int = 0) -> Array:
   """Shuffle the elements of an array uniformly at random along an axis.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     x: the array to be shuffled.
     axis: optional, an int axis along which to shuffle (default 0).
 
   Returns:
     A shuffled version of x.
   """
+  key = PRNGKey(seed)
   msg = ("jax.random.shuffle is deprecated and will be removed in a future release. "
          "Use jax.random.permutation with independent=True.")
   warnings.warn(msg, FutureWarning)
@@ -405,14 +407,14 @@ def shuffle(key: KeyArray, x: ArrayLike, axis: int = 0) -> Array:
   return _shuffle(key, x, axis)  # type: ignore
 
 
-def permutation(key: KeyArray,
+def permutation(seed: Int,
                 x: Union[int, ArrayLike],
                 axis: int = 0,
                 independent: bool = False) -> Array:
   """Returns a randomly permuted array or range.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     x: int or array. If x is an integer, randomly shuffle np.arange(x).
       If x is an array, randomly shuffle its elements.
     axis: int, optional. The axis which x is shuffled along. Default is 0.
@@ -422,6 +424,7 @@ def permutation(key: KeyArray,
   Returns:
     A shuffled version of x or array range
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   _check_arraylike("permutation", x)
   axis = canonicalize_axis(axis, np.ndim(x) or 1)
@@ -464,7 +467,7 @@ def _shuffle(key, x, axis) -> Array:
   return x
 
 
-def choice(key: KeyArray,
+def choice(seed: Int,
            a: Union[int, ArrayLike],
            shape: Shape = (),
            replace: bool = True,
@@ -478,7 +481,7 @@ def choice(key: KeyArray,
     function is ill-defined. Please make sure to use appropriate inputs.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     a : array or int. If an ndarray, a random sample is generated from
       its elements. If an int, the random sample is generated as if a were
       arange(a).
@@ -496,6 +499,7 @@ def choice(key: KeyArray,
   Returns:
     An array of shape `shape` containing samples from `a`.
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   if not isinstance(shape, Sequence):
     raise TypeError("shape argument of jax.random.choice must be a sequence, "
@@ -541,13 +545,13 @@ def choice(key: KeyArray,
                         np.insert(np.delete(arr.shape, axis), axis, shape))
 
 
-def normal(key: KeyArray,
+def normal(seed: Int,
            shape: Union[Shape, NamedShape] = (),
            dtype: DTypeLikeFloat = dtypes.float_) -> Array:
   """Sample standard normal random values with given shape and float dtype.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     shape: optional, a tuple of nonnegative integers representing the result
       shape. Default ().
     dtype: optional, a float dtype for the returned values (default float64 if
@@ -556,6 +560,7 @@ def normal(key: KeyArray,
   Returns:
     A random array with the specified shape and dtype.
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   if not dtypes.issubdtype(dtype, np.inexact):
     raise ValueError(f"dtype argument to `normal` must be a float or complex dtype, "
@@ -586,7 +591,7 @@ def _normal_real(key, shape, dtype) -> Array:
   return lax.mul(np.array(np.sqrt(2), dtype), lax.erf_inv(u))
 
 
-def multivariate_normal(key: KeyArray,
+def multivariate_normal(seed: Int,
                         mean: RealArray,
                         cov: RealArray,
                         shape: Optional[Shape] = None,
@@ -595,7 +600,7 @@ def multivariate_normal(key: KeyArray,
   """Sample multivariate normal random values with given mean and covariance.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     mean: a mean vector of shape ``(..., n)``.
     cov: a positive definite covariance matrix of shape ``(..., n, n)``. The
       batch shape ``...`` must be broadcast-compatible with that of ``mean``.
@@ -614,6 +619,7 @@ def multivariate_normal(key: KeyArray,
     ``shape + mean.shape[-1:]`` if ``shape`` is not None, or else
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   mean, cov = _promote_dtypes_inexact(mean, cov)
   if method not in {'svd', 'eigh', 'cholesky'}:
@@ -660,7 +666,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   return result
 
 
-def truncated_normal(key: KeyArray,
+def truncated_normal(seed: Int,
                      lower: RealArray,
                      upper: RealArray,
                      shape: Optional[Union[Shape, NamedShape]] = None,
@@ -668,7 +674,7 @@ def truncated_normal(key: KeyArray,
   """Sample truncated standard normal random values with given shape and dtype.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     lower: a float or array of floats representing the lower bound for
       truncation. Must be broadcast-compatible with ``upper``.
     upper: a float or array of floats representing the  upper bound for
@@ -685,6 +691,7 @@ def truncated_normal(key: KeyArray,
     ``shape`` is not None, or else by broadcasting ``lower`` and ``upper``.
     Returns values in the open interval ``(lower, upper)``.
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   if not dtypes.issubdtype(dtype, np.floating):
     raise ValueError(f"dtype argument to `truncated_normal` must be a float "
@@ -718,13 +725,13 @@ def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
       lax.nextafter(lax.stop_gradient(upper), np.array(-np.inf, dtype=dtype)))
 
 
-def bernoulli(key: KeyArray,
+def bernoulli(seed: Int,
               p: RealArray = np.float32(0.5),
               shape: Optional[Union[Shape, NamedShape]] = None) -> Array:
   """Sample Bernoulli random values with given shape and mean.
 
   Args:
-    key: a PRNG key used as the random key.
+    seed: the seed for the random number generation.
     p: optional, a float or array of floats for the mean of the random
       variables. Must be broadcast-compatible with ``shape``. Default 0.5.
     shape: optional, a tuple of nonnegative integers representing the result
@@ -735,6 +742,7 @@ def bernoulli(key: KeyArray,
     A random array with boolean dtype and shape given by ``shape`` if ``shape``
     is not None, or else ``p.shape``.
   """
+  key = PRNGKey(seed)
   key, _ = _check_prng_key(key)
   dtype = dtypes.canonicalize_dtype(lax.dtype(p))
   if shape is not None:
