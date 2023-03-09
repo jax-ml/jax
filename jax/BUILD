@@ -24,6 +24,7 @@ load(
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
+    "pytype_strict_library",
 )
 
 package(default_visibility = [":internal"])
@@ -101,6 +102,10 @@ py_library_providing_imports_info(
             "third_party/**/*.py",
         ],
         exclude = [
+            # TODO(phawkins): exclude these files after fixing up users.
+            # "_src/config.py",
+            # "_src/util.py",
+            "_src/lib/**",
             "_src/test_util.py",
             "*_test.py",
             "**/*_test.py",
@@ -122,18 +127,34 @@ py_library_providing_imports_info(
     lib_rule = pytype_library,
     pytype_srcs = glob(["_src/**/*.pyi"]),
     visibility = ["//visibility:public"],
-    deps = select({
-               ":enable_jaxlib_build": [":jaxlib_deps"],
-               "//conditions:default": [],
-           }) +
-           py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
+    deps = [
+        ":config",
+        ":util",
+        ":version",
+        "//jax/_src/lib",
+    ] + py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
 )
 
-py_library(
-    name = "jaxlib_deps",
+pytype_library(
+    name = "config",
+    srcs = ["_src/config.py"],
     deps = [
-        "//jaxlib",
+        "//jax/_src/lib",
     ],
+)
+
+pytype_library(
+    name = "util",
+    srcs = ["_src/util.py"],
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "version",
+    srcs = ["version.py"],
 )
 
 py_library_providing_imports_info(

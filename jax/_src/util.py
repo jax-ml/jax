@@ -26,7 +26,7 @@ from typing import (Any, Callable, Generic, Iterable, Iterator, List,
 import numpy as np
 
 from jax._src.lib import xla_client as xc
-from jax.config import config
+from jax._src.config import config
 
 logger = logging.getLogger(__name__)
 

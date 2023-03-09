@@ -1,4 +1,4 @@
-# Copyright 2021 The JAX Authors.
+# Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# flake8: noqa: F401
-import jaxlib.mlir.dialects.builtin as builtin
-import jaxlib.mlir.dialects.chlo as chlo
-import jaxlib.mlir.dialects.mhlo as mhlo
-import jaxlib.mlir.dialects.func as func
-import jaxlib.mlir.dialects.ml_program as ml_program
-import jaxlib.mlir.dialects.sparse_tensor as sparse_tensor
+load("//jaxlib:jax.bzl", "pytype_library")
 
-import jaxlib.mlir.dialects.stablehlo as stablehlo
+package(default_visibility = ["//:__subpackages__"])
 
-# Alias that is set up to abstract away the transition from MHLO to StableHLO.
-import jaxlib.mlir.dialects.stablehlo as hlo
+pytype_library(
+    name = "lib",
+    srcs = [
+        "__init__.py",
+        "mlir/__init__.py",
+        "mlir/dialects/__init__.py",
+    ],
+    deps = [
+        "//jax:version",
+    ] + select({
+        "//jax:enable_jaxlib_build": [
+            "//jaxlib",
+        ],
+        "//conditions:default": [],
+    }),
+)

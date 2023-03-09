@@ -135,7 +135,7 @@ class Config:
 
   def config_with_absl(self):
     # Run this before calling `app.run(main)` etc
-    import absl.flags as absl_FLAGS  # noqa: F401
+    import absl.flags as absl_FLAGS  # noqa: F401  # pytype: disable=import-error
     from absl import app, flags as absl_flags  # pytype: disable=import-error
 
     self.use_absl = True
@@ -166,7 +166,7 @@ class Config:
       jax_argv = itertools.takewhile(lambda a: a != '--', sys.argv)
       jax_argv = ['', *(a for a in jax_argv if a.startswith('--jax'))]
 
-      import absl.flags
+      import absl.flags  # pytype: disable=import-error
       self.config_with_absl()
       absl.flags.FLAGS(jax_argv, known_only=True)
       self.complete_absl_config(absl.flags)

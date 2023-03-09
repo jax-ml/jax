@@ -26,6 +26,7 @@ load("@org_tensorflow//tensorflow/core/platform:build_config_root.bzl", _tf_cuda
 cuda_library = _cuda_library
 rocm_library = _rocm_library
 pytype_library = native.py_library
+pytype_strict_library = native.py_library
 pytype_test = native.py_test
 pyx_library = _pyx_library
 pybind_extension = _pybind_extension

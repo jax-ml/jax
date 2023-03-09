@@ -61,6 +61,7 @@ from jax._src import pjit
 from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
+from jax._src.lib import pytree
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.interpreters import pxla
@@ -271,7 +272,7 @@ def spvalues_to_avals(
   return tree_map(spvalue_to_aval, spvalues, is_leaf=_is_spvalue)
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Implementation of sparsify() using tracers.
 
 def popattr(obj: Any, name: str) -> Any:
@@ -375,7 +376,7 @@ def _sparsify_with_tracer(fun):
     return tree_unflatten(out_tree(), out)
   return _wrapped
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Implementation of sparsify() using a jaxpr interpreter.
 
 def eval_sparse(
@@ -440,7 +441,10 @@ def eval_sparse(
   return safe_map(read, jaxpr.outvars)
 
 def sparsify_raw(f):
-  def wrapped(spenv: SparsifyEnv, *spvalues: SparsifyValue, **params: Any) -> Tuple[Sequence[SparsifyValue], bool]:
+
+  def wrapped(
+      spenv: SparsifyEnv, *spvalues: SparsifyValue, **params: Any
+  ) -> Tuple[Sequence[SparsifyValue], pytree.PyTreeDef]:
     spvalues_flat, in_tree = tree_flatten(spvalues, is_leaf=_is_spvalue)
     in_avals_flat = spvalues_to_avals(spenv, spvalues_flat)
     wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, params), in_tree)
@@ -450,6 +454,7 @@ def sparsify_raw(f):
       raise Exception("Internal: eval_sparse does not return expected number of arguments. "
                       "Got {result} for avals {out_avals_flat}")
     return result, out_tree()
+
   return wrapped
 
 def _sparsify_with_interpreter(f):
@@ -491,7 +496,7 @@ def sparsify(f, use_tracer=False):
     return _sparsify_with_interpreter(f)
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # Sparse rules for various primitives
 
 def _ensure_unique_indices(spenv, spvalue):
@@ -680,7 +685,6 @@ def _reduce_sum_sparse(spenv, *spvalues, axes):
 sparse_rules_bcoo[lax.reduce_sum_p] = _reduce_sum_sparse
 
 
-
 def _gather_sparse_rule(spenv, *args, dimension_numbers, slice_sizes, unique_indices,
                         indices_are_sorted, mode, fill_value):
   operand, start_indices = spvalues_to_arrays(spenv, args)
@@ -697,7 +701,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
   #   shared data & indices when generating the sparsified jaxpr. The
   #   current approach produces valid sparsified while loops, but they
   #   don't work in corner cases (see associated TODO in sparsify_test.py)
-  out_tree = None
+  out_tree: Optional[pytree.PyTreeDef] = None
 
   @lu.wrap_init
   def wrapped(*args_flat):
@@ -718,6 +722,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
   avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
   sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
+  assert out_tree is not None
   return sp_jaxpr, out_tree
 
 def _while_sparse(spenv, *spvalues, cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts):
@@ -846,7 +851,7 @@ def _todense_sparse_rule(spenv, spvalue, *, tree):
 sparse_rules_bcoo[sparse.todense_p] = _todense_sparse_rule
 
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # BCOO methods derived from sparsify
 # defined here to avoid circular imports
 
@@ -908,7 +913,7 @@ _bcoo_methods = {
 for method, impl in _bcoo_methods.items():
   setattr(BCOO, method, impl)
 
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # BCSR methods derived from sparsify
 # defined here to avoid circular imports
 

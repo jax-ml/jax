@@ -42,7 +42,7 @@ except Exception as err:
 # Checks the jaxlib version before importing anything else from jaxlib.
 # Returns the jaxlib version string.
 def check_jaxlib_version(jax_version: str, jaxlib_version: str,
-                         minimum_jaxlib_version: str):
+                         minimum_jaxlib_version: str) -> Tuple[int, ...]:
   # Regex to match a dotted version prefix 0.1.23.456.789 of a PEP440 version.
   # PEP440 allows a number of non-numeric suffixes, which we allow also.
   # We currently do not allow an epoch.
@@ -103,7 +103,7 @@ import jaxlib.gpu_linalg as gpu_linalg  # pytype: disable=import-error
 # Only for the internal usage of the JAX developers, we expose a version
 # number that can be used to perform changes without breaking the main
 # branch on the Jax github.
-xla_extension_version = getattr(xla_client, '_version', 0)
+xla_extension_version: int = getattr(xla_client, '_version', 0)
 
 import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 
