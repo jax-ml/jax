@@ -3057,7 +3057,7 @@ def vdot(a, b, *, precision=None):
   util._check_arraylike("vdot", a, b)
   if issubdtype(_dtype(a), complexfloating):
     a = ufuncs.conj(a)
-  return dot(a.ravel(), b.ravel(), precision=precision)
+  return dot(ravel(a), ravel(b), precision=precision)
 
 
 @util._wraps(np.tensordot, lax_description=_PRECISION_DOC)
@@ -3487,9 +3487,9 @@ def sort(a, axis: Optional[int] = -1, kind='quicksort', order=None):
     raise ValueError("'order' argument to sort is not supported.")
 
   if axis is None:
-    return lax.sort(a.ravel(), dimension=0)
+    return lax.sort(ravel(a), dimension=0)
   else:
-    return lax.sort(a, dimension=_canonicalize_axis(axis, ndim(a)))
+    return lax.sort(asarray(a), dimension=_canonicalize_axis(axis, ndim(a)))
 
 @util._wraps(np.sort_complex)
 @jit
