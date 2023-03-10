@@ -1220,7 +1220,7 @@ def _bcoo_spdot_general_abstract_eval(lhs_data, lhs_indices, rhs_data, rhs_indic
 
   data_aval = core.ShapedArray(data_shape, lhs_data.dtype)
   indices_aval = core.ShapedArray(indices_shape, lhs_indices.dtype)
-  _validate_bcoo(data_aval, indices_aval, out_shape)
+  _validate_bcoo(data_aval, indices_aval, out_shape)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
 
   return data_aval, indices_aval
 
