@@ -25,7 +25,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import array
 from jax._src import sharding
-from jax.tree_util import PyTreeDef
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
@@ -39,12 +38,11 @@ import numpy as np
 
 # This needs to be top-level for the jax compilation cache.
 @functools.partial(jax.pmap, axis_name='hosts')
-def _psum(x: PyTreeDef) -> PyTreeDef:
+def _psum(x: Any) -> Any:
   return jax.lax.psum(x, 'hosts')
 
 
-def broadcast_one_to_all(in_tree: PyTreeDef,
-                         is_source: Optional[bool] = None) -> PyTreeDef:
+def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
   """Broadcast data from a source host (host 0 by default) to all other hosts.
 
   Args:
@@ -127,7 +125,7 @@ def _handle_array_process_allgather(inp, tiled):
   return np.asarray(out.addressable_data(0))
 
 
-def process_allgather(in_tree: PyTreeDef, tiled: bool = False) -> PyTreeDef:
+def process_allgather(in_tree: Any, tiled: bool = False) -> Any:
   """Gather data from across processes.
 
   Args:

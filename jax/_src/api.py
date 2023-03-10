@@ -2106,7 +2106,7 @@ def pmap(
 class PmapCallInfo(NamedTuple):
   flat_fun: lu.WrappedFun
   in_tree: PyTreeDef
-  out_tree: PyTreeDef
+  out_tree: Callable[[], PyTreeDef]
   flat_args: Sequence[Any]
   donated_invars: Sequence[bool]
   in_axes_flat: Sequence[Optional[int]]

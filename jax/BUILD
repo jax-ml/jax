@@ -121,7 +121,6 @@ py_library_providing_imports_info(
         "_src/random.py",
         "_src/sharding.py",
         "_src/stages.py",
-        "_src/tree_util.py",
         "_src/typing.py",
     ] + glob(
         [
@@ -181,6 +180,7 @@ py_library_providing_imports_info(
         ":profiler",
         ":source_info_util",
         ":traceback_util",
+        ":tree_util",
         ":util",
         ":version",
         ":xla_bridge",
@@ -274,6 +274,17 @@ pytype_library(
     deps = [
         ":traceback_util",
         ":version",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_library(
+    name = "tree_util",
+    srcs = ["_src/tree_util.py"],
+    visibility = [":internal"] + jax_visibility("tree_util"),
+    deps = [
+        ":traceback_util",
+        ":util",
         "//jax/_src/lib",
     ],
 )

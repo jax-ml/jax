@@ -1057,6 +1057,9 @@ jax_test(
         "gpu": 10,
         "tpu": 10,
     },
+    deps = [
+        "//jax:tree_util",
+    ],
 )
 
 jax_test(
