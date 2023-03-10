@@ -43,6 +43,7 @@ List of Available Functions
     poisson
     rademacher
     randint
+    rayleigh
     shuffle
     split
     t

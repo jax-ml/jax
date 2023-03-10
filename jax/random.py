@@ -178,6 +178,7 @@ from jax._src.random import (
   rademacher as rademacher,
   randint as randint,
   random_gamma_p as random_gamma_p,
+  rayleigh as rayleigh,
   rbg_key as rbg_key,
   shuffle as shuffle,
   split as split,
