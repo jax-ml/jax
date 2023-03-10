@@ -978,9 +978,12 @@ def _pe_custom_res(params_known, aval):
   mesh = params_known['mesh']
   return _unshard_aval(mesh, {0: (*mesh.axis_names,)}, aval)
 
+def _pe_custom_ctx(params):
+  return core.extend_axis_env_nd(params['mesh'].shape.items())
+
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr', _pe_custom_params,
-            res_aval=_pe_custom_res)
+            res_aval=_pe_custom_res, ctx=_pe_custom_ctx)
 
 # Misc
 

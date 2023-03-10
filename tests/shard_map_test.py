@@ -524,6 +524,20 @@ class ShardMapTest(jtu.JaxTestCase):
     for i in range(len(jax.devices())):
       self.assertIn(f'x=[{2*i} {2*i+1}]', output())
 
+  def test_partial_eval_custom_axis_env(self):
+    mesh = Mesh(jax.devices(), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'),
+             check_rep=False)  # check_rep=False b/c no scan rep rule yet
+    def f(_):
+      _, idx = jax.lax.scan(lambda _, __: (None, jax.lax.axis_index('i')),
+                            None, None, length=1)
+      return idx
+
+    xs = jnp.arange(16.)
+    jax.eval_shape(jax.grad(lambda x: jax.remat(f)(x).sum().astype('float32')),
+                   xs)
+
 
 class FunSpec(NamedTuple):
   name: str
