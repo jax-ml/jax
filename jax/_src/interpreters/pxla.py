@@ -31,7 +31,7 @@
 from __future__ import annotations
 
 import enum
-from contextlib import contextmanager, ContextDecorator
+from contextlib import contextmanager
 from collections import defaultdict, OrderedDict, namedtuple
 import dataclasses
 from functools import partial, lru_cache, cached_property
@@ -60,6 +60,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import mesh
 from jax._src import profiler
 from jax._src import sharding as sharding_internal
 from jax._src import source_info_util
@@ -68,7 +69,6 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
-from jax._src import config as jax_config
 from jax._src.config import flags
 from jax._src.core import ConcreteArray, ShapedArray
 from jax._src.interpreters import ad
@@ -113,10 +113,11 @@ Replicated = pmap_lib.Replicated
 
 _UNSHARDED_INSTANCE = NoSharding()
 AvalDimSharding = Union[Unstacked, Chunked, NoSharding]
+Mesh = jax._src.mesh.Mesh
+MeshAxisName = mesh.MeshAxisName
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = pmap_lib.ShardingSpec
 
-MeshAxisName = Any
 OpShardingType = Any
 
 PartitionSpec = sharding_internal.PartitionSpec
@@ -191,7 +192,7 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   # specially over some mesh axes.
   if replicated_maxes:
     last_tile_dims = []
-    axes_by_type: Dict[OpShardingType, List[MeshAxisName]] = {}
+    axes_by_type: Dict[OpShardingType, List[jax._src.mesh.MeshAxisName]] = {}
     size_by_type: Dict[OpShardingType, int] = defaultdict(lambda: 1)
     assert {x[0] for x in replicated_maxes}.issuperset(set(special_axes.keys()))
     for axis, size in replicated_maxes:
@@ -541,7 +542,7 @@ that would mean that a flat list of chunks would get assigned to a flattened lis
 mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
 mesh devices ndarray would have to be transposed before flattening and assignment.
 """
-ArrayMapping = OrderedDictType[MeshAxisName, int]
+ArrayMapping = OrderedDictType[mesh.MeshAxisName, int]
 ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTOAxisResource,
                                         UnspecifiedValue]
 
@@ -691,7 +692,7 @@ def make_sharded_device_array(
     sharding_spec = _create_pmap_sharding_spec(aval)
 
   if jax.config.jax_array:
-    mesh = thread_resources.env.physical_mesh
+    mesh = jax._src.mesh.thread_resources.env.physical_mesh
     if mesh.empty:
       sharding = sharding_internal.PmapSharding(
           np.asarray([d.device() for d in device_buffers]), sharding_spec)
@@ -1993,8 +1994,9 @@ def global_avals_to_results_handler(
   else:
     # This path is taken when the outputs are SDAs.
     assert all(isinstance(s, sharding_internal.NamedSharding) for s in shardings)
-    local_out_avals = [s.mesh._global_to_local(get_array_mapping(s.spec), aval)
-                       for aval, s in safe_zip(global_out_avals, shardings)]
+    local_out_avals = [
+        mesh_global_to_local(s.mesh, get_array_mapping(s.spec), aval)  # type: ignore
+        for aval, s in safe_zip(global_out_avals, shardings)]
     local_shardings = [sharding_internal.NamedSharding(s.mesh.local_mesh, s.spec)  # type: ignore
                        for s in shardings]
     return local_avals_to_results_handler(local_out_avals, local_shardings)
@@ -2388,250 +2390,6 @@ mlir.register_lowering(xla_pmap_p, _pmap_lowering)
 
 # ------------------- xmap -------------------
 
-class Mesh(ContextDecorator):
-  """Declare the hardware resources available in the scope of this manager.
-
-  In particular, all ``axis_names`` become valid resource names inside the
-  managed block and can be used e.g. in the ``in_axis_resources`` argument of
-  :py:func:`jax.experimental.pjit.pjit`. Also see JAX's multi-process programming
-  model (https://jax.readthedocs.io/en/latest/multi_process.html)
-  and the Distributed arrays and automatic parallelization tutorial
-  (https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html)
-
-  If you are compiling in multiple threads, make sure that the
-  ``with Mesh`` context manager is inside the function that the threads will
-  execute.
-
-  Args:
-    devices: A NumPy ndarray object containing JAX device objects (as
-      obtained e.g. from :py:func:`jax.devices`).
-    axis_names: A sequence of resource axis names to be assigned to the
-      dimensions of the ``devices`` argument. Its length should match the
-      rank of ``devices``.
-
-  Example:
-
-    >>> from jax.experimental.pjit import pjit
-    >>> from jax.sharding import Mesh
-    >>> from jax.sharding import PartitionSpec as P
-    >>> import numpy as np
-    ...
-    >>> inp = np.arange(16).reshape((8, 2))
-    >>> devices = np.array(jax.devices()).reshape(4, 2)
-    ...
-    >>> # Declare a 2D mesh with axes `x` and `y`.
-    >>> global_mesh = Mesh(devices, ('x', 'y'))
-    >>> # Use the mesh object directly as a context manager.
-    >>> with global_mesh:
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-
-    >>> # Initialize the Mesh and use the mesh as the context manager.
-    >>> with Mesh(devices, ('x', 'y')) as global_mesh:
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-
-    >>> # Also you can use it as `with ... as ...`.
-    >>> global_mesh = Mesh(devices, ('x', 'y'))
-    >>> with global_mesh as m:
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-
-    >>> # You can also use it as `with Mesh(...)`.
-    >>> with Mesh(devices, ('x', 'y')):
-    ...   out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(inp)
-  """
-
-  devices: np.ndarray
-  axis_names: Tuple[MeshAxisName, ...]
-
-  def __init__(self, devices: Union[np.ndarray, Sequence[xc.Device]],
-               axis_names: Union[str, Sequence[MeshAxisName]]):
-    if not isinstance(devices, np.ndarray):
-      devices = np.array(devices)
-    if isinstance(axis_names, str):
-      axis_names = (axis_names,)
-    assert devices.ndim == len(axis_names)
-    # TODO: Make sure that devices are unique? At least with the quick and
-    #       dirty check that the array size is not larger than the number of
-    #       available devices?
-    self.devices = devices.copy()
-    self.devices.flags.writeable = False
-    self.axis_names = tuple(axis_names)
-
-  def __eq__(self, other):
-    if not isinstance(other, Mesh):
-      return False
-    # This is a performance optimization. Comparing thousands of devices
-    # can be expensive.
-    if id(self) == id(other):
-      return True
-    return (self.axis_names == other.axis_names and
-            np.array_equal(self.devices, other.devices))
-
-  def __hash__(self):
-    if not hasattr(self, '_hash'):
-      self._hash = hash(
-          (self.axis_names, tuple(self.devices.flat), self.devices.shape))
-    return self._hash
-
-  def __setattr__(self, name, value):
-    if hasattr(self, name):
-      raise RuntimeError("Cannot reassign attributes of immutable mesh objects")
-    super().__setattr__(name, value)
-
-  def __enter__(self):
-    new_env = thread_resources.stack[-1].with_mesh(self)
-    thread_resources.stack.append(new_env)
-    thread_resources.env = new_env
-    jax_config.update_thread_local_jit_state(
-        mesh_context_manager=tuple(t.physical_mesh for t in thread_resources.stack
-                                   if not t.physical_mesh.empty))
-    return self
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    thread_resources.stack.pop()
-    thread_resources.env = thread_resources.stack[-1]
-    jax_config.update_thread_local_jit_state(
-        mesh_context_manager=tuple(t.physical_mesh for t in thread_resources.stack
-                                   if not t.physical_mesh.empty))
-    return False
-
-  @property
-  def shape(self):
-    return OrderedDict((name, size) for name, size in safe_zip(self.axis_names, self.devices.shape))
-
-  @property
-  def size(self):
-    return np.prod(list(self.shape.values()))
-
-  @property
-  def empty(self):
-    return self.devices.ndim == 0
-
-  @property
-  def is_multi_process(self):
-    return self.devices.size != len(self.local_devices)
-
-  @cached_property
-  def local_mesh(self):
-    return self._local_mesh(xb.process_index())
-
-  def _local_mesh(self, process_index):
-    if self.empty:
-      return self
-    is_local_device = np.vectorize(
-        lambda d: d.process_index == process_index, otypes=[bool])(self.devices)
-    subcube_indices = []
-    # We take the smallest slice of each dimension that doesn't skip any local device.
-    for axis in range(self.devices.ndim):
-      other_axes = tuple_delete(tuple(range(self.devices.ndim)), axis)
-      # NOTE: This re-reduces over many axes multiple times, so we could definitely
-      #       optimize it, but I hope it won't be a bottleneck anytime soon.
-      local_slices = is_local_device.any(other_axes, keepdims=False)
-      nonzero_indices = np.flatnonzero(local_slices)
-      start, end = int(np.min(nonzero_indices)), int(np.max(nonzero_indices))
-      subcube_indices.append(slice(start, end + 1))
-    subcube_indices = tuple(subcube_indices)
-    # We only end up with all conditions being true if the local devices formed a
-    # subcube of the full array. This is because we were biased towards taking a
-    # "hull" spanned by the devices, and in case the local devices don't form a
-    # subcube that hull will contain non-local devices.
-    if not is_local_device[subcube_indices].all():
-      raise ValueError(
-          "When passing host local inputs to pjit or xmap, devices "
-          "connected to a single host must form a contiguous subcube of the "
-          "global device mesh")
-    return Mesh(self.devices[subcube_indices], self.axis_names)
-
-  @property
-  def device_ids(self):
-    assert not self.empty
-    return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
-
-  def __repr__(self):
-    if self.empty:
-      return "Mesh(device_ids=[], axis_names=())"
-    return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r})"
-
-  @cached_property
-  def local_devices(self):
-    return [d for d in self.devices.flat
-            if d.process_index == d.client.process_index()]
-
-  def _local_to_global(self, axes: ArrayMapping, aval):
-    return untile_aval_nd(self.shape, axes,
-                          tile_aval_nd(self.local_mesh.shape, axes, aval))
-
-  def _global_to_local(self, axes: ArrayMapping, aval):
-    return untile_aval_nd(self.local_mesh.shape, axes,
-                          tile_aval_nd(self.shape, axes, aval))
-
-
-ResourceAxisName = core.AxisName
-
-class Loop(NamedTuple):
-  name: ResourceAxisName
-  length: int
-
-
-def show_axes(axes):
-  return ", ".join(sorted(f"`{a}`" for a in axes))
-
-
-class ResourceEnv(NamedTuple):
-  physical_mesh: Mesh
-  loops: Tuple[Loop, ...]
-
-  def with_mesh(self, mesh: Mesh):
-    overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
-    if overlap:
-      raise ValueError(f"Cannot update the mesh of the current resource "
-                       f"environment. The new mesh shadows already defined axes "
-                       f"{show_axes(overlap)}")
-    return self._replace(physical_mesh=mesh)
-
-  def with_extra_loop(self, loop: Loop):
-    if loop.name in self.resource_axes:
-      raise ValueError(f"Cannot extend the resource environment with loop named "
-                       f"`{loop.name}`. An axis of this name is already defined!")
-    return self._replace(loops=self.loops + (loop,))
-
-  @property
-  def physical_resource_axes(self) -> Set[ResourceAxisName]:
-    return set(self.physical_mesh.axis_names)
-
-  @property
-  def loop_resource_axes(self) -> Set[ResourceAxisName]:
-    return {loop.name for loop in self.loops}
-
-  @property
-  def resource_axes(self) -> Set[ResourceAxisName]:
-    return self.physical_resource_axes | self.loop_resource_axes
-
-  @property
-  def shape(self):
-    shape = self.physical_mesh.shape
-    shape.update(self.loops)
-    return shape
-
-  @property
-  def local_shape(self):
-    shape = self.physical_mesh.local_mesh.shape
-    shape.update(self.loops)
-    return shape
-
-  def __repr__(self):
-    return f"ResourceEnv({self.physical_mesh!r}, {self.loops!r})"
-
-EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
-
-class _ThreadResourcesLocalState(threading.local):
-
-  def __init__(self):
-    self.stack = [EMPTY_ENV]
-    self.env = self.stack[-1]
-
-thread_resources = _ThreadResourcesLocalState()
-
-
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
@@ -2651,6 +2409,15 @@ def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
     shape[axis] *= axis_sizes[name]
     named_shape.pop(name, None)  # The name might be missing --- it's a broadcast.
   return aval.update(shape=tuple(shape), named_shape=named_shape)
+
+
+def mesh_local_to_global(mesh, axes: ArrayMapping, aval):
+  return untile_aval_nd(mesh.shape, axes,
+                        tile_aval_nd(mesh.local_mesh.shape, axes, aval))
+
+def mesh_global_to_local(mesh, axes: ArrayMapping, aval):
+  return untile_aval_nd(mesh.local_mesh.shape, axes,
+                        tile_aval_nd(mesh.shape, axes, aval))
 
 
 class SPMDBatchTrace(batching.BatchTrace):
@@ -2688,7 +2455,7 @@ def _full_to_shard_abstract_eval(x, axes, mesh, **_):
   # TODO: Assert x is a global aval! Or ideally check that it's global in dims from axes!
   return tile_aval_nd(mesh.shape, axes, x)
 
-def manual_proto(aval: core.ShapedArray, manual_axes_set: FrozenSet[MeshAxisName], mesh: Mesh):
+def manual_proto(aval: core.ShapedArray, manual_axes_set: FrozenSet[mesh.MeshAxisName], mesh: Mesh):
   """Create an OpSharding proto that declares all mesh axes from `axes` as manual
   and all others as replicated.
   """
@@ -2714,7 +2481,8 @@ def manual_proto(aval: core.ShapedArray, manual_axes_set: FrozenSet[MeshAxisName
   return proto
 
 @partial(mlir.register_lowering, full_to_shard_p)
-def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh, manual_axes: FrozenSet[MeshAxisName]):
+def _full_to_shard_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
+                            manual_axes: FrozenSet[mesh.MeshAxisName]):
   # TODO: Can we short-circuit for replicated values? Probably not.
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
@@ -2733,7 +2501,8 @@ def _shard_to_full_abstract_eval(x, axes, mesh, **_):
   return untile_aval_nd(mesh.shape, axes, x)
 
 @partial(mlir.register_lowering, shard_to_full_p)
-def _shard_to_full_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh, manual_axes: FrozenSet[MeshAxisName]):
+def _shard_to_full_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh,
+                            manual_axes: FrozenSet[mesh.MeshAxisName]):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   proto = manual_proto(aval_in, manual_axes, mesh)
@@ -2744,7 +2513,7 @@ def _shard_to_full_lowering(ctx, x, *, axes: ArrayMapping, mesh: Mesh, manual_ax
   return mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, unspecified_dims),
 
 @lu.transformation
-def vtile_manual(manual_axes: FrozenSet[MeshAxisName],
+def vtile_manual(manual_axes: FrozenSet[mesh.MeshAxisName],
                  mesh: Mesh,
                  in_axes: Sequence[ArrayMapping],
                  out_axes: Sequence[ArrayMapping],
@@ -2763,7 +2532,7 @@ class TileVectorize:
 
 @dataclasses.dataclass(frozen=True)
 class TileManual:
-  manual_axes: FrozenSet[MeshAxisName]
+  manual_axes: FrozenSet[mesh.MeshAxisName]
 
 TilingMethod = Union[TileVectorize, TileManual]
 
@@ -3415,7 +3184,7 @@ def _get_normalized_avals_and_shardings(
       in_sharding = i
     else:
       assert isinstance(i, sharding_internal.NamedSharding)
-      aval = i.mesh._global_to_local(
+      aval = mesh_global_to_local(i.mesh,
           cast(ArrayMapping, get_array_mapping(i.spec)), gaval)  # pylint: disable=g-bare-generic
       in_sharding = sharding_internal.NamedSharding(i.mesh.local_mesh, i.spec)
     avals.append(aval)

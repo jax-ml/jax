@@ -18,17 +18,14 @@ from jax._src.interpreters.pxla import (
   ArrayMappingOrAutoOrUnspecified as ArrayMappingOrAutoOrUnspecified,
   AvalDimSharding as AvalDimSharding,
   Chunked as Chunked,
-  ContextDecorator as ContextDecorator,
   DynamicAxisEnv as DynamicAxisEnv,
   DynamicAxisEnvFrame as DynamicAxisEnvFrame,
-  EMPTY_ENV as EMPTY_ENV,
   EmapInfo as EmapInfo,
   ExecuteReplicated as ExecuteReplicated,
   Index as Index,
   InputsHandler as InputsHandler,
   MapTrace as MapTrace,
   MapTracer as MapTracer,
-  MeshAxisName as MeshAxisName,
   MeshComputation as MeshComputation,
   MeshDimAssignment as MeshDimAssignment,
   MeshExecutable as MeshExecutable,
@@ -44,8 +41,6 @@ from jax._src.interpreters.pxla import (
   PxlaResultHandler as PxlaResultHandler,
   ReplicaInfo as ReplicaInfo,
   Replicated as Replicated,
-  ResourceAxisName as ResourceAxisName,
-  ResourceEnv as ResourceEnv,
   ResultsHandler as ResultsHandler,
   SPMDBatchTrace as SPMDBatchTrace,
   ShardInfo as ShardInfo,
@@ -109,11 +104,9 @@ from jax._src.interpreters.pxla import (
   shard_to_full_p as shard_to_full_p,
   sharding_internal as sharding_internal,
   sharding_spec_sharding_proto as sharding_spec_sharding_proto,
-  show_axes as show_axes,
   spec_to_indices as spec_to_indices,
   spmd_primitive_batchers as spmd_primitive_batchers,
   stage_parallel_callable as stage_parallel_callable,
-  thread_resources as thread_resources,
   tile_aval_nd as tile_aval_nd,
   untile_aval_nd as untile_aval_nd,
   vtile_by_mesh as vtile_by_mesh,
@@ -125,19 +118,23 @@ from jax._src.interpreters.pxla import (
   xla_pmap_impl_lazy as xla_pmap_impl_lazy,
   xla_pmap_p as xla_pmap_p,
 )
+from jax._src.mesh import (
+  MeshAxisName as MeshAxisName,
+  thread_resources as thread_resources,
+)
 
 # Deprecations
 
+from jax._src.mesh import Mesh as _deprecated_Mesh
 from jax._src.interpreters.pxla import (
-  Mesh as _deprecated_Mesh,
   PartitionSpec as _deprecated_PartitionSpec,
   make_sharded_device_array as _deprecated_make_sharded_device_array,
 )
 
 import typing
 if typing.TYPE_CHECKING:
+  from jax._src.mesh import Mesh as Mesh
   from jax._src.interpreters.pxla import (
-    Mesh as Mesh,
     PartitionSpec as PartitionSpec,
     make_sharded_device_array as make_sharded_device_array,
   )

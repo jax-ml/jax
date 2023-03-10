@@ -41,6 +41,7 @@ from jax._src.sharding import (
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
 from jax._src import array
 from jax._src import dispatch
+from jax._src import mesh
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -714,7 +715,7 @@ def pjit(
 
   def infer_params(*args, **kwargs):
     # Putting this outside of wrapped would make resources lexically scoped
-    resource_env = pxla.thread_resources.env
+    resource_env = mesh.thread_resources.env
     pjit_info_args = PjitInfo(
           fun=fun, in_shardings=in_shardings,
           out_shardings=out_shardings, static_argnums=static_argnums,
@@ -1173,7 +1174,7 @@ def _check_unique_resources(axis_resources, arg_name):
       if multiple_uses:
         raise ValueError(f"A single {arg_name} specification can map every mesh axis "
                          f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
-                         f"has duplicate entries for {pxla.show_axes(multiple_uses)}")
+                         f"has duplicate entries for {mesh.show_axes(multiple_uses)}")
 
 # -------------------- pjit rules --------------------
 
@@ -1916,7 +1917,7 @@ def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_ax
         f"{pos_axis_resources.unsynced_user_spec(SpecSync.DIM_PERMUTE)} "
         f"that uses one or more mesh axes already used by xmap to partition "
         f"a named axis appearing in its named_shape (both use mesh axes "
-        f"{pxla.show_axes(overlap)})")
+        f"{mesh.show_axes(overlap)})")
 
 def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_resources):
   jaxpr = params["jaxpr"]
@@ -2024,7 +2025,7 @@ def with_sharding_constraint(x, axis_resources=_UNSPECIFIED,
       flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
   del user_shardings
 
-  resource_env = pxla.thread_resources.env
+  resource_env = jax._src.mesh.thread_resources.env
   mesh = resource_env.physical_mesh
 
   if config.jax_array:
@@ -2171,7 +2172,8 @@ def global_to_local(positional_semantics, avals, shardings, mesh):
       # replicated avals don't go through this code path. To convert global
       # avals to host local avals, round trip it via NamedSharding.
       parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
-      out.append(mesh._global_to_local(get_array_mapping(parsed_pspec), aval))
+      out.append(pxla.mesh_global_to_local(
+          mesh, get_array_mapping(parsed_pspec), aval))
   return out
 
 
@@ -2188,7 +2190,8 @@ def local_to_global(positional_semantics, avals, shardings, mesh):
       # replicated avals don't go through this code path. To convert host local
       # avals to global avals, round trip it via NamedSharding.
       parsed_pspec = parse_flatten_op_sharding(s._op_sharding, mesh)[0]
-      out.append(mesh._local_to_global(get_array_mapping(parsed_pspec), aval))
+      out.append(pxla.mesh_local_to_global(
+          mesh, get_array_mapping(parsed_pspec), aval))
   return out
 
 

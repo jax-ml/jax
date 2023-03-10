@@ -14,21 +14,21 @@
 
 from jax._src.maps import (
   AxisName as AxisName,
-  EMPTY_ENV as EMPTY_ENV,
-  FrozenDict as FrozenDict,
-  ResourceEnv as ResourceEnv,
   ResourceSet as ResourceSet,
   SerialLoop as SerialLoop,
   _PositionalSemantics as _PositionalSemantics,
   make_xmap_callable as make_xmap_callable,
   serial_loop as serial_loop,
-  thread_resources as thread_resources,
   xmap as xmap,
   xmap_p as xmap_p,
   _positional_semantics as _positional_semantics,
   _prepare_axes as _prepare_axes,
 )
-
+from jax._src.mesh import (
+  EMPTY_ENV as EMPTY_ENV,
+  ResourceEnv as ResourceEnv,
+  thread_resources as thread_resources,
+)
 
 # Deprecations
 

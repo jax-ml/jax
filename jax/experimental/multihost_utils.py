@@ -115,8 +115,8 @@ def _handle_array_process_allgather(inp, tiled):
       host_np_arr = np.expand_dims(host_np_arr, axis=0)
 
     aval = core.ShapedArray(host_np_arr.shape, host_np_arr.dtype)
-    global_aval = global_mesh._local_to_global(
-        pxla.get_array_mapping(pspec), aval)
+    global_aval = pxla.mesh_local_to_global(
+        global_mesh, pxla.get_array_mapping(pspec), aval)
 
     bufs = [jax.device_put(host_np_arr, d) for d in jax.local_devices()]
     global_arr = array.make_array_from_single_device_arrays(
@@ -243,12 +243,13 @@ def _flatten_pspecs(name, in_tree, pspecs_thunk):
 
 @functools.lru_cache()
 def _local_to_global_aval(local_aval, mesh, pspec):
-  return mesh._local_to_global(pxla.get_array_mapping(pspec), local_aval)
+  return pxla.mesh_local_to_global(mesh, pxla.get_array_mapping(pspec),
+                                   local_aval)
 
 @functools.lru_cache()
 def _global_to_local_aval(global_aval, mesh, pspec):
-  return mesh._global_to_local(
-      pxla.get_array_mapping(pspec), global_aval)
+  return pxla.mesh_global_to_local(mesh, pxla.get_array_mapping(pspec),
+                                   global_aval)
 
 def _device_put(x, device):
   try:

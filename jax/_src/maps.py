@@ -22,6 +22,7 @@ from functools import wraps, partial, partialmethod, lru_cache
 
 from jax import numpy as jnp
 from jax._src import core
+from jax._src import mesh
 from jax._src import linear_util as lu
 from jax import stages
 from jax._src import dispatch
@@ -85,13 +86,12 @@ class FrozenDict(abc.Mapping):
 # Multi-dimensional generalized map
 
 AxisName = core.AxisName
-ResourceAxisName = AxisName  # Different name just for documentation purposes
-# TODO(https://github.com/google/jax/issues/13487): Remove Mesh in
-# 3 months from `jax.experimental.maps.Mesh`.
-Mesh = pxla.Mesh
-ResourceEnv = pxla.ResourceEnv
-EMPTY_ENV = pxla.EMPTY_ENV
-thread_resources = pxla.thread_resources
+ResourceAxisName = mesh.ResourceAxisName  # Different name just for documentation purposes
+Mesh = mesh.Mesh
+MeshAxisName = mesh.MeshAxisName
+ResourceEnv = mesh.ResourceEnv
+EMPTY_ENV = mesh.EMPTY_ENV
+thread_resources = mesh.thread_resources
 
 
 class SerialLoop:
@@ -161,7 +161,7 @@ def serial_loop(name: ResourceAxisName, length: int):
         axis_resources={'i': 'l'})(x)
   """
   old_env: ResourceEnv = getattr(thread_resources, "env", EMPTY_ENV)
-  thread_resources.env = old_env.with_extra_loop(pxla.Loop(name, length))
+  thread_resources.env = old_env.with_extra_loop(mesh.Loop(name, length))
   try:
     yield
   finally:
@@ -686,7 +686,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
     mesh_in_axes, mesh_out_axes = plan.to_mesh_axes(in_axes, out_axes)
     mesh = resource_env.physical_mesh
     global_in_avals = [
-        av if ips == _PositionalSemantics.GLOBAL else mesh._local_to_global(ax, av)
+        av if ips == _PositionalSemantics.GLOBAL else pxla.mesh_local_to_global(mesh, ax, av)
         for ax, av, ips in safe_zip(mesh_in_axes, in_avals, in_positional_semantics)
     ]
     in_is_global = [ips == _PositionalSemantics.GLOBAL or not ia
@@ -964,7 +964,7 @@ def _resource_typing_xmap(avals,
     raise JAXTypeError(
         f"Detected disallowed xmap axis name shadowing at "
         f"{source_info_util.summarize(source_info)} "
-        f"(shadowed axes: {pxla.show_axes(overlap)})")
+        f"(shadowed axes: {mesh.show_axes(overlap)})")
 
   if resource_env.physical_mesh != params['resource_env'].physical_mesh:
     raise RuntimeError("Changing the physical mesh is not allowed inside xmap.")
@@ -992,9 +992,9 @@ def _resource_typing_xmap(avals,
         raise JAXTypeError(
             f"One of xmapped function ({params['name']}) outputs is broadcast "
             f"along axis `{baxis}` which is assigned to resources "
-            f"{pxla.show_axes(baxis_resources)}, but the output is already "
-            f"partitioned along {pxla.show_axes(overlap)}, because its "
-            f"named shape contains {pxla.show_axes(partitioning_axes)}")
+            f"{mesh.show_axes(baxis_resources)}, but the output is already "
+            f"partitioned along {mesh.show_axes(overlap)}, because its "
+            f"named shape contains {mesh.show_axes(partitioning_axes)}")
 pxla.custom_resource_typing_rules[xmap_p] = _resource_typing_xmap
 
 
@@ -1419,8 +1419,9 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   f = pxla.vtile_by_mesh(f, mesh, mesh_in_axes, mesh_out_axes)
 
   # XXX: We modify mesh_in_axes and mesh_out_axes here
-  def add_spmd_axes(flat_mesh_axes: Sequence[pxla.ArrayMapping],
-                    flat_extra_axes: Optional[Sequence[Sequence[Sequence[pxla.MeshAxisName]]]]):
+  def add_spmd_axes(
+      flat_mesh_axes: Sequence[pxla.ArrayMapping],
+      flat_extra_axes: Optional[Sequence[Sequence[Sequence[MeshAxisName]]]]):
     if flat_extra_axes is None:
       return
     for axes, extra in zip(flat_mesh_axes, flat_extra_axes):

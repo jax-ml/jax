@@ -48,6 +48,7 @@ from jax._src import array
 from jax._src.sharding import NamedSharding, Sharding, GSPMDSharding
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
+from jax._src import mesh
 from jax._src.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src import xla_bridge
@@ -265,19 +266,20 @@ class PJitTest(jtu.BufferDonationTestCase):
   def testDifferentNestedMesh(self):
     with jtu.create_global_mesh((2, 1), ("x", "y")) as m1:
       with jtu.create_global_mesh((2, 2), ("a", "b")) as m2:
-        self.assertEqual(pxla.thread_resources.env.physical_mesh, m2)
-      self.assertEqual(pxla.thread_resources.env.physical_mesh, m1)
-    self.assertEqual(pxla.thread_resources.env.physical_mesh,
-                     pxla.EMPTY_ENV.physical_mesh)
+        self.assertEqual(mesh.thread_resources.env.physical_mesh, m2)
+      self.assertEqual(mesh.thread_resources.env.physical_mesh, m1)
+    self.assertEqual(mesh.thread_resources.env.physical_mesh,
+                     mesh.EMPTY_ENV.physical_mesh)
 
   def testSameNestedMesh(self):
     mesh = jtu.create_global_mesh((2, 1), ("a", "b"))
+    thread_resources = jax._src.mesh.thread_resources
     with mesh as m1:
       with mesh as m2:
-        self.assertEqual(pxla.thread_resources.env.physical_mesh, m2)
-      self.assertEqual(pxla.thread_resources.env.physical_mesh, m1)
-    self.assertEqual(pxla.thread_resources.env.physical_mesh,
-                     pxla.EMPTY_ENV.physical_mesh)
+        self.assertEqual(thread_resources.env.physical_mesh, m2)
+      self.assertEqual(thread_resources.env.physical_mesh, m1)
+    self.assertEqual(thread_resources.env.physical_mesh,
+                     jax._src.mesh.EMPTY_ENV.physical_mesh)
 
   def testMeshDecorator(self):
     x = jnp.arange(8)

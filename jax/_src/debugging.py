@@ -27,12 +27,12 @@ from jax import lax
 from jax._src import core
 from jax._src import effects
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -310,7 +310,7 @@ class ShardingCallbackInfo:
 def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                                     callback):
 
-  mesh = pxla.thread_resources.env.physical_mesh
+  mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
   if isinstance(axis_context, mlir.ShardingContext):
