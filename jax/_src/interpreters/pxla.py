@@ -963,10 +963,10 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         bufs.append(buf)
         break
     else:
-      bufs.append(buf.copy_to_device(device))
+      bufs.append(buf)
   if isinstance(x, ArrayImpl):
-    return ArrayImpl(x.aval, sharding, bufs, committed=True)
-  return bufs
+    return batched_device_put(x.aval, sharding, bufs, devices)
+  return [(buf if buf.device() == buf else buf.copy_to_device(device)) for buf, device in zip(bufs, devices)]
 
 
 def _sharded_device_array_mlir_constant_handler(val, canonicalize_types=True):
