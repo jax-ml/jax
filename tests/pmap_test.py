@@ -1834,6 +1834,21 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertIn("The jitted function foo includes a pmap",
                     str(w[-1].message))
 
+  def testJitOfPmapOutputSharding(self):
+    device_count = jax.device_count()
+
+    if device_count == 1 or config.jax_disable_jit:
+      raise SkipTest("test requires at least two devices")
+
+    @jax.jit
+    @jax.pmap
+    def foo(x): return x + x
+
+    x = np.ones((2,2,2), dtype=np.float32)
+    for _ in range(10):
+      # Does not crash.
+      x = foo(x)
+
   def testPsumZeroCotangents(self):
     # https://github.com/google/jax/issues/3651
     def loss(params, meta_params):
