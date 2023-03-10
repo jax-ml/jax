@@ -1407,8 +1407,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                      transform2 != "none") else
           [False, True])
   )
-  def test_cross_platform(self, with_mesh=True, transform1="xmap",
-                          transform2="none", nullary=True):
+  def test_cross_platform(self, with_mesh=True, transform1="pjit_in_shardings_P",
+                          transform2="none", nullary=False):
     # Tests cross-lowering for
     #  with mesh:
     #   transform2(transform1(func))

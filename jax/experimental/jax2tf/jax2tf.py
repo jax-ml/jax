@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Experimental module transforms JAX functions to be executed by TensorFlow."""
+import collections
 import dataclasses
 from functools import partial
 import contextlib
@@ -641,53 +642,30 @@ def _interpret_fun_jax(
 
     return util.unzip2(out_vals)
 
-def _lower_native_and_run(fun_jax: Callable,
-                          args_avals: Sequence[core.ShapedArray],
-                          args_tf: Sequence[TfVal],
-                          lowering_params: LoweringParameters
-                          ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
-  """Lowers the function using native lowering and then invokes it.
+@dataclasses.dataclass
+class Exported:
+  """Represents a lowered and serialized module."""
+  in_avals: Sequence[core.ShapedArray]
+  out_avals: Sequence[core.ShapedArray]
+  in_shardings: Optional[Sequence[Any]]
+  out_shardings: Optional[Sequence[Any]]
+  lowering_platform: str  # One of "tpu", "cpu", "cuda", "rocm"
 
-  Work-in-progress.
+  mlir_module: mlir.ir.Module
+  mlir_module_serialized: bytes  # VHLO bytecode format
+  xla_call_module_version: int  # Follows the versions of XlaCallModule
+  module_kept_var_idx: Sequence[bool]  # Specifies if an argument is kept in the
+                                       # lowering. As long as `out_avals`.
+  dim_args_spec: Sequence[str]
 
-  Uses JAX native lowering to MLIR, and then wraps the result in a
-  XlaCallModule TF op. This op does not have backward-compatibility yet.
-
-  Special care must be taken in presence of shape polymorphism.
-  """
-  # Look for shape polymorphism
-  # We now have two implementations for the native lowering. If --jax_dynamic_shapes
-  # then we use JAX's in-progress support for native dynamic shapes, and we pass
-  # abstracted_axes to lowering functions. Otherwise, we just lower using
-  # abstract values whose shapes may include polynomials (already in args_avals).
-  if config.jax_dynamic_shapes:
-    abstracted_axes: Sequence[Dict[int, str]] = []
-    for arg_idx, aval in enumerate(args_avals):
-      one_abstract_axes = {}
-      for axis_idx, d in enumerate(aval.shape):
-        if not core.is_constant_dim(d):
-          d_var = d.to_var()
-          if d_var is None:
-            raise ValueError(f"Only trivial dimension polynomials on input: {aval.shape}")
-          one_abstract_axes[axis_idx] = d_var
-      abstracted_axes.append(one_abstract_axes)
-
-    if any(abstracted_axes):
-      abstracted_axes = tuple(abstracted_axes)
-    else:
-      abstracted_axes = None  # type: ignore
-  else:
-    abstracted_axes = None  # type: ignore
-
+def export_native(fun_jax: Callable,
+                  args_avals: Sequence[core.ShapedArray], *,
+                  lowering_platform: Optional[str],
+                  strict_checks: bool) -> Exported:
   arg_specs_jax = [
     jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
     for aval in args_avals
   ]
-
-  if lowering_params.experimental_native_lowering_platforms:
-    lowering_platform = lowering_params.experimental_native_lowering_platforms[0]
-  else:
-    lowering_platform = None
 
   if not hasattr(fun_jax, "lower"):
     # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
@@ -708,7 +686,7 @@ def _lower_native_and_run(fun_jax: Callable,
   mlir_module = lowered.stablehlo()
   xla_call_module_version = 3
 
-  mlir_serialized_module = mlir.module_to_bytecode(mlir_module)
+  mlir_module_serialized = mlir.module_to_bytecode(mlir_module)
   # Figure out the result types and shapes
   if "global_out_avals" in lowered.compile_args:
     # This is currently the case for pjit
@@ -720,23 +698,12 @@ def _lower_native_and_run(fun_jax: Callable,
   if lowered.compile_args["host_callbacks"]:
     raise NotImplementedError("host_callbacks are not yet implemented for the jax2tf native lowering")
 
-  # TODO(necula): handle d being InDBIdx
-  out_shapes = tuple(
-      tuple(d if type(d) is int else None
-            for d in out_aval.shape)
-      for out_aval in out_avals)
-
-  def _out_type(jax_type):
-    if jax_type == dtypes.float0:
-      return dtypes.bool_
-    return jax_type
-  out_types = tuple(_out_type(out_aval.dtype) for out_aval in out_avals)
-
   if "kept_var_idx" in lowered.compile_args:
     module_kept_var_idx = lowered.compile_args["kept_var_idx"]
   else:
     # For pmap
     module_kept_var_idx = tuple(range(len(args_avals)))
+
   # We must compute the dim_args_spec: for each dimension variable, encode how
   # to compute its value from the shape of the explicit arguments. E.g., "2.1"
   # denotes args_tf[2].shape[1]. The order of the dimension variables must match
@@ -789,8 +756,79 @@ def _lower_native_and_run(fun_jax: Callable,
   else:
     dim_args_spec = []
 
-  args_avals = [aval for i, aval in enumerate(args_avals) if i in module_kept_var_idx]
-  args_tf = [atf for i, atf in enumerate(args_tf) if i in module_kept_var_idx]
+  # Log and then check the module.
+  if logging.vlog_is_on(3):
+    mlir_module_text = mlir.module_to_string(mlir_module)
+    logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}, dim_args_spec=" + ", ".join(dim_args_spec)
+    logging.vlog(3, "Lowered JAX module: %s\n%s", logmsg, mlir_module_text)
+
+  check_module(mlir_module,
+               allow_non_replicated_sharding=allow_non_replicated_sharding,
+               allow_all_custom_calls=not strict_checks)
+
+  return Exported(
+      in_avals=args_avals,
+      out_avals=out_avals,
+      in_shardings=lowered.compile_args.get("in_shardings"),
+      out_shardings=lowered.compile_args.get("out_shardings"),
+      lowering_platform=lowering_platform or default_jax_backend(),
+      mlir_module=mlir_module,
+      mlir_module_serialized=mlir_module_serialized,
+      module_kept_var_idx=module_kept_var_idx,
+      xla_call_module_version=xla_call_module_version,
+      dim_args_spec=dim_args_spec
+  )
+
+def _lower_native_and_run(fun_jax: Callable,
+                          args_avals: Sequence[core.ShapedArray],
+                          args_tf: Sequence[TfVal],
+                          lowering_params: LoweringParameters
+                          ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
+  """Lowers the function using native lowering and then invokes it.
+
+  Uses JAX native lowering to MLIR, and then wraps the result in a
+  XlaCallModule TF op.
+  """
+  if lowering_params.experimental_native_lowering_platforms:
+    lowering_platform = lowering_params.experimental_native_lowering_platforms[0]
+  else:
+    lowering_platform = None
+  exported: Exported = export_native(
+      fun_jax, args_avals,
+      lowering_platform=lowering_platform,
+      strict_checks=lowering_params.experimental_native_lowering_strict_checks)
+
+  out_shapes = tuple(
+      tuple(d if type(d) is int else None
+            for d in out_aval.shape)
+      for out_aval in exported.out_avals)
+
+  def _out_type(jax_type):
+    if jax_type == dtypes.float0:
+      return dtypes.bool_
+    return jax_type
+  out_types = tuple(_out_type(out_aval.dtype) for out_aval in exported.out_avals)
+
+  args_avals = [aval for i, aval in enumerate(args_avals) if i in exported.module_kept_var_idx]
+  args_tf = [atf for i, atf in enumerate(args_tf) if i in exported.module_kept_var_idx]
+
+  call_module_attrs = dict(
+      version=exported.xla_call_module_version,
+      Tout=out_types,
+      Sout=out_shapes,
+      dim_args_spec=exported.dim_args_spec)
+
+  if exported.xla_call_module_version >= 3:
+    if lowering_params.experimental_native_lowering_strict_checks:
+      call_module_attrs["platforms"] = (default_jax_backend().upper(),)
+    else:
+      call_module_attrs["platforms"] = ()  # No platform checking
+
+  if logging.vlog_is_on(3):
+    # We already logged the MLIR module
+    logging.vlog(3, "XlaCallModule %s", str(call_module_attrs))
+
+  call_module_attrs["module"] = exported.mlir_module_serialized
 
   # Apply the shardings on arguments and results for pjit. This is redundant
   # because the mlir_module_text will already contain the shardings, but it
@@ -800,39 +838,14 @@ def _lower_native_and_run(fun_jax: Callable,
   # Do not apply XlaSharding for REPLICATED, on inputs and outputs.
   # This is an agreed convention, and also improves usability under TF eager.
   # See b/255511660.
-  if "in_shardings" in lowered.compile_args:
+  if exported.in_shardings is not None:
     args_tf = tuple(
       map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
-          args_tf, args_avals, lowered.compile_args["in_shardings"]))
-
-  call_module_attrs = dict(
-      version=xla_call_module_version,
-      module=mlir_serialized_module,
-      Tout=out_types,
-      Sout=out_shapes,
-      dim_args_spec=dim_args_spec)
-  log_msg = f"version={xla_call_module_version} dim_args_spec=" + ", ".join(dim_args_spec)
-  if xla_call_module_version == 3:
-    if lowering_params.experimental_native_lowering_strict_checks:
-      call_module_attrs["platforms"] = (default_jax_backend().upper(),)
-    else:
-      call_module_attrs["platforms"] = ()  # No platform checking
-    log_msg += " platforms=" + ", ".join(call_module_attrs["platforms"])  # type: ignore
-  if logging.vlog_is_on(3):
-    mlir_module_text = mlir.module_to_string(mlir_module)
-    logging.vlog(3, "XlaCallModule (%s)\n%s",
-                 log_msg,
-                 mlir_module_text)
-
-  # Check the module after we logged it.
-  check_module(mlir_module,
-               allow_non_replicated_sharding=allow_non_replicated_sharding,
-               allow_all_custom_calls=not lowering_params.experimental_native_lowering_strict_checks)
-
+          args_tf, args_avals, exported.in_shardings))
   res = tfxla.call_module(args_tf, **call_module_attrs)
-  if "out_shardings" in lowered.compile_args:
+  if exported.out_shardings is not None:
     res = list(map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
-                   res, out_avals, lowered.compile_args["out_shardings"]))
+                   res, exported.out_avals, exported.out_shardings))
 
   # Convert the results to the needed TF types
   def _convert_res(res_val, res_jax_type):
@@ -844,16 +857,14 @@ def _lower_native_and_run(fun_jax: Callable,
 
   res = tuple(
       _convert_res(res_val, out_aval.dtype)
-      for res_val, out_aval in zip(res, out_avals))
-  return res, out_avals
+      for res_val, out_aval in zip(res, exported.out_avals))
+  return res, tuple(exported.out_avals)
 
 
 def check_module(mod: mlir.ir.Module, *,
                  allow_non_replicated_sharding: bool,
                  allow_all_custom_calls: bool):
   """Run a number of checks on the module.
-
-  TODO: check for custom calls.
 
   Args:
     allow_non_replicated_sharding: whether the module is allowed to contain
