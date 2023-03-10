@@ -428,7 +428,11 @@ def _shard_token(x, devices, indices, sharding):
   if jax.config.jax_array:
     zeros = np.zeros((), dtype=np.dtype(np.bool_))
     aval = api_util.shaped_abstractify(zeros)
-    return batched_device_put(aval, sharding, [zeros for i in indices], devices)
+    out = batched_device_put(aval, sharding, [zeros for i in indices], devices)
+    if xla_extension_version >= 136:
+      return out
+    else:
+      return out._arrays
   return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
 shard_arg_handlers[core.Token] = _shard_token
 
@@ -442,7 +446,11 @@ def _shard_array(x, devices, indices, sharding):
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   if jax.config.jax_array:
     aval = api_util.shaped_abstractify(x)
-    return batched_device_put(aval, sharding, [x[i] for i in indices], devices)
+    out = batched_device_put(aval, sharding, [x[i] for i in indices], devices)
+    if xla_extension_version >= 136:
+      return out
+    else:
+      return out._arrays
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
@@ -453,7 +461,11 @@ def shard_device_array(x, devices, indices, sharding):
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
   if jax.config.jax_array:
     aval = api_util.shaped_abstractify(x)
-    return batched_device_put(aval, sharding, shards, devices)
+    out = batched_device_put(aval, sharding, shards, devices)
+    if xla_extension_version >= 136:
+      return out
+    else:
+      return out._arrays
   return device_put(shards, devices)
 for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
@@ -463,7 +475,9 @@ if xla_extension_version >= 136:
   batched_device_put = xc.batched_device_put  # pytype: disable=module-attr
 else:
   def batched_device_put(aval, sharding, xs, devices, committed=True):
-    return [d.client.buffer_from_pyval(x, d) for x, d in safe_zip(xs, devices)]
+    from jax._src.array import ArrayImpl
+    bufs = [d.client.buffer_from_pyval(x, d) for x, d in safe_zip(xs, devices)]
+    return ArrayImpl(aval, sharding, bufs, committed, _skip_checks=True)
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
