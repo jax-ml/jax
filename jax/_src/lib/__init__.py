@@ -15,10 +15,9 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
-import platform
+import gc
 import re
 import os
-import warnings
 from typing import Optional, Tuple
 
 try:
@@ -93,6 +92,11 @@ xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
 pmap_lib = xla_client._xla.pmap_lib
+
+# XLA garbage collection: see https://github.com/google/jax/issues/14882
+def _xla_gc_callback(*args):
+  xla_client._xla.collect_garbage()
+gc.callbacks.append(_xla_gc_callback)
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
