@@ -3399,14 +3399,15 @@ def argwhere(a, *, size=None, fill_value=None):
 
 
 @util._wraps(np.argmax, skip_params=['out'])
-def argmax(a, axis: Optional[int] = None, out=None, keepdims=None):
-  return _argmax(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
-
-@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
-def _argmax(a, axis: Optional[int] = None, out=None, keepdims=False):
+def argmax(a: ArrayLike, axis: Optional[int] = None, out=None, keepdims=None) -> Array:
   util._check_arraylike("argmax", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmax is not supported.")
+  return _argmax(asarray(a), None if axis is None else operator.index(axis),
+                 keepdims=bool(keepdims))
+
+@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
+def _argmax(a: Array, axis: Optional[int] = None, keepdims: bool = False) -> Array:
   if axis is None:
     dims = list(range(ndim(a)))
     a = ravel(a)
@@ -3419,14 +3420,15 @@ def _argmax(a, axis: Optional[int] = None, out=None, keepdims=False):
   return expand_dims(result, dims) if keepdims else result
 
 @util._wraps(np.argmin, skip_params=['out'])
-def argmin(a, axis: Optional[int] = None, out=None, keepdims=None):
-  return _argmin(a, None if axis is None else operator.index(axis), keepdims=bool(keepdims))
-
-@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
-def _argmin(a, axis: Optional[int] = None, out=None, keepdims=False):
+def argmin(a: ArrayLike, axis: Optional[int] = None, out=None, keepdims=None) -> Array:
   util._check_arraylike("argmin", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.argmin is not supported.")
+  return _argmin(asarray(a), None if axis is None else operator.index(axis),
+                 keepdims=bool(keepdims))
+
+@partial(jit, static_argnames=('axis', 'keepdims'), inline=True)
+def _argmin(a: Array, axis: Optional[int] = None, keepdims: bool = False) -> Array:
   if axis is None:
     dims = list(range(ndim(a)))
     a = ravel(a)
