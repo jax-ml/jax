@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 from collections import namedtuple
-import contextlib
+from contextlib import contextmanager, AbstractContextManager
 import functools
 from functools import partial
 import inspect
 import itertools as it
 import operator as op
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Sequence, Tuple,
-                    List, Union, Hashable, Set, cast)
+                    List, Union, Hashable, Set)
 from weakref import ref
 
 import numpy as np
@@ -37,10 +37,9 @@ from jax._src import source_info_util
 from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
 from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
-                           ConcreteArray, Var, DropVar,
-                           raise_to_shaped, Atom, JaxprEqn, Primitive,
-                           ShapedArray, DShapedArray, mapped_aval,
-                           unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
+                           ConcreteArray, Var, DropVar, raise_to_shaped, Atom,
+                           JaxprEqn, Primitive, ShapedArray, DShapedArray,
+                           mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
                            InputType, OutputType, get_referent, DebugInfo)
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
                                 KeyPath, _generate_key_paths, keystr)
@@ -1239,14 +1238,19 @@ def _default_res_aval_updater(
     params: Dict[str, Any], aval: AbstractValue) -> AbstractValue:
   return aval
 
+@contextmanager
+def trivial_ctx(_): yield
+
 def call_partial_eval_custom_rule(
     jaxpr_param_name: str, params_updater: ParamsUpdater,
     saveable: Callable[..., bool], unks_in: List[bool], inst_in: List[bool],
     eqn: JaxprEqn, *, res_aval: ResAvalUpdater = _default_res_aval_updater,
+    ctx: Callable[[core.ParamDict], AbstractContextManager[None]] = trivial_ctx,
   ) -> Tuple[JaxprEqn, JaxprEqn, Sequence[bool], Sequence[bool], List[Var]]:
   jaxpr = eqn.params[jaxpr_param_name]
-  jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
-      partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
+  with ctx(eqn.params):
+    jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
+        partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
@@ -2079,7 +2083,7 @@ def trace_to_subjaxpr_dynamic2(
   return jaxpr, out_type, consts
 
 
-@contextlib.contextmanager
+@contextmanager
 def extend_jaxpr_stack(main, frame):
   main.jaxpr_stack = main.jaxpr_stack + (frame,)
   try:
@@ -2285,8 +2289,7 @@ def _extract_implicit_args(
           tracers[d1.val] = trace.instantiate_const(d2)
         assert tracers[d1.val] is trace.instantiate_const(d2)
   assert all(t is not None for t in tracers)
-  tracers_validated = cast(List[DynamicJaxprTracer], tracers)  # remove Optional annotation.
-  return [t for t, (_, e) in zip(tracers_validated, in_type) if not e]
+  return [t for t, (_, e) in zip(tracers, in_type) if not e]  # type: ignore
 
 def _input_type_to_tracers(
     new_arg: Callable[[AbstractValue], Tracer],
