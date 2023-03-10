@@ -1,0 +1,21 @@
+@import url("theme.css");
+
+:root {
+  --block-bg-opacity: .5;
+}
+
+.wy-side-nav-search {
+  background-color: #fff;
+}
+
+.getting-started {
+  background-color: rgba(78, 150, 253, var(--block-bg-opacity));
+}
+
+.user-guides {
+  background-color: rgba(0, 169, 154, var(--block-bg-opacity));
+}
+
+.developer-docs {
+  background-color: rgba(171, 0, 182, var(--block-bg-opacity));
+}

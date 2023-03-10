@@ -1,0 +1,57 @@
+# JAX Converters Evaluation Results
+
+*Last generated on: {{generation_date}}* (YYYY-MM-DD)
+
+This file contains the evaluation results for all converters in table format.
+
+See [models_test_main.py](../tests/models_test_main.py) for instructions on how to
+regenerate this table.
+
+See [Description of Converters](#description-of-converters) below for more
+details on the different converters.
+
+## Summary Table
+
+{{table}}
+
+## Errors
+
+{{errors}}
+
+## Description of Converters
+
+Below is a description of all converters that can be found in
+[converters.py](converters.py).
+
+### `jax2tf_xla`
+
+This converter simply converts a the forward function of a JAX model to a
+Tensorflow function with XLA support linked in. This is considered the baseline
+converter and has the largest coverage, because we expect nearly all ops to be
+convertible. However, please see
+[jax2tf Known Issue](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#known-issues)
+for a list of known problems.
+
+### `jax2tf_noxla`
+
+This converter converts a JAX model to a Tensorflow function without XLA
+support. This means the Tensorflow XLA ops aren't used. See
+[here](https://github.com/google/jax/tree/main/jax/experimental/jax2tf#tensorflow-xla-ops)
+for more details.
+
+### `jax2tfjs`
+
+This converter first converts a JAX model to TF SavedModel format without XLA
+support. After that, it converts the SavedModel to TensorFlow.js using the
+[TF.js converter](https://github.com/tensorflow/tfjs/tree/master/tfjs-converter#calling-a-converter-function-in-python-flaxjax).
+
+### `jax2tflite`
+
+This converter first converts a JAX model to TF SavedModel format without XLA
+support. After that, it converts the SavedModel to TFLite using the
+[TFLite converter](https://www.tensorflow.org/lite/convert).
+
+### `jax2tflite+flex`
+
+This is similar to the `jax2tflite` path, but then links in the Select ops. See
+[here](https://www.tensorflow.org/lite/guide/ops_select) for more details.

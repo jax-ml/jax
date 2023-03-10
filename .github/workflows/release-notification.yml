@@ -1,0 +1,15 @@
+name: Google Chat Release Notification
+on:
+  release:
+    types: [published]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Google Chat Notification
+        run: |
+          curl --location --request POST '${{ secrets.RELEASES_WEBHOOK }}' \
+          --header 'Content-Type: application/json' \
+          --data-raw '{
+              "text": "Release ${{github.event.release.name}} at ${{github.event.release.published_at}} by ${{github.event.release.author.login}}. <${{github.event.release.url}}|[github]>"
+          }'

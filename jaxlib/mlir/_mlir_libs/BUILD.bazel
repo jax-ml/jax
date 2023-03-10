@@ -1,0 +1,212 @@
+# Copyright 2021 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load(
+    "//jaxlib:jax.bzl",
+    "py_extension",
+    "windows_cc_shared_mlir_library",
+)
+load("//jaxlib:symlink_files.bzl", "symlink_inputs")
+
+package(
+    default_visibility = [
+        "//visibility:public",
+    ],
+    licenses = ["notice"],
+)
+
+COPTS = [
+    "-fexceptions",
+    "-frtti",
+]
+
+py_extension(
+    name = "_mlir",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/MainModule.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:MLIRBindingsPythonCoreNoCAPI",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+    ],
+)
+
+py_extension(
+    name = "_mlirDialectsSparseTensor",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/DialectSparseTensor.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPISparseTensorHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@pybind11",
+    ],
+)
+
+py_extension(
+    name = "_mlirSparseTensorPasses",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/SparseTensorPasses.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPISparseTensorHeaders",
+        "@pybind11",
+    ],
+)
+
+symlink_inputs(
+    name = "_mlir_libs",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        ".": [
+            "@llvm-project//mlir/python:MlirLibsPyFiles",
+        ],
+    }},
+    deps = [
+        ":_mlir",
+        ":_site_initialize_0",
+    ],
+)
+
+# JAX-specific registrations.
+py_extension(
+    name = "_site_initialize_0",
+    srcs = ["_site_initialize_0.cc"],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
+    ],
+)
+
+##---------------------------------------------------------------------------##
+# MHLO Extensions
+##---------------------------------------------------------------------------##
+
+py_extension(
+    name = "_mlirHlo",
+    srcs = [
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:bindings/python/MlirHloModule.cc",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:CAPIHeaders",
+        "@pybind11",
+    ],
+)
+
+##---------------------------------------------------------------------------##
+# Stablehlo Extensions
+##---------------------------------------------------------------------------##
+
+py_extension(
+    name = "_chlo",
+    srcs = [
+        "@stablehlo//:stablehlo/integrations/python/ChloModule.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
+        "@stablehlo//:chlo_capi_headers",
+    ],
+)
+
+py_extension(
+    name = "_stablehlo",
+    srcs = [
+        "@stablehlo//:stablehlo/integrations/python/StablehloModule.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
+        "@stablehlo//:stablehlo_capi_headers",
+    ],
+)
+
+cc_library(
+    name = "jaxlib_mlir_capi_shared_library",
+    srcs = select({
+        "@org_tensorflow//tensorflow:windows": [":jaxlib_mlir_capi.dll"],
+        "@org_tensorflow//tensorflow:macos": [":libjaxlib_mlir_capi.dylib"],
+        "//conditions:default": [":libjaxlib_mlir_capi.so"],
+    }),
+    deps = select({
+        "@org_tensorflow//tensorflow:windows": [":jaxlib_mlir_capi_dll"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "jaxlib_mlir_capi_objects",
+    deps = [
+        "@llvm-project//mlir:CAPISparseTensorObjects",
+        "@llvm-project//mlir:CAPITransformsObjects",
+        "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
+        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:CAPIObjects",
+        "@stablehlo//:chlo_capi_objects",
+        "@stablehlo//:stablehlo_capi_objects",
+    ],
+)
+
+cc_binary(
+    name = "libjaxlib_mlir_capi.so",
+    linkopts = [
+        "-Wl,-soname=libjaxlib_mlir_capi.so",
+        "-Wl,-rpath='$$ORIGIN'",
+    ],
+    linkshared = 1,
+    deps = [":jaxlib_mlir_capi_objects"],
+)
+
+cc_binary(
+    name = "libjaxlib_mlir_capi.dylib",
+    linkopts = [
+        "-Wl,-rpath,@loader_path/",
+        "-Wl,-install_name,@loader_path/libjaxlib_mlir_capi.dylib",
+    ],
+    linkshared = 1,
+    deps = [":jaxlib_mlir_capi_objects"],
+)
+
+windows_cc_shared_mlir_library(
+    name = "jaxlib_mlir_capi_dll",
+    out = "jaxlib_mlir_capi.dll",
+    exported_symbol_prefixes = [
+        "mlir",
+        "chlo",
+        "stablehlo",
+    ],
+    deps = [":jaxlib_mlir_capi_objects"],
+)

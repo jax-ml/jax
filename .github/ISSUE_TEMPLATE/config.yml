@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Have questions or need support?
+    url: https://github.com/google/jax/discussions
+    about: Please ask questions on the Discussions tab

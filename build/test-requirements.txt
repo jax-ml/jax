@@ -1,0 +1,8 @@
+absl-py
+cloudpickle
+colorama>=0.4.4
+matplotlib
+pillow>=9.1.0
+pytest-xdist
+wheel
+rich
