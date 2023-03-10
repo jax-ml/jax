@@ -88,10 +88,60 @@ py_library(
 
 py_library_providing_imports_info(
     name = "jax",
-    srcs = glob(
+    srcs = [
+        "_src/abstract_arrays.py",
+        "_src/ad_checkpoint.py",
+        "_src/ad_util.py",
+        "_src/api.py",
+        "_src/api_util.py",
+        "_src/array.py",
+        "_src/basearray.py",
+        "_src/callback.py",
+        "_src/checkify.py",
+        "_src/core.py",
+        "_src/custom_api_util.py",
+        "_src/custom_batching.py",
+        "_src/custom_derivatives.py",
+        "_src/custom_transpose.py",
+        "_src/debugging.py",
+        "_src/deprecations.py",
+        "_src/device_array.py",
+        "_src/dispatch.py",
+        "_src/dlpack.py",
+        "_src/dtypes.py",
+        "_src/effects.py",
+        "_src/environment_info.py",
+        "_src/errors.py",
+        "_src/flatten_util.py",
+        "_src/global_device_array.py",
+        "_src/__init__.py",
+        "_src/iree.py",
+        "_src/lax_reference.py",
+        "_src/linear_util.py",
+        "_src/maps.py",
+        "_src/mesh.py",
+        "_src/pjit.py",
+        "_src/prng.py",
+        "_src/profiler.py",
+        "_src/public_test_util.py",
+        "_src/random.py",
+        "_src/sharding.py",
+        "_src/stages.py",
+        "_src/tree_util.py",
+        "_src/typing.py",
+    ] + glob(
         [
             "*.py",
-            "_src/**/*.py",
+            "_src/debugger/**/*.py",
+            "_src/image/**/*.py",
+            "_src/interpreters/**/*.py",
+            "_src/lax/**/*.py",
+            "_src/nn/**/*.py",
+            "_src/numpy/**/*.py",
+            "_src/ops/**/*.py",
+            "_src/scipy/**/*.py",
+            "_src/state/**/*.py",
+            "_src/third_party/**/*.py",
             "image/**/*.py",
             "interpreters/**/*.py",
             "lax/**/*.py",
@@ -112,7 +162,6 @@ py_library_providing_imports_info(
             "_src/util.py",
             "_src/lib/**",
             "_src/test_util.py",
-            "_src/source_info_util.py",
             "_src/traceback_util.py",
             "*_test.py",
             "**/*_test.py",
@@ -145,6 +194,7 @@ py_library_providing_imports_info(
         ":traceback_util",
         ":util",
         ":version",
+        ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
 )
@@ -160,6 +210,15 @@ pytype_library(
     deps = [
         "//jax/_src/lib",
     ],
+)
+
+pytype_library(
+    name = "iree",
+    srcs = ["_src/iree.py"],
+    deps = [
+        ":config",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(
@@ -218,6 +277,28 @@ pytype_library(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
+)
+
+# TODO(phawkins): break up this SCC.
+pytype_library(
+    name = "xla_bridge",
+    srcs = [
+        "_src/clusters/__init__.py",
+        "_src/clusters/cloud_tpu_cluster.py",
+        "_src/clusters/cluster.py",
+        "_src/clusters/ompi_cluster.py",
+        "_src/clusters/slurm_cluster.py",
+        "_src/distributed.py",
+        "_src/xla_bridge.py",
+    ],
+    deps = [
+        ":cloud_tpu_init",
+        ":config",
+        ":iree",
+        ":util",
+        ":traceback_util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 # Public JAX libraries below this point.
