@@ -538,16 +538,17 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_cant_jit_and_pmap_function_with_unordered_effects(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
-    if not jax.config.jax_array:
-      self.skipTest("Only works with jax.Array")
     @jax.jit
     @jax.pmap
     def f(x):
       effect_p.bind(effect=bar_effect)
       return x + 1
-    with warnings.catch_warnings():
-      warnings.simplefilter("ignore")
-      f(jnp.arange(jax.device_count()))  # doesn't crash
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Cannot execute replicated computation with effects."):
+      with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        f(jnp.arange(jax.device_count()))
 
   def test_cant_jit_and_pmap_function_with_ordered_effects(self):
     @jax.jit
