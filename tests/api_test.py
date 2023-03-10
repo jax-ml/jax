@@ -9629,5 +9629,18 @@ class AutodidaxTest(jtu.JaxTestCase):
     autodidax_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(autodidax_module)
 
+class GarbageCollectionTest(jtu.JaxTestCase):
+  def test_xla_gc_callback(self):
+    # https://github.com/google/jax/issues/14882
+    x_np = np.arange(10, dtype='int32')
+    x_jax = jax.device_put(x_np)
+    x_np_weakref = weakref.ref(x_np)
+
+    del x_np
+    del x_jax
+    gc.collect()
+
+    assert x_np_weakref() is None
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
