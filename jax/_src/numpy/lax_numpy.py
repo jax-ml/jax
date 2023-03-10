@@ -5340,7 +5340,7 @@ class _IndexUpdateRef:
   def __repr__(self):
     return f"_IndexUpdateRef({repr(self.array)}, {repr(self.index)})"
 
-  def get(self, indices_are_sorted=False, unique_indices=False,
+  def get(self, *, indices_are_sorted=False, unique_indices=False,
           mode=None, fill_value=None):
     """Equivalent to ``x[idx]``.
 
@@ -5356,7 +5356,7 @@ class _IndexUpdateRef:
                            unique_indices=unique_indices, mode=mode,
                            fill_value=fill_value)
 
-  def set(self, values, indices_are_sorted=False, unique_indices=False,
+  def set(self, values, *, indices_are_sorted=False, unique_indices=False,
           mode=None):
     """Pure equivalent of ``x[idx] = y``.
 
@@ -5369,7 +5369,7 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def apply(self, func, indices_are_sorted=False, unique_indices=False,
+  def apply(self, func, *, indices_are_sorted=False, unique_indices=False,
             mode=None):
     """Pure equivalent of ``func.at(x, idx)`` for a unary ufunc ``func``.
 
@@ -5392,7 +5392,7 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def add(self, values, indices_are_sorted=False, unique_indices=False,
+  def add(self, values, *, indices_are_sorted=False, unique_indices=False,
           mode=None):
     """Pure equivalent of ``x[idx] += y``.
 
@@ -5406,7 +5406,7 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def multiply(self, values, indices_are_sorted=False, unique_indices=False,
+  def multiply(self, values, *, indices_are_sorted=False, unique_indices=False,
                mode=None):
     """Pure equivalent of ``x[idx] *= y``.
 
@@ -5422,7 +5422,7 @@ class _IndexUpdateRef:
                                    mode=mode)
   mul = multiply
 
-  def divide(self, values, indices_are_sorted=False, unique_indices=False,
+  def divide(self, values, *, indices_are_sorted=False, unique_indices=False,
              mode=None):
     """Pure equivalent of ``x[idx] /= y``.
 
@@ -5438,7 +5438,7 @@ class _IndexUpdateRef:
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode))
 
-  def power(self, values, indices_are_sorted=False, unique_indices=False,
+  def power(self, values, *, indices_are_sorted=False, unique_indices=False,
             mode=None):
     """Pure equivalent of ``x[idx] **= y``.
 
@@ -5454,7 +5454,7 @@ class _IndexUpdateRef:
                               indices_are_sorted=indices_are_sorted,
                               unique_indices=unique_indices, mode=mode))
 
-  def min(self, values, indices_are_sorted=False, unique_indices=False,  # noqa: F811
+  def min(self, values, *, indices_are_sorted=False, unique_indices=False,  # noqa: F811
           mode=None):
     """Pure equivalent of ``x[idx] = minimum(x[idx], y)``.
 
@@ -5469,7 +5469,7 @@ class _IndexUpdateRef:
                                    indices_are_sorted=indices_are_sorted,
                                    unique_indices=unique_indices, mode=mode)
 
-  def max(self, values, indices_are_sorted=False, unique_indices=False,  # noqa: F811
+  def max(self, values, *, indices_are_sorted=False, unique_indices=False,  # noqa: F811
           mode=None):
     """Pure equivalent of ``x[idx] = maximum(x[idx], y)``.
 
