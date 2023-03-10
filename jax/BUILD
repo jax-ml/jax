@@ -315,6 +315,7 @@ pytype_library(
         "_src/distributed.py",
         "_src/xla_bridge.py",
     ],
+    visibility = [":internal"] + jax_visibility("xla_bridge"),
     deps = [
         ":cloud_tpu_init",
         ":config",
