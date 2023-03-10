@@ -35,7 +35,6 @@ import jax
 from jax.errors import UnexpectedTracerError
 from jax.monitoring import record_event_duration_secs
 import jax.interpreters.mlir as mlir
-from jax.interpreters import pxla
 import jax.interpreters.partial_eval as pe
 
 from jax._src import array
@@ -56,6 +55,7 @@ from jax._src.config import config, flags
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client as xc
@@ -1377,6 +1377,12 @@ def _check_sharding(aval, s):
   s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
 
+def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
+  result_handler = pxla.global_aval_to_result_handler(aval, s, committed, False)
+  map_ = s.devices_indices_map(aval.shape)  # type: ignore
+  return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
+
+
 def _device_put_impl(
     x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
   try:
@@ -1402,10 +1408,7 @@ def _device_put_impl(
 
     if getattr(x, 'sharding', None) == s:
       return x
-    # TODO(mattjj,yashkatariya,phawkins): more runtime fast resharding here?
-    result_handler = pxla.global_aval_to_result_handler(aval, s, True, False)
-    map_ = s.devices_indices_map(aval.shape)  # type: ignore
-    return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
+    return _put_x(x, s, aval, True)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
@@ -1421,7 +1424,12 @@ def _device_put_impl(
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
 
-  return aval_to_result_handler(device, aval)(None, *device_put(x, device))
+  if jax.config.jax_array:
+    sh = SingleDeviceSharding(pxla._get_default_device()
+                              if device is None else device)
+    return _put_x(x, sh, aval, device is not None)
+  else:
+    return aval_to_result_handler(device, aval)(None, *device_put(x, device))
 
 
 device_put_p = core.Primitive('device_put')

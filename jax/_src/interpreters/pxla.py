@@ -2858,6 +2858,11 @@ ShardingInfo = Tuple[
           AUTOAxisResource],
     MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
 
+
+def _get_default_device() -> xc.Device:
+  return config.jax_default_device or xb.local_devices()[0]
+
+
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     devices: Optional[Sequence[xc.Device]],
@@ -2889,7 +2894,7 @@ def _get_and_check_device_assignment(
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
-    final_device_assignment = [config.jax_default_device or xb.local_devices()[0]]
+    final_device_assignment = [_get_default_device()]
   else:
     final_device_assignment = first_sharding_info[0]
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
