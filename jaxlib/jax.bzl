@@ -51,6 +51,12 @@ def py_deps(_package):
     # dependencies from source with Bazel, but that's not something most people would want.
     return []
 
+def jax_visibility(_target):
+    """Returns the additional Bazel visibilities for `target`."""
+
+    # This is only useful as part of a larger Bazel repository.
+    return []
+
 jax_extra_deps = []
 jax2tf_deps = []
 

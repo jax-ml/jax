@@ -20,7 +20,7 @@ import os.path
 import sysconfig
 import threading
 import types
-from typing import Optional, Iterator, NamedTuple, Union, Tuple
+from typing import List, Optional, Iterator, NamedTuple, Union, Tuple
 
 import jax.version
 from jax._src.lib import xla_client
@@ -40,7 +40,7 @@ class Frame(NamedTuple):
   end_column: int
 
 
-_exclude_paths = [
+_exclude_paths: List[str] = [
     os.path.dirname(jax.version.__file__),
     # Also exclude stdlib as user frames. In a non-standard Python runtime,
     # the following two may be different.
@@ -48,7 +48,7 @@ _exclude_paths = [
     os.path.dirname(sysconfig.__file__)
 ]
 
-def register_exclusion(path):
+def register_exclusion(path: str):
   _exclude_paths.append(path)
 
 class Scope(NamedTuple):
@@ -84,7 +84,7 @@ class NameStack:
   def transform(self, transform_name: str) -> 'NameStack':
     return NameStack((*self.stack, Transform(transform_name)))
 
-  def __getitem__(self, idx) -> 'NameStack':
+  def __getitem__(self, idx: slice) -> 'NameStack':
     return NameStack(self.stack[idx])
 
   def __len__(self):

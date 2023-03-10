@@ -21,6 +21,7 @@ load(
     "jax_extra_deps",
     "jax_internal_packages",
     "jax_test_util_visibility",
+    "jax_visibility",
     "py_deps",
     "py_library_providing_imports_info",
     "pytype_library",
@@ -111,6 +112,7 @@ py_library_providing_imports_info(
             "_src/util.py",
             "_src/lib/**",
             "_src/test_util.py",
+            "_src/source_info_util.py",
             "_src/traceback_util.py",
             "*_test.py",
             "**/*_test.py",
@@ -139,6 +141,7 @@ py_library_providing_imports_info(
         ":monitoring",
         ":path",
         ":pretty_printer",
+        ":source_info_util",
         ":traceback_util",
         ":util",
         ":version",
@@ -182,8 +185,20 @@ pytype_library(
 )
 
 pytype_library(
+    name = "source_info_util",
+    srcs = ["_src/source_info_util.py"],
+    visibility = [":internal"] + jax_visibility("source_info_util"),
+    deps = [
+        ":traceback_util",
+        ":version",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_library(
     name = "traceback_util",
     srcs = ["_src/traceback_util.py"],
+    visibility = [":internal"] + jax_visibility("traceback_util"),
     deps = [
         ":config",
         ":util",
