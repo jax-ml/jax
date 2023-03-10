@@ -36,7 +36,7 @@ _profiler_server: Optional[xla_client.profiler.ProfilerServer] = None
 logger = logging.getLogger(__name__)
 
 
-def start_server(port: int):
+def start_server(port: int) -> xla_client.profiler.ProfilerServer:
   """Starts the profiler server on port `port`.
 
   Using the "TensorFlow profiler" feature in `TensorBoard
@@ -80,7 +80,7 @@ _profile_state = _ProfileState()
 
 
 def start_trace(log_dir, create_perfetto_link: bool = False,
-                create_perfetto_trace: bool = False):
+                create_perfetto_trace: bool = False) -> None:
   """Starts a profiler trace.
 
   The trace will capture CPU, GPU, and/or TPU activity, including Python
@@ -345,7 +345,7 @@ def device_memory_profile(backend: Optional[str] = None) -> bytes:
   return xla_client.heap_profile(xla_bridge.get_backend(backend))
 
 
-def save_device_memory_profile(filename, backend: Optional[str] = None):
+def save_device_memory_profile(filename, backend: Optional[str] = None) -> None:
   """Collects a device memory profile and writes it to a file.
 
   :func:`save_device_memory_profile` is a convenience wrapper around :func:`device_memory_profile`

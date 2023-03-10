@@ -115,14 +115,12 @@ py_library_providing_imports_info(
         "_src/flatten_util.py",
         "_src/global_device_array.py",
         "_src/__init__.py",
-        "_src/iree.py",
         "_src/lax_reference.py",
         "_src/linear_util.py",
         "_src/maps.py",
         "_src/mesh.py",
         "_src/pjit.py",
         "_src/prng.py",
-        "_src/profiler.py",
         "_src/public_test_util.py",
         "_src/random.py",
         "_src/sharding.py",
@@ -153,16 +151,6 @@ py_library_providing_imports_info(
             "third_party/**/*.py",
         ],
         exclude = [
-            "_src/cloud_tpu_init.py",
-            "_src/config.py",
-            "_src/lazy_loader.py",
-            "_src/monitoring.py",
-            "_src/path.py",
-            "_src/pretty_printer.py",
-            "_src/util.py",
-            "_src/lib/**",
-            "_src/test_util.py",
-            "_src/traceback_util.py",
             "*_test.py",
             "**/*_test.py",
             "_src/internal_test_util/**",
@@ -190,6 +178,7 @@ py_library_providing_imports_info(
         ":monitoring",
         ":path",
         ":pretty_printer",
+        ":profiler",
         ":source_info_util",
         ":traceback_util",
         ":util",
@@ -241,6 +230,16 @@ pytype_library(
     name = "pretty_printer",
     srcs = ["_src/pretty_printer.py"],
     deps = [":config"] + py_deps("colorama"),
+)
+
+pytype_library(
+    name = "profiler",
+    srcs = ["_src/profiler.py"],
+    deps = [
+        ":traceback_util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_library(
