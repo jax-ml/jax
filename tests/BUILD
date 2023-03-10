@@ -494,11 +494,10 @@ jax_test(
 py_test(
     name = "lazy_loader_test",
     srcs = [
-        "lazy_loader_module/__init__.py",
-        "lazy_loader_module/lazy_test_submodule.py",
         "lazy_loader_test.py",
     ],
     deps = [
+        "//jax:internal_test_util",
         "//jax:test_util",
     ],
 )
