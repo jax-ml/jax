@@ -18,7 +18,7 @@ import math
 import operator as op
 import numpy as np
 import functools
-from typing import Sequence, Tuple, Callable, Union, Optional, cast, List
+from typing import Sequence, Tuple, Callable, Union, Optional, cast, List, Set
 
 from jax._src import abstract_arrays
 from jax._src import api_util
@@ -384,9 +384,9 @@ class ArrayImpl(basearray.Array):
     raise ValueError('Length of devices is greater than 1. '
                      'Please use `.devices()`.')
 
-  def devices(self) -> List[Device]:
+  def devices(self) -> Set[Device]:
     self._check_if_deleted()
-    return list(self.sharding.device_set)
+    return self.sharding.device_set
 
   # TODO(https://github.com/google/jax/issues/12380): Remove this when DA is
   # deleted.
