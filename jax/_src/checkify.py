@@ -95,7 +95,7 @@ class JaxException(Exception):
     return cls(metadata)
 
   def get_effect_type(self) -> core.Effect:
-    pass
+    raise NotImplementedError
 
 
 @functools.total_ordering

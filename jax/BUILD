@@ -99,18 +99,14 @@ py_library_providing_imports_info(
         "_src/callback.py",
         "_src/checkify.py",
         "_src/core.py",
-        "_src/custom_api_util.py",
         "_src/custom_batching.py",
         "_src/custom_derivatives.py",
         "_src/custom_transpose.py",
         "_src/debugging.py",
-        "_src/deprecations.py",
         "_src/device_array.py",
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/dtypes.py",
-        "_src/effects.py",
-        "_src/environment_info.py",
         "_src/errors.py",
         "_src/flatten_util.py",
         "_src/global_device_array.py",
@@ -173,7 +169,11 @@ py_library_providing_imports_info(
     visibility = ["//visibility:public"],
     deps = [
         ":cloud_tpu_init",
+        ":custom_api_util",
         ":config",
+        ":deprecations",
+        ":effects",
+        ":environment_info",
         ":lazy_loader",
         ":monitoring",
         ":path",
@@ -199,6 +199,31 @@ pytype_library(
     deps = [
         "//jax/_src/lib",
     ],
+)
+
+pytype_library(
+    name = "custom_api_util",
+    srcs = ["_src/custom_api_util.py"],
+)
+
+pytype_library(
+    name = "deprecations",
+    srcs = ["_src/deprecations.py"],
+)
+
+pytype_library(
+    name = "effects",
+    srcs = ["_src/effects.py"],
+)
+
+pytype_library(
+    name = "environment_info",
+    srcs = ["_src/environment_info.py"],
+    deps = [
+        ":xla_bridge",
+        ":version",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(
