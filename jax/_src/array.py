@@ -352,6 +352,7 @@ class ArrayImpl(basearray.Array):
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
+  @use_cpp_method(xla_extension_version >= 138)
   def unsafe_buffer_pointer(self):
     if len(self._arrays) != 1:
       raise ValueError("unsafe_buffer_pointer() is supported only for unsharded"
@@ -359,19 +360,18 @@ class ArrayImpl(basearray.Array):
     return self._arrays[0].unsafe_buffer_pointer()
 
   @property
+  @use_cpp_method(xla_extension_version >= 138)
   def __cuda_array_interface__(self):
     if len(self._arrays) != 1:
       raise ValueError("__cuda_array_interface__() is supported only for "
                        "unsharded arrays.")
     return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
 
+  @use_cpp_method(xla_extension_version >= 138)
   def on_device_size_in_bytes(self):
     """Returns the total global on-device size of the array in bytes."""
     arr = self._arrays[0]
-    if hasattr(arr, "_on_device_size_in_bytes"):
-      per_shard_size = arr._on_device_size_in_bytes()  # type: ignore
-    else:
-      per_shard_size = arr.on_device_size_in_bytes()  # type: ignore
+    per_shard_size = arr.on_device_size_in_bytes()  # type: ignore
     return per_shard_size * len(self.sharding.device_set)
 
   # TODO(yashkatariya): Remove this method when everyone is using devices().
@@ -443,6 +443,7 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(global_d, self.sharding, self.shape, array))
     return out
 
+  @use_cpp_method(xla_extension_version >= 138)
   def delete(self):
     if self._arrays is None:
       return
@@ -471,11 +472,19 @@ class ArrayImpl(basearray.Array):
       db.block_until_ready()
     return self
 
+  @use_cpp_method(xla_extension_version >= 138)
+  def _single_device_array_to_np_array(self):
+    return np.asarray(self._arrays[0])
+
+  @use_cpp_method(xla_extension_version >= 138)
+  def _copy_single_device_array_to_host_async(self):
+    self._arrays[0].copy_to_host_async()
+
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
       if self.is_fully_replicated:
-        self._arrays[0].copy_to_host_async()
+        self._copy_single_device_array_to_host_async()
         return
       try:
         self.addressable_shards[0].replica_id
@@ -485,7 +494,7 @@ class ArrayImpl(basearray.Array):
 
       for s in self.addressable_shards:
         if not replica_id_exists or s.replica_id == 0:
-          s.data._arrays[0].copy_to_host_async()  # pytype: disable=attribute-error
+          s.data._copy_single_device_array_to_host_async()
 
   @property
   def _value(self) -> np.ndarray:
@@ -493,7 +502,8 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       if self.is_fully_replicated:
-        self._npy_value = np.asarray(self._arrays[0])  # type: ignore
+        arr = _single_device_array_from_buf(self._arrays[0], self._committed)
+        self._npy_value = arr._single_device_array_to_np_array()  # type: ignore
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
@@ -514,7 +524,7 @@ class ArrayImpl(basearray.Array):
 
       for s in self.addressable_shards:
         if not replica_id_exists or s.replica_id == 0:
-          npy_value[s.index] = np.asarray(s.data._arrays[0])  # type: ignore  # [union-attr]
+          npy_value[s.index] = s.data._single_device_array_to_np_array()  # type: ignore  # [union-attr]
       self._npy_value = npy_value  # type: ignore
       self._npy_value.flags.writeable = False
     # https://docs.python.org/3/library/typing.html#typing.cast
