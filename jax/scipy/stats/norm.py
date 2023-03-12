@@ -21,4 +21,6 @@ from jax._src.scipy.stats.norm import (
   logpdf as logpdf,
   pdf as pdf,
   ppf as ppf,
+  sf as sf,
+  isf as isf,
 )
