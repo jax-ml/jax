@@ -1447,7 +1447,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      native_serialization=False)(x)
     with self.assertRaisesRegex(
         ValueError,
-        "dimension variables cannot be computed from the static shapes of the kept lowered arguments"):
+        "dimension variables cannot be computed from the static shapes of the array arguments"):
       jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
                      native_serialization=True)(x)
 

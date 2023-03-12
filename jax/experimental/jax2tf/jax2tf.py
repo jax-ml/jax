@@ -744,8 +744,7 @@ def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
   call_module_attrs = dict(
       version=exported.xla_call_module_version,
       Tout=out_types,
-      Sout=out_shapes,
-      dim_args_spec=exported.dim_args_spec)
+      Sout=out_shapes)
 
   if exported.xla_call_module_version >= 3:
     if native_serialization_strict_checks:

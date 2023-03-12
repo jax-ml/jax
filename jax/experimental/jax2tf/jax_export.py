@@ -16,13 +16,13 @@
 This module is used with jax2tf, but should have no TensorFlow dependencies.
 """
 import dataclasses
+from functools import partial
 import re
 from typing import  Callable, Dict, List, Optional, Sequence, Set, Union
 
 from absl import logging
 
 import jax
-from jax import config
 from jax import sharding
 
 from jax._src import core
@@ -32,13 +32,16 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
 from jax._src.lib.mlir.dialects import stablehlo
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import hlo
+from jax._src.lib.mlir.dialects import func as func_dialect
 
 
 map = util.safe_map
 zip = util.safe_zip
 
 # These are the JAX custom call target names that are guaranteed to be stable.
-# They are tested by back_compat_test.py.
+# Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "ducc_fft", "cu_threefry2x32",
@@ -81,8 +84,7 @@ class Exported:
   mlir_module_serialized: bytes  # VHLO bytecode format
   xla_call_module_version: int  # Follows the versions of XlaCallModule
   module_kept_var_idx: Sequence[int]  # Specifies if an argument is kept in the
-                                      # lowering. As long as `out_avals`.
-  dim_args_spec: Sequence[str]
+                                      # lowering. Same length as `in_shardings`.
 
 
 def default_jax_backend() -> str:
@@ -116,6 +118,16 @@ def serialize_native(fun_jax: Callable,
       _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
 
   mlir_module = lowered.stablehlo()
+  if "kept_var_idx" in lowered.compile_args:
+    module_kept_var_idx = tuple(sorted(lowered.compile_args["kept_var_idx"]))
+  else:
+    # For pmap
+    module_kept_var_idx = tuple(range(len(args_avals)))
+
+  if not all(core.is_constant_shape(a.shape) for a in args_avals):
+    # All arguments are kept if we have dimension variables.
+    assert len(module_kept_var_idx) == len(args_avals)
+    mlir_module = compute_dim_vars(mlir_module, args_avals)
 
   if xla_client.mlir_api_version >= 46:
     xla_call_module_version = 4
@@ -138,68 +150,10 @@ def serialize_native(fun_jax: Callable,
   if lowered.compile_args["host_callbacks"]:
     raise NotImplementedError("host_callbacks are not yet implemented for the jax2tf native lowering")
 
-  if "kept_var_idx" in lowered.compile_args:
-    module_kept_var_idx = tuple(sorted(lowered.compile_args["kept_var_idx"]))
-  else:
-    # For pmap
-    module_kept_var_idx = tuple(range(len(args_avals)))
-
-  # We must compute the dim_args_spec: for each dimension variable, encode how
-  # to compute its value from the shape of the explicit arguments. E.g., "2.1"
-  # denotes args_tf[2].shape[1]. The order of the dimension variables must match
-  # the order of the first N arguments of the lowered function.
-  # If we use --jax_dynamic_shapes, the dimension variables are listed in the
-  # order in which they are encountered by scanning the arguments and their
-  # shapes in order. Otherwise, the dimension variables are passed in the
-  # alphabetical order of their names.
-  dim_args_spec_dict: Dict[str, str] = {}  # map dim var name to dim_args_spec
-  dim_vars_order: List[str] = []
-  all_dim_vars: Set[str] = set()
-  current_kept_arg_idx = -1  # The index among the kept arguments
-  for arg_idx, aval in enumerate(args_avals):
-    is_kept = arg_idx in module_kept_var_idx
-    if is_kept:
-      current_kept_arg_idx += 1
-
-    for axis_idx, d in enumerate(aval.shape):
-      if not core.is_constant_dim(d):
-        # We collect dimension variables even from dropped args
-        all_dim_vars = all_dim_vars.union(d.get_vars())
-        if not is_kept: continue
-        d_var = d.to_var()
-        # We can compute dim vars only from trivial polynomials
-        if d_var is None: continue
-        if d_var not in dim_args_spec_dict:
-          dim_vars_order.append(d_var)
-          dim_args_spec_dict[d_var] = f"{current_kept_arg_idx}.{axis_idx}"
-
-  if all_dim_vars:
-    dim_args_spec_set = set(dim_vars_order)
-    if dim_args_spec_set != all_dim_vars:
-      missing = all_dim_vars.difference(dim_args_spec_set)
-      args_list = [f"  Arg[{arg_idx}] - {'KEPT   ' if arg_idx in module_kept_var_idx else 'DROPPED'}: {aval}"
-                   for arg_idx, aval in enumerate(args_avals)]
-      raise ValueError(
-          "The following dimension variables cannot be computed from the static "
-          f"shapes of the kept lowered arguments: {missing}. These are the "
-          "argument shapes:\n" +
-          "\n".join(args_list) +
-          "\n"
-          "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
-
-    if config.jax_dynamic_shapes:
-      # In the order we have seen them
-      dim_args_spec = [dim_args_spec_dict[d_var] for d_var in dim_vars_order]
-    else:
-      # In sorted order by name
-      dim_args_spec = [dim_args_spec_dict[d_var] for d_var in sorted(dim_vars_order)]
-  else:
-    dim_args_spec = []
-
   # Log and then check the module.
   if logging.vlog_is_on(3):
     mlir_module_text = mlir.module_to_string(mlir_module)
-    logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}, dim_args_spec=" + ", ".join(dim_args_spec)
+    logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}"
     logging.vlog(3, "Lowered JAX module: %s\n%s", logmsg, mlir_module_text)
 
   check_module(mlir_module,
@@ -215,9 +169,147 @@ def serialize_native(fun_jax: Callable,
       mlir_module=mlir_module,
       mlir_module_serialized=mlir_module_serialized,
       module_kept_var_idx=module_kept_var_idx,
-      xla_call_module_version=xla_call_module_version,
-      dim_args_spec=dim_args_spec
-  )
+      xla_call_module_version=xla_call_module_version)
+
+
+def compute_dim_vars(module: mlir.ir.Module,
+                     args_avals: Sequence[core.ShapedArray]) -> mlir.ir.Module:
+  """Wraps the lowered module with a new "main" that computes the dim vars.
+
+  JAX lowering in presence of shape polymorphism produces a `module` that
+  takes one or more dimension arguments, specified using 0-dimensional tensors
+  of type i32 or i64, followed by the regular array arguments.
+  The dimension arguments correspond to the dimension variables appearing in
+  the `args_avals`, in sorted order.
+
+  Consider the lowering of a function with one array argument of type "f32[w, h]",
+  where "w" and "h" are two dimension variables. The `module` will also
+  contain two dimension arguments, corresponding to "h" and "w" respectively:
+
+      func public main(arg_h: i32, arg_w: i32, arg: f32[?, ?]) {
+        ...
+      }
+
+      we rename "main" to "_wrapped_jax_export_main" and add a new "main":
+
+      func public main(arg: f32[?, ?]) {
+         arg_h = hlo.get_dimension_size(arg, 1)
+         arg_w = hlo.get_dimension_size(arg, 0)
+         res = call _wrapped_jax_export_main(arg_h, arg_w, arg)
+         return res
+      }
+
+  Args:
+    module: the HLO module as obtained from lowering. May have a number of
+      dimension arguments, followed by the kept array arguments.
+    args_avals: the avals for all the arguments of the lowered function, which
+      correspond to the array arguments of the `module`.
+
+  Returns the wrapped module.
+  """
+  dim_args_builders = get_dim_arg_builders(args_avals)
+
+  # Make a new module, do not mutate the "module" because it may be cached
+  context = mlir.make_ir_context()
+  with context, ir.Location.unknown(context):
+    new_module = ir.Module.parse(mlir.module_to_bytecode(module))
+    symbol_table = ir.SymbolTable(new_module.operation)
+    orig_main = symbol_table["main"]
+    orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
+    orig_main_name = "_wrapped_jax_export_main"
+    symbol_table.set_symbol_name(orig_main, orig_main_name)
+
+    orig_input_types = orig_main.type.inputs
+    nr_array_args = len(orig_input_types) - len(dim_args_builders)
+    assert nr_array_args >= 0
+
+    new_main_input_types = orig_input_types[- nr_array_args:]
+    orig_output_types = orig_main.type.results
+
+    ftype = ir.FunctionType.get(new_main_input_types, orig_output_types)
+    new_main_op = func_dialect.FuncOp(
+        "main", ftype, ip=ir.InsertionPoint.at_block_begin(new_module.body))
+    new_main_op.attributes["sym_visibility"] = ir.StringAttr.get("public")
+    try:
+      new_main_op.arg_attrs = list(orig_main.arg_attrs)[- nr_array_args:]
+    except KeyError:
+      pass  # TODO: better detection if orig_main.arg_attrs does not exist
+    try:
+      new_main_op.result_attrs = orig_main.result_attrs
+    except KeyError:
+      pass
+    symbol_table.insert(new_main_op)
+    entry_block = new_main_op.add_entry_block()
+    with ir.InsertionPoint(entry_block):
+      orig_main_args = []
+      # The first arguments are the dimension variable
+      for dim_arg_idx, dim_arg_builder in enumerate(dim_args_builders):
+        orig_main_args.append(
+            dim_arg_builder(new_main_op.arguments, orig_input_types[dim_arg_idx]))
+      # Then the array arguments
+      orig_main_args.extend(new_main_op.arguments)
+      call = func_dialect.CallOp(orig_output_types,
+                                 ir.FlatSymbolRefAttr.get(orig_main_name),
+                                 orig_main_args)
+      func_dialect.ReturnOp(call.results)
+    symbol_table.set_symbol_name(new_main_op, "main")
+    return new_module
+
+
+# A dimension argument builder computes a dimension argument given
+# the array arguments and the desired type of the dimension argument.
+DimArgBuilder = Callable[[Sequence[mlir.ir.Value], mlir.ir.Type], mlir.ir.Value]
+
+def get_dim_arg_builders(
+    args_avals: Sequence[core.ShapedArray]) -> Sequence[DimArgBuilder]:
+  """For each dimension variable, return a builder.
+
+  Args:
+    args_avals: the abstract values of the array arguments.
+
+  Returns:
+    a list of DimArgBuilder, for each dimension variable appearing in `args_avals`
+    in the sorted order of dimension variable name.
+  """
+  def get_dim_arg(array_arg_idx: int, dim_idx: int,
+                  array_args: Sequence[mlir.ir.Value],
+                  dim_arg_type: mlir.ir.Type) -> mlir.ir.Value:
+    dim_arg = hlo.GetDimensionSizeOp(array_args[array_arg_idx], dim_idx)
+    if dim_arg.result.type != dim_arg_type:
+      return hlo.ConvertOp(dim_arg_type, dim_arg).result
+    else:
+      return dim_arg.result
+
+  dim_args_builder_dict: Dict[str, DimArgBuilder] = {}  # a builder for each dim var by name
+  all_dim_vars: Set[str] = set()
+  for arg_idx, aval in enumerate(args_avals):
+    for axis_idx, d in enumerate(aval.shape):
+      if not core.is_constant_dim(d):
+        all_dim_vars = all_dim_vars.union(d.get_vars())
+        d_var = d.to_var()
+        # TODO(necula): compute dim vars from non-trivial expressions also
+        if d_var is None: continue
+        if not d_var in dim_args_builder_dict:
+          dim_args_builder_dict[d_var] = partial(get_dim_arg, arg_idx, axis_idx)
+
+  if all_dim_vars:
+    dim_vars_with_builders_set = set(dim_args_builder_dict.keys())
+    if dim_vars_with_builders_set != all_dim_vars:
+      missing = all_dim_vars.difference(dim_vars_with_builders_set)
+      args_list = [f"  Arg[{arg_idx}]: {aval}"
+                   for arg_idx, aval in enumerate(args_avals)]
+      raise ValueError(
+          "The following dimension variables cannot be computed from the static "
+          f"shapes of the array arguments: {missing}. The argument shapes are:\n" +
+          "\n".join(args_list) +
+          "\n"
+          "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
+
+    # In sorted order by name
+    builders = [dim_args_builder_dict[d_var] for d_var in sorted(dim_args_builder_dict.keys())]
+  else:
+    builders = []
+  return builders
 
 
 def check_module(mod: mlir.ir.Module, *,
