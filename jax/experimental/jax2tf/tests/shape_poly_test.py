@@ -740,8 +740,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(avals)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(get_dim_values_jax,
-                                                         args_tf, avals, "",
-                                                         lowering_params=jax2tf.jax2tf.non_native_lowering_params)
+                                                         args_tf, avals, "")
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
         return dict(zip(dim_vars, dim_values))
@@ -1395,53 +1394,76 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(lambda x: 0 if x.shape[0] + 1 >= x.shape[1] else 1,
                      polymorphic_shapes=["(a, b)"])(np.ones((4, 4)))
 
-    # Unsoundness: not checking that the shape is 0
-    def f_jax(x):
-      return 0 if x.shape[0] == 0 else 1
+    # Unsoundness: not checking that the dimension variable is 0
+    def f1_jax(x):  # f32[b]
+      # We have to use "x"
+      return jnp.concatenate([x, jnp.array([0. if x.shape[0] == 0 else 1.],
+                                           dtype=np.float32)])
 
     x0 = np.array([], np.float32)
-    self.assertEqual(0, f_jax(x0))  # JAX sees that the x.shape[0] == 0
+    # JAX with static shapes sees that the x.shape[0] == 0
+    self.assertEqual(jnp.array([0.], dtype=np.float32), f1_jax(x0))
 
     # jax2tf catches the broken assumption b >= 1 if the converted function is executed
     # eagerly.
-    # Raises: ValueError: PolyShape 'b' has dimension variable 'b' corresponding to 0, for argument shape (0,)
-    with self.assertRaisesRegex(ValueError,
-                                "Dimension variable b must have integer value >= 1. Found value 0 when solving .*"):
-      jax2tf.convert(f_jax, polymorphic_shapes=["b"])(x0)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Dimension variable b must have integer value >= 1. Found value 0 when solving .*"):
+      jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
+                     experimental_native_lowering=False)(x0)
 
     # TODO(https://github.com/google/jax/issues/14437)
-    if not config.jax2tf_default_experimental_native_lowering:
-      # However, if we first trace to a TensorFlow graph, we may miss the broken assumption:
-      f_tf = tf.function(
-          jax2tf.convert(f_jax, polymorphic_shapes=["b"])).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
-      self.assertEqual(1, f_tf(x0))
+    # In native lowering, or if we trace to a TF graph, we miss this
+    res1_tf = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
+                             experimental_native_lowering=True)(x0)
+    self.assertEqual(jnp.array([1.], dtype=np.float32), res1_tf)
+
+    f1_tf = tf.function(
+        jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
+                       experimental_native_lowering=False)
+    ).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
+    self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
 
     # Unsoundness: not checking that the actual dimensions denoted by the same
     # dimension variables have equal sizes.
-    def f_jax(x):
-      return 0 if x.shape[0] != x.shape[1] else 1
+    def f2_jax(x):  # f32[b, b]
+      # We have to use "x"
+      return jnp.sum(x) + (0. if x.shape[0] != x.shape[1] else 1.)
 
     x45 = np.ones((4, 5), dtype=np.float32)
-    self.assertEqual(0, f_jax(x45))  # JAX seems that x.shape[0] != x.shape[1]
+    # JAX with static shapes sees that x.shape[0] != x.shape[1]
+    self.assertEqual(jnp.sum(x45), f2_jax(x45))
 
-    # jax2tf catches the broken assumption x.shape[0] == x.shape[1] if the converted
-    # function is executed eagerly.
-    # Raises: ValueError: PolyShape 'b, b' has dimension variable 'b' corresponding to multiple values ([4, 5]), for argument shape (4, 5)
+    # jax2tf catches the broken assumption b >= 1 if the converted function is executed
+    # eagerly.
     with self.assertRaisesRegex(ValueError,
                                 "Found inconsistency when solving b == .*"):
-      jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])(x45)
+      jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
+                     experimental_native_lowering=False)(x45)
 
-    # However, if we first trace to a TensorFlow graph, we may miss the broken assumption.
-     # TODO(https://github.com/google/jax/issues/14437)
-    if not config.jax2tf_default_experimental_native_lowering:
-      f_tf = tf.function(
-          jax2tf.convert(f_jax, polymorphic_shapes=["b, b"])).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
-      self.assertEqual(1, f_tf(x45))
+    # TODO(https://github.com/google/jax/issues/14437)
+    # In native lowering, or if we trace to a TF graph, we miss this
+    res2_tf = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
+                             experimental_native_lowering=True)(x45)
+    self.assertEqual(1. + jnp.sum(x45), res2_tf)
+
+    f2_tf = tf.function(
+        jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
+                       experimental_native_lowering=False)
+    ).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
+    self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
 
     x = np.ones((5,), dtype=np.float32)
-    with self.assertRaisesRegex(ValueError,
-                                "Cannot solve for values of dimension variables"):
-      jax2tf.convert(lambda x: x, polymorphic_shapes=["a + b"])(x)
+    with self.assertRaisesRegex(
+        ValueError,
+        "Cannot solve for values of dimension variables"):
+      jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
+                     experimental_native_lowering=False)(x)
+    with self.assertRaisesRegex(
+        ValueError,
+        "dimension variables cannot be computed from the static shapes of the kept lowered arguments"):
+      jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
+                     experimental_native_lowering=True)(x)
 
   def test_dynamic_shapes(self):
     # Test dim_as_value with dynamic shapes.

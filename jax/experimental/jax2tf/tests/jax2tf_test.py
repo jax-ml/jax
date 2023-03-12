@@ -1490,7 +1490,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         stack.enter_context(mesh)
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
-      exported = jax2tf.jax2tf.export_native(
+      exported = jax2tf.jax2tf.serialize_native(
           func_to_convert,
           [core.ShapedArray(a.shape, a.dtype) for a in args],
           lowering_platform='tpu',
