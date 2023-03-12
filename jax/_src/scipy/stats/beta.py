@@ -19,7 +19,7 @@ import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
-from jax.scipy.special import betaln, xlogy, xlog1py
+from jax.scipy.special import betaln, betainc, xlogy, xlog1py
 
 
 @_wraps(osp_stats.beta.logpdf, update_doc=False)
@@ -40,3 +40,31 @@ def logpdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
 def pdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
         loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, a, b, loc, scale))
+
+
+@_wraps(osp_stats.beta.cdf, update_doc=False)
+def cdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
+        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  x, a, b, loc, scale = promote_args_inexact("beta.cdf", x, a, b, loc, scale)
+  return betainc(
+    a,
+    b,
+    lax.clamp(
+      _lax_const(x, 0),
+      lax.div(lax.sub(x, loc), scale),
+      _lax_const(x, 1),
+    )
+  )
+
+
+@_wraps(osp_stats.beta.logcdf, update_doc=False)
+def logcdf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
+        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  return lax.log(cdf(x, a, b, loc, scale))
+
+
+@_wraps(osp_stats.beta.sf, update_doc=False)
+def sf(x: ArrayLike, a: ArrayLike, b: ArrayLike,
+        loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
+  cdf_result = cdf(x, a, b, loc, scale)
+  return lax.sub(_lax_const(cdf_result, 1), cdf_result)
