@@ -346,14 +346,7 @@ def convert(fun_jax: Callable,
             DeprecationWarning)
         native_serialization = experimental_native_lowering
       else:
-        if config.jax2tf_default_experimental_native_lowering:
-          warnings.warn(
-              ("jax2tf_default_experimental_native_lowering is "
-              "deprecated. Use jax2tf_default_native_serialization instead"),
-              DeprecationWarning)
-          native_serialization = config.jax2tf_default_experimental_native_lowering
-        else:
-          native_serialization = config.jax2tf_default_native_serialization
+        native_serialization = config.jax2tf_default_native_serialization
 
   if native_serialization and not enable_xla:
     raise ValueError(
