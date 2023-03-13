@@ -107,7 +107,7 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
 
 
 def _single_device_array_from_buf(buf, committed):
-  if isinstance(buf, ArrayImpl):
+  if isinstance(buf, ArrayImpl) and buf._committed == committed:  # type: ignore
     return buf
   db = dispatch._set_aval(buf)
   return ArrayImpl(db.aval, SingleDeviceSharding(db.device()), [db],

@@ -795,6 +795,15 @@ def device_put(state):
     _ = jax.device_put(x).block_until_ready()
 
 
+@google_benchmark.register
+def device_put_sharded(state):
+  arr_inp = [np.array(i) for i in range(jax.device_count())]
+  dev = jax.devices()
+
+  while state:
+    _ = jax.device_put_sharded(arr_inp, dev).block_until_ready()
+
+
 def batch_inplace_while(inplace_op, state):
 
   @jax.jit

@@ -3163,6 +3163,13 @@ class ArrayPmapTest(jtu.JaxTestCase):
     out_copy1 = jnp.copy(out1)
     _compare_if_equal(out1, out_copy1)
 
+  def test_device_put_sharded_transfer_guard(self):
+    inp = jnp.arange(jax.device_count())
+    arr_inp = [jax.device_put(i, d) for i, d in zip(inp, jax.devices())]
+
+    with jax.transfer_guard("disallow_explicit"):
+      jax.device_put_sharded(arr_inp, jax.devices())
+
 
 class EagerPmapMixin:
 
