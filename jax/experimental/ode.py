@@ -34,7 +34,7 @@ import jax.numpy as jnp
 from jax._src import core
 from jax import custom_derivatives
 from jax import lax
-from jax._src.numpy.util import _promote_dtypes_inexact
+from jax._src.numpy.util import promote_dtypes_inexact
 from jax._src.util import safe_map, safe_zip
 from jax.flatten_util import ravel_pytree
 from jax.tree_util import tree_leaves, tree_map
@@ -76,7 +76,7 @@ def initial_step_size(fun, t0, y0, order, rtol, atol, f0):
   # Algorithm from:
   # E. Hairer, S. P. Norsett G. Wanner,
   # Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
-  y0, f0 = _promote_dtypes_inexact(y0, f0)
+  y0, f0 = promote_dtypes_inexact(y0, f0)
   dtype = y0.dtype
 
   scale = atol + jnp.abs(y0) * rtol

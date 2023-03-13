@@ -19,11 +19,11 @@ import scipy.fft as osp_fft
 from jax import lax
 import jax.numpy as jnp
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import _wraps, _promote_dtypes_complex
+from jax._src.numpy.util import _wraps, promote_dtypes_complex
 from jax._src.typing import Array
 
 def _W4(N: int, k: Array) -> Array:
-  N_arr, k = _promote_dtypes_complex(N, k)
+  N_arr, k = promote_dtypes_complex(N, k)
   return jnp.exp(-.5j * jnp.pi * k / N_arr)
 
 def _dct_interleave(x: Array, axis: int) -> Array:

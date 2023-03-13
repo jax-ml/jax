@@ -228,11 +228,11 @@ def _asarray(arr: ArrayLike) -> Array:
   Pared-down utility to convert object to a DeviceArray.
   Note this will not correctly handle lists or tuples.
   """
-  _check_arraylike("_asarray", arr)
+  check_arraylike("_asarray", arr)
   dtype, weak_type = dtypes._lattice_result_type(arr)
   return lax._convert_element_type(arr, dtype, weak_type)
 
-def _promote_shapes(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_shapes(fun_name: str, *args: ArrayLike) -> List[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
   if len(args) < 2:
     return [_asarray(arg) for arg in args]
@@ -273,7 +273,7 @@ def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
     raise ValueError(msg.format(fun_name, ' '.join(map(str, shapes))))
 
 
-def _promote_dtypes(*args: ArrayLike) -> List[Array]:
+def promote_dtypes(*args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument dtype promotion."""
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
@@ -284,7 +284,7 @@ def _promote_dtypes(*args: ArrayLike) -> List[Array]:
     return [lax._convert_element_type(x, to_dtype, weak_type) for x in args]
 
 
-def _promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
+def promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to an inexact type."""
@@ -295,7 +295,7 @@ def _promote_dtypes_inexact(*args: ArrayLike) -> List[Array]:
           for x in args]
 
 
-def _promote_dtypes_numeric(*args: ArrayLike) -> List[Array]:
+def promote_dtypes_numeric(*args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a numeric (non-bool) type."""
@@ -306,7 +306,7 @@ def _promote_dtypes_numeric(*args: ArrayLike) -> List[Array]:
           for x in args]
 
 
-def _promote_dtypes_complex(*args: ArrayLike) -> List[Array]:
+def promote_dtypes_complex(*args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument dtype promotion.
 
   Promotes arguments to a complex type."""
@@ -333,7 +333,7 @@ stackables: Set[Type] = set()
 _register_stackable: Callable[[Type], None] = stackables.add
 
 
-def _check_arraylike(fun_name: str, *args: Any):
+def check_arraylike(fun_name: str, *args: Any):
   """Check if all args fit JAX's definition of arraylike."""
   assert isinstance(fun_name, str), f"fun_name must be a string. Got {fun_name}"
   if any(not _arraylike(arg) for arg in args):
@@ -356,26 +356,26 @@ def _check_no_float0s(fun_name: str, *args: Any):
         "taken a gradient with respect to an integer argument.")
 
 
-def _promote_args(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_args(fun_name: str, *args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion."""
-  _check_arraylike(fun_name, *args)
+  check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
-  return _promote_shapes(fun_name, *_promote_dtypes(*args))
+  return promote_shapes(fun_name, *promote_dtypes(*args))
 
 
-def _promote_args_numeric(fun_name: str, *args: ArrayLike) -> List[Array]:
-  _check_arraylike(fun_name, *args)
+def promote_args_numeric(fun_name: str, *args: ArrayLike) -> List[Array]:
+  check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
-  return _promote_shapes(fun_name, *_promote_dtypes_numeric(*args))
+  return promote_shapes(fun_name, *promote_dtypes_numeric(*args))
 
 
-def _promote_args_inexact(fun_name: str, *args: ArrayLike) -> List[Array]:
+def promote_args_inexact(fun_name: str, *args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument shape and dtype promotion.
 
   Promotes non-inexact types to an inexact type."""
-  _check_arraylike(fun_name, *args)
+  check_arraylike(fun_name, *args)
   _check_no_float0s(fun_name, *args)
-  return _promote_shapes(fun_name, *_promote_dtypes_inexact(*args))
+  return promote_shapes(fun_name, *promote_dtypes_inexact(*args))
 
 
 @partial(api.jit, inline=True)
@@ -391,7 +391,7 @@ def _broadcast_arrays(*args: ArrayLike) -> List[Array]:
 def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
   if hasattr(arr, "broadcast_to"):
     return arr.broadcast_to(shape)  # type: ignore[union-attr]
-  _check_arraylike("broadcast_to", arr)
+  check_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else _asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
@@ -425,7 +425,7 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
                      .format(x, y))
   if not np.issubdtype(_dtype(condition), np.bool_):
     condition = lax.ne(condition, lax._zero(condition))
-  x, y = _promote_dtypes(x, y)
+  x, y = promote_dtypes(x, y)
   condition_arr, x_arr, y_arr = _broadcast_arrays(condition, x, y)
   try:
     is_always_empty = core.is_empty_shape(x_arr.shape)

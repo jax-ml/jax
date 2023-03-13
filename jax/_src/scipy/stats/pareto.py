@@ -18,13 +18,13 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, _promote_args_inexact
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.pareto.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, b: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, b, loc, scale = _promote_args_inexact("pareto.logpdf", x, b, loc, scale)
+  x, b, loc, scale = promote_args_inexact("pareto.logpdf", x, b, loc, scale)
   one = _lax_const(x, 1)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   normalize_term = lax.log(lax.div(scale, b))

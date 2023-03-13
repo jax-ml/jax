@@ -17,14 +17,14 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, _promote_args_inexact
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax.scipy.special import gammaln, xlogy
 
 
 @_wraps(osp_stats.gamma.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, a: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, a, loc, scale = _promote_args_inexact("gamma.logpdf", x, a, loc, scale)
+  x, a, loc, scale = promote_args_inexact("gamma.logpdf", x, a, loc, scale)
   one = _lax_const(x, 1)
   y = lax.div(lax.sub(x, loc), scale)
   log_linear_term = lax.sub(xlogy(lax.sub(a, one), y), y)

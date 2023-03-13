@@ -30,7 +30,7 @@ from jax._src.interpreters import batching
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
-from jax._src.numpy.util import _promote_dtypes_complex, _promote_dtypes_inexact
+from jax._src.numpy.util import promote_dtypes_complex, promote_dtypes_inexact
 
 __all__ = [
   "fft",
@@ -61,9 +61,9 @@ def fft(x, fft_type: Union[xla_client.FftType, str], fft_lengths: Sequence[int])
   if typ == xla_client.FftType.RFFT:
     if np.iscomplexobj(x):
       raise ValueError("only real valued inputs supported for rfft")
-    x, = _promote_dtypes_inexact(x)
+    x, = promote_dtypes_inexact(x)
   else:
-    x, = _promote_dtypes_complex(x)
+    x, = promote_dtypes_complex(x)
   if len(fft_lengths) == 0:
     # XLA FFT doesn't support 0-rank.
     return x

@@ -28,7 +28,7 @@ from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions
-from jax._src.numpy.util import _check_arraylike, _promote_dtypes
+from jax._src.numpy.util import check_arraylike, promote_dtypes
 
 
 Array = Any
@@ -100,7 +100,7 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   if core.is_empty_shape(indexer.slice_shape):
     return x
 
-  x, y = _promote_dtypes(x, y)
+  x, y = promote_dtypes(x, y)
 
   # Broadcast `y` to the slice output shape.
   y = jnp.broadcast_to(y, tuple(indexer.slice_shape))
@@ -157,7 +157,7 @@ def _segment_update(name: str,
                     bucket_size: Optional[int] = None,
                     reducer: Optional[Callable] = None,
                     mode: Optional[lax.GatherScatterMode] = None) -> Array:
-  _check_arraylike(name, data, segment_ids)
+  check_arraylike(name, data, segment_ids)
   mode = lax.GatherScatterMode.FILL_OR_DROP if mode is None else mode
   data = jnp.asarray(data)
   segment_ids = jnp.asarray(segment_ids)

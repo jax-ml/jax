@@ -38,7 +38,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy.lax_numpy import _convert_and_clip_integer
-from jax._src.numpy.util import _arraylike, _check_arraylike, _promote_dtypes_inexact
+from jax._src.numpy.util import _arraylike, check_arraylike, promote_dtypes_inexact
 from jax._src.typing import Array, ArrayLike, DTypeLike
 from jax._src.util import canonicalize_axis
 
@@ -330,7 +330,7 @@ def _randint(key, shape, minval, maxval, dtype) -> Array:
   if not jnp.issubdtype(dtype, np.integer):
     raise TypeError(f"randint only accepts integer dtypes, got {dtype}")
 
-  _check_arraylike("randint", minval, maxval)
+  check_arraylike("randint", minval, maxval)
   minval = jnp.asarray(minval)
   maxval = jnp.asarray(maxval)
   if not jnp.issubdtype(minval.dtype, np.integer):
@@ -423,7 +423,7 @@ def permutation(key: KeyArray,
     A shuffled version of x or array range
   """
   key, _ = _check_prng_key(key)
-  _check_arraylike("permutation", x)
+  check_arraylike("permutation", x)
   axis = canonicalize_axis(axis, np.ndim(x) or 1)
   if not np.ndim(x):
     if not np.issubdtype(lax.dtype(x), np.integer):
@@ -500,7 +500,7 @@ def choice(key: KeyArray,
   if not isinstance(shape, Sequence):
     raise TypeError("shape argument of jax.random.choice must be a sequence, "
                     f"got {shape}")
-  _check_arraylike("choice", a)
+  check_arraylike("choice", a)
   arr = jnp.asarray(a)
   if arr.ndim == 0:
     n_inputs = core.concrete_or_error(int, a, "The error occurred in jax.random.choice()")
@@ -523,8 +523,8 @@ def choice(key: KeyArray,
       slices = (slice(None),) * axis + (slice(n_draws),)
       result = permutation(key, n_inputs if arr.ndim == 0 else arr, axis)[slices]
   else:
-    _check_arraylike("choice", p)
-    p_arr, = _promote_dtypes_inexact(p)
+    check_arraylike("choice", p)
+    p_arr, = promote_dtypes_inexact(p)
     if p_arr.shape != (n_inputs,):
       raise ValueError("p must be None or match the shape of a")
     if replace:
@@ -615,7 +615,7 @@ def multivariate_normal(key: KeyArray,
     ``broadcast_shapes(mean.shape[:-1], cov.shape[:-2]) + mean.shape[-1:]``.
   """
   key, _ = _check_prng_key(key)
-  mean, cov = _promote_dtypes_inexact(mean, cov)
+  mean, cov = promote_dtypes_inexact(mean, cov)
   if method not in {'svd', 'eigh', 'cholesky'}:
     raise ValueError("method must be one of {'svd', 'eigh', 'cholesky'}")
   if dtype is None:
@@ -1328,7 +1328,7 @@ def categorical(key: KeyArray,
     is not None, or else ``np.delete(logits.shape, axis)``.
   """
   key, _ = _check_prng_key(key)
-  _check_arraylike("categorical", logits)
+  check_arraylike("categorical", logits)
   logits_arr = jnp.asarray(logits)
 
   if axis >= 0:

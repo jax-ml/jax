@@ -22,7 +22,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax._src import dtypes
 from jax._src.api import vmap
-from jax._src.numpy.util import _check_arraylike, _wraps
+from jax._src.numpy.util import check_arraylike, _wraps
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
 
@@ -35,7 +35,7 @@ Currently the only supported nan_policy is 'propagate'
 """)
 @partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
 def mode(a: ArrayLike, axis: Optional[int] = 0, nan_policy: str = "propagate", keepdims: bool = False) -> ModeResult:
-  _check_arraylike("mode", a)
+  check_arraylike("mode", a)
   x = jnp.atleast_1d(a)
 
   if nan_policy not in ["propagate", "omit", "raise"]:
@@ -100,7 +100,7 @@ def rankdata(
   nan_policy: str = "propagate",
 ) -> Array:
 
-  _check_arraylike("rankdata", a)
+  check_arraylike("rankdata", a)
 
   if nan_policy not in ["propagate", "omit", "raise"]:
     raise ValueError(

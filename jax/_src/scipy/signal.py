@@ -28,7 +28,7 @@ from jax._src import dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
-    _check_arraylike, _wraps, _promote_dtypes_inexact, _promote_dtypes_complex)
+    check_arraylike, _wraps, promote_dtypes_inexact, promote_dtypes_complex)
 from jax._src.third_party.scipy import signal_helper
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
@@ -44,7 +44,7 @@ def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike)
     raise ValueError("in1 and in2 must have the same number of dimensions")
   if in1.size == 0 or in2.size == 0:
     raise ValueError(f"zero-size arrays not supported in convolutions, got shapes {in1.shape} and {in2.shape}.")
-  in1, in2 = _promote_dtypes_inexact(in1, in2)
+  in1, in2 = promote_dtypes_inexact(in1, in2)
 
   no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
   swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
@@ -135,7 +135,7 @@ def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
     raise NotImplementedError("overwrite_data argument not implemented.")
   if type not in ['constant', 'linear']:
     raise ValueError("Trend type must be 'linear' or 'constant'.")
-  data_arr, = _promote_dtypes_inexact(jnp.asarray(data))
+  data_arr, = promote_dtypes_inexact(jnp.asarray(data))
   if type == 'constant':
     return data_arr - data_arr.mean(axis, keepdims=True)
   else:
@@ -185,7 +185,7 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
 
   # Apply window by multiplication
   if jnp.iscomplexobj(win):
-    result, = _promote_dtypes_complex(result)
+    result, = promote_dtypes_complex(result)
   result = win.reshape((1,) * len(batch_shape) + (1, nperseg)) * result
 
   # Perform the fft on last axis. Zero-pads automatically
@@ -267,15 +267,15 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
   axis = canonicalize_axis(axis, x.ndim)
 
   if y is None:
-    _check_arraylike('spectral_helper', x)
-    x, = _promote_dtypes_inexact(x)
+    check_arraylike('spectral_helper', x)
+    x, = promote_dtypes_inexact(x)
     y_arr = x  # place-holder for type checking
     outershape = tuple_delete(x.shape, axis)
   else:
     if mode != 'psd':
       raise ValueError("two-argument mode is available only when mode=='psd'")
-    _check_arraylike('spectral_helper', x, y)
-    x, y_arr = _promote_dtypes_inexact(x, y)
+    check_arraylike('spectral_helper', x, y)
+    x, y_arr = promote_dtypes_inexact(x, y)
     if x.ndim != y_arr.ndim:
       raise ValueError("two-arguments must have the same rank ({x.ndim} vs {y.ndim}).")
     # Check if we can broadcast the outer axes together
@@ -384,7 +384,7 @@ def _spectral_helper(x: Array, y: Optional[ArrayLike], fs: ArrayLike = 1.0,
     raise ValueError(f'Unknown scaling: {scaling}')
   if mode == 'stft':
     scale = jnp.sqrt(scale)
-  scale, = _promote_dtypes_complex(scale)
+  scale, = promote_dtypes_complex(scale)
 
   # Determine onesided/ two-sided
   if return_onesided:
@@ -513,7 +513,7 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
   Returns:
     An array with `(..., output_size)`-shape containing overlapped signal.
   """
-  _check_arraylike("_overlap_and_add", x)
+  check_arraylike("_overlap_and_add", x)
   step_size = jax.core.concrete_or_error(int, step_size,
                                         "step_size for overlap_and_add")
   if x.ndim < 2:
@@ -557,7 +557,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           boundary: bool = True, time_axis: int = -1,
           freq_axis: int = -2) -> Tuple[Array, Array]:
   # Input validation
-  _check_arraylike("istft", Zxx)
+  check_arraylike("istft", Zxx)
   if Zxx.ndim < 2:
     raise ValueError('Input stft must be at least 2d!')
   freq_axis = canonicalize_axis(freq_axis, Zxx.ndim)

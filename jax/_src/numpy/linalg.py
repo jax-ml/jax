@@ -28,7 +28,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions, ufuncs
-from jax._src.numpy.util import _wraps, _promote_dtypes_inexact, _check_arraylike
+from jax._src.numpy.util import _wraps, promote_dtypes_inexact, check_arraylike
 from jax._src.util import canonicalize_axis
 from jax._src.typing import ArrayLike, Array
 
@@ -47,8 +47,8 @@ def _symmetrize(x: Array) -> Array: return (x + _H(x)) / 2
 @_wraps(np.linalg.cholesky)
 @jit
 def cholesky(a: ArrayLike) -> Array:
-  _check_arraylike("jnp.linalg.cholesky", a)
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.cholesky", a)
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.cholesky(a)
 
 @overload
@@ -71,8 +71,8 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
 @partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
 def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
         hermitian: bool = False) -> Union[Array, Tuple[Array, Array, Array]]:
-  _check_arraylike("jnp.linalg.svd", a)
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.svd", a)
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   if hermitian:
     w, v = lax_linalg.eigh(a)
     s = lax.abs(v)
@@ -95,8 +95,8 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
 @_wraps(np.linalg.matrix_power)
 @partial(jit, static_argnames=('n',))
 def matrix_power(a: ArrayLike, n: int) -> Array:
-  _check_arraylike("jnp.linalg.matrix_power", a)
-  arr, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.matrix_power", a)
+  arr, = promote_dtypes_inexact(jnp.asarray(a))
 
   if arr.ndim < 2:
     raise TypeError("{}-dimensional array given. Array must be at least "
@@ -134,8 +134,8 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
 @_wraps(np.linalg.matrix_rank)
 @jit
 def matrix_rank(M: ArrayLike, tol: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("jnp.linalg.matrix_rank", M)
-  M, = _promote_dtypes_inexact(jnp.asarray(M))
+  check_arraylike("jnp.linalg.matrix_rank", M)
+  M, = promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim < 2:
     return (M != 0).any().astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
@@ -197,8 +197,8 @@ def _slogdet_qr(a: Array) -> Tuple[Array, Array]:
     """))
 @partial(jit, static_argnames=('method',))
 def slogdet(a: ArrayLike, *, method: Optional[str] = None) -> Tuple[Array, Array]:
-  _check_arraylike("jnp.linalg.slogdet", a)
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.slogdet", a)
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
   if len(a_shape) < 2 or a_shape[-1] != a_shape[-2]:
     msg = "Argument to slogdet() must have shape [..., n, n], got {}"
@@ -269,8 +269,8 @@ def _cofactor_solve(a: ArrayLike, b: ArrayLike) -> Tuple[Array, Array]:
   Returns:
     det(a) and cofactor(a)^T*b, aka adjugate(a)*b
   """
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
-  b, = _promote_dtypes_inexact(jnp.asarray(b))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
+  b, = promote_dtypes_inexact(jnp.asarray(b))
   a_shape = jnp.shape(a)
   b_shape = jnp.shape(b)
   a_ndims = len(a_shape)
@@ -336,8 +336,8 @@ def _det_3x3(a: Array) -> Array:
 @_wraps(np.linalg.det)
 @jit
 def det(a: ArrayLike) -> Array:
-  _check_arraylike("jnp.linalg.det", a)
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.det", a)
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   a_shape = jnp.shape(a)
   if len(a_shape) >= 2 and a_shape[-1] == 2 and a_shape[-2] == 2:
     return _det_2x2(a)
@@ -369,8 +369,8 @@ backend. However eigendecomposition for symmetric/Hermitian matrices is
 implemented more widely (see :func:`jax.numpy.linalg.eigh`).
 """)
 def eig(a: ArrayLike) -> Tuple[Array, Array]:
-  _check_arraylike("jnp.linalg.eig", a)
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.eig", a)
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   w, v = lax_linalg.eig(a, compute_left_eigenvectors=False)
   return w, v
 
@@ -378,7 +378,7 @@ def eig(a: ArrayLike) -> Tuple[Array, Array]:
 @_wraps(np.linalg.eigvals)
 @jit
 def eigvals(a: ArrayLike) -> Array:
-  _check_arraylike("jnp.linalg.eigvals", a)
+  check_arraylike("jnp.linalg.eigvals", a)
   return lax_linalg.eig(a, compute_left_eigenvectors=False,
                         compute_right_eigenvectors=False)[0]
 
@@ -387,7 +387,7 @@ def eigvals(a: ArrayLike) -> Array:
 @partial(jit, static_argnames=('UPLO', 'symmetrize_input'))
 def eigh(a: ArrayLike, UPLO: Optional[str] = None,
          symmetrize_input: bool = True) -> Tuple[Array, Array]:
-  _check_arraylike("jnp.linalg.eigh", a)
+  check_arraylike("jnp.linalg.eigh", a)
   if UPLO is None or UPLO == "L":
     lower = True
   elif UPLO == "U":
@@ -396,7 +396,7 @@ def eigh(a: ArrayLike, UPLO: Optional[str] = None,
     msg = f"UPLO must be one of None, 'L', or 'U', got {UPLO}"
     raise ValueError(msg)
 
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower, symmetrize_input=symmetrize_input)
   return w, v
 
@@ -404,7 +404,7 @@ def eigh(a: ArrayLike, UPLO: Optional[str] = None,
 @_wraps(np.linalg.eigvalsh)
 @partial(jit, static_argnames=('UPLO',))
 def eigvalsh(a: ArrayLike, UPLO: Optional[str] = 'L') -> Array:
-  _check_arraylike("jnp.linalg.eigvalsh", a)
+  check_arraylike("jnp.linalg.eigvalsh", a)
   w, _ = eigh(a, UPLO)
   return w
 
@@ -420,7 +420,7 @@ def pinv(a: ArrayLike, rcond: Optional[ArrayLike] = None,
          hermitian: bool = False) -> Array:
   # Uses same algorithm as
   # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
-  _check_arraylike("jnp.linalg.pinv", a)
+  check_arraylike("jnp.linalg.pinv", a)
   arr = jnp.asarray(a)
   m, n = arr.shape[-2:]
   if m == 0 or n == 0:
@@ -473,7 +473,7 @@ def _pinv_jvp(rcond, hermitian, primals, tangents):
 @_wraps(np.linalg.inv)
 @jit
 def inv(a: ArrayLike) -> Array:
-  _check_arraylike("jnp.linalg.inv", a)
+  check_arraylike("jnp.linalg.inv", a)
   arr = jnp.asarray(a)
   if arr.ndim < 2 or arr.shape[-1] != arr.shape[-2]:
     raise ValueError(
@@ -487,8 +487,8 @@ def inv(a: ArrayLike) -> Array:
 def norm(x: ArrayLike, ord: Union[int, str, None] = None,
          axis: Union[None, Tuple[int, ...], int] = None,
          keepdims: bool = False) -> Array:
-  _check_arraylike("jnp.linalg.norm", x)
-  x, = _promote_dtypes_inexact(jnp.asarray(x))
+  check_arraylike("jnp.linalg.norm", x)
+  x, = promote_dtypes_inexact(jnp.asarray(x))
   x_shape = jnp.shape(x)
   ndim = len(x_shape)
 
@@ -587,8 +587,8 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, Tuple[Array, Array]]
 @_wraps(np.linalg.qr)
 @partial(jit, static_argnames=('mode',))
 def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, Tuple[Array, Array]]:
-  _check_arraylike("jnp.linalg.qr", a)
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  check_arraylike("jnp.linalg.qr", a)
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   if mode == "raw":
     a, taus = lax_linalg.geqrf(a)
     return _T(a), taus
@@ -607,8 +607,8 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Union[Array, Tuple[Array, Array]]
 @_wraps(np.linalg.solve)
 @jit
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
-  _check_arraylike("jnp.linalg.solve", a, b)
-  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+  check_arraylike("jnp.linalg.solve", a, b)
+  a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   return lax_linalg._solve(a, b)
 
 
@@ -616,7 +616,7 @@ def _lstsq(a: ArrayLike, b: ArrayLike, rcond: Optional[float], *,
            numpy_resid: bool = False) -> Tuple[Array, Array, Array, Array]:
   # TODO: add lstsq to lax_linalg and implement this function via those wrappers.
   # TODO: add custom jvp rule for more robust lstsq differentiation
-  a, b = _promote_dtypes_inexact(a, b)
+  a, b = promote_dtypes_inexact(a, b)
   if a.shape[0] != b.shape[0]:
     raise ValueError("Leading dimensions of input arrays must match")
   b_orig_ndim = b.ndim
@@ -674,7 +674,7 @@ _jit_lstsq = jit(partial(_lstsq, numpy_resid=False))
     """))
 def lstsq(a: ArrayLike, b: ArrayLike, rcond: Optional[float] = None, *,
           numpy_resid: bool = False) -> Tuple[Array, Array, Array, Array]:
-  _check_arraylike("jnp.linalg.lstsq", a, b)
+  check_arraylike("jnp.linalg.lstsq", a, b)
   if numpy_resid:
     return _lstsq(a, b, rcond, numpy_resid=True)
   return _jit_lstsq(a, b, rcond)
