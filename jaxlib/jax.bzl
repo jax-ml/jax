@@ -25,7 +25,6 @@ load("@org_tensorflow//tensorflow/core/platform:build_config_root.bzl", _tf_cuda
 # lint tools.
 cuda_library = _cuda_library
 rocm_library = _rocm_library
-pytype_library = native.py_library
 pytype_strict_library = native.py_library
 pytype_test = native.py_test
 pyx_library = _pyx_library
@@ -59,6 +58,10 @@ def jax_visibility(_target):
 
 jax_extra_deps = []
 jax2tf_deps = []
+
+def pytype_library(name, pytype_srcs = None, **kwargs):
+    _ = pytype_srcs  # @unused
+    native.py_library(name = name, **kwargs)
 
 def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
     lib_rule(name = name, **kwargs)

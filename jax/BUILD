@@ -95,7 +95,6 @@ py_library_providing_imports_info(
         "_src/api.py",
         "_src/api_util.py",
         "_src/array.py",
-        "_src/basearray.py",
         "_src/callback.py",
         "_src/checkify.py",
         "_src/core.py",
@@ -163,9 +162,15 @@ py_library_providing_imports_info(
         "experimental/compilation_cache/cache_interface.py",
     ],
     lib_rule = pytype_library,
-    pytype_srcs = glob(["_src/**/*.pyi"]),
+    pytype_srcs = glob(
+        ["_src/**/*.pyi"],
+        exclude = [
+            "_src/basearray.pyi",
+        ],
+    ),
     visibility = ["//visibility:public"],
     deps = [
+        ":basearray",
         ":cloud_tpu_init",
         ":custom_api_util",
         ":config",
@@ -187,6 +192,16 @@ py_library_providing_imports_info(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
+)
+
+pytype_library(
+    name = "basearray",
+    srcs = ["_src/basearray.py"],
+    pytype_srcs = ["_src/basearray.pyi"],
+    deps = [
+        ":sharding",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(

@@ -29,7 +29,10 @@ from __future__ import annotations
 from typing import Any, Protocol, Sequence, Union
 import numpy as np
 
-from jax._src.basearray import Array
+from jax._src.basearray import (
+    Array as Array,
+    ArrayLike as ArrayLike,
+)
 
 DType = np.dtype
 
@@ -62,10 +65,3 @@ Shape = Sequence[DimSize]
 # JAX array (i.e. not including future non-standard array types like KeyArray and BInt).
 # It's different than np.typing.ArrayLike in that it doesn't accept arbitrary sequences,
 # nor does it accept string data.
-ArrayLike = Union[
-  Array,  # JAX array type
-  np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
-]
-ArrayLike.__doc__ = "Type annotation for JAX array-like objects."

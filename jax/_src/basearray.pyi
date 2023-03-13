@@ -16,10 +16,12 @@ from typing import Any, List, Optional, Sequence, Tuple, Union, Set
 import numpy as np
 
 from jax._src.sharding import Sharding
-from jax._src.array import Device, Shard
-from jax._src.typing import ArrayLike
+from jax._src import lib
+
+Shard = Any
 
 # TODO: alias this to xla_client.Traceback
+Device = Any
 Traceback = Any
 
 
@@ -204,3 +206,11 @@ class Array(abc.ABC):
   @property
   def traceback(self) -> Traceback: ...
   def unsafe_buffer_pointer(self) -> int: ...
+
+
+ArrayLike = Union[
+  Array,  # JAX array type
+  np.ndarray,  # NumPy array type
+  np.bool_, np.number,  # NumPy scalar types
+  bool, int, float, complex,  # Python scalar types
+]
