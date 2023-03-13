@@ -3,7 +3,7 @@
 <!-- Next line must match the copybara config. -->
 <!-- Link to internal documentation. -->
 
-This package provides experimental support for interoperation between JAX and TensorFlow.
+This package provides support for interoperation between JAX and TensorFlow.
 There are two interoperation directions:
 
 - `jax2tf.convert`: for using JAX functions in a TensorFlow context, e.g.,

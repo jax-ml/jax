@@ -181,7 +181,7 @@ class _ThreadLocalState(threading.local):
     # safety check that we are not inside JAX transformations.
     self.inside_call_tf = False
 
-    # Maps dimension variables to TF expressions
+    # Maps dimension variables to TF expressions, for non-native lowering
     self.shape_env: Sequence[Tuple[str, TfVal]] = ()
 
     # Whether to actually include XLA op metadata in the generated TF ops
@@ -323,11 +323,6 @@ def convert(fun_jax: Callable,
       raise NotImplementedError(
           "experimental_native_lowering_platforms is not implemented for multiple platforms")
 
-  params = LoweringParameters(
-      experimental_native_lowering=experimental_native_lowering,
-      experimental_native_lowering_strict_checks=experimental_native_lowering_strict_checks,
-      experimental_native_lowering_platforms=experimental_native_lowering_platforms,
-  )
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
   name_stack = util.wrap_name(fun_name, "jax2tf")
@@ -377,12 +372,39 @@ def convert(fun_jax: Callable,
               polymorphic_shapes_flat))
       args_flat_tf, args_avals_flat = util.unzip2(args_and_avals)
 
-      dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
-          args_avals_flat)
-      dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
-                                         args_avals_flat, name_stack,
-                                         lowering_params=non_native_lowering_params)
-      shape_env = zip(dim_vars, dim_values)
+      if experimental_native_lowering:
+        shape_env = ()
+        if experimental_native_lowering_platforms:
+          lowering_platform = experimental_native_lowering_platforms[0]
+        else:
+          lowering_platform = None
+        exported: Exported = serialize_native(
+            fun_flat_jax, args_avals_flat,
+            lowering_platform=lowering_platform,
+            strict_checks=experimental_native_lowering_strict_checks)
+
+        def run_fun_flat_as_tf(
+            args_flat_tf: Sequence[TfVal]
+        ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
+          outs_tf, out_avals = run_exported_as_tf(
+              args_avals_flat, args_flat_tf, exported,
+              experimental_native_lowering_strict_checks)
+          return outs_tf, out_avals
+      else:
+        dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
+            args_avals_flat)
+        dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
+                                           args_avals_flat, name_stack)
+        shape_env = zip(dim_vars, dim_values)  # type: ignore
+        def run_fun_flat_as_tf(
+            args_flat_tf: Sequence[TfVal]
+        ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
+          outs_tf, out_avals = _interpret_fun_jax(
+              fun_flat_jax,
+              args_flat_tf, args_avals_flat,
+              name_stack,
+              fresh_constant_cache=True)
+          return outs_tf, out_avals
 
       assert not _thread_local_state.shape_env, f"Unexpected shape environment {_thread_local_state.shape_env}"
 
@@ -401,12 +423,7 @@ def convert(fun_jax: Callable,
 
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient_tf(*args_flat_tf: TfVal) -> TfVal:
-          outs_tf, out_avals = _interpret_fun_jax(
-              fun_flat_jax,
-              args_flat_tf, args_avals_flat,
-              name_stack,
-              fresh_constant_cache=True,
-              lowering_params=params)
+          outs_tf, out_avals = run_fun_flat_as_tf(args_flat_tf)
           return (tuple(outs_tf),
                   make_custom_gradient_fn_tf(
                       fun_flat_jax=fun_flat_jax,
@@ -417,12 +434,7 @@ def convert(fun_jax: Callable,
 
         out_flat_tf = converted_fun_flat_with_custom_gradient_tf(*args_flat_tf)
       else:
-        outs_tf, out_avals = _interpret_fun_jax(
-            fun_flat_jax,
-            args_flat_tf, args_avals_flat,
-            name_stack,
-            fresh_constant_cache=True,
-            lowering_params=params)
+        outs_tf, out_avals = run_fun_flat_as_tf(args_flat_tf)
         message = ("The jax2tf-converted function does not support gradients. "
                    "Use `with_gradient` parameter to enable gradients")
         # We use PreventGradient, which is propagated through a SavedModel.
@@ -442,14 +454,6 @@ def convert(fun_jax: Callable,
 
   return converted_fun_tf
 
-
-@dataclasses.dataclass
-class LoweringParameters:
-  experimental_native_lowering: bool
-  experimental_native_lowering_strict_checks: bool = False
-  experimental_native_lowering_platforms: Tuple[str, ...] = ()
-
-non_native_lowering_params = LoweringParameters(experimental_native_lowering=False)
 
 def dtype_of_val(val: TfVal) -> DType:
   """Computes the TensorFlow dtype using JAX's typing rules.
@@ -621,26 +625,19 @@ def _interpret_fun_jax(
     args_tf: Sequence[TfVal],
     args_avals: Sequence[core.ShapedArray],
     extra_name_stack: Optional[str],
-    fresh_constant_cache: bool = False, *,
-    lowering_params: LoweringParameters,
+    fresh_constant_cache: bool = False,
 ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
-  if lowering_params.experimental_native_lowering:
-    del extra_name_stack
-    return _lower_native_and_run(
-        fun_jax, args_avals, args_tf,
-        lowering_params=lowering_params)
-  else:
-    with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
-      subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
-      with _extended_name_stack(extra_name_stack):
-        with core.new_sublevel():
-          out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-              _call_wrapped_with_new_constant_cache(subtrace_fun, args_tf,
-                                                    fresh_constant_cache=fresh_constant_cache)
+  with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
+    subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
+    with _extended_name_stack(extra_name_stack):
+      with core.new_sublevel():
+        out_vals: Sequence[Tuple[TfVal, core.ShapedArray]] = \
+            _call_wrapped_with_new_constant_cache(subtrace_fun, args_tf,
+                                                  fresh_constant_cache=fresh_constant_cache)
 
-        del main
+      del main
 
-    return util.unzip2(out_vals)
+  return util.unzip2(out_vals)
 
 @dataclasses.dataclass
 class Exported:
@@ -658,10 +655,10 @@ class Exported:
                                        # lowering. As long as `out_avals`.
   dim_args_spec: Sequence[str]
 
-def export_native(fun_jax: Callable,
-                  args_avals: Sequence[core.ShapedArray], *,
-                  lowering_platform: Optional[str],
-                  strict_checks: bool) -> Exported:
+def serialize_native(fun_jax: Callable,
+                     args_avals: Sequence[core.ShapedArray], *,
+                     lowering_platform: Optional[str],
+                     strict_checks: bool) -> Exported:
   arg_specs_jax = [
     jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
     for aval in args_avals
@@ -779,25 +776,12 @@ def export_native(fun_jax: Callable,
       dim_args_spec=dim_args_spec
   )
 
-def _lower_native_and_run(fun_jax: Callable,
-                          args_avals: Sequence[core.ShapedArray],
-                          args_tf: Sequence[TfVal],
-                          lowering_params: LoweringParameters
-                          ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
-  """Lowers the function using native lowering and then invokes it.
-
-  Uses JAX native lowering to MLIR, and then wraps the result in a
-  XlaCallModule TF op.
-  """
-  if lowering_params.experimental_native_lowering_platforms:
-    lowering_platform = lowering_params.experimental_native_lowering_platforms[0]
-  else:
-    lowering_platform = None
-  exported: Exported = export_native(
-      fun_jax, args_avals,
-      lowering_platform=lowering_platform,
-      strict_checks=lowering_params.experimental_native_lowering_strict_checks)
-
+def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
+                       args_tf: Sequence[TfVal],
+                       exported: Exported,
+                       experimental_native_lowering_strict_checks: bool,
+                       ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
+  """Runs the `exported` as an XlaCallModule TF op."""
   out_shapes = tuple(
       tuple(d if type(d) is int else None
             for d in out_aval.shape)
@@ -819,13 +803,13 @@ def _lower_native_and_run(fun_jax: Callable,
       dim_args_spec=exported.dim_args_spec)
 
   if exported.xla_call_module_version >= 3:
-    if lowering_params.experimental_native_lowering_strict_checks:
+    if experimental_native_lowering_strict_checks:
       call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking
 
   if logging.vlog_is_on(3):
-    # We already logged the MLIR module
+    # We already logged the MLIR module when we exported it.
     logging.vlog(3, "XlaCallModule %s", str(call_module_attrs))
 
   call_module_attrs["module"] = exported.mlir_module_serialized
@@ -979,7 +963,7 @@ def _convert_jax_impl(impl_jax: Callable, *,
 
     results_tf, _ = _interpret_fun_jax(
         impl_multiple_results_jax, args_tf, _in_avals,
-        extra_name_stack, lowering_params=non_native_lowering_params)
+        extra_name_stack)
     return results_tf if multiple_results else results_tf[0]
 
   return wrapped_tf
@@ -1012,8 +996,7 @@ def _interpret_jaxpr(jaxpr: core.ClosedJaxpr, *args_tf: TfVal,
   """
   outs_tf, _ = _interpret_fun_jax(core.jaxpr_as_fun(jaxpr),
                                   args_tf, jaxpr.in_avals, extra_name_stack,
-                                  fresh_constant_cache=fresh_constant_cache,
-                                  lowering_params=non_native_lowering_params)
+                                  fresh_constant_cache=fresh_constant_cache)
   return outs_tf
 
 
@@ -1157,8 +1140,7 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
   eval_shape_jax = shape_poly.get_shape_evaluator(dim_vars, shape)
   dim_aval = shape_poly.dim_as_value_abstract(1)
   shape_values_tf, _ = _interpret_fun_jax(eval_shape_jax,
-                                          dim_values, [dim_aval] * len(dim_values), "",  # type: ignore
-                                          lowering_params=non_native_lowering_params)  # type: ignore
+                                          dim_values, [dim_aval] * len(dim_values), "")  # type: ignore
   # Keep only the non-constant dimensions
   return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf
                for d, d_tf in zip(shape, shape_values_tf))
