@@ -114,7 +114,6 @@ py_library_providing_imports_info(
         "_src/lax_reference.py",
         "_src/linear_util.py",
         "_src/maps.py",
-        "_src/mesh.py",
         "_src/pjit.py",
         "_src/prng.py",
         "_src/public_test_util.py",
@@ -174,6 +173,7 @@ py_library_providing_imports_info(
         ":effects",
         ":environment_info",
         ":lazy_loader",
+        ":mesh",
         ":monitoring",
         ":path",
         ":pretty_printer",
@@ -238,6 +238,17 @@ pytype_library(
 pytype_library(
     name = "lazy_loader",
     srcs = ["_src/lazy_loader.py"],
+)
+
+pytype_library(
+    name = "mesh",
+    srcs = ["_src/mesh.py"],
+    deps = [
+        ":config",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_library(
@@ -412,7 +423,10 @@ pytype_library(
     name = "maps",
     srcs = ["experimental/maps.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
+    deps = [
+        ":jax",
+        ":mesh",
+    ],
 )
 
 # TODO(apaszke): Remove this target
