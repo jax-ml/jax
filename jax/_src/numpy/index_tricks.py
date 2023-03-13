@@ -17,7 +17,7 @@ from typing import Any, Iterable, List, Tuple, Union
 
 import jax
 from jax._src import core
-from jax._src.numpy.util import _promote_dtypes
+from jax._src.numpy.util import promote_dtypes
 from jax._src.numpy.lax_numpy import (
   arange, array, concatenate, expand_dims, linspace, meshgrid, stack, transpose
 )
@@ -54,7 +54,7 @@ class _IndexGrid(abc.ABC):
       return _make_1d_grid_from_slice(key, op_name=self.op_name)
     output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name=self.op_name) for k in key)
     with jax.numpy_dtype_promotion('standard'):
-      output = _promote_dtypes(*output)
+      output = promote_dtypes(*output)
     output_arr = meshgrid(*output, indexing='ij', sparse=self.sparse)
     if self.sparse:
       return output_arr

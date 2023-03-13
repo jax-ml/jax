@@ -29,8 +29,8 @@ from jax._src import dtypes
 from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import qdwh
 from jax._src.numpy.util import (
-    _check_arraylike, _wraps, _promote_dtypes, _promote_dtypes_inexact,
-    _promote_dtypes_complex)
+    check_arraylike, _wraps, promote_dtypes, promote_dtypes_inexact,
+    promote_dtypes_complex)
 from jax._src.typing import Array, ArrayLike
 
 
@@ -43,7 +43,7 @@ _no_overwrite_and_chkfinite_doc = _no_chkfinite_doc + "\nDoes not support the Sc
 
 @partial(jit, static_argnames=('lower',))
 def _cholesky(a: ArrayLike, lower: bool) -> Array:
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   l = lax_linalg.cholesky(a if lower else jnp.conj(_T(a)), symmetrize_input=False)
   return l if lower else jnp.conj(_T(l))
 
@@ -63,7 +63,7 @@ def cho_factor(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
 
 @partial(jit, static_argnames=('lower',))
 def _cho_solve(c: ArrayLike, b: ArrayLike, lower: bool) -> Array:
-  c, b = _promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
+  c, b = promote_dtypes_inexact(jnp.asarray(c), jnp.asarray(b))
   lax_linalg._check_solve_shapes(c, b)
   b = lax_linalg.triangular_solve(c, b, left_side=True, lower=lower,
                                   transpose_a=not lower, conjugate_a=not lower)
@@ -90,7 +90,7 @@ def _svd(x: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array,
 
 @partial(jit, static_argnames=('full_matrices', 'compute_uv'))
 def _svd(a: ArrayLike, *, full_matrices: bool, compute_uv: bool) -> Union[Array, Tuple[Array, Array, Array]]:
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=compute_uv)
 
 @overload
@@ -151,7 +151,7 @@ def _eigh(a: ArrayLike, b: Optional[ArrayLike], lower: bool, eigvals_only: bool,
     raise NotImplementedError(
         "Only the eigvals=None case of eigh is implemented.")
 
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   v, w = lax_linalg.eigh(a, lower=lower)
 
   if eigvals_only:
@@ -218,7 +218,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
 @partial(jit, static_argnames=('overwrite_a', 'check_finite'))
 def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> Tuple[Array, Array]:
   del overwrite_a, check_finite  # unused
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, pivots, _ = lax_linalg.lu(a)
   return lu, pivots
 
@@ -245,7 +245,7 @@ def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array
 
 @partial(jit, static_argnums=(1,))
 def _lu(a: ArrayLike, permute_l: bool) -> Union[Tuple[Array, Array], Tuple[Array, Array, Array]]:
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   lu, _, permutation = lax_linalg.lu(a)
   dtype = lax.dtype(a)
   m, n = jnp.shape(a)
@@ -298,7 +298,7 @@ def _qr(a: ArrayLike, mode: str, pivoting: bool) -> Union[Tuple[Array], Tuple[Ar
     full_matrices = False
   else:
     raise ValueError(f"Unsupported QR decomposition mode '{mode}'")
-  a, = _promote_dtypes_inexact(jnp.asarray(a))
+  a, = promote_dtypes_inexact(jnp.asarray(a))
   q, r = lax_linalg.qr(a, full_matrices=full_matrices)
   if mode == "r":
     return (r,)
@@ -334,7 +334,7 @@ def _solve(a: ArrayLike, b: ArrayLike, assume_a: str, lower: bool) -> Array:
   if assume_a != 'pos':
     return jnp.linalg.solve(a, b)
 
-  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+  a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
   lax_linalg._check_solve_shapes(a, b)
 
   # With custom_linear_solve, we can reuse the same factorization when
@@ -382,7 +382,7 @@ def _solve_triangular(a: ArrayLike, b: ArrayLike, trans: Union[int, str],
   else:
     raise ValueError(f"Invalid 'trans' value {trans}")
 
-  a, b = _promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
+  a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
 
   # lax_linalg.triangular_solve only supports matrix 'b's at the moment.
   b_is_vector = jnp.ndim(a) == jnp.ndim(b) + 1
@@ -609,7 +609,7 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: Optional[str] = None,
 def block_diag(*arrs: ArrayLike) -> Array:
   if len(arrs) == 0:
     arrs = cast(Tuple[ArrayLike], (jnp.zeros((1, 0)),))
-  arrs = cast(Tuple[ArrayLike], _promote_dtypes(*arrs))
+  arrs = cast(Tuple[ArrayLike], promote_dtypes(*arrs))
   bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
@@ -940,7 +940,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> Tuple[Arra
   if T.shape[0] != Z.shape[0]:
     raise ValueError(f"Input array shapes must match: Z: {Z.shape} vs. T: {T.shape}")
 
-  T, Z = _promote_dtypes_complex(T, Z)
+  T, Z = promote_dtypes_complex(T, Z)
   eps = jnp.finfo(T.dtype).eps
   N = T.shape[0]
 
@@ -1020,10 +1020,10 @@ def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
 @_wraps(scipy.linalg.toeplitz)
 def toeplitz(c: ArrayLike, r: Optional[ArrayLike] = None) -> Array:
   if r is None:
-    _check_arraylike("toeplitz", c)
+    check_arraylike("toeplitz", c)
     r = jnp.conjugate(jnp.asarray(c))
   else:
-    _check_arraylike("toeplitz", c, r)
+    check_arraylike("toeplitz", c, r)
 
   c = jnp.asarray(c).flatten()
   r = jnp.asarray(r).flatten()

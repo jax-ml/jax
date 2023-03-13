@@ -18,7 +18,7 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, _promote_args_inexact
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
 
@@ -27,7 +27,7 @@ from jax._src.typing import Array, ArrayLike
 def logpmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,
            loc: ArrayLike = 0) -> Array:
   """JAX implementation of scipy.stats.betabinom.logpmf."""
-  k, n, a, b, loc = _promote_args_inexact("betabinom.logpmf", k, n, a, b, loc)
+  k, n, a, b, loc = promote_args_inexact("betabinom.logpmf", k, n, a, b, loc)
   y = lax.sub(lax.floor(k), loc)
   one = _lax_const(y, 1)
   zero = _lax_const(y, 0)

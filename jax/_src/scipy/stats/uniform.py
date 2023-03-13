@@ -18,12 +18,12 @@ import scipy.stats as osp_stats
 from jax import lax
 from jax.numpy import where, inf, logical_or
 from jax._src.typing import Array, ArrayLike
-from jax._src.numpy.util import _wraps, _promote_args_inexact
+from jax._src.numpy.util import _wraps, promote_args_inexact
 
 
 @_wraps(osp_stats.uniform.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, loc, scale = _promote_args_inexact("uniform.logpdf", x, loc, scale)
+  x, loc, scale = promote_args_inexact("uniform.logpdf", x, loc, scale)
   log_probs = lax.neg(lax.log(scale))
   return where(logical_or(lax.gt(x, lax.add(loc, scale)),
                           lax.lt(x, loc)),

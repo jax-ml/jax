@@ -47,7 +47,7 @@ from jax._src.interpreters import pxla
 from jax._src.config import (flags, bool_env, config,
                              raise_persistent_cache_errors,
                              persistent_cache_min_compile_time_secs)
-from jax._src.numpy.util import _promote_dtypes, _promote_dtypes_inexact
+from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
@@ -827,7 +827,7 @@ def promote_like_jnp(fun, inexact=False):
   tests make an np reference implementation act more like an jnp
   implementation.
   """
-  _promote = _promote_dtypes_inexact if inexact else _promote_dtypes
+  _promote = promote_dtypes_inexact if inexact else promote_dtypes
   def wrapper(*args, **kw):
     flat_args, tree = tree_flatten(args)
     args = tree_unflatten(tree, _promote(*flat_args))

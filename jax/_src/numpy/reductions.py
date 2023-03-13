@@ -26,8 +26,8 @@ from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.numpy.util import (
-    _broadcast_to, _check_arraylike, _complex_elem_type,
-    _promote_dtypes_inexact, _promote_dtypes_numeric, _where, _wraps)
+    _broadcast_to, check_arraylike, _complex_elem_type,
+    promote_dtypes_inexact, promote_dtypes_numeric, _where, _wraps)
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import (
@@ -52,7 +52,7 @@ def _isscalar(element: Any) -> bool:
 
 def _moveaxis(a: ArrayLike, source: int, destination: int) -> Array:
   # simplified version of jnp.moveaxis() for local use.
-  _check_arraylike("moveaxis", a)
+  check_arraylike("moveaxis", a)
   a = _asarray(a)
   source = _canonicalize_axis(source, np.ndim(a))
   destination = _canonicalize_axis(destination, np.ndim(a))
@@ -83,7 +83,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   # exists, passing along all its arguments.
   if out is not None:
     raise NotImplementedError(f"The 'out' argument to jnp.{name} is not supported.")
-  _check_arraylike(name, a)
+  check_arraylike(name, a)
   dtypes.check_user_dtype_supported(dtype, name)
   axis = core.concrete_or_error(None, axis, f"axis argument to jnp.{name}().")
 
@@ -180,7 +180,7 @@ def _cast_to_bool(operand: ArrayLike) -> Array:
     return lax.convert_element_type(operand, np.bool_)
 
 def _cast_to_numeric(operand: ArrayLike) -> Array:
-  return _promote_dtypes_numeric(operand)[0]
+  return promote_dtypes_numeric(operand)[0]
 
 
 def _ensure_optional_axes(x: Axis) -> Axis:
@@ -326,7 +326,7 @@ def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
 def _mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
           out: None = None, keepdims: bool = False, *,
           where: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("mean", a)
+  check_arraylike("mean", a)
   dtypes.check_user_dtype_supported(dtype, "mean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.mean is not supported.")
@@ -365,8 +365,8 @@ def average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None
 def _average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = None,
              returned: bool = False, keepdims: bool = False) -> Union[Array, Tuple[Array, Array]]:
   if weights is None: # Treat all weights as 1
-    _check_arraylike("average", a)
-    a, = _promote_dtypes_inexact(a)
+    check_arraylike("average", a)
+    a, = promote_dtypes_inexact(a)
     avg = mean(a, axis=axis, keepdims=keepdims)
     if axis is None:
       weights_sum = lax.full((), core.dimension_as_value(a.size), dtype=avg.dtype)
@@ -375,8 +375,8 @@ def _average(a: ArrayLike, axis: Axis = None, weights: Optional[ArrayLike] = Non
     else:
       weights_sum = lax.full_like(avg, core.dimension_as_value(a.shape[axis]))  # type: ignore[index]
   else:
-    _check_arraylike("average", a, weights)
-    a, weights = _promote_dtypes_inexact(a, weights)
+    check_arraylike("average", a, weights)
+    a, weights = promote_dtypes_inexact(a, weights)
 
     a_shape = np.shape(a)
     a_ndim = len(a_shape)
@@ -427,7 +427,7 @@ def var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
 def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
          out: None = None, ddof: int = 0, keepdims: bool = False, *,
          where: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("var", a)
+  check_arraylike("var", a)
   dtypes.check_user_dtype_supported(dtype, "var")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
@@ -487,7 +487,7 @@ def std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
 def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
          out: None = None, ddof: int = 0, keepdims: bool = False, *,
          where: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("std", a)
+  check_arraylike("std", a)
   dtypes.check_user_dtype_supported(dtype, "std")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
@@ -502,7 +502,7 @@ def ptp(a: ArrayLike, axis: Axis = None, out: None = None,
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def _ptp(a: ArrayLike, axis: Axis = None, out: None = None,
          keepdims: bool = False) -> Array:
-  _check_arraylike("ptp", a)
+  check_arraylike("ptp", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.ptp is not supported.")
   x = amax(a, axis=axis, keepdims=keepdims)
@@ -514,7 +514,7 @@ def _ptp(a: ArrayLike, axis: Axis = None, out: None = None,
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def count_nonzero(a: ArrayLike, axis: Axis = None,
                   keepdims: bool = False) -> Array:
-  _check_arraylike("count_nonzero", a)
+  check_arraylike("count_nonzero", a)
   return sum(lax.ne(a, _lax_const(a, 0)), axis=axis,
              dtype=dtypes.canonicalize_dtype(np.int_), keepdims=keepdims)
 
@@ -522,7 +522,7 @@ def count_nonzero(a: ArrayLike, axis: Axis = None,
 def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
                    init_val: ArrayLike, nan_if_all_nan: bool,
                    axis: Axis = None, keepdims: bool = False, **kwargs) -> Array:
-  _check_arraylike(name, a)
+  check_arraylike(name, a)
   if not dtypes.issubdtype(dtypes.dtype(a), np.inexact):
     return jnp_reduction(a, axis=axis, keepdims=keepdims, **kwargs)
 
@@ -580,7 +580,7 @@ def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None 
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None = None,
             keepdims: bool = False, where: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("nanmean", a)
+  check_arraylike("nanmean", a)
   dtypes.check_user_dtype_supported(dtype, "nanmean")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
@@ -600,7 +600,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None 
 def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
            where: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("nanvar", a)
+  check_arraylike("nanvar", a)
   dtypes.check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
@@ -631,7 +631,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None =
 def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
            where: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("nanstd", a)
+  check_arraylike("nanstd", a)
   dtypes.check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanstd is not supported.")
@@ -649,7 +649,7 @@ def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array
   @partial(api.jit, static_argnames=('axis', 'dtype'))
   def _cumulative_reduction(a: ArrayLike, axis: Axis = None,
                             dtype: DTypeLike = None, out: None = None) -> Array:
-    _check_arraylike(np_reduction.__name__, a)
+    check_arraylike(np_reduction.__name__, a)
     if out is not None:
       raise NotImplementedError(f"The 'out' argument to jnp.{np_reduction.__name__} "
                                 f"is not supported.")

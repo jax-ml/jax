@@ -34,7 +34,7 @@ from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import gpu_sparse
-from jax._src.numpy.util import _promote_dtypes
+from jax._src.numpy.util import promote_dtypes
 from jax._src.typing import Array, ArrayLike, DTypeLike
 import jax.numpy as jnp
 
@@ -156,7 +156,7 @@ class COO(JAXSparse):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
     other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    data, other = promote_dtypes(self.data, other)
     self_promoted = COO((data, self.row, self.col), **self._info._asdict())
     if other.ndim == 1:
       return coo_matvec(self_promoted, other)

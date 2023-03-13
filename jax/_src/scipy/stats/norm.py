@@ -20,13 +20,13 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, _promote_args_inexact
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 from jax.scipy import special
 
 @_wraps(osp_stats.norm.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, loc, scale = _promote_args_inexact("norm.logpdf", x, loc, scale)
+  x, loc, scale = promote_args_inexact("norm.logpdf", x, loc, scale)
   scale_sqrd = lax.square(scale)
   log_normalizer = lax.log(lax.mul(_lax_const(x, 2 * np.pi), scale_sqrd))
   quadratic = lax.div(lax.square(lax.sub(x, loc)), scale_sqrd)
@@ -40,13 +40,13 @@ def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 
 @_wraps(osp_stats.norm.cdf, update_doc=False)
 def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, loc, scale = _promote_args_inexact("norm.cdf", x, loc, scale)
+  x, loc, scale = promote_args_inexact("norm.cdf", x, loc, scale)
   return special.ndtr(lax.div(lax.sub(x, loc), scale))
 
 
 @_wraps(osp_stats.norm.logcdf, update_doc=False)
 def logcdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, loc, scale = _promote_args_inexact("norm.logcdf", x, loc, scale)
+  x, loc, scale = promote_args_inexact("norm.logcdf", x, loc, scale)
   # Cast required because custom_jvp return type is broken.
   return cast(Array, special.log_ndtr(lax.div(lax.sub(x, loc), scale)))
 

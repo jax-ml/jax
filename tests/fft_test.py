@@ -25,7 +25,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import dtypes
 from jax._src import test_util as jtu
-from jax._src.numpy.util import _promote_dtypes_complex
+from jax._src.numpy.util import promote_dtypes_complex
 
 from jax.config import config
 config.parse_flags_with_absl()
@@ -175,7 +175,7 @@ class FftTest(jtu.JaxTestCase):
       return jax.vmap(linear_func)(jnp.eye(size, size))
 
     def func(x):
-      x, = _promote_dtypes_complex(x)
+      x, = promote_dtypes_complex(x)
       return jnp.fft.irfft(jnp.concatenate([jnp.zeros_like(x, shape=1),
                                             x[:2] + 1j*x[2:]]))
 

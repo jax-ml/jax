@@ -19,7 +19,7 @@ import textwrap
 
 from jax import vmap
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps, _check_arraylike, _promote_dtypes_inexact
+from jax._src.numpy.util import _wraps, check_arraylike, promote_dtypes_inexact
 
 
 _no_chkfinite_doc = textwrap.dedent("""
@@ -30,10 +30,10 @@ because compiled JAX code cannot perform checks of array values at runtime
 
 @_wraps(scipy.cluster.vq.vq, lax_description=_no_chkfinite_doc, skip_params=('check_finite',))
 def vq(obs, code_book, check_finite=True):
-    _check_arraylike("scipy.cluster.vq.vq", obs, code_book)
+    check_arraylike("scipy.cluster.vq.vq", obs, code_book)
     if obs.ndim != code_book.ndim:
         raise ValueError("Observation and code_book should have the same rank")
-    obs, code_book = _promote_dtypes_inexact(obs, code_book)
+    obs, code_book = promote_dtypes_inexact(obs, code_book)
     if obs.ndim == 1:
         obs, code_book = obs[..., None], code_book[..., None]
     if obs.ndim != 2:

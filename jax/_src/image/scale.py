@@ -23,7 +23,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax._src import core
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import _promote_dtypes_inexact
+from jax._src.numpy.util import promote_dtypes_inexact
 
 
 def _fill_lanczos_kernel(radius, x):
@@ -243,8 +243,8 @@ def scale_and_translate(image, shape: core.Shape,
   assert isinstance(method, ResizeMethod)
 
   kernel = _kernels[method]
-  image, = _promote_dtypes_inexact(image)
-  scale, translation = _promote_dtypes_inexact(scale, translation)
+  image, = promote_dtypes_inexact(image)
+  scale, translation = promote_dtypes_inexact(scale, translation)
   return _scale_and_translate(image, shape, spatial_dims, scale, translation,
                               kernel, antialias, precision)
 
@@ -281,7 +281,7 @@ def _resize(image, shape: core.Shape, method: Union[str, ResizeMethod],
   assert isinstance(method, ResizeMethod)
   kernel = _kernels[method]
 
-  image, = _promote_dtypes_inexact(image)
+  image, = promote_dtypes_inexact(image)
   # Skip dimensions that have scale=1 and translation=0, this is only possible
   # since all of the current resize methods (kernels) are interpolating, so the
   # output = input under an identity warp.

@@ -18,13 +18,13 @@ import scipy.stats as osp_stats
 
 from jax import lax
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, _promote_args_inexact
+from jax._src.numpy.util import _wraps, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
 @_wraps(osp_stats.t.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, df: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
-  x, df, loc, scale = _promote_args_inexact("t.logpdf", x, df, loc, scale)
+  x, df, loc, scale = promote_args_inexact("t.logpdf", x, df, loc, scale)
   two = _lax_const(x, 2)
   scaled_x = lax.div(lax.sub(x, loc), scale)
   df_over_two = lax.div(df, two)

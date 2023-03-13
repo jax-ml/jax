@@ -32,7 +32,7 @@ from jax._src.numpy.lax_numpy import (
     sort, where, zeros)
 from jax._src.numpy.reductions import any, cumsum
 from jax._src.numpy.ufuncs import isnan
-from jax._src.numpy.util import _check_arraylike, _wraps
+from jax._src.numpy.util import check_arraylike, _wraps
 from jax._src.typing import Array, ArrayLike
 
 
@@ -48,7 +48,7 @@ def in1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False, invert: bo
 
 @partial(jit, static_argnames=('invert',))
 def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
-  _check_arraylike("in1d", ar1, ar2)
+  check_arraylike("in1d", ar1, ar2)
   ar1_flat = ravel(ar1)
   ar2_flat = ravel(ar2)
   # Note: an algorithm based on searchsorted has better scaling, but in practice
@@ -80,7 +80,7 @@ def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
         remaining elements will be filled with ``fill_value``, which defaults to zero."""))
 def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
               *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("setdiff1d", ar1, ar2)
+  check_arraylike("setdiff1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in setdiff1d()")
   else:
@@ -118,7 +118,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
         value of the union."""))
 def union1d(ar1: ArrayLike, ar2: ArrayLike,
             *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None) -> Array:
-  _check_arraylike("union1d", ar1, ar2)
+  check_arraylike("union1d", ar1, ar2)
   if size is None:
     ar1 = core.concrete_or_error(None, ar1, "The error arose in union1d()")
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
@@ -132,7 +132,7 @@ In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
 def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False) -> Array:
-  _check_arraylike("setxor1d", ar1, ar2)
+  check_arraylike("setxor1d", ar1, ar2)
   ar1 = core.concrete_or_error(None, ar1, "The error arose in setxor1d()")
   ar2 = core.concrete_or_error(None, ar2, "The error arose in setxor1d()")
 
@@ -174,7 +174,7 @@ def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: boo
 @_wraps(np.intersect1d)
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
                 return_indices: bool = False) -> Union[Array, Tuple[Array, Array, Array]]:
-  _check_arraylike("intersect1d", ar1, ar2)
+  check_arraylike("intersect1d", ar1, ar2)
   ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
   ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
 
@@ -326,7 +326,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
 def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = False,
            return_counts: bool = False, axis: Optional[int] = None,
            *, size: Optional[int] = None, fill_value: Optional[ArrayLike] = None):
-  _check_arraylike("unique", ar)
+  check_arraylike("unique", ar)
   if size is None:
     ar = core.concrete_or_error(None, ar,
         "The error arose for the first argument of jnp.unique(). " + UNIQUE_SIZE_HINT)

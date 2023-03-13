@@ -34,7 +34,7 @@ from jax._src import dispatch
 from jax._src.interpreters import ad
 from jax._src.lax.lax import _const
 from jax._src.lib import gpu_sparse
-from jax._src.numpy.util import _promote_dtypes
+from jax._src.numpy.util import promote_dtypes
 from jax._src.typing import Array, ArrayLike, DTypeLike
 import jax.numpy as jnp
 
@@ -117,7 +117,7 @@ class CSR(JAXSparse):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
     other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    data, other = promote_dtypes(self.data, other)
     if other.ndim == 1:
       return _csr_matvec(data, self.indices, self.indptr, other, shape=self.shape)
     elif other.ndim == 2:
@@ -184,7 +184,7 @@ class CSC(JAXSparse):
     if isinstance(other, JAXSparse):
       raise NotImplementedError("matmul between two sparse objects.")
     other = jnp.asarray(other)
-    data, other = _promote_dtypes(self.data, other)
+    data, other = promote_dtypes(self.data, other)
     if other.ndim == 1:
       return _csr_matvec(data, self.indices, self.indptr, other,
                          shape=self.shape[::-1], transpose=True)
