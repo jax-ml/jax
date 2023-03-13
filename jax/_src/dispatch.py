@@ -1338,6 +1338,33 @@ def _copy_device_array_to_device(
   return device_array.make_device_array(x.aval, device, moved_buf)
 
 
+def _copy_array_to_device(x: jax.Array, device: Optional[xc.Device]) -> jax.Array:
+  """Copies `Array`s with SingleDeviceSharding to a different device."""
+  if device is None:
+    # no copying to be done because there's no target specified
+    return x
+
+  buf = x._arrays[0]
+  if xb.get_device_backend(device).platform == buf.platform():
+    # source and target platforms are the same
+    if x.device() == device:
+      # no copying to be done because source equals target
+      if x._committed:
+        return x
+      else:
+        moved_buf = buf  # We need to change stickyness
+    else:
+      # move the buffer with a device-to-device copy
+      moved_buf = buf.copy_to_device(device)
+  else:
+    # buffers from different XLA backends are passed through the host.
+    backend = xb.get_device_backend(device)
+    moved_buf = backend.buffer_from_pyval(np.asarray(buf), device)
+  return array.ArrayImpl(
+      x.aval, SingleDeviceSharding(moved_buf.device()), [moved_buf],
+      committed=(device is not None))
+
+
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.
 def _check_sharding(aval, s):
@@ -1392,8 +1419,7 @@ def _device_put_impl(
     if device is None:
       return x
     elif is_single_device_sharding(x.sharding):
-      return pxla.batched_device_put(
-          aval, SingleDeviceSharding(device), [x], [device])
+      return _copy_array_to_device(x, device)
 
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
