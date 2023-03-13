@@ -68,7 +68,7 @@ symlink_files(
 
 symlink_files(
     name = "xla_client",
-    srcs = ["@xla///python:xla_client"],
+    srcs = ["@xla//xla/python:xla_client"],
     dst = ".",
     flatten = True,
 )
@@ -76,8 +76,8 @@ symlink_files(
 symlink_files(
     name = "xla_extension",
     srcs = if_windows(
-        ["@xla///python:xla_extension.pyd"],
-        ["@xla///python:xla_extension.so"],
+        ["@xla//xla/python:xla_extension.pyd"],
+        ["@xla//xla/python:xla_extension.so"],
     ),
     dst = ".",
     flatten = True,
