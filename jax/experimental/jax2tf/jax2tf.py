@@ -820,7 +820,7 @@ def _lower_native_and_run(fun_jax: Callable,
 
   if exported.xla_call_module_version >= 3:
     if lowering_params.experimental_native_lowering_strict_checks:
-      call_module_attrs["platforms"] = (default_jax_backend().upper(),)
+      call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking
 

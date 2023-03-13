@@ -29,6 +29,7 @@ from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax import sharding
+from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 import jax._src.xla_bridge
@@ -1408,7 +1409,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           [False, True])
   )
   def test_cross_platform(self, with_mesh=True, transform1="pjit_in_shardings_P",
-                          transform2="none", nullary=False):
+                          transform2="pjit_in_shardings_P", nullary=False):
     # Tests cross-lowering for
     #  with mesh:
     #   transform2(transform1(func))
@@ -1489,12 +1490,31 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         stack.enter_context(mesh)
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
-      tf_hlo = f_tf.experimental_get_compiler_ir(*args)(stage="hlo")
+      exported = jax2tf.jax2tf.export_native(
+          func_to_convert,
+          [core.ShapedArray(a.shape, a.dtype) for a in args],
+          lowering_platform='tpu',
+          strict_checks=True)
 
     if transform1 == "shard_map":
-      self.assertIn(" all-gather(f32[4,6]", tf_hlo)
+      self.assertIn("stablehlo.all_gather", str(exported.mlir_module))
     else:
-      self.assertIn(" reduce-window(", tf_hlo)
+      self.assertIn("stablehlo.reduce_window", str(exported.mlir_module))
+
+  def test_cross_platform_error(self):
+    f_tf = jax2tf.convert(jnp.sin, experimental_native_lowering=True,
+                          experimental_native_lowering_platforms=('tpu',))
+    x = np.float32(.5)
+    if jtu.device_under_test() == "tpu":
+      self.assertAllClose(jnp.sin(x), f_tf(x))
+    else:
+      # We can construct the tf.Graph
+      f_tf_fun = tf.function(f_tf, jit_compile=True, autograph=False)
+      graph_def = f_tf_fun.get_concrete_function(x).graph.as_graph_def()
+      self.assertIn("XlaCallModule", str(graph_def))
+      with self.assertRaisesRegex(tf.errors.NotFoundError,
+          "The current platform .* is not among the platforms required by the module"):
+        f_tf(x)
 
 
 def get_serialized_computation(
