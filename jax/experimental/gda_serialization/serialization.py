@@ -29,6 +29,7 @@ from jax._src.config import config
 from jax._src import global_device_array as gda
 from jax._src import array
 from jax._src import sharding
+from jax._src import sharding_impls
 from jax._src import typing
 from jax.sharding import Mesh
 import jax.numpy as jnp
@@ -46,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 async def create_async_array_from_callback(
     global_shape: array.Shape,
-    inp_sharding: sharding.XLACompatibleSharding,
+    inp_sharding: sharding_impls.XLACompatibleSharding,
     data_callback: Callable[[array.Index], asyncio.Future],
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
@@ -282,7 +283,7 @@ async def async_deserialize(in_sharding, tensorstore_spec,
   if config.jax_array:
     return await create_async_array_from_callback(tuple(shape), in_sharding, cb)
   else:
-    if not isinstance(in_sharding, sharding.NamedSharding):
+    if not isinstance(in_sharding, sharding_impls.NamedSharding):
       raise ValueError('Deserializing a GlobalDeviceArray is only possible with '
                        'a `NamedSharding` which consists of a `mesh` and '
                        f'`pspec`, but got {in_sharding}')

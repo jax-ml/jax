@@ -62,7 +62,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh
 from jax._src import profiler
-from jax._src import sharding as sharding_internal
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
 from jax._src import util
@@ -120,7 +120,7 @@ ShardingSpec = pmap_lib.ShardingSpec
 
 OpShardingType = Any
 
-PartitionSpec = sharding_internal.PartitionSpec
+PartitionSpec = sharding_impls.PartitionSpec
 
 def sharding_spec_mesh_shape(self):
   sharded_axis_sizes = []
@@ -402,7 +402,7 @@ def shard_arg(arg, devices, arg_indices, sharding):
 def shard_args(
     devices: Sequence[xb.xla_client.Device],
     indices: Sequence[Sequence[Index]],
-    shardings: Sequence[sharding_internal.XLACompatibleSharding],
+    shardings: Sequence[sharding_impls.XLACompatibleSharding],
     args,
 ) -> Sequence[Union[Sequence[xb.xla_client.Buffer], jax.Array]]:
   """Shard each argument data array along its leading axis.
@@ -583,7 +583,7 @@ class OutputType(enum.Enum):
 
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
-    sharding: sharding_internal.XLACompatibleSharding,
+    sharding: sharding_impls.XLACompatibleSharding,
     indices: Optional[Tuple[Index, ...]],
 ) -> Callable[[List[xb.xla_client.Buffer]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
@@ -708,13 +708,13 @@ def make_sharded_device_array(
   if jax.config.jax_array:
     mesh = jax._src.mesh.thread_resources.env.physical_mesh
     if mesh.empty:
-      sharding = sharding_internal.PmapSharding(
+      sharding = sharding_impls.PmapSharding(
           np.asarray([d.device() for d in device_buffers]), sharding_spec)
     else:
       op_sharding = sharding_spec_sharding_proto(sharding_spec)
       pspec = pjit.parse_flatten_op_sharding(
           op_sharding, mesh)[0].get_partition_spec()
-      sharding = sharding_internal.NamedSharding(mesh, pspec)
+      sharding = sharding_impls.NamedSharding(mesh, pspec)
 
     return jax.make_array_from_single_device_arrays(
         aval.shape, sharding, device_buffers)  # type: ignore
@@ -900,7 +900,7 @@ def _sda_sharding(self):
   has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding_spec.sharding)
   if has_unstacked:
     devices = np.array([d.device() for d in self.device_buffers])
-    return sharding_internal.PmapSharding(devices, self.sharding_spec)
+    return sharding_impls.PmapSharding(devices, self.sharding_spec)
   raise NotImplementedError(
       'SDAs that are the output of pjit/xmap do not have the sharding attribute '
       'implemented. If you are trying to pass the SDA to pjit/xmap, please '
@@ -1602,9 +1602,9 @@ class UnloadedPmapExecutable:
   compiled: Any
   backend: xb.XlaBackend
   local_input_avals: Sequence[core.AbstractValue]
-  input_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  input_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   local_output_avals: Sequence[ShapedArray]
-  output_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  output_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   unordered_effects: List[core.Effect]
   ordered_effects: List[core.Effect]
   keepalive: Sequence[Any]
@@ -1789,7 +1789,7 @@ class PmapExecutable(stages.XlaExecutable):
 
 
 def _get_pmap_sharding(devices, specs):
-  return [sharding_internal.PmapSharding(devices, spec) for spec in specs]
+  return [sharding_impls.PmapSharding(devices, spec) for spec in specs]
 
 
 multi_host_supported_collectives: Set[core.Primitive] = set()
@@ -1968,11 +1968,11 @@ class ResultsHandler:
 
 
 def _get_sharding_specs(
-    shardings: Sequence[sharding_internal.XLACompatibleSharding], avals: Sequence[ShapedArray]
+    shardings: Sequence[sharding_impls.XLACompatibleSharding], avals: Sequence[ShapedArray]
 ) -> Sequence[ShardingSpec]:
-  if all(isinstance(s, sharding_internal.PmapSharding) for s in shardings):
+  if all(isinstance(s, sharding_impls.PmapSharding) for s in shardings):
     return [s.sharding_spec for s in shardings]  # type: ignore
-  elif all(isinstance(s, sharding_internal.NamedSharding) for s in shardings):
+  elif all(isinstance(s, sharding_impls.NamedSharding) for s in shardings):
     return [new_mesh_sharding_specs(s.mesh.shape, s.mesh.axis_names)(
               aval.ndim, get_array_mapping(s.spec))
             for aval, s in safe_zip(avals, shardings)]
@@ -1983,7 +1983,7 @@ def _get_sharding_specs(
 
 def local_avals_to_results_handler(
     unmapped_local_out_avals: Sequence[ShapedArray],
-    local_shardings: Sequence[sharding_internal.XLACompatibleSharding]) -> ResultsHandler:
+    local_shardings: Sequence[sharding_impls.XLACompatibleSharding]) -> ResultsHandler:
   out_indices = [tuple(s.devices_indices_map(aval.shape).values())
                  for s, aval in safe_zip(local_shardings, unmapped_local_out_avals)]
   handlers = [
@@ -1995,7 +1995,7 @@ def local_avals_to_results_handler(
 
 def global_avals_to_results_handler(
     global_out_avals: Sequence[ShapedArray],
-    shardings: Sequence[sharding_internal.XLACompatibleSharding],
+    shardings: Sequence[sharding_impls.XLACompatibleSharding],
     committed: bool,
     are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
   if config.jax_parallel_functions_output_gda or config.jax_array:
@@ -2007,11 +2007,11 @@ def global_avals_to_results_handler(
     return ResultsHandler(handlers, shardings, global_out_avals)
   else:
     # This path is taken when the outputs are SDAs.
-    assert all(isinstance(s, sharding_internal.NamedSharding) for s in shardings)
+    assert all(isinstance(s, sharding_impls.NamedSharding) for s in shardings)
     local_out_avals = [
         mesh_global_to_local(s.mesh, get_array_mapping(s.spec), aval)  # type: ignore
         for aval, s in safe_zip(global_out_avals, shardings)]
-    local_shardings = [sharding_internal.NamedSharding(s.mesh.local_mesh, s.spec)  # type: ignore
+    local_shardings = [sharding_impls.NamedSharding(s.mesh.local_mesh, s.spec)  # type: ignore
                        for s in shardings]
     return local_avals_to_results_handler(local_out_avals, local_shardings)
 
@@ -2061,7 +2061,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   device_buffers = device_put(val, devices, replicate=True)
 
   if jax.config.jax_array:
-    sharding = sharding_internal.PmapSharding(
+    sharding = sharding_impls.PmapSharding(
         np.asarray([d.device() for d in device_buffers]), sharding_spec)
     return jax.make_array_from_single_device_arrays(
         replicated_aval.shape, sharding, device_buffers)
@@ -2574,7 +2574,7 @@ positional_semantics = _PSThreadLocalState()
 
 
 def check_if_any_auto(
-    shardings: Iterable[Union[sharding_internal.XLACompatibleSharding,
+    shardings: Iterable[Union[sharding_impls.XLACompatibleSharding,
                               AUTOAxisResource, UnspecifiedValue]]) -> bool:
   for s in shardings:
     if is_auto(s):
@@ -2637,7 +2637,7 @@ class DeviceAssignmentMismatchError(Exception):
 
 
 ShardingInfo = Tuple[
-    Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue,
+    Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue,
           AUTOAxisResource],
     MismatchType, Optional[Any]]  # Any is dispatch.SourceInfo to avoid circular imports
 
@@ -2688,8 +2688,8 @@ def lower_sharding_computation(
     fun_or_jaxpr: Union[lu.WrappedFun, core.ClosedJaxpr],
     api_name: str,
     fun_name: str,
-    in_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue]],
-    out_shardings: Union[Sequence[Union[sharding_internal.XLACompatibleSharding, UnspecifiedValue]], UnspecifiedValue],
+    in_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]],
+    out_shardings: Union[Sequence[Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]], UnspecifiedValue],
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     *,
@@ -2750,7 +2750,7 @@ def lower_sharding_computation(
       any(not _is_unspecified(js) for js, _ in jaxpr_sharding) or  # type: ignore
       any(not _is_unspecified(o) for o in out_shardings))  # type: ignore
 
-  in_shardings = tuple(sharding_internal.GSPMDSharding.get_replicated(device_assignment)
+  in_shardings = tuple(sharding_impls.GSPMDSharding.get_replicated(device_assignment)
                        if _is_unspecified(i) else i for i in in_shardings)
 
   log_priority = logging.WARNING if config.jax_log_compiles else logging.DEBUG
@@ -2923,8 +2923,8 @@ def lower_mesh_computation(
     api_name: str,
     fun_name: str,
     mesh: Mesh,
-    in_shardings: Sequence[Union[sharding_internal.NamedSharding, AUTOAxisResource]],
-    out_shardings: Sequence[Union[sharding_internal.NamedSharding, AUTOAxisResource,
+    in_shardings: Sequence[Union[sharding_impls.NamedSharding, AUTOAxisResource]],
+    out_shardings: Sequence[Union[sharding_impls.NamedSharding, AUTOAxisResource,
                             UnspecifiedValue]],
     donated_invars: Sequence[bool],
     spmd_lowering: bool,
@@ -3176,8 +3176,8 @@ class MeshComputation(stages.XlaLowering):
 
 def get_input_metadata(
     global_in_avals: Sequence[ShapedArray],
-    in_shardings: Sequence[sharding_internal.XLACompatibleSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[sharding_internal.XLACompatibleSharding], Sequence[Tuple[Optional[Index], ...]],
+    in_shardings: Sequence[sharding_impls.XLACompatibleSharding], in_is_global: Sequence[bool]
+) -> Tuple[Sequence[sharding_impls.XLACompatibleSharding], Sequence[Tuple[Optional[Index], ...]],
            Sequence[ShapedArray]]:
   avals, shardings = _get_normalized_avals_and_shardings(
       global_in_avals, in_shardings, in_is_global)
@@ -3186,8 +3186,8 @@ def get_input_metadata(
 
 def _get_normalized_avals_and_shardings(
     global_in_avals: Sequence[ShapedArray],
-    in_shardings: Sequence[sharding_internal.XLACompatibleSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[ShapedArray], Sequence[sharding_internal.XLACompatibleSharding]]:
+    in_shardings: Sequence[sharding_impls.XLACompatibleSharding], in_is_global: Sequence[bool]
+) -> Tuple[Sequence[ShapedArray], Sequence[sharding_impls.XLACompatibleSharding]]:
   avals = []
   shardings = []
 
@@ -3197,10 +3197,10 @@ def _get_normalized_avals_and_shardings(
       aval = gaval
       in_sharding = i
     else:
-      assert isinstance(i, sharding_internal.NamedSharding)
+      assert isinstance(i, sharding_impls.NamedSharding)
       aval = mesh_global_to_local(i.mesh,
           cast(ArrayMapping, get_array_mapping(i.spec)), gaval)  # pylint: disable=g-bare-generic
-      in_sharding = sharding_internal.NamedSharding(i.mesh.local_mesh, i.spec)
+      in_sharding = sharding_impls.NamedSharding(i.mesh.local_mesh, i.spec)
     avals.append(aval)
     shardings.append(in_sharding)
 
@@ -3208,7 +3208,7 @@ def _get_normalized_avals_and_shardings(
 
 
 def _get_input_indices(
-    avals: Sequence[ShapedArray], shardings: Sequence[sharding_internal.XLACompatibleSharding]
+    avals: Sequence[ShapedArray], shardings: Sequence[sharding_impls.XLACompatibleSharding]
 ) -> Sequence[Tuple[Optional[Index], ...]]:
 
   input_indices = []
@@ -3238,8 +3238,8 @@ def _get_input_indices(
 def get_gspmd_shardings_from_executable(
     xla_executable, device_assignment: Sequence[xc.Device],
     num_in_avals: int, num_out_avals: int
-) -> Tuple[Sequence[sharding_internal.XLACompatibleSharding],
-           Sequence[sharding_internal.XLACompatibleSharding]]:
+) -> Tuple[Sequence[sharding_impls.XLACompatibleSharding],
+           Sequence[sharding_impls.XLACompatibleSharding]]:
   from jax.experimental import pjit
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
@@ -3247,16 +3247,16 @@ def get_gspmd_shardings_from_executable(
   # just return SingleDeviceShardings since we know the computation is running
   # only on 1 device.
   if len(device_assignment) == 1:
-    return ([sharding_internal.SingleDeviceSharding(device_assignment[0])
+    return ([sharding_impls.SingleDeviceSharding(device_assignment[0])
              for _ in range(num_in_avals)],
-            [sharding_internal.SingleDeviceSharding(device_assignment[0])
+            [sharding_impls.SingleDeviceSharding(device_assignment[0])
              for _ in range(num_out_avals)])
 
   in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
 
-  in_shardings_xla = [sharding_internal.GSPMDSharding(device_assignment, i)
+  in_shardings_xla = [sharding_impls.GSPMDSharding(device_assignment, i)
                       for i in in_op_shardings]
-  out_shardings_xla = [sharding_internal.GSPMDSharding(device_assignment, o)
+  out_shardings_xla = [sharding_impls.GSPMDSharding(device_assignment, o)
                        for o in out_op_shardings]
   # This condition happens when all the elements in the output tuple have the
   # same sharding, so XLA decides to run the `FusionTupleDeduplicator` to
@@ -3272,13 +3272,13 @@ def get_gspmd_shardings_from_executable(
 # without mesh.
 def _get_mesh_pspec_shardings_from_executable(
     xla_executable, mesh: Mesh
-) -> Tuple[Sequence[sharding_internal.NamedSharding],
-           Sequence[sharding_internal.NamedSharding]]:
+) -> Tuple[Sequence[sharding_impls.NamedSharding],
+           Sequence[sharding_impls.NamedSharding]]:
   from jax.experimental import pjit
 
   in_pspec, out_pspec = pjit._get_pspec_from_executable(xla_executable, mesh)
-  return ([sharding_internal.NamedSharding(mesh, i) for i in in_pspec],
-          [sharding_internal.NamedSharding(mesh, o) for o in out_pspec])
+  return ([sharding_impls.NamedSharding(mesh, i) for i in in_pspec],
+          [sharding_impls.NamedSharding(mesh, o) for o in out_pspec])
 
 
 @dataclasses.dataclass
@@ -3287,9 +3287,9 @@ class UnloadedMeshExecutable:
   device_assignment: Sequence[xc.Device]
   backend: xb.XlaBackend
   input_avals: Sequence[ShapedArray]
-  input_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  input_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   output_avals: Sequence[ShapedArray]
-  output_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  output_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   committed: bool
   are_out_shardings_from_xla: Sequence[bool]
   pmap_nreps: int
@@ -3340,8 +3340,8 @@ class UnloadedMeshExecutable:
                mesh: Optional[Mesh],
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
-               in_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, AUTOAxisResource]],
-               out_shardings: Sequence[Union[sharding_internal.XLACompatibleSharding, AUTOAxisResource,
+               in_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, AUTOAxisResource]],
+               out_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, AUTOAxisResource,
                                        UnspecifiedValue]],
                spmd_lowering: bool,
                tuple_args: bool,
@@ -3457,7 +3457,7 @@ class UnloadedMeshExecutable:
         local_devices = xla_executable.local_devices()
         # Create replicated in_shardings for jit(pmap) path with local devices
         # because multihost jit(pmap) is not allowed.
-        input_shardings = [sharding_internal.GSPMDSharding.get_replicated(
+        input_shardings = [sharding_impls.GSPMDSharding.get_replicated(
             local_devices) for _ in input_shardings]
 
       return UnloadedMeshExecutable(
@@ -3483,8 +3483,8 @@ class UnloadedMeshExecutable:
 class MeshExecutableFastpathData(NamedTuple):
   xla_executable: xc.LoadedExecutable
   out_pytree_def: Any
-  in_shardings: Sequence[sharding_internal.XLACompatibleSharding]
-  out_shardings: Sequence[sharding_internal.XLACompatibleSharding]
+  in_shardings: Sequence[sharding_impls.XLACompatibleSharding]
+  out_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
@@ -3554,10 +3554,10 @@ class MeshExecutable(stages.XlaExecutable):
     check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
 
-  def input_shardings(self) -> Sequence[sharding_internal.XLACompatibleSharding]:
+  def input_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
     return self._in_shardings
 
-  def output_shardings(self) -> Sequence[sharding_internal.XLACompatibleSharding]:
+  def output_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
     return self._out_shardings
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
@@ -3591,9 +3591,9 @@ class MeshExecutable(stages.XlaExecutable):
 
 def _out_shardings_for_trivial(
     jaxpr: core.Jaxpr, consts: Sequence[Any],
-    in_shardings: Sequence[sharding_internal.XLACompatibleSharding],
+    in_shardings: Sequence[sharding_impls.XLACompatibleSharding],
     device_assignment: Sequence[xc.Device],
-  ) -> List[sharding_internal.XLACompatibleSharding]:
+  ) -> List[sharding_impls.XLACompatibleSharding]:
   # For each jaxpr output, compute a Sharding by:
   #   * if the output is a forwarded input, get the corresponding in_sharding;
   #   * if the output is a constant Array, get its .sharding attribute;
@@ -3601,9 +3601,9 @@ def _out_shardings_for_trivial(
   #     a replicated sharding
   from jax._src import array
 
-  rep = sharding_internal.GSPMDSharding(
-      device_assignment, sharding_internal._get_replicated_op_sharding())
-  shardings: Dict[core.Var, sharding_internal.XLACompatibleSharding] = {}
+  rep = sharding_impls.GSPMDSharding(
+      device_assignment, sharding_impls.get_replicated_op_sharding())
+  shardings: Dict[core.Var, sharding_impls.XLACompatibleSharding] = {}
   for constvar, constval in zip(jaxpr.constvars, consts):
     if isinstance(constval, array.ArrayImpl):
       shardings[constvar] = constval.sharding
@@ -3696,8 +3696,8 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 @lru_cache()
 def create_mesh_pspec_sharding(
     mesh: Mesh, pspec: PartitionSpec, parsed_pspec=None
-) -> sharding_internal.NamedSharding:
-  return sharding_internal.NamedSharding(mesh, pspec, parsed_pspec)
+) -> sharding_impls.NamedSharding:
+  return sharding_impls.NamedSharding(mesh, pspec, parsed_pspec)
 
 
 def check_device_backend_on_shardings(shardings) -> bool:
@@ -3711,7 +3711,7 @@ def check_device_backend_on_shardings(shardings) -> bool:
 
 
 def check_gda_or_array_xla_sharding_match(
-    args, in_xla_shardings: Sequence[sharding_internal.XLACompatibleSharding]) -> None:
+    args, in_xla_shardings: Sequence[sharding_impls.XLACompatibleSharding]) -> None:
   from jax._src.global_device_array import GlobalDeviceArray
   from jax._src.array import ArrayImpl
 

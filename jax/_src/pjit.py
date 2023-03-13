@@ -36,8 +36,9 @@ from jax.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
     treedef_tuple)
 
-from jax._src.sharding import (
-    NamedSharding, Sharding, XLACompatibleSharding, GSPMDSharding,
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import (
+    NamedSharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
 from jax._src import array
 from jax._src import dispatch

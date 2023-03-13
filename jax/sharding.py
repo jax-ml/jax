@@ -15,8 +15,8 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
-from jax._src.sharding import (
-    Sharding as Sharding,
+from jax._src.sharding import Sharding as Sharding
+from jax._src.sharding_impls import (
     XLACompatibleSharding as XLACompatibleSharding,
     # TODO(yashkatariya): Remove MeshPspecSharding in 3 months.
     MeshPspecSharding as MeshPspecSharding,
@@ -28,7 +28,7 @@ from jax._src.sharding import (
     GSPMDSharding as GSPMDSharding,
     # TODO(yashkatariya): Remove OpShardingSharding in 3 months from
     # Feb 17, 2023.
-    OpShardingSharding as OpShardingSharding,
+    GSPMDSharding as OpShardingSharding,
     PositionalSharding as PositionalSharding,
 )
 

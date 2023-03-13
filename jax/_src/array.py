@@ -35,8 +35,9 @@ from jax._src.typing import ArrayLike
 from jax.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax._src.sharding import (
-    Sharding, SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import (
+    SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map)
 
 Shape = Tuple[int, ...]

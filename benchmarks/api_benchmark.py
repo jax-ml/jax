@@ -28,7 +28,6 @@ from jax._src.lib import xla_client as xc
 from jax.interpreters import xla
 from jax.interpreters import pxla
 from jax._src import array
-from jax._src import sharding
 from jax._src.pjit import pjit_check_aval_sharding
 from jax.experimental import pjit as pjit_lib
 from jax.experimental import multihost_utils
@@ -589,7 +588,7 @@ def bench_pjit_check_aval_sharding(state):
   mesh = create_mesh((4, 2), ('x', 'y'), state)
   if mesh is None:
     return
-  s = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x', 'y'))
+  s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x', 'y'))
   aval = jax.core.ShapedArray((8, 2), np.int32)
 
   while state:
@@ -660,7 +659,7 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   mesh = create_mesh((num_devices,), ('x',), state)
   if mesh is None:
     return
-  s = sharding.NamedSharding(mesh, spec)
+  s = jax.sharding.NamedSharding(mesh, spec)
   inp_data = np.arange(num_devices).astype(np.float32)
   x = array.make_array_from_callback(inp_data.shape, s, lambda idx: inp_data[idx])
 
@@ -669,8 +668,8 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   prev_state = jax_config.FLAGS.experimental_cpp_pjit
   jax_config.FLAGS.experimental_cpp_pjit = cpp_jit
 
-  in_axis_resources = sharding.NamedSharding(mesh, spec)
-  out_axis_resources = sharding.NamedSharding(mesh, spec)
+  in_axis_resources = jax.sharding.NamedSharding(mesh, spec)
+  out_axis_resources = jax.sharding.NamedSharding(mesh, spec)
 
   f = pjit_lib.pjit(
       lambda x: jax.tree_map(lambda x: x + 1, x),

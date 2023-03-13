@@ -43,7 +43,7 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.sharding import GSPMDSharding
+from jax._src.sharding_impls import GSPMDSharding
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache)

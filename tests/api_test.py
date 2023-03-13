@@ -58,7 +58,7 @@ from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.sharding import PartitionSpec as P
-from jax._src import array, sharding
+from jax._src import array
 from jax.experimental import pjit
 from jax._src import config as jax_config
 from jax._src import custom_derivatives
@@ -726,7 +726,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     jitted_f(1)
     if config.jax_array:
       out = jitted_f(2)
-      self.assertIsInstance(out.sharding, sharding.SingleDeviceSharding)
+      self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
       self.assertIsInstance(out, array.ArrayImpl)
     else:
       self.assertIsInstance(jitted_f(2), device_array.Buffer)
@@ -997,7 +997,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     if not config.jax_array:
       self.skipTest('with_sharding_constraint only works with the Array path '
                     'in jit.')
-    s = sharding.SingleDeviceSharding(jax.devices()[0])
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     def f(x): return pjit.with_sharding_constraint(x, s)
     out = self.jit(f).lower(1.).compile()(4.)
     self.assertAllClose(out, 4.)
@@ -1549,7 +1549,7 @@ class APITest(jtu.JaxTestCase):
   @jax_config.jax_array(True)
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
-    s = sharding.NamedSharding(mesh, P('x'))
+    s = jax.sharding.NamedSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
 
     y = jax.device_put(x, s)
@@ -1576,9 +1576,9 @@ class APITest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)),
                              ("x", "y"))
-    s1 = sharding.NamedSharding(mesh, P("x"))
-    s2 = sharding.NamedSharding(mesh, P("y"))
-    s3 = sharding.NamedSharding(mesh, P("x", "y"))
+    s1 = jax.sharding.NamedSharding(mesh, P("x"))
+    s2 = jax.sharding.NamedSharding(mesh, P("y"))
+    s3 = jax.sharding.NamedSharding(mesh, P("x", "y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1599,8 +1599,8 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.NamedSharding(mesh, P("x"))
-    s2 = sharding.NamedSharding(mesh, P("y"))
+    s1 = jax.sharding.NamedSharding(mesh, P("x"))
+    s2 = jax.sharding.NamedSharding(mesh, P("y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1621,8 +1621,8 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.NamedSharding(mesh, P("x"))
-    s2 = sharding.NamedSharding(mesh, P("y"))
+    s1 = jax.sharding.NamedSharding(mesh, P("x"))
+    s2 = jax.sharding.NamedSharding(mesh, P("y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1643,8 +1643,8 @@ class APITest(jtu.JaxTestCase):
       raise unittest.SkipTest("Test requires >= 2 devices")
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)), ("x", "y"))
-    s1 = sharding.NamedSharding(mesh, P("x"))
-    s2 = sharding.NamedSharding(mesh, P("y"))
+    s1 = jax.sharding.NamedSharding(mesh, P("x"))
+    s2 = jax.sharding.NamedSharding(mesh, P("y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10

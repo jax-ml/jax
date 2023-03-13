@@ -23,7 +23,6 @@ from jax.config import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import pxla
-from jax._src import sharding
 from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
@@ -790,8 +789,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     else:
       spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
@@ -847,7 +846,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     else:
       spec = jax.sharding.PartitionSpec('dev')
     f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
@@ -876,8 +875,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       return out
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      in_spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+      in_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     else:
       in_spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
@@ -991,7 +990,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   def test_trivial_sharding(self):
     mesh = jax.sharding.Mesh(self._create_devices(1), ['x'])
     pspec = jax.sharding.PartitionSpec('x')
-    sd = sharding.NamedSharding(mesh, pspec)
+    sd = jax.sharding.NamedSharding(mesh, pspec)
     shape = (5,)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
@@ -1004,7 +1003,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   def test_trivial_sharding_with_scale(self):
     mesh = jax.sharding.Mesh(self._create_devices(1), ['x'])
     pspec = jax.sharding.PartitionSpec('x')
-    sd = sharding.NamedSharding(mesh, pspec)
+    sd = jax.sharding.NamedSharding(mesh, pspec)
     shape = (5,)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd, scale=8.)
@@ -1017,7 +1016,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
   def test_full_sharding(self):
     mesh = jax.sharding.Mesh(self._create_devices((8, 4)), ['x', 'y'])
     pspec = jax.sharding.PartitionSpec('x', 'y')
-    sd = sharding.NamedSharding(mesh, pspec)
+    sd = jax.sharding.NamedSharding(mesh, pspec)
     shape = (8, 8)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
@@ -1047,7 +1046,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(self._create_devices((8, 4)), ['x', 'y'])
 
     pspec = jax.sharding.PartitionSpec('x', None)
-    sd = sharding.NamedSharding(mesh, pspec)
+    sd = jax.sharding.NamedSharding(mesh, pspec)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
@@ -1073,7 +1072,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(self._create_devices((4, 2)), ['x', 'y'])
     pspec = jax.sharding.PartitionSpec(None, 'y')
-    sd = sharding.NamedSharding(mesh, pspec)
+    sd = jax.sharding.NamedSharding(mesh, pspec)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
@@ -1096,7 +1095,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(self._create_devices((8, 4)), ['x', 'y'])
 
     pspec = jax.sharding.PartitionSpec('x', None)
-    sd = sharding.NamedSharding(mesh, pspec)
+    sd = jax.sharding.NamedSharding(mesh, pspec)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
     expected = _format_multiline("""
@@ -1124,7 +1123,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8),),
         mesh_mapping=(pxla.ShardedAxis(0),))
-    sd = sharding.PmapSharding(self._create_devices(8), ss)
+    sd = jax.sharding.PmapSharding(self._create_devices(8), ss)
     shape = (8,)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
@@ -1138,7 +1137,7 @@ class VisualizeShardingTest(jtu.JaxTestCase):
     ss = pxla.ShardingSpec(
         sharding=(pxla.Unstacked(8), pxla.NoSharding()),
         mesh_mapping=(pxla.ShardedAxis(0),))
-    sd = sharding.PmapSharding(self._create_devices(8), ss)
+    sd = jax.sharding.PmapSharding(self._create_devices(8), ss)
     shape = (8, 2)
     with jtu.capture_stdout() as output:
       debugging.visualize_sharding(shape, sd)
@@ -1175,7 +1174,7 @@ class InspectShardingTest(jtu.JaxTestCase):
     def _cb(sd):
       nonlocal is_called
       is_called = True
-      self.assertIsInstance(sd, sharding.Sharding)
+      self.assertIsInstance(sd, jax.sharding.Sharding)
       self.assertLen(sd.device_set, len(jax.devices()))
 
     def f(x):
@@ -1184,8 +1183,8 @@ class InspectShardingTest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     else:
       spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()
@@ -1203,7 +1202,7 @@ class InspectShardingTest(jtu.JaxTestCase):
     def _cb(sd):
       nonlocal is_called
       is_called = True
-      self.assertIsInstance(sd, sharding.Sharding)
+      self.assertIsInstance(sd, jax.sharding.Sharding)
       self.assertLen(sd.device_set, 1)
 
     def f(x):

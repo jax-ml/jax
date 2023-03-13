@@ -24,7 +24,7 @@ from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax._src import core
 from jax._src import dispatch
 from jax._src import array
-from jax._src import sharding
+from jax._src import sharding_impls
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
@@ -94,8 +94,9 @@ def _identity_fn(x):
 
 def _handle_array_process_allgather(inp, tiled):
   if isinstance(inp, array.ArrayImpl) and not inp.is_fully_addressable:
-    reps = sharding.GSPMDSharding(inp.sharding._device_assignment,
-                                       sharding._get_replicated_op_sharding())
+    reps = sharding_impls.GSPMDSharding(
+        inp.sharding._device_assignment,
+        sharding_impls.get_replicated_op_sharding())
     out = pjit(_identity_fn, out_shardings=reps)(inp)
   else:
     # All inputs here will be fully addressable.
