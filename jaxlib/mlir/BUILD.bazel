@@ -120,7 +120,7 @@ symlink_inputs(
     name = "mhlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
-        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:MhloOpsPyFiles",
+        "@xla//xla/mlir_hlo:MhloOpsPyFiles",
     ]}},
     deps = [
         ":core",

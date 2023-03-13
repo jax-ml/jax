@@ -103,14 +103,14 @@ def patch_copy_xla_extension_stubs(dst_dir):
   os.makedirs(xla_extension_dir)
   for stub_name in _XLA_EXTENSION_STUBS:
     stub_path = r.Rlocation(
-        "org_tensorflow/tensorflow/compiler/xla/python/xla_extension/" + stub_name)
+        "xla/xla/python/xla_extension/" + stub_name)
     stub_path = str(stub_path)  # Make pytype accept os.path.exists(stub_path).
     if stub_name in _OPTIONAL_XLA_EXTENSION_STUBS and not os.path.exists(stub_path):
       continue
     with open(stub_path) as f:
       src = f.read()
     src = src.replace(
-        "from tensorflow.compiler.xla.python import xla_extension",
+        "from xla.python import xla_extension",
         "from .. import xla_extension"
     )
     with open(os.path.join(xla_extension_dir, stub_name), "w") as f:
@@ -118,14 +118,14 @@ def patch_copy_xla_extension_stubs(dst_dir):
 
 
 def patch_copy_tpu_client_py(dst_dir):
-  with open(r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client.py")) as f:
+  with open(r.Rlocation("xla/xla/python/tpu_driver/client/tpu_client.py")) as f:
     src = f.read()
-    src = src.replace("from tensorflow.compiler.xla.python import xla_extension as _xla",
+    src = src.replace("from xla.python import xla_extension as _xla",
                       "from . import xla_extension as _xla")
-    src = src.replace("from tensorflow.compiler.xla.python import xla_client",
+    src = src.replace("from xla.python import xla_client",
                       "from . import xla_client")
     src = src.replace(
-        "from tensorflow.compiler.xla.python.tpu_driver.client import tpu_client_extension as _tpu_client",
+        "from xla.python.tpu_driver.client import tpu_client_extension as _tpu_client",
         "from . import tpu_client_extension as _tpu_client")
     with open(os.path.join(dst_dir, "tpu_client.py"), "w") as f:
       f.write(src)
@@ -143,7 +143,7 @@ def verify_mac_libraries_dont_reference_chkstack():
     return
   nm = subprocess.run(
     ["nm", "-g",
-     r.Rlocation("org_tensorflow/tensorflow/compiler/xla/python/xla_extension.so")
+     r.Rlocation("xla/xla/python/xla_extension.so")
     ],
     capture_output=True, text=True,
     check=False)
@@ -250,8 +250,8 @@ def prepare_wheel(sources_path):
     copy_file("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.so", dst_dir=mlir_libs_dir)
   patch_copy_xla_extension_stubs(jaxlib_dir)
 
-  if exists("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so"):
-    copy_to_jaxlib("org_tensorflow/tensorflow/compiler/xla/python/tpu_driver/client/tpu_client_extension.so")
+  if exists("xla/xla/python/tpu_driver/client/tpu_client_extension.so"):
+    copy_to_jaxlib("xla/xla/python/tpu_driver/client/tpu_client_extension.so")
     patch_copy_tpu_client_py(jaxlib_dir)
 
 

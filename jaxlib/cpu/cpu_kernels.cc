@@ -16,9 +16,9 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 
-#include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/cpu/ducc_fft_kernels.h"
-#include "tensorflow/compiler/xla/service/custom_call_target_registry.h"
+#include "jaxlib/cpu/lapack_kernels.h"
+#include "xla/service/custom_call_target_registry.h"
 
 namespace jax {
 namespace {

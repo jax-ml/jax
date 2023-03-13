@@ -44,11 +44,11 @@ py_binary(
         "//jaxlib:README.md",
         "//jaxlib:setup.py",
         "//jaxlib:setup.cfg",
-        "@org_tensorflow//tensorflow/compiler/xla/python:xla_client",
+        "@xla//xla/python:xla_client",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
     ]) + select({
-        ":remote_tpu_enabled": ["@org_tensorflow//tensorflow/compiler/xla/python/tpu_driver/client:py_tpu_client"],
+        ":remote_tpu_enabled": ["@xla//xla/python/tpu_driver/client:py_tpu_client"],
         "//conditions:default": [],
     }) + if_cuda([
         "//jaxlib/cuda:cuda_gpu_support",

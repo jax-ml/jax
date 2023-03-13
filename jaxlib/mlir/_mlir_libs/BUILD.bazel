@@ -31,12 +31,25 @@ COPTS = [
     "-frtti",
 ]
 
+LINKOPTS = select({
+        "@tsl//tsl:macos": [
+            "-Wl,-rpath,@loader_path/",
+            "-Wl,-rename_section,__TEXT,text_env,__TEXT,__text",
+        ],
+        "@tsl//tsl:windows": [],
+        "//conditions:default": [
+            "-Wl,-rpath,$$ORIGIN/",
+        ],
+    })
+
+
 py_extension(
     name = "_mlir",
     srcs = [
         "@llvm-project//mlir:lib/Bindings/Python/MainModule.cpp",
     ],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:MLIRBindingsPythonCoreNoCAPI",
@@ -50,6 +63,7 @@ py_extension(
         "@llvm-project//mlir:lib/Bindings/Python/DialectSparseTensor.cpp",
     ],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPISparseTensorHeaders",
@@ -64,6 +78,7 @@ py_extension(
         "@llvm-project//mlir:lib/Bindings/Python/SparseTensorPasses.cpp",
     ],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPISparseTensorHeaders",
@@ -90,6 +105,7 @@ py_extension(
     name = "_site_initialize_0",
     srcs = ["_site_initialize_0.cc"],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
@@ -106,15 +122,16 @@ py_extension(
 py_extension(
     name = "_mlirHlo",
     srcs = [
-        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:bindings/python/MlirHloModule.cc",
+        "@xla//xla/mlir_hlo:bindings/python/MlirHloModule.cc",
     ],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
-        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:CAPIHeaders",
+        "@xla//xla/mlir_hlo:CAPIHeaders",
         "@pybind11",
     ],
 )
@@ -129,6 +146,7 @@ py_extension(
         "@stablehlo//:stablehlo/integrations/python/ChloModule.cpp",
     ],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
@@ -145,6 +163,7 @@ py_extension(
         "@stablehlo//:stablehlo/integrations/python/StablehloModule.cpp",
     ],
     copts = COPTS,
+    linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIIRHeaders",
@@ -158,12 +177,12 @@ py_extension(
 cc_library(
     name = "jaxlib_mlir_capi_shared_library",
     srcs = select({
-        "@org_tensorflow//tensorflow:windows": [":jaxlib_mlir_capi.dll"],
-        "@org_tensorflow//tensorflow:macos": [":libjaxlib_mlir_capi.dylib"],
+        "@tsl//tsl:windows": [":jaxlib_mlir_capi.dll"],
+        "@tsl//tsl:macos": [":libjaxlib_mlir_capi.dylib"],
         "//conditions:default": [":libjaxlib_mlir_capi.so"],
     }),
     deps = select({
-        "@org_tensorflow//tensorflow:windows": [":jaxlib_mlir_capi_dll"],
+        "@tsl//tsl:windows": [":jaxlib_mlir_capi_dll"],
         "//conditions:default": [],
     }),
 )
@@ -174,7 +193,7 @@ cc_library(
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
-        "@org_tensorflow//tensorflow/compiler/xla/mlir_hlo:CAPIObjects",
+        "@xla//xla/mlir_hlo:CAPIObjects",
         "@stablehlo//:chlo_capi_objects",
         "@stablehlo//:stablehlo_capi_objects",
     ],

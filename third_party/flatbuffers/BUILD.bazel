@@ -1,4 +1,4 @@
-# Copyright 2021 The JAX Authors.
+# Copyright 2023 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,23 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-licenses(["notice"])
-
-cc_binary(
-    name = "main",
-    srcs = ["main.cc"],
-    tags = ["manual"],
-    deps = [
-        "@xla//:literal",
-        "@xla//:literal_util",
-        "@xla//:shape_util",
-        "@xla//:status",
-        "@xla//:statusor",
-        "@xla///pjrt:pjrt_client",
-        "@xla///pjrt:tfrt_cpu_pjrt_client",
-        "@xla///service:hlo_proto_cc",
-        "@xla///tools:hlo_module_loader",
-        "@tsl///platform:logging",
-        "@tsl///platform:platform_port",
-    ],
-)
+# This empty BUILD file is required to make Bazel treat this directory as a package.

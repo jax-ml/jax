@@ -66,11 +66,11 @@ specify the paths to CUDA and CUDNN, which you must have installed. Here
 may need to use `python3` instead. By default, the wheel is written to the
 `dist/` subdirectory of the current directory.
 
-### Building jaxlib from source with a modified TensorFlow repository.
+### Building jaxlib from source with a modified XLA repository.
 
 JAX depends on XLA, whose source code is in the
-[Tensorflow GitHub repository](https://github.com/tensorflow/tensorflow).
-By default JAX uses a pinned copy of the TensorFlow repository, but we often
+[XLA GitHub repository](https://github.com/openxla/xla).
+By default JAX uses a pinned copy of the XLA repository, but we often
 want to use a locally-modified copy of XLA when working on JAX. There are two
 ways to do this:
 
@@ -78,12 +78,12 @@ ways to do this:
   line flag to `build.py` as follows:
 
   ```
-  python build/build.py --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow
+  python build/build.py --bazel_options=--override_repository=xla=/path/to/xla
   ```
 * modify the `WORKSPACE` file in the root of the JAX source tree to point to
-  a different TensorFlow tree.
+  a different XLA tree.
 
-To contribute changes back to XLA, send PRs to the TensorFlow repository.
+To contribute changes back to XLA, send PRs to the XLA repository.
 
 The version of XLA pinned by JAX is regularly updated, but is updated in
 particular before each `jaxlib` release.
@@ -141,7 +141,7 @@ sudo apt install miopen-hip hipfft-dev rocrand-dev hipsparse-dev hipsolver-dev \
     rccl-dev rccl hip-dev rocfft-dev roctracer-dev hipblas-dev rocm-device-libs
 ```
 
-AMD's fork of the XLA (TensorFlow) repository may include fixes
+AMD's fork of the XLA repository may include fixes
 not present in the upstream repository. To use AMD's fork, you should clone
 their repository:
 ```
@@ -152,7 +152,7 @@ To build jaxlib with ROCM support, you can run the following build command,
 suitably adjusted for your paths and ROCM version.
 ```
 python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.3.0 \
-  --bazel_options=--override_repository=org_tensorflow=/path/to/tensorflow-upstream
+  --bazel_options=--override_repository=xla=/path/to/xla-upstream
 ```
 
 ## Installing `jax`

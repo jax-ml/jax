@@ -14,12 +14,11 @@
 
 """Bazel macros used by the JAX build."""
 
-load("@org_tensorflow//tensorflow/tsl/platform/default:build_config.bzl", _pyx_library = "pyx_library")
-load("@org_tensorflow//tensorflow:tensorflow.bzl", _if_windows = "if_windows", _pybind_extension = "pybind_extension")
+load("@tsl//tsl:tsl.bzl", _if_windows = "if_windows", _pybind_extension = "tsl_pybind_extension_opensource")
 load("@local_config_cuda//cuda:build_defs.bzl", _cuda_library = "cuda_library", _if_cuda_is_configured = "if_cuda_is_configured")
 load("@local_config_rocm//rocm:build_defs.bzl", _if_rocm_is_configured = "if_rocm_is_configured", _rocm_library = "rocm_library")
 load("@flatbuffers//:build_defs.bzl", _flatbuffer_cc_library = "flatbuffer_cc_library")
-load("@org_tensorflow//tensorflow/core/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
+load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_tests_tags", _tf_exec_properties = "tf_exec_properties")
 
 # Explicitly re-exports names to avoid "unused variable" warnings from .bzl
 # lint tools.
@@ -27,7 +26,6 @@ cuda_library = _cuda_library
 rocm_library = _rocm_library
 pytype_strict_library = native.py_library
 pytype_test = native.py_test
-pyx_library = _pyx_library
 pybind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
 if_rocm_is_configured = _if_rocm_is_configured
@@ -66,8 +64,8 @@ def pytype_library(name, pytype_srcs = None, **kwargs):
 def py_library_providing_imports_info(*, name, lib_rule = native.py_library, pytype_srcs = [], **kwargs):
     lib_rule(name = name, **kwargs)
 
-def py_extension(name, srcs, copts, deps):
-    pybind_extension(name, srcs = srcs, copts = copts, deps = deps, module_name = name)
+def py_extension(name, srcs, copts, deps, linkopts = []):
+    pybind_extension(name, srcs = srcs, copts = copts, linkopts = linkopts, deps = deps, module_name = name)
 
 def windows_cc_shared_mlir_library(name, out, deps = [], srcs = [], exported_symbol_prefixes = []):
     """Workaround DLL building issue.

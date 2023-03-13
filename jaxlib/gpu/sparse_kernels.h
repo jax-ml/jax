@@ -25,7 +25,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/handle_pool.h"
-#include "tensorflow/compiler/xla/service/custom_call_status.h"
+#include "xla/service/custom_call_status.h"
 
 namespace jax {
 
