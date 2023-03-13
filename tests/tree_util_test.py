@@ -604,6 +604,25 @@ class RavelUtilTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, 'but expected dtype'):
       _ = unravel(y)
 
+  def test_no_recompile(self):
+    x1 = jnp.array([1, 2])
+    x2 = jnp.array([3, 4])
+    x_flat1, unravel1 = flatten_util.ravel_pytree((x1, x2))
+    x_flat2, unravel2 = flatten_util.ravel_pytree((x1, x2))
+    num_traces = 0
+
+    def run(flat, unravel):
+      nonlocal num_traces
+      num_traces += 1
+      flat = flat + 1
+      return unravel(flat)
+
+    run = jax.jit(run, static_argnums=1)
+
+    run(x_flat1, unravel1)
+    run(x_flat2, unravel2)
+    self.assertEqual(num_traces, 1)
+
 
 class TreePrefixErrorsTest(jtu.JaxTestCase):
 
