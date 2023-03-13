@@ -482,6 +482,35 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(p, array.ArrayImpl)
     self.assertArraysEqual(p, input_data[:2])
 
+  def test_array_getitem_compile_multi_device_sharding(self):
+    def _check(out, inp, shard_shape):
+      self.assertArraysEqual(out, inp)
+      self.assertEqual(out.sharding.shard_shape(out.shape), shard_shape)
+      self.assertNotIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
+
+    global_mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
+    input_shape = (4, 4, 2)
+    arr, np_inp = create_array(
+        input_shape, jax.sharding.NamedSharding(global_mesh, P('x', 'y', 'z')))
+
+    _check(arr[:, -1, :], np_inp[:, -1, :], (2, 1))
+    _check(arr[0, 0, 0], np_inp[0, 0, 0], ())
+    _check(arr[-1, -1, :], np_inp[-1, -1, :], (1,))
+    _check(arr[:, 1, 0], np_inp[:, 1, 0], (2,))
+    _check(arr[:, :, :], np_inp[:, :, :], (2, 2, 1))
+    _check(arr[3, :, :], np_inp[3, :, :], (2, 1))
+    _check(arr[-1, -1, -1], np_inp[-1, -1, -1], ())
+    _check(arr[2, -1, :], np_inp[2, -1, :], (1,))
+    _check(arr[2, 3, 1], np_inp[2, 3, 1], ())
+    _check(arr[-1], np_inp[-1], (2, 1))
+    _check(arr[:], np_inp[:], (2, 2, 1))
+    _check(arr[np.array(0), :, :], np_inp[np.array(0), :, :], (2, 1))
+    _check(arr[jnp.array(0), :, :], np_inp[jnp.array(0), :, :], (2, 1))
+    # TODO(yashkatariya): This returns a replicated output because the int
+    # indexing in `_rewriting_take` goes via `dynamic_index_in_dim` rather than
+    # `_gather`.
+    # _check(arr[1], np_inp[1], (2, 1))
+
   def test_array_getitem_replicated_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_shape = (8, 2)

@@ -20,6 +20,7 @@ import numpy as np
 import functools
 from typing import Sequence, Tuple, Callable, Union, Optional, cast, List, Set
 
+import jax
 from jax._src import abstract_arrays
 from jax._src import api_util
 from jax._src import basearray
@@ -112,6 +113,21 @@ def _single_device_array_from_buf(buf, committed):
   db = dispatch._set_aval(buf)
   return ArrayImpl(db.aval, SingleDeviceSharding(db.device()), [db],
                    committed=committed, _skip_checks=True)
+
+
+def _is_reduced_on_dim(idx):
+  # TODO(yashkatariya): This handles very narrow use case where we know XLA will
+  # not return an output with uneven sharding. Remove this after we have the
+  # ability to catch uneven shardings in lower_sharding_computation and raise
+  # a special exception for that which can be caught here to fallback to
+  # bouncing via host.
+  if not isinstance(idx, tuple):
+    idx = (idx,)
+  return all(isinstance(i, int) or
+             (isinstance(i, slice) and  i == slice(None)) or
+             (isinstance(i, (np.ndarray, jax.Array)) and not i.shape and
+              np.issubdtype(i.dtype, np.integer))
+             for i in idx)
 
 
 @use_cpp_class(xc.ArrayImpl)
@@ -272,11 +288,7 @@ class ArrayImpl(basearray.Array):
     from jax._src.numpy import lax_numpy
     self._check_if_deleted()
 
-    if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
-      return lax_numpy._rewriting_take(self, idx)
-    # TODO(yashkatariya): Make it work for other Shardings too wherever its
-    # possible to not do data movement.
-    elif isinstance(self.sharding, PmapSharding):
+    if isinstance(self.sharding, PmapSharding):
       if not isinstance(idx, tuple):
         cidx = (idx,) + (slice(None),) * (len(self.shape) - 1)
       else:
@@ -292,6 +304,9 @@ class ArrayImpl(basearray.Array):
           aval = core.ShapedArray(buf.shape, self.dtype)
           return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
                            committed=False, _skip_checks=True)
+      return lax_numpy._rewriting_take(self, idx)
+    elif (dispatch.is_single_device_sharding(self.sharding) or
+        self.is_fully_replicated or _is_reduced_on_dim(idx)):
       return lax_numpy._rewriting_take(self, idx)
     else:
       # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
