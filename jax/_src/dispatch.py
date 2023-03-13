@@ -932,8 +932,7 @@ def _execute_replicated(name: str,
                         ordered_effects: List[core.Effect],
                         kept_var_idx,
                         has_host_callbacks: bool,
-                        *args,
-                        from_lower_sharding_computation: bool = False):
+                        *args):
   if has_unordered_effects or ordered_effects:
     # TODO(sharadmv): support jit-of-pmap with effects
     raise NotImplementedError(
@@ -947,8 +946,6 @@ def _execute_replicated(name: str,
   out_flat = [bufs[0] for bufs in out_bufs_flat_rep]  # type: ignore
   check_special(name, out_flat)
   out_bufs = unflatten(out_flat, output_buffer_counts)
-  if from_lower_sharding_computation:
-    return result_handler(out_bufs)
   return result_handler(None, out_bufs)
 
 
