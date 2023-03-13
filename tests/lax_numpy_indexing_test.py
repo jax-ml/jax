@@ -929,6 +929,13 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       jnp.zeros(2).at[0.].set(1.)
 
+  def testIndexingPositionalArgumentWarning(self):
+    x = jnp.arange(4)
+    with self.assertWarnsRegex(
+        FutureWarning,  "Passing 'indices_are_sorted' by position is deprecated"):
+      out = x.at[5].set(1, True, mode='drop')
+    self.assertArraysEqual(out, x)
+
   def testIndexOutOfBounds(self):  # https://github.com/google/jax/issues/2245
     x = jnp.arange(5, dtype=jnp.int32) + 1
     self.assertAllClose(x, x[:10])
