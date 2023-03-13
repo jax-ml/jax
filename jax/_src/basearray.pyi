@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
-from typing import Any, List, Optional, Sequence, Tuple, Union, Set
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union, Set
 import numpy as np
 
 from jax._src.sharding import Sharding
@@ -184,7 +184,7 @@ class Array(abc.ABC):
 
   # JAX extensions
   @property
-  def at(self) -> Any: ...
+  def at(self) -> _IndexUpdateHelper: ...
   @property
   def weak_type(self) -> bool: ...
 
@@ -214,3 +214,33 @@ ArrayLike = Union[
   np.bool_, np.number,  # NumPy scalar types
   bool, int, float, complex,  # Python scalar types
 ]
+
+
+# TODO: restructure to avoid re-defining this here?
+# from jax._src.numpy.lax_numpy import _IndexUpdateHelper
+
+class _IndexUpdateHelper:
+  def __getitem__(self, index: Any) -> _IndexUpdateRef: ...
+
+class _IndexUpdateRef:
+  def get(self, indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: Optional[str] = None, fill_value: Optional[ArrayLike] = None) -> Array: ...
+  def set(self, values: ArrayLike,
+          indices_are_sorted: bool = False, unique_indices: bool = False,
+          mode: Optional[str] = None, fill_value: Optional[ArrayLike] = None) -> Array: ...
+  def add(self, values: ArrayLike, indices_are_sorted: bool = False,
+          unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def mul(self, values: ArrayLike, indices_are_sorted: bool = False,
+          unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def multiply(self, values: ArrayLike, indices_are_sorted: bool = False,
+               unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def divide(self, values: ArrayLike, indices_are_sorted: bool = False,
+             unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def power(self, values: ArrayLike, indices_are_sorted: bool = False,
+            unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def min(self, values: ArrayLike, indices_are_sorted: bool = False,
+          unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def max(self, values: ArrayLike, indices_are_sorted: bool = False,
+          unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
+  def apply(self, func: Callable[[ArrayLike], ArrayLike], indices_are_sorted: bool = False,
+            unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
