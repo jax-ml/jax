@@ -209,7 +209,7 @@ class custom_partitioning:
     .. code-block:: python
 
       import jax
-      from jax._src.sharding import NamedSharding
+      from jax.sharding import NamedSharding
       from jax.experimental.custom_partitioning import custom_partitioning
       from jax.experimental.pjit import pjit
       from jax.sharding import PartitionSpec as P
@@ -386,7 +386,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
 
   def to_mesh_pspec_sharding(op_sharding: xc.OpSharding):
     if mesh.empty:
-      from jax._src.sharding import GSPMDSharding
+      from jax._src.sharding_impls import GSPMDSharding
       return GSPMDSharding(devices, op_sharding)
     pspec = pjit.parse_flatten_op_sharding(op_sharding,
                                            mesh)[0].get_partition_spec()

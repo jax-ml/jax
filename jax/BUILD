@@ -118,7 +118,7 @@ py_library_providing_imports_info(
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
-        "_src/sharding.py",
+        "_src/sharding_impls.py",
         "_src/stages.py",
         "_src/typing.py",
     ] + glob(
@@ -178,6 +178,7 @@ py_library_providing_imports_info(
         ":path",
         ":pretty_printer",
         ":profiler",
+        ":sharding",
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
@@ -274,6 +275,15 @@ pytype_library(
     deps = [
         ":traceback_util",
         ":xla_bridge",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_library(
+    name = "sharding",
+    srcs = ["_src/sharding.py"],
+    deps = [
+        ":util",
         "//jax/_src/lib",
     ],
 )

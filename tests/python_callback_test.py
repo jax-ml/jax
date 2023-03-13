@@ -25,7 +25,6 @@ from jax._src import core
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import effects
-from jax._src import sharding
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src import xla_bridge
@@ -1020,8 +1019,8 @@ class IOPythonCallbackTest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     else:
       spec = jax.sharding.PartitionSpec('dev')
       out_spec = jax.sharding.PartitionSpec()

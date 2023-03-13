@@ -26,7 +26,7 @@ from jax._src.lib import xla_extension
 from jax.config import config
 from jax.experimental import checkify
 from jax.experimental import pjit
-from jax._src.sharding import NamedSharding
+from jax.sharding import NamedSharding
 from jax._src import array
 from jax._src import core
 from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError

@@ -102,7 +102,6 @@ from jax._src.interpreters.pxla import (
   shard_aval as shard_aval,
   shard_aval_handlers as shard_aval_handlers,
   shard_to_full_p as shard_to_full_p,
-  sharding_internal as sharding_internal,
   sharding_spec_sharding_proto as sharding_spec_sharding_proto,
   spec_to_indices as spec_to_indices,
   spmd_primitive_batchers as spmd_primitive_batchers,

@@ -49,7 +49,7 @@ from jax._src.util import safe_map, safe_zip
 from jax.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import array
-from jax._src.sharding import PmapSharding
+from jax._src.sharding_impls import PmapSharding
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 
 from jax.config import config

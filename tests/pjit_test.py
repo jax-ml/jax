@@ -45,7 +45,8 @@ from jax.experimental import global_device_array
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import NamedSharding, Sharding, GSPMDSharding
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import NamedSharding, GSPMDSharding
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, FROM_GDA, AUTO)
 from jax._src import mesh

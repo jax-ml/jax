@@ -59,9 +59,10 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client as xc
-from jax._src.sharding import (PmapSharding, SingleDeviceSharding,
-                               GSPMDSharding, NamedSharding, PartitionSpec,
-                               Sharding, XLACompatibleSharding)
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import (
+    PmapSharding, SingleDeviceSharding, GSPMDSharding, NamedSharding,
+    PartitionSpec, XLACompatibleSharding)
 from jax._src.util import flatten, unflatten
 
 

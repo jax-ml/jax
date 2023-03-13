@@ -22,7 +22,7 @@ from jax._src import test_util as jtu
 from jax._src import config as jax_config
 from jax.config import config
 from jax._src import array
-from jax._src.sharding import NamedSharding, GSPMDSharding
+from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.gda_serialization import serialization
 import numpy as np

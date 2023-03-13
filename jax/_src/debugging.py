@@ -36,7 +36,8 @@ from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.sharding import Sharding, GSPMDSharding, NamedSharding
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import GSPMDSharding, NamedSharding
 from jax.interpreters import partial_eval as pe
 from jax.config import config
 

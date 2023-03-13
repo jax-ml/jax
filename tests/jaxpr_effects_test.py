@@ -28,7 +28,6 @@ from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import ad
 from jax.interpreters import partial_eval as pe
-from jax._src import sharding
 from jax._src.interpreters import mlir
 from jax._src import ad_checkpoint
 from jax._src import dispatch
@@ -290,7 +289,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['x'])
     if config.jax_array:
-      spec = sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
+      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     else:
       spec = jax.sharding.PartitionSpec('x')
     f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)

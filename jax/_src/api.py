@@ -65,7 +65,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.lib import xla_extension_version
-from jax._src.sharding import PmapSharding
+from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix, _generate_key_paths
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, split_list,
