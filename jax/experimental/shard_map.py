@@ -39,8 +39,9 @@ from jax._src import util
 from jax._src.core import Tracer
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, fft, linalg)
-from jax._src.util import (HashableFunction, unzip2, as_hashable_function,
-                           memoize, partition_list, merge_lists)
+from jax._src.util import (HashableFunction, HashablePartial, unzip2,
+                           as_hashable_function, memoize, partition_list,
+                           merge_lists)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax.interpreters import batching
 from jax._src.interpreters import mlir
@@ -984,23 +985,3 @@ def _pe_custom_ctx(params):
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr', _pe_custom_params,
             res_aval=_pe_custom_res, ctx=_pe_custom_ctx)
-
-# Misc
-
-# TODO(mattjj): move this to _src/util.py
-class HashablePartial:
-  def __init__(self, f, *args, **kwargs):
-    self.f = f
-    self.args = args
-    self.kwargs = kwargs
-
-  def __eq__(self, other):
-    return (type(other) is HashablePartial and
-            self.f.__code__ == other.f.__code__ and
-            self.args == other.args and self.kwargs == other.kwargs)
-
-  def __hash__(self):
-    return hash((self.f.__code__, self.args, tuple(self.kwargs.items())))
-
-  def __call__(self, *args, **kwargs):
-    return self.f(*self.args, *args, **self.kwargs, **kwargs)
