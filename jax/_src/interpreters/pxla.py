@@ -2070,14 +2070,15 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
     replicated_aval = aval
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, in_axis)
-  device_buffers = device_put(val, devices, replicate=True)
 
   if jax.config.jax_array:
+    buf = jax.device_put(val, devices[0])
     sharding = sharding_impls.PmapSharding(
-        np.asarray([d.device() for d in device_buffers]), sharding_spec)
-    return jax.make_array_from_single_device_arrays(
-        replicated_aval.shape, sharding, device_buffers)
+        np.asarray([d for d in devices]), sharding_spec)
+    return batched_device_put(replicated_aval, sharding, [buf] * len(devices),
+                              devices)
   else:
+    device_buffers = device_put(val, devices, replicate=True)
     return make_sharded_device_array(replicated_aval, sharding_spec,
                                      device_buffers)
 
