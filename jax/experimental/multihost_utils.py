@@ -314,24 +314,20 @@ def host_local_array_to_global_array(local_inputs: Any,
     # matches the `local_sharding`, then there's no need to reshard and create
     # copies.
     if (isinstance(arr, array.ArrayImpl) and
-        arr.sharding._device_assignment == local_sharding._device_assignment and
-        pxla.are_op_shardings_equal(
-            arr.sharding._to_xla_op_sharding(arr.ndim),
-            local_sharding._to_xla_op_sharding(arr.ndim))):
-      arrays = arr._arrays
+        arr.sharding.is_equivalent_to(local_sharding, arr.ndim)):
+      arrays = [x.data for x in arr.addressable_shards]
     else:
       arr = xla.canonicalize_dtype(arr)
-      arrays = list(it.chain.from_iterable(
-          _device_put(arr[index], d)
-          for d, index in local_sharding.devices_indices_map(arr.shape).items()
-      ))
+      arrays = list(
+          arr[index]
+          for d, index in local_sharding.devices_indices_map(arr.shape).items())
 
     global_aval = _local_to_global_aval(
         core.ShapedArray(arr.shape, arrays[0].dtype), global_mesh, pspec)
 
-    return array.ArrayImpl(
+    return pxla.batched_device_put(
         global_aval, jax.sharding.NamedSharding(global_mesh, pspec),
-        arrays, committed=True, _skip_checks=True)
+        arrays, list(global_mesh.local_mesh.devices.flat))
 
   flattened_inps, in_tree = tree_flatten(local_inputs)
   in_pspecs = _flatten_pspecs('input pspecs', in_tree,
