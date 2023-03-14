@@ -1847,7 +1847,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.ones((2,2,2), dtype=np.float32)
     for _ in range(10):
       # Does not crash.
-      x = foo(x)
+      with jtu.ignore_warning(
+          message=".*Using jit-of-pmap can lead to inefficient data movement"):
+        x = foo(x)
 
   def testPsumZeroCotangents(self):
     # https://github.com/google/jax/issues/3651
