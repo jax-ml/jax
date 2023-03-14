@@ -32,7 +32,7 @@ import operator
 import types
 from typing import (
   overload, Any, Callable, Dict, FrozenSet, List, Literal,
-  Optional, Sequence, Tuple, TypeVar, Union)
+  NamedTuple, Optional, Sequence, Tuple, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -3983,33 +3983,30 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
   # This adds np.newaxis/None dimensions.
   return expand_dims(y, indexer.newaxis_dims)
 
-_Indexer = collections.namedtuple("_Indexer", [
+class _Indexer(NamedTuple):
   # The expected shape of the slice output.
-  "slice_shape",
-
+  slice_shape: Sequence[int]
   # The slice shape to pass to lax.gather().
-  "gather_slice_shape",
-
+  gather_slice_shape: Sequence[int]
   # The gather indices to use.
-  "gather_indices",
-
+  gather_indices: ArrayLike
   # A GatherDimensionNumbers object describing the gather to perform.
-  "dnums",
+  dnums: lax.GatherDimensionNumbers
 
   # Are the gather_indices known to be non-overlapping and/or sorted?
   # (In practice, these translate to "there no advanced indices", because
   # only advanced indices could lead to index repetition.)
-  "unique_indices",
-  "indices_are_sorted",
+  unique_indices: bool
+  indices_are_sorted: bool
 
   # Slice dimensions that have negative strides, and so must be reversed after
   # the gather.
-  "reversed_y_dims",
+  reversed_y_dims: Sequence[int]
 
   # Keep track of any axes created by `newaxis`. These must be inserted for
   # gathers and eliminated for scatters.
-  "newaxis_dims",
-])
+  newaxis_dims: Sequence[int]
+
 
 def _split_index_for_jit(idx, shape):
   """Splits indices into necessarily-static and dynamic parts.
@@ -4051,7 +4048,8 @@ def _merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx):
 def _int(aval):
   return not aval.shape and issubdtype(aval.dtype, integer)
 
-def _index_to_gather(x_shape, idx, normalize_indices=True):
+def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
+                     normalize_indices: bool = True) -> _Indexer:
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
 
@@ -4062,14 +4060,14 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
   # move the advanced axes to the front.
   advanced_axes_are_contiguous = False
 
-  advanced_indexes = None
+  advanced_indexes: Optional[Sequence[Union[Array, np.ndarray]]] = None
 
   # The positions of the advanced indexing axes in `idx`.
-  idx_advanced_axes = []
+  idx_advanced_axes: Sequence[int] = []
 
   # The positions of the advanced indexes in x's shape.
   # collapsed, after None axes have been removed. See below.
-  x_advanced_axes = None
+  x_advanced_axes: Optional[Sequence[int]] = None
 
   if _is_advanced_int_indexer(idx):
     idx_no_nones = [(i, d) for i, d in enumerate(idx) if d is not None]
@@ -4080,16 +4078,16 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       advanced_pairs = ((_normalize_index(e, x_shape[j]), i, j)
                         for e, i, j in advanced_pairs)
     advanced_indexes, idx_advanced_axes, x_advanced_axes = zip(*advanced_pairs)
-    advanced_axes_are_contiguous = np.all(np.diff(idx_advanced_axes) == 1)
+    advanced_axes_are_contiguous = bool(np.all(np.diff(idx_advanced_axes) == 1))
 
   x_axis = 0  # Current axis in x.
   y_axis = 0  # Current axis in y, before collapsing. See below.
   collapsed_y_axis = 0  # Current axis in y, after collapsing.
 
   # Scatter dimension numbers.
-  offset_dims = []
-  collapsed_slice_dims = []
-  start_index_map = []
+  offset_dims: Sequence[int] = []
+  collapsed_slice_dims: Sequence[int] = []
+  start_index_map: Sequence[int] = []
 
   use_64bit_index = _any([not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape])
   index_dtype = int64 if use_64bit_index else int32
@@ -4098,22 +4096,22 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
   # Pairs of (array, start_dim) values. These will be broadcast into
   # gather_indices_shape, with the array dimensions aligned to start_dim, and
   # then concatenated.
-  gather_indices = []
-  gather_indices_shape = []
+  gather_indices: List[Tuple[Array, int]] = []
+  gather_indices_shape: List[int] = []
 
   # We perform three transformations to y before the scatter op, in order:
   # First, y is broadcast to slice_shape. In general `y` only need broadcast to
   # the right shape.
-  slice_shape = []
+  slice_shape: Sequence[int] = []
 
   # Next, y is squeezed to remove newaxis_dims. This removes np.newaxis/`None`
   # indices, which the scatter cannot remove itself.
-  newaxis_dims = []
+  newaxis_dims: Sequence[int] = []
 
   # Finally, we reverse reversed_y_dims to handle slices with negative strides.
-  reversed_y_dims = []
+  reversed_y_dims: Sequence[int] = []
 
-  gather_slice_shape = []
+  gather_slice_shape: Sequence[int] = []
 
   for idx_pos, i in enumerate(idx):
     # Handle the advanced indices here if:
@@ -4246,7 +4244,7 @@ def _index_to_gather(x_shape, idx, normalize_indices=True):
       raise IndexError(msg.format(idx))
 
   if len(gather_indices) == 0:
-    gather_indices_array = np.zeros((0,), dtype=index_dtype)
+    gather_indices_array: ArrayLike = np.zeros((0,), dtype=index_dtype)
   elif len(gather_indices) == 1:
     g, _ = gather_indices[0]
     gather_indices_array = lax.expand_dims(g, (g.ndim,))
