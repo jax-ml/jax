@@ -496,14 +496,16 @@ class JaxprTrace(Trace['JaxprTracer']):
       for t in out_tracers: t.recipe = eqn
       return out_tracers
 
-  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees,
+                              symbolic_zeros):
     # TODO(mattjj): after old remat is deleted, make this method trivial.
     # Because we instantiate all tracers, in_knowns is all False.
     tracers = map(self.instantiate_const_abstracted, tracers)
     in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
     f = trace_to_subjaxpr_nounits(f, self.main, True)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
-    out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees)
+    out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees,
+                         symbolic_zeros=symbolic_zeros)
     out_knowns, out_avals, jaxpr, env = aux()
     out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
     res_tracers = map(self.new_instantiated_const, res)
@@ -513,8 +515,9 @@ class JaxprTrace(Trace['JaxprTracer']):
     closed_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(jaxpr), ())
 
     @_memoize
-    def fwd_jaxpr_thunk():
-      fwd_ = trace_to_subjaxpr_nounits(fwd, self.main, True)
+    def fwd_jaxpr_thunk(*zeros):
+      fwd_ = _interleave_fun(fwd, zeros)
+      fwd_ = trace_to_subjaxpr_nounits(fwd_, self.main, True)
       fwd_, aux = partial_eval_wrapper_nounits(
           fwd_, tuple(in_knowns), tuple(in_avals))
       with core.new_sublevel():
@@ -531,7 +534,8 @@ class JaxprTrace(Trace['JaxprTracer']):
                          dict(fun_jaxpr=closed_jaxpr,
                               fwd_jaxpr_thunk=fwd_jaxpr_thunk,
                               num_consts=len(res) + len(env),
-                              bwd=bwd, out_trees=out_trees),
+                              bwd=bwd, out_trees=out_trees,
+                              symbolic_zeros=symbolic_zeros),
                          jaxpr.effects, source)
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
@@ -1905,23 +1909,29 @@ class DynamicJaxprTrace(core.Trace):
   def post_process_custom_jvp_call(self, out_tracers, _):
     assert False  # unreachable
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
+                              symbolic_zeros):
     in_avals = [t.aval for t in tracers]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
+
     main_ = ref(self.main)
-    fwd_jaxpr_thunk = _memoize(
-        lambda: trace_to_subjaxpr_dynamic(fwd, main_(), in_avals)[::2])
+    @_memoize
+    def fwd_jaxpr_from_zeros(*zeros):
+      fwd_ = _interleave_fun(fwd, zeros)
+      return trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)[::2]
+
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
     constvars = map(self.getvar, map(self.instantiate_const, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
                         dict(fun_jaxpr=closed_fun_jaxpr,
-                             fwd_jaxpr_thunk=fwd_jaxpr_thunk,
+                             fwd_jaxpr_thunk=fwd_jaxpr_from_zeros,
                              num_consts=len(consts),
-                             bwd=bwd, out_trees=out_trees),
+                             bwd=bwd, out_trees=out_trees,
+                             symbolic_zeros=symbolic_zeros),
                         fun_jaxpr.effects,
                         source_info_util.current())
     self.frame.add_eqn(eqn)
@@ -1970,18 +1980,23 @@ class DynamicJaxprTrace(core.Trace):
 
 custom_staging_rules: Dict[Primitive, Callable] = {}
 
-def _memoize(thunk):
-  cell = []
+@lu.transformation
+def _interleave_fun(every_others, *args, **kwargs):
+  args_ = [x for pair in zip(args, every_others) for x in pair]
+  yield (yield (args_, kwargs))
+
+def _memoize(fn):
+  cells = {}
   saved_state = [core.thread_local_state.trace_state.copy()]
-  def memoized():
-    if not cell:
+  def memoized(*args):
+    if args not in cells:
       prev_state = core.thread_local_state.trace_state
       core.thread_local_state.trace_state = saved_state.pop()
       try:
-        cell.append(thunk())
+        cells[args] = fn(*args)
       finally:
         core.thread_local_state.trace_state = prev_state
-    return cell[0]
+    return cells[args]
   return memoized
 
 # TODO(mattjj): remove this DebugInfo and helper functions, replace with

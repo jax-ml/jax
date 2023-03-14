@@ -23,19 +23,19 @@ import numpy as np
 
 import jax
 from jax.config import config
+from jax.interpreters import partial_eval as pe
 from jax._src import core
 from jax._src import source_info_util
-from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
-from jax._src.tree_util import (tree_unflatten, tree_flatten,
-                                register_pytree_node)
+from jax._src import linear_util as lu
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero, SymbolicZero,
                               replace_rule_output_symbolic_zeros, instantiate)
-from jax._src import linear_util as lu
+from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
+from jax._src.tree_util import (tree_unflatten, tree_flatten,
+                                register_pytree_node)
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
-from jax.interpreters import partial_eval as pe
 
 Array = Any
 map, unsafe_map = safe_map, map
@@ -473,16 +473,19 @@ class BatchTrace(Trace):
         return map(partial(BatchTracer, trace), vals, dims, srcs)
     return vals, todo
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees):  # pytype: disable=signature-mismatch
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees,
+                              symbolic_zeros):  # pytype: disable=signature-mismatch
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims)
                   if d is not not_mapped}
+    fwd_in_dims = [d for in_dim in in_dims for d in [in_dim, not_mapped]]
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
-    fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims)
+    fwd, out_dims2 = batch_subtrace(fwd, self.main, fwd_in_dims)
     bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
                                out_dims2, in_dims, self.main.trace_type,
                                self.spmd_axis_name)
-    out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees)
+    out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees,
+                         symbolic_zeros=symbolic_zeros)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree = out_trees()
@@ -779,8 +782,14 @@ def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
 def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests,
                          main_type, spmd_axis_name):
   def new_bwd(*args):
+    in_dims_ = in_dims() if callable(in_dims) else in_dims
+    args = [SymbolicZero(core.mapped_aval(axis_size, dim, x.aval))
+            if type(x) is SymbolicZero else x
+            for x, dim in zip(args, in_dims_)]
+    in_dims_ = [None if type(x) is SymbolicZero else d
+                for x, d in zip(args, in_dims_)]
     bwd_, out_dims_thunk = batch_subtrace(lu.wrap_init(bwd))
-    bwd_ = _batch_outer(bwd_, axis_name, axis_size, in_dims, main_type,
+    bwd_ = _batch_outer(bwd_, axis_name, axis_size, in_dims_, main_type,
                         spmd_axis_name)
     bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, out_dims_thunk,
                                out_dim_dests)
@@ -797,7 +806,7 @@ def _match_axes_and_sum(axis_size, axis_name, out_dims_thunk, out_dim_dests, *in
 def _matchaxis_symbolic_zeros(axis_name, sz, name, src, dst, x, sum_match=False):
   # Just like `matchaxis`, but handles symbolic zeros using ad_util.py
   # TODO(mattjj): dedup with matchaxis
-  if isinstance(x, Zero):
+  if isinstance(x, (Zero, SymbolicZero)):
     if src == dst:
       return x
     elif type(src) == type(dst) == int:
