@@ -4586,23 +4586,47 @@ def _dilate_shape(shape, dilation):
 def _ceil_divide(x1, x2):
   return -np.floor_divide(np.negative(x1), x2)
 
+
+# A dynamic enum is essential because this code extends existing
+# xla_client.PaddingType. If I make it static and xla_client.PaddingType gets
+# changed everything gets broken. That's why mypy is disabled.
+jax_enum_names = [  # type: ignore
+    *[es.name for es in xla_client.PaddingType],
+    'PYTORCH_SAME',
+]
+PaddingType = enum.Enum(  # type: ignore
+    'JaxPaddingType',
+    jax_enum_names,
+    start=0,
+)
+
 def padtype_to_pads(in_shape, window_shape, window_strides, padding):
   """Convert padding string to list of pairs of pad values."""
-  PaddingType = xla_client.PaddingType
-
   if isinstance(padding, str):
-    mapping = {'VALID': PaddingType.VALID, 'SAME': PaddingType.SAME}
     try:
-      padding = mapping[padding.upper()]
+      padding = PaddingType[padding.upper()]
     except KeyError as err:
       msg = "Unrecognized padding type: expected 'VALID' or 'SAME', got {}."
       raise RuntimeError(msg.format(padding)) from err
 
-  if padding == PaddingType.SAME:
+  if padding in [PaddingType.SAME, PaddingType.PYTORCH_SAME]:
     out_shape = _ceil_divide(in_shape, window_strides)
-    pad_sizes = np.maximum(0, (out_shape - 1) * window_strides +
-                                window_shape - in_shape)
-    return [(pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes]
+    pad_sizes = np.maximum(
+        0,
+        (out_shape - 1) * window_strides + window_shape - in_shape,
+    )
+    if padding == PaddingType.PYTORCH_SAME:
+      check_strides = window_strides
+      if isinstance(check_strides, int):
+        check_strides = [check_strides]
+      if any(stride != 1 for stride in check_strides):
+        raise ValueError("PYTORCH_SAME padding is incompatible with strided "
+                         f"convolutions. Got {check_strides}.")
+      shift_pad_sizes = pad_sizes + 1
+    else:
+      shift_pad_sizes = pad_sizes
+    return [(shift_pad_size // 2, pad_size - shift_pad_size // 2)
+            for pad_size, shift_pad_size in zip(pad_sizes, shift_pad_sizes)]
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
   else:

@@ -270,6 +270,26 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(fun, args_maker)
 
   @jtu.sample_product(
+      [dict(lhs_shape=(b, i, 9, 10), rhs_shape=(j, i, 4, 5))
+       for b, i, j in itertools.product([2, 3], repeat=3)],
+      dtype=float_dtypes,
+      strides=[(1, 1), (1, 2), (2, 1)],
+      padding=["PYTORCH_SAME"],
+  )
+  def testConvPyTorchSame(self, lhs_shape, rhs_shape, dtype, strides, padding):
+    rng = jtu.rand_small(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
+
+    def fun(lhs, rhs):
+      return lax.conv(lhs, rhs, strides, padding)
+
+    if all(stride == 1 for stride in strides):
+      self._CompileAndCheck(fun, args_maker)
+    else:
+      with self.assertRaises(ValueError):
+        self._CompileAndCheck(fun, args_maker)
+
+  @jtu.sample_product(
     [dict(lhs_shape=(b, i, 9, 10), rhs_shape=(j, i, 4, 5))
      for b, i, j in itertools.product([2, 3], repeat=3)],
     [dict(dtype=dtype, preferred_element_type=preferred)
@@ -2808,6 +2828,34 @@ class LazyConstantTest(jtu.JaxTestCase):
         expected.astype(np.float32), lax.log1p(np.float32(1e-5)))
     np.testing.assert_array_almost_equal_nulp(
         expected.astype(np.complex64), lax.log1p(np.complex64(1e-5)))
+
+  @parameterized.named_parameters(
+      dict(testcase_name='_same', pad_type='SAME', answer=[(0, 1)], stride=2),
+      dict(
+          testcase_name='_pytorch_same',
+          pad_type='PYTORCH_SAME',
+          stride=1,
+          answer=[(1, 1)],
+      ),
+      dict(testcase_name='_valid', pad_type='VALID', answer=[(0, 0)], stride=2),
+  )
+  def testPadTypeToPads(self, pad_type, stride, answer):
+    result = lax.padtype_to_pads(
+        in_shape=[768],
+        window_shape=[3],
+        window_strides=stride,
+        padding=pad_type,
+    )
+    self.assertEqual(result, answer)
+
+  def testPadTypeToPadsFaultyStride(self):
+    with self.assertRaises(ValueError):
+      _ = lax.padtype_to_pads(
+          in_shape=[768],
+          window_shape=[3],
+          window_strides=2,
+          padding='PYTORCH_SAME',
+      )
 
 
 class LaxNamedShapeTest(jtu.JaxTestCase):

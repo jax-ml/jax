@@ -74,9 +74,10 @@ def conv_general_dilated(
     rhs: a rank `n+2` dimensional array of kernel weights.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
-    padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
-      `n` `(low, high)` integer pairs that give the padding to apply before and
-      after each spatial dimension.
+    padding: either the string `'SAME'`, the string `'VALID'`,
+      the string `'PYTORCH_SAME'`, or a sequence of `n` `(low, high)`
+      integer pairs that give the padding to apply before and after each spatial
+      dimension.
     lhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `lhs`. LHS dilation
       is also known as transposed convolution.
@@ -177,7 +178,8 @@ def conv(lhs: Array, rhs: Array, window_strides: Sequence[int],
     rhs: a rank `n+2` dimensional array of kernel weights.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
-    padding: either the string `'SAME'`, the string `'VALID'`.
+    padding: either the string `'SAME'`, the string `'VALID', the string
+      `'PYTORCH_SAME'`.
     precision: Optional. Either ``None``, which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
@@ -207,9 +209,9 @@ def conv_with_general_padding(lhs: Array, rhs: Array,
     rhs: a rank `n+2` dimensional array of kernel weights.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
-    padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
-      `n` `(low, high)` integer pairs that give the padding to apply before and
-      after each spatial dimension.
+    padding: either the string `'SAME'`, the string `'VALID'`, the string
+      `'PYTORCH_SAME'`, or a sequence of `n` `(low, high)` integer pairs that
+      give the padding to apply before and after each spatial dimension.
     lhs_dilation: `None`, or a sequence of `n` integers, giving the
       dilation factor to apply in each spatial dimension of `lhs`. LHS dilation
       is also known as transposed convolution.
