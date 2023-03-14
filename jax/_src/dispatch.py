@@ -1352,17 +1352,6 @@ def _copy_device_array_to_device(
   return device_array.make_device_array(x.aval, device, moved_buf)
 
 
-def _copy_array_to_device(x: jax.Array, aval: core.AbstractValue,
-                          device: xc.Device) -> array.ArrayImpl:
-  """Copies `Array`s with SingleDeviceSharding to a different device."""
-  if xb.get_device_backend(device).platform == x.device().platform:
-    # source and target platforms are the same
-    if x.device() == device:
-      return array._single_device_array_from_buf(x, True)
-  return pxla.batched_device_put(  # type: ignore
-      aval, SingleDeviceSharding(device), [x], [device])
-
-
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.
 def _check_sharding(aval, s):
@@ -1417,7 +1406,8 @@ def _device_put_impl(
     if device is None:
       return x
     elif is_single_device_sharding(x.sharding):
-      return _copy_array_to_device(x, aval, device)
+      return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
+                                     [device])
 
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)

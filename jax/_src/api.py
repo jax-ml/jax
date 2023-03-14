@@ -3105,21 +3105,10 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
     if config.jax_array:
-      sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
-      bufs = [x for x, d in safe_zip(xs, devices)
-              if (isinstance(x, array.ArrayImpl) and
-                  dispatch.is_single_device_sharding(x.sharding) and
-                  x.device() == d)]
-      if len(bufs) == len(xs):
-        return array.ArrayImpl(
-            stacked_aval,
-            PmapSharding(np.array(devices), sharding_spec),
-            bufs, committed=True, _skip_checks=True)
-
       xs = [xla.canonicalize_dtype(arg) for arg in xs]
+      sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
       return pxla.batched_device_put(
-          stacked_aval,
-          PmapSharding(np.array(devices), sharding_spec),
+          stacked_aval, PmapSharding(np.array(devices), sharding_spec),
           xs, list(devices))
     else:
       buffers = [buf for x, d in zip(xs, devices)

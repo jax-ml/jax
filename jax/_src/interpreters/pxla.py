@@ -461,7 +461,20 @@ for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
 
 
-batched_device_put = xc.batched_device_put  # pytype: disable=module-attr
+def batched_device_put(aval: core.AbstractValue,
+                       sharding: jax.sharding.Sharding, xs: Sequence[Any],
+                       devices: Sequence[jax.Device], committed: bool = True):
+  from jax._src import array
+
+  bufs = [x for x, d in safe_zip(xs, devices)
+          if (isinstance(x, array.ArrayImpl) and
+              dispatch.is_single_device_sharding(x.sharding) and
+              x.device() == d)]
+  if len(bufs) == len(xs):
+    return array.ArrayImpl(
+        aval, sharding, bufs, committed=committed, _skip_checks=True)
+  return xc.batched_device_put(aval, sharding, xs, devices, committed)  # type: ignore
+
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would

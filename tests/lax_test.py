@@ -38,11 +38,11 @@ import jax.util
 from jax.interpreters import xla
 from jax._src.interpreters import mlir
 from jax.interpreters import batching
-from jax.interpreters import pxla
 from jax._src import array
 from jax._src.lib.mlir.dialects import hlo
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src.interpreters import pxla
 from jax._src import test_util as jtu
 from jax._src import lax_reference
 from jax._src.lax import lax as lax_internal
@@ -2985,7 +2985,8 @@ def shard_foo_array_handler(x, devices, indices, sharding):
   device, = devices
   if config.jax_array:
     aval = core.raise_to_shaped(core.get_aval(x.data))
-    return dispatch._copy_array_to_device(x.data, aval, device)
+    return pxla.batched_device_put(
+        aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device])
   bufs = dispatch._device_put_array(x.data, device)
   return bufs
 
