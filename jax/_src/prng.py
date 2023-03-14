@@ -17,7 +17,7 @@ import abc
 from functools import partial, reduce
 import math
 import operator as op
-from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence
+from typing import Any, Callable, Hashable, Iterator, NamedTuple, Sequence, Union
 
 import numpy as np
 
@@ -46,6 +46,7 @@ from jax._src.numpy.lax_numpy import _set_device_array_base_attributes
 from jax._src.numpy.util import _register_stackable
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, GSPMDSharding)
+from jax._src.typing import Array
 from jax._src.util import canonicalize_axis, safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
@@ -265,7 +266,7 @@ basearray.Array.register(PRNGKeyArray)
 
 
 # TODO(frostig): remove, rerouting callers directly to random_seed
-def seed_with_impl(impl: PRNGImpl, seed: int) -> PRNGKeyArray:
+def seed_with_impl(impl: PRNGImpl, seed: Union[int, Array]) -> PRNGKeyArray:
   return random_seed(seed, impl=impl)
 
 

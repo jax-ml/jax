@@ -115,7 +115,7 @@ def default_prng_impl():
 ### key operations
 
 
-def PRNGKey(seed: int) -> KeyArray:
+def PRNGKey(seed: Union[int, Array]) -> KeyArray:
   """Create a pseudo-random number generator (PRNG) key given an integer seed.
 
   The resulting key carries the default PRNG implementation, as
