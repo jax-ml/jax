@@ -28,9 +28,8 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.config import config
-from jax._src.util import safe_zip, use_cpp_class, use_cpp_method
+from jax._src.util import use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src import api
 from jax._src.typing import ArrayLike
 from jax.interpreters import mlir
@@ -655,21 +654,14 @@ def _array_shard_arg(x, devices, indices, sharding):
   x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
   if not x.is_fully_addressable:
     if tuple(x_indices) == tuple(indices):
-      if xla_extension_version >= 136:
-        return x
-      else:
-        return x._arrays
+      return x
     else:
       raise NotImplementedError(
           "Cannot reshard an input that is not fully addressable")
   else:
     if tuple(x_indices) == tuple(indices):
-      if xla_extension_version >= 136:
-        return xc.copy_array_to_devices_with_sharding(
-            x, list(devices), sharding)
-      else:
-        return [buf if buf.device() == d else buf.copy_to_device(d)
-                for buf, d in safe_zip(x._arrays, devices)]
+      return xc.copy_array_to_devices_with_sharding(
+          x, list(devices), sharding)
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
       return pxla.shard_device_array(x, devices, indices, sharding)
@@ -688,12 +680,9 @@ def _array_global_result_handler(global_aval, out_sharding, committed,
   if core.is_opaque_dtype(global_aval.dtype):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed, is_out_sharding_from_xla)
-  if xla_extension_version >= 131:
-    return xc.array_result_handler(
-        global_aval, out_sharding, committed=committed, _skip_checks=True
-    )
-  return lambda bufs: ArrayImpl(global_aval, out_sharding, bufs,
-                                committed=committed, _skip_checks=True)
+  return xc.array_result_handler(
+      global_aval, out_sharding, committed=committed, _skip_checks=True
+  )
 pxla.global_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_global_result_handler
 pxla.global_result_handlers[(core.AbstractToken, pxla.OutputType.Array)] = lambda *_: lambda *_: core.token
@@ -706,11 +695,8 @@ def _array_local_result_handler(aval, sharding, indices):
   if core.is_opaque_dtype(aval.dtype):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)
-  if xla_extension_version >= 131:
-    return xc.array_result_handler(
-        aval, sharding, committed=True, _skip_checks=True
-    )
-  return lambda bufs: ArrayImpl(aval, sharding, bufs, committed=True,
-                                _skip_checks=True)
+  return xc.array_result_handler(
+      aval, sharding, committed=True, _skip_checks=True
+  )
 pxla.local_result_handlers[(core.ShapedArray, pxla.OutputType.Array)] = _array_local_result_handler
 pxla.local_result_handlers[(core.ConcreteArray, pxla.OutputType.Array)] = _array_local_result_handler

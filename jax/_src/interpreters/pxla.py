@@ -76,7 +76,6 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -429,10 +428,7 @@ def _shard_token(x, devices, indices, sharding):
     zeros = np.zeros((), dtype=np.dtype(np.bool_))
     aval = api_util.shaped_abstractify(zeros)
     out = batched_device_put(aval, sharding, [zeros for i in indices], devices)
-    if xla_extension_version >= 136:
-      return out
-    else:
-      return out._arrays
+    return out
   return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
 shard_arg_handlers[core.Token] = _shard_token
 
@@ -447,10 +443,7 @@ def _shard_array(x, devices, indices, sharding):
   if jax.config.jax_array:
     aval = api_util.shaped_abstractify(x)
     out = batched_device_put(aval, sharding, [x[i] for i in indices], devices)
-    if xla_extension_version >= 136:
-      return out
-    else:
-      return out._arrays
+    return out
   return device_put([x[i] for i in indices], devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
@@ -462,22 +455,13 @@ def shard_device_array(x, devices, indices, sharding):
   if jax.config.jax_array:
     aval = api_util.shaped_abstractify(x)
     out = batched_device_put(aval, sharding, shards, devices)
-    if xla_extension_version >= 136:
-      return out
-    else:
-      return out._arrays
+    return out
   return device_put(shards, devices)
 for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
 
 
-if xla_extension_version >= 136:
-  batched_device_put = xc.batched_device_put  # pytype: disable=module-attr
-else:
-  def batched_device_put(aval, sharding, xs, devices, committed=True):
-    from jax._src.array import ArrayImpl
-    bufs = [d.client.buffer_from_pyval(x, d) for x, d in safe_zip(xs, devices)]
-    return ArrayImpl(aval, sharding, bufs, committed, _skip_checks=True)
+batched_device_put = xc.batched_device_put  # pytype: disable=module-attr
 
 # NOTE(skye): we could refactor to generate _multi_slice parameters directly
 # from the input ShardingSpec, rather than the indices. However, this would
@@ -980,7 +964,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         break
     else:
       bufs.append(buf.copy_to_device(device))
-  if xla_extension_version >= 136 and isinstance(x, ArrayImpl):
+  if isinstance(x, ArrayImpl):
     return ArrayImpl(x.aval, sharding, bufs, committed=True)
   return bufs
 
@@ -2196,35 +2180,24 @@ class ExecuteReplicated:
   def __call__(self, *args):
     args = [x for i, x in enumerate(args) if i in self.kept_var_idx]
     input_bufs = self.in_handler(args)
-    if xla_extension_version >= 131:
-      if (self.ordered_effects or self.has_unordered_effects
-          or self.has_host_callbacks):
-        input_bufs = self._add_tokens_to_inputs(input_bufs)
-        results = self.xla_executable.execute_sharded(
-            input_bufs, with_tokens=True
-        )
-        self._handle_token_bufs(
-            results.disassemble_prefix_into_single_device_arrays(
-                len(self.ordered_effects)),
-            results.consume_token())
-      else:
-        results = self.xla_executable.execute_sharded(input_bufs)
-      if dispatch.needs_check_special():
-        out_arrays = results.disassemble_into_single_device_arrays()
-        for arrays in out_arrays:
-          dispatch.check_special(self.name, arrays)
-        return self.out_handler(out_arrays)
-      return results.consume_with_handlers(self.out_handler.handlers)
+    if (self.ordered_effects or self.has_unordered_effects
+        or self.has_host_callbacks):
+      input_bufs = self._add_tokens_to_inputs(input_bufs)
+      results = self.xla_executable.execute_sharded(
+          input_bufs, with_tokens=True
+      )
+      self._handle_token_bufs(
+          results.disassemble_prefix_into_single_device_arrays(
+              len(self.ordered_effects)),
+          results.consume_token())
     else:
-      if (self.ordered_effects  or self.has_unordered_effects
-          or self.has_host_callbacks):
-        out_bufs = self._call_with_tokens(input_bufs)
-      else:
-        out_bufs = self.xla_executable.execute_sharded_on_local_devices(input_bufs)
-      if dispatch.needs_check_special():
-        for bufs in out_bufs:
-          dispatch.check_special(self.name, bufs)
-      return self.out_handler(out_bufs)
+      results = self.xla_executable.execute_sharded(input_bufs)
+    if dispatch.needs_check_special():
+      out_arrays = results.disassemble_into_single_device_arrays()
+      for arrays in out_arrays:
+        dispatch.check_special(self.name, arrays)
+      return self.out_handler(out_arrays)
+    return results.consume_with_handlers(self.out_handler.handlers)
 
 
 xla_pmap_p = core.MapPrimitive('xla_pmap')

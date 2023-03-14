@@ -25,7 +25,6 @@ from jax._src import core
 from jax._src import sharding
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax.interpreters import mlir
 from jax._src.interpreters import pxla
 
@@ -579,7 +578,7 @@ class DeviceIdSet:
             self._ids == other._ids)
 
 
-@use_cpp_class(xc.GSPMDSharding if xla_extension_version >= 129 else xc.OpShardingSharding)  # type: ignore
+@use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(XLACompatibleSharding):
 
   @use_cpp_method()

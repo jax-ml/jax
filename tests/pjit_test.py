@@ -360,12 +360,11 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(np.asarray(actual.device_buffers[0]), expected,
                         check_dtypes=False)
 
-    if xc.mlir_api_version >= 44:
-      hlo = f.lower(np.ones(shape)).compiler_ir()
-      # Annotation from with_sharding_constraint
-      self.assertIn('sharding = "{devices=[2,1]0,1}"', str(hlo))
-      # Annotation from pjit
-      self.assertIn('sharding = "{replicated}"', str(hlo))
+    hlo = f.lower(np.ones(shape)).compiler_ir()
+    # Annotation from with_sharding_constraint
+    self.assertIn('sharding = "{devices=[2,1]0,1}"', str(hlo))
+    # Annotation from pjit
+    self.assertIn('sharding = "{replicated}"', str(hlo))
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingConstraint(self):

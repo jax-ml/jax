@@ -64,7 +64,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
-from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix, _generate_key_paths
@@ -2453,13 +2452,8 @@ def _cpp_pmap(
 
     return out, fastpath_data
 
-  shard_arg_fallback: Callable[..., Any]
-  if xla_extension_version >= 133:
-    shard_arg_fallback = pxla.shard_arg
-  else:
-    shard_arg_fallback = lambda x, ds, idxs: pxla.shard_arg(x, ds, idxs, None)
   cpp_mapped_f = pmap_lib.pmap(
-      fun, cache_miss, static_broadcasted_tuple, shard_arg_fallback)
+      fun, cache_miss, static_broadcasted_tuple, pxla.shard_arg)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
 
@@ -3126,7 +3120,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       return pxla.batched_device_put(
           stacked_aval,
           PmapSharding(np.array(devices), sharding_spec),
-          xs, devices)
+          xs, list(devices))
     else:
       buffers = [buf for x, d in zip(xs, devices)
                  for buf in dispatch.device_put(x, d)]

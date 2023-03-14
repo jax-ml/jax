@@ -28,7 +28,6 @@ from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
@@ -83,8 +82,7 @@ def create_array(shape, sharding, global_data=None):
 class JaxArrayTest(jtu.JaxTestCase):
 
   def test_array_impl_name(self):
-    expected = "Array" if xla_extension_version < 135 else "ArrayImpl"
-    self.assertEqual(array.ArrayImpl.__name__, expected)
+    self.assertEqual(array.ArrayImpl.__name__, "ArrayImpl")
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y")),

@@ -24,7 +24,6 @@ from jax import lax
 
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
-from jax._src import lib
 from jax._src import util
 
 from jax.config import config
@@ -70,10 +69,8 @@ class LaxVmapOpTest(jtu.JaxTestCase):
       dtype=rec.dtypes,
     ) for rec in lax_test_util.lax_ops()))
   def testOp(self, op_name, rng_factory, shapes, dtype, bdims, tol):
-    # TODO(pizzud): Make this unconditional after the next minimum jaxlib bump.
-    if lib.xla_extension_version >= 134:
-      if dtype == np.float64 or any(len(shape) > 2 for shape in shapes):
-        self.skipTest('Skipping big tests under sanitizers due to slowdown.')
+    if dtype == np.float64 or any(len(shape) > 2 for shape in shapes):
+      self.skipTest('Skipping big tests under sanitizers due to slowdown.')
 
     rng = rng_factory(self.rng())
     op = getattr(lax, op_name)
