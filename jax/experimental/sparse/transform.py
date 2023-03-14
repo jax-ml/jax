@@ -671,6 +671,22 @@ def _mul_sparse(spenv, *spvalues):
 
 sparse_rules_bcoo[lax.mul_p] = _mul_sparse
 
+def _div_sparse(spenv, *spvalues):
+  X, Y = spvalues
+  if Y.is_sparse():
+    raise NotImplementedError(
+      "Division by a sparse array is not implemented because it "
+      "would result in dense output. If this is your intent, use "
+      "sparse.todense() to convert your arguments to a dense array.")
+  X_promoted = spvalues_to_arrays(spenv, X)
+  out_data = bcoo_multiply_dense(X_promoted, 1. / spenv.data(Y))
+  out_spvalue = spenv.sparse(X.shape, out_data, indices_ref=X.indices_ref,
+                              indices_sorted=X.indices_sorted,
+                              unique_indices=X.unique_indices)
+  return (out_spvalue,)
+
+sparse_rules_bcoo[lax.div_p] = _div_sparse
+
 def _reduce_sum_sparse(spenv, *spvalues, axes):
   X, = spvalues
   X_promoted = spvalues_to_arrays(spenv, X)
@@ -894,6 +910,8 @@ _bcoo_methods = {
   "__rmatmul__": sparsify(_swap_args(jnp.matmul)),
   "__mul__": sparsify(jnp.multiply),
   "__rmul__": sparsify(_swap_args(jnp.multiply)),
+  "__truediv__": sparsify(jnp.divide),
+  "__rtruediv__": sparsify(_swap_args(jnp.divide)),
   "__add__": sparsify(jnp.add),
   "__radd__": sparsify(_swap_args(jnp.add)),
   "__sub__": sparsify(jnp.subtract),

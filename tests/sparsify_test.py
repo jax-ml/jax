@@ -240,6 +240,33 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(out.todense(), x.todense() * y.todense())
 
+  @jtu.sample_product(
+    [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
+      for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
+      for n_batch in range(len(shape) + 1)
+      for n_dense in range(len(shape) + 1 - n_batch)
+    ],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex,
+  )
+  def testSparseDiv(self, shape, dtype, n_batch, n_dense):
+    rng_dense = jtu.rand_nonzero(self.rng())
+    rng_sparse = rand_sparse(self.rng(), rand_method=jtu.rand_some_zero)
+    x = BCOO.fromdense(rng_sparse(shape, dtype), n_batch=n_batch,
+                       n_dense=n_dense)
+    spdiv = self.sparsify(operator.truediv)
+
+    # Scalar division
+    divisor = 2
+    expected = x.todense() / divisor
+    self.assertAllClose(expected, spdiv(x, divisor).todense())
+    self.assertAllClose(expected,  (x / divisor).todense())
+
+    # Array division
+    divisor = rng_dense(shape, dtype)
+    expected = x.todense() / divisor
+    self.assertAllClose(expected, spdiv(x, divisor).todense())
+    self.assertAllClose(expected,  (x / divisor).todense())
+
   def testSparseSubtract(self):
     x = BCOO.fromdense(3 * jnp.arange(5))
     y = BCOO.fromdense(jnp.arange(5))
