@@ -44,26 +44,7 @@ def _make_1d_grid_from_slice(s: slice, op_name: str) -> Array:
   return newobj
 
 
-class _IndexGrid(abc.ABC):
-  """Creates multi-dimensional grids of indices."""
-  sparse: bool
-  op_name: str
-
-  def __getitem__(self, key: Union[slice, Tuple[slice, ...]]) -> Union[Array, List[Array]]:
-    if isinstance(key, slice):
-      return _make_1d_grid_from_slice(key, op_name=self.op_name)
-    output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name=self.op_name) for k in key)
-    with jax.numpy_dtype_promotion('standard'):
-      output = promote_dtypes(*output)
-    output_arr = meshgrid(*output, indexing='ij', sparse=self.sparse)
-    if self.sparse:
-      return output_arr
-    if len(output_arr) == 0:
-      return arange(0)
-    return stack(output_arr, 0)
-
-
-class _Mgrid(_IndexGrid):
+class _Mgrid:
   """Return dense multi-dimensional "meshgrid".
 
   LAX-backend implementation of :obj:`numpy.mgrid`. This is a convenience wrapper for
@@ -91,14 +72,23 @@ class _Mgrid(_IndexGrid):
            [[0, 1, 2],
             [0, 1, 2]]], dtype=int32)
   """
-  sparse = False
-  op_name = "mgrid"
+
+  def __getitem__(self, key: Union[slice, Tuple[slice, ...]]) -> Array:
+    if isinstance(key, slice):
+      return _make_1d_grid_from_slice(key, op_name="mgrid")
+    output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="mgrid") for k in key)
+    with jax.numpy_dtype_promotion('standard'):
+      output = promote_dtypes(*output)
+    output_arr = meshgrid(*output, indexing='ij', sparse=False)
+    if len(output_arr) == 0:
+      return arange(0)
+    return stack(output_arr, 0)
 
 
 mgrid = _Mgrid()
 
 
-class _Ogrid(_IndexGrid):
+class _Ogrid:
   """Return open multi-dimensional "meshgrid".
 
   LAX-backend implementation of :obj:`numpy.ogrid`. This is a convenience wrapper for
@@ -125,8 +115,16 @@ class _Ogrid(_IndexGrid):
             [1]], dtype=int32),
      Array([[0, 1, 2]], dtype=int32)]
   """
-  sparse = True
-  op_name = "ogrid"
+
+  def __getitem__(
+      self, key: Union[slice, Tuple[slice, ...]]
+  ) -> Union[Array, List[Array]]:
+    if isinstance(key, slice):
+      return _make_1d_grid_from_slice(key, op_name="ogrid")
+    output: Iterable[Array] = (_make_1d_grid_from_slice(k, op_name="ogrid") for k in key)
+    with jax.numpy_dtype_promotion('standard'):
+      output = promote_dtypes(*output)
+    return meshgrid(*output, indexing='ij', sparse=True)
 
 
 ogrid = _Ogrid()
