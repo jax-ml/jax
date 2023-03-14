@@ -18,7 +18,8 @@ import math
 import operator as op
 import numpy as np
 import functools
-from typing import Sequence, Tuple, Callable, Union, Optional, cast, List, Set
+from typing import (Sequence, Tuple, Callable, Union, Optional, cast, List, Set,
+                    TYPE_CHECKING)
 
 import jax
 from jax._src import abstract_arrays
@@ -107,7 +108,7 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   return jnp_value
 
 
-def _single_device_array_from_buf(buf, committed):
+def _single_device_array_from_buf(buf, committed) -> ArrayImpl:
   if isinstance(buf, ArrayImpl) and buf._committed == committed:  # type: ignore
     return buf
   db = dispatch._set_aval(buf)
@@ -130,7 +131,6 @@ def _is_reduced_on_dim(idx):
              for i in idx)
 
 
-@use_cpp_class(xc.ArrayImpl)
 class ArrayImpl(basearray.Array):
   # TODO(yashkatariya): Add __slots__ here.
 
@@ -545,6 +545,14 @@ class ArrayImpl(basearray.Array):
     # https://docs.python.org/3/library/typing.html#typing.cast
     return cast(np.ndarray, self._npy_value)
 
+
+# TODO(b/273265390): ideally we would write this as a decorator on the ArrayImpl
+# class, however this triggers a pytype bug. Workaround: apply the decorator
+# after the fact.
+if not TYPE_CHECKING:
+  ArrayImpl = use_cpp_class(xc.ArrayImpl)(ArrayImpl)
+
+
 # explicitly set to be unhashable. Same as what device_array.py does.
 setattr(ArrayImpl, "__hash__", None)
 setattr(ArrayImpl, "__array_priority__", 100)
@@ -601,7 +609,8 @@ def make_array_from_callback(
 
 
 def make_array_from_single_device_arrays(
-    shape: Shape, sharding: Sharding, arrays: Sequence[ArrayImpl]) -> ArrayImpl:
+    shape: Shape, sharding: Sharding, arrays: Sequence[basearray.Array]
+) -> ArrayImpl:
   r"""Returns a ``jax.Array`` from a sequence of ``jax.Array``\s on a single device.
 
   ``jax.Array`` on a single device is analogous to a ``DeviceArray``. You can use
@@ -641,7 +650,10 @@ def make_array_from_single_device_arrays(
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
-  return ArrayImpl(aval, sharding, arrays, committed=True)
+  # TODO(phawkins): ideally the cast() could be checked. Revisit this after
+  # removing DeviceArray.
+  return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
+                   committed=True)
 
 
 core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval

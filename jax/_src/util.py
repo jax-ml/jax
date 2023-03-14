@@ -528,45 +528,55 @@ def _original_func(f):
   return f
 
 
-def use_cpp_class(cpp_cls):
-  """A helper decorator to replace a python class with its C++ version"""
-
-  def wrapper(cls):
-    if TYPE_CHECKING or cpp_cls is None:
+if TYPE_CHECKING:
+  def use_cpp_class(cpp_cls: Any) -> Callable[[T], T]:
+    def wrapper(cls: T) -> T:
       return cls
+    return wrapper
 
-    exclude_methods = {'__module__', '__dict__', '__doc__'}
+  def use_cpp_method(is_enabled: bool = True) -> Callable[[T], T]:
+    def wrapper(cls: T) -> T:
+      return cls
+    return wrapper
 
-    originals = {}
-    for attr_name, attr in cls.__dict__.items():
-      if attr_name not in exclude_methods:
-        if hasattr(_original_func(attr), "_use_cpp"):
-          originals[attr_name] = attr
-        else:
-          setattr(cpp_cls, attr_name, attr)
+else:
+  def use_cpp_class(cpp_cls):
+    """A helper decorator to replace a python class with its C++ version"""
 
-    cpp_cls.__doc__ = cls.__doc__
-    # TODO(pschuh): Remove once fastpath is gone.
-    cpp_cls._original_py_fns = originals
+    def wrapper(cls):
+      if cpp_cls is None:
+        return cls
 
-    return cpp_cls
+      exclude_methods = {'__module__', '__dict__', '__doc__'}
 
-  return wrapper
+      originals = {}
+      for attr_name, attr in cls.__dict__.items():
+        if attr_name not in exclude_methods:
+          if hasattr(_original_func(attr), "_use_cpp"):
+            originals[attr_name] = attr
+          else:
+            setattr(cpp_cls, attr_name, attr)
 
+      cpp_cls.__doc__ = cls.__doc__
+      # TODO(pschuh): Remove once fastpath is gone.
+      cpp_cls._original_py_fns = originals
+      return cpp_cls
 
-def use_cpp_method(is_enabled=True):
-  """A helper decorator to exclude methods from the set that are forwarded to C++ class"""
-  def decorator(f):
-    if is_enabled:
-      original_func = _original_func(f)
-      original_func._use_cpp = True
-    return f
+    return wrapper
 
-  if not isinstance(is_enabled, bool):
-    raise TypeError(
-        "Decorator got wrong type: @use_cpp_method(is_enabled: bool=True)"
-    )
-  return decorator
+  def use_cpp_method(is_enabled=True):
+    """A helper decorator to exclude methods from the set that are forwarded to C++ class"""
+    def decorator(f):
+      if is_enabled:
+        original_func = _original_func(f)
+        original_func._use_cpp = True
+      return f
+
+    if not isinstance(is_enabled, bool):
+      raise TypeError(
+          "Decorator got wrong type: @use_cpp_method(is_enabled: bool=True)"
+      )
+    return decorator
 
 
 def fun_sourceinfo(fun: Callable) -> Optional[str]:

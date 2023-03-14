@@ -704,6 +704,7 @@ def make_sharded_device_array(
 
   if jax.config.jax_array:
     mesh = jax._src.mesh.thread_resources.env.physical_mesh
+    sharding: sharding_impls.XLACompatibleSharding
     if mesh.empty:
       sharding = sharding_impls.PmapSharding(
           np.asarray([d.device() for d in device_buffers]), sharding_spec)
@@ -1746,11 +1747,11 @@ class UnloadedPmapExecutable:
     )
 
   def load(self) -> PmapExecutable:
-    input_indices = [
-        spec_to_indices(aval.shape, spec.sharding_spec)  # pytype: disable=attribute-error
-        if spec.sharding_spec is not None else None
-        for aval, spec in safe_zip(self.local_input_avals, self.input_shardings)
-    ]
+    input_indices = []
+    for aval, spec in safe_zip(self.local_input_avals, self.input_shardings):
+      assert isinstance(spec, sharding_impls.PmapSharding), spec
+      input_indices.append(spec_to_indices(aval.shape, spec.sharding_spec)
+                           if spec.sharding_spec is not None else None)
     handle_outs = local_avals_to_results_handler(self.local_output_avals,
                                                  self.output_shardings)
     handle_args = InputsHandler(self.compiled.local_devices(),
@@ -1989,9 +1990,15 @@ def _get_sharding_specs(
   if all(isinstance(s, sharding_impls.PmapSharding) for s in shardings):
     return [s.sharding_spec for s in shardings]  # type: ignore
   elif all(isinstance(s, sharding_impls.NamedSharding) for s in shardings):
-    return [new_mesh_sharding_specs(s.mesh.shape, s.mesh.axis_names)(
-              aval.ndim, get_array_mapping(s.spec))
-            for aval, s in safe_zip(avals, shardings)]
+    out = []
+    for aval, s in safe_zip(avals, shardings):
+      ns = cast(sharding_impls.NamedSharding, s)
+      out.append(
+          new_mesh_sharding_specs(ns.mesh.shape, ns.mesh.axis_names)(
+              aval.ndim, get_array_mapping(ns.spec)
+          )
+      )
+    return out
   else:
     raise ValueError('Getting sharding spec is only supported for '
                      "PmapSharding and NamedSharding, "

@@ -2032,8 +2032,9 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
     # coerce_to_array on each leaf, but this may have performance implications.
     out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)
   elif isinstance(object, ndarray_types):
-    assert object.aval is not None
-    out = _array_copy(object) if copy else object
+    # TODO(phawkins): remove the type: ignore here after DeviceArray has been deleted.
+    assert object.aval is not None  # type: ignore
+    out = _array_copy(object) if copy else object  # type: ignore
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])

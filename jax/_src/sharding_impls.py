@@ -11,17 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 from __future__ import annotations
 
-import abc
 import functools
 from collections import Counter
 import operator as op
-from typing import (Sequence, List, Tuple, Optional, Mapping, Dict, Set,
+from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
                     FrozenSet, Union, cast)
 
 import jax
 from jax._src import core
+from jax._src import mesh as mesh_lib
 from jax._src import sharding
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
@@ -39,7 +40,7 @@ XLADeviceAssignment = Sequence[Device]
 # Shardings that inherit from XLACompatibleSharding should implement the
 # `_device_assignment` property and `_to_xla_op_sharding` method.
 @use_cpp_class(xc.XLACompatibleSharding)
-class XLACompatibleSharding(sharding.Sharding, metaclass=abc.ABCMeta):
+class XLACompatibleSharding(sharding.Sharding):
   """A `Sharding` that describes shardings expressible to XLA.
 
   Any ``Sharding`` that is a subclass of ``XLACompatibleSharding`` will work
@@ -48,11 +49,10 @@ class XLACompatibleSharding(sharding.Sharding, metaclass=abc.ABCMeta):
 
   # Abstract methods below that subclasses should implement.
 
-  @abc.abstractproperty
+  @property
   def _device_assignment(self) -> XLADeviceAssignment:
     raise NotImplementedError('Subclasses should implement this method.')
 
-  @abc.abstractmethod
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
@@ -211,9 +211,13 @@ class NamedSharding(XLACompatibleSharding):
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
   """
 
+  mesh: mesh_lib.Mesh
+  spec: PartitionSpec
+  _parsed_pspec: Optional[Any]
+
   @use_cpp_method()
   def __init__(
-      self, mesh: pxla.Mesh, spec: PartitionSpec, _parsed_pspec = None):
+      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, _parsed_pspec = None):
 
     self.mesh = mesh
     self.spec = spec
@@ -256,6 +260,7 @@ class NamedSharding(XLACompatibleSharding):
     return self.mesh == other.mesh and self._parsed_pspec == other._parsed_pspec
 
   def is_compatible_aval(self, aval_shape: Shape):
+    assert self._parsed_pspec is not None
     if len(aval_shape) < len(self._parsed_pspec):
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "
@@ -281,7 +286,7 @@ class NamedSharding(XLACompatibleSharding):
       axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
   ) -> xc.OpSharding:
     from jax.experimental.pjit import get_array_mapping
-
+    assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
     # since we don't really need sharding spec.
@@ -322,6 +327,8 @@ class SingleDeviceSharding(XLACompatibleSharding):
     ...     jax.devices()[0])
   """
 
+  _device: Device
+
   @use_cpp_method()
   def __init__(self, device: Device):
     self._device = device
@@ -359,10 +366,13 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
 @use_cpp_class(xc.PmapSharding)
 class PmapSharding(XLACompatibleSharding):
+  devices: np.ndarray
+  sharding_spec: pxla.ShardingSpec
 
   @use_cpp_method()
-  def __init__(self, devices: np.ndarray, sharding_spec: pxla.ShardingSpec):
-    self.devices = devices
+  def __init__(self, devices: Union[Sequence[Device], np.ndarray],
+               sharding_spec: pxla.ShardingSpec):
+    self.devices = np.asarray(devices)
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
 
@@ -421,7 +431,7 @@ class PmapSharding(XLACompatibleSharding):
           '`None` to sharded_dim is not supported. Please file a jax '
           'issue if you need this feature.')
 
-    pmap_devices = jax.local_devices()[:num_ways_sharded]
+    pmap_devices: np.ndarray = np.array(jax.local_devices()[:num_ways_sharded])
     return cls(pmap_devices, sharding_spec)
 
   @functools.cached_property
@@ -580,6 +590,8 @@ class DeviceIdSet:
 
 @use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(XLACompatibleSharding):
+  _devices: Tuple[Device, ...]
+  _op_sharding: xc.OpSharding
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device], op_sharding: xc.OpSharding):

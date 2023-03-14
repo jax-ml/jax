@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import abc
 import functools
 from typing import (Mapping, Optional, Sequence, Set, Tuple)
 
@@ -28,14 +27,13 @@ XLADeviceAssignment = Sequence[Device]
 
 
 @util.use_cpp_class(xc.Sharding)
-class Sharding(metaclass=abc.ABCMeta):
+class Sharding:
   """Abstract ``Sharding`` interface which describes how a ``jax.Array`` is laid out
   across devices.
   """
 
   # Abstract methods below that subclasses should implement.
-
-  @abc.abstractproperty
+  @property
   def device_set(self) -> Set[Device]:
     """A ``set`` of global devices that this ``Sharding`` spans.
 
@@ -44,7 +42,6 @@ class Sharding(metaclass=abc.ABCMeta):
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
-  @abc.abstractmethod
   def devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     """A global mapping from device to the slice of the global data it contains.
@@ -54,7 +51,6 @@ class Sharding(metaclass=abc.ABCMeta):
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
-  @abc.abstractmethod
   def shard_shape(self, global_shape: Shape) -> Shape:
     """Returns the shape of the data on each device.
 
@@ -63,7 +59,6 @@ class Sharding(metaclass=abc.ABCMeta):
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
-  @abc.abstractmethod
   def is_equivalent_to(self, other: Sharding, ndim: int) -> bool:
     """Returns True if two shardings put the same logical array
     (sharded/unsharded) on the same device(s).

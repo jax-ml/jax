@@ -387,6 +387,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   def to_mesh_pspec_sharding(op_sharding: xc.OpSharding):
     if mesh.empty:
       from jax._src.sharding_impls import GSPMDSharding
+      assert devices is not None
       return GSPMDSharding(devices, op_sharding)
     pspec = pjit.parse_flatten_op_sharding(op_sharding,
                                            mesh)[0].get_partition_spec()
