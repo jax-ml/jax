@@ -28,8 +28,8 @@ from operator import attrgetter
 import threading
 import types
 from typing import (Any, Callable, ClassVar, DefaultDict, Dict, FrozenSet,
-                    Generator, Hashable, Iterable, Iterator, List,
-                    NamedTuple, Optional, Sequence, Set, Tuple, Type,
+                    Generator, Generic, Hashable, Iterable, Iterator, List,
+                    NamedTuple, Optional, Sequence, Set, Tuple, Type, TypeVar,
                     Union, cast)
 import warnings
 from weakref import ref
@@ -433,8 +433,9 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
 
 # -------------------- tracing --------------------
 
+TracerType = TypeVar('TracerType', bound='Tracer')
 
-class Trace:
+class Trace(Generic[TracerType]):
   __slots__ = ['main', 'level', 'sublevel']
 
   main: MainTrace
@@ -446,7 +447,7 @@ class Trace:
     self.level = main.level
     self.sublevel = sublevel
 
-  def full_raise(self, val) -> Tracer:
+  def full_raise(self, val) -> TracerType:
     if hasattr(val, "dimension_as_value"):  # Used for shape_poly._DimPolynomial
       val = val.dimension_as_value()
     if not isinstance(val, Tracer):
@@ -456,7 +457,7 @@ class Trace:
     sublevel = self.sublevel
     if val._trace.main is self.main:
       if val._trace.sublevel == sublevel:
-        return val
+        return cast(TracerType, val)
       elif val._trace.sublevel < sublevel:
         return self.sublift(val)
       else:
@@ -474,13 +475,13 @@ class Trace:
       raise escaped_tracer_error(
           val, f"Different traces at same level: {val}, {self}")
 
-  def pure(self, val):
+  def pure(self, val) -> TracerType:
     raise NotImplementedError("must override")
 
-  def lift(self, tracer):
+  def lift(self, tracer) -> TracerType:
     raise NotImplementedError("must override")
 
-  def sublift(self, tracer):
+  def sublift(self, tracer) -> TracerType:
     raise NotImplementedError("must override")
 
   def process_primitive(self, primitive, tracers, params):

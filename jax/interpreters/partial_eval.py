@@ -137,7 +137,7 @@ class PartialVal(tuple):
       return self[0]
 
 
-class JaxprTrace(Trace):
+class JaxprTrace(Trace['JaxprTracer']):
 
   def __init__(self, *args, name_stack: source_info_util.NameStack):
     super().__init__(*args)
@@ -188,7 +188,7 @@ class JaxprTrace(Trace):
     else:
       return self.new_const(const)
 
-  def instantiate_const(self, tracer) -> Tracer:
+  def instantiate_const(self, tracer: JaxprTracer) -> JaxprTracer:
     const = tracer.pval.get_known()
     if const is None:
       return tracer
