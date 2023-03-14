@@ -2983,12 +2983,10 @@ def device_put_foo_array(x: FooArray, device):
 
 def shard_foo_array_handler(x, devices, indices, sharding):
   device, = devices
-  if isinstance(x.data, array.ArrayImpl):
-    bufs = dispatch._device_put_jax_array(x.data, device)
-  bufs = dispatch._device_put_array(x.data, device)
   if config.jax_array:
     aval = core.raise_to_shaped(core.get_aval(x.data))
-    return array.ArrayImpl(aval, sharding, list(bufs), committed=True)
+    return dispatch._copy_array_to_device(x.data, aval, device)
+  bufs = dispatch._device_put_array(x.data, device)
   return bufs
 
 def foo_array_constant_handler(x, c):

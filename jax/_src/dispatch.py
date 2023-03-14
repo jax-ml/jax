@@ -142,12 +142,28 @@ class RuntimeTokenSet(threading.local):
     self.output_runtime_tokens = {}
 
   def get_token(self, eff: core.Effect, device: Device) -> RuntimeToken:
+    s = jax.sharding.SingleDeviceSharding(device)
     if eff not in self.tokens:
-      self.tokens[eff] = device_put(np.zeros(0, np.bool_), device), device
+      inp = np.zeros(0, np.bool_)
+      if jax.config.jax_array:
+        indices = tuple(
+            s.addressable_devices_indices_map(inp.shape).values())
+        out = pxla.shard_args([device], [indices], [s], [inp])
+      else:
+        out = device_put(inp, device)
+      self.tokens[eff] = out, device
     elif self.tokens[eff][1] != device:
       (old_token,), _ = self.tokens[eff]
-      old_token.aval = core.ShapedArray((0,), np.bool_)
-      self.tokens[eff] = device_put(old_token, device), device
+      if jax.config.jax_array:
+        if not isinstance(old_token, array.ArrayImpl):
+          old_token = array._single_device_array_from_buf(old_token, True)
+        indices = tuple(
+            s.addressable_devices_indices_map((0,)).values())
+        out = pxla.shard_args([device], [indices], [s], [old_token])
+      else:
+        old_token.aval = core.ShapedArray((0,), np.bool_)
+        out = device_put(old_token, device)
+      self.tokens[eff] = out, device
     return self.tokens[eff][0]
 
   def update_token(self, eff: core.Effect, token: RuntimeToken):
