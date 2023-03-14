@@ -19,7 +19,7 @@ import scipy.optimize
 
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax import jit
+from jax import jit, value_and_grad
 from jax.config import config
 import jax.scipy.optimize
 
@@ -56,6 +56,10 @@ def eggholder(np):
       np.sqrt(np.abs(x - (y + 47.))))
 
   return func
+
+
+def newton_sqrt(x, a):
+  return 0.5 * (x + a / x)
 
 
 def zakharovFromIndices(x, ii):
@@ -230,6 +234,115 @@ class TestLBFGS(jtu.JaxTestCase):
 
     jax_res = min_op(init)
     self.assertAllClose(jax_res, expect, atol=2e-5)
+
+
+class TestFixedPoint(jtu.JaxTestCase):
+    @parameterized.named_parameters(
+        jtu.cases_from_list(
+            {
+                "testcase_name": f"_func={func_init_args_and_res[0].__name__}_maxiter={maxiter}_xtol={xtol}",
+                "maxiter": maxiter,
+                "xtol": xtol,
+                "func_init_args_and_res": func_init_args_and_res,
+            }
+            for maxiter in [500]
+            for xtol in [1e-8]
+            for func_init_args_and_res in [(newton_sqrt, 2.0, (2.0,), np.sqrt(2.0))]
+        )
+    )
+    def test_fixed_point(self, maxiter, xtol, func_init_args_and_res):
+        func, x0, args, expected_res = func_init_args_and_res
+
+        # Scipy supported methods
+        for method in ("iteration", "del2"):
+            jax_res = jax.scipy.optimize.fixed_point(
+                func, x0, args, xtol, maxiter, method=method
+            )
+            scipy_res = scipy.optimize.fixed_point(
+                func, x0, args, xtol, maxiter, method=method
+            )
+
+            self.assertAllClose(jax_res, scipy_res, atol=1e-10)
+            self.assertAllClose(jax_res, expected_res, atol=1e-10)
+
+        # Methods only supported by jax
+        for method in ("newton",):
+            jax_res = jax.scipy.optimize.fixed_point(
+                func, x0, args, xtol, maxiter, method=method
+            )
+
+            self.assertAllClose(jax_res, expected_res, atol=1e-10)
+
+    @parameterized.named_parameters(
+        jtu.cases_from_list(
+            {
+                "testcase_name": f"_maxiter={maxiter}_xtol={xtol}",
+                "maxiter": maxiter,
+                "xtol": xtol,
+            }
+            for maxiter in [500]
+            for xtol in [1e-8]
+        )
+    )
+    def test_gradient_sqrt(self, xtol, maxiter):
+        sqrt_v_and_g = value_and_grad(jnp.sqrt)
+
+        def f_iteration(x):
+            return jax.scipy.optimize.fixed_point(
+                newton_sqrt, x, (x,), xtol, maxiter, method="iteration"
+            )
+
+        def f_del2(x):
+            return jax.scipy.optimize.fixed_point(
+                newton_sqrt, x, (x,), xtol, maxiter, method="del2"
+            )
+
+        def f_newton(x):
+            return jax.scipy.optimize.fixed_point(
+                newton_sqrt, x, (x,), xtol, maxiter, method="newton"
+            )
+
+        fixed_point_iteration_v_and_g = value_and_grad(f_iteration)
+        fixed_point_del2_v_and_g = value_and_grad(f_del2)
+        fixed_point_newton_v_and_g = value_and_grad(f_newton)
+
+        for x in jnp.linspace(1, 10, 10):
+            sqrt_res, sqrt_g = sqrt_v_and_g(x)
+            (
+                fixed_point_iteration_res,
+                fixed_point_iteration_g,
+            ) = fixed_point_iteration_v_and_g(x)
+            fixed_point_del2_res, fixed_point_del2_g = fixed_point_del2_v_and_g(x)
+            fixed_point_newton_res, fixed_point_newton_g = fixed_point_newton_v_and_g(x)
+
+            self.assertAllClose(sqrt_res, fixed_point_iteration_res, atol=1e-10)
+            self.assertAllClose(sqrt_g, fixed_point_iteration_g, atol=1e-10)
+            self.assertAllClose(sqrt_res, fixed_point_del2_res, atol=1e-10)
+            self.assertAllClose(sqrt_g, fixed_point_del2_g, atol=1e-10)
+            self.assertAllClose(sqrt_res, fixed_point_newton_res, atol=1e-10)
+            self.assertAllClose(sqrt_g, fixed_point_newton_g, atol=1e-10)
+
+    @parameterized.named_parameters(
+        jtu.cases_from_list(
+            {
+                "testcase_name": f"_maxiter={maxiter}_xtol={xtol}_init_args={init_args_and_res[0]}",
+                "maxiter": maxiter,
+                "xtol": xtol,
+                "init_args_and_res": init_args_and_res,
+            }
+            for maxiter in [500]
+            for xtol in [1e-8]
+            for init_args_and_res in [(2.+0.j, jnp.sqrt(2.+0.j)), (2.+1j, jnp.sqrt(2.+1j))]
+        )
+    )
+    def test_complex_sqrt(self, xtol, maxiter, init_args_and_res):
+        x0, expected_res = init_args_and_res
+
+        for method in ("iteration", "del2", "newton"):
+            jax_res = jax.scipy.optimize.fixed_point(
+                newton_sqrt, x0, (x0,), xtol, maxiter, method=method
+            )
+            self.assertAllClose(jax_res, expected_res, atol=1e-10)
 
 
 if __name__ == "__main__":
