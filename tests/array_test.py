@@ -689,6 +689,14 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, x.shape)
     self.assertArraysEqual(out, x)
 
+  def test_array_copy_to_host_async(self):
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    x = pjit(lambda: jnp.arange(8.),
+             out_shardings=jax.sharding.NamedSharding(global_mesh, P(None)))()
+    self.assertLen(x.sharding.device_set, 4)
+    x.copy_to_host_async()  # doesn't crash
+    self.assertArraysEqual(np.arange(8.), x)
+
 
 @jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
