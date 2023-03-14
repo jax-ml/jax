@@ -511,7 +511,8 @@ class Trace(Generic[TracerType]):
            "to handle custom_transpose_call primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
+                              out_trees, symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
