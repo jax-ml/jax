@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.7
 
+* Deprecations
+  * Passing additional arguments to {func}`jax.numpy.ndarray.at` by position is deprecated.
+    For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
+
 ## jaxlib 0.4.7
 
 ## jax 0.4.6 (Mar 9, 2023)
