@@ -952,7 +952,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
 
   candidates = defaultdict(list)
   if isinstance(x, ArrayImpl):
-    bufs = x._arrays
+    bufs = [buf.data for buf in x.addressable_shards]
     arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
   else:
     bufs = x.device_buffers
@@ -976,9 +976,13 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         bufs.append(buf)
         break
     else:
-      bufs.append(buf.copy_to_device(device))
-  if isinstance(x, ArrayImpl):
-    return ArrayImpl(x.aval, sharding, bufs, committed=True)
+      if jax.config.jax_array:
+        bufs.append(buf)
+      else:
+        bufs.append(buf.copy_to_device(device))
+
+  if jax.config.jax_array:
+    return batched_device_put(x.aval, sharding, bufs, devices)
   return bufs
 
 
