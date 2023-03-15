@@ -804,6 +804,72 @@ def device_put_sharded(state):
     _ = jax.device_put_sharded(arr_inp, dev).block_until_ready()
 
 
+@google_benchmark.register
+@required_devices(8)
+def device_get_8_devices(state):
+  mesh = jax.sharding.Mesh(
+      np.array(jax.devices()[:8]).reshape((4, 2)), ('x', 'y')
+  )
+  sharding = jax.sharding.NamedSharding(
+      mesh, jax.sharding.PartitionSpec('x', 'y')
+  )
+  inp = jax.device_put(np.zeros((8, 4), dtype=np.float32), sharding)
+
+  @jax.jit
+  def fn(x):
+    y = x + x
+    return [y for _ in range(50)]
+
+  jax.device_get(fn(inp))
+
+  while state:
+    jax.device_get(fn(inp))
+
+
+@google_benchmark.register
+@required_devices(8)
+def np_asarray_8_devices(state):
+  mesh = jax.sharding.Mesh(
+      np.array(jax.devices()[:8]).reshape((4, 2)), ('x', 'y')
+  )
+  sharding = jax.sharding.NamedSharding(
+      mesh, jax.sharding.PartitionSpec('x', 'y')
+  )
+  inp = jax.device_put(np.zeros((8, 4), dtype=np.float32), sharding)
+
+  @jax.jit
+  def fn(x):
+    y = x + x
+    return [y for _ in range(50)]
+
+  jax.device_get(fn(inp))
+
+  while state:
+    [np.asarray(x) for x in fn(inp)]
+
+
+@google_benchmark.register
+@required_devices(8)
+def jax_array_arrays_8_devices(state):
+  mesh = jax.sharding.Mesh(
+      np.array(jax.devices()[:8]).reshape((4, 2)), ('x', 'y')
+  )
+  sharding = jax.sharding.NamedSharding(
+      mesh, jax.sharding.PartitionSpec('x', 'y')
+  )
+  inp = jax.device_put(np.zeros((8, 4), dtype=np.float32), sharding)
+
+  @jax.jit
+  def fn(x):
+    y = x + x
+    return [y for _ in range(200)]
+
+  jax.device_get(fn(inp))
+
+  while state:
+    [x._arrays for x in fn(inp)]
+
+
 def batch_inplace_while(inplace_op, state):
 
   @jax.jit
