@@ -582,6 +582,15 @@ class Tracer(typing.Array):
   def __index__(self):
     raise TracerIntegerConversionError(self)
 
+  def tolist(self):
+    raise ConcretizationTypeError(self,
+      f"The tolist() method was called on the JAX Tracer object {self}")
+
+  def tobytes(self, order="C"):
+    del order
+    raise ConcretizationTypeError(self,
+      f"The tobytes() method was called on the JAX Tracer object {self}")
+
   def __init__(self, trace: Trace):
     self._trace = trace
 

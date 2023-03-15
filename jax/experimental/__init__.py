@@ -24,6 +24,7 @@ from jax.experimental.x64_context import (
 from jax._src.callback import (
   io_callback as io_callback
 )
+from jax.experimental._custom_impl import custom_impl as custom_impl
 
 # Deprecations
 
