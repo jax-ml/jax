@@ -41,7 +41,6 @@ jobs:
         run: |
           python -m pip install -r build/test-requirements.txt
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-
           python.exe build\build.py `
             --noenable_tpu `
             --noenable_remote_tpu `
@@ -50,8 +49,7 @@ jobs:
             --noenable_plugin_device `
             --noremote_build `
             --noenable_cuda `
-            --configure_only
-                    
+            --configure_only 
           bazel build --jobs=1 --subcommands `
             --cxxopt="/Zm2000" `
             --verbose_failures `
@@ -62,7 +60,6 @@ jobs:
             --experimental_local_memory_estimate="true" `
             --local_ram_resources=2048 `
             //jaxlib
-
           bazel run `
             --verbose_failures=true `
             //build:build_wheel -- `
@@ -80,6 +77,7 @@ jobs:
           pytest -n auto --tb=short tests examples
 
       - uses: actions/upload-artifact@v2
+        if: ${{ github.event_name == 'release' }}
         with:
           name: jaxlib_wheels
           path: ${{ github.workspace }}\dist\*.whl
