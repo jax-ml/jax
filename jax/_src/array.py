@@ -302,7 +302,7 @@ class ArrayImpl(basearray.Array):
           arr_idx = None
         if arr_idx is not None:
           arr = self._arrays[arr_idx]
-          return _single_device_array_from_buf(arr, self._committed)
+          return _single_device_array_from_buf(arr, committed=False)
       return lax_numpy._rewriting_take(self, idx)
     elif (dispatch.is_single_device_sharding(self.sharding) or
         self.is_fully_replicated or _is_reduced_on_dim(idx)):

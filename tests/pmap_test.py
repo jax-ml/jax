@@ -3187,6 +3187,15 @@ class ArrayPmapTest(jtu.JaxTestCase):
     with jax.transfer_guard("disallow_explicit"):
       jax.device_put_sharded(arr_inp, jax.devices())
 
+  def test_jnp_stack(self):
+    @jax.pmap
+    def something(x):
+      return (x + x).reshape([])
+
+    z = something(np.arange(jax.device_count()))
+    self.assertArraysEqual(jnp.stack([z[i] for i in range(jax.device_count())]),
+                           np.arange(jax.device_count()) * 2)
+
 
 class EagerPmapMixin:
 
