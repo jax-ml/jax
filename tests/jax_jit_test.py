@@ -20,6 +20,9 @@ from absl.testing import parameterized
 import jax
 from jax._src import api
 from jax._src import core
+from jax._src import api_util
+from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax import dtypes
 from jax._src import lib as jaxlib
 from jax import numpy as jnp
@@ -30,7 +33,10 @@ import numpy as np
 config.parse_flags_with_absl()
 
 def _cpp_device_put(value, device):
-  return jaxlib.jax_jit.device_put(value, config.x64_enabled, device)
+  aval = api_util.shaped_abstractify(value)
+  value = xla.canonicalize_dtype(value)
+  return pxla.batched_device_put(
+      aval, jax.sharding.SingleDeviceSharding(device), [value], [device])
 
 
 class JaxJitTest(jtu.JaxTestCase):
@@ -143,12 +149,6 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertEqual(res, 1 + 1j)
       self.assertEqual(res.dtype, complex_type)
       self.assertEqual(jnp.asarray(1 + 1j).dtype, res.dtype)
-
-  def test_convert_int_overflow(self):
-    with self.assertRaisesRegex(
-        RuntimeError,
-        "(Python int too large|Unable to convert Python scalar).*"):
-      jaxlib.jax_jit.device_put(int(1e100), True, jax.devices()[0])
 
   def test_arg_signature_of_value(self):
     """Tests the C++ code-path."""
