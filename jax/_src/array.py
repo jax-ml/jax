@@ -297,14 +297,12 @@ class ArrayImpl(basearray.Array):
       if self._npy_value is None:
         indices = tuple(self.sharding.devices_indices_map(self.shape).values())
         try:
-          buf_idx = indices.index(cidx)
+          arr_idx = indices.index(cidx)
         except ValueError:
-          buf_idx = None
-        if buf_idx is not None:
-          buf = self._arrays[buf_idx]
-          aval = core.ShapedArray(buf.shape, self.dtype)
-          return ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
-                           committed=False, _skip_checks=True)
+          arr_idx = None
+        if arr_idx is not None:
+          arr = self._arrays[arr_idx]
+          return _single_device_array_from_buf(arr, self._committed)
       return lax_numpy._rewriting_take(self, idx)
     elif (dispatch.is_single_device_sharding(self.sharding) or
         self.is_fully_replicated or _is_reduced_on_dim(idx)):
