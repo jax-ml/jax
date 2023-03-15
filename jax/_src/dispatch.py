@@ -866,11 +866,13 @@ def _dynamic_array_result_handler(sticky_device, aval, env, buf):
            out_env[d.val] if type(d) is core.OutDBIdx else d
            for d in aval.shape]
   if all(type(d) is int for d in shape) and type(aval.dtype) is not core.bint:
-    aval = core.ShapedArray(tuple(shape), buf.dtype)
+    aval = core.ShapedArray(tuple(shape), aval.dtype)
     return maybe_create_array_from_da(buf, aval, sticky_device)
   else:
     pad_shape = [d.dtype.bound if _is_bint_axis_size(d) else d for d in shape]
-    buf_aval = core.ShapedArray(tuple(pad_shape), buf.dtype, aval.weak_type)
+    buf_dtype = (aval.dtype if not core.is_opaque_dtype(aval.dtype) else
+                 aval.dtype._rules.physical_avals(aval)[0])
+    buf_aval = core.ShapedArray(tuple(pad_shape), buf_dtype, aval.weak_type)
     data = maybe_create_array_from_da(buf, buf_aval, sticky_device)
     return core.DArray(aval.update(shape=tuple(shape)), data)
 

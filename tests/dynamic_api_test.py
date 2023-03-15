@@ -666,11 +666,12 @@ class DynamicShapeTest(jtu.JaxTestCase):
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
   def test_transpose(self):
+    # see also https://github.com/iree-org/iree-jax/issues/57
     @partial(jax.jit, abstracted_axes=({0: 'h', 1: 'w'},))
     def f(x):  # f32[h, w] -> f32[w, h]
       return x.T
 
-    f(np.ones((3, 5), dtype=np.float32))
+    f(np.ones((3, 5), dtype=np.float32))  # doesn't crash
     # TODO: add assertions
 
   @unittest.skipIf(jtu.device_under_test() != 'iree', 'iree test')
