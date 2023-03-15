@@ -28,6 +28,7 @@ from jax._src import basearray
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import profiler
 from jax._src.config import config
 from jax._src.util import use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
@@ -496,23 +497,25 @@ class ArrayImpl(basearray.Array):
   def _copy_single_device_array_to_host_async(self):
     self._arrays[0].copy_to_host_async()
 
+  @profiler.annotate_function
   def copy_to_host_async(self):
     self._check_if_deleted()
     if self._npy_value is None:
       if self.is_fully_replicated:
         self._copy_single_device_array_to_host_async()
         return
-      try:
-        self.addressable_shards[0].replica_id
-        replica_id_exists = True
-      except ValueError:
-        replica_id_exists = False
-
-      for s in self.addressable_shards:
-        if not replica_id_exists or s.replica_id == 0:
-          s.data._copy_single_device_array_to_host_async()
+      # Only calculate the device_to_replica_id map once for performance
+      device_to_replica_id_map = (
+          device_replica_id_map(self.sharding, self.shape))
+      for arr in self._arrays:
+        if device_to_replica_id_map[arr.device()] == 0:
+          if isinstance(arr, ArrayImpl):
+            arr._copy_single_device_array_to_host_async()
+          else:
+            arr.copy_to_host_async()
 
   @property
+  @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
   def _value(self) -> np.ndarray:
     self._check_if_deleted()
 
@@ -528,18 +531,26 @@ class ArrayImpl(basearray.Array):
                            "`jax.experimental.multihost_utils.process_allgather` "
                            "for this use case.")
 
-      self.copy_to_host_async()
+      # Only calculate the device_to_replica_id map once for performance
+      device_to_replica_id_map = device_replica_id_map(self.sharding, self.shape)
+      # device() is slow so compute it only once for the rest of the function.
+      devices = [arr.device() for arr in self._arrays]
+      for arr, d in zip(self._arrays, devices):
+        if device_to_replica_id_map[d] == 0:
+          if isinstance(arr, ArrayImpl):
+            arr._copy_single_device_array_to_host_async()
+          else:
+            arr.copy_to_host_async()
+      # Only calculate the device_to_index map once for performance
+      device_to_index_map = self.sharding.devices_indices_map(self.shape)
       npy_value = np.empty(self.shape, self.dtype)
-
-      try:
-        self.addressable_shards[0].replica_id
-        replica_id_exists = True
-      except ValueError:
-        replica_id_exists = False
-
-      for s in self.addressable_shards:
-        if not replica_id_exists or s.replica_id == 0:
-          npy_value[s.index] = s.data._single_device_array_to_np_array()  # type: ignore  # [union-attr]
+      for arr, d in zip(self._arrays, devices):
+        if device_to_replica_id_map[d] == 0:
+          if isinstance(arr, ArrayImpl):
+            npy_value[device_to_index_map[d]] = (
+                arr._single_device_array_to_np_array())
+          else:
+            npy_value[device_to_index_map[d]] = np.asarray(arr)
       self._npy_value = npy_value  # type: ignore
       self._npy_value.flags.writeable = False
     # https://docs.python.org/3/library/typing.html#typing.cast
