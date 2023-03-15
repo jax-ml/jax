@@ -28,7 +28,6 @@ import jax
 from jax._src import core
 from jax import stages
 from jax.errors import JAXTypeError
-from jax._src.global_device_array import GlobalDeviceArray as GDA
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax._src.interpreters.pxla import PartitionSpec
@@ -491,28 +490,17 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     out_shardings = tree_map(
         lambda x: x if _is_unspecified(x) else
         _create_mesh_pspec_sharding_from_parsed_pspec(pjit_mesh, x), user_out_shardings)
-    # This check fails extremely rarely and has a huge cost in the dispatch
-    # path. So hide it behind the jax_enable_checks flag.
-    if jax.config.jax_enable_checks:
-      _maybe_check_pjit_gda_mesh(args_flat, pjit_mesh)
 
   del user_in_shardings, user_out_shardings
 
   local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
-  # TODO(yashkatariya): This is a hack. This should go away when avals have
-  # is_global attribute.
-  if jax.config.jax_array:
-    in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
-  else:
-    in_positional_semantics = tuple(tree_map(_get_in_positional_semantics, args_flat))
-  out_positional_semantics = (
-      pxla._PositionalSemantics.GLOBAL
-      if jax.config.jax_parallel_functions_output_gda or jax.config.jax_array else
-      pxla.positional_semantics.val)
+
+  in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
+  out_positional_semantics = pxla._PositionalSemantics.GLOBAL
 
   global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
       hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
-      tuple(isinstance(a, GDA) for a in args_flat), resource_env)
+      resource_env)
 
   jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), global_in_avals,
@@ -842,7 +830,7 @@ class PytreeLeaf:
 
 @lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
-                               in_tree, in_positional_semantics, is_gda,
+                               in_tree, in_positional_semantics,
                                resource_env):
   orig_in_shardings = in_shardings_thunk()
   # Only do this if original in_shardings are unspecified. If they are
@@ -854,66 +842,15 @@ def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
           "pjit in_shardings", in_tree, orig_in_shardings,
           tupled_args=True)
 
-  # Fork here because the `Array` path is very simple and doesn't need all the
-  # complexity below.
-  if config.jax_array:
-    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
-                             allow_uneven_sharding=False)
-    global_in_avals = local_in_avals
-    # TODO(yashkatariya): Only check for is_auto or _is_unspecified when
-    # FROM_GDA is removed.
-    canonicalized_shardings = tuple(
-        i if _is_unspecified_or_from_gda_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
-        for i, aval in safe_zip(in_shardings_flat, global_in_avals))
-    return tuple(global_in_avals), canonicalized_shardings
-
-  if not local_in_avals:
-    assert not in_shardings_flat
-    return (), ()
-
-  in_axis_resources_flat = tuple(
-      i if _is_from_gda(i) or is_auto(i) else i._parsed_pspec
-      for i in in_shardings_flat)
-
-  # This check should be above local_to_global call below otherwise if
-  # `FROM_GDA` is passed to any input other than GDA, a ugly error message
-  # will be raised because get_array_mapping (in local_to_global) of a
-  # FROM_GDA cannot happen.
-  tree_map(_check_resources_mismatch, in_axis_resources_flat, is_gda)
-  # If all inputs have global semantics or fully replicated, then the avals are
-  # global and the mesh should also be global. This split is because
-  # non-contiguous mesh can only be used if all inputs have global semantics or
-  # fully replicated.
-  # Use canonicalized in_axis_resources here because we want to treat P(None)
-  # and None (for example) as equivalent.
-  if all(
-      (not _is_from_gda(p) and not is_auto(p) and
-       CanonicalizedParsedPartitionSpec(p).partitions == ()) or
-      ips == pxla._PositionalSemantics.GLOBAL
-      for p, ips in safe_zip(in_axis_resources_flat, in_positional_semantics)):
-    # Shapes should be checked against non canonicalized in_axis_resources.
-    # For example, partitions of () and ((),) are not equivalent, since the
-    # first one is a valid spec for a scalar value, while the second is not!
-    pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
-                             allow_uneven_sharding=False)
-  else:
-    pjit_check_aval_sharding(
-        [i if _is_from_gda(i) or is_auto(i) else
-         NamedSharding(i.mesh.local_mesh, i.spec)
-         for i in in_shardings_flat],
-        local_in_avals, "pjit arguments", allow_uneven_sharding=False)
-
-  # Local or global avals doesn't matter for converting to op sharding because
-  # the `ndim` does not change.
-  canonicalized_in_shardings_flat = tuple(
-      i if _is_from_gda(i) or is_auto(i) else to_gspmd_sharding(i, aval.ndim)
-      for i, aval in safe_zip(in_shardings_flat, local_in_avals))
-
-  global_in_avals = local_to_global(
-      in_positional_semantics, local_in_avals, canonicalized_in_shardings_flat,
-      resource_env.physical_mesh)
-
-  return tuple(global_in_avals), canonicalized_in_shardings_flat
+  pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+                            allow_uneven_sharding=False)
+  global_in_avals = local_in_avals
+  # TODO(yashkatariya): Only check for is_auto or _is_unspecified when
+  # FROM_GDA is removed.
+  canonicalized_shardings = tuple(
+      i if _is_unspecified_or_from_gda_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
+      for i, aval in safe_zip(in_shardings_flat, global_in_avals))
+  return tuple(global_in_avals), canonicalized_shardings
 
 
 @lu.cache
@@ -1155,11 +1092,6 @@ def _prepare_axis_resources(axis_resources,
   _check_unique_resources(new_entries, arg_name)
   return tree_unflatten(treedef, new_entries), new_entries, treedef
 
-
-def _check_resources_mismatch(in_axis_resources_flat, is_gda):
-  if not is_gda and _is_from_gda(in_axis_resources_flat):
-    raise ValueError('For a non-GDA input, the corresponding resource in '
-                     'in_axis_resources cannot be `pjit.FROM_GDA`.')
 
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
@@ -2204,11 +2136,6 @@ def _calc_is_global_sequence(in_positional_semantics, in_shardings):
                 pxla.is_op_sharding_replicated(i._op_sharding))
                for ips, i in safe_zip(in_positional_semantics, in_shardings))
 
-def _get_in_positional_semantics(arg) -> pxla._PositionalSemantics:
-  if isinstance(arg, GDA):
-    return pxla._PositionalSemantics.GLOBAL
-  return pxla.positional_semantics.val
-
 
 def _fast_path_get_device_assignment(
     shardings: Iterable[PjitSharding]) -> Optional[XLADeviceAssignment]:
@@ -2244,19 +2171,10 @@ def _maybe_replace_from_gda_with_pspec(
       out.append(in_sharding_flat)
     elif isinstance(arg, array.ArrayImpl):
       out.append(to_gspmd_sharding(arg.sharding, arg.ndim))
-    elif isinstance(arg, GDA):
-      gda_sharding = pxla.create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
-      out.append(_gda_check_and_get_sharding(gda_sharding, in_sharding_flat, arg.ndim))
     else:
       out.append(in_sharding_flat)
   return tuple(out)
 
-
-def _maybe_check_pjit_gda_mesh(args, mesh):
-  for x in args:
-    if isinstance(x, GDA) and x.mesh != mesh:
-      raise ValueError("Pjit's mesh and GDA's mesh should be equal. Got Pjit "
-                       f"mesh: {mesh},\n GDA mesh: {x.mesh}")
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------
 # Note that OpSharding is more expressive than PartitionSpecs, so it's not

@@ -30,7 +30,6 @@ from jax.interpreters import xla
 from jax._src import pjit as pjit_lib
 from jax.experimental.pjit import pjit, FROM_GDA
 from jax.sharding import PartitionSpec as P
-from jax._src.global_device_array import GlobalDeviceArray
 from jax._src import distributed
 from jax._src import config as config_internal
 import numpy as np
@@ -60,9 +59,6 @@ def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
     is_source = jax.process_index() == 0
 
   def pre_pmap(x):
-    if isinstance(x, GlobalDeviceArray):
-      raise ValueError('GDAs cannot be broadcasted from source host to other '
-                       'hosts.')
     if is_source:
       return np.concatenate([
           x[None, ...],
@@ -148,35 +144,8 @@ def process_allgather(in_tree: Any, tiled: bool = False) -> Any:
   """
 
   def _pjit(inp):
-    if jax.config.jax_array:
-      return _handle_array_process_allgather(inp, tiled)
-    else:
-      if isinstance(inp, GlobalDeviceArray):
-        if inp.is_fully_replicated:
-          return np.asarray(inp.addressable_data(0))
-        global_mesh = inp.mesh
-        in_axis_resources = FROM_GDA
-      else:
-        # DA/SDA/np.array will be sharded based on global_mesh.local_mesh.
-        # Shape of local_mesh will always be (1, local_device_count())
-        devices = np.array(jax.devices()).reshape(jax.process_count(),
-                                                  jax.local_device_count())
-        global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
-        in_axis_resources = P('processes')
-        if inp.ndim == 0 or not tiled:
-          inp = np.expand_dims(inp, axis=0)
-
-      with global_mesh:
-        out = pjit(
-            _identity_fn, in_shardings=in_axis_resources, out_shardings=None
-        )(inp)
-      return np.asarray(out.addressable_data(0))
-
-  if jax.config.jax_array:
-    return jax.tree_map(_pjit, in_tree)  # array route
-  else:
-    with config_internal.parallel_functions_output_gda(True):
-      return jax.tree_map(_pjit, in_tree)  # gda route
+    return _handle_array_process_allgather(inp, tiled)
+  return jax.tree_map(_pjit, in_tree)
 
 
 def assert_equal(in_tree, fail_message: str = ''):

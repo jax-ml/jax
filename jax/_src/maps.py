@@ -37,7 +37,6 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax._src.array import ArrayImpl
-from jax._src.global_device_array import GlobalDeviceArray
 from jax._src.sharding_impls import NamedSharding
 from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
@@ -521,13 +520,7 @@ def xmap(fun: Callable,
       lambda: tuple(_flatten_axes("xmap out_axes", out_tree(), out_axes, tupled_args=False)),
       closure=(out_axes_entries, out_axes_treedef))
 
-    if config.jax_array:
-      in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
-    else:
-      in_positional_semantics = tuple(
-          _PositionalSemantics.GLOBAL
-          if isinstance(a, GlobalDeviceArray) else _positional_semantics.val
-          for a in args_flat)
+    in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
     out_positional_semantics = (
         _PositionalSemantics.GLOBAL
         if config.jax_array or config.jax_parallel_functions_output_gda
@@ -1638,7 +1631,7 @@ def _get_axis_sizes(args_flat: Iterable[Any],
                     in_axes_flat: Iterable[AxisNamePos],
                     global_axis_sizes: Dict[AxisName, int],
                     axis_resource_count: Dict[AxisName, ResourceCount],
-                    in_positional_semantics: Sequence[bool]):
+                    in_positional_semantics: Sequence[_PositionalSemantics]):
   global_axis_sizes = dict(global_axis_sizes)
   for arg, in_axes, ips in zip(args_flat, in_axes_flat, in_positional_semantics):
     for name, dim in in_axes.items():
@@ -1824,26 +1817,22 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
       axis_resources, resource_env, global_axis_sizes,
       in_positional_semantics).to_mesh_axes(in_axes_flat)
   for arg, xmap_array_mapping in safe_zip(args_flat, mesh_in_axes):
-    if isinstance(arg, (GlobalDeviceArray, ArrayImpl)):
-      arr_flavor = 'GDA' if isinstance(arg, GlobalDeviceArray) else 'Array'
-      if arr_flavor == 'Array' and not isinstance(arg.sharding, NamedSharding):
+    if isinstance(arg, ArrayImpl):
+      if not isinstance(arg.sharding, NamedSharding):
         continue
-      mesh = arg.mesh if arr_flavor == 'GDA' else arg.sharding.mesh
+      mesh = arg.sharding.mesh
       if mesh != resource_env.physical_mesh:
-        raise ValueError(f"xmap's mesh and {arr_flavor}'s mesh should be equal. "
+        raise ValueError("xmap's mesh and Array's mesh should be equal. "
                          f"Got xmap mesh: {resource_env.physical_mesh},\n"
-                         f"{arr_flavor} mesh: {mesh}")
+                         f"Array mesh: {mesh}")
 
-      if arr_flavor == 'GDA':
-        s = pxla.create_mesh_pspec_sharding(arg.mesh, arg.mesh_axes)
-      else:
-        s = arg.sharding
+      s = arg.sharding
       xmap_sharding = pxla.create_mesh_pspec_sharding(
           mesh, pxla.array_mapping_to_axis_resources(xmap_array_mapping))
       # This check is cached because comparing OpSharding is expensive during
       # dispatch and if the shardings are the same, then there is no need to
       # compare twice.
-      _check_sharding(s, xmap_sharding, arg.ndim, arr_flavor)
+      _check_sharding(s, xmap_sharding, arg.ndim, 'Array')
 
 
 # TODO: We should relax this at least for "constructor primitives"

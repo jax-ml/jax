@@ -54,7 +54,6 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.global_device_array import GlobalDeviceArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -1093,16 +1092,6 @@ def _to_jax_dtype(tf_dtype):
   return dt
 
 
-def _maybe_decode_gda(gda_or_py_object: Any):
-  """Convert GlobalDeviceArray into numpy object."""
-  if isinstance(gda_or_py_object, GlobalDeviceArray):
-    if jax.process_count() != 1:
-      raise RuntimeError("GlobalDeviceArray does not support multi-process"
-                         f" currently. Process num = {jax.process_count()}")
-    return gda_or_py_object._value
-  return gda_or_py_object
-
-
 def _tfval_to_tensor_jax_dtype(val: TfVal,
                                jax_dtype: Optional[DType] = None,
                                memoize_constants=False) -> Tuple[TfVal, DType]:
@@ -1153,8 +1142,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
       # The float0 type is not known to TF.
       if jax_dtype == dtypes.float0:
         val = np.zeros(np.shape(val), conversion_dtype.as_numpy_dtype)
-      tf_val = tf.convert_to_tensor(
-          _maybe_decode_gda(val), dtype=conversion_dtype)
+      tf_val = tf.convert_to_tensor(val, dtype=conversion_dtype)
       if do_memoize:
         _thread_local_state.constant_cache[const_key] = (val, tf_val)
     return tf_val, jax_dtype

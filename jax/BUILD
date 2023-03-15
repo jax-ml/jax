@@ -107,7 +107,6 @@ py_library_providing_imports_info(
         "_src/dtypes.py",
         "_src/errors.py",
         "_src/flatten_util.py",
-        "_src/global_device_array.py",
         "_src/__init__.py",
         "_src/lax_reference.py",
         "_src/linear_util.py",
@@ -381,9 +380,6 @@ py_library_providing_imports_info(
             "experimental/*.py",
             "example_libraries/*.py",
         ],
-        exclude = [
-            "experimental/global_device_array.py",
-        ],
     ),
     visibility = ["//visibility:public"],
     deps = [
@@ -504,12 +500,5 @@ pytype_library(
     name = "rnn",
     srcs = ["experimental/rnn.py"],
     visibility = ["//visibility:public"],
-    deps = [":jax"],
-)
-
-pytype_library(
-    name = "global_device_array",
-    srcs = ["experimental/global_device_array.py"],
-    visibility = [":internal"],
     deps = [":jax"],
 )

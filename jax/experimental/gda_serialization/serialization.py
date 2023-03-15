@@ -26,7 +26,6 @@ from typing import Callable, Sequence, Optional, Dict, Any
 import jax
 from jax._src import distributed
 from jax._src.config import config
-from jax._src import global_device_array as gda
 from jax._src import array
 from jax._src import sharding
 from jax._src import sharding_impls
@@ -62,27 +61,6 @@ async def create_async_array_from_callback(
          for array, device in zip(local_arrays, addressable_da)]
   return array.make_array_from_single_device_arrays(
       global_shape, inp_sharding, dbs)
-
-
-async def create_async_gda_from_callback(
-    global_shape: gda.Shape,
-    global_mesh: Mesh,
-    mesh_axes: gda.MeshAxes,
-    data_callback: Callable[[gda.Index], asyncio.Future],
-):
-  global_idx_rid = gda.get_shard_indices_replica_ids(
-      global_shape, global_mesh, mesh_axes)
-  local_devices = global_mesh.local_devices
-  future_arrays = [data_callback(global_idx_rid[d][0])
-                   for d in local_devices]
-  # Pause here and come back to `from_async_callback()` when future_arrays are
-  # ready. device_put cannot happen with future_arrays.
-  local_arrays = await asyncio.gather(*future_arrays)
-
-  dbs = [jax.device_put(array, device)
-         for array, device in zip(local_arrays, local_devices)]
-  return gda.GlobalDeviceArray(global_shape, global_mesh, mesh_axes, dbs,
-                               gda._GdaFastPathArgs(global_idx_rid, local_devices))
 
 
 def _get_metadata(arr):
@@ -280,15 +258,7 @@ async def async_deserialize(in_sharding, tensorstore_spec,
       await byte_limiter.release_bytes(requested_bytes)
     return out
 
-  if config.jax_array:
-    return await create_async_array_from_callback(tuple(shape), in_sharding, cb)
-  else:
-    if not isinstance(in_sharding, sharding_impls.NamedSharding):
-      raise ValueError('Deserializing a GlobalDeviceArray is only possible with '
-                       'a `NamedSharding` which consists of a `mesh` and '
-                       f'`pspec`, but got {in_sharding}')
-    return await create_async_gda_from_callback(
-        tuple(shape), in_sharding.mesh, in_sharding.spec, cb)
+  return await create_async_array_from_callback(tuple(shape), in_sharding, cb)
 
 
 def run_deserialization(shardings: Sequence[sharding.Sharding],
