@@ -22,7 +22,7 @@ the interoperation is by way of a StableHLO intermediate form. That is,
 the target function is lowered to StableHLO using standard native JAX or TensorFlow APIs,
 and then the StableHLO is invoked from TensorFlow or JAX. This has the advantage that
 it stays faithful to the semantics of the native target function, even as JAX and
-TensorFlow evolves. We refer to this usage mode as "native lowering" or
+TensorFlow evolves. We refer to this usage mode as
 "native serialization".
 
 Note that at the moment when using JAX native serialization the whole
@@ -50,7 +50,7 @@ optionally without going through StableHLO.
     Even in this case, most of JAX's internals are used as in the
     native mode, except that each JAX primitive is lowered to a TensorFlow op instead of
     an StableHLO op. The result is a function that is pretty much 1:1 with the StableHLO program
-    that would be obtained through native lowering. As a result, we can execute
+    that would be obtained through native serialization. As a result, we can execute
     the lowered code in TensorFlow eager mode for debugging,
     or trace to a `tf.Graph` for consumption by tooling that understands TensorFlow
     ops but does not yet work with StableHLO, e.g., TFLite and TensorFlow.js.
@@ -285,7 +285,7 @@ The lowering is actually similar as for a `jax.jit`, except that the
 arguments and results will be wrapped with
 `tensorflow.python.compiler.xla.experimental.xla_sharding.XlaSharding` TensorFlow ops.
 
-In the default native-serialization mode, if the target JAX function
+In the default native serialization mode, if the target JAX function
 includes sharding operations, e.g., from nested `jax.pjit`, then
 there should be a top-level `jax.pjit`. E.g.,
 
@@ -676,7 +676,7 @@ polymorphic_shapes = ["a * a"]  # Not a linear polynomial
 polymorphic_shapes = ["a + b"]  # Too few equations to derive both `a` and `b`
 ```
 
-If you are using native lowering, the restrictions are stronger: every dimension
+If you are using native serialization, the restrictions are stronger: every dimension
 variable must occur as the value of some dimension of some input, e.g.,
 the following will work:
 
@@ -685,7 +685,7 @@ polymorphic_shapes = ["a, 2*a, b"]
 polymorphic_shapes = ["a * a, a"]
 ```
 
-Furthermore, when using the native lowering the inputs that are not needed in the computation
+Furthermore, when using the native serialization the inputs that are not needed in the computation
 are ignored, so the dimension variables must be derivable only from used inputs.
 In the following example, the `x_unused` is not part of the computation so its
 input shapes cannot be used for deriving the dimension variables, and you will
@@ -993,7 +993,7 @@ The `jax2tf`-lowered function supports higher-order gradients, but when the
 function is saved in a SavedModel, only the first-order gradient is saved.
 This is primarily a limitation of the SavedModel support for custom gradients.
 
-### Native lowering supports only select custom calls
+### Native serialization supports only select custom calls
 
 Applies to native serialization only.
 
@@ -1010,7 +1010,7 @@ a list of allowed custom call targets. If you try to serialize
 code that invokes other targets you will get an error.
 
 If you do not care about the compatibility guarantees of the
-serialized artifact, you can set `experimental_native_lowering_strict_checks`
+serialized artifact, you can set `native_serialization_strict_checks`
 to `False` to disable the check.
 
 ### XlaCallModule not supported by some TensorFlow tools
@@ -1403,7 +1403,7 @@ def fun_jax(x):
 jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."])(x)
 ```
 
-The shape polymorphism support for `call_tf` does not yet work for native lowering.
+The shape polymorphism support for `call_tf` does not yet work for native serialization.
 
 ### Limitations of call_tf
 

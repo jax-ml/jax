@@ -803,9 +803,9 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     def f_jax():
       return jnp.sin(1.)
     f_tf = jax2tf.convert(f_jax)
-    # for native lowering the HLO we get from TF is constant-folded, so this
+    # for native serialization the HLO we get from TF is constant-folded, so this
     # test fails.
-    if not config.jax2tf_default_experimental_native_lowering:
+    if not config.jax2tf_default_native_serialization:
       self.assertIn("sine(", self.TfToHlo(f_tf))
 
   def test_convert_of_nested_independent_jit(self):
@@ -895,7 +895,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
       out = jax2tf.convert(caller_jax, with_gradient=False)(2.)
       return out
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
       graph_def = str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def())
@@ -925,8 +925,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const = np.random.uniform(size=256).astype(np.float32)  # A shared constant
     def f(x):
       return x + const + const + const + const
@@ -937,8 +937,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
   def test_shared_constants_under_cond(self):
     # Check that the constants are shared properly in converted functions
     # See https://github.com/google/jax/issues/7992.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
     const = np.random.uniform(size=const_size).astype(np.float32)  # A shared constant
     x = np.ones((const_size,), dtype=np.float32)
@@ -953,8 +953,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_scan(self):
     # See https://github.com/google/jax/issues/7992.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const_size = 512
     const = np.random.uniform(size=const_size).astype(np.float32)  # A shared constant
     xs = np.ones((8, const_size), dtype=np.float32)
@@ -972,8 +972,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_shared_constants_under_jit(self):
     # We do not share constants under jit.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("shared constants tests not interesting for native serialization")
     const = np.random.uniform(size=(16, 16)).astype(np.float32)  # A shared constant
     @jax.jit
     def g_jit(x):
@@ -988,8 +988,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # randint has the property that the TF lowering of the randbits_p
     # primitive generates constants that did not exist in the Jaxpr. As such
     # it has created new errors related to the sharing of the constants.
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("shared constants tests not interesting for native lowering")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("shared constants tests not interesting for native serialization")
 
     key = jax.random.PRNGKey(42)
 
@@ -1055,7 +1055,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                         (grad_tf[0].numpy(), grad_tf[1].numpy()))
 
 
-  @jtu.skip_on_flag("jax2tf_default_experimental_native_lowering", True)
+  @jtu.skip_on_flag("jax2tf_default_native_serialization", True)
   def test_enable_xla(self):
     # Tests that enable_xla flag is properly scoped to a conversion.
     def fun(x):
@@ -1090,7 +1090,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
     with contextlib.ExitStack() as stack:
       if (jtu.device_under_test() == "gpu" and
-          config.jax2tf_default_experimental_native_lowering):
+          config.jax2tf_default_native_serialization):
         stack.enter_context(
             self.assertRaisesRegex(ValueError,
                 "Cannot serialize code with custom calls whose targets .*"))
@@ -1290,7 +1290,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         self.fail(f"{op.name} does not start with {scope_name}.")
 
   def test_name_scope_polymorphic(self):
-    if config.jax2tf_default_experimental_native_lowering and not config.jax_dynamic_shapes:
+    if config.jax2tf_default_native_serialization and not config.jax_dynamic_shapes:
       self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
 
     def func_jax(x, y):
@@ -1482,8 +1482,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("TODO: figure out how to invoke pmap from TF")
 
     f_tf = jax2tf.convert(func_to_convert,
-                          experimental_native_lowering=True,
-                          experimental_native_lowering_platforms=('tpu',))
+                          native_serialization=True,
+                          native_serialization_platforms=('tpu',))
     f_tf = tf.function(f_tf, jit_compile=True, autograph=False)
     with contextlib.ExitStack() as stack:
       if with_mesh:
@@ -1502,8 +1502,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertIn("stablehlo.reduce_window", str(exported.mlir_module))
 
   def test_cross_platform_error(self):
-    f_tf = jax2tf.convert(jnp.sin, experimental_native_lowering=True,
-                          experimental_native_lowering_platforms=('tpu',))
+    f_tf = jax2tf.convert(jnp.sin, native_serialization=True,
+                          native_serialization_platforms=('tpu',))
     x = np.float32(.5)
     if jtu.device_under_test() == "tpu":
       self.assertAllClose(jnp.sin(x), f_tf(x))

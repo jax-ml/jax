@@ -77,7 +77,7 @@ def check_sharding_annotations(test,
                               num_replicas=1,
                               num_partitions=2,
                               num_variables=0,
-                              experimental_native_lowering="default",
+                              native_serialization="default",
                               checks=()):
   """Log the HLO generated from f_jax and its conversion.
 
@@ -116,7 +116,7 @@ def check_sharding_annotations(test,
                  test._testMethodName, backend.platform, jax_optimized_hlo)
 
   f_tf_base = jax2tf.convert(f_jax, with_gradient=False,
-                              experimental_native_lowering=experimental_native_lowering)
+                              native_serialization=native_serialization)
   if num_variables > 0:
     args_vars = [tf.Variable(a) for a in args[:num_variables]]
     args = args[:num_variables]
@@ -320,7 +320,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a):
       f_converted = jax2tf.convert(f_jax,
-                                   experimental_native_lowering=True)
+                                   native_serialization=True)
       if jtu.device_under_test() == "tpu":
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a)],
@@ -348,7 +348,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a, b):
-      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      f_converted = jax2tf.convert(f_jax, native_serialization=True)
       if jtu.device_under_test() == "tpu":
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
@@ -405,8 +405,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     # TODO(necula): on TPU this function gets executed on the CPU device and
     # fails the platform check. I turned off strict_checks to work around this!
-    f_tf = tf.function(jax2tf.convert(f_jax, experimental_native_lowering=True,
-                                      experimental_native_lowering_strict_checks=False),
+    f_tf = tf.function(jax2tf.convert(f_jax, native_serialization=True,
+                                      native_serialization_strict_checks=False),
                        autograph=False, jit_compile=False)
     with Mesh(self.devices, axis_names=("x",)):
       with contextlib.ExitStack() as stack:
@@ -421,7 +421,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
                    "nested_pjit_sharded", "nested_pjit_replicated")
   )
   def test_pjit_eager_error(self, func="pjit_sharded"):
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("There is no error in eager mode for native serialization")
     # Define some test functions
     @partial(pjit.pjit, in_shardings=(P("x"),),
@@ -471,7 +471,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a, b):
-      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      f_converted = jax2tf.convert(f_jax, native_serialization=True)
       if jtu.device_under_test() == "tpu":
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
@@ -494,7 +494,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
       # jax2tf for xmap works only with native lowering
       check_sharding_annotations(self, f_jax, [a, b],
-                                 experimental_native_lowering=True)
+                                 native_serialization=True)
       res_tf = f_tf(a, b)
       self.assertAllClose(res_tf, res_jax)
 
@@ -508,7 +508,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a, b):
-      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      f_converted = jax2tf.convert(f_jax, native_serialization=True)
       if jtu.device_under_test() == "tpu":
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a), tf.convert_to_tensor(b)],
@@ -529,7 +529,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(res_jax, ((a * 2).sum(0), b * 4))
 
       check_sharding_annotations(self, f_jax, [a, b],
-                                 experimental_native_lowering=True)
+                                 native_serialization=True)
       res_tf = f_tf(a, b)
       self.assertAllClose(res_tf, res_jax)
 
@@ -549,7 +549,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a):
-      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      f_converted = jax2tf.convert(f_jax, native_serialization=True)
       if jtu.device_under_test() == "tpu":
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a)],
@@ -595,11 +595,11 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(res_jax, expected)
 
       check_sharding_annotations(self, f_jax, [a],
-                                 experimental_native_lowering=True,
+                                 native_serialization=True,
                                  num_partitions=2, num_replicas=1)
       # XLA bug: invoke the f_tf without tpu.replicate
       f_tf = tf.function(
-          jax2tf.convert(f_jax, experimental_native_lowering=True),
+          jax2tf.convert(f_jax, native_serialization=True),
           autograph=False, jit_compile=True)
 
       res_tf = f_tf(a)
@@ -621,7 +621,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
     @tf.function(autograph=False, jit_compile=True)
     def f_tf(a):
-      f_converted = jax2tf.convert(f_jax, experimental_native_lowering=True)
+      f_converted = jax2tf.convert(f_jax, native_serialization=True)
       if jtu.device_under_test() == "tpu":
         res = tf.compat.v1.tpu.rewrite(
             f_converted, [tf.convert_to_tensor(a)],

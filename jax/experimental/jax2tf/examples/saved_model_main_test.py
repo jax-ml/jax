@@ -48,7 +48,7 @@ class SavedModelMainTest(tf_test_util.JaxToTfTestCase):
                                model="mnist_flax",
                                serving_batch_size=-1):
     if (serving_batch_size == -1 and
-        config.jax2tf_default_experimental_native_lowering and
+        config.jax2tf_default_native_serialization and
         not config.jax_dynamic_shapes):
       self.skipTest("shape polymorphism but --jax_dynamic_shapes is not set.")
     FLAGS.model = model
