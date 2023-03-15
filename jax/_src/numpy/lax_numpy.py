@@ -3109,9 +3109,16 @@ rather, the specified ``precision`` is forwarded to each ``dot_general`` call us
 the implementation.
 """
 
+
 @util._wraps(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
-def einsum(*operands, out=None, optimize='optimal', precision=None,
-           _use_xeinsum=False):
+def einsum(
+    *operands,
+    out=None,
+    optimize="optimal",
+    precision=None,
+    _use_xeinsum=False,
+    _dot_general=lax.dot_general,
+):
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
 
@@ -3140,7 +3147,8 @@ def einsum(*operands, out=None, optimize='optimal', precision=None,
 
   _einsum_computation = jax.named_call(
       _einsum, name=spec) if spec is not None else _einsum
-  return _einsum_computation(operands, contractions, precision)
+  return _einsum_computation(operands, contractions, precision, _dot_general)
+
 
 # Enable other modules to override einsum_contact_path.
 # Indexed by the type of the non constant dimension
@@ -3163,10 +3171,14 @@ def einsum_path(subscripts, *operands, optimize='greedy'):
 def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))
 
-@partial(jit, static_argnums=(1, 2))
-def _einsum(operands: Sequence,
-            contractions: Sequence[Tuple[Tuple[int, ...], FrozenSet[str], str]],
-            precision):
+
+@partial(jit, static_argnums=(1, 2, 3))
+def _einsum(
+    operands: Sequence,
+    contractions: Sequence[Tuple[Tuple[int, ...], FrozenSet[str], str]],
+    precision,
+    _dot_general=lax.dot_general,
+):
   operands = list(util.promote_dtypes(*operands))
   def sum(x, axes):
     return lax.reduce(x, np.array(0, x.dtype),
@@ -3265,7 +3277,7 @@ def _einsum(operands: Sequence,
           f"lhs.shape={lhs.shape} lhs_names={lhs_names} "
           f"rhs.shape={rhs.shape} rhs_names={rhs_names}")
 
-      # contract using lax.dot_general
+      # contract using dot_general
       batch_names_str = ''.join(batch_names)
       lhs_cont, rhs_cont = unzip2((lhs_names.index(n), rhs_names.index(n))
                                   for n in contracted_names)
@@ -3279,11 +3291,11 @@ def _einsum(operands: Sequence,
       names = batch_names_str + remaining_rhs_names + remaining_lhs_names
       if names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
-        operand = lax.dot_general(rhs, lhs, dimension_numbers, precision)
+        operand = _dot_general(rhs, lhs, dimension_numbers, precision)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        operand = lax.dot_general(lhs, rhs, dimension_numbers, precision)
+        operand = _dot_general(lhs, rhs, dimension_numbers, precision)
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
