@@ -11,12 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Experimental module transforms JAX functions to be executed by TensorFlow."""
-import collections
+"""Provides JAX and TensorFlow interoperation APIs."""
 import dataclasses
 from functools import partial
 import contextlib
-import itertools
 import operator
 import os
 import re
@@ -225,16 +223,16 @@ def convert(fun_jax: Callable,
             experimental_native_lowering="default",
             experimental_native_lowering_platforms=(),
             experimental_native_lowering_strict_checks=True) -> Callable:
-  """Lowers `fun_jax` into a function that uses only TensorFlow ops.
+  """Allows calling a JAX function from a TensorFlow program.
 
   See
   [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md)
   for more details about usage and common problems.
 
   Args:
-    fun_jax: JAX function to be lowered. Its arguments and return value should be
-      JAX arrays, or nested standard Python containers (tuple/list/dict) thereof
-      (pytrees).
+    fun_jax: target JAX function to be called. Its arguments and return value
+      should be JAX arrays, or nested standard Python containers
+      (tuple/list/dict) thereof (pytrees).
     polymorphic_shapes: Specifies input shapes to be treated polymorphically
       during lowering.
 
@@ -280,25 +278,31 @@ def convert(fun_jax: Callable,
     enable_xla: if set (default), use the simplest conversion
       and use XLA TF ops when necessary. These ops are known to create issues
       for the TFLite and TFjs converters. For those cases, unset this parameter
-      so the the lowering tries harder to use non-XLA TF ops to lower the
-      function and aborts if this is not possible.
-    experimental_native_lowering: DO NOT USE, for experimental purposes only.
-      The value "default" defers to --jax2tf_default_experimental_native_lowering.
-    experimental_native_lowering_platforms: DO NOT USE, for experimental purposes only.
-      In conjunction with `experimental_native_lowering`, specify the platform
-      for which to lower the code. Must be a tuple with one element, one of
-      'cpu', 'gpu', 'tpu'. The default (empty tuple), specifies the JAX default
+      so the lowering tries harder to use non-XLA TF ops to lower the
+      function and aborts if this is not possible. Cannot be set to `False`
+      when using `experimental_native_lowering`.
+    experimental_native_lowering: serialized the JAX function natively to
+      StableHLO. This makes it easier to have confidence that the code executed
+      when calling this function from TensorFlow is exactly the same as JAX
+      would run natively. The "default" value defers to the configuration flag
+      `--jax2tf_default_experimental_native_lowering`. Native lowering cannot
+      be used with `enable_xla=False`.
+    experimental_native_lowering_platforms: In conjunction with
+      `experimental_native_lowering`, specify the platform(s)
+      for which to lower the code. Must be a tuple of
+      strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
+      The default (empty tuple), specifies the JAX default
       backend on the machine where the lowering is done.
-    experimental_native_lowering_strict_checks: DO NOT USE, for experimental purposes only.
-      In conjunction with `experimental_native_lowering`, enable the following
-      checks: the lowered computation is executed on a platform for which it
-      was lowered, the serialized computation contains only custom calls with
-      targets that are guaranteed to be stable, (more to come).
+    experimental_native_lowering_strict_checks: In conjunction with
+      `experimental_native_lowering`, enable the following
+      checks: (A) the lowered computation is executed on a platform for which it
+      was lowered; (B) the serialized computation contains only custom calls
+      with targets that are guaranteed to be stable, (more to come).
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or
     tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
-    only TensorFlow ops.
+    only TensorFlow ops and thus can be called from a TensorFlow program.
   """
   if experimental_native_lowering == "default":
     experimental_native_lowering = config.jax2tf_default_experimental_native_lowering
@@ -868,7 +872,8 @@ def check_module(mod: mlir.ir.Module, *,
       if m and m.group(1) not in ["{replicated}", ""]:
         raise ValueError(
             "Lowered function does not have a top-level pjit but it has "
-            f"non-replicated sharding annotations, e.g., {op_str} at {loc}.")
+            f"non-replicated sharding annotations, e.g., {op_str} at {loc}.\n"
+            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion.")
 
   def check_op(op: mlir.ir.Operation):
     op_name = op.operation.name
@@ -898,9 +903,7 @@ def check_module(mod: mlir.ir.Module, *,
     msg = ("Cannot serialize code with custom calls whose targets have no "
            "compatibility guarantees. Examples are:\n"
            f"{disallowed_custom_call_ops_str}.\n"
-           "If you know what you are doing you can disable this check by "
-           "setting `experimental_native_lowering_strict_checks` to "
-           "`False`.")
+           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
 
 

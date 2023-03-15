@@ -3,57 +3,73 @@
 <!-- Next line must match the copybara config. -->
 <!-- Link to internal documentation. -->
 
-This package provides support for interoperation between JAX and TensorFlow.
+This package provides support for JAX native serialization and for interoperation
+between JAX and TensorFlow.
 There are two interoperation directions:
 
-- `jax2tf.convert`: for using JAX functions in a TensorFlow context, e.g.,
+- `jax2tf.convert`: for calling JAX functions in a TensorFlow context, e.g.,
 for eager or graph TensorFlow execution,
-or for saving as a TensorFlow SavedModel; and
-- `jax2tf.call_tf`: for using TensorFlow  functions in a JAX context, e.g., to call a
+or for serializing as a TensorFlow SavedModel; and
+- `jax2tf.call_tf`: for calling TensorFlow functions in a JAX context, e.g., to call a
 TensorFlow library or a SavedModel inside a JAX function.
 
-`jax2tf.convert` directs JAX to use an alternative code
-generator (lowering) and emit TensorFlow operations instead of the regular HLO operations
-emitted in native JAX lowering. In all other respects the JAX function is
-processed as in native JAX execution, e.g., for the JAX transformations.
-The resulting function
-can be called or traced from TensorFlow and will behave as if it was written in TensorFlow.
-In practice this means that you can take some code written in JAX and execute it using
-TensorFlow eager mode, or stage it out as a TensorFlow graph, even use it
-with TensorFlow tooling such as: SavedModel for archival ([examples below](#usage-saved-model)),
-TensorFlow Serving ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/serving/README.md)),
-TFX ([examples](https://github.com/tensorflow/tfx/blob/master/tfx/examples/penguin/README.md#instructions-for-using-flax)),
-TensorFlow Lite ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)),
-TensorFlow.js ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md)),
-or TensorFlow Hub.
+These APIs can be called in sequence, e.g., to reload in JAX a program that
+has been serialized from JAX to a TensorFlow SavedModel, or to save to
+TensorFlow SavedModel a JAX program that uses a TensorFlow library.
 
-This package also contains the `jax2tf.call_tf` mechanism to call TensorFlow functions
-from JAX. These functions can be called in JAX's op-by-op execution mode,
-in which case the callee is executed in TensorFlow eager mode, or in JAX's jit (staged) context,
-in which case the callee is compiled to XLA and embedded in JAX's lowered HLO.
+These APIs can be used in different modes, but in the default preferred mode
+the interoperation is by way of a StableHLO intermediate form. That is,
+the target function is lowered to StableHLO using standard native JAX or TensorFlow APIs,
+and then the StableHLO is invoked from TensorFlow or JAX. This has the advantage that
+it stays faithful to the semantics of the native target function, even as JAX and
+TensorFlow evolves. We refer to this usage mode as "native lowering" or
+"native serialization".
 
-Both interoperation directions rely on the ability of
-TensorFlow to use the XLA compiler (`tf.function(jit_compile=True)`). For the
-`jax2tf.convert` direction the JIT compilation of the resulting TensorFlow code ensures
-that the performance characteristics of the code match those of the JAX source.
-For the `call_tf` direction, JIT compilation is an essential part of the implementation
-mechanism. Only TensorFlow functions that can be JIT-compiled can be called from
-JAX in a jit context.
-Since the TensorFlow functions that are produced by `jax2tf.convert` can
-be JIT-compiled by design, we can call them using `jax2tf.call_tf` thus achieving
-a round-trip from JAX to TensorFlow (e.g., a SavedModel) and back.
+Note that at the moment when using JAX native serialization the whole
+JAX compilation unit is wrapped with a single thin TensorFlow op,
+called [`XlaCallModule`](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/ops/xla_ops.cc#L1318),
+that carries a serialized version of the StableHLO obtained from JAX. This
+op simply compiles the StableHLO and invokes it.
+The reasons we still wrap the StableHLO in a TensorFlow op are:
+
+  * it allows saving the serialization in a tf.SavedModel, for use with
+    multiple mature tools for TensorFlow,
+  * it allows composing the JAX program with TensorFlow pre- and post-processing
+    functions,
+  * the `XlaCallModule` contains the code that must be executed
+    to deserialize, compile, and execute the JAX program.
+  * the semantics of JAX program is still preserved faithfully because it
+    is entirely captured by the StableHLO serialization.
+
+For backwards compatibility purposes, these interoperation APIs can be used also
+optionally without going through StableHLO.
+
+  * For calling JAX functions from TensorFlow,
+    it is possible to request that the JAX function be lowered not to StableHLO but to
+    TensorFlow ops. This can be achieved by setting `experimental_native_serialization=False`.
+    Even in this case, most of JAX's internals are used as in the
+    native mode, except that each JAX primitive is lowered to a TensorFlow op instead of
+    an StableHLO op. The result is a function that is pretty much 1:1 with the StableHLO program
+    that would be obtained through native lowering. As a result, we can execute
+    the lowered code in TensorFlow eager mode for debugging,
+    or trace to a `tf.Graph` for consumption by tooling that understands TensorFlow
+    ops but does not yet work with StableHLO, e.g., TFLite and TensorFlow.js.
+  * For calling TensorFlow functions from JAX, if the resulting JAX program
+    is executed in op-by-op mode (i.e., not under `jax.jit` or `jax.pmap`)
+    then the target TensorFlow function is executed in eager mode. This can
+    be useful if the target TensorFlow function is not lowerable to HLO.
 
 We describe below some general concepts and capabilities, first for
 `jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
 for `jax2tf.call_tf`.
+For more involved examples, please see examples involving:
 
-More involved examples, including using jax2tf with
-Flax models and their use with TensorFlow Hub and Keras, are described in the
-[examples directory](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md).
-
-For details on saving a batch-polymorphic SavedModel see [below](#shape-polymorphic-conversion).
-
-See also some internal ongoing design discussions at `go/jax2tf-doc`.
+   * SavedModel for archival ([examples below](#usage-saved-model)), including
+     saving [batch-polymorphic functions](#shape-polymorphic-conversion), 
+   * TensorFlow Lite ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tflite/mnist/README.md)),
+   * TensorFlow.js ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/tf_js/quickdraw/README.md)),
+   * TFX ([examples](https://github.com/tensorflow/tfx/blob/master/tfx/examples/penguin/README.md#instructions-for-using-flax)),
+   * TensorFlow Hub and Keras ([examples](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/examples/README.md)).
 
 [TOC]
 
@@ -85,27 +101,27 @@ f_tf(np.random.random(...))
 f_tf_graph = tf.function(f_tf, autograph=False)
 ```
 
+Note that when using the default native serialization, the target JAX function
+must be jittable (see [JAX - The Sharp Bits](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html)).
+In the native serialization mode, under TensorFlow eager
+the whole JAX function executes as one op.
+
 The Autograph feature of `tf.function` cannot be expected to work on
 functions lowered from JAX as above, so it is recommended to
 set `autograph=False` in order to speed up the execution
 and to avoid warnings and outright errors.
 
-It is a good idea to use XLA to compile the lowered function; that is
-the scenario for which we are optimizing for numerical and performance
-accuracy w.r.t. the JAX execution:
-
-```python
-tf.function(jax2tf.convert(f_jax), autograph=False, jit_compile=True)(x)
-```
-
-The above happens automatically for JAX code that uses `jax.jit`. E.g.,
-the above is equivalent to:
-
-```python
-jax2tf.convert(jax.jit(f_jax))(x)
-```
 
 ## Usage: saved model
+
+You can serialize JAX program into a TensorFlow SavedModel, for use
+with tooling that understands SavedModel. Both in native and non-native
+serialization you can count on 6 months of backwards compatiblity (you
+can load a function serialized today with tooling that will be built
+up to 6 months in the future), and 3 weeks of limited forwards compatibility
+(you can load a function serialized today with tooling that was built
+up to 3 weeks in the past, provided the model that not use any
+new features).
 
 Since jax2tf provides a regular TensorFlow function using it with SavedModel
 is trivial:
@@ -269,6 +285,23 @@ The lowering is actually similar as for a `jax.jit`, except that the
 arguments and results will be wrapped with
 `tensorflow.python.compiler.xla.experimental.xla_sharding.XlaSharding` TensorFlow ops.
 
+In the default native-serialization mode, if the target JAX function
+includes sharding operations, e.g., from nested `jax.pjit`, then
+there should be a top-level `jax.pjit`. E.g.,
+
+```python
+# The following is correct
+with mesh:
+   jax2tf.convert(pjit.pjit(f_jax, in_shardings=...))(...)
+
+# The following will lead to errors because pjit is not at top-level.
+def wrapped_pjit(x):
+   ...pjit.pjit(f_jax, in_shardings=...))...
+
+with mesh:
+  jax2tf.convert(wrapped_pjit)
+```
+
 A limitation of `XlaSharding` is that it cannot be used in TensorFlow eager
 mode. Therefore, `jax2tf` will give an error when lowering a function that
 requires sharded (not replicated) arguments or results and the lowered
@@ -276,7 +309,7 @@ function is used outside a `tf.function` context (see b/255511660).
 
 Another limitation is that today only TPUs have integrated with XLA SPMD
 support in serving, while CPUs and GPUs don't have e2e XLA SPMD support yet in
-TensorFlow. Executing a jax2tf converted tf.function with `XlaSharding` ops on
+TensorFlow. Executing a jax2tf converted `tf.function` with `XlaSharding` ops on
 CPUs and GPUs will simply ignore all the `XlaSharding` ops.
 
 Note that when saving a model, the parameters to the model are wrapped with
@@ -676,9 +709,12 @@ jax2tf.convert(lambda x_unused, y: y * x_unused.shape[0],
 `jax2tf` has been in use since 2020 and the vast majority of users encounter
 no problems. However, there are a few rare corner cases
 in which the different conventions of JAX and TensorFlow result in a breakage.
-We try to give an exhaustive list below.
+We try to give an exhaustive list below, specifying whether the limitations
+apply to the native serialization or non-native.
 
 ### Different 64-bit precision in JAX and TensorFlow
+
+Applies to both native and non-native serialization.
 
 JAX behaves somewhat differently than TensorFlow in the handling
 of 32-bit vs. 64-bit values. However, the `jax2tf` lowered function
@@ -742,51 +778,9 @@ jax2tf.convert(jax_fun)(3.14)
 jax2tf.convert(jax_fun)(tf.Variable(3.14, dtype=jax2tf.dtype_of_val(3.14)))
 ```
 
-### Incomplete TensorFlow data type coverage
-
-There are a number of cases when the TensorFlow ops that are used by the
-`jax2tf` are not supported by TensorFlow for the same data types as in JAX.
-There is an
-[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
-
-If you try to lower and run in TensorFlow a program with partially supported primitives,
-you may see TensorFlow errors that
-a TensorFlow op is used with an unsupported data type, or that
-there is no supported TensorFlow kernel for the op for the given
-data type. The former case can happen even if you `jit_compile`
-the TensorFlow program, and it is a priority to fit. The latter
-case only appears in TensorFlow non-compiled mode; you can
-avoid the problem if you use XLA to `jit_compile` (always recommended).
-
-Our priority is to ensure numerical and performance accuracy for
-the lowered program **when using XLA to compile the lowered program**.
-It is always a good idea to use XLA on the lowered function.
-
-Sometimes you cannot compile the entire TensorFlow function for your
-model, because in addition to the function that is lowered from JAX,
-it may include some pre-processing TensorFlow code that
-is not compileable with XLA, e.g., string parsing. Even in those situations
-you can instruct TensorFlow to compile only the portion that originates
-from JAX:
-
-```python
-def entire_tf_fun(x):
-  y = preprocess_tf_fun_not_compileable(x)
-  # Compile the code that is lowered from JAX
-  z = tf.function(jax2tf.convert(compute_jax_fn),
-                  autograph=False, jit_compile=True)(y)
-  return postprocess_tf_fun_not_compileable(z)
-```
-
-You won't be able to compile the `entire_tf_fun`, but you can still execute
-it knowing that the jax2tf-lowered code is compiled. You can even save
-the function to a SavedModel, knowing that upon restore the
-jax2tf-lowered code will be compiled.
-
-For a more elaborate example, see the test `test_tf_mix_jax_with_uncompileable`
-in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
-
 ### Functions whose arguments and results are nested Python data structures
+
+Applies to both native and non-native serialization.
 
 `jax2tf` can lower functions with arguments and results that are nested
 collections (tuples, lists, dictionaries) of numeric values or JAX arrays
@@ -864,6 +858,8 @@ self.assertAllClose(grad_jax.b, grad_tf[1])
 
 ### Lowering gradients for functions with integer arguments or unused arguments
 
+Applies to both native and non-native serialization.
+
 When JAX differentiates functions with integer or boolean arguments, the gradients will
 be zero-vectors with a special `float0` type (see PR 4039](https://github.com/google/jax/pull/4039)).
 This type is translated to `int32` when lowering to TF.
@@ -939,8 +935,9 @@ g_jax2tf_0 = tape.gradient(res, xs,
 # In this case we get the same result as for TF native.
 ```
 
-
 ### Errors due to tf.Module magic conversion during attribute assignment
+
+Applies to both native and non-native serialization.
 
 `tf.Module` will automatically wrap the standard Python container data types into
 trackable classes during attribute assignment.
@@ -969,6 +966,8 @@ input_data = jax.tree_util.tree_unflatten(m.input_data['tree_def'], m.input_data
 
 ### Large saved_model.pb due too many PRNG operations
 
+Applies to both native and non-native serialization.
+
 The default `threefry2x32` PRNG is implemented in JAX with dozens
 of additions and bitwise operations. This means that a single PRNG
 operation in JAX will result in dozens of TF ops after jax2tf.
@@ -986,18 +985,92 @@ streams it generates from different keys is less well understood.
 Nevertheless, this should be fine for most inference/serving cases.
 See more details in the [JAX PRNG documentation](https://jax.readthedocs.io/en/latest/jax.random.html?highlight=unsafe_rbg#advanced-rng-configuration).
 
-### Unimplemented jax2tf features
-
-There is currently no support for `pmap` or`xmap`, nor for the collective
-operations. There is support for `pjit`.
-
 ### SavedModel supports only first-order gradients
+
+Applies to both native and non-native serialization.
 
 The `jax2tf`-lowered function supports higher-order gradients, but when the
 function is saved in a SavedModel, only the first-order gradient is saved.
 This is primarily a limitation of the SavedModel support for custom gradients.
 
+### Native lowering supports only select custom calls
+
+Applies to native serialization only.
+
+JAX natively uses custom calls for lowering of certain primitives.
+The most common example are for the implementation of PRNG on GPUs
+where we get better performance with a custom call (`cu_threefry32`)
+than if we use native StableHLO. Another class of examples are for
+FFT and some linear algebra primitives (e.g., QR decomposition).
+
+Unlike regular StableHLO ops, the compatibility guarantees for
+custom calls are the burden of the teams maintaining the C++
+code that backs the custom call. For this reason, we maintain
+a list of allowed custom call targets. If you try to serialize
+code that invokes other targets you will get an error.
+
+If you do not care about the compatibility guarantees of the
+serialized artifact, you can set `experimental_native_lowering_strict_checks`
+to `False` to disable the check.
+
+### XlaCallModule not supported by some TensorFlow tools
+
+Applies to native serialization only.
+
+JAX native serialization uses the `XlaCallModule` TensorFlow op to host
+the StableHLO program obtained from JAX. This is a relatively
+new TensorFlow op and may not be supported by some tools. In fact,
+certain tools that need to do `tf.Graph` inspection and transformation
+cannot work when the whole JAX program is a single TensorFlow op.
+
+This is the case, for example, for the TFLite and TensorFlow.js converters.
+There is work underway to enable more tools to consume StableHLO.
+
+### Natively serialized JAX modules are platform specific
+
+Applies to native serialization only.
+
+When you use native serialization, JAX will record the plaform for
+which the module was serialized, and you will get an error if you
+try to execute the `XlaCallModule` TensorFlow op on another platform.
+
+Note that this error will only arise in native serialization; with
+non-native serialization the lowering to TensorFlow ops is
+platform independent, although it is only guaranteed to match the
+JAX semantics and performance behavior for TPUs.
+
+The error has the form:
+```commandline
+The current platform CPU is not among the platforms required by the module [CUDA]
+```
+
+where `CPU` is the TensorFlow platform where the op is being executed
+and `CUDA` is the plaform for which the module was serialized by JAX.
+This probably means that JAX and TensorFlow may see different devices
+as the default device (JAX defaults to GPU and TensorFlow to CPU
+in the example error above).
+You can check what devices TensorFlow uses:
+
+```python
+logging.info("All TF devices: %s", tf.config.list_logical_devices())
+tf_device = (tf.config.list_logical_devices("TPU") + 
+             tf.config.list_logical_devices("GPU") + 
+             tf.config.list_logical_devices())[0]
+assert jax.default_backend().upper() == tf_device.device_type 
+with tf.device(tf_device):
+   ...
+```
+
+### Unsupported JAX features
+
+Applies to non-native serialization only.
+
+There is currently no support for `pmap`, `xmap`, `shard_map`,
+nor for the collective operations, except in native serialization.
+
 ### Slow implementation of associative reductions for CPU
+
+Applies to non-native serialization only.
 
 Operations like ``jax.numpy.cumsum`` are lowered by JAX differently based
 on the platform. For TPU, the lowering uses the [HLO ReduceWindow](https://www.tensorflow.org/xla/operation_semantics#reducewindow)
@@ -1019,6 +1092,8 @@ Note that this lowering may not work as well as the default one in presence
 of shape polymorphism.
 
 ### TensorFlow XLA ops
+
+Applies to non-native serialization only.
 
 For most JAX primitives there is a natural TensorFlow op that fits the needed semantics.
 There are a few (listed in [no_xla_limitations.md](g3doc/no_xla_limitations.md)) JAX primitives
@@ -1048,6 +1123,8 @@ You can enable this with the `enable_xla=False` parameter to `jax2tf.convert`.
 For more details see [no_xla_limitations.md](g3doc/no_xla_limitations.md).
 
 ### Different performance characteristics
+
+Applies to non-native serialization only.
 
 The lowered code may have slightly different performance characteristics than
 the original JAX code.
@@ -1088,6 +1165,8 @@ A similar example is that of an LSTM cell.
 
 
 ### Unchecked assumption that the dimension variables take strictly positive values
+
+Applies to non-native serialization only.
 
 The shape polymorphic conversion is sound with the assumption that the dimension
 variables take non-zero values. In the following example, the function to be lowered
@@ -1137,6 +1216,52 @@ f_tf = tf.function(
     autograph=False).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
 self.assertEqual(1, f_tf(x45))
 ```
+
+### Incomplete TensorFlow data type coverage
+
+Applies to non-native serialization only.
+
+There are a number of cases when the TensorFlow ops that are used by the
+`jax2tf` are not supported by TensorFlow for the same data types as in JAX.
+There is an
+[up-to-date list of unimplemented cases](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/g3doc/primitives_with_limited_support.md).
+
+If you try to lower and run in TensorFlow a program with partially supported primitives,
+you may see TensorFlow errors that
+a TensorFlow op is used with an unsupported data type, or that
+there is no supported TensorFlow kernel for the op for the given
+data type. The former case can happen even if you `jit_compile`
+the TensorFlow program, and it is a priority to fit. The latter
+case only appears in TensorFlow non-compiled mode; you can
+avoid the problem if you use XLA to `jit_compile` (always recommended).
+
+Our priority is to ensure numerical and performance accuracy for
+the lowered program **when using XLA to compile the lowered program**.
+It is always a good idea to use XLA on the lowered function.
+
+Sometimes you cannot compile the entire TensorFlow function for your
+model, because in addition to the function that is lowered from JAX,
+it may include some pre-processing TensorFlow code that
+is not compileable with XLA, e.g., string parsing. Even in those situations
+you can instruct TensorFlow to compile only the portion that originates
+from JAX:
+
+```python
+def entire_tf_fun(x):
+  y = preprocess_tf_fun_not_compileable(x)
+  # Compile the code that is lowered from JAX
+  z = tf.function(jax2tf.convert(compute_jax_fn),
+                  autograph=False, jit_compile=True)(y)
+  return postprocess_tf_fun_not_compileable(z)
+```
+
+You won't be able to compile the `entire_tf_fun`, but you can still execute
+it knowing that the jax2tf-lowered code is compiled. You can even save
+the function to a SavedModel, knowing that upon restore the
+jax2tf-lowered code will be compiled.
+
+For a more elaborate example, see the test `test_tf_mix_jax_with_uncompileable`
+in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
 
 # Calling TensorFlow functions from JAX
 
@@ -1380,7 +1505,7 @@ purposes of `call_tf`.)
 ## TensorFlow versions supported
 
 The ``jax2tf.convert`` and `call_tf` require fairly recent versions of TensorFlow.
-As of today, the tests are run using `tf_nightly==2.9.0.dev20220202`.
+As of today, the tests are run using `tf_nightly==2.13.0.dev20230311`.
 
 ## Running on GPU
 
