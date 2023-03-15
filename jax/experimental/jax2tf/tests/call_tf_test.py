@@ -886,7 +886,7 @@ class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):
     y = np.array([-0.5, 0.0, 0.5], dtype=np.float32)
 
     converted_fun = tf.function(
-        jax2tf.convert(fun_jax, experimental_native_lowering=True)
+        jax2tf.convert(fun_jax, native_serialization=True)
     )
     expected = np.sin(x) + np.cos(y)
     res = tf.function(converted_fun, jit_compile=True, autograph=False)(x, y)
@@ -1113,8 +1113,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly_static_output_shape(self, with_jit=True):
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native lowering.")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([0.7, 0.8], dtype=np.float32)
 
     def fun_tf(x):
@@ -1127,8 +1127,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly(self, with_jit=False):
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native lowering.")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
       y = jax2tf.call_tf(tf.math.sin,
@@ -1146,8 +1146,8 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly_pytree_result(self, with_jit=True):
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native lowering.")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
       # Returns a tuple
@@ -1232,25 +1232,25 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     if kind == "bad_dim" and with_jit:
       # TODO: in jit more the error pops up later, at AddV2
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
-    if kind == "bad_dim" and config.jax2tf_default_experimental_native_lowering:
-      # TODO(b/268386622): call_tf with shape polymorphism and native lowering.
+    if kind == "bad_dim" and config.jax2tf_default_native_serialization:
+      # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
       expect_error = "Error compiling TensorFlow function. call_tf can used .* only with compileable functions with static output shapes"
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
     with self.assertRaisesRegex(expect_ex, expect_error):
       fun_tf_rt(x)
 
-  def test_inner_native_lowering(self):
-    # Two nested jax2tf, the inner one being with native lowering
+  def test_inner_native_serialization(self):
+    # Two nested jax2tf, the inner one being with native serialization
     x = np.ones((3,), dtype=np.float32)
     def f_inner_jax(x):
       return jnp.sin(x)
     def f_outer_jax(x):
-      f_inner_tf = jax2tf.convert(f_inner_jax, experimental_native_lowering=True)
+      f_inner_tf = jax2tf.convert(f_inner_jax, native_serialization=True)
       return jnp.cos(jax2tf.call_tf(f_inner_tf)(x))
 
     f_outer_tf = tf.function(
-        jax2tf.convert(f_outer_jax, experimental_native_lowering=False),
+        jax2tf.convert(f_outer_jax, native_serialization=False),
         autograph=False)
     f_outer_graph = str(f_outer_tf.get_concrete_function(tf.convert_to_tensor(x)).graph.as_graph_def())
     # Quick way to check that there is an XlaCallModule op, and a Cos op, but no Sin op

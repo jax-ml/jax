@@ -57,7 +57,7 @@ _f32 = np.float32
 _i32 = np.int32
 
 expect_error_associative_scan = (
-    (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+    (None, None) if (not config.jax2tf_default_native_serialization or
                                          jtu.device_under_test() == "tpu") else
     (NotImplementedError,
      "associative scan over axis of non-constant size"))
@@ -622,9 +622,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      input_signature=[tf.TensorSpec([2, None]), tf.TensorSpec([2, 3])],
                      polymorphic_shapes="_, h",
                      expected_output_signature=(
-                         # for native lowering we cannot refine the inferred shape of the
+                         # for native serialization we cannot refine the inferred shape of the
                          # output if the input is more specific than polymorphic_shapes.
-                         tf.TensorSpec([2, 3]) if not config.jax2tf_default_experimental_native_lowering
+                         tf.TensorSpec([2, 3]) if not config.jax2tf_default_native_serialization
                          else tf.TensorSpec([2, None])))
 
     check_shape_poly(self,
@@ -1052,7 +1052,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b2"],
         expect_error=(
-            (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+            (None, None) if (not config.jax2tf_default_native_serialization or
                              not config.jax_jit_pjit_api_merge) else
             (ValueError,
              "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
@@ -1065,7 +1065,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b1 * b1"],
         expect_error=(
-            (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+            (None, None) if (not config.jax2tf_default_native_serialization or
                              not config.jax_jit_pjit_api_merge) else
             (ValueError,
              "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
@@ -1077,7 +1077,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b2"],
         expect_error=(
-            (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+            (None, None) if (not config.jax2tf_default_native_serialization or
                              not config.jax_jit_pjit_api_merge) else
             (KeyError,
              "Encountered dimension variable 'b1' that is not appearing in the shapes")))
@@ -1132,9 +1132,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
        tf_value_and_grad, autograph=False).get_concrete_function(
            tf.TensorSpec([3, 4, 8, 9]))
 
-    # for native lowering we cannot refine the inferred shape of the
+    # for native serialization we cannot refine the inferred shape of the
     # output if the input is more specific than polymorphic_shapes.
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[0]))
       self.assertEqual((None, None, None, None), tuple(tf_grad.output_shapes[1]))
     else:
@@ -1181,8 +1181,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_grad_not_var_output(self):
     # Output of the function has poly shapes, non-variable
-    if config.jax2tf_default_experimental_native_lowering:
-      raise unittest.SkipTest("Not supported with native lowering")
+    if config.jax2tf_default_native_serialization:
+      raise unittest.SkipTest("Not supported with native serialization")
     def f_jax(x):  # :[b, 3]
       return jnp.reshape(x, (-1,))  # : [3b]
     x = np.arange(12, dtype=np.float32).reshape((4, 3))
@@ -1295,7 +1295,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_saved_model_int_function(self):
     # TODO(https://github.com/google/jax/issues/14437)
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("Gradient function does not use the dimension  variables")
 
     def f_jax(x):  # x:s32[b, 3, 4]
@@ -1316,7 +1316,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
   def test_saved_model_constant_gradient(self):
     # TODO(https://github.com/google/jax/issues/14437)
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("Gradient function does not use the dimension  variables")
 
     def f_jax(x):  # A function whose gradient is a constant
@@ -1383,7 +1383,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                    polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 
-    if not config.jax2tf_default_experimental_native_lowering:
+    if not config.jax2tf_default_native_serialization:
       # Does not support 2*b constraints
       jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
                      polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
@@ -1410,17 +1410,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         ValueError,
         "Dimension variable b must have integer value >= 1. Found value 0 when solving .*"):
       jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                     experimental_native_lowering=False)(x0)
+                     native_serialization=False)(x0)
 
     # TODO(https://github.com/google/jax/issues/14437)
-    # In native lowering, or if we trace to a TF graph, we miss this
+    # In native serialization, or if we trace to a TF graph, we miss this
     res1_tf = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                             experimental_native_lowering=True)(x0)
+                             native_serialization=True)(x0)
     self.assertEqual(jnp.array([1.], dtype=np.float32), res1_tf)
 
     f1_tf = tf.function(
         jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
-                       experimental_native_lowering=False)
+                       native_serialization=False)
     ).get_concrete_function(tf.TensorSpec([None], dtype=np.float32))
     self.assertEqual(jnp.array([1.], dtype=np.float32), f1_tf(x0))
 
@@ -1439,17 +1439,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(ValueError,
                                 "Found inconsistency when solving b == .*"):
       jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                     experimental_native_lowering=False)(x45)
+                     native_serialization=False)(x45)
 
     # TODO(https://github.com/google/jax/issues/14437)
-    # In native lowering, or if we trace to a TF graph, we miss this
+    # In native serialization, or if we trace to a TF graph, we miss this
     res2_tf = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                             experimental_native_lowering=True)(x45)
+                             native_serialization=True)(x45)
     self.assertEqual(1. + jnp.sum(x45), res2_tf)
 
     f2_tf = tf.function(
         jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
-                       experimental_native_lowering=False)
+                       native_serialization=False)
     ).get_concrete_function(tf.TensorSpec([None, None], dtype=np.float32))
     self.assertEqual(1. + jnp.sum(x45), f2_tf(x45))
 
@@ -1458,12 +1458,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         ValueError,
         "Cannot solve for values of dimension variables"):
       jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
-                     experimental_native_lowering=False)(x)
+                     native_serialization=False)(x)
     with self.assertRaisesRegex(
         ValueError,
         "dimension variables cannot be computed from the static shapes of the kept lowered arguments"):
       jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
-                     experimental_native_lowering=True)(x)
+                     native_serialization=True)(x)
 
   def test_dynamic_shapes(self):
     # Test dim_as_value with dynamic shapes.
@@ -1485,7 +1485,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose((9., 1.8), (res_primal, res_tangent))
 
     # TODO(https://github.com/google/jax/issues/14437)
-    if not config.jax2tf_default_experimental_native_lowering:
+    if not config.jax2tf_default_native_serialization:
       self.assertAllClose(
           np.array([3., 3., 3.]),
           jax2tf.convert(jax.grad(f), polymorphic_shapes=["b"])(x))
@@ -1536,7 +1536,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
   def test_poly_unary_op(self, *, op=jnp.array):
     if config.jax_enable_x64:
       raise unittest.SkipTest("TODO(necula): dim_as_value in x64 mode")
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
     def f_jax(x):  # x: f32[b]
       poly = 2 * x.shape[0]
@@ -1568,7 +1568,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                           other_jnp_array=False,
                           swap=True):
     # Test arithmetic operations with poly and a variety of other operand types
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
 
     def f_jax(x):  # x: f32[b]
@@ -1902,7 +1902,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 arg_descriptors=[RandArg((3, 5), _f32)],
                 poly_axes=[0],
                 expect_error=(
-                  (None, None) if (not config.jax2tf_default_experimental_native_lowering or
+                  (None, None) if (not config.jax2tf_default_native_serialization or
                                    jtu.device_under_test() == "tpu") else
                   (NotImplementedError,
                    "associative scan over axis of non-constant size"))),
@@ -2610,9 +2610,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
   )
   def test_harness(self, harness: PolyHarness):
     # Exclude some harnesses that are known to fail for native serialization
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       if not harness.enable_xla:
-        raise unittest.SkipTest("disabled for experimental_native_lowering and enable_xla=False")
+        raise unittest.SkipTest("disabled for native_serialization and enable_xla=False")
 
       # Set of harness.group_name:platform that are implemented with custom call
       custom_call_harnesses = {
@@ -2628,7 +2628,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "random_uniform:gpu", "vmap_random_uniform:gpu",
           "vmap_random_split:gpu"}
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
-        raise unittest.SkipTest("native lowering with shape polymorphism not implemented for custom calls; b/261671778")
+        raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
 
       # Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
       fallback_lowering_harnesses = {
@@ -2640,7 +2640,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if (harness.group_name in fallback_lowering_harnesses or
           f"{harness.group_name}:{jtu.device_under_test()}" in fallback_lowering_harnesses):
         raise unittest.SkipTest(
-            "native lowering with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
+            "native serialization with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
 
       if (jtu.device_under_test() == "tpu" and
           harness.fullname in [
@@ -2649,7 +2649,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
               "jnp.nonzero_size=constant", "jnp.nonzero_size=poly"]):
         # https://github.com/openxla/stablehlo/issues/1258
         raise unittest.SkipTest(
-            "native lowering with shape polymorphism not implemented for window_reductions on TPU")
+            "native serialization with shape polymorphism not implemented for window_reductions on TPU")
       if (jtu.device_under_test() == "gpu" and
           harness.fullname in [
               "jnp.cumsum_reduce_axis=poly",

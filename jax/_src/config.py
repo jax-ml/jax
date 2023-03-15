@@ -675,14 +675,16 @@ jax2tf_associative_scan_reductions = config.define_bool_state(
     )
 )
 
-jax2tf_default_experimental_native_lowering = config.define_bool_state(
-    name='jax2tf_default_experimental_native_lowering',
-    default=bool_env('JAX2TF_DEFAULT_EXPERIMENTAL_NATIVE_LOWERING', False),
+jax2tf_default_native_serialization = config.define_bool_state(
+    name='jax2tf_default_native_serialization',
+    default=bool_env('JAX2TF_DEFAULT_NATIVE_SERIALIZATION', False),
     help=(
-        'DO NOT USE, highly experimental. Sets the default value of the '
-        'experimental_native_lowering parameter to jax2tf.convert.'
+        'Sets the default value of the native_serialization parameter to '
+        'jax2tf.convert. Prefer using the parameter instead of the flag, the '
+        'flag may be removed in the future.'
     )
 )
+
 
 jax_platforms = config.define_string_state(
     name='jax_platforms',

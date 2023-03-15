@@ -369,7 +369,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
 
   def TfToHlo(self, tf_fun: Callable, *args):
     # Converts a tf.function to HLO text which we can inspect for occurrence of
-    # substrings. This works whether we use native lowering or not.
+    # substrings. This works whether we use native serialization or not.
     tf_function = tf.function(tf_fun, autograph=False, jit_compile=True)
     device_name = f"/device:{jtu.device_under_test().upper()}:0"
     return tf_function.experimental_get_compiler_ir(*args)(stage="hlo",
@@ -381,7 +381,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # graph. We count the number of characters in the textual representation
     # of the constant.
     f_tf_graph = tf.function(tf_fun, autograph=False).get_concrete_function(*args).graph.as_graph_def()
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       # This way of finding constants may be brittle, if the constant representation
       # contains >. It seems tobe hex-encoded, so this may be safe.
       large_consts = [m for m in re.findall(r"dense<([^>]+)>", str(f_tf_graph)) if len(m) >= at_least]
