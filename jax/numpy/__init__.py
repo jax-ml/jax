@@ -18,7 +18,6 @@
 from jax.numpy import fft as fft
 from jax.numpy import linalg as linalg
 
-from jax._src.basearray import Array as DeviceArray
 from jax._src.basearray import Array as ndarray
 
 from jax._src.numpy.lax_numpy import (
@@ -420,3 +419,23 @@ from jax._src.numpy.ufuncs import (
 )
 
 from jax._src.numpy.vectorize import vectorize as vectorize
+
+
+# Deprecations
+
+_deprecations = {
+    # Added March 14, 2023:
+    "DeviceArray": (
+        "jax.numpy.DeviceArray is deprecated. Use jax.Array.",
+        ndarray,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.basearray import Array as DeviceArray
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing

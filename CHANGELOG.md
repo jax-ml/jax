@@ -9,6 +9,8 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.7
 
 * Deprecations
+  * The type `jax.numpy.DeviceArray` is deprecated. Use `jax.Array` instead,
+    for which it is an alias.
   * Passing additional arguments to {func}`jax.numpy.ndarray.at` by position is deprecated.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
 
