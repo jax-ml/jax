@@ -2642,6 +2642,20 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
         raise unittest.SkipTest(
             "native serialization with shape polymorphism not implemented for JAX primitives still using HLO fallback lowering; b/261682623")
 
+      # Set of harness.group_name that are unsupported in serialization
+      require_stablehlo_feature_support = {
+          # Tan and TopK require additional support for dynamic shape lowering
+          "vmap_tan", "vmap_top_k",
+          # Filter CHLO decompositions that produce shape dialect ops
+          "vmap_acosh", "vmap_asin", "vmap_asinh", "vmap_atan", "vmap_atanh",
+          "vmap_bessel_i1e", "vmap_cosh", "vmap_digamma", "vmap_erf",
+          "vmap_erfc", "vmap_lgamma", "vmap_nextafter",
+          "vmap_nextafter_broadcasting", "vmap_sinh",
+      }
+      if harness.group_name in require_stablehlo_feature_support:
+        raise unittest.SkipTest(
+            "native lowering with shape polymorphism requires additional StableHLO feature support")
+
       if (jtu.device_under_test() == "tpu" and
           harness.fullname in [
               "jnp.cumsum_reduce_axis=poly",

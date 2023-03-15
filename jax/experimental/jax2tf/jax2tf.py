@@ -64,6 +64,7 @@ from jax._src.lax import linalg as lax_linalg
 from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
+from jax._src.lib.mlir.dialects import stablehlo
 from jax._src.numpy.ufuncs import logaddexp
 
 import tensorflow as tf  # type: ignore[import]
@@ -709,9 +710,17 @@ def serialize_native(fun_jax: Callable,
       _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
 
   mlir_module = lowered.stablehlo()
-  xla_call_module_version = 3
 
-  mlir_module_serialized = mlir.module_to_bytecode(mlir_module)
+  if xla_client.mlir_api_version >= 46:
+    xla_call_module_version = 4
+    mlir_str = mlir.module_to_bytecode(mlir_module)
+    target_version = stablehlo.get_earliest_forward_compatible_version()
+    mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+        mlir_str, target_version)
+  else:
+    xla_call_module_version = 3
+    mlir_module_serialized = mlir.module_to_bytecode(mlir_module)
+
   # Figure out the result types and shapes
   if "global_out_avals" in lowered.compile_args:
     # This is currently the case for pjit
