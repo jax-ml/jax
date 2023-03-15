@@ -23,6 +23,7 @@ from jax._src import core
 from jax._src import api_util
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
+from jax._src.lib import xla_extension_version
 from jax import dtypes
 from jax._src import lib as jaxlib
 from jax import numpy as jnp
@@ -34,7 +35,8 @@ config.parse_flags_with_absl()
 
 def _cpp_device_put(value, device):
   aval = api_util.shaped_abstractify(value)
-  value = xla.canonicalize_dtype(value)
+  if xla_extension_version < 139:
+    value = xla.canonicalize_dtype(value)
   return pxla.batched_device_put(
       aval, jax.sharding.SingleDeviceSharding(device), [value], [device])
 
