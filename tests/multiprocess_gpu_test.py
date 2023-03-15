@@ -33,7 +33,6 @@ from jax._src import distributed
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import util
-from jax.experimental import global_device_array
 from jax.experimental import pjit
 
 try:
@@ -338,43 +337,37 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       return global_input_data[index]
 
     mesh_axes1 = experimental.PartitionSpec("x", "y")
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes1, cb)
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes1), cb)
     mesh_axes2 = experimental.PartitionSpec("x")
-    gda2 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes2, cb)
+    gda2 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes2), cb)
     mesh_axes3 = experimental.PartitionSpec(("x", "y"))
-    gda3 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes3, cb)
+    gda3 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes3), cb)
 
     with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
 
       @functools.partial(
           pjit.pjit,
-          # `FROM_GDA` will be replicated for all the inputs.
-          in_shardings=pjit.FROM_GDA,
           out_shardings=(mesh_axes1, None, mesh_axes2))
       def f(x, y, z):
         return x @ x.T, y, z
 
       out1, out2, out3 = f(gda1, gda2, gda3)
 
-      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (16, 16))
       self.assertEqual(out1.addressable_shards[0].data.shape, (2, 8))
-      self.assertDictEqual(out1.mesh.shape, {"x": 8, "y": 2})
       expected_matrix_mul = global_input_data @ global_input_data.T
       for s in out1.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data),
                                       expected_matrix_mul[s.index])
 
-      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (16, 2))
       self.assertEqual(out2.addressable_shards[0].data.shape, (16, 2))
       for s in out2.addressable_shards:
         np.testing.assert_array_equal(np.asarray(s.data), global_input_data)
 
-      self.assertIsInstance(out3, global_device_array.GlobalDeviceArray)
       self.assertEqual(out3.shape, (16, 2))
       self.assertEqual(out3.addressable_shards[0].data.shape, (2, 2))
       for s in out3.addressable_shards:
@@ -403,8 +396,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes, cb)
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), cb)
 
     # device_id -> (index, replica_id)
     expected_idx_rid = {
@@ -454,8 +447,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes, cb)
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes), cb)
 
     # device_id -> (index, replica_id)
     expected_idx_rid = {
@@ -501,16 +494,14 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       )
       # Fully replicated values allows a non-contiguous mesh.
       out = f(global_input_data)
-      self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
 
     with global_mesh:
       f = pjit.pjit(lambda x: x, in_shardings=None, out_shardings=mesh_axes)
       # Fully replicated values allows a non-contiguous mesh.
       out = f(global_input_data)
-      self.assertIsInstance(out, global_device_array.GlobalDeviceArray)
 
-    gda2 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, experimental.PartitionSpec(None), cb)
+    gda2 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, experimental.PartitionSpec(None)), cb)
 
     with global_mesh:
       f = pjit.pjit(
@@ -520,8 +511,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       )
       # Fully replicated values + GDA allows a non-contiguous mesh.
       out1, out2 = f(global_input_data, gda2)
-      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
-      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
 
   # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
   # since `GlobalDeviceArray` is going to be deprecated in the future
@@ -532,8 +521,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     mesh_axes = experimental.PartitionSpec("x", "y")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
-    gda1 = global_device_array.GlobalDeviceArray.from_callback(
-        global_input_shape, global_mesh, mesh_axes,
+    gda1 = jax.make_array_from_callback(
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes),
         lambda idx: global_input_data[idx])
 
     with global_mesh:
@@ -547,9 +536,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       # Hence it can bypass the contiguous mesh restriction.
       compiled = f.lower(inp_aval, gda1).compile()
       out1, out2 = compiled(gda1, gda1)
-      self.assertIsInstance(out1, global_device_array.GlobalDeviceArray)
       self.assertEqual(out1.shape, (8, 2))
-      self.assertIsInstance(out2, global_device_array.GlobalDeviceArray)
       self.assertEqual(out2.shape, (8, 2))
 
   # TODO(sudhakarsingh27): To change/omit test in favor of using `Array`
