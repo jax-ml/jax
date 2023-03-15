@@ -58,8 +58,12 @@ def slice(operand: ArrayLike, start_indices: Sequence[int],
                       limit_indices=tuple(limit_indices),
                       strides=None if strides is None else tuple(strides))
 
-def dynamic_slice(operand: Array, start_indices: Union[Array, Sequence[ArrayLike]],
-                  slice_sizes: Shape) -> Array:
+
+def dynamic_slice(
+    operand: Union[Array, np.ndarray],
+    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]],
+    slice_sizes: Shape,
+) -> Array:
   """Wraps XLA's `DynamicSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicslice>`_
   operator.
@@ -105,6 +109,7 @@ def dynamic_slice(operand: Array, start_indices: Union[Array, Sequence[ArrayLike
     static_sizes = core.canonicalize_shape(slice_sizes)  # type: ignore
   return dynamic_slice_p.bind(operand, *start_indices, *dynamic_sizes,
                               slice_sizes=tuple(static_sizes))
+
 
 def dynamic_update_slice(operand: Array, update: ArrayLike,
                          start_indices: Union[Array, Sequence[ArrayLike]]) -> Array:
@@ -1987,7 +1992,6 @@ batching.primitive_batchers[scatter_p] = (
   partial(_scatter_batching_rule, scatter))
 
 
-
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
@@ -2092,8 +2096,8 @@ mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 
 
 def _dynamic_slice_indices(
-    operand: Array,
-    start_indices: Union[Array, Sequence[ArrayLike]]
+    operand: Union[Array, np.ndarray],
+    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]]
   ) -> List[ArrayLike]:
   # Normalize the start_indices w.r.t. operand.shape
   if len(start_indices) != operand.ndim:
