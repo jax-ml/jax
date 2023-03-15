@@ -22,6 +22,7 @@ import threading
 from typing import (
     Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union,
     cast)
+import warnings
 
 from absl import logging
 import numpy as np
@@ -220,9 +221,11 @@ def convert(fun_jax: Callable,
             polymorphic_shapes=None,
             with_gradient=True,
             enable_xla=True,
+            # TODO(necula): remove the experimental flag
             experimental_native_lowering="default",
-            experimental_native_lowering_platforms=(),
-            experimental_native_lowering_strict_checks=True) -> Callable:
+            native_serialization="default",
+            native_serialization_platforms=(),
+            native_serialization_strict_checks=True) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
 
   See
@@ -280,21 +283,24 @@ def convert(fun_jax: Callable,
       for the TFLite and TFjs converters. For those cases, unset this parameter
       so the lowering tries harder to use non-XLA TF ops to lower the
       function and aborts if this is not possible. Cannot be set to `False`
-      when using `experimental_native_lowering`.
-    experimental_native_lowering: serialized the JAX function natively to
-      StableHLO. This makes it easier to have confidence that the code executed
-      when calling this function from TensorFlow is exactly the same as JAX
-      would run natively. The "default" value defers to the configuration flag
-      `--jax2tf_default_experimental_native_lowering`. Native lowering cannot
-      be used with `enable_xla=False`.
-    experimental_native_lowering_platforms: In conjunction with
-      `experimental_native_lowering`, specify the platform(s)
+      when using `native_serialization`.
+    native_serialization: serialize the JAX function natively to
+      StableHLO with compatibility guarantees. This makes it easier to have
+      confidence that the code executed when calling this function from
+      TensorFlow is exactly the same as JAX would run natively.
+      The "default" value defers to `False` if `enable_xla`
+      is set to `False` or to the configuration flag
+      `--jax2tf_default_native_serialization` otherwise.
+      Native serialization cannot be used with `enable_xla=False`.
+    experimental_native_lowering: DEPRECATED, use `native_serialization.
+    native_serialization_platforms: In conjunction with
+      `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
       strings, including a subset of: 'cpu', 'cuda', 'rocm', 'tpu'.
       The default (empty tuple), specifies the JAX default
       backend on the machine where the lowering is done.
-    experimental_native_lowering_strict_checks: In conjunction with
-      `experimental_native_lowering`, enable the following
+    native_serialization_strict_checks: In conjunction with
+      `native_serialization`, enable the following
       checks: (A) the lowered computation is executed on a platform for which it
       was lowered; (B) the serialized computation contains only custom calls
       with targets that are guaranteed to be stable, (more to come).
@@ -304,28 +310,46 @@ def convert(fun_jax: Callable,
     tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
     only TensorFlow ops and thus can be called from a TensorFlow program.
   """
-  if experimental_native_lowering == "default":
-    experimental_native_lowering = config.jax2tf_default_experimental_native_lowering
+  if native_serialization == "default":
+    if not enable_xla:
+      native_serialization = False
+    else:
+      # TODO(necula): remove the experimental_native_lowering parameter
+      if experimental_native_lowering != "default":
+        warnings.warn(
+            ("experimental_native_lowering is deprecated. Use "
+             "native_serialization instead"),
+            DeprecationWarning)
+        native_serialization = experimental_native_lowering
+      else:
+        if config.jax2tf_default_experimental_native_lowering:
+          warnings.warn(
+              ("jax2tf_default_experimental_native_lowering is "
+              "deprecated. Use jax2tf_default_native_serialization instead"),
+              DeprecationWarning)
+          native_serialization = config.jax2tf_default_experimental_native_lowering
+        else:
+          native_serialization = config.jax2tf_default_native_serialization
 
-  if experimental_native_lowering and not enable_xla:
+  if native_serialization and not enable_xla:
     raise ValueError(
-        "experimental_native_lowering is not supported with enable_xla=False")
+        "native_serialization is not supported with enable_xla=False")
 
-  if experimental_native_lowering_platforms:
-    if not experimental_native_lowering:
+  if native_serialization_platforms:
+    if not native_serialization:
       raise ValueError(
-          "experimental_native_lowering_platforms is not supported without "
-          "experimental_native_lowering")
-    if (not isinstance(experimental_native_lowering_platforms, (list, tuple)) or
-        not all(p in ["tpu", "cpu", "gpu"] for p in experimental_native_lowering_platforms)):
+          "native_serialization_platforms is not supported without "
+          "native_serialization")
+    if (not isinstance(native_serialization_platforms, (list, tuple)) or
+        not all(p in ["tpu", "cpu", "gpu"] for p in native_serialization_platforms)):
       raise ValueError(
-          "experimental_native_lowering_platforms must be a sequence "
+          "native_serialization_platforms must be a sequence "
           "containing a subset of {'cpu', 'gpu', 'tpu'}. "
-          f"Got: {experimental_native_lowering_platforms}")
-    experimental_native_lowering_platforms = tuple(experimental_native_lowering_platforms)
-    if len(experimental_native_lowering_platforms) > 1:
+          f"Got: {native_serialization_platforms}")
+    native_serialization_platforms = tuple(native_serialization_platforms)
+    if len(native_serialization_platforms) > 1:
       raise NotImplementedError(
-          "experimental_native_lowering_platforms is not implemented for multiple platforms")
+          "native_serialization_platforms is not implemented for multiple platforms")
 
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
@@ -376,23 +400,23 @@ def convert(fun_jax: Callable,
               polymorphic_shapes_flat))
       args_flat_tf, args_avals_flat = util.unzip2(args_and_avals)
 
-      if experimental_native_lowering:
+      if native_serialization:
         shape_env = ()
-        if experimental_native_lowering_platforms:
-          lowering_platform = experimental_native_lowering_platforms[0]
+        if native_serialization_platforms:
+          lowering_platform = native_serialization_platforms[0]
         else:
           lowering_platform = None
         exported: Exported = serialize_native(
             fun_flat_jax, args_avals_flat,
             lowering_platform=lowering_platform,
-            strict_checks=experimental_native_lowering_strict_checks)
+            strict_checks=native_serialization_strict_checks)
 
         def run_fun_flat_as_tf(
             args_flat_tf: Sequence[TfVal]
         ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
           outs_tf, out_avals = run_exported_as_tf(
               args_avals_flat, args_flat_tf, exported,
-              experimental_native_lowering_strict_checks)
+              native_serialization_strict_checks)
           return outs_tf, out_avals
       else:
         dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
@@ -783,7 +807,7 @@ def serialize_native(fun_jax: Callable,
 def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
                        args_tf: Sequence[TfVal],
                        exported: Exported,
-                       experimental_native_lowering_strict_checks: bool,
+                       native_serialization_strict_checks: bool,
                        ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   """Runs the `exported` as an XlaCallModule TF op."""
   out_shapes = tuple(
@@ -807,7 +831,7 @@ def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
       dim_args_spec=exported.dim_args_spec)
 
   if exported.xla_call_module_version >= 3:
-    if experimental_native_lowering_strict_checks:
+    if native_serialization_strict_checks:
       call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking

@@ -114,8 +114,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
     enable_xla = harness.params.get("enable_xla", True)
-    if config.jax2tf_default_experimental_native_lowering and not enable_xla:
-      raise unittest.SkipTest("experimental_native_lowering not supported with enable_xla=False")
+    if config.jax2tf_default_native_serialization and not enable_xla:
+      raise unittest.SkipTest("native_serialization not supported with enable_xla=False")
 
     if ("eigh" == harness.group_name and
         np.complex64 == harness.dtype and
@@ -127,7 +127,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         "top_k_sort_inf_nan_inshape=float32[5]_k=5" in harness.fullname):
       raise unittest.SkipTest("Unexplained failure, but in old no_jax_array")
 
-    if (config.jax2tf_default_experimental_native_lowering and
+    if (config.jax2tf_default_native_serialization and
         device == "gpu" and
         "lu" in harness.fullname):
       raise unittest.SkipTest("b/269388847: lu failures on GPU")
@@ -135,7 +135,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     def skipCustomCallTest(target: str):
       raise unittest.SkipTest(
           f"TODO(b/272239584): custom call target not guaranteed stable: {target}")
-    if config.jax2tf_default_experimental_native_lowering:
+    if config.jax2tf_default_native_serialization:
       if device == "cpu":
         if "cholesky_shape" in harness.fullname:
           skipCustomCallTest("lapack_spotrf, lapack_dpotrf, lapack_zpotrf, lapack_cpotrf")
@@ -192,10 +192,10 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                enable_xla=enable_xla)
     except Exception as e:
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
-      if (config.jax2tf_default_experimental_native_lowering and
+      if (config.jax2tf_default_native_serialization and
           "does not work with custom calls" in str(e)):
         logging.warning("Supressing error %s", e)
-        raise unittest.SkipTest("b/264596006: custom calls in native lowering fail in TF")
+        raise unittest.SkipTest("b/264596006: custom calls in native serialization fail in TF")
       else:
         raise e
 
@@ -346,8 +346,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     y = np.int32(3)
     self.ConvertAndCompare(jnp.floor_divide, x, y)
     expected = jnp.floor_divide(x, y)
-    if not config.jax2tf_default_experimental_native_lowering:
-      # With native lowering TF1 seems to want to run the converted code
+    if not config.jax2tf_default_native_serialization:
+      # With native serialization TF1 seems to want to run the converted code
       # on the CPU even when the default backend is the TPU.
       # Try it with TF 1 as well (#5831)
       with tf.compat.v1.Session() as sess:

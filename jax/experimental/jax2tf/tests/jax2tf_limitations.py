@@ -47,7 +47,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       enabled: bool = True,
       # jax2tf specific
       modes=("eager", "graph", "compiled"),
-      native_lowering=FOR_NON_NATIVE,
+      native_serialization=FOR_NON_NATIVE,
       skip_tf_run=False,
       expect_tf_error: bool = True,
       skip_comparison=False,
@@ -57,7 +57,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
 
     Args :
       modes: one of "eager", "graph", "compiled"
-      for_native_lowering: A bitmask with some of {FOR_NATIVE, FOR_NON_NATIVE}
+      for_native_serialization: A bitmask with some of {FOR_NATIVE, FOR_NON_NATIVE}
         to specify how the limitation applies to native and non-native lowering.
       skip_tf_run: if set will skip the TF execution. Use this sparingly,
         prefer `expect_tf_error`. Use only when the test cannot recover from
@@ -83,7 +83,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       modes = (modes,)
     assert all(m in ["eager", "graph", "compiled"] for m in modes), "Invalid modes: {modes}"
     self.modes = modes
-    self.native_lowering = native_lowering
+    self.native_serialization = native_serialization
     self.expect_tf_error = expect_tf_error
     self.skip_tf_run = skip_tf_run
     self.custom_assert = custom_assert
@@ -111,12 +111,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
       device: Optional[str] = None,
       mode: Optional[str] = None) -> bool:
     """Checks if this limitation is enabled for dtype and device and mode."""
-    native_lowering_mask = (
+    native_serialization_mask = (
         Jax2TfLimitation.FOR_NATIVE
-        if config.jax2tf_default_experimental_native_lowering
+        if config.jax2tf_default_native_serialization
         else Jax2TfLimitation.FOR_NON_NATIVE)
     return ((mode is None or mode in self.modes) and
-            (self.native_lowering & native_lowering_mask) and
+            (self.native_serialization & native_serialization_mask) and
             super().filter(device=device, dtype=dtype))
 
   @classmethod
@@ -327,7 +327,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
         custom_numeric(dtypes=[np.float32], devices="cpu",
                        modes=("eager", "graph", "compiled"),
                        tol=1e-4,
-                       native_lowering=Jax2TfLimitation.FOR_NATIVE | Jax2TfLimitation.FOR_NON_NATIVE),
+                       native_serialization=Jax2TfLimitation.FOR_NATIVE | Jax2TfLimitation.FOR_NON_NATIVE),
         custom_numeric(description="higher numeric inaccuracy when `enable_xla=False`",
                        modes=("eager", "graph", "compiled"),
                        enabled=(not harness.params["enable_xla"]),
@@ -887,7 +887,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                 "JAX always returns NaN, while TF returns the value NaN is compared with."
             ),
             modes=("eager", "graph", "compiled"),
-            native_lowering=Jax2TfLimitation.FOR_NON_NATIVE),
+            native_serialization=Jax2TfLimitation.FOR_NON_NATIVE),
         # TODO(b/269996580)
         custom_numeric(
             custom_assert=custom_assert,
@@ -898,7 +898,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                 "different behavior of NaN propagation through min/max."
             ),
             modes=("eager", "graph", "compiled"),
-            native_lowering=Jax2TfLimitation.FOR_NATIVE)
+            native_serialization=Jax2TfLimitation.FOR_NATIVE)
     ]
 
   @classmethod
@@ -917,7 +917,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                 "JAX always returns NaN, while TF returns the value NaN is compared with."
             ),
             modes=("eager", "graph", "compiled"),
-            native_lowering=Jax2TfLimitation.FOR_NON_NATIVE),
+            native_serialization=Jax2TfLimitation.FOR_NON_NATIVE),
         # TODO(b/269996580)
         custom_numeric(
             custom_assert=custom_assert,
@@ -928,7 +928,7 @@ class Jax2TfLimitation(primitive_harness.Limitation):
                 "different behavior of NaN propagation through min/max."
             ),
             modes=("eager", "graph", "compiled"),
-            native_lowering=Jax2TfLimitation.FOR_NATIVE)
+            native_serialization=Jax2TfLimitation.FOR_NATIVE)
     ]
 
   @classmethod
@@ -1357,7 +1357,7 @@ def custom_numeric(
     devices=("cpu", "gpu", "tpu"),
     custom_assert=None,
     enabled=True,
-    native_lowering=Jax2TfLimitation.FOR_NON_NATIVE,
+    native_serialization=Jax2TfLimitation.FOR_NON_NATIVE,
     tol=None) -> Jax2TfLimitation:
 
   return Jax2TfLimitation(
@@ -1368,7 +1368,7 @@ def custom_numeric(
       modes=modes,
       custom_assert=custom_assert,
       enabled=enabled,
-      native_lowering=native_lowering,
+      native_serialization=native_serialization,
       tol=tol)
 
 def custom_random_keys_output():
