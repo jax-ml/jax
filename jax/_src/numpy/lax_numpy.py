@@ -2273,8 +2273,19 @@ def identity(n: DimSize, dtype: Optional[DTypeLike] = None) -> Array:
 def arange(start: DimSize, stop: Optional[DimSize] = None,
            step: Optional[DimSize] = None, dtype: Optional[DTypeLike] = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "arange")
-  require = partial(core.concrete_or_error, None)
-  msg = "It arose in jax.numpy.arange argument `{}`.".format
+  if not jax.config.jax_dynamic_shapes:
+    util.check_arraylike("arange", start)
+    if stop is None and step is None:
+      start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'stop'")
+    else:
+      start = core.concrete_or_error(None, start, "It arose in the jnp.arange argument 'start'")
+  util.check_arraylike_or_none("arange", None, stop, step)
+  stop = core.concrete_or_error(None, stop, "It arose in the jnp.arange argument 'stop'")
+  step = core.concrete_or_error(None, step, "It arose in the jnp.arange argument 'step'")
+  start_name = "stop" if stop is None and step is None else "start"
+  for name, val in [(start_name, start), ("stop", stop), ("step", step)]:
+    if val is not None and np.ndim(val) != 0:
+      raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
   if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
     if stop is not None or step is not None:
       raise ValueError(
@@ -2287,17 +2298,12 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   dtype = _jnp_dtype(dtype)
   if stop is None and step is None:
     start_dtype = _dtype(start)
-    if not jax.config.jax_dynamic_shapes:
-      start = require(start, msg("stop"))
     if (not dtypes.issubdtype(start_dtype, np.integer) and
         not core.is_opaque_dtype(start_dtype)):
       ceil_ = ufuncs.ceil if isinstance(start, core.Tracer) else np.ceil
       start = ceil_(start).astype(int)  # type: ignore
     return lax.iota(dtype, start)
   else:
-    start = require(start, msg("start"))
-    stop = None if stop is None else require(stop, msg("stop"))
-    step = None if step is None else require(step, msg("step"))
     if step is None and start == 0 and stop is not None:
       stop = np.ceil(stop).astype(int)
       return lax.iota(dtype, stop)

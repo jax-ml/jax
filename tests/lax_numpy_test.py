@@ -4953,7 +4953,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(jnp.asarray(v).tolist(), v.tolist())
 
   def testArangeConcretizationError(self):
-    msg = r"It arose in jax.numpy.arange argument `{}`".format
+    msg = r"It arose in the jnp.arange argument '{}'".format
     with self.assertRaisesRegex(core.ConcretizationTypeError, msg('stop')):
       jax.jit(jnp.arange)(3)
 
