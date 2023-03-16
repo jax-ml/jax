@@ -101,8 +101,10 @@ map = util.safe_map
 zip = util.safe_zip
 
 # These are the JAX custom call target names that are guaranteed to be stable.
+# TODO: maybe we should differentiate the allow-list by platform?
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
-    "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape"
+    "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
+    "ducc_fft", "cu_threefry2x32",
 ]
 
 def _sanitize_scope_name(name):

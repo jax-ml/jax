@@ -146,8 +146,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           skipCustomCallTest("lapack_dgeqrf, lapack_cgeqrf, lapack_zgeqrf")
         if "triangular_solve_" in harness.fullname:
           skipCustomCallTest("blas_ctrsm, blas_dtrsm, blas_ztrsm, blas_strsm")
-        if "fft_" in harness.fullname:
-          skipCustomCallTest("ducc_fft")
         if "custom_linear_solve" in harness.fullname:
           skipCustomCallTest("lapack_sgetrf, lapack_dgetrf")
 
@@ -171,12 +169,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
         if "svd_shape" in harness.fullname:
           skipCustomCallTest("cusolver_gesvdj")
-        if ("random_split_" in harness.fullname or
-            "random_gamma_" in harness.fullname or
-            "random_uniform_" in harness.fullname or
-            "random_categorical_" in harness.fullname or
-            "random_randint" in harness.fullname):
-          skipCustomCallTest("cu_threefry2x32")
         if "tridiagonal_solve_shape" in harness.fullname:
           skipCustomCallTest("cusparse_gtsv2_f32, cusparse_gtsv2_f64")
 
