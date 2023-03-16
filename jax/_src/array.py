@@ -133,6 +133,20 @@ def _is_reduced_on_dim(idx):
 
 
 class ArrayImpl(basearray.Array):
+  """JAX Array Implementation
+
+  Users should never reference ``ArrayImpl`` directly.
+
+  - For instance checks and type annotation, you should prefer the base class,
+    :class:`jax.Array`.
+  - For creation of array objects, you should use functions in the :mod:`jax.numpy`
+    module, including :func:`jax.numpy.array`, :func:`jax.numpy.zeros`,
+    :func:`jax.numpy.ones`, :func:`jax.numpy.full`, :func:`jax.numpy.arange`,
+    and others.
+
+  This class is included in the documentation to generate documentation for its
+  methods and attributes.
+  """
   # TODO(yashkatariya): Add __slots__ here.
 
   aval: core.ShapedArray
@@ -438,10 +452,10 @@ class ArrayImpl(basearray.Array):
 
   @property
   def global_shards(self) -> Sequence[Shard]:
-    """Returns list of all `Shard`s of the Array across all devices.
+    """Returns list of all ``Shard``\\s of the Array across all devices.
 
     The result includes shards that are not addressable by the current process.
-    If a `Shard` is not addressable, then its `data` will be `None`.
+    If a ``Shard`` is not addressable, then its ``data`` will be ``None``.
     """
     self._check_if_deleted()
     if self.is_fully_addressable:  # pylint: disable=using-constant-test
