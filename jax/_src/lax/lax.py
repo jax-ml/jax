@@ -1395,7 +1395,7 @@ def full_like(x: ArrayLike, fill_value: ArrayLike, dtype: Optional[DTypeLike] = 
   # probably in the form of a primitive like `val = match_sharding_p.bind(x, val)`
   # (so it works in staged-out code as well as 'eager' code). Related to
   # equi-sharding.
-  if config.jax_array and shape is None and isinstance(x, array.ArrayImpl):
+  if shape is None and isinstance(x, array.ArrayImpl):
     sharding = x.sharding  # type: ignore[union-attr]
     if (not dispatch.is_single_device_sharding(sharding) and
         not isinstance(sharding, PmapSharding)):
@@ -4438,8 +4438,7 @@ def _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs):
 # method on jax.Array so that we can bypass the XLA compilation here.
 def _copy_impl(prim, *args, **kwargs):
   a, = args
-  if (config.jax_array and isinstance(a, jax.Array) and
-      isinstance(a.sharding, PmapSharding)):
+  if isinstance(a, jax.Array) and isinstance(a.sharding, PmapSharding):
     sharded_dim = _which_dim_sharded(a.sharding)
     return _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs)
   return xla.apply_primitive(prim, *args, **kwargs)

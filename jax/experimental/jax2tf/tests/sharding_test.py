@@ -378,8 +378,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   )
   def test_pjit_error_inner_sharding(self, kind="pjit", in_shardings="P",
                                      out_shardings="none"):
-    if not config.jax_array:
-      raise unittest.SkipTest("Test not intended to work without jax.Array")
     # Check that we raise an error if there is no top-level pjit but we convert
     # a function with non-replicated shardings (with native lowering).
     shardings_map = dict(none=None, P=P("x"))

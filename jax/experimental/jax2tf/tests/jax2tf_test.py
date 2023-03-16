@@ -1413,8 +1413,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # Tests cross-lowering for
     #  with mesh:
     #   transform2(transform1(func))
-    if not config.jax_array:
-      raise unittest.SkipTest("cross_platform test work only with jax.Array")
     if not config.jax_jit_pjit_api_merge:
       raise unittest.SkipTest("cross_platform test work only with jit==pjit")
     if transform2 == "none" and (

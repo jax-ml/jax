@@ -775,8 +775,6 @@ sparse_rules_bcoo[xla.xla_call_p] = _xla_call_sparse
 def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
                  resource_env, donated_invars, name, in_positional_semantics,
                  out_positional_semantics, keep_unused, inline):
-  if not config.jax_array:
-    raise ValueError('sparse pjit is only supported with jax.Array.')
   if any(donated_invars):
     raise NotImplementedError("sparse xla_call with donated_invars")
 

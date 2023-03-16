@@ -497,11 +497,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     arr = jnp.array(data)
     other = othertype(data)
 
-    if config.jax_array:
-      val_str = 'ArrayImpl'
-    else:
-      val_str = 'DeviceArray'
-    msg = f"unsupported operand type.* '{val_str}' and '{othertype.__name__}'"
+    msg = f"unsupported operand type.* 'ArrayImpl' and '{othertype.__name__}'"
     with self.assertRaisesRegex(TypeError, msg):
       getattr(arr, name)(other)
 
@@ -516,11 +512,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
     arr = jnp.array(data)
     other = othertype(data)
 
-    if config.jax_array:
-      val_str = 'ArrayImpl'
-    else:
-      val_str = 'DeviceArray'
-    msg = f"unsupported operand type.* '{othertype.__name__}' and '{val_str}'"
+    msg = f"unsupported operand type.* '{othertype.__name__}' and 'ArrayImpl'"
     with self.assertRaisesRegex(TypeError, msg):
       getattr(arr, name)(other)
 

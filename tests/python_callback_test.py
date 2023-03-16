@@ -1018,12 +1018,8 @@ class IOPythonCallbackTest(jtu.JaxTestCase):
       return x
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    if config.jax_array:
-      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    else:
-      spec = jax.sharding.PartitionSpec('dev')
-      out_spec = jax.sharding.PartitionSpec()
+    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
     with mesh:
       f(jnp.arange(mesh.size))

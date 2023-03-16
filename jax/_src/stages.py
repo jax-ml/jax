@@ -587,8 +587,7 @@ class Lowered(Stage):
     """Compile, returning a corresponding ``Compiled`` instance."""
     from jax._src.interpreters import pxla
 
-    if (jax.config.jax_array and
-        isinstance(self._lowering, pxla.MeshComputation)):
+    if isinstance(self._lowering, pxla.MeshComputation):
       kw = dict(
           _allow_propagation_to_outputs=[
               pxla._is_unspecified(o)

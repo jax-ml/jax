@@ -338,10 +338,7 @@ class KeyTyRules:
 
     # TODO(yashkatariya,frostig): remove this conditional and inline it when
     # the transient config ever settles
-    if config.jax_array:
-      output_type = pxla.OutputType.Array
-    else:
-      output_type = pxla.OutputType.ShardedDeviceArray
+    output_type = pxla.OutputType.Array
     phys_handler_maker = pxla.local_result_handlers[
         (core.ShapedArray, output_type)]
 
@@ -372,10 +369,7 @@ class KeyTyRules:
 
     # TODO(yashkatariya,frostig): remove this conditional and inline it when
     # the transient config ever settles
-    if config.jax_array:
-      output_type = pxla.OutputType.Array
-    else:
-      output_type = pxla.OutputType.GlobalDeviceArray
+    output_type = pxla.OutputType.Array
 
     phys_handler_maker = pxla.global_result_handlers[
         (core.ShapedArray, output_type)]

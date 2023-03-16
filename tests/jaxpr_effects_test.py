@@ -288,10 +288,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect=bar_effect)
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['x'])
-    if config.jax_array:
-      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
-    else:
-      spec = jax.sharding.PartitionSpec('x')
+    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x'))
     f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
     with mesh:
       jaxpr = jax.make_jaxpr(f)(np.arange(jax.local_device_count()))
@@ -537,8 +534,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
   def test_cant_jit_and_pmap_function_with_unordered_effects(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices.")
-    if not jax.config.jax_array:
-      self.skipTest("Only works with jax.Array")
     @jax.jit
     @jax.pmap
     def f(x):

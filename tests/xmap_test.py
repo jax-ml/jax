@@ -41,14 +41,13 @@ from jax.experimental.pjit import pjit, with_sharding_constraint
 from jax.sharding import PartitionSpec as P
 from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.errors import JAXTypeError
-from jax._src import config as jax_config
 from jax._src.nn import initializers as nn_initializers
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.util import unzip2
 from jax._src.lax import parallel as lax_parallel
 from jax._src.lax.parallel import pgather
-from jax.interpreters import batching, pxla
+from jax.interpreters import batching
 from jax.ad_checkpoint import checkpoint
 
 from jax.config import config
@@ -347,27 +346,13 @@ class XMapTest(XMapTestCase):
     vshape = (4, 5)
     v = jnp.arange(np.prod(vshape)).reshape(vshape)
     zxy = fxy(v)
-    if config.jax_array:
-      zxy_op_sharding = zxy.sharding._to_xla_op_sharding(zxy.ndim)
-      self.assertListEqual(zxy_op_sharding.tile_assignment_dimensions, [1, 4])
-      self.assertListEqual(zxy_op_sharding.tile_assignment_devices, [0, 1, 2, 3])
-    else:
-      zxy_sharding_spec = zxy.sharding_spec
-      self.assertEqual(
-          zxy_sharding_spec,
-          pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
-                            (pxla.ShardedAxis(0), pxla.ShardedAxis(1))))
+    zxy_op_sharding = zxy.sharding._to_xla_op_sharding(zxy.ndim)
+    self.assertListEqual(zxy_op_sharding.tile_assignment_dimensions, [1, 4])
+    self.assertListEqual(zxy_op_sharding.tile_assignment_devices, [0, 1, 2, 3])
     zyx = fyx(v)
-    if config.jax_array:
-      zyx_op_sharding = zyx.sharding._to_xla_op_sharding(zyx.ndim)
-      self.assertListEqual(zyx_op_sharding.tile_assignment_dimensions, [1, 4])
-      self.assertListEqual(zyx_op_sharding.tile_assignment_devices, [0, 2, 1, 3])
-    else:
-      zyx_sharding_spec = zyx.sharding_spec
-      self.assertEqual(
-          zyx_sharding_spec,
-          pxla.ShardingSpec((pxla.NoSharding(), pxla.Chunked((2, 2))),
-                            (pxla.ShardedAxis(1), pxla.ShardedAxis(0))))
+    zyx_op_sharding = zyx.sharding._to_xla_op_sharding(zyx.ndim)
+    self.assertListEqual(zyx_op_sharding.tile_assignment_dimensions, [1, 4])
+    self.assertListEqual(zyx_op_sharding.tile_assignment_devices, [0, 2, 1, 3])
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testSkipFirstMeshDim(self):
@@ -397,11 +382,10 @@ class XMapTest(XMapTestCase):
            axis_resources={'a': 'x'})(x)
 
   def testNoTracerLeak(self):
-    if config.jax_array:
-      self.skipTest('Does not work with Array because of ShardingContext '
-                    'being used in xmap because of jit. Removing that '
-                    'restriction makes the test pass but that should be done '
-                    'in a separate CL.')
+    self.skipTest('Does not work with Array because of ShardingContext '
+                  'being used in xmap because of jit. Removing that '
+                  'restriction makes the test pass but that should be done '
+                  'in a separate CL.')
     @jax.jit
     def xmap_linearize(xs):
       eye = jnp.eye(xs.shape[0], dtype=jnp.float32)
@@ -442,17 +426,9 @@ class XMapTest(XMapTestCase):
              np.arange(xshape[-1], dtype=float)[None, None]).transpose(
                  (1, 2, 0)), (x * 2).sum((0, 1))))
 
-    if config.jax_array:
-      y_op_sharding = y[0].sharding._to_xla_op_sharding(y[0].ndim)
-      m_size = math.prod([2] + [2] * (len(mesh) - 2))
-      self.assertListEqual(y_op_sharding.tile_assignment_dimensions, [2, 1, 1, m_size])
-    else:
-      sharding_spec = y[0].sharding_spec
-      self.assertEqual(sharding_spec.sharding,
-                      (pxla.Chunked([2]), pxla.NoSharding(), pxla.NoSharding()))
-      self.assertEqual(sharding_spec.mesh_mapping,
-                      (pxla.Replicated(2), pxla.ShardedAxis(0)) +
-                      (pxla.Replicated(2),) * (len(mesh) - 2))
+    y_op_sharding = y[0].sharding._to_xla_op_sharding(y[0].ndim)
+    m_size = math.prod([2] + [2] * (len(mesh) - 2))
+    self.assertListEqual(y_op_sharding.tile_assignment_dimensions, [2, 1, 1, m_size])
     if config.experimental_xmap_spmd_lowering:
       hlo = f.lower(x).compiler_ir(dialect="hlo").as_hlo_text()
       # Make sure that there are non-partial sharding specs in the HLO
@@ -931,8 +907,6 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
   def testAllGather(self, mesh):
     # try hard_xmap variant, mapping across leading axes
     x = jnp.arange(8).reshape(2, 4)
-    if not config.jax_array:
-      self.skipTest('Do not test on the cpu+no array test')
     f = xmap(lambda x: lax.all_gather(x, 'i', axis=0, tiled=True),
              in_axes=['i', None], out_axes=[None],
              axis_resources={'i': 'x'})
@@ -948,8 +922,6 @@ class XMapTestManualSPMD(ManualSPMDTestMixin, XMapTestCase):
   def testReduceScatter(self, mesh):
     # try hard_xmap variant, mapping across leading axes
     x = jnp.arange(8).reshape(2, 4)
-    if not config.jax_array:
-      self.skipTest('Do not test on the cpu+no array test')
     f = xmap(lambda x: lax.psum_scatter(x, 'i', scatter_dimension=0, tiled=True),
              in_axes=[None, None], out_axes=['i', None, None], axis_sizes={'i': 2},
              axis_resources={'i': 'x'})
@@ -1117,21 +1089,20 @@ class XMapArrayTest(XMapTestCase):
     input_array, input_data = create_array(global_input_shape, global_mesh,
                                            mesh_axes)
 
-    with jax_config.jax_array(True):
-      with global_mesh:
-        f = maps.xmap(
-              lambda x: x,
-              in_axes=({0: "a", 1: "b"}),
-              out_axes=({0: "a", 1: "b"}),
-              axis_resources={"a": "x", "b": "y"})
+    with global_mesh:
+      f = maps.xmap(
+            lambda x: x,
+            in_axes=({0: "a", 1: "b"}),
+            out_axes=({0: "a", 1: "b"}),
+            axis_resources={"a": "x", "b": "y"})
 
-        out = f(input_array)
-        self.assertIsInstance(out, array.ArrayImpl)
-        self.assertEqual(out.shape, (8, 2))
-        self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
-        self.assertDictEqual(out.sharding.mesh.shape, {'x': 4, 'y': 2})
-        for s in out.addressable_shards:
-          self.assertArraysEqual(s.data, input_data[s.index])
+      out = f(input_array)
+      self.assertIsInstance(out, array.ArrayImpl)
+      self.assertEqual(out.shape, (8, 2))
+      self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
+      self.assertDictEqual(out.sharding.mesh.shape, {'x': 4, 'y': 2})
+      for s in out.addressable_shards:
+        self.assertArraysEqual(s.data, input_data[s.index])
 
   def test_xmap_array_double_input(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -1139,50 +1110,47 @@ class XMapArrayTest(XMapTestCase):
     a1, input_data = create_array(global_input_shape, global_mesh, P('x'))
     a2, _ = create_array(global_input_shape, global_mesh, P('y'))
 
-    with jax_config.jax_array(True):
-      with global_mesh:
-        f = maps.xmap(
-              lambda x, y: (x @ x.T, y @ y.T),
-              in_axes=({0: "a"}, ["c", ...]),
-              out_axes=({0: "a"}, ["c", ...]),
-              axis_resources={"a": "x", "c": "y"})
+    with global_mesh:
+      f = maps.xmap(
+            lambda x, y: (x @ x.T, y @ y.T),
+            in_axes=({0: "a"}, ["c", ...]),
+            out_axes=({0: "a"}, ["c", ...]),
+            axis_resources={"a": "x", "c": "y"})
 
-        expected_matrix_mul = np.diagonal(input_data @ input_data.T)
-        out1, out2 = f(a1, a2)
+      expected_matrix_mul = np.diagonal(input_data @ input_data.T)
+      out1, out2 = f(a1, a2)
 
-        self.assertIsInstance(out1, array.ArrayImpl)
-        self.assertEqual(out1.shape, (8,))
-        self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
-        self.assertDictEqual(out1.sharding.mesh.shape, {'x': 4, 'y': 2})
-        for s in out1.addressable_shards:
-          self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+      self.assertIsInstance(out1, array.ArrayImpl)
+      self.assertEqual(out1.shape, (8,))
+      self.assertEqual(out1.addressable_shards[0].data.shape, (2,))
+      self.assertDictEqual(out1.sharding.mesh.shape, {'x': 4, 'y': 2})
+      for s in out1.addressable_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
-        self.assertIsInstance(out2, array.ArrayImpl)
-        self.assertEqual(out2.shape, (8,))
-        self.assertEqual(out2.addressable_shards[0].data.shape, (4,))
-        self.assertDictEqual(out2.sharding.mesh.shape, {'x': 4, 'y': 2})
-        for s in out2.addressable_shards:
-          self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
+      self.assertIsInstance(out2, array.ArrayImpl)
+      self.assertEqual(out2.shape, (8,))
+      self.assertEqual(out2.addressable_shards[0].data.shape, (4,))
+      self.assertDictEqual(out2.sharding.mesh.shape, {'x': 4, 'y': 2})
+      for s in out2.addressable_shards:
+        self.assertArraysEqual(s.data, expected_matrix_mul[s.index])
 
   def test_xmap_array_sharding_mismatch(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     mesh_axes = P('x', 'y')
-    input_array, _ = create_array(global_input_shape, global_mesh,
-                                           mesh_axes)
+    input_array, _ = create_array(global_input_shape, global_mesh, mesh_axes)
 
-    with jax_config.jax_array(True):
-      with global_mesh:
-        f = maps.xmap(
-              lambda x: x @ x.T,
-              in_axes=({0: "a"}),
-              out_axes=({0: "a"}),
-              axis_resources={"a": "x"})
-        with self.assertRaisesRegex(
-            ValueError,
-            ('Got an input Array to xmap with different partitioning than '
-             'specified in xmap. The partitioning must match.')):
-          f(input_array)
+    with global_mesh:
+      f = maps.xmap(
+            lambda x: x @ x.T,
+            in_axes=({0: "a"}),
+            out_axes=({0: "a"}),
+            axis_resources={"a": "x"})
+      with self.assertRaisesRegex(
+          ValueError,
+          ('Got an input Array to xmap with different partitioning than '
+            'specified in xmap. The partitioning must match.')):
+        f(input_array)
 
   def test_can_stage_and_interpret_xmap_with_constants(self):
     def f(x):

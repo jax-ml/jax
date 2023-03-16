@@ -2709,12 +2709,8 @@ class LazyConstantTest(jtu.JaxTestCase):
     self.assertEqual(x.dtype, dtype_in)
     y = lax.convert_element_type(x, dtype_out)
     self.assertEqual(y.dtype, dtype_out)
-    if config.jax_array:
-      x_buf = x
-      y_buf = y
-    else:
-      x_buf = x.device_buffer
-      y_buf = y.device_buffer
+    x_buf = x
+    y_buf = y
     if np.dtype(dtype_in) == np.dtype(dtype_out):
       self.assertEqual(x_buf.unsafe_buffer_pointer(),
                        y_buf.unsafe_buffer_pointer())
@@ -2983,17 +2979,12 @@ def device_put_foo_array(x: FooArray, device):
 
 def shard_foo_array_handler(x, devices, indices, sharding):
   device, = devices
-  if config.jax_array:
-    aval = core.raise_to_shaped(core.get_aval(x.data))
-    return pxla.batched_device_put(
-        aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device])
-  bufs = dispatch._device_put_array(x.data, device)
-  return bufs
+  aval = core.raise_to_shaped(core.get_aval(x.data))
+  return pxla.batched_device_put(
+      aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device])
 
 def foo_array_constant_handler(x, c):
-  if config.jax_array:
-    return array._array_mlir_constant_handler(x.data, c)
-  return mlir._device_array_constant_handler(x.data, c)
+  return array._array_mlir_constant_handler(x.data, c)
 
 def make_lowering(*, shape):
   return jnp.zeros((*shape, 2), 'uint32')

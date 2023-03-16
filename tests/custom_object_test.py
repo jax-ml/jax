@@ -17,7 +17,6 @@ import unittest
 
 import numpy as np
 
-import jax
 import jax.numpy as jnp
 from jax import jit, lax, make_jaxpr
 from jax.config import config
@@ -277,7 +276,7 @@ dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
-@unittest.skipIf(jax.config.jax_array, "Test does not work with jax.Array")
+@unittest.skip("Test does not work with jax.Array")
 class CustomObjectTest(jtu.JaxTestCase):
 
   @jtu.sample_product(

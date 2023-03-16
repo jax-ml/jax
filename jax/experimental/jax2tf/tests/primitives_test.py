@@ -122,11 +122,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         device == "tpu"):
       raise unittest.SkipTest("b/264716764: error on tf.cast from c64 to f32")
 
-    if (not config.jax_array and
-        device == "cpu" and
-        "top_k_sort_inf_nan_inshape=float32[5]_k=5" in harness.fullname):
-      raise unittest.SkipTest("Unexplained failure, but in old no_jax_array")
-
     if (config.jax2tf_default_native_serialization and
         device == "gpu" and
         "lu" in harness.fullname):

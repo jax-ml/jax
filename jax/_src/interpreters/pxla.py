@@ -424,12 +424,10 @@ def shard_args(
 shard_arg_handlers: Dict[Any, Callable[[Any, Any, Any, Any], Any]] = {}
 
 def _shard_token(x, devices, indices, sharding):
-  if jax.config.jax_array:
-    zeros = np.zeros((), dtype=np.dtype(np.bool_))
-    aval = api_util.shaped_abstractify(zeros)
-    out = batched_device_put(aval, sharding, [zeros for i in indices], devices)
-    return out
-  return device_put(np.zeros((), dtype=np.dtype(np.bool_)), devices, replicate=True)
+  zeros = np.zeros((), dtype=np.dtype(np.bool_))
+  aval = api_util.shaped_abstractify(zeros)
+  out = batched_device_put(aval, sharding, [zeros for i in indices], devices)
+  return out
 shard_arg_handlers[core.Token] = _shard_token
 
 def _masked_array_error(x, devices, indices, sharding):
@@ -440,11 +438,9 @@ shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 def _shard_array(x, devices, indices, sharding):
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
-  if jax.config.jax_array:
-    aval = api_util.shaped_abstractify(x)
-    out = batched_device_put(aval, sharding, [x[i] for i in indices], devices)
-    return out
-  return device_put([x[i] for i in indices], devices)
+  aval = api_util.shaped_abstractify(x)
+  out = batched_device_put(aval, sharding, [x[i] for i in indices], devices)
+  return out
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
@@ -452,11 +448,9 @@ def shard_device_array(x, devices, indices, sharding):
   start_indices, limit_indices, removed_dims = unzip3(
       as_slice_indices(x, idx) for idx in indices)
   shards = x._multi_slice(start_indices, limit_indices, removed_dims)
-  if jax.config.jax_array:
-    aval = api_util.shaped_abstractify(x)
-    out = batched_device_put(aval, sharding, shards, devices)
-    return out
-  return device_put(shards, devices)
+  aval = api_util.shaped_abstractify(x)
+  out = batched_device_put(aval, sharding, shards, devices)
+  return out
 for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
 
@@ -597,10 +591,7 @@ def local_aval_to_result_handler(
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
-  if config.jax_array:
-    output_type = OutputType.Array
-  else:
-    output_type = OutputType.ShardedDeviceArray
+  output_type = OutputType.Array
   try:
     return local_result_handlers[(type(aval), output_type)](aval, sharding, indices)
   except KeyError as err:
@@ -642,10 +633,7 @@ def global_aval_to_result_handler(
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
-  if config.jax_array:
-    output_type = OutputType.Array
-  elif config.jax_parallel_functions_output_gda:
-    output_type = OutputType.GlobalDeviceArray
+  output_type = OutputType.Array
   try:
     return global_result_handlers[(type(aval), output_type)](
         aval, out_sharding, committed, is_out_sharding_from_xla)
@@ -702,33 +690,19 @@ def make_sharded_device_array(
   if sharding_spec is None:
     sharding_spec = _create_pmap_sharding_spec(aval)
 
-  if jax.config.jax_array:
-    mesh = jax._src.mesh.thread_resources.env.physical_mesh
-    sharding: sharding_impls.XLACompatibleSharding
-    if mesh.empty:
-      sharding = sharding_impls.PmapSharding(
-          np.asarray([d.device() for d in device_buffers]), sharding_spec)
-    else:
-      op_sharding = sharding_spec_sharding_proto(sharding_spec)
-      pspec = pjit.parse_flatten_op_sharding(
-          op_sharding, mesh)[0].get_partition_spec()
-      sharding = sharding_impls.NamedSharding(mesh, pspec)
-
-    return jax.make_array_from_single_device_arrays(
-        aval.shape, sharding, device_buffers)  # type: ignore
+  mesh = jax._src.mesh.thread_resources.env.physical_mesh
+  sharding: sharding_impls.XLACompatibleSharding
+  if mesh.empty:
+    sharding = sharding_impls.PmapSharding(
+        np.asarray([d.device() for d in device_buffers]), sharding_spec)
   else:
-    if indices is None:
-      indices = spec_to_indices(aval.shape, sharding_spec)
+    op_sharding = sharding_spec_sharding_proto(sharding_spec)
+    pspec = pjit.parse_flatten_op_sharding(
+        op_sharding, mesh)[0].get_partition_spec()
+    sharding = sharding_impls.NamedSharding(mesh, pspec)
 
-    if (_USE_CPP_SDA and
-        (not device_buffers or
-        isinstance(device_buffers[0], xb.xla_client.Buffer))):
-      return pmap_lib.ShardedDeviceArray.make(
-          aval, sharding_spec, device_buffers,
-          indices, aval.weak_type)
-
-    return _ShardedDeviceArray(aval, sharding_spec, device_buffers, indices)
-
+  return jax.make_array_from_single_device_arrays(
+      aval.shape, sharding, device_buffers)  # type: ignore
 
 if _USE_CPP_SDA:
   ShardedDeviceArrayBase = pmap_lib.ShardedDeviceArrayBase  # type: ignore
@@ -977,14 +951,9 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         bufs.append(buf)
         break
     else:
-      if jax.config.jax_array:
-        bufs.append(buf)
-      else:
-        bufs.append(buf.copy_to_device(device))
+      bufs.append(buf)
 
-  if jax.config.jax_array:
-    return batched_device_put(x.aval, sharding, bufs, devices)
-  return bufs
+  return batched_device_put(x.aval, sharding, bufs, devices)
 
 
 def _sharded_device_array_mlir_constant_handler(val, canonicalize_types=True):
@@ -2021,22 +1990,12 @@ def global_avals_to_results_handler(
     shardings: Sequence[sharding_impls.XLACompatibleSharding],
     committed: bool,
     are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
-  if config.jax_parallel_functions_output_gda or config.jax_array:
-    handlers = [
-        global_aval_to_result_handler(global_aval, s, committed, x)
-        for global_aval, s, x in safe_zip(global_out_avals, shardings,
-                                          are_out_shardings_from_xla)
-    ]
-    return ResultsHandler(handlers, shardings, global_out_avals)
-  else:
-    # This path is taken when the outputs are SDAs.
-    assert all(isinstance(s, sharding_impls.NamedSharding) for s in shardings)
-    local_out_avals = [
-        mesh_global_to_local(s.mesh, get_array_mapping(s.spec), aval)  # type: ignore
-        for aval, s in safe_zip(global_out_avals, shardings)]
-    local_shardings = [sharding_impls.NamedSharding(s.mesh.local_mesh, s.spec)  # type: ignore
-                       for s in shardings]
-    return local_avals_to_results_handler(local_out_avals, local_shardings)
+  handlers = [
+      global_aval_to_result_handler(global_aval, s, committed, x)
+      for global_aval, s, x in safe_zip(global_out_avals, shardings,
+                                        are_out_shardings_from_xla)
+  ]
+  return ResultsHandler(handlers, shardings, global_out_avals)
 
 
 @profiler.annotate_function
@@ -2082,16 +2041,11 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
   # TODO(skye): figure out how partitioning should work here
   sharding_spec = _pmap_sharding_spec(nrep, axis_size, 1, None, aval, in_axis)
 
-  if jax.config.jax_array:
-    buf = jax.device_put(val, devices[0])
-    sharding = sharding_impls.PmapSharding(
-        np.asarray([d for d in devices]), sharding_spec)
-    return batched_device_put(replicated_aval, sharding, [buf] * len(devices),
-                              devices)
-  else:
-    device_buffers = device_put(val, devices, replicate=True)
-    return make_sharded_device_array(replicated_aval, sharding_spec,
-                                     device_buffers)
+  buf = jax.device_put(val, devices[0])
+  sharding = sharding_impls.PmapSharding(
+      np.asarray([d for d in devices]), sharding_spec)
+  return batched_device_put(replicated_aval, sharding, [buf] * len(devices),
+                            devices)
 
 
 def _pmap_sharding_spec(nrep, axis_size, npart, parts, sharded_aval,
@@ -2794,8 +2748,7 @@ def lower_sharding_computation(
     # allows explicit `jax.jit` to work but not implicitly jitted `jnp`.
     # operations. This restriction will be relaxed in the future when the
     # default value of `spmd_mode` config changes to `allow_jit`.
-    if (config.jax_array and api_name == 'jit' and
-        config.jax_spmd_mode != 'allow_all'):
+    if api_name == 'jit' and config.jax_spmd_mode != 'allow_all':
       raise RuntimeError(
           "Running operations on `Array`s that are not fully addressable by this "
           "process (i.e. `Array`s with data sharded across multiple devices and "
@@ -3532,10 +3485,7 @@ class MeshExecutable(stages.XlaExecutable):
 
     out_shardings = _out_shardings_for_trivial(
         jaxpr, consts, in_shardings, device_assignment)
-    if config.jax_array or config.jax_parallel_functions_output_gda:
-      are_global = [True] * len(global_out_avals)
-    else:
-      are_global = [False] * len(global_out_avals)
+    are_global = [True] * len(global_out_avals)
     _, indices, _ = get_input_metadata(global_out_avals, out_shardings,
                                         are_global)
     local_device_assignment = [d for d in device_assignment
@@ -3666,10 +3616,7 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
   out_shardings = _out_shardings_for_trivial(
       jaxpr, consts, in_shardings, device_assignment)
 
-  if config.jax_array or config.jax_parallel_functions_output_gda:
-    in_is_global = [True] * len(global_in_avals)
-  else:
-    in_is_global = [False] * len(global_in_avals)
+  in_is_global = [True] * len(global_in_avals)
   in_shardings, input_indices, input_avals = get_input_metadata(
       global_in_avals, in_shardings, in_is_global)  # type: ignore
   handle_outs = global_avals_to_results_handler(

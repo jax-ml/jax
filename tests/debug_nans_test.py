@@ -185,9 +185,6 @@ class DebugNaNsTest(jtu.JaxTestCase):
         ans.block_until_ready()
 
   def testDebugNansZeroDiv(self):
-    if not config.jax_array:
-      self.skipTest('This test only works with jax.Array')
-
     inp = jnp.zeros(())
     def f(x, y):
       return x / y

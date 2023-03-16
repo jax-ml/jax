@@ -60,21 +60,13 @@ class MultiDeviceTest(jtu.JaxTestCase):
 
   def assert_committed_to_device(self, data, device):
     """Asserts that the data is committed to the device."""
-    if config.jax_array:
-      self.assertTrue(data._committed)
-      self.assertEqual(data.device(), device)
-    else:
-      self.assertIsNotNone(data._device)
-      self.assertEqual(data.device_buffer.device(), device)
+    self.assertTrue(data._committed)
+    self.assertEqual(data.device(), device)
 
   def assert_uncommitted_to_device(self, data, device):
     """Asserts that the data is on the device but not committed to it."""
-    if config.jax_array:
-      self.assertFalse(data._committed)
-      self.assertEqual(data.device(), device)
-    else:
-      self.assertIsNone(data._device)
-      self.assertEqual(data.device_buffer.device(), device)
+    self.assertFalse(data._committed)
+    self.assertEqual(data.device(), device)
 
   def test_computation_follows_data(self):
     if jax.device_count() < 5:

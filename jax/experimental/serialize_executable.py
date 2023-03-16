@@ -30,8 +30,7 @@ def compile_and_serialize(lowered: jax.stages.Lowered):
 
   from jax.interpreters import pxla
 
-  if (jax.config.jax_array and
-      isinstance(lowered._lowering, pxla.MeshComputation)):
+  if isinstance(lowered._lowering, pxla.MeshComputation):
     kw = dict(_allow_propagation_to_outputs=[
           pxla._is_unspecified(o)
           for o in lowered._lowering.compile_args['out_shardings']])

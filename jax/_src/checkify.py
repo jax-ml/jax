@@ -43,7 +43,6 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
-from jax._src.sharding_impls import GSPMDSharding
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache)
@@ -855,17 +854,12 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
   # Update pjit params to account for extra error values.
   num_error_vals = len(err_vals)
   num_out_error_vals = out_tree.num_leaves - len(out_shardings)
-  if jax.config.jax_array:
-    sharding = pjit._UNSPECIFIED
-  else:
-    sharding = GSPMDSharding.get_replicated(
-        list(resource_env.physical_mesh.devices.flat))
+  sharding = pjit._UNSPECIFIED
 
   new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)
   new_out_shardings = (*[sharding] * num_out_error_vals, *out_shardings)
 
-  pos_sem = (maps._PositionalSemantics.GLOBAL if jax.config.jax_array
-             else maps._positional_semantics.val)
+  pos_sem = maps._PositionalSemantics.GLOBAL
   if not isinstance(in_positional_semantics, Iterable):
     in_positional_semantics = (in_positional_semantics,)
   if not isinstance(out_positional_semantics, Iterable):

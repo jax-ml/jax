@@ -486,13 +486,9 @@ class CheckifyTransformTests(jtu.JaxTestCase):
       return x / y
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ["dev"])
-    if config.jax_array:
-      ps = NamedSharding(mesh, jax.sharding.PartitionSpec("dev"))
-      inp = np.arange(8)
-      x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
-    else:
-      ps = jax.sharding.PartitionSpec("dev")
-      x = jnp.arange(8)
+    ps = NamedSharding(mesh, jax.sharding.PartitionSpec("dev"))
+    inp = np.arange(8)
+    x = array.make_array_from_callback(inp.shape, ps, lambda idx: inp[idx])
 
     f = pjit.pjit(f, in_shardings=ps, out_shardings=ps)
     f = checkify.checkify(f, errors=checkify.float_checks)

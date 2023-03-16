@@ -589,11 +589,7 @@ class TestPromotionTables(jtu.JaxTestCase):
   def testDeviceArrayRepr(self, dtype, weak_type):
     val = lax_internal._convert_element_type(0, dtype, weak_type=weak_type)
     rep = repr(val)
-    if config.jax_array:
-      msg = 'Array('
-    else:
-      msg = 'DeviceArray('
-    self.assertStartsWith(rep, msg)
+    self.assertStartsWith(rep, 'Array(')
     if weak_type:
       self.assertEndsWith(rep, f"dtype={val.dtype.name}, weak_type=True)")
     else:

@@ -521,10 +521,7 @@ def xmap(fun: Callable,
       closure=(out_axes_entries, out_axes_treedef))
 
     in_positional_semantics = (_PositionalSemantics.GLOBAL,) * len(args_flat)
-    out_positional_semantics = (
-        _PositionalSemantics.GLOBAL
-        if config.jax_array or config.jax_parallel_functions_output_gda
-        else _positional_semantics.val)
+    out_positional_semantics = _PositionalSemantics.GLOBAL
 
     axis_resource_count = _get_axis_resource_count(
         frozen_axis_resources, resource_env, in_positional_semantics)
@@ -701,14 +698,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
         tiling_method=tiling_method, in_is_global=in_is_global,
         lowering_platform=lowering_platform)
   else:
-    if config.jax_array:
-      return dispatch.sharded_lowering(
-          f, None, backend, name, donated_invars, False, True,
-          *[(a, None) for a in in_avals], lowering_platform=lowering_platform)
-    else:
-      return dispatch.lower_xla_callable(
-          f, None, backend, name, donated_invars, False, True,
-          *[(a, None) for a in in_avals], lowering_platform=lowering_platform)
+    return dispatch.sharded_lowering(
+        f, None, backend, name, donated_invars, False, True,
+        *[(a, None) for a in in_avals], lowering_platform=lowering_platform)
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""

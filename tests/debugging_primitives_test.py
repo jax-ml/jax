@@ -788,12 +788,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       debug_print("{}", x, ordered=False)
       return x
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    if config.jax_array:
-      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    else:
-      spec = jax.sharding.PartitionSpec('dev')
-      out_spec = jax.sharding.PartitionSpec()
+    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
     with mesh:
       with jtu.capture_stdout() as output:
@@ -816,9 +812,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
     if xla_bridge.get_backend().runtime_type == 'stream_executor':
       raise self.skipTest(
           'Host callback not supported for runtime type: stream_executor.')
-
-    if not jax.config.jax_array:
-      self.skipTest("This test only works with jax.Array.")
 
     def f(x):
       debug_print("{}", x)
@@ -845,10 +838,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       return lax.while_loop(cond, body, (0, x))[1]
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    if config.jax_array:
-      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-    else:
-      spec = jax.sharding.PartitionSpec('dev')
+    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
     f = pjit.pjit(f, in_shardings=spec, out_shardings=spec)
     with mesh:
       with jtu.capture_stdout() as output:
@@ -874,12 +864,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
       debug_print("Out: {}", out)
       return out
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    if config.jax_array:
-      in_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    else:
-      in_spec = jax.sharding.PartitionSpec('dev')
-      out_spec = jax.sharding.PartitionSpec()
+    in_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     f = pjit.pjit(f, in_shardings=in_spec, out_shardings=out_spec)
     with mesh:
       with jtu.capture_stdout() as output:
@@ -1182,21 +1168,14 @@ class InspectShardingTest(jtu.JaxTestCase):
       return jnp.square(x)
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    if config.jax_array:
-      spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-      out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    else:
-      spec = jax.sharding.PartitionSpec('dev')
-      out_spec = jax.sharding.PartitionSpec()
+    spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
+    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
     f = pjit.pjit(f, in_shardings=spec, out_shardings=out_spec)
     with mesh:
       f(np.arange(8, dtype=jnp.int32))
     self.assertTrue(is_called)
 
   def test_inspect_sharding_is_called_in_jit(self):
-
-    if not config.jax_array:
-      raise unittest.SkipTest("jax_array to work inside of `jit`.")
 
     is_called = False
     def _cb(sd):

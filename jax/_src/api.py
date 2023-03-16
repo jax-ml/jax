@@ -717,11 +717,7 @@ def _cpp_jit(
     fastpath_data = None
 
     # TODO(sharadmv): Enable fast path for effectful jaxprs
-    if jax.config.jax_array:
-      fastpath_data = _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat)
-    else:
-      fastpath_data = _device_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat)
-
+    fastpath_data = _jax_array_use_fast_path(execute, out_pytree_def, args_flat, out_flat)
     return out, fastpath_data
 
   def get_device_info():
@@ -770,21 +766,17 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
   def arg_spec(x):
     # like xla.arg_spec but duck-types on x.shape and x.dtype
     aval = None if jax.config.jax_dynamic_shapes else shaped_abstractify(x)
-    if jax.config.jax_array:
-      if hasattr(x, 'sharding'):
-        if isinstance(x.sharding, PmapSharding):
-          return aval, None
-        # If `x` has a sharding attribute but not `_committed` attribute,
-        # assume that `x` is committed. This might happen when the input is
-        # a `ShapedDtypeStruct` or `types.SimpleNamespace`, etc that might
-        # only have a `sharding` attribute on them.
-        return aval, (pjit.to_gspmd_sharding(x.sharding, x.ndim)
-                      if getattr(x, '_committed', True) else None)
-      else:
+    if hasattr(x, 'sharding'):
+      if isinstance(x.sharding, PmapSharding):
         return aval, None
+      # If `x` has a sharding attribute but not `_committed` attribute,
+      # assume that `x` is committed. This might happen when the input is
+      # a `ShapedDtypeStruct` or `types.SimpleNamespace`, etc that might
+      # only have a `sharding` attribute on them.
+      return aval, (pjit.to_gspmd_sharding(x.sharding, x.ndim)
+                    if getattr(x, '_committed', True) else None)
     else:
-      device = getattr(x, '_device', None)
-      return aval, device
+      return aval, None
 
   @api_boundary
   def lower(*args, _experimental_lowering_platform: Optional[str] = None,
@@ -819,20 +811,12 @@ def _jit_lower(fun, static_argnums, static_argnames, device, backend,
         # the dimension variables from the kept inputs.
         nonlocal keep_unused
         keep_unused = True
-    if jax.config.jax_array:
-      computation = dispatch.sharded_lowering(
-          flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
-          keep_unused, lowering_platform=_experimental_lowering_platform,
-          *arg_specs_and_devices)
-      return stages.Lowered.from_flat_info(
-          computation, in_tree, in_avals, donate_argnums, out_tree())
-    else:
-      computation = dispatch.lower_xla_callable(
-          flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
-          keep_unused, lowering_platform=_experimental_lowering_platform,
-          *arg_specs_and_devices)
-      return stages.Lowered.from_flat_info(
-          computation, in_tree, in_avals, donate_argnums, out_tree())
+    computation = dispatch.sharded_lowering(
+        flat_fun, device, backend, flat_fun.__name__, donated_invars, True,
+        keep_unused, lowering_platform=_experimental_lowering_platform,
+        *arg_specs_and_devices)
+    return stages.Lowered.from_flat_info(
+        computation, in_tree, in_avals, donate_argnums, out_tree())
 
   return lower
 
@@ -2424,12 +2408,8 @@ def _cpp_pmap(
       out_indices = [tuple(s.devices_indices_map(a.shape).values())
                      for s, a in safe_zip(out_handler.out_shardings, out_handler.out_avals)]
 
-      if jax.config.jax_array:
-        out_array_shardings = [out.sharding for out in out_flat]
-        out_committed = [out._committed for out in out_flat]
-      else:
-        out_array_shardings = []
-        out_committed = []
+      out_array_shardings = [out.sharding for out in out_flat]
+      out_committed = [out._committed for out in out_flat]
 
       fastpath_data = _PmapFastpathData(
           version=1,
@@ -3105,17 +3085,12 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
-    if config.jax_array:
-      if xla_extension_version < 139:
-        xs = [xla.canonicalize_dtype(arg) for arg in xs]
-      sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
-      return pxla.batched_device_put(
-          stacked_aval, PmapSharding(np.array(devices), sharding_spec),
-          xs, list(devices))
-    else:
-      buffers = [buf for x, d in zip(xs, devices)
-                 for buf in dispatch.device_put(x, d)]
-      return pxla.make_sharded_device_array(stacked_aval, None, buffers)
+    if xla_extension_version < 139:
+      xs = [xla.canonicalize_dtype(arg) for arg in xs]
+    sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
+    return pxla.batched_device_put(
+        stacked_aval, PmapSharding(np.array(devices), sharding_spec),
+        xs, list(devices))
 
   with config_explicit_device_put_scope():
     return tree_map(_device_put_sharded, *shards)
@@ -3160,18 +3135,13 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
                               core.raise_to_shaped(core.get_aval(x)))
     assert (isinstance(aval, ShapedArray) and
             len(xla.aval_to_xla_shapes(aval)) == 1)
-    if config.jax_array:
-      sharding_spec = pxla._create_pmap_sharding_spec(aval)
-      if xla_extension_version < 139:
-        x = xla.canonicalize_dtype(x)
-      buf = jax.device_put(x, devices[0])
-      return pxla.batched_device_put(
-          aval, PmapSharding(np.array(devices), sharding_spec),
-          [buf] * len(devices), devices)
-    else:
-      buf, = dispatch.device_put(x, devices[0])
-      rest_bufs = [buf.copy_to_device(d) for d in devices[1:]]
-      return pxla.make_sharded_device_array(aval, None, [buf, *rest_bufs])
+    sharding_spec = pxla._create_pmap_sharding_spec(aval)
+    if xla_extension_version < 139:
+      x = xla.canonicalize_dtype(x)
+    buf = jax.device_put(x, devices[0])
+    return pxla.batched_device_put(
+        aval, PmapSharding(np.array(devices), sharding_spec),
+        [buf] * len(devices), devices)
 
   with config_explicit_device_put_scope():
     return tree_map(_device_put_replicated, x)

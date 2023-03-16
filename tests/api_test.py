@@ -60,7 +60,6 @@ from jax.interpreters import partial_eval as pe
 from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax.experimental import pjit
-from jax._src import config as jax_config
 from jax._src import custom_derivatives
 from jax import custom_derivatives as custom_derivatives_public
 from jax._src import device_array
@@ -83,10 +82,7 @@ python_version = (sys.version_info[0], sys.version_info[1])
 numpy_version = jtu.numpy_version()
 
 def _check_instance(self, x):
-  if config.jax_array:
-    self.assertIsInstance(x, array.ArrayImpl)
-  else:
-    self.assertIsInstance(x, device_array.DeviceArray)
+  self.assertIsInstance(x, array.ArrayImpl)
 
 
 class CPPJitTest(jtu.BufferDonationTestCase):
@@ -724,12 +720,9 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     jitted_f = self.jit(lambda a: a + 1)
     jitted_f(1)
-    if config.jax_array:
-      out = jitted_f(2)
-      self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
-      self.assertIsInstance(out, array.ArrayImpl)
-    else:
-      self.assertIsInstance(jitted_f(2), device_array.Buffer)
+    out = jitted_f(2)
+    self.assertIsInstance(out.sharding, jax.sharding.SingleDeviceSharding)
+    self.assertIsInstance(out, array.ArrayImpl)
 
   @parameterized.named_parameters(
       ('jit', jax.jit),
@@ -994,9 +987,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(out, 4.)
 
   def test_jit_lower_compile_sharding_computation(self):
-    if not config.jax_array:
-      self.skipTest('with_sharding_constraint only works with the Array path '
-                    'in jit.')
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
     def f(x): return pjit.with_sharding_constraint(x, s)
     out = self.jit(f).lower(1.).compile()(4.)
@@ -1146,7 +1136,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(g.runtime_executable())
 
   def test_jit_lower_arg_info(self):
-    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+    if not jax.config.jax_jit_pjit_api_merge:
       raise unittest.SkipTest("test only applies after jit-pjit api merge")
 
     def f(x, y, *args, **kwargs):
@@ -1162,7 +1152,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['w']", mhlo_str)
 
   def test_jit_lower_result_info(self):
-    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+    if not jax.config.jax_jit_pjit_api_merge:
       raise unittest.SkipTest("test only applies after jit-pjit api merge")
 
     def f(x, y, z):
@@ -1546,7 +1536,6 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(y2[1][1], np.ndarray)
     assert np.all(y2[1][1] == 3 * x)
 
-  @jax_config.jax_array(True)
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     s = jax.sharding.NamedSharding(mesh, P('x'))
@@ -1569,7 +1558,6 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysAllClose(u, y)
     self.assertEqual(u.device(), jax.devices()[0])
 
-  @jax_config.jax_array(True)
   def test_device_put_sharding_tree(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
@@ -1593,7 +1581,6 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysAllClose(out[1][0], y)
     self.assertArraysAllClose(out[1][1], z)
 
-  @jax_config.jax_array(True)
   def test_device_put_sharding_tree_prefix(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
@@ -1615,7 +1602,6 @@ class APITest(jtu.JaxTestCase):
     self.assertArraysAllClose(out[1][0], y)
     self.assertArraysAllClose(out[1][1], z)
 
-  @jax_config.jax_array(True)
   def test_device_put_sharding_mismatched_tree_same_leaf_count(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
@@ -1637,7 +1623,6 @@ class APITest(jtu.JaxTestCase):
     ):
       jax.device_put((x, (y, z)), device=((s1, s2), s2))
 
-  @jax_config.jax_array(True)
   def test_device_put_sharding_mismatched_tree_different_leaf_count(self):
     if jax.device_count() < 2:
       raise unittest.SkipTest("Test requires >= 2 devices")
@@ -1683,16 +1668,10 @@ class APITest(jtu.JaxTestCase):
     d1, d2 = jax.local_devices()[:2]
     data = self.rng().randn(*shape).astype(np.float32)
     x = api.device_put(data, device=d1)
-    if config.jax_array:
-      self.assertEqual(x.device(), d1)
-    else:
-      self.assertEqual(x.device_buffer.device(), d1)
+    self.assertEqual(x.device(), d1)
 
     y = api.device_put(x, device=d2)
-    if config.jax_array:
-      self.assertEqual(y.device(), d2)
-    else:
-      self.assertEqual(y.device_buffer.device(), d2)
+    self.assertEqual(y.device(), d2)
 
     np.testing.assert_array_equal(data, np.array(y))
     # Make sure these don't crash
@@ -1707,17 +1686,11 @@ class APITest(jtu.JaxTestCase):
     np_arr = np.array([1,2,3])
     scalar = 1
     device_arr = jnp.array([1,2,3])
-    if config.jax_array:
-      assert device_arr.device() is default_device
-    else:
-      assert device_arr.device_buffer.device() is default_device
+    assert device_arr.device() is default_device
 
     for val in [np_arr, device_arr, scalar]:
       x = api.device_put(val, device=cpu_device)
-      if config.jax_array:
-        self.assertEqual(x.device(), cpu_device)
-      else:
-        self.assertEqual(x.device_buffer.device(), cpu_device)
+      self.assertEqual(x.device(), cpu_device)
 
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
@@ -2208,11 +2181,8 @@ class APITest(jtu.JaxTestCase):
   def test_devicearray_delete(self):
     x = device_put(1.)
     x.delete()
-    if config.jax_array:
-      msg = "Array has been deleted."
-    else:
-      msg = "DeviceArray has been deleted."
-    self.assertRaisesRegex(RuntimeError, msg, lambda: repr(x))
+    self.assertRaisesRegex(RuntimeError, "Array has been deleted.",
+                           lambda: repr(x))
 
   def test_devicearray_block_until_ready(self):
     x = device_put(1.)
@@ -3080,11 +3050,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_array_repr(self):
     rep = jnp.ones(()) + 1.
-    if config.jax_array:
-      msg = 'Array'
-    else:
-      msg = 'DeviceArray'
-    self.assertStartsWith(repr(rep), msg)
+    self.assertStartsWith(repr(rep), 'Array')
 
   def test_device_array_hash(self):
     rep = jnp.ones((1,)) + 1.

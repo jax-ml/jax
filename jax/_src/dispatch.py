@@ -107,13 +107,10 @@ def arg_spec(x: Any) -> ArgSpec:
 
   aval = xla.abstractify(x)
   try:
-    if config.jax_array:
-      if isinstance(x.sharding, PmapSharding):
-        return aval, None
-      return aval, (pjit.to_gspmd_sharding(x.sharding, x.ndim)  # type: ignore
-                    if x._committed else None)
-    else:
-      return aval, x._device
+    if isinstance(x.sharding, PmapSharding):
+      return aval, None
+    return aval, (pjit.to_gspmd_sharding(x.sharding, x.ndim)  # type: ignore
+                  if x._committed else None)
   except:
     return aval, None
 
@@ -145,24 +142,17 @@ class RuntimeTokenSet(threading.local):
     s = jax.sharding.SingleDeviceSharding(device)
     if eff not in self.tokens:
       inp = np.zeros(0, np.bool_)
-      if jax.config.jax_array:
-        indices = tuple(
-            s.addressable_devices_indices_map(inp.shape).values())
-        out = pxla.shard_args([device], [indices], [s], [inp])
-      else:
-        out = device_put(inp, device)
+      indices = tuple(
+          s.addressable_devices_indices_map(inp.shape).values())
+      out = pxla.shard_args([device], [indices], [s], [inp])
       self.tokens[eff] = out, device
     elif self.tokens[eff][1] != device:
       (old_token,), _ = self.tokens[eff]
-      if jax.config.jax_array:
-        if not isinstance(old_token, array.ArrayImpl):
-          old_token = array._single_device_array_from_buf(old_token, True)
-        indices = tuple(
-            s.addressable_devices_indices_map((0,)).values())
-        out = pxla.shard_args([device], [indices], [s], [old_token])
-      else:
-        old_token.aval = core.ShapedArray((0,), np.bool_)
-        out = device_put(old_token, device)
+      if not isinstance(old_token, array.ArrayImpl):
+        old_token = array._single_device_array_from_buf(old_token, True)
+      indices = tuple(
+          s.addressable_devices_indices_map((0,)).values())
+      out = pxla.shard_args([device], [indices], [s], [old_token])
       self.tokens[eff] = out, device
     return self.tokens[eff][0]
 
@@ -204,11 +194,7 @@ def wait_for_tokens():
 def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
   _, arg_devices = util.unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
-  if config.jax_array:
-    # This will be resolved in sharded_lowering.
-    device = None
-  else:
-    device = _device_from_arg_devices(arg_devices)
+  device = None  # This will be resolved in sharded_lowering.
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
@@ -251,9 +237,8 @@ def _xla_call_impl_lazy(fun: lu.WrappedFun, *args, device, backend, name,
     arg_specs: Iterable[Any] = unsafe_map(arg_spec, args)
   else:
     # fun.in_type is used for dynamic shapes.
-    if config.jax_array:
-      raise NotImplementedError('Dynamic shapes do not work with Array.')
-    arg_specs = [(None, getattr(x, '_device', None)) for x in args]
+    raise NotImplementedError('Dynamic shapes do not work with Array.')
+    # arg_specs = [(None, getattr(x, '_device', None)) for x in args]
   return xla_callable(fun, device, backend, name, donated_invars, keep_unused,
                       *arg_specs)
 
@@ -366,16 +351,11 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
 
 def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
                            donated_invars, keep_unused, *arg_specs):
-  if config.jax_array:
-    computation = sharded_lowering(fun, device, backend, name, donated_invars,
-                                   False, keep_unused, *arg_specs,
-                                   lowering_platform=None)
-    allow_prop = [True] * len(computation.compile_args['global_out_avals'])
-    return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
-  else:
-    return lower_xla_callable(fun, device, backend, name, donated_invars, False,
-                              keep_unused, *arg_specs,
-                              lowering_platform=None).compile().unsafe_call
+  computation = sharded_lowering(fun, device, backend, name, donated_invars,
+                                  False, keep_unused, *arg_specs,
+                                  lowering_platform=None)
+  allow_prop = [True] * len(computation.compile_args['global_out_avals'])
+  return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
 
 xla_callable = lu.cache(_xla_callable_uncached)
 
@@ -821,11 +801,8 @@ class SimpleResultHandler:
 
 
 def maybe_create_array_from_da(buf, aval, device):
-  if config.jax_array:
-    return array.ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
-                           committed=(device is not None), _skip_checks=True)
-  else:
-    return device_array.make_device_array(aval, device, buf)
+  return array.ArrayImpl(aval, SingleDeviceSharding(buf.device()), [buf],
+                          committed=(device is not None), _skip_checks=True)
 
 
 if MYPY:
@@ -1381,12 +1358,6 @@ def _device_put_impl(
         f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
   if isinstance(device, Sharding):
-    if not jax.config.jax_array:
-      raise RuntimeError(
-          "Please enable `jax_array` to use device_put with a `Sharding`. "
-          "You can use jax.config.update('jax_array', True) or set JAX_ARRAY=1 "
-          "environment variable or set the `jax_array` boolean flag to "
-          "something true-like.")
     s = device
     if not s.is_fully_addressable:  # type: ignore
       raise ValueError(
@@ -1414,12 +1385,9 @@ def _device_put_impl(
   if device_array.type_is_device_array(x):
     return _copy_device_array_to_device(x, device)
 
-  if jax.config.jax_array:
-    sh = SingleDeviceSharding(pxla._get_default_device()
-                              if device is None else device)
-    return _put_x(x, sh, aval, device is not None)
-  else:
-    return aval_to_result_handler(device, aval)(None, *device_put(x, device))
+  sh = SingleDeviceSharding(pxla._get_default_device()
+                            if device is None else device)
+  return _put_x(x, sh, aval, device is not None)
 
 
 device_put_p = core.Primitive('device_put')

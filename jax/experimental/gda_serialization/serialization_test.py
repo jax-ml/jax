@@ -19,7 +19,6 @@ import pathlib
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax._src import config as jax_config
 from jax.config import config
 from jax._src import array
 from jax.sharding import NamedSharding, GSPMDSharding
@@ -33,7 +32,6 @@ config.parse_flags_with_absl()
 
 class CheckpointTest(jtu.JaxTestCase):
 
-  @jax_config.jax_array(True)
   def test_checkpointing_jax_array(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     inp_shape = (8, 2)
@@ -96,7 +94,6 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(np.asarray(s.data), np.array([]))
     self.assertEqual(m3.dtype, np.float32)
 
-  @jax_config.jax_array(True)
   def test_checkpointing_with_bigger_shape_jax_array(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
@@ -138,7 +135,6 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data1.astype('float32'))
 
-  @jax_config.jax_array(True)
   def test_checkpointing_scalar_jax_array(self):
     global_mesh = jtu.create_global_mesh((2,), ('x'))
     global_input_shape = ()
@@ -164,7 +160,6 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m1.addressable_shards:
       self.assertArraysEqual(np.asarray(l.data), data.astype(np.float32))
 
-  @jax_config.jax_array(True)
   def test_deserialize_tensorstore_array_jax_array(self):
     global_mesh = jtu.create_global_mesh((2,), ('x'))
     data = np.arange(1024)

@@ -89,13 +89,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       y = jnp.sin(x)
       debugger.breakpoint(stdin=stdin, stdout=stdout, backend="cli")
       return y
-    if config.jax_array:
-      arr = "Array"
-    else:
-      arr = "DeviceArray"
-    expected = _format_multiline(rf"""
+    expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) {arr}(2., dtype=float32)
+    (jdb) Array(2., dtype=float32)
     (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()

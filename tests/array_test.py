@@ -78,7 +78,6 @@ def create_array(shape, sharding, global_data=None):
       shape, sharding, lambda idx: global_data[idx]), global_data
 
 
-@jtu.with_config(jax_array=True)
 class JaxArrayTest(jtu.JaxTestCase):
 
   def test_array_impl_name(self):
@@ -698,7 +697,6 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(np.arange(8.), x)
 
 
-@jtu.with_config(jax_array=True)
 class ShardingTest(jtu.JaxTestCase):
 
   def test_mesh_pspec_sharding_interface(self):
@@ -942,7 +940,6 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(s9.is_equivalent_to(s10, 2))
 
 
-@jtu.with_config(jax_array=True)
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
 

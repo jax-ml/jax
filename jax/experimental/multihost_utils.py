@@ -258,17 +258,7 @@ def host_local_array_to_global_array(local_inputs: Any,
     local_inputs: A Pytree of host local values.
     global_mesh: A ``jax.sharding.Mesh`` object.
     pspecs: A Pytree of ``jax.sharding.PartitionSpec``s.
-
-  Raises:
-    RuntimeError: If `jax.config.jax_array` not previously enabled.
   """
-  if not jax.config.jax_array:
-    raise RuntimeError(
-        "Please enable `jax_array` to use `host_local_array_to_global_array`. "
-        "You can use jax.config.update('jax_array', True) or set the "
-        "environment variable  JAX_ARRAY=1 , or set the `jax_array` boolean "
-        "flag to something true-like.")
-
   def _convert(arr, pspec):
     # If the Array is not fully addressable i.e. not host local, return it.
     if isinstance(arr, array.ArrayImpl) and not arr.is_fully_addressable:
@@ -338,17 +328,7 @@ def global_array_to_host_local_array(global_inputs: Any,
     global_inputs: A Pytree of global `jax.Array`s.
     global_mesh: A ``jax.sharding.Mesh`` object.
     pspecs: A Pytree of ``jax.sharding.PartitionSpec``s.
-
-  Raises:
-    RuntimeError: If `jax.config.jax_array` not previously enabled.
   """
-  if not jax.config.jax_array:
-    raise RuntimeError(
-        "Please enable `jax_array` to use `global_array_to_host_local_array`. "
-        "You can use jax.config.update('jax_array', True) or set the "
-        "environment variable  JAX_ARRAY=1 , or set the `jax_array` boolean "
-        "flag to something true-like.")
-
   def _convert(arr, pspec):
     # If the Array is already fully addressable i.e. host local, return it.
     if isinstance(arr, array.ArrayImpl) and arr.is_fully_addressable:

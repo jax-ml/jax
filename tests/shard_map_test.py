@@ -76,8 +76,6 @@ def setUpModule():
 
   if len(jax.devices()) < 8:
     raise unittest.SkipTest("tests require 8 devices")
-  if not jax.config.jax_array:
-    raise unittest.SkipTest("tests require jax_array")
 
 # Reset to previous configuration in case other test modules will be run.
 def tearDownModule():

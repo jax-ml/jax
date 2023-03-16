@@ -215,19 +215,6 @@ jax_test(
 )
 
 jax_test(
-    name = "remote_transfer_test",
-    srcs = ["remote_transfer_test.py"],
-    disable_backends = [
-        "gpu",
-        "cpu",
-    ],
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax:experimental",
-    ],
-)
-
-jax_test(
     name = "image_test",
     srcs = ["image_test.py"],
     shard_count = {

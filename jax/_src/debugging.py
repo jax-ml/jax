@@ -39,7 +39,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import GSPMDSharding, NamedSharding
 from jax.interpreters import partial_eval as pe
-from jax.config import config
 
 # pytype: disable=import-error
 try:
@@ -277,8 +276,6 @@ inspect_sharding_p = core.Primitive("inspect_sharding")
 inspect_sharding_p.multiple_results = True
 
 def _inspect_sharding_impl(value, *, callback):
-  if not config.jax_array:
-    raise NotImplementedError("`inspect_sharding` not implemented.")
   callback(value.sharding)
   return []
 inspect_sharding_p.def_impl(_inspect_sharding_impl)
@@ -599,8 +596,6 @@ def inspect_array_sharding(value, *, callback: Callable[[Sharding], None]):
 
 def visualize_array_sharding(arr, **kwargs):
   """Visualizes an array's sharding."""
-  if not config.jax_array:
-    raise NotImplementedError("`visualize_array_sharding` not implemented.")
   def _visualize(sharding):
     return visualize_sharding(arr.shape, sharding, **kwargs)
   inspect_array_sharding(arr, callback=_visualize)

@@ -21,7 +21,6 @@ from typing import Any, Optional, Union
 
 import jax
 from jax._src import core
-from jax._src import config as jax_config
 from jax._src import test_util as jtu
 from jax._src import typing
 from jax import lax
@@ -116,18 +115,18 @@ class TypingTest(jtu.JaxTestCase):
   def testAnnotations(self):
     # This test is mainly meant for static type checking: we want to ensure that
     # Tracer and ArrayImpl are valid as array.Array.
-    with jax_config.jax_array(True):
-      def f(x: Any) -> Optional[typing.Array]:
-        if isinstance(x, core.Tracer):
-          return x
-        elif isinstance(x, ArrayImpl):
-          return x
-        else:
-          return None
+    def f(x: Any) -> Optional[typing.Array]:
+      if isinstance(x, core.Tracer):
+        return x
+      elif isinstance(x, ArrayImpl):
+        return x
+      else:
+        return None
 
-      x = jnp.arange(10)
-      y = f(x)
-      self.assertArraysEqual(x, y)
+    x = jnp.arange(10)
+    y = f(x)
+    self.assertArraysEqual(x, y)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

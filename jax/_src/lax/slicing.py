@@ -1539,13 +1539,10 @@ def _clamp_scatter_indices(operand, indices, updates, *, dnums):
                                    for i in dnums.scatter_dims_to_operand_dims)
   # Stack upper_bounds into a Array[n]
   upper_bound = lax.shape_as_value(upper_bounds)
-  if jax.config.jax_array:
-    # This fix fails lax_test_no_jax_array
-    upper_bound = lax.min(upper_bound,
-                          lax.convert_element_type(np.uint64(np.iinfo(indices.dtype).max),
-                                                   np.int64))
-  else:
-    upper_bound = lax.min(upper_bound, np.iinfo(indices.dtype).max)
+  # This fix fails lax_test_no_jax_array
+  upper_bound = lax.min(upper_bound,
+                        lax.convert_element_type(np.uint64(np.iinfo(indices.dtype).max),
+                                                  np.int64))
 
   upper_bound = lax.broadcast_in_dim(upper_bound, indices.shape,
                                      (len(indices.shape) - 1,))

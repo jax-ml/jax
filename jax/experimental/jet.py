@@ -732,9 +732,6 @@ def _jet_jaxpr(
 
 
 def _pjit_jet_rule(primals_in, series_in, **params):
-  if not jax.config.jax_array:
-    raise NotImplementedError('jet is not implemented for pjit when jax.Array '
-                              'is disabled. Please enable jax.Array')
   primals_and_series, in_tree_def = tree_flatten((primals_in, series_in))
   order = len(series_in[0])
   primals_and_series_avals = tuple(shaped_abstractify(x) for x in primals_and_series)
