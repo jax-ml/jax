@@ -219,12 +219,6 @@ def _global_to_local_aval(global_aval, mesh, pspec):
   return pxla.mesh_global_to_local(mesh, pxla.get_array_mapping(pspec),
                                    global_aval)
 
-def _device_put(x, device):
-  try:
-    return dispatch.device_put_handlers[type(x)](x, device)
-  except KeyError as err:
-    raise TypeError(f"No device_put handler for type: {type(x)}") from err
-
 
 def host_local_array_to_global_array(local_inputs: Any,
                                      global_mesh: jax.sharding.Mesh,

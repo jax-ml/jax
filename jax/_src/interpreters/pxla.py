@@ -1770,7 +1770,7 @@ class PmapExecutable(stages.XlaExecutable):
   def call(self, *args):
     # TODO(frostig): do we need to check sharding and sharded avals?
     arg_avals = map(xla.abstractify, args)
-    dispatch.check_arg_avals_for_call(self.in_avals, arg_avals)
+    check_arg_avals_for_call(self.in_avals, arg_avals)
     return self.unsafe_call(*args)
 
 
@@ -3508,7 +3508,7 @@ class MeshExecutable(stages.XlaExecutable):
     kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
     arg_avals = map(xla.abstractify, kept_args)
     ref_avals = self.in_avals
-    dispatch.check_arg_avals_for_call(ref_avals, arg_avals)
+    check_arg_avals_for_call(ref_avals, arg_avals)
     # Check the GDA sharding and the input sharding.
     check_gda_or_array_xla_sharding_match(kept_args, self._in_shardings)
     return self.unsafe_call(*args)
@@ -3546,6 +3546,20 @@ class MeshExecutable(stages.XlaExecutable):
       return outs, fastpath_data
 
     return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [])  # type: ignore
+
+
+def check_arg_avals_for_call(ref_avals, arg_avals):
+  if len(ref_avals) != len(arg_avals):
+    raise TypeError(
+        f"Computation compiled for {len(ref_avals)} inputs "
+        f"but called with {len(arg_avals)}")
+  for ref_aval, arg_aval in zip(ref_avals, arg_avals):
+    if not core.typematch(ref_aval, arg_aval):
+      raise TypeError(
+        "Computation was compiled for different input types and called with "
+        "different types. One of the mismatches is:\n"
+        f"Compiled with:\n {ref_aval}\n"
+        f"called with:\n {arg_aval}")
 
 
 def _out_shardings_for_trivial(
@@ -3837,9 +3851,10 @@ class _ThreadLocalState(threading.local):
 
 _thread_local_state = _ThreadLocalState()
 
-def device_put(x, devices: Sequence[xb.xla_client.Device], replicate: bool=False) -> List[xb.xla_client.Buffer]:
+def device_put(x, devices: Sequence[xb.xla_client.Device],
+               replicate: bool=False) -> List[xb.xla_client.Buffer]:
   """Call device_put on a sequence of devices and return a flat sequence of buffers."""
   if replicate:
-    return list(it.chain.from_iterable(dispatch.device_put(x, device) for device in devices))
+    return [jax.device_put(x, device) for device in devices]
   else:
-    return list(it.chain.from_iterable(dispatch.device_put(val, device) for val, device in safe_zip(x, devices)))
+    return [jax.device_put(val, device) for val, device in safe_zip(x, devices)]

@@ -40,7 +40,6 @@ from jax._src.interpreters import mlir
 from jax.interpreters import batching
 from jax._src import array
 from jax._src.lib.mlir.dialects import hlo
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.interpreters import pxla
 from jax._src import test_util as jtu
@@ -2972,11 +2971,6 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def device_put_foo_array(x: FooArray, device):
-  if isinstance(x.data, array.ArrayImpl):
-    return array._device_put_array(x.data, device)
-  return dispatch._device_put_array(x.data, device)
-
 def shard_foo_array_handler(x, devices, indices, sharding):
   device, = devices
   aval = core.raise_to_shaped(core.get_aval(x.data))
@@ -3014,7 +3008,6 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     xla.canonicalize_dtype_handlers[FooArray] = lambda x: x
     xla.pytype_aval_mappings[FooArray] = \
         lambda x: core.ShapedArray(x.shape, FooTy())
-    dispatch.device_put_handlers[FooArray] = device_put_foo_array
     pxla.shard_arg_handlers[FooArray] = shard_foo_array_handler
     mlir._constant_handlers[FooArray] = foo_array_constant_handler
     mlir.register_lowering(make_p, mlir.lower_fun(make_lowering, False))
@@ -3028,7 +3021,6 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     del core.pytype_aval_mappings[FooArray]
     del xla.canonicalize_dtype_handlers[FooArray]
     del xla.pytype_aval_mappings[FooArray]
-    del dispatch.device_put_handlers[FooArray]
     del mlir._constant_handlers[FooArray]
     del mlir._lowerings[make_p]
     del mlir._lowerings[bake_p]

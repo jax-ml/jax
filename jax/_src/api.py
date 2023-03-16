@@ -3054,7 +3054,6 @@ def clear_backends():
   """
   xb._clear_backends()
   jax.lib.xla_bridge._backends = {}
-  dispatch.xla_callable.cache_clear()  # type: ignore
   dispatch.xla_primitive_callable.cache_clear()
   jax_jit.CompiledFunctionCache.clear_all()
   pjit._pjit_lower_cached.cache_clear()

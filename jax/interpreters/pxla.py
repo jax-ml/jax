@@ -68,7 +68,7 @@ from jax._src.interpreters.pxla import (
   array_mapping_to_axis_resources as array_mapping_to_axis_resources,
   array_types as array_types,
   custom_resource_typing_rules as custom_resource_typing_rules,
-  device_put as device_put,
+  device_put as _deprecated_device_put,
   find_partitions as find_partitions,
   find_replicas as find_replicas,
   full_to_shard_p as full_to_shard_p,
@@ -136,6 +136,7 @@ if typing.TYPE_CHECKING:
   from jax._src.interpreters.pxla import (
     PartitionSpec as PartitionSpec,
     make_sharded_device_array as make_sharded_device_array,
+    device_put as device_put,
   )
 del typing
 
@@ -160,6 +161,13 @@ _deprecations = {
             " of March 3, 2023. Use jax.make_array_from_single_device_arrays."
         ),
         _deprecated_make_sharded_device_array,
+    ),
+    "device_put": (
+        (
+            "jax.interpreters.pxla.device_put is deprecated. Please use"
+            " jax.device_put."
+        ),
+        _deprecated_device_put,
     ),
 }
 

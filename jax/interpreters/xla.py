@@ -33,6 +33,7 @@ from jax._src.interpreters.xla import (
   xla_call_p as xla_call_p,
   xla_destructure as xla_destructure,
   xla_shape_handlers as xla_shape_handlers,
+  device_put as _deprecated_device_put,
 )
 
 from jax._src.core import (
@@ -44,7 +45,6 @@ from jax._src.core import (
 from jax._src.dispatch import (
   apply_primitive as apply_primitive,
   backend_compile as backend_compile,
-  device_put as device_put,
 )
 
 from jax._src import xla_bridge as xb
@@ -64,15 +64,25 @@ from jax._src.device_array import (
 )
 
 _deprecations = {
-  # Added Feb 9, 2023:
-  "Device": (
-    "jax.interpreters.xla.Device is deprecated. Use jax.Device instead.",
-    _deprecated_Device,
-  ),
-  "DeviceArray": (
-    "jax.interpreters.xla.DeviceArray is deprecated. Use jax.Array instead.",
-    _deprecated_DeviceArray,
-  ),
+    # Added Feb 9, 2023:
+    "Device": (
+        "jax.interpreters.xla.Device is deprecated. Use jax.Device instead.",
+        _deprecated_Device,
+    ),
+    "DeviceArray": (
+        (
+            "jax.interpreters.xla.DeviceArray is deprecated. Use jax.Array"
+            " instead."
+        ),
+        _deprecated_DeviceArray,
+    ),
+    "device_put": (
+        (
+            "jax.interpreters.xla.device_put is deprecated. Please use"
+            " jax.device_put instead."
+        ),
+        _deprecated_device_put,
+    ),
 }
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
@@ -84,5 +94,8 @@ if typing.TYPE_CHECKING:
   Device = xc.Device
   from jax._src.device_array import (
     DeviceArray as DeviceArray,
+  )
+  from jax._src.interpreters.xla import (
+      device_put as device_put,
   )
 del typing

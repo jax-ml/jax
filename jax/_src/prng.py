@@ -492,10 +492,6 @@ xla.pytype_aval_mappings[PRNGKeyArray] = (
 
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
-def device_put_key_array(x: PRNGKeyArray, device):
-  return dispatch.device_put(x.unsafe_raw_array(), device)
-dispatch.device_put_handlers[PRNGKeyArray] = device_put_key_array
-
 
 def key_array_shard_arg_handler(x: PRNGKeyArray, devices, indices, sharding):
   # TODO(frostig): Remove the need for `core.get_aval`.
