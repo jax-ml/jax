@@ -1022,18 +1022,13 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
-_CPP_JIT_IMPLEMENTATION = functools.partial(api._jit, True)
-_CPP_JIT_IMPLEMENTATION._name = "cpp"
-_PYTHON_JIT_IMPLEMENTATION = functools.partial(api._jit, False)
-_PYTHON_JIT_IMPLEMENTATION._name = "python"
 _PJIT_IMPLEMENTATION = jax.jit
-_PJIT_IMPLEMENTATION._name = "pjit"
+_PJIT_IMPLEMENTATION._name = "jit"
 _NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
 _NOOP_JIT_IMPLEMENTATION._name = "noop"
 
 JIT_IMPLEMENTATION = (
-  _CPP_JIT_IMPLEMENTATION,
-  _PYTHON_JIT_IMPLEMENTATION,
+  _PJIT_IMPLEMENTATION,
   _NOOP_JIT_IMPLEMENTATION,
 )
 

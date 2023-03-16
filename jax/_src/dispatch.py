@@ -61,7 +61,7 @@ from jax._src.lib import pmap_lib
 from jax._src.lib import xla_client as xc
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, GSPMDSharding, NamedSharding,
+    PmapSharding, SingleDeviceSharding, NamedSharding,
     PartitionSpec, XLACompatibleSharding)
 from jax._src.util import flatten, unflatten
 
@@ -190,16 +190,14 @@ def wait_for_tokens():
 
 @util.cache()
 def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
-  _, arg_devices = util.unzip2(arg_specs)
   donated_invars = (False,) * len(arg_specs)
-  device = None  # This will be resolved in sharded_lowering.
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
       return out
     else:
       return out,
-  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), device, None,
+  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), None, None,
                                     prim.name, donated_invars, False, *arg_specs)
   if not prim.multiple_results:
     return lambda *args, **kw: compiled(*args, **kw)[0]
@@ -299,42 +297,10 @@ def _xla_call_impl(fun: lu.WrappedFun, *args, device, backend, name,
 xla.xla_call_p.def_impl(_xla_call_impl)
 
 
-# TODO(yashkatariya,mattjj): Try to handle this in api.py via a device_put and
-# don't pass the device and backend argument to `_xla_callable_uncached`.
-def not_none_device_or_backend_on_jit(backend, device, num_ins):
-  """This is to support the backend and device argument on jit. It's a feature
-  that's deprecated but needs to be supported for feature parity and so that we
-  can delete the non-Array paths when Array is switched on.
-  """
-  # TODO(yashkatariya): Remove this entire function when backend and device are
-  # removed as arguments on jit.
-  if device is not None and backend is not None:
-    raise ValueError("can't specify both a device and a backend for jit, "
-                     "got device={} and backend={}".format(device, backend))
-
-  if backend is not None:
-    da = [xb.get_backend(backend).get_default_device_assignment(1)[0]]
-  else:
-    assert device is not None
-    da = [device]
-
-  assert len(da) == 1
-  # in_shardings will be marked as replicated regardless of whatever the input
-  # had. Given that only a single device is allowed above, this is correct.
-  in_shardings = [GSPMDSharding.get_replicated(da)] * num_ins
-  return da, in_shardings
-
-
 def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
                      keep_unused, *arg_specs,
                      lowering_platform: Optional[str]):
   in_avals, in_shardings = util.unzip2(arg_specs)
-
-  da = None
-  if backend is not None or device is not None:
-    da, in_shardings = not_none_device_or_backend_on_jit(
-        backend, device, len(in_shardings))
-
   in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]  # type: ignore
 
   # Pass in a singleton `_UNSPECIFIED` for out_shardings because we don't know
@@ -343,7 +309,7 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings, pxla._UNSPECIFIED, donated_invars,
       in_avals, in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      always_lower=always_lower, devices_from_context=da,
+      always_lower=always_lower, devices_from_context=None,
       lowering_platform=lowering_platform)
 
 
