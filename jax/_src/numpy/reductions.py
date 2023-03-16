@@ -657,6 +657,7 @@ def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array
 
     if axis is None or _isscalar(a):
       a = lax.reshape(a, (np.size(a),))
+    if axis is None:
       axis = 0
 
     a_shape = list(np.shape(a))
