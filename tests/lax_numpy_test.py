@@ -5251,7 +5251,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     }
 
     extra_params = {
-      'einsum': ['precision'],
+      'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
       'take_along_axis': ['mode'],
     }
