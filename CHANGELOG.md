@@ -8,6 +8,14 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.7
 
+* Changes
+  * {func}`jax2tf.convert` now has a new "native serialization" mode that uses
+    [StableHLO](https://github.com/openxla/stablehlo) to serialize the JAX
+    function, instead of lowering each JAX primitive to a TensorFlow op. This
+    simplifies the internals and increases the confidence that what you serialize
+    matches the JAX native semantics.
+    See [jax2tf documentation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
+  
 * Deprecations
   * The type `jax.numpy.DeviceArray` is deprecated. Use `jax.Array` instead,
     for which it is an alias.

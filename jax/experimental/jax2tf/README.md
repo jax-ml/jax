@@ -5,7 +5,16 @@
 
 This package provides support for JAX native serialization and for interoperation
 between JAX and TensorFlow.
-There are two interoperation directions:
+
+{% note %}
+
+**Note:** As of JAX version 0.4.7 (March 2023) you can now use native serialization
+with `jax2tf.convert` to ensure that the semantics of the serialized artifact
+is faithful to the JAX native semantics.
+
+{% endnote %}
+
+There are two interoperation directions offered by this package:
 
 - `jax2tf.convert`: for calling JAX functions in a TensorFlow context, e.g.,
 for eager or graph TensorFlow execution,
@@ -17,12 +26,16 @@ These APIs can be called in sequence, e.g., to reload in JAX a program that
 has been serialized from JAX to a TensorFlow SavedModel, or to save to
 TensorFlow SavedModel a JAX program that uses a TensorFlow library.
 
-These APIs can be used in different modes, but in the default preferred mode
-the interoperation is by way of a StableHLO intermediate form. That is,
-the target function is lowered to StableHLO using standard native JAX or TensorFlow APIs,
+These APIs can be used in different modes, but the default preferred mode
+the interoperation is by way of a
+[StableHLO](https://github.com/openxla/stablehlo) intermediate form.
+That is, the target function is lowered to StableHLO using standard native JAX or TensorFlow APIs,
 and then the StableHLO is invoked from TensorFlow or JAX. This has the advantage that
 it stays faithful to the semantics of the native target function, even as JAX and
-TensorFlow evolves. We refer to this usage mode as
+TensorFlow evolve. 
+Furthermore, StableHLO offers
+[backward and forward compatibility](https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md)
+guarantees. We refer to this usage mode as
 "native serialization".
 
 Note that at the moment when using JAX native serialization the whole
