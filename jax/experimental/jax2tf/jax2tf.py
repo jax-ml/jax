@@ -715,7 +715,11 @@ def serialize_native(fun_jax: Callable,
   if xla_client.mlir_api_version >= 46:
     xla_call_module_version = 4
     mlir_str = mlir.module_to_bytecode(mlir_module)
-    target_version = stablehlo.get_earliest_forward_compatible_version()
+    if xla_client.mlir_api_version >= 47:
+      target_version = \
+          xla_client._xla.mlir.get_earliest_compatible_stablehlo_version()
+    else:
+      target_version = stablehlo.get_earliest_forward_compatible_version()
     mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
         mlir_str, target_version)
   else:
