@@ -3112,6 +3112,7 @@ the implementation.
 
 @util._wraps(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
 def einsum(
+    subscripts,
     *operands,
     out=None,
     optimize="optimal",
@@ -3119,6 +3120,7 @@ def einsum(
     _use_xeinsum=False,
     _dot_general=lax.dot_general,
 ):
+  operands = (subscripts, *operands)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
 
