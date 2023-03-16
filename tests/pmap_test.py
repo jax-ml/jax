@@ -2036,9 +2036,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
   def test_pmap_lower_arg_info(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
@@ -2054,9 +2051,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIn("kwargs['w']", mhlo_str)
 
   def test_pmap_lower_result_info(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, z):
       return {'a': x, 'b': [y]}
 

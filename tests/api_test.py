@@ -49,7 +49,7 @@ from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax._src import core
 from jax import lax
 from jax import custom_batching
-from jax._src import api, dtypes, dispatch, lib, api_util
+from jax._src import api, dtypes, lib, api_util
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
 from jax._src.interpreters import mlir
@@ -98,19 +98,13 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @property
   def jit(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      return jax.jit
-    return functools.partial(api._jit, self.use_cpp_jit)
+    return jax.jit
 
   def test_jit_repr(self):
     def my_function():
       return
     jitted = jit(my_function)
-    if jax.config.jax_jit_pjit_api_merge:
-      fun_name = 'PjitFunction'
-    else:
-      fun_name = 'CompiledFunction'
-    self.assertEqual(repr(jitted), f"<{fun_name} of {repr(my_function)}>")
+    self.assertEqual(repr(jitted), f"<PjitFunction of {repr(my_function)}>")
 
   def test_jit_repr_errors(self):
     class Callable:
@@ -120,15 +114,11 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
     # repr succeeds when underlying function repr fails.
     jitted = jit(Callable())
-    if jax.config.jax_jit_pjit_api_merge:
-      fun_name = 'PjitFunction'
-    else:
-      fun_name = 'CompiledFunction'
-    self.assertEqual(repr(jitted), f"<{fun_name}>")
+    self.assertEqual(repr(jitted), "<PjitFunction>")
 
     # repr succeeds when object is malformed.
     del jitted.__wrapped__
-    self.assertEqual(repr(jitted), f"<{fun_name}>")
+    self.assertEqual(repr(jitted), "<PjitFunction>")
 
   def test_jit_of_noncallable(self):
     self.assertRaisesRegex(TypeError, "Expected a callable value.*",
@@ -593,10 +583,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.jit(f)("foo")
 
     # Jax type objects aren't valid data arguments.
-    if config.jax_jit_pjit_api_merge:
-      err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
-    else:
-      err_str = ".* '.*int32.*' of type <.*_ScalarMeta.*> is not a valid JAX type"
+    err_str = "JAX scalar type .*int32.* cannot be interpreted as a JAX array."
 
     with self.assertRaisesRegex(TypeError, err_str):
       self.jit(f)(jnp.int32)
@@ -764,12 +751,7 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     def f(x):
       return jax.jit(lambda x: x + 1, backend="cpu")(x)
 
-    if jax.config.jax_jit_pjit_api_merge:
-      msg = 'Received incompatible devices for jitted computation'
-    else:
-      msg = ("Outer-jit backend specification .* must match explicit inner-jit "
-             "backend specification cpu.")
-
+    msg = 'Received incompatible devices for jitted computation'
     with self.assertRaisesRegex(ValueError, msg):
       f(1.)
 
@@ -1136,9 +1118,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(g.runtime_executable())
 
   def test_jit_lower_arg_info(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
@@ -1152,9 +1131,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['w']", mhlo_str)
 
   def test_jit_lower_result_info(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, z):
       return {'a': x, 'b': [y]}
 
@@ -1189,34 +1165,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
       self.assertEqual(x, f(x))
       python_should_be_executing = False
       self.assertEqual(x, f(x))
-
-  def test_hitting_cpp_path(self):
-    # pjit has a similar test in pjit_test.py
-    if not self.use_cpp_jit or jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("this test only applies to _cpp_jit")
-
-    jit_impl = dispatch._xla_call_impl_lazy
-    count = 0
-
-    def jit_impl_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return jit_impl(*args, **kwargs)
-
-    f = self.jit(lambda x: x + 1)
-
-    try:
-      dispatch._xla_call_impl_lazy = jit_impl_and_count
-      f(0)
-      self.assertEqual(count, 1)
-      f(0)
-      self.assertEqual(count, 1)
-      f(1)
-      self.assertEqual(count, 1)
-      f(2)
-      self.assertEqual(count, 1)
-    finally:
-      dispatch._xla_call_impl_lazy = jit_impl
 
   def test_caches_depend_on_axis_env(self):
     # https://github.com/google/jax/issues/9187
@@ -3186,12 +3134,8 @@ class APITest(jtu.JaxTestCase):
     outer_jaxpr, inner_jaxpr = jaxprs
 
     self.assertLen(outer_jaxpr.eqns, 1)
-    if jax.config.jax_jit_pjit_api_merge:
-      prim_name = 'pjit'
-      jaxpr_param = 'jaxpr'
-    else:
-      prim_name = 'xla_call'
-      jaxpr_param = 'call_jaxpr'
+    prim_name = 'pjit'
+    jaxpr_param = 'jaxpr'
     self.assertEqual(outer_jaxpr.eqns[0].primitive.name, f'{prim_name}')
     subjaxpr_1 = outer_jaxpr.eqns[0].params[f"{jaxpr_param}"]
     self.assertEqual(str(subjaxpr_1), str(inner_jaxpr))
@@ -3268,11 +3212,7 @@ class APITest(jtu.JaxTestCase):
       # Use the tracer
       return x + self._saved_tracer
 
-    if jax.config.jax_jit_pjit_api_merge:
-      msg = "Encountered an unexpected tracer"
-    else:
-      msg = "Encountered an unexpected tracer.*Tracer not in input tracers"
-
+    msg = "Encountered an unexpected tracer"
     with self.assertRaisesRegex(
         UnexpectedTracerError, re.compile(msg, re.DOTALL)):
       api.jit(func1)(2.0)
@@ -3652,11 +3592,7 @@ class APITest(jtu.JaxTestCase):
         x = g(x)
         return x
 
-      if jax.config.jax_jit_pjit_api_merge:
-        msg = r'Leaked trace MainTrace\(2,DynamicJaxprTrace\)'
-      else:
-        msg = r'Leaked sublevel'
-
+      msg = r'Leaked trace MainTrace\(2,DynamicJaxprTrace\)'
       with self.assertRaisesRegex(Exception, f"{msg}"):
         f(3)
 
@@ -3922,20 +3858,14 @@ class APITest(jtu.JaxTestCase):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    if jax.config.jax_jit_pjit_api_merge:
-      self.assertIn('pjit', str(jaxpr))
-    else:
-      self.assertIn('xla_call', str(jaxpr))
+    self.assertIn('pjit', str(jaxpr))
 
     @partial(api.jit, inline=True)
     def f(x):
       return x * 2
 
     jaxpr = api.make_jaxpr(f)(3)
-    if jax.config.jax_jit_pjit_api_merge:
-      self.assertNotIn('pjit', str(jaxpr))
-    else:
-      self.assertNotIn('xla_call', str(jaxpr))
+    self.assertNotIn('pjit', str(jaxpr))
 
   # Repro for https://github.com/google/jax/issues/7229.
   def test_compute_with_large_transfer(self):

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import unittest
 from collections import namedtuple
 from functools import partial
 import gc
@@ -616,9 +616,8 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[0].aval.shape)
     self.assertEqual((jaxpr.invars[0],), jaxpr.outvars[1].aval.shape)
 
+  @unittest.skip('This test does not work with nested pjit and DShapedArray')
   def test_staging_nested(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      self.skipTest("This test does not work with nested pjit and DShapedArray")
     n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
@@ -653,9 +652,8 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[3].aval.shape)
     self.assertEqual((inner_jaxpr.invars[0],), inner_jaxpr.invars[4].aval.shape)
 
+  @unittest.skip('This test does not work with nested pjit and DShapedArray')
   def test_staging_nested_including_shape_arg(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      self.skipTest("This test does not work with nested pjit and DShapedArray")
     n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
     b = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)
@@ -715,9 +713,8 @@ class DynamicShapesTest(jtu.JaxTestCase):
     self.assertLen(jaxpr.outvars, 1)
     self.assertEqual(jaxpr.outvars[0].aval.shape, ())
 
+  @unittest.skip('This test does not work with nested pjit and DShapedArray')
   def test_typecheck_staging_nested(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      self.skipTest("This test does not work with nested pjit and DShapedArray")
     n = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
     m = core.ShapedArray((), jnp.dtype('int32'), weak_type=False)
     a = core.DShapedArray((DBIdx(0),), jnp.dtype('float32'), weak_type=False)

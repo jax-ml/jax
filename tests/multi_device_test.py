@@ -95,11 +95,7 @@ class MultiDeviceTest(jtu.JaxTestCase):
     # A computation with inputs committed to multiple devices will result
     # in an error
 
-    if jax.config.jax_jit_pjit_api_merge:
-      err_msg = "Received incompatible devices for jitted computation"
-    else:
-      err_msg = "primitive arguments must be colocated on the same device"
-
+    err_msg = "Received incompatible devices for jitted computation"
     with self.assertRaisesRegex(ValueError, err_msg):
       jax.device_put(x, devices[2]) + jax.device_put(x, devices[3])
 

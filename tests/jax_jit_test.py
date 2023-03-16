@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import inspect
 
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax._src import api
 from jax._src import core
 from jax._src import api_util
 from jax._src.interpreters import xla
@@ -209,15 +207,10 @@ class JaxJitTest(jtu.JaxTestCase):
       self.assertTrue(signature.weak_type)
 
   def test_signature_support(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      jit = jax.jit
-    else:
-      jit = partial(api._jit, True)
-
     def f(a, b, c):
       return a + b + c
 
-    jitted_f = jit(f)
+    jitted_f = jax.jit(f)
     self.assertEqual(inspect.signature(f), inspect.signature(jitted_f))
 
 

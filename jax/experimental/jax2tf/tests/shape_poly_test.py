@@ -1052,8 +1052,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b2"],
         expect_error=(
-            (None, None) if (not config.jax2tf_default_native_serialization or
-                             not config.jax_jit_pjit_api_merge) else
+            (None, None) if not config.jax2tf_default_native_serialization else
             (ValueError,
              "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
 
@@ -1065,8 +1064,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b1 * b1"],
         expect_error=(
-            (None, None) if (not config.jax2tf_default_native_serialization or
-                             not config.jax_jit_pjit_api_merge) else
+            (None, None) if not config.jax2tf_default_native_serialization else
             (ValueError,
              "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
 
@@ -1077,8 +1075,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
         polymorphic_shapes=["b1", "b2"],
         expect_error=(
-            (None, None) if (not config.jax2tf_default_native_serialization or
-                             not config.jax_jit_pjit_api_merge) else
+            (None, None) if not config.jax2tf_default_native_serialization else
             (KeyError,
              "Encountered dimension variable 'b1' that is not appearing in the shapes")))
 

@@ -319,10 +319,8 @@ class ShardMapTest(jtu.JaxTestCase):
     f = shard_map(lambda x: x.reshape(1, *x.shape), mesh, P(), P('x'))
     _ = jax.jit(f)(jnp.array(2.0))  # doesnt crash
 
+  @unittest.skip('Does not work with pjit with pjit batcher error')
   def test_vmap_basic(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("pjit batcher error")  # TODO(mattjj)
-
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
     x = jnp.arange(8 * 8.).reshape(8, 8)
 
@@ -341,7 +339,7 @@ class ShardMapTest(jtu.JaxTestCase):
 
     x = jnp.arange(8 * 8.).reshape(8, 8)
     with self.assertRaisesRegex(ValueError, r'shard_map in_specs\[0\]'):
-       f([x, x])
+      f([x, x])
 
   def test_rank_errors(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))

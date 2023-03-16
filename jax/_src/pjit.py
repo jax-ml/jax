@@ -1361,11 +1361,6 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
                    in_positional_semantics, out_positional_semantics,
                    keep_unused, inline):
-  if not config.jax_jit_pjit_api_merge:
-    if not isinstance(ctx.module_context.axis_context,
-                      (mlir.SPMDAxisContext, mlir.ShardingContext)):
-      raise RuntimeError("Nesting pjit() inside jit() is not allowed.")
-
   effects = list(ctx.tokens_in.effects())
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types

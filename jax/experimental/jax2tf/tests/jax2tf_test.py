@@ -1413,8 +1413,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # Tests cross-lowering for
     #  with mesh:
     #   transform2(transform1(func))
-    if not config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("cross_platform test work only with jit==pjit")
     if transform2 == "none" and (
         transform1 == "shard_map" or
         transform1 in ["pjit_in_shardings_P", "pjit_in_shardings_Sharding"] and nullary):

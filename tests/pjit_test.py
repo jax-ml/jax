@@ -30,7 +30,6 @@ import concurrent.futures
 import jax
 import jax.numpy as jnp
 from jax._src import core
-from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax import dtypes
 from jax import stages
@@ -816,11 +815,11 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
 
-    def dispatch():
+    def _dispatch():
       with jax.sharding.Mesh(devices, ['d']):
         logging.info('Making pjit call')
         pjit(f, in_shardings=(P('d'),), out_shardings=P('d'))(x)
-    execution = threading.Thread(target=dispatch)
+    execution = threading.Thread(target=_dispatch)
     execution.start()
 
     def check_outfeed(d, x):
@@ -1973,9 +1972,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         out_s._to_xla_op_sharding(out.ndim)))
 
   def test_jit_with_sharding_constraint_committed_inp_error(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      self.skipTest('Requires jit-pjit merge')
-
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
 
     s = NamedSharding(mesh, P('x', 'y'))
@@ -2008,9 +2004,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
   def test_jit_device_with_sharding_constraint_error(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      self.skipTest('Requires jit-pjit merge.')
-
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
 
     @partial(jax.jit, static_argnums=(0, 1), device=jax.devices()[0])
@@ -2656,9 +2649,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertLen(out.devices(), 8)
 
   def test_jit_with_mesh_context_manager(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      self.skipTest("This test only works if jax_jit_pjit_api_merge is True")
-
     mesh = jtu.create_global_mesh((1,), ('x',))
     with self.assertRaisesRegex(
         RuntimeError,
@@ -2744,32 +2734,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         pf1(jnp.arange(8.))
     self.assertEqual(count[0], 1)
 
-  def test_jit_function_cache_cpp(self):
-    if jax.config.jax_jit_pjit_api_merge:
-      self.skipTest("This test only works if jax_jit_pjit_api_merge is False "
-                    "since it tests the old jit codepath.")
-
-    def f(x):
-      return x * 2
-
-    inp = jnp.arange(3.)
-
-    original_xla_call_impl_lazy = dispatch._xla_call_impl_lazy
-    count = 0
-
-    def xla_call_impl_lazy_and_count(*args, **kwargs):
-      nonlocal count
-      count += 1
-      return original_xla_call_impl_lazy(*args, **kwargs)
-
-    try:
-      dispatch._xla_call_impl_lazy = xla_call_impl_lazy_and_count
-      for _ in range(10):
-        jax.jit(f)(inp)
-        self.assertEqual(count, 1)
-    finally:
-      dispatch._xla_call_impl_lazy = original_xla_call_impl_lazy
-
   def test_set_both_axis_resources_and_shardings(self):
     with self.assertRaisesRegex(
         ValueError,
@@ -2847,9 +2811,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def test_jit_nested_xmap_lower_arg_info(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, *args):
       out = xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
                axis_resources={'i': 'y'})(jnp.arange(8.))
@@ -2867,9 +2828,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def test_jit_nested_xmap_lower_result_info(self):
-    if not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, z):
       _ = xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
                axis_resources={'i': 'y'})(jnp.arange(8.))

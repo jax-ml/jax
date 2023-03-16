@@ -985,7 +985,7 @@ def lower_jaxpr_to_fun(
         if alias is not None:
           attrs["tf.aliasing_output"] = i32_attr(alias)
 
-    if config.jax_jit_pjit_api_merge and arg_names:
+    if arg_names:
       named_arg_attrs = arg_attrs[num_dim_vars + num_tokens:]
       if len(named_arg_attrs) == len(arg_names):
         for attrs, name_ in zip(named_arg_attrs, arg_names):
@@ -997,7 +997,7 @@ def lower_jaxpr_to_fun(
   result_attrs: List[Dict[str, ir.Attribute]] = [
       {} for _ in range(len(flat_output_types))]
 
-  if config.jax_jit_pjit_api_merge and result_names:
+  if result_names:
     named_result_attrs = result_attrs[num_tokens:]
     if len(named_result_attrs) == len(result_names):
       for attrs, name_ in zip(named_result_attrs, result_names):
