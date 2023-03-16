@@ -148,8 +148,6 @@ class RuntimeTokenSet(threading.local):
       self.tokens[eff] = out, device
     elif self.tokens[eff][1] != device:
       (old_token,), _ = self.tokens[eff]
-      if not isinstance(old_token, array.ArrayImpl):
-        old_token = array._single_device_array_from_buf(old_token, True)
       indices = tuple(
           s.addressable_devices_indices_map((0,)).values())
       out = pxla.shard_args([device], [indices], [s], [old_token])
