@@ -153,11 +153,13 @@ _UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
 
 
 class PartitionSpec(tuple):
-  """Tuple of integer specifying how a value should be partitioned.
+  """Tuple describing how to partition tensor into mesh .
 
-  Each integer corresponds to how many ways a dimension is partitioned. We
-  create a separate class for this so JAX's pytree utilities can distinguish it
-  from a tuple that should be treated as a pytree.
+  Each element is either None, string or a tuple of strings.
+  See``NamedSharding`` class for more details.
+
+  We create a separate class for this so JAX's pytree utilities can distinguish
+  it from a tuple that should be treated as a pytree.
   """
 
   # A sentinel value representing a dim is unconstrained.
@@ -186,7 +188,7 @@ class NamedSharding(XLACompatibleSharding):
   where each axis of the mesh has a name, e.g. 'x' or 'y'. Another name for
   ``Mesh`` is "logical mesh".
 
-  ``PartitionSpec`` is a named tuple, whose elements can be a ``None``,
+  ``PartitionSpec`` is a tuple, whose elements can be a ``None``,
   a mesh axis or a tuple of mesh axes. Each element describes how an input
   dimension is partitioned across zero or more mesh dimensions. For example,
   PartitionSpec('x', 'y') is a PartitionSpec where the first dimension of data
