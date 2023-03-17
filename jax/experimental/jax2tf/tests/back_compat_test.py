@@ -41,7 +41,8 @@ want, then pick some inputs, and then add this to the new test to get started.
                                platform=default_jax_backend())
     self.run_one_test(func, data)
 
-The test will fail, but will print the test data you will need. Create a new
+The test will fail, but will save to a file the test data you will need. The
+file name will be printed in the logs. Create a new
 file ./back_compat_testdata/cuda_foo_call.py and paste the test data that
 you will see printed in the logs. You may want to
 edit the serialization string to remove any pathnames that may be included at
@@ -59,12 +60,13 @@ Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
 """
 import dataclasses
 import datetime
+import os
 import re
-from typing import Callable, List, Sequence
 import sys
+from typing import Callable, List, Sequence
 
 # from absl import logging
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from absl import logging
 
 import numpy as np
@@ -75,8 +77,12 @@ import jax
 from jax.config import config
 from jax import lax
 from jax.experimental import jax2tf
-from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lapack_syev
+from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_cusolver_syev
+from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
+
+from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
 
 import jax.numpy as jnp
 
@@ -148,7 +154,8 @@ dummy_data = load_testdata(dummy_data_dict)
 
 class CompatTest(jtu.JaxTestCase):
 
-  def run_one_test(self, func: Callable[..., jax.Array], data: CompatTestData):
+  def run_one_test(self, func: Callable[..., jax.Array], data: CompatTestData,
+                   rtol=None):
     if default_jax_backend() != data.platform:
       self.skipTest(f"Test enabled only for {data.platform}")
 
@@ -174,9 +181,9 @@ class CompatTest(jtu.JaxTestCase):
     )
     np.set_printoptions(threshold=sys.maxsize, floatmode="unique")
     # Print the test data to simplify updating the test
-    updated_testdata = f"""Computed test data for this test (paste this into the test):
+    updated_testdata = f"""
 # Pasted from the test output (see back_compat_test.py module docstring)
-data = dict(
+data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     testdata_version={CURRENT_TESTDATA_VERSION},
     platform={repr(default_jax_backend())},
     custom_call_targets={repr(custom_call_targets)},
@@ -188,11 +195,19 @@ data = dict(
     xla_call_module_version={exported.xla_call_module_version},
 )  # End paste
 """
-    logging.info("%s", updated_testdata)
-    self.assertAllClose(res_from_jax, data.expected_outputs)
+    output_dir = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR",
+                           "/tmp/back_compat_testdata")
+    output_file = os.path.join(output_dir, f"{self._testMethodName}.py")
+    logging.info("Writing the up-to-date testdata at %s", output_file)
+    with open(output_file, "w") as f:
+      f.write(updated_testdata)
+
+    if rtol is not None:
+      rtol = 1.e-7
+    self.assertAllClose(res_from_jax, data.expected_outputs, rtol=rtol)
 
     res_from_serialized = self.run_serialized(data)
-    self.assertAllClose(res_from_serialized, data.expected_outputs)
+    self.assertAllClose(res_from_serialized, data.expected_outputs, rtol=rtol)
     self.assertListEqual(custom_call_targets, data.custom_call_targets)
 
   def run_serialized(self, data: CompatTestData, run_tf=None):
@@ -256,6 +271,47 @@ data = dict(
 
     data = load_testdata(cpu_ducc_fft.data_2023_03_17)
     self.run_one_test(func, data)
+
+  @staticmethod
+  def eigh_harness(shape, dtype):
+    # In order to keep inputs small, we construct the input programmatically
+    operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
+    # Make operand self-adjoint
+    operand = (operand + jnp.conj(jnp.swapaxes(operand, -1, -2))) / 2.
+    return lax.linalg.eigh(jnp.tril(operand), lower=True, symmetrize_input=False)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_cpu_lapack_syevd(self, dtype_name="f32"):
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    func = lambda: CompatTest.eigh_harness((8, 8), dtype)
+    data = load_testdata(cpu_lapack_syev.data_2023_03_17[dtype_name])
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)
+    self.run_one_test(func, data, rtol=rtol)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}_{variant}",
+           dtype_name=dtype_name, variant=variant)
+      for dtype_name in ("f32", "f64")
+      # We use different custom calls for sizes <= 32
+      for variant in ["syevj", "syevd"])
+  def test_gpu_cusolver_syev(self, dtype_name="f32", variant="syevj"):
+    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
+    size = dict(syevj=8, syevd=36)[variant]
+    rtol = dict(f32=1e-3, f64=1e-5)
+    func = lambda: CompatTest.eigh_harness((size, size), dtype)
+    data = load_testdata(cuda_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
+    self.run_one_test(func, data, rtol=rtol)
+
+  def test_tpu_Eigh(self):
+    func = lambda: CompatTest.eigh_harness((8, 8), np.float32)
+    data = load_testdata(tpu_Eigh.data)
+    self.run_one_test(func, data, rtol=1e-3)
 
   def test_cu_threefry2x32(self):
     def func(x):

@@ -105,6 +105,12 @@ zip = util.safe_zip
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "ducc_fft", "cu_threefry2x32",
+    # eigh on CPU
+    "lapack_ssyevd", "lapack_dsyevd", "lapack_cheevd", "lapack_zheevd",
+    # eigh on GPU
+    "cusolver_syevj", "cusolver_syevd",
+    # eigh on TPU
+    "Eigh",
 ]
 
 def _sanitize_scope_name(name):
