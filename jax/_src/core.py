@@ -704,7 +704,7 @@ class Tracer(typing.Array):
 
     try:
       attr = getattr(self.aval, name)
-    except KeyError as err:
+    except AttributeError as err:
       raise AttributeError(
           f"{self.__class__.__name__} has no attribute {name}"
       ) from err
