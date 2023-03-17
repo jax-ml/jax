@@ -173,6 +173,15 @@ from jax import util as util
 # Also circular dependency.
 from jax._src.array import Shard as Shard
 
+
+# TODO(yashkatariya): Remove after 2 jax releases from 0.4.6
+if not config.jax_jit_pjit_api_merge:
+  raise ValueError(
+      'jax.config.jax_jit_pjit_api_merge cannot be disabled after jax 0.4.7'
+      ' release. Please downgrade to jax and jaxlib 0.4.6 if you want to'
+      ' disable jax.config.jax_jit_pjit_api_merge.'
+  )
+
 import jax.lib  # TODO(phawkins): remove this export.
 
 # trailer

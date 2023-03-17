@@ -19,7 +19,6 @@ import logging
 import os
 import sys
 import threading
-import warnings
 from typing import Any, List, Callable, Hashable, NamedTuple, Iterator, Optional
 
 from jax._src import lib
@@ -756,20 +755,18 @@ parallel_functions_output_gda = config.define_bool_state(
 
 def _update_jax_array_global(val):
   if val is not None and not val:
-    warnings.warn(
-        'DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been '
-        'deprecated. Please use `jax.Array`. See '
-        'https://jax.readthedocs.io/en/latest/jax_array_migration.html on how '
-        'to migrate to `jax.Array`.', DeprecationWarning)
+    raise ValueError(
+        'jax.config.jax_array cannot be disabled after jax 0.4.7 release.'
+        ' Please downgrade to jax and jaxlib 0.4.6 if you want to disable'
+        ' jax.config.jax_array.')
   lib.jax_jit.global_state().jax_array = val
 
 def _update_jax_array_thread_local(val):
   if val is not None and not val:
-    warnings.warn(
-        'DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been '
-        'deprecated. Please use `jax.Array`. See '
-        'https://jax.readthedocs.io/en/latest/jax_array_migration.html on how '
-        'to migrate to `jax.Array`.', DeprecationWarning)
+    raise ValueError(
+        'jax.config.jax_array cannot be disabled after jax 0.4.7 release.'
+        ' Please downgrade to jax and jaxlib 0.4.6 if you want to disable'
+        ' jax.config.jax_array.')
   lib.jax_jit.thread_local_state().jax_array = val
 
 jax_array = config.define_bool_state(

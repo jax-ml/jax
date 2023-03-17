@@ -8,6 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.7
 
+* Changes
+  * As per https://jax.readthedocs.io/en/latest/jax_array_migration.html#jax-array-migration
+    `jax.config.jax_array` cannot be disabled anymore.
+  * `jax.config.jax_jit_pjit_api_merge` cannot be disabled anymore.
+
 * Deprecations
   * The type `jax.numpy.DeviceArray` is deprecated. Use `jax.Array` instead,
     for which it is an alias.
