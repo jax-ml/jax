@@ -776,7 +776,7 @@ jax_test(
         ],
     },
     shard_count = {
-        "cpu": 5,
+        "cpu": 10,
         "gpu": 20,
         "tpu": 10,
     },
