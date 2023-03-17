@@ -24,8 +24,6 @@ from jax.interpreters import mlir
 from jax.interpreters import xla
 
 from jax._src import core
-from jax._src import device_array
-from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -112,12 +110,6 @@ class AbstractSparseArray(core.ShapedArray):
 class ConcreteSparseArray(AbstractSparseArray):
   pass
 
-def sparse_array_result_handler(device, aval):
-  def build_sparse_array(_, data_buf, indices_buf):
-    data = device_array.make_device_array(aval.data_aval, device, data_buf)
-    indices = device_array.make_device_array(aval.indices_aval, device, indices_buf)
-    return SparseArray(aval, data, indices)
-  return build_sparse_array
 
 def sparse_array_shape_handler(a):
   return (
@@ -130,8 +122,6 @@ core.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 core.raise_to_shaped_mappings[AbstractSparseArray] = lambda aval, _: aval
 xla.pytype_aval_mappings[SparseArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[SparseArray] = lambda x: x
-dispatch.result_handlers[AbstractSparseArray] = sparse_array_result_handler
-dispatch.num_buffers_handlers[AbstractSparseArray] = lambda _: 2
 xla.xla_shape_handlers[AbstractSparseArray] = sparse_array_shape_handler
 
 def sparse_array_mlir_type_handler(a):
@@ -267,8 +257,6 @@ core.pytype_aval_mappings[Empty] = lambda x: ConcreteEmpty()
 core.raise_to_shaped_mappings[AbstractEmpty] = lambda aval, _: aval
 xla.pytype_aval_mappings[Empty] = lambda x: AbstractEmpty()
 xla.canonicalize_dtype_handlers[Empty] = lambda x: x
-dispatch.result_handlers[AbstractEmpty] = lambda _, __: lambda: Empty(AbstractEmpty())
-dispatch.num_buffers_handlers[AbstractEmpty] = lambda _: 0
 xla.xla_shape_handlers[AbstractEmpty] = lambda _: ()
 
 
