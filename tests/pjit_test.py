@@ -1777,9 +1777,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jnp.array([1, 2, 3])
     with self.assertRaisesRegex(
         RuntimeError,
-        "pjit requires a non-empty mesh!.*Alternatively, provide a "
-        "XLACompatibleSharding to pjit and then the mesh context manager is "
-        "not required."):
+        r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
+        r' `None` to in_shardings or out_shardings.*'):
       pjit(lambda x: x, in_shardings=P('x'))(arr)
 
     with self.assertRaisesRegex(
@@ -3080,9 +3079,9 @@ class PJitErrorTest(jtu.JaxTestCase):
       f(x, x)
 
   def testEmptyMesh(self):
-    error = (r"pjit requires a non-empty mesh!.*Alternatively, provide a "
-              "XLACompatibleSharding to "
-              r"pjit and then the mesh context manager is not required.")
+    error = (
+        r'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
+        r' `None` to in_shardings or out_shardings.*')
     with self.assertRaisesRegex(RuntimeError, error):
       pjit(lambda x: x, in_shardings=None, out_shardings=None)(jnp.arange(4))
 
