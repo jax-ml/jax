@@ -55,7 +55,6 @@ from jax._src.interpreters.pxla import (
   UnloadedPmapExecutable as UnloadedPmapExecutable,
   Unstacked as Unstacked,
   WeakRefList as WeakRefList,
-  _PositionalSemantics as _PositionalSemantics,
   _ShardedDeviceArray as _ShardedDeviceArray,
   _UNSPECIFIED as _UNSPECIFIED,
   _create_pmap_sharding_spec as _create_pmap_sharding_spec,

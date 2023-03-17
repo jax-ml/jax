@@ -56,9 +56,6 @@ traceback_util.register_exclusion(__file__)
 map, unsafe_map = safe_map, map
 zip = safe_zip
 
-_PositionalSemantics = pxla._PositionalSemantics
-_positional_semantics = pxla.positional_semantics
-
 
 class FrozenDict(abc.Mapping):
   def __init__(self, *args, **kwargs):

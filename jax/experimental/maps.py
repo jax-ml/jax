@@ -16,12 +16,10 @@ from jax._src.maps import (
   AxisName as AxisName,
   ResourceSet as ResourceSet,
   SerialLoop as SerialLoop,
-  _PositionalSemantics as _PositionalSemantics,
   make_xmap_callable as make_xmap_callable,
   serial_loop as serial_loop,
   xmap as xmap,
   xmap_p as xmap_p,
-  _positional_semantics as _positional_semantics,
   _prepare_axes as _prepare_axes,
 )
 from jax._src.mesh import (

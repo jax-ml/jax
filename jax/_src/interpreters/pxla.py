@@ -2518,28 +2518,6 @@ class TileManual:
 TilingMethod = Union[TileVectorize, TileManual]
 
 
-class _PositionalSemantics(enum.Enum):
-  """Indicates whether the positional shapes of inputs should be interpreted as
-  global or local with respect to the multi-host mesh.
-
-  While named axes are always associated with global sizes, the outermost pjit
-  is the boundary between the local shapes in the outer scope and global
-  positional shapes in its inner scope. pjits nested inside that one should not
-  attempt to increase the sizes of avals again, and xmap has to take this into
-  account when inferring the global size of a named axis.
-  """
-  LOCAL = 0
-  GLOBAL = 1
-
-
-class _PSThreadLocalState(threading.local):
-
-  def __init__(self):
-    self.val = _PositionalSemantics.LOCAL
-
-positional_semantics = _PSThreadLocalState()
-
-
 def check_if_any_auto(
     shardings: Iterable[Union[sharding_impls.XLACompatibleSharding,
                               AUTOAxisResource, UnspecifiedValue]]) -> bool:
