@@ -28,17 +28,14 @@ from typing import (Any, Callable, Dict, NamedTuple, Optional, Protocol,
 import numpy as np
 
 from jax.config import config
-from jax.interpreters import partial_eval as pe
 
 from jax._src import core
 from jax._src import device_array
 from jax._src import dtypes
-from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ConcreteArray, ShapedArray
-from jax._src.interpreters import ad
-from jax._src.util import (safe_zip, safe_map, partition_list)
+from jax._src.util import safe_zip, safe_map
 
 from jax._src.typing import Shape
 
@@ -155,7 +152,6 @@ xla_shape_handlers: Dict[Type[core.AbstractValue],
     ConcreteArray: _make_array_shape,
 }
 xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
-
 
 
 # IR constants
@@ -346,12 +342,6 @@ def jaxpr_collectives(jaxpr):
   for subjaxpr in core.subjaxprs(jaxpr): yield from jaxpr_collectives(subjaxpr)
 
 
-### xla_call underlying jit
-
-
-xla_call_p: core.CallPrimitive = core.CallPrimitive('xla_call')
-xla_call = xla_call_p.bind
-
 def _xla_call_partial_eval_update_params(
     params: core.ParamDict, kept_inputs: Sequence[bool], num_new_inputs: int
   ) -> core.ParamDict:
@@ -366,57 +356,18 @@ def _xla_call_partial_eval_update_params(
     # Any new inputs are prepended to the left, so mark those as not donated.
     donated_invars = [False] * num_new_inputs + donated_invars
   return dict(params, donated_invars=tuple(donated_invars))
-pe.call_param_updaters[xla_call_p] = _xla_call_partial_eval_update_params
 
 def _xla_call_jvp_update_params(params, nz_tangents):
   donated_invars = params['donated_invars']
   donated_tangents = [d for d, nz in zip(donated_invars, nz_tangents) if nz]
   new_donated_invars = (*donated_invars, *donated_tangents)
   return dict(params, donated_invars=new_donated_invars)
-ad.call_param_updaters[xla_call_p] = _xla_call_jvp_update_params
 
 def _xla_call_transpose_update_params(params, undef_primals, nonzero_cts):
   donated_invars = params['donated_invars']
   donated_primals = [d for d, u in zip(donated_invars, undef_primals) if not u]
   donated_cotangents = [False for nz in nonzero_cts if nz]
   return dict(params, donated_invars=(*donated_primals, *donated_cotangents))
-ad.call_transpose_param_updaters[xla_call_p] = _xla_call_transpose_update_params
-
-
-ad.primitive_transposes[xla_call_p] = partial(ad.call_transpose, xla_call_p)
-
-
-def _xla_call_partial_eval_custom_params_updater(
-    unks_in: Sequence[bool], inst_in: Sequence[bool],
-    kept_outs_known: Sequence[bool], kept_outs_staged: Sequence[bool],
-    num_res: int, params_known: dict, params_staged: dict
-  ) -> Tuple[dict, dict]:
-  # pruned inputs to jaxpr_known according to unks_in, so prune donated_invars
-  donated_known, _ = partition_list(unks_in, params_known['donated_invars'])
-  new_params_known = dict(params_known, donated_invars=tuple(donated_known))
-  # added num_res new inputs to jaxpr_staged, so extend donated_invars
-  _, donated_staged_ = partition_list(inst_in, params_staged['donated_invars'])
-  donated_staged = [False] * num_res + donated_staged_
-  new_params_staged = dict(params_staged, donated_invars=tuple(donated_staged))
-  return new_params_known, new_params_staged
-pe.partial_eval_jaxpr_custom_rules[xla_call_p] = \
-    partial(pe.call_partial_eval_custom_rule, 'call_jaxpr',
-            _xla_call_partial_eval_custom_params_updater)
-pe.dce_rules[xla_call_p] = pe.dce_jaxpr_call_rule
-
-pe.padding_rules[xla_call_p] = partial(pe.call_padding_rule, xla_call_p)
-
-
-def _pp_xla_call(eqn: core.JaxprEqn, context: core.JaxprPpContext,
-                 settings: core.JaxprPpSettings,
-                 ) -> pp.Doc:
-  printed_params = {k:v for k, v in eqn.params.items() if
-                    k == 'call_jaxpr' or k == 'name' or
-                    k == 'backend' and v is not None or
-                    k == 'device' and v is not None or
-                    k == 'donated_invars' and any(v)}
-  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
-core.pp_eqn_rules[xla_call_p] = _pp_xla_call
 
 
 ### translation tables

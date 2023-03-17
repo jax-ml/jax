@@ -846,7 +846,7 @@ core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 # NOTE: We don't have to handle spmd_{in|out}_axes here, because
 # SPMD batching always gets involved as the last transform before XLA translation
 ad.JVPTrace.process_xmap = ad.JVPTrace.process_call  # type: ignore
-ad.call_param_updaters[xmap_p] = ad.call_param_updaters[xla.xla_call_p]
+ad.call_param_updaters[xmap_p] = xla._xla_call_jvp_update_params
 
 def _xmap_transpose(params, call_jaxpr, args, cts_in, cts_in_avals, reduce_axes):
   all_args, in_tree_def = tree_flatten(((), args, cts_in))  # empty consts

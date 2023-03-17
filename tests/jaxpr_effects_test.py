@@ -205,7 +205,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
     self.assertIn(foo_effect, jaxpr.jaxpr.effects)
     self.assertIn(bar_effect, jaxpr.jaxpr.effects)
 
-  def test_xla_call_primitive_inherits_effects(self):
+  def test_jit_primitive_inherits_effects(self):
 
     @jax.jit
     def f(x):

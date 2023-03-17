@@ -29,8 +29,6 @@ from jax._src.interpreters.xla import (
   register_translation as register_translation,
   sharding_to_proto as sharding_to_proto,
   translations as translations,
-  xla_call as xla_call,
-  xla_call_p as xla_call_p,
   xla_destructure as xla_destructure,
   xla_shape_handlers as xla_shape_handlers,
   device_put as _deprecated_device_put,
