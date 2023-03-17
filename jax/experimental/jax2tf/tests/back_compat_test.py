@@ -60,6 +60,7 @@ Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
 """
 import dataclasses
 import datetime
+from functools import partial
 import os
 import re
 import sys
@@ -84,7 +85,13 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
 
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
 
+from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Sharding
+from jax.experimental import pjit
+from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
+
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
 from jax._src import core
 from jax._src import test_util as jtu
@@ -154,8 +161,19 @@ dummy_data = load_testdata(dummy_data_dict)
 
 class CompatTest(jtu.JaxTestCase):
 
-  def run_one_test(self, func: Callable[..., jax.Array], data: CompatTestData,
+  def run_one_test(self, func: Callable[..., jax.Array],
+                   data: CompatTestData,
+                   run_tf=None,
                    rtol=None):
+    """Run one compatibility test.
+
+    Args:
+      func: the JAX function to serialize and run
+      data: the test data
+      run_tf: (optional) a function to invoke the XlaCallModule TF op. Takes
+        a TensorFlow callable and the arguments.
+      rtol: relative tolerance for numerical comparisons
+    """
     if default_jax_backend() != data.platform:
       self.skipTest(f"Test enabled only for {data.platform}")
 
@@ -206,8 +224,9 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       rtol = 1.e-7
     self.assertAllClose(res_from_jax, data.expected_outputs, rtol=rtol)
 
-    res_from_serialized = self.run_serialized(data)
-    self.assertAllClose(res_from_serialized, data.expected_outputs, rtol=rtol)
+    res_serialized = self.run_serialized(data, run_tf=run_tf)
+    logging.info("Result of serialized run is %s", res_serialized)
+    self.assertAllClose(res_serialized, data.expected_outputs)
     self.assertListEqual(custom_call_targets, data.custom_call_targets)
 
   def run_serialized(self, data: CompatTestData, run_tf=None):
@@ -227,18 +246,23 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         jtu.device_under_test().upper(), tf_preferred_devices[0].device_type
     )
 
-    # We need this to run the TPU code on the TPU
-    with tf.device(tf_preferred_devices[0]):
-      args_tf = [tf.constant(a) for a in data.inputs]
-      res_tf = [tf.constant(r) for r in data.expected_outputs]
-      res = tfxla.call_module(
+    def f_tf(*args_tf):
+      return tfxla.call_module(
           args_tf,
           version=data.xla_call_module_version,
           Tout=[r.dtype for r in res_tf],
           Sout=[r.shape for r in res_tf],
           module=data.mlir_module_serialized,
-          platforms=[data.platform.upper()],
-      )
+          platforms=[data.platform.upper()])
+
+    # We need this to run the TPU code on the TPU
+    with tf.device(tf_preferred_devices[0]):
+      args_tf = [tf.constant(a) for a in data.inputs]
+      res_tf = [tf.constant(r) for r in data.expected_outputs]
+      if run_tf is not None:
+        res = run_tf(f_tf, *args_tf)
+      else:
+        res = f_tf(*args_tf)
       return tuple(r.numpy() for r in res)
 
   def test_dummy(self):
@@ -319,6 +343,45 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
     data = load_testdata(cuda_threefry2x32.data_2023_03_15)
     self.run_one_test(func, data)
+
+  def test_sharding(self):
+    # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
+    if jtu.device_under_test() != "tpu" or len(jax.devices()) < 2:
+      self.skipTest("Test runs only on TPU with at least 2 devices")
+
+    # Must use exactly 2 devices for expected outputs from ppermute
+    devices = jax.devices()[:2]
+    mesh = Mesh(devices, axis_names=('a'))
+
+    @partial(pjit.pjit,
+             in_shardings=(P('a', None),), out_shardings=P('a', None))
+    @partial(shard_map, mesh=mesh,
+             in_specs=(P('a', None),), out_specs=P('a', None))
+    def func(x):  # b: f32[2, 4]
+      axis_size = lax.psum(1, 'a')
+      perm = [(j, (j + 1) % axis_size) for j in range(axis_size)]
+      return lax.ppermute(x, 'a', perm=perm)
+
+    # We need these only because for now we run the serialized module with TF
+    tf_tpus = tf.config.list_logical_devices("TPU")
+    self.assertNotEmpty(tf_tpus)
+
+    resolver = tf.distribute.cluster_resolver.TPUClusterResolver(tpu='')
+    tf.config.experimental_connect_to_cluster(resolver)
+    topology = tf.tpu.experimental.initialize_tpu_system(resolver)
+    device_assignment = tf.tpu.experimental.DeviceAssignment.build(
+        topology, computation_shape=[1, 1, 1, 2],
+        num_replicas=1)
+    def run_tf(f_tf, x):
+      def wrapped_f_tf(x):
+        return tf.compat.v1.tpu.rewrite(
+            f_tf, [tf.convert_to_tensor(x)],
+            device_assignment=device_assignment)
+      return tf.function(wrapped_f_tf, autograph=False, jit_compile=True)(x)
+
+    data = load_testdata(tpu_Sharding.data_2023_03_16)
+    with mesh:
+      self.run_one_test(func, data, run_tf=run_tf)
 
 
 if __name__ == "__main__":
