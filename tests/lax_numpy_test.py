@@ -4937,9 +4937,23 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     for order in ['C', 'F']:
       self.assertEqual(jnp.asarray(v).tobytes(order), v.tobytes(order))
 
+  def testToBytesJitError(self):
+    v = np.arange(12, dtype=np.int32).reshape(3, 4)
+    f = jax.jit(lambda x: x.tobytes())
+    msg = r".*The tobytes\(\) method was called on the JAX Tracer object"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(v)
+
   def testToList(self):
     v = np.arange(12, dtype=np.int32).reshape(3, 4)
     self.assertEqual(jnp.asarray(v).tolist(), v.tolist())
+
+  def testToListJitError(self):
+    v = np.arange(12, dtype=np.int32).reshape(3, 4)
+    f = jax.jit(lambda x: x.tolist())
+    msg = r".*The tolist\(\) method was called on the JAX Tracer object"
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(v)
 
   def testArangeConcretizationError(self):
     msg = r"It arose in the jnp.arange argument '{}'".format
