@@ -29,12 +29,6 @@ JAX is Autograd_ and XLA_, brought together for high-performance numerical compu
 
       The same code executes on multiple backends, including CPU, GPU, & TPU
 
-.. note::
-   JAX 0.4.1 introduces new parallelism APIs, including breaking changes to :func:`jax.experimental.pjit` and a new unified ``jax.Array`` type.
-   Please see `Distributed arrays and automatic parallelization <https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html>`_ tutorial and the :ref:`jax-array-migration`
-   guide for more information.
-
-
 .. grid:: 3
 
     .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting Started
