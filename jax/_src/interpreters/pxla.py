@@ -2660,7 +2660,6 @@ def lower_sharding_computation(
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     *,
-    in_is_global: Sequence[bool],
     keep_unused: bool,
     always_lower: bool,
     devices_from_context: Optional[Sequence[xc.Device]] = None,
@@ -2733,7 +2732,6 @@ def lower_sharding_computation(
     consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
     global_in_avals = tuple(a for i, a in enumerate(global_in_avals) if i in kept_var_idx)
     in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
-    in_is_global = tuple(g for i, g in enumerate(in_is_global) if i in kept_var_idx)
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
     del kept_const_idx
 
@@ -2870,7 +2868,6 @@ def lower_sharding_computation(
       out_shardings=out_shardings,
       spmd_lowering=True,
       tuple_args=tuple_args,
-      in_is_global=in_is_global,
       auto_spmd_lowering=False,
       unordered_effects=unordered_effects,
       ordered_effects=ordered_effects,
@@ -2896,7 +2893,6 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: Optional[TilingMethod],
-    in_is_global: Sequence[bool],
     lowering_platform: Optional[str]) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
@@ -3051,7 +3047,6 @@ def lower_mesh_computation(
       out_shardings=out_shardings,
       spmd_lowering=spmd_lowering,
       tuple_args=tuple_args,
-      in_is_global=in_is_global,
       auto_spmd_lowering=auto_spmd_lowering,
       unordered_effects=unordered_effects,
       ordered_effects=ordered_effects,
@@ -3139,38 +3134,6 @@ class MeshComputation(stages.XlaLowering):
           f"'{backend.platform}'. Use compile().cost_analysis() for "
           "post-compilation cost estimates.")
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
-
-def get_input_metadata(
-    global_in_avals: Sequence[ShapedArray],
-    in_shardings: Sequence[sharding_impls.XLACompatibleSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[sharding_impls.XLACompatibleSharding], Sequence[Tuple[Optional[Index], ...]],
-           Sequence[ShapedArray]]:
-  avals, shardings = _get_normalized_avals_and_shardings(
-      global_in_avals, in_shardings, in_is_global)
-  return shardings, _get_input_indices(avals, shardings), avals
-
-
-def _get_normalized_avals_and_shardings(
-    global_in_avals: Sequence[ShapedArray],
-    in_shardings: Sequence[sharding_impls.XLACompatibleSharding], in_is_global: Sequence[bool]
-) -> Tuple[Sequence[ShapedArray], Sequence[sharding_impls.XLACompatibleSharding]]:
-  avals = []
-  shardings = []
-
-  for gaval, i, is_global in safe_zip(global_in_avals, in_shardings,
-                                      in_is_global):
-    if is_global:
-      aval = gaval
-      in_sharding = i
-    else:
-      assert isinstance(i, sharding_impls.NamedSharding)
-      aval = mesh_global_to_local(i.mesh,
-          cast(ArrayMapping, get_array_mapping(i.spec)), gaval)  # pylint: disable=g-bare-generic
-      in_sharding = sharding_impls.NamedSharding(i.mesh.local_mesh, i.spec)
-    avals.append(aval)
-    shardings.append(in_sharding)
-
-  return avals, shardings
 
 
 def _get_input_indices(
@@ -3299,7 +3262,6 @@ class UnloadedMeshExecutable:
                                        UnspecifiedValue]],
                spmd_lowering: bool,
                tuple_args: bool,
-               in_is_global: Sequence[bool],
                auto_spmd_lowering: bool,
                _allow_propagation_to_outputs: Optional[Sequence[bool]],
                _allow_compile_replicated: bool,
@@ -3358,7 +3320,7 @@ class UnloadedMeshExecutable:
     if _allow_compile_replicated and hasattr(backend, "compile_replicated"):
       return _compile_replicated_mesh_executable_from_hlo(
           name, computation, global_in_avals, global_out_avals, in_shardings,
-          out_shardings, in_is_global, auto_spmd_lowering, compile_options,
+          out_shardings, auto_spmd_lowering, compile_options,
           host_callbacks, bool(unordered_effects), ordered_effects,
           kept_var_idx, backend, device_assignment, committed, pmap_nreps)
     else:
@@ -3419,16 +3381,12 @@ class UnloadedMeshExecutable:
         # the outputs to be committed.
         committed = True
 
-      input_avals, input_shardings = (
-          _get_normalized_avals_and_shardings(
-              global_in_avals, in_shardings, in_is_global))  # type: ignore # arg-type
-
       return UnloadedMeshExecutable(
           xla_executable=xla_executable,
           device_assignment=device_assignment,
           backend=backend,
-          input_avals=input_avals,
-          input_shardings=input_shardings,
+          input_avals=global_in_avals,
+          input_shardings=in_shardings,  # type: ignore
           output_avals=global_out_avals,
           output_shardings=out_shardings,  # type: ignore # arg-type
           committed=committed,
@@ -3485,9 +3443,7 @@ class MeshExecutable(stages.XlaExecutable):
 
     out_shardings = _out_shardings_for_trivial(
         jaxpr, consts, in_shardings, device_assignment)
-    are_global = [True] * len(global_out_avals)
-    _, indices, _ = get_input_metadata(global_out_avals, out_shardings,
-                                        are_global)
+    indices = _get_input_indices(global_out_avals, out_shardings)
     local_device_assignment = [d for d in device_assignment
                                if d.process_index == d.client.process_index()]
     handle_ins = InputsHandler(local_device_assignment, out_shardings, indices)
@@ -3597,12 +3553,12 @@ def _execute_trivial(jaxpr, consts, in_handler, out_handler, kept_var_idx, *args
 
 def _compile_replicated_mesh_executable_from_hlo(
     name, computation, global_in_avals, global_out_avals, in_shardings,
-    out_shardings, in_is_global, auto_spmd_lowering, compile_options,
+    out_shardings, auto_spmd_lowering, compile_options,
     host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
     backend, device_assignment, committed, pmap_nreps):
   assert not auto_spmd_lowering
-  in_shardings, input_indices, input_avals = get_input_metadata(
-      global_in_avals, in_shardings, in_is_global)  # type: ignore
+  input_indices = _get_input_indices(
+      global_in_avals, in_shardings)  # type: ignore
   if pmap_nreps > 1:
     # For a jit wrapping a pmap, replicate each input index to match the
     # devices of the replicated jit computation.
@@ -3613,13 +3569,13 @@ def _compile_replicated_mesh_executable_from_hlo(
       is_trivial=False, name=name, computation=computation,
       compile_options=compile_options, host_callbacks=host_callbacks,
       has_unordered_effects=has_unordered_effects,
-      ordered_effects=ordered_effects, in_avals=input_avals,
+      ordered_effects=ordered_effects, in_avals=global_in_avals,
       in_indices=input_indices, in_shardings=in_shardings,
       kept_var_idx=kept_var_idx,
       out_avals=global_out_avals, out_shardings=out_shardings,
       committed=committed, pmap_nreps=pmap_nreps)
   xla_executable = None
-  return MeshExecutable(xla_executable, unsafe_call, input_avals,
+  return MeshExecutable(xla_executable, unsafe_call, global_in_avals,
                         in_shardings, out_shardings, auto_spmd_lowering,
                         kept_var_idx, device_assignment)
 
@@ -3630,16 +3586,15 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
   out_shardings = _out_shardings_for_trivial(
       jaxpr, consts, in_shardings, device_assignment)
 
-  in_is_global = [True] * len(global_in_avals)
-  in_shardings, input_indices, input_avals = get_input_metadata(
-      global_in_avals, in_shardings, in_is_global)  # type: ignore
+  input_indices = _get_input_indices(
+      global_in_avals, in_shardings)  # type: ignore
   handle_outs = global_avals_to_results_handler(
       global_out_avals, out_shardings, committed,
       [False] * len(global_out_avals))
   # Use the standard out_handler.
   unsafe_call = backend.compile_replicated(
       is_trivial=True, jaxpr=jaxpr, consts=consts,
-      device_assignment=device_assignment, in_avals=input_avals,
+      device_assignment=device_assignment, in_avals=global_in_avals,
       in_indices=input_indices, in_shardings=in_shardings,
       kept_var_idx=kept_var_idx, out_handler=handle_outs,
       out_shardings=out_shardings, pmap_nreps=pmap_nreps)

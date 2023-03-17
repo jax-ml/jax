@@ -745,9 +745,6 @@ def _pjit_jet_rule(primals_in, series_in, **params):
       'in_shardings': (
           params['in_shardings'] + (pjit._UNSPECIFIED,) * num_series_in),
       'out_shardings': params['out_shardings'] + (pjit._UNSPECIFIED,) * num_series_out,
-      'in_positional_semantics': (
-          params['in_positional_semantics']
-          + (pxla._PositionalSemantics.GLOBAL,) * num_series_in),
       'donated_invars': params['donated_invars'] + (False,) * num_series_in,
   }
   result = pjit.pjit_p.bind(*primals_and_series, **new_params)

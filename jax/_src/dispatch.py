@@ -190,8 +190,8 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
       return out
     else:
       return out,
-  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), None, None,
-                                    prim.name, donated_invars, False, *arg_specs)
+  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), prim.name,
+                                    donated_invars, False, *arg_specs)
   if not prim.multiple_results:
     return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
@@ -217,9 +217,8 @@ def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[De
 
 
 
-def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
-                     keep_unused, *arg_specs,
-                     lowering_platform: Optional[str]):
+def sharded_lowering(fun, name, donated_invars, keep_unused,
+                     *arg_specs, lowering_platform: Optional[str]):
   in_avals, in_shardings = util.unzip2(arg_specs)
   in_shardings = [pxla._UNSPECIFIED if i is None else i for i in in_shardings]  # type: ignore
 
@@ -228,16 +227,14 @@ def sharded_lowering(fun, device, backend, name, donated_invars, always_lower,
   # apply it to all out_avals.
   return pxla.lower_sharding_computation(
       fun, 'jit', name, in_shardings, pxla._UNSPECIFIED, donated_invars,
-      in_avals, in_is_global=(True,) * len(arg_specs), keep_unused=keep_unused,
-      always_lower=always_lower, devices_from_context=None,
-      lowering_platform=lowering_platform)
+      in_avals, keep_unused=keep_unused, always_lower=False,
+      devices_from_context=None, lowering_platform=lowering_platform)
 
 
-def _xla_callable_uncached(fun: lu.WrappedFun, device, backend, name,
-                           donated_invars, keep_unused, *arg_specs):
-  computation = sharded_lowering(fun, device, backend, name, donated_invars,
-                                  False, keep_unused, *arg_specs,
-                                  lowering_platform=None)
+def _xla_callable_uncached(fun: lu.WrappedFun, name, donated_invars,
+                           keep_unused, *arg_specs):
+  computation = sharded_lowering(fun, name, donated_invars, keep_unused,
+                                 *arg_specs, lowering_platform=None)
   allow_prop = [True] * len(computation.compile_args['global_out_avals'])
   return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
 

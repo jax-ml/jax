@@ -679,8 +679,6 @@ def make_xmap_callable(fun: lu.WrappedFun,
         av if ips == _PositionalSemantics.GLOBAL else pxla.mesh_local_to_global(mesh, ax, av)
         for ax, av, ips in safe_zip(mesh_in_axes, in_avals, in_positional_semantics)
     ]
-    in_is_global = [ips == _PositionalSemantics.GLOBAL or not ia
-                    for ips, ia in safe_zip(in_positional_semantics, mesh_in_axes)]
     tiling_method: pxla.TilingMethod
     if config.experimental_xmap_spmd_lowering_manual:
       manual_mesh_axes = frozenset(it.chain.from_iterable(plan.physical_axis_resources.values()))
@@ -695,12 +693,13 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, global_in_avals,
-        tiling_method=tiling_method, in_is_global=in_is_global,
+        tiling_method=tiling_method,
         lowering_platform=lowering_platform)
   else:
     return dispatch.sharded_lowering(
-        f, None, backend, name, donated_invars, False, True,
-        *[(a, None) for a in in_avals], lowering_platform=lowering_platform)
+        f, name, donated_invars, True, *[(a, None) for a in in_avals],
+        lowering_platform=lowering_platform)
+
 
 class EvaluationPlan(NamedTuple):
   """Encapsulates preprocessing common to top-level xmap invocations and its translation rule."""

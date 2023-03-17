@@ -16,7 +16,7 @@ import dataclasses
 import functools
 import itertools as it
 from typing import (Union, Optional, Callable, Dict, Tuple, TypeVar,
-                    FrozenSet, Iterable, Type, Set, List, Sequence, Any)
+                    FrozenSet, Type, Set, List, Sequence, Any)
 
 import numpy as np
 
@@ -25,7 +25,6 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import lax
 from jax.api_util import flatten_fun
-from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import mlir
 from jax.interpreters import partial_eval as pe
@@ -842,7 +841,6 @@ error_checks[lax.while_p] = while_loop_error_check
 def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
                      in_shardings, out_shardings, resource_env,
                      donated_invars, name,
-                     in_positional_semantics, out_positional_semantics,
                      inline, keep_unused):
   # jaxpr to checked_jaxpr
   err_vals, err_tree = jtu.tree_flatten(error)
@@ -858,16 +856,6 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
 
   new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)
   new_out_shardings = (*[sharding] * num_out_error_vals, *out_shardings)
-
-  pos_sem = maps._PositionalSemantics.GLOBAL
-  if not isinstance(in_positional_semantics, Iterable):
-    in_positional_semantics = (in_positional_semantics,)
-  if not isinstance(out_positional_semantics, Iterable):
-    out_positional_semantics = (out_positional_semantics,)
-  new_positional_sems_in = (*[pos_sem] * num_error_vals,
-                            *in_positional_semantics)
-  new_positional_sems_out = (*[pos_sem] * num_error_vals,
-                             *out_positional_semantics)
   new_donated_invars = (*[False] * num_error_vals, *donated_invars)
 
   err_and_out = pjit.pjit_p.bind(
@@ -878,8 +866,6 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
       resource_env=resource_env,
       donated_invars=new_donated_invars,
       name=name,
-      in_positional_semantics=new_positional_sems_in,
-      out_positional_semantics=new_positional_sems_out,
       inline=inline,
       keep_unused=keep_unused,
   )

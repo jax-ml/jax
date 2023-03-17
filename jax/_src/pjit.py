@@ -358,18 +358,16 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
   @api_boundary
   def lower(*args, _experimental_lowering_platform: Optional[str] = None,
             **kwargs):
-    (args_flat, flat_local_in_avals, params, in_tree, out_tree,
+    (args_flat, flat_global_in_avals, params, in_tree, out_tree,
      donate_argnums) = infer_params_fn(*args, **kwargs)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
     in_shardings = _resolve_in_shardings(
         args_flat, params['in_shardings'], params['out_shardings'], mesh)
-    in_is_global = _calc_is_global_sequence(
-        params['in_positional_semantics'], in_shardings)
     lowering = _pjit_lower(
         params['jaxpr'], in_shardings, params['out_shardings'],
         params['resource_env'], params['donated_invars'], params['name'],
-        in_is_global, params['keep_unused'], always_lower=True,
+        params['keep_unused'], always_lower=True,
         lowering_platform=_experimental_lowering_platform)
 
     if kwargs:
@@ -378,7 +376,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
       args_kwargs_in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
 
     return stages.Lowered.from_flat_info(
-        lowering, args_kwargs_in_tree, flat_local_in_avals, donate_argnums,
+        lowering, args_kwargs_in_tree, flat_global_in_avals, donate_argnums,
         out_tree)
 
   wrapped.lower = lower
@@ -465,20 +463,17 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   del user_in_shardings, user_out_shardings
 
-  local_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
-  in_positional_semantics = (pxla._PositionalSemantics.GLOBAL,) * len(args_flat)
-  out_positional_semantics = pxla._PositionalSemantics.GLOBAL
+  global_in_avals = tuple(shaped_abstractify(a) for a in args_flat)
 
-  global_in_avals, canonicalized_in_shardings_flat = _process_in_axis_resources(
-      hashable_pytree(in_shardings), local_in_avals, in_tree, in_positional_semantics,
-      resource_env)
+  canonicalized_in_shardings_flat = _process_in_axis_resources(
+      hashable_pytree(in_shardings), global_in_avals, in_tree, resource_env)
 
   jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), global_in_avals,
       HashableFunction(out_tree, closure=()),
       ('jit' if resource_env is None else 'pjit'))
 
-  if (any(_is_from_gda(i) for i in canonicalized_in_shardings_flat)):
+  if any(_is_from_gda(i) for i in canonicalized_in_shardings_flat):
     canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
         canonicalized_in_shardings_flat, args_flat)
 
@@ -487,8 +482,6 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   canonicalized_in_shardings_flat = (
       _UNSPECIFIED,) * len(consts) + canonicalized_in_shardings_flat
   donated_invars = (False,) * len(consts) + donated_invars
-  in_positional_semantics = (
-      pxla._PositionalSemantics.GLOBAL,) * len(consts) + in_positional_semantics
 
   # in_shardings and out_shardings here are all GSPMDSharding.
   params = dict(
@@ -498,12 +491,10 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       resource_env=resource_env,
       donated_invars=donated_invars,
       name=getattr(flat_fun, '__name__', '<unnamed function>'),
-      in_positional_semantics=in_positional_semantics,
-      out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
       inline=inline,
   )
-  return (consts + args_flat, local_in_avals, params, in_tree, out_tree(),
+  return (consts + args_flat, global_in_avals, params, in_tree, out_tree(),
           donate_argnums)
 
 
@@ -795,28 +786,26 @@ class PytreeLeaf:
 
 
 @lru_cache(maxsize=4096)
-def _process_in_axis_resources(in_shardings_thunk, local_in_avals,
-                               in_tree, in_positional_semantics,
-                               resource_env):
+def _process_in_axis_resources(in_shardings_thunk, global_in_avals,
+                               in_tree, resource_env):
   orig_in_shardings = in_shardings_thunk()
   # Only do this if original in_shardings are unspecified. If they are
   # FROM_GDA or AUTO, go via flatten_axis_resources.
   if _is_unspecified(orig_in_shardings):
-    in_shardings_flat = (orig_in_shardings,) * len(local_in_avals)
+    in_shardings_flat = (orig_in_shardings,) * len(global_in_avals)
   else:
     in_shardings_flat = flatten_axis_resources(
           "pjit in_shardings", in_tree, orig_in_shardings,
           tupled_args=True)
 
-  pjit_check_aval_sharding(in_shardings_flat, local_in_avals, "pjit arguments",
+  pjit_check_aval_sharding(in_shardings_flat, global_in_avals, "pjit arguments",
                             allow_uneven_sharding=False)
-  global_in_avals = local_in_avals
   # TODO(yashkatariya): Only check for is_auto or _is_unspecified when
   # FROM_GDA is removed.
   canonicalized_shardings = tuple(
       i if _is_unspecified_or_from_gda_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
       for i, aval in safe_zip(in_shardings_flat, global_in_avals))
-  return tuple(global_in_avals), canonicalized_shardings
+  return canonicalized_shardings
 
 
 @lu.cache
@@ -1172,21 +1161,17 @@ def _resolve_in_shardings(
 
 def _pjit_call_impl(*args, jaxpr,
                     in_shardings, out_shardings, resource_env,
-                    donated_invars, name,
-                    in_positional_semantics, out_positional_semantics,
-                    keep_unused, inline):
-
+                    donated_invars, name, keep_unused, inline):
   global _most_recent_pjit_call_executable
 
   in_shardings = _resolve_in_shardings(
       args, in_shardings, out_shardings,
       resource_env.physical_mesh if resource_env is not None else None)
 
-  in_is_global = _calc_is_global_sequence(in_positional_semantics, in_shardings)
   _allow_propagation_to_outputs = [_is_unspecified(o) for o in out_shardings]
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
-      donated_invars, name, in_is_global, keep_unused,
+      donated_invars, name, keep_unused,
       always_lower=False, lowering_platform=None).compile(
           _allow_propagation_to_outputs=_allow_propagation_to_outputs)
   _most_recent_pjit_call_executable.value = compiled
@@ -1281,7 +1266,6 @@ def _pjit_lower_cached(
     resource_env,
     donated_invars,
     name: str,
-    in_is_global: Sequence[bool],
     keep_unused: bool,
     always_lower: bool,
     *,
@@ -1327,12 +1311,12 @@ def _pjit_lower_cached(
     return pxla.lower_mesh_computation(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
-      True, jaxpr.in_avals, tiling_method=None, in_is_global=in_is_global,
+      True, jaxpr.in_avals, tiling_method=None,
       lowering_platform=lowering_platform)
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings, donated_invars,
-        jaxpr.in_avals, in_is_global=in_is_global, keep_unused=keep_unused,
+        jaxpr.in_avals, keep_unused=keep_unused,
         always_lower=always_lower,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
@@ -1351,15 +1335,13 @@ def pjit_staging_rule(trace, *args, **params):
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
 
 
-def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env,
-                        out_positional_semantics, **_):
+def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env, **_):
   return jaxpr.out_avals, jaxpr.effects
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, resource_env, donated_invars,
-                   in_positional_semantics, out_positional_semantics,
                    keep_unused, inline):
   effects = list(ctx.tokens_in.effects())
   output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out)
@@ -1396,8 +1378,7 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
                   axis_size, axis_name, main_type,
                   vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings,
-                  resource_env, donated_invars, name, in_positional_semantics,
-                  out_positional_semantics, keep_unused, inline):
+                  resource_env, donated_invars, name, keep_unused, inline):
   new_jaxpr, axes_out = batching.batch_jaxpr2(
       jaxpr, axis_size, dims_in, axis_name=axis_name,
       spmd_axis_name=spmd_axis_name, main_type=main_type)
@@ -1427,8 +1408,6 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
     resource_env=resource_env,
     donated_invars=donated_invars,
     name=name,
-    in_positional_semantics=in_positional_semantics,
-    out_positional_semantics=out_positional_semantics,
     keep_unused=keep_unused,
     inline=inline)
   return vals_out, axes_out
@@ -1459,8 +1438,7 @@ def _pjit_batcher_for_sharding(
 
 def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_shardings, out_shardings,
-              resource_env, donated_invars, name, in_positional_semantics,
-              out_positional_semantics, keep_unused, inline):
+              resource_env, donated_invars, name, keep_unused, inline):
   is_nz_tangents_in = [type(t) is not ad.Zero for t in tangents_in]
   jaxpr_jvp, is_nz_tangents_out = ad.jvp_jaxpr(
       jaxpr, is_nz_tangents_in, instantiate=False)
@@ -1477,8 +1455,6 @@ def _pjit_jvp(primals_in, tangents_in,
       resource_env=resource_env,
       donated_invars=(*donated_invars, *_filter_zeros_in(donated_invars)),
       name=name,
-      in_positional_semantics=(*in_positional_semantics, *_filter_zeros_in(in_positional_semantics)),
-      out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
       inline=inline)
 
@@ -1501,8 +1477,7 @@ def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
 
 def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
-                       resource_env, donated_invars, name, in_positional_semantics,
-                       out_positional_semantics, keep_unused, inline):
+                       resource_env, donated_invars, name, keep_unused, inline):
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
@@ -1526,8 +1501,6 @@ def _pjit_partial_eval(trace, *in_tracers,
       resource_env=resource_env,
       donated_invars=keep_where(donated_invars, known_ins),
       name=name,
-      in_positional_semantics=keep_where(in_positional_semantics, known_ins),
-      out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
       inline=inline)
 
@@ -1584,9 +1557,6 @@ def _pjit_partial_eval(trace, *in_tracers,
       donated_invars=(keep_where(donated_invars, unknown_ins) +
                       (False,) * num_residuals),
       name=name,
-      in_positional_semantics=(keep_where(
-          in_positional_semantics, unknown_ins) + (out_positional_semantics,) * num_residuals),
-      out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
       inline=inline)
   unknown_tracers_in = [t for t in in_tracers if not t.pval.is_known()]
@@ -1615,8 +1585,6 @@ def _pjit_partial_eval_custom_params_updater(
   # prune inputs to jaxpr_known according to unks_in
   donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
   in_shardings_known, _ = pe.partition_list(unks_in, params_known['in_shardings'])
-  in_positional_semantics_known, _ = pe.partition_list(
-      unks_in, params_known['in_positional_semantics'])
   if num_res == 0:
     residual_shardings = []
   else:
@@ -1625,8 +1593,7 @@ def _pjit_partial_eval_custom_params_updater(
   new_params_known = dict(params_known,
                           in_shardings=tuple(in_shardings_known),
                           out_shardings=(*out_shardings_known, *residual_shardings),
-                          donated_invars=tuple(donated_invars_known),
-                          in_positional_semantics=tuple(in_positional_semantics_known))
+                          donated_invars=tuple(donated_invars_known))
   assert len(new_params_known['in_shardings']) == len(params_known['jaxpr'].in_avals)
   assert len(new_params_known['out_shardings']) == len(params_known['jaxpr'].out_avals)
 
@@ -1635,18 +1602,13 @@ def _pjit_partial_eval_custom_params_updater(
   donated_invars_staged = [False] * num_res + donated_invars_staged
   _, in_shardings_staged = pe.partition_list(inst_in, params_staged['in_shardings'])
   in_shardings_staged = [*residual_shardings, *in_shardings_staged]
-  _, in_positional_semantics_staged = pe.partition_list(
-      inst_in, params_staged['in_positional_semantics'])
-  in_positional_semantics_staged = [
-      pxla._PositionalSemantics.GLOBAL] * num_res + in_positional_semantics_staged
 
   _, out_shardings_staged = pe.partition_list(kept_outs_staged, params_staged['out_shardings'])
 
   new_params_staged = dict(params_staged,
                            in_shardings=tuple(in_shardings_staged),
                            out_shardings=tuple(out_shardings_staged),
-                           donated_invars=tuple(donated_invars_staged),
-                           in_positional_semantics=tuple(in_positional_semantics_staged))
+                           donated_invars=tuple(donated_invars_staged))
   assert len(new_params_staged['in_shardings']) == len(params_staged['jaxpr'].in_avals)
   assert len(new_params_staged['out_shardings']) == len(params_staged['jaxpr'].out_avals)
   return new_params_known, new_params_staged
@@ -1666,8 +1628,7 @@ def _pjit_transpose_trace(fun, in_avals, api_name):
 
 def _pjit_transpose(reduce_axes, cts_in, *primals_in,
                     jaxpr, in_shardings, out_shardings,
-                    resource_env, donated_invars, name, in_positional_semantics,
-                    out_positional_semantics, keep_unused, inline):
+                    resource_env, donated_invars, name, keep_unused, inline):
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
 
@@ -1679,10 +1640,6 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
   transpose_in_shardings = (
     *prune_type(ad.UndefinedPrimal, in_shardings, primals_in),
     *prune_type(ad.Zero, out_shardings, cts_in)
-  )
-  transpose_in_positional_semantics = (
-    *prune_type(ad.UndefinedPrimal, in_positional_semantics, primals_in),
-    *prune_type(ad.Zero, (out_positional_semantics,) * len(cts_in), cts_in)
   )
   global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
                               for ct in primals_and_nz_cts_in)
@@ -1703,8 +1660,6 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
       resource_env=resource_env,
       donated_invars=(False,) * len(primals_and_nz_cts_in),
       name=name,
-      in_positional_semantics=transpose_in_positional_semantics,
-      out_positional_semantics=out_positional_semantics,
       keep_unused=keep_unused,
       inline=inline)
   return tree_unflatten(cts_out_treedef, nz_cts_out)
@@ -1733,8 +1688,6 @@ def dce_jaxpr_pjit_rule(used_outputs: List[bool], eqn: core.JaxprEqn
       jaxpr=dced_jaxpr,
       in_shardings=keep_where(eqn_params["in_shardings"], used_inputs),
       out_shardings=keep_where(eqn_params["out_shardings"], used_outputs),
-      in_positional_semantics=keep_where(eqn_params["in_positional_semantics"],
-                                         used_inputs),
       donated_invars=keep_where(eqn_params["donated_invars"], used_inputs),
   )
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
@@ -1816,11 +1769,6 @@ def _pjit_pp_rule(eqn, context, settings):
   del params['inline']
   if not any(params['donated_invars']):
     del params['donated_invars']
-  if all(p == pxla._PositionalSemantics.GLOBAL
-         for p in params['in_positional_semantics']):
-    del params['in_positional_semantics']
-  if params['out_positional_semantics'] == pxla._PositionalSemantics.GLOBAL:
-    del params['out_positional_semantics']
   if all(pxla._is_unspecified(s) for s in params['in_shardings']):
     del params['in_shardings']
   if all(pxla._is_unspecified(s) for s in params['out_shardings']):
@@ -1990,18 +1938,6 @@ def get_unconstrained_dims(sharding: NamedSharding):
   assert sharding._parsed_pspec is not None
   return {i for i, axes in enumerate(sharding._parsed_pspec)
           if axes is None}
-
-
-def global_to_local(positional_semantics, avals, shardings, mesh):
-  return avals
-
-
-def local_to_global(positional_semantics, avals, shardings, mesh):
-  return avals
-
-
-def _calc_is_global_sequence(in_positional_semantics, in_shardings):
-  return (True,) * len(in_positional_semantics)
 
 
 def _fast_path_get_device_assignment(

@@ -3226,7 +3226,7 @@ class UtilTest(jtu.JaxTestCase):
   def test_array_mapping_to_axis_resources(self, inp, expected_out):
     self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)
 
-  def test_get_input_metadata_fully_replicated(self):
+  def test_get_input_indices_fully_replicated(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_in_aval1 = core.ShapedArray((4, 4), jnp.int32)
     global_in_aval2 = core.ShapedArray((4, 4, 4), jnp.int32)
@@ -3235,8 +3235,7 @@ class UtilTest(jtu.JaxTestCase):
 
     mp = NamedSharding(global_mesh, P(None))
 
-    _, out_indices, _ = pxla.get_input_metadata(
-        in_avals, [mp, mp, mp], [False, False, False])
+    out_indices = pxla._get_input_indices(in_avals, [mp, mp, mp])
 
     self.assertLen(out_indices, len(in_avals))
     self.assertTrue(all(len(out) == len(global_mesh.local_devices)
