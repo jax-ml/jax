@@ -531,6 +531,33 @@ class TreeTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "can't tree-flatten type"):
       flatten_one_level(jnp.array((1, 2)))
 
+  def testOptionalFlatten(self):
+    @tree_util.register_pytree_with_keys_class
+    class FooClass:
+      def __init__(self, x, y):
+        self.x = x
+        self.y = y
+      def tree_flatten(self):
+        return ((self.x, self.y), 'treedef')
+      def tree_flatten_with_keys(self):
+        return (((tree_util.GetAttrKey('x'), self.x),
+                 (tree_util.GetAttrKey('x'), self.y)), 'treedef')
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        return cls(*children)
+
+    tree = FooClass(x=1, y=2)
+    self.assertEqual(
+        str(tree_util.tree_flatten(tree)[1]),
+        "PyTreeDef(CustomNode(FooClass[treedef], [*, *]))",
+    )
+    self.assertEqual(
+        str(tree_util.tree_flatten_with_path(tree)[1]),
+        "PyTreeDef(CustomNode(FooClass[treedef], [*, *]))",
+    )
+    self.assertEqual(tree_util.tree_flatten(tree)[0],
+                     [l for _, l in tree_util.tree_flatten_with_path(tree)[0]])
+
 
 class RavelUtilTest(jtu.JaxTestCase):
 
