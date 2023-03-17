@@ -49,12 +49,9 @@ JAX transformation and compilation are designed to work only on Python functions
 Here are some examples of functions that are not functionally pure for which JAX behaves differently than the Python interpreter. Note that these behaviors are not guaranteed by the JAX system; the proper way to use JAX is to use it only on functionally pure Python functions.
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: A6R-pdcm4u3v
-outputId: 25dcb191-14d4-4620-bcb2-00492d2f24e1
----
+:id: A6R-pdcm4u3v
+:outputId: 25dcb191-14d4-4620-bcb2-00492d2f24e1
+
 def impure_print_side_effect(x):
   print("Executing function")  # This is a side-effect
   return x
@@ -71,12 +68,9 @@ print ("Third call, different type: ", jit(impure_print_side_effect)(jnp.array([
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: -N8GhitI2bhD
-outputId: fd3624c9-197d-42cb-d97f-c5e0ef885467
----
+:id: -N8GhitI2bhD
+:outputId: fd3624c9-197d-42cb-d97f-c5e0ef885467
+
 g = 0.
 def impure_uses_globals(x):
   return x + g
@@ -94,12 +88,9 @@ print ("Third call, different type: ", jit(impure_uses_globals)(jnp.array([4.]))
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: RTB6iFgu4DL6
-outputId: 16697bcd-3623-49b1-aabb-c54614aeadea
----
+:id: RTB6iFgu4DL6
+:outputId: 16697bcd-3623-49b1-aabb-c54614aeadea
+
 g = 0.
 def impure_saves_global(x):
   global g
@@ -116,12 +107,9 @@ print ("Saved global: ", g)  # Saved global has an internal JAX value
 A Python function can be functionally pure even if it actually uses stateful objects internally, as long as it does not read or write external state:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: TP-Mqf_862C0
-outputId: 78d55886-54de-483c-e7c4-bafd1d2c7219
----
+:id: TP-Mqf_862C0
+:outputId: 78d55886-54de-483c-e7c4-bafd1d2c7219
+
 def pure_uses_internal_state(x):
   state = dict(even=0, odd=0)
   for i in range(10):
@@ -136,12 +124,9 @@ print(jit(pure_uses_internal_state)(5.))
 It is not recommended to use iterators in any JAX function you want to `jit` or in any control-flow primitive. The reason is that an iterator is a python object which introduces state to retrieve the next element. Therefore, it is incompatible with JAX functional programming model. In the code below, there are some examples of incorrect attempts to use iterators with JAX. Most of them return an error, but some give unexpected results.
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: w99WXa6bBa_H
-outputId: 52d885fd-0239-4a08-f5ce-0c38cc008903
----
+:id: w99WXa6bBa_H
+:outputId: 52d885fd-0239-4a08-f5ce-0c38cc008903
+
 import jax.numpy as jnp
 import jax.lax as lax
 from jax import make_jaxpr
@@ -178,12 +163,9 @@ iter_operand = iter(range(10))
 In Numpy you're used to doing this:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: om4xV7_84N9j
-outputId: 88b0074a-4440-41f6-caa7-031ac2d1a96f
----
+:id: om4xV7_84N9j
+:outputId: 88b0074a-4440-41f6-caa7-031ac2d1a96f
+
 numpy_array = np.zeros((3,3), dtype=np.float32)
 print("original array:")
 print(numpy_array)
@@ -199,23 +181,17 @@ print(numpy_array)
 If we try to update a JAX device array in-place, however, we get an __error__!  (☉_☉)
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: iOscaa_GecEK
-outputId: 26fdb703-a476-4b7f-97ba-d28997ef750c
----
+:id: iOscaa_GecEK
+:outputId: 26fdb703-a476-4b7f-97ba-d28997ef750c
+
 %xmode Minimal
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: 2AxeCufq4wAp
-outputId: fa4a87ad-1a84-471a-a3c5-a1396c432c85
-tags: [raises-exception]
----
+:id: 2AxeCufq4wAp
+:outputId: fa4a87ad-1a84-471a-a3c5-a1396c432c85
+:tags: [raises-exception]
+
 jax_array = jnp.zeros((3,3), dtype=jnp.float32)
 
 # In place update of JAX's array will yield an error!
@@ -241,12 +217,9 @@ Instead, JAX offers a _functional_ array update using the [`.at` property on JAX
 For example, the update above can be written as:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: PBGI-HIeCP_s
-outputId: de13f19a-2066-4df1-d503-764c34585529
----
+:id: PBGI-HIeCP_s
+:outputId: de13f19a-2066-4df1-d503-764c34585529
+
 updated_array = jax_array.at[1, :].set(1.0)
 print("updated array:\n", updated_array)
 ```
@@ -256,12 +229,9 @@ print("updated array:\n", updated_array)
 JAX's array update functions, unlike their NumPy versions, operate out-of-place. That is, the updated array is returned as a new array and the original array is not modified by the update.
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: dbB0UmMhCe8f
-outputId: 55d46fa1-d0de-4c43-996c-f3bbc87b7175
----
+:id: dbB0UmMhCe8f
+:outputId: 55d46fa1-d0de-4c43-996c-f3bbc87b7175
+
 print("original array unchanged:\n", jax_array)
 ```
 
@@ -278,12 +248,9 @@ However, inside __jit__-compiled code, if the __input value__ `x` of `x.at[idx].
 Indexed array updates are not limited simply to overwriting values. For example, we can perform indexed addition as follows:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: tsw2svao8FUp
-outputId: 3c62a3b1-c12d-46f0-da74-791ec4b61e0b
----
+:id: tsw2svao8FUp
+:outputId: 3c62a3b1-c12d-46f0-da74-791ec4b61e0b
+
 print("original array:")
 jax_array = jnp.ones((5, 6))
 print(jax_array)
@@ -306,13 +273,10 @@ For more details on indexed array updates, see the [documentation for the `.at` 
 In Numpy, you are used to errors being thrown when you index an array outside of its bounds, like this:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: 5_ZM-BJUypdO
-outputId: c9c41ae8-2653-4219-e6dc-09b03faa3b95
-tags: [raises-exception]
----
+:id: 5_ZM-BJUypdO
+:outputId: c9c41ae8-2653-4219-e6dc-09b03faa3b95
+:tags: [raises-exception]
+
 np.arange(10)[11]
 ```
 
@@ -321,13 +285,28 @@ np.arange(10)[11]
 However, raising an error from code running on an accelerator can be difficult or impossible. Therefore, JAX must choose some non-error behavior for out of bounds indexing (akin to how invalid floating point arithmetic results in `NaN`). When the indexing operation is an array index update (e.g. `index_add` or `scatter`-like primitives), updates at out-of-bounds indices will be skipped; when the operation is an array index retrieval (e.g. NumPy indexing or `gather`-like primitives) the index is clamped to the bounds of the array since __something__ must be returned. For example, the last value of the array will be returned from this indexing operation:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: cusaAD0NypdR
-outputId: af1708aa-b50b-4da8-f022-7f2fa67030a8
----
+:id: cusaAD0NypdR
+:outputId: af1708aa-b50b-4da8-f022-7f2fa67030a8
+
 jnp.arange(10)[11]
+```
+
++++ {"id": "NAcXJNAcDi_v"}
+
+If you would like finer-grained control over the behavior for out-of-bound indices, you can use the optional parameters of [`ndarray.at`](https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ndarray.at.html); for example:
+
+```{code-cell} ipython3
+:id: -0-MaFddO-xy
+:outputId: 746c4b2b-a90e-4ec9-de56-ed6682d451e5
+
+jnp.arange(10.0).at[11].get()
+```
+
+```{code-cell} ipython3
+:id: g5JEJtIUPBXi
+:outputId: 4a0f6854-1165-47f2-e1ac-5a21fa2b8516
+
+jnp.arange(10.0).at[11].get(mode='fill', fill_value=jnp.nan)
 ```
 
 +++ {"id": "J8uO8yevBa_M"}
@@ -343,12 +322,9 @@ Note also that, as the two behaviors described above are not inverses of each ot
 NumPy is generally happy accepting Python lists or tuples as inputs to its API functions:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: sErQES14sjCG
-outputId: 601485ff-4cda-48c5-f76c-2789073c4591
----
+:id: sErQES14sjCG
+:outputId: 601485ff-4cda-48c5-f76c-2789073c4591
+
 np.sum([1, 2, 3])
 ```
 
@@ -357,13 +333,10 @@ np.sum([1, 2, 3])
 JAX departs from this, generally returning a helpful error:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: DFEGcENSsmEc
-outputId: 08535679-6c1f-4dd9-a414-d8b59310d1ee
-tags: [raises-exception]
----
+:id: DFEGcENSsmEc
+:outputId: 08535679-6c1f-4dd9-a414-d8b59310d1ee
+:tags: [raises-exception]
+
 jnp.sum([1, 2, 3])
 ```
 
@@ -374,12 +347,9 @@ This is a deliberate design choice, because passing lists or tuples to traced fu
 For example, consider the following permissive version of `jnp.sum` that allows list inputs:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: jhe-L_TwsvKd
-outputId: ab2ee183-d9ec-45cc-d6be-5009347e1bc5
----
+:id: jhe-L_TwsvKd
+:outputId: ab2ee183-d9ec-45cc-d6be-5009347e1bc5
+
 def permissive_sum(x):
   return jnp.sum(jnp.array(x))
 
@@ -392,12 +362,9 @@ permissive_sum(x)
 The output is what we would expect, but this hides potential performance issues under the hood. In JAX's tracing and JIT compilation model, each element in a Python list or tuple is treated as a separate JAX variable, and individually processed and pushed to device. This can be seen in the jaxpr for the ``permissive_sum`` function above:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: k81u6DQ7vAjQ
-outputId: 869fc3b9-feda-4aa9-d2e5-5b5107de102d
----
+:id: k81u6DQ7vAjQ
+:outputId: 869fc3b9-feda-4aa9-d2e5-5b5107de102d
+
 make_jaxpr(permissive_sum)(x)
 ```
 
@@ -408,12 +375,9 @@ Each entry of the list is handled as a separate input, resulting in a tracing & 
 If you would like to pass a tuple or list to a JAX function, you can do so by first explicitly converting it to an array:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: nFf_DydixG8v
-outputId: e31b43b3-05f7-4300-fdd2-40e3896f6f8f
----
+:id: nFf_DydixG8v
+:outputId: e31b43b3-05f7-4300-fdd2-40e3896f6f8f
+
 jnp.sum(jnp.array(x))
 ```
 
@@ -433,12 +397,9 @@ jnp.sum(jnp.array(x))
 You're used to _stateful_ pseudorandom number generators (PRNGs) from numpy and other libraries, which helpfully hide a lot of details under the hood to give you a ready fountain of pseudorandomness:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: rr9FeP41fynt
-outputId: df0ceb15-96ec-4a78-e327-c77f7ea3a745
----
+:id: rr9FeP41fynt
+:outputId: df0ceb15-96ec-4a78-e327-c77f7ea3a745
+
 print(np.random.random())
 print(np.random.random())
 print(np.random.random())
@@ -505,12 +466,9 @@ JAX instead implements an _explicit_ PRNG where entropy production and consumpti
 The random state is described by two unsigned-int32s that we call a __key__:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: yPHE7KTWgAWs
-outputId: ae8af0ee-f19e-474e-81b6-45e894eb2fc3
----
+:id: yPHE7KTWgAWs
+:outputId: ae8af0ee-f19e-474e-81b6-45e894eb2fc3
+
 from jax import random
 key = random.PRNGKey(0)
 key
@@ -523,12 +481,9 @@ JAX's random functions produce pseudorandom numbers from the PRNG state, but __d
 Reusing the same state will cause __sadness__ and __monotony__, depriving the end user of __lifegiving chaos__:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: 7zUdQMynoE5e
-outputId: 23a86b72-dfb9-410a-8e68-22b48dc10805
----
+:id: 7zUdQMynoE5e
+:outputId: 23a86b72-dfb9-410a-8e68-22b48dc10805
+
 print(random.normal(key, shape=(1,)))
 print(key)
 # No no no!
@@ -541,12 +496,9 @@ print(key)
 Instead, we __split__ the PRNG to get usable __subkeys__ every time we need a new pseudorandom number:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: ASj0_rSzqgGh
-outputId: 2f13f249-85d1-47bb-d503-823eca6961aa
----
+:id: ASj0_rSzqgGh
+:outputId: 2f13f249-85d1-47bb-d503-823eca6961aa
+
 print("old key", key)
 key, subkey = random.split(key)
 normal_pseudorandom = random.normal(subkey, shape=(1,))
@@ -559,12 +511,9 @@ print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 We propagate the __key__ and make new __subkeys__ whenever we need a new random number:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: jbC34XLor2Ek
-outputId: 4059a2e2-0205-40bc-ad55-17709d538871
----
+:id: jbC34XLor2Ek
+:outputId: 4059a2e2-0205-40bc-ad55-17709d538871
+
 print("old key", key)
 key, subkey = random.split(key)
 normal_pseudorandom = random.normal(subkey, shape=(1,))
@@ -577,12 +526,9 @@ print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 We can generate more than one __subkey__ at a time:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: lEi08PJ4tfkX
-outputId: 1f280560-155d-4c04-98e8-c41d72ee5b01
----
+:id: lEi08PJ4tfkX
+:outputId: 1f280560-155d-4c04-98e8-c41d72ee5b01
+
 key, *subkeys = random.split(key, 4)
 for subkey in subkeys:
   print(random.normal(subkey, shape=(1,)))
@@ -599,12 +545,9 @@ for subkey in subkeys:
 If you just want to apply `grad` to your python functions, you can use regular python control-flow constructs with no problems, as if you were using [Autograd](https://github.com/hips/autograd) (or Pytorch or TF Eager).
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: aAx0T3F8lLtu
-outputId: 383b7bfa-1634-4d23-8497-49cb9452ca52
----
+:id: aAx0T3F8lLtu
+:outputId: 383b7bfa-1634-4d23-8497-49cb9452ca52
+
 def f(x):
   if x < 3:
     return 3. * x ** 2
@@ -624,12 +567,9 @@ Using control flow with `jit` is more complicated, and by default it has more co
 This works:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: OZ_BJX0CplNC
-outputId: 60c902a2-eba1-49d7-c8c8-2f68616d660c
----
+:id: OZ_BJX0CplNC
+:outputId: 60c902a2-eba1-49d7-c8c8-2f68616d660c
+
 @jit
 def f(x):
   for i in range(3):
@@ -644,12 +584,9 @@ print(f(3))
 So does this:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: pinVnmRWp6w6
-outputId: 25e06cf2-474f-4782-af7c-4f5514b64422
----
+:id: pinVnmRWp6w6
+:outputId: 25e06cf2-474f-4782-af7c-4f5514b64422
+
 @jit
 def g(x):
   y = 0.
@@ -665,13 +602,10 @@ print(g(jnp.array([1., 2., 3.])))
 But this doesn't, at least by default:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: 9z38AIKclRNM
-outputId: 38dd2075-92fc-4b81-fee0-b9dff8da1fac
-tags: [raises-exception]
----
+:id: 9z38AIKclRNM
+:outputId: 38dd2075-92fc-4b81-fee0-b9dff8da1fac
+:tags: [raises-exception]
+
 @jit
 def f(x):
   if x < 3:
@@ -700,12 +634,9 @@ But there's a tradeoff here: if we trace a Python function on a `ShapedArray((),
 The good news is that you can control this tradeoff yourself. By having `jit` trace on more refined abstract values, you can relax the traceability constraints. For example, using the `static_argnums` argument to `jit`, we can specify to trace on concrete values of some arguments. Here's that example function again:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: -Tzp0H7Bt1Sn
-outputId: f7f664cb-2cd0-4fd7-c685-4ec6ba1c4b7a
----
+:id: -Tzp0H7Bt1Sn
+:outputId: f7f664cb-2cd0-4fd7-c685-4ec6ba1c4b7a
+
 def f(x):
   if x < 3:
     return 3. * x ** 2
@@ -722,12 +653,9 @@ print(f(2.))
 Here's another example, this time involving a loop:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: iwY86_JKvD6b
-outputId: 48f9b51f-bd32-466f-eac1-cd23444ce937
----
+:id: iwY86_JKvD6b
+:outputId: 48f9b51f-bd32-466f-eac1-cd23444ce937
+
 def f(x, n):
   y = 0.
   for i in range(n):
@@ -750,12 +678,9 @@ In effect, the loop gets statically unrolled.  JAX can also trace at _higher_ le
 These control-flow issues also come up in a more subtle way: numerical functions we want to __jit__ can't specialize the shapes of internal arrays on argument _values_ (specializing on argument __shapes__ is ok).  As a trivial example, let's make a function whose output happens to depend on the input variable `length`.
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: Tqe9uLmUI_Gv
-outputId: 989be121-dfce-4bb3-c78e-a10829c5f883
----
+:id: Tqe9uLmUI_Gv
+:outputId: 989be121-dfce-4bb3-c78e-a10829c5f883
+
 def example_fun(length, val):
   return jnp.ones((length,)) * val
 # un-jit'd works fine
@@ -763,25 +688,19 @@ print(example_fun(5, 4))
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: fOlR54XRgHpd
-outputId: cf31d798-a4ce-4069-8e3e-8f9631ff4b71
-tags: [raises-exception]
----
+:id: fOlR54XRgHpd
+:outputId: cf31d798-a4ce-4069-8e3e-8f9631ff4b71
+:tags: [raises-exception]
+
 bad_example_jit = jit(example_fun)
 # this will fail:
 bad_example_jit(10, 4)
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: kH0lOD4GgFyI
-outputId: d009fcf5-c9f9-4ce6-fc60-22dc2cf21ade
----
+:id: kH0lOD4GgFyI
+:outputId: d009fcf5-c9f9-4ce6-fc60-22dc2cf21ade
+
 # static_argnums tells JAX to recompile on changes at these argument positions:
 good_example_jit = jit(example_fun, static_argnums=(0,))
 # first compile
@@ -797,12 +716,9 @@ print(good_example_jit(5, 4))
 Lastly, if your function has global side-effects, JAX's tracer can cause weird things to happen. A common gotcha is trying to print arrays inside __jit__'d functions:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: m2ABpRd8K094
-outputId: 4f7ebe17-ade4-4e18-bd8c-4b24087c33c3
----
+:id: m2ABpRd8K094
+:outputId: 4f7ebe17-ade4-4e18-bd8c-4b24087c33c3
+
 @jit
 def f(x):
   print(x)
@@ -837,12 +753,9 @@ def cond(pred, true_fun, false_fun, operand):
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: SGxz9JOWeiyH
-outputId: 942a8d0e-5ff6-4702-c499-b3941f529ca3
----
+:id: SGxz9JOWeiyH
+:outputId: 942a8d0e-5ff6-4702-c499-b3941f529ca3
+
 from jax import lax
 
 operand = jnp.array([0.])
@@ -886,12 +799,9 @@ def while_loop(cond_fun, body_fun, init_val):
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: jM-D39a-c436
-outputId: 552fe42f-4d32-4e25-c8c2-b951160a3f4e
----
+:id: jM-D39a-c436
+:outputId: 552fe42f-4d32-4e25-c8c2-b951160a3f4e
+
 init_val = 0
 cond_fun = lambda x: x<10
 body_fun = lambda x: x+1
@@ -912,12 +822,9 @@ def fori_loop(start, stop, body_fun, init_val):
 ```
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: dt3tUpOmeR8u
-outputId: 7819ca7c-1433-4d85-b542-f6159b0e8380
----
+:id: dt3tUpOmeR8u
+:outputId: 7819ca7c-1433-4d85-b542-f6159b0e8380
+
 init_val = 0
 start = 0
 stop = 10
@@ -978,12 +885,9 @@ def nansum(x):
 Outside JIT and other transforms, this works as expected:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: ITYoNQEZur4s
-outputId: a9a03d25-9c54-43b6-d35e-aea6c448d680
----
+:id: ITYoNQEZur4s
+:outputId: a9a03d25-9c54-43b6-d35e-aea6c448d680
+
 x = jnp.array([1, 2, jnp.nan, 3, 4])
 print(nansum(x))
 ```
@@ -993,14 +897,10 @@ print(nansum(x))
 If you attempt to apply `jax.jit` or another transform to this function, it will error:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-  height: 114
-id: nms9KjQEvNTz
-outputId: d8ae982f-111d-45b6-99f8-37715e2eaab3
-tags: [raises-exception]
----
+:id: nms9KjQEvNTz
+:outputId: d8ae982f-111d-45b6-99f8-37715e2eaab3
+:tags: [raises-exception]
+
 jax.jit(nansum)(x)
 ```
 
@@ -1011,12 +911,9 @@ Often in JAX it is possible to work-around the need for dynamically-sized arrays
 For example, here it is possible to use the three-argument form of  `jnp.where` to replace the NaN values with zeros, thus computing the same result while avoiding dynamic shapes:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: Zbuj7Dg1wnSg
-outputId: 81a5e356-cd28-4709-b307-07c6254c82de
----
+:id: Zbuj7Dg1wnSg
+:outputId: 81a5e356-cd28-4709-b307-07c6254c82de
+
 @jax.jit
 def nansum_2(x):
   mask = ~jnp.isnan(x)  # boolean mask selecting non-nan values
@@ -1171,12 +1068,9 @@ When this code sees a nan in the output of an `@jit` function, it calls into the
 At the moment, JAX by default enforces single-precision numbers to mitigate the Numpy API's tendency to aggressively promote operands to `double`.  This is the desired behavior for many machine-learning applications, but it may catch you by surprise!
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: CNNGtzM3NDkO
-outputId: b422bb23-a784-44dc-f8c9-57f3b6c861b8
----
+:id: CNNGtzM3NDkO
+:outputId: b422bb23-a784-44dc-f8c9-57f3b6c861b8
+
 x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
 x.dtype
 ```
@@ -1218,12 +1112,9 @@ Note that #2-#4 work for _any_ of JAX's configuration options.
 We can then confirm that `x64` mode is enabled:
 
 ```{code-cell} ipython3
----
-colab:
-  base_uri: https://localhost:8080/
-id: HqGbBa9Rr-2g
-outputId: 5aa72952-08cc-4569-9b51-a10311ae9e81
----
+:id: HqGbBa9Rr-2g
+:outputId: 5aa72952-08cc-4569-9b51-a10311ae9e81
+
 import jax.numpy as jnp
 from jax import random
 x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
