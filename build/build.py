@@ -261,10 +261,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write(
         f'build:rocm --action_env TF_ROCM_AMDGPU_TARGETS="{rocm_amdgpu_targets}"\n')
     if cpu is not None:
-      f.write("build --distinct_host_configuration=true\n")
       f.write(f"build --cpu={cpu}\n")
-    else:
-      f.write("build --distinct_host_configuration=false\n")
 
     for o in bazel_options:
       f.write(f"build {o}\n")
