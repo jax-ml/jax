@@ -48,14 +48,14 @@ def _run_tf_function(func_tf: Callable, *tf_args, mode: str):
   if mode == "eager":
     return func_tf(*tf_args)  # EAGER
   elif mode == "graph":
-    return tf.function(
+    return tf.function(  # GRAPH
         func_tf,
         autograph=False,
         input_signature=_make_tf_input_signature(*tf_args))(*tf_args)  # GRAPH
   elif mode == "compiled":
     # Adding an explicit input_signature prevents TF from constant-folding
     # the computation eagerly before compilation
-    return tf.function(
+    return tf.function(  # COMPILED
         func_tf,
         autograph=False,
         jit_compile=True,

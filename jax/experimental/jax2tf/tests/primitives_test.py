@@ -160,6 +160,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           skipCustomCallTest("LuDecomposition")
         if "eigh_shape" in harness.fullname:
           skipCustomCallTest("Eigh")
+        if "approx_top_k_large=True" in harness.fullname:
+          skipCustomCallTest("PartialReduce")  # ApproxTopK
 
       elif device == "gpu":
         if "eigh_shape" in harness.fullname:

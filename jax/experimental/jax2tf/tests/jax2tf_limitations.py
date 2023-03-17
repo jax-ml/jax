@@ -206,14 +206,19 @@ class Jax2TfLimitation(primitive_harness.Limitation):
     ]
 
   @classmethod
-  def approx_max_k(cls, harness: primitive_harness.Harness):
+  def approx_top_k(cls, harness: primitive_harness.Harness):
     supported_dtypes = jtu.supported_dtypes()
-    return Jax2TfLimitation(
-        "eager is not supported in CPU or GPU.",
-        dtypes=[t for t in [jnp.bfloat16, np.float16, np.float32]
-                if t in supported_dtypes],
-        devices=("cpu", "gpu", "tpu"),
-        modes=("graph", "compiled"))
+    return [
+        missing_tf_kernel(
+            dtypes=[t for t in [jnp.bfloat16, np.float16, np.float32, np.float64]
+                    if t in supported_dtypes],
+            devices=("cpu", "gpu"),
+            modes=("graph", "eager")),
+        Jax2TfLimitation(
+            "compilation not supported for float64.",
+            dtypes=[np.float64],
+            devices=("cpu", "gpu"),
+            modes=("compiled",))]
 
   @classmethod
   def argmax(cls, harness: primitive_harness.Harness):
@@ -1391,11 +1396,13 @@ def custom_random_keys_output():
 
 
 def missing_tf_kernel(*,
-                      description="op not defined for dtype",
-                      dtypes,
-                      modes=("eager", "graph", "compiled"),
-                      devices=("cpu", "gpu", "tpu"),
-                      enabled=True) -> Jax2TfLimitation:
+    description="op not defined for dtype",
+    dtypes,
+    modes=("eager", "graph", "compiled"),
+    devices=("cpu", "gpu", "tpu"),
+    native_serialization = Jax2TfLimitation.FOR_NON_NATIVE,
+    enabled=True) -> Jax2TfLimitation:
 
   return Jax2TfLimitation(
-      description, dtypes=dtypes, devices=devices, modes=modes, enabled=enabled)
+      description, dtypes=dtypes, devices=devices, modes=modes, enabled=enabled,
+      native_serialization=native_serialization)

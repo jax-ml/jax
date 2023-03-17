@@ -2629,7 +2629,7 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
 
       # Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
       fallback_lowering_harnesses = {
-          "vmap_approx_top_k:cpu", "vmap_bessel_i0e", "vmap_eigh:tpu",
+          "vmap_approx_top_k", "vmap_bessel_i0e", "vmap_eigh:tpu",
           "vmap_erf_inv", "vmap_igamma", "vmap_igammac", "vmap_lu",
           "vmap_regularized_incomplete_beta", "vmap_qr:tpu",
           "vmap_random_gamma:cpu", "random_gamma:tpu",

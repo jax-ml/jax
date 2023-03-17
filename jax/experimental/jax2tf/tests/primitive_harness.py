@@ -2604,7 +2604,7 @@ for window_dimensions, window_strides in [((2, 2), (1, 1)), ((3, 3), (2, 2)),
 
 _make_reduce_window_harness(
     "init_value_1d",
-    shape=(1, 16000),
+    shape=(1, 1600),
     init_value=1.0,
     computation=lax.min,
     window_dimensions=[1, 401],
@@ -3301,3 +3301,22 @@ for in_dtype in jtu.dtypes.all_floating:
             shape=shape,
             dtype=in_dtype,
             out_dtype=out_dtype)
+
+# approx_top_k
+for is_max in [True, False]:
+  for dtype in jtu.dtypes.all_floating:
+    # There are different lowerings for sizes < 1024 for rank-1 and 128 for higher
+    # rank.
+    for shape in [(32,), (2048,), (16, 256)]:
+      define(
+          lax.approx_top_k_p,
+          f"large={np.prod(shape) >= 1024}_max={is_max}_op={jtu.format_shape_dtype_string(shape, dtype)}",
+          lambda operand, is_max: lax.approx_top_k_p.bind(
+              operand, k=4, reduction_dimension=-1, recall_target=0.95,
+              is_max_k=is_max,
+              reduction_input_size_override=-1,
+              aggregate_to_topk=True),
+          [RandArg(shape, dtype), StaticArg(is_max)],
+          dtype=dtype,
+          is_max=is_max,
+          shape=shape)
