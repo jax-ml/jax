@@ -17,7 +17,6 @@
 import datetime
 from numpy import array, float32, complex64
 
-# Pasted from the test output (see back_compat_test.py module docstring)
 data_2023_03_17 = dict(
     # Pasted from the test output (see back_compat_test.py module docstring)
     f32=dict(
