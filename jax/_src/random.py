@@ -32,6 +32,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
+from jax._src.lib import xla_extension_version
 from jax._src.api import jit, vmap
 from jax._src.core import NamedShape
 from jax._src.interpreters import ad
@@ -284,15 +285,22 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
   if nbits not in (16, 32, 64):
     raise TypeError("uniform only accepts 32- or 64-bit dtypes.")
 
-  bits = _random_bits(key, nbits, shape)
+  rng_bits = nbits
+  if xla_extension_version >= 140 and nmant < 8:
+    rng_bits = 8
+  bits = _random_bits(key, rng_bits, shape)
+  uint_dtype = UINT_DTYPES[nbits]
+  if rng_bits != nbits:
+    bits = lax.convert_element_type(bits, uint_dtype)
 
   # The strategy here is to randomize only the mantissa bits with an exponent of
   # 1 (after applying the bias), then shift and scale to the desired range. The
   # bit-level transformation we use relies on Numpy and XLA having bit-for-bit
   # equivalent float representations, which might not be true on all platforms.
   float_bits = lax.bitwise_or(
-      lax.shift_right_logical(bits, np.array(nbits - nmant, lax.dtype(bits))),
-      np.array(1., dtype).view(UINT_DTYPES[nbits]))
+      lax.shift_right_logical(bits, np.array(rng_bits - nmant, uint_dtype)),
+      np.array(1.0, dtype).view(uint_dtype),
+  )
   floats = lax.bitcast_convert_type(float_bits, dtype) - np.array(1., dtype)
   return lax.max(
       minval,

@@ -65,7 +65,7 @@ from jax._src.lax.utils import (
 from jax._src.lib import pmap_lib
 from jax._src.lib import pytree
 from jax._src import xla_bridge
-from jax._src.lib import xla_client
+from jax._src.lib import xla_client, xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -2748,7 +2748,6 @@ def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
       [hlo.PrecisionAttr.get(str(p)) for p in full_precision])
 
 
-
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: Optional[np.dtype]):
   del preferred_element_type  # Implied by the output aval
@@ -3857,8 +3856,6 @@ mlir.register_lowering(reduce_max_p, partial(_unary_reduce_lower, mlir.max_hlo,
                                              _get_max_identity))
 
 
-
-
 def _reduce_precision_shape_rule(operand, *, exponent_bits, mantissa_bits):
   exponent_bits = operator.index(exponent_bits)
   mantissa_bits = operator.index(mantissa_bits)
@@ -3881,7 +3878,6 @@ def _reduce_precision_lower(ctx, operand, *, exponent_bits, mantissa_bits):
                                mlir.i32_attr(mantissa_bits)).results
 
 mlir.register_lowering(reduce_precision_p, _reduce_precision_lower)
-
 
 
 _UINT_DTYPES = {
@@ -4359,7 +4355,14 @@ def _rng_bit_generator_lowering(
           (key_shape == [2] and key_etype == u64_type)), (key_shape, key_etype)
   dtype = np.dtype(dtype)
   etype = mlir.dtype_to_ir_type(dtype)
-  if dtype == np.dtype('uint32') or dtype == np.dtype('uint64'):
+  if (
+      dtype == np.dtype('uint32')
+      or dtype == np.dtype('uint64')
+      or (
+          xla_extension_version >= 140
+          and (dtype == np.dtype('uint16') or dtype == np.dtype('uint8'))
+      )
+  ):
     rbg_etype = etype
   else:
     rbg_etype = u32_type
