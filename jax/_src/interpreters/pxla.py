@@ -1116,6 +1116,7 @@ def stage_parallel_callable(
                                    event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
           fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
+  jaxpr = api_util.jaxpr_debug_info(jaxpr, fun.debug_info)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
@@ -1264,7 +1265,6 @@ def lower_parallel_callable(
       raise ValueError("Ordered effects not supported in `pmap`.")
     unordered_effects = list(
         effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
-    arg_names, result_names = _debug_names(jaxpr.debug_info)
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -1278,7 +1278,8 @@ def lower_parallel_callable(
         replicated_args=replicated_args,
         arg_shardings=_shardings_to_mlir_shardings(parts.arg_parts),
         result_shardings=_shardings_to_mlir_shardings(parts.out_parts),
-        arg_names=arg_names, result_names=result_names)
+        arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
+        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths)
     module, keepalive, host_callbacks = (
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)
@@ -2564,7 +2565,6 @@ def lower_sharding_computation(
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
-  arg_names, result_names = _debug_names(jaxpr.debug_info)
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
@@ -2579,7 +2579,8 @@ def lower_sharding_computation(
       replicated_args=replicated_args,
       arg_shardings=in_op_shardings,
       result_shardings=out_op_shardings,
-      arg_names=arg_names, result_names=result_names)
+      arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
+      result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths)
 
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,
@@ -2750,7 +2751,6 @@ def lower_mesh_computation(
       closed_jaxpr.effects))
     ordered_effects = list(effects.ordered_effects.filter_in(
       closed_jaxpr.effects))
-    arg_names, result_names = _debug_names(jaxpr.debug_info)
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -2764,8 +2764,8 @@ def lower_mesh_computation(
         replicated_args=replicated_args,
         arg_shardings=in_partitions,
         result_shardings=out_partitions,
-        arg_names=arg_names,
-        result_names=result_names)
+        arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
+        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths)
     module, keepalive, host_callbacks = (
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)
@@ -2790,12 +2790,6 @@ def lower_mesh_computation(
       backend=backend,
       device_assignment=list(mesh.devices.flat),
       committed=True)
-
-def _debug_names(
-    dbg: Optional[core.JaxprDebugInfo]
-) -> Union[Tuple[None, None],
-           Tuple[Sequence[Optional[str]], Sequence[Optional[str]]]]:
-  return (None, None) if dbg is None else (dbg.arg_names, dbg.result_paths)
 
 class MeshComputation(stages.XlaLowering):
   _hlo: Optional[ir.Module]

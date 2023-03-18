@@ -59,7 +59,7 @@ from jax._src.api_util import (
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, argnames_partial_except,
     validate_argnames, validate_argnums, check_callable, resolve_argnums,
-    FLAGS)
+    debug_info, result_paths, debug_info_final, FLAGS)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -1634,6 +1634,8 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
+  dbg = debug_info('pmap', fun, args, kwargs, static_broadcasted_tuple, ())
+
   f = lu.wrap_init(fun)
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
@@ -1671,7 +1673,9 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
       kws=True))
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
+  f, res_paths = result_paths(f)
   flat_fun, out_tree = flatten_fun(f, in_tree)
+  flat_fun = debug_info_final(flat_fun, dbg, res_paths)
 
   if any(out_axis is None for out_axis in tree_flatten(out_axes)):
     raise NotImplementedError("None out_axes in pmap are not supported yet")
