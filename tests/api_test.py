@@ -1129,6 +1129,44 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['z']", mhlo_str)
     self.assertIn("kwargs['w']", mhlo_str)
 
+  @parameterized.parameters([0, 2, [(0, 2)]])
+  def test_jit_lower_arg_info_static_argnums(self, static_argnums):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, *args, **kwargs):
+      return y['hi'] + args[1] + sum(kwargs.values())
+
+    lowered = jax.jit(f, static_argnums=static_argnums).lower(
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.)
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertNotIn("\"x\"", mhlo_str)
+    self.assertIn("y['hi']", mhlo_str)
+    self.assertNotIn("args[0]", mhlo_str)
+    self.assertIn("args[1]", mhlo_str)
+    self.assertIn("kwargs['z']", mhlo_str)
+    self.assertIn("kwargs['w']", mhlo_str)
+
+  @parameterized.parameters(['a', 'b', [('a', 'b')]])
+  def test_jit_lower_arg_info_static_argnames(self, static_argnames):
+    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
+      raise unittest.SkipTest("test only applies after jit-pjit api merge")
+
+    def f(x, y, *args, **kwargs):
+      return y['hi'] + args[1] + kwargs['z'] + kwargs['w']
+
+    lowered = jax.jit(f, static_argnames=static_argnames).lower(
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.)
+    mhlo_str = str(lowered.compiler_ir('mhlo'))
+    self.assertNotIn("\"x\"", mhlo_str)
+    self.assertIn("y['hi']", mhlo_str)
+    self.assertNotIn("args[0]", mhlo_str)
+    self.assertIn("args[1]", mhlo_str)
+    self.assertIn("kwargs['z']", mhlo_str)
+    self.assertIn("kwargs['w']", mhlo_str)
+    self.assertNotIn("kwargs['a']", mhlo_str)
+    self.assertNotIn("kwargs['b']", mhlo_str)
+
   def test_jit_lower_result_info(self):
     def f(x, y, z):
       return {'a': x, 'b': [y]}

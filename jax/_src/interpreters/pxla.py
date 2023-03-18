@@ -49,7 +49,7 @@ import numpy as np
 import jax
 from jax.errors import JAXTypeError
 from jax.interpreters import partial_eval as pe
-from jax.tree_util import tree_flatten, tree_map, keystr
+from jax.tree_util import tree_flatten, tree_map
 
 from jax._src import abstract_arrays
 from jax._src import api_util
@@ -1507,7 +1507,7 @@ def lower_parallel_callable(
       raise ValueError("Ordered effects not supported in `pmap`.")
     unordered_effects = list(
         effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
-    arg_names, result_names = _debug_names(jaxpr.debug_info, None)
+    arg_names, result_names = _debug_names(jaxpr.debug_info)
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
@@ -2658,8 +2658,7 @@ def lower_sharding_computation(
                                   "in {elapsed_time} sec",
                                   event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_final(
-          fun_or_jaxpr, global_in_avals,
-          debug_info=pe.debug_info_final(fun_or_jaxpr, api_name))
+          fun_or_jaxpr, global_in_avals)
   else:
     assert isinstance(fun_or_jaxpr, core.ClosedJaxpr)
     jaxpr = fun_or_jaxpr.jaxpr
@@ -2808,7 +2807,7 @@ def lower_sharding_computation(
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
-  arg_names, result_names = _debug_names(jaxpr.debug_info, kept_var_idx)
+  arg_names, result_names = _debug_names(jaxpr.debug_info)
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
@@ -3036,16 +3035,10 @@ def lower_mesh_computation(
       committed=True)
 
 def _debug_names(
-    dbg: Optional[core.DebugInfo], kept_var_idx: Optional[Set] = None
-) -> Tuple[Optional[List[str]], Optional[List[str]]]:
-  if dbg is None: return (None, None)
-  arg_info = pe.arg_info_all(dbg)
-  arg_names = None if arg_info is None else [
-      f'{name}{keystr(path)}' for i, (name, path) in enumerate(arg_info)
-      if kept_var_idx is None or i in kept_var_idx]
-  result_info = pe.result_info(dbg)
-  result_names = None if result_info is None else map(keystr, result_info)
-  return arg_names, result_names
+    dbg: Optional[core.JaxprDebugInfo]
+) -> Union[Tuple[None, None],
+           Tuple[Sequence[Optional[str]], Sequence[Optional[str]]]]:
+  return (None, None) if dbg is None else (dbg.arg_names, dbg.result_paths)
 
 class MeshComputation(stages.XlaLowering):
   _hlo: Optional[ir.Module]

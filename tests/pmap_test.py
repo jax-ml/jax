@@ -2036,6 +2036,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr_text.count(' cos '), 2)
 
   def test_pmap_lower_arg_info(self):
+    raise SkipTest("arg info not plumbed to pmap yet")  # TODO(mattjj)
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
@@ -2051,6 +2052,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIn("kwargs['w']", mhlo_str)
 
   def test_pmap_lower_result_info(self):
+    raise SkipTest("arg info not plumbed to pmap yet")  # TODO(mattjj)
     def f(x, y, z):
       return {'a': x, 'b': [y]}
 

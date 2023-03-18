@@ -667,8 +667,8 @@ def lower_jaxpr_to_module(
     replicated_args: Optional[Sequence[bool]] = None,
     arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
-    arg_names: Optional[Sequence[str]] = None,
-    result_names: Optional[Sequence[str]] = None,
+    arg_names: Optional[Sequence[Optional[str]]] = None,
+    result_names: Optional[Sequence[Optional[str]]] = None,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
 
@@ -863,8 +863,8 @@ def lower_jaxpr_to_fun(
     input_output_aliases: Optional[Sequence[Optional[int]]] = None,
     num_output_tokens: int = 0,
     api_name: str = 'jit',
-    arg_names: Optional[Sequence[str]] = None,
-    result_names: Optional[Sequence[str]] = None,
+    arg_names: Optional[Sequence[Optional[str]]] = None,
+    result_names: Optional[Sequence[Optional[str]]] = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -987,8 +987,8 @@ def lower_jaxpr_to_fun(
 
     if arg_names:
       named_arg_attrs = arg_attrs[num_dim_vars + num_tokens:]
-      if len(named_arg_attrs) == len(arg_names):
-        for attrs, name_ in zip(named_arg_attrs, arg_names):
+      for attrs, name_ in zip(named_arg_attrs, arg_names):
+        if name_:
           attrs['jax.arg_info'] = ir.StringAttr.get(name_)
 
     func_op.arg_attrs = ir.ArrayAttr.get(
@@ -1007,13 +1007,6 @@ def lower_jaxpr_to_fun(
     for attrs, sharding in zip(result_attrs, ir_result_shardings):
       if sharding is not None:
         attrs['mhlo.sharding'] = get_sharding_attr(sharding)
-
-    # func_op.result_attrs = ir.ArrayAttr.get([
-    #         ir.DictAttr.get(
-    #         {} if sharding is None else
-    #         {"mhlo.sharding": get_sharding_attr(sharding)}
-    #     ) for sharding in ir_result_shardings
-    # ])
 
   func_op.result_attrs = ir.ArrayAttr.get(
       [ir.DictAttr.get(attrs) for attrs in result_attrs])

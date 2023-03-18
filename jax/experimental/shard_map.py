@@ -52,7 +52,7 @@ from jax.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_leaves, keystr)
 from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
-                                _generate_key_paths, KeyPath)
+                                generate_key_paths, KeyPath)
 
 P = PartitionSpec
 
@@ -133,7 +133,7 @@ def _check_specs(error_type: SpecErrorType, specs: Any) -> None:
   if all(isinstance(p, PartitionSpec) for p in tree_leaves(specs)): return
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
   msgs = [f"  {prefix}_specs{keystr(key)} is {x} of type {type(x).__name__}, "
-          for key, x in _generate_key_paths(specs) if not isinstance(x, P)]
+          for key, x in generate_key_paths(specs) if not isinstance(x, P)]
   raise TypeError(
       f"shard_map {prefix}_specs argument must be a pytree of "
       f"`jax.sharding.PartitionSpec` instances, but:\n\n"
@@ -276,8 +276,8 @@ T = TypeVar('T')
 def _iter_paths(tree: PyTreeDef, specs: Specs, fails: List[Union[T, NoFail]]
                 ) -> List[Tuple[Tuple[KeyPath, P], Tuple[KeyPath, T]]]:
   failures = tree_unflatten(tree, fails)
-  failures_aug = _generate_key_paths(failures)
-  specs_ = tree_unflatten(tree_structure(specs), _generate_key_paths(specs))
+  failures_aug = generate_key_paths(failures)
+  specs_ = tree_unflatten(tree_structure(specs), generate_key_paths(specs))
   leaf = lambda x: type(x) is tuple and len(x) == 2 and type(x[1]) is P
   specs_aug = broadcast_prefix(specs_, failures, is_leaf=leaf)
   return [((spec_key, spec), (fail_key, fail_data))
