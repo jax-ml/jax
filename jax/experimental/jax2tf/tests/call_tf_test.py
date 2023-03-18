@@ -58,7 +58,7 @@ _parameterized_jit = parameterized.named_parameters(
     _named_test(with_jit=with_jit)
     for with_jit in [True, False])
 
-_call_tf_non_compileable_error = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compileable functions"
+_call_tf_non_compilable_error = "Error compiling TensorFlow function. call_tf can used in a staged context .* only with compilable functions"
 _call_tf_dynamic_shape_error = "call_tf cannot call functions whose output has dynamic shape"
 
 class CallTfTest(tf_test_util.JaxToTfTestCase):
@@ -151,37 +151,37 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res = fun_jax()
     self.assertAllClose(res, (x1, x2))
 
-  def test_error_non_compileable_strings(self):
+  def test_error_non_compilable_strings(self):
     # Check that in op-by-op we call a function in eager mode.
-    def f_tf_non_compileable(x):
+    def f_tf_non_compilable(x):
       return tf.strings.length(tf.strings.format("Hello {}!", [x]))
 
-    f_jax = jax2tf.call_tf(f_tf_non_compileable)
+    f_jax = jax2tf.call_tf(f_tf_non_compilable)
     x = np.float32(0.7)
-    self.assertAllClose(f_tf_non_compileable(x).numpy(), f_jax(x))
+    self.assertAllClose(f_tf_non_compilable(x).numpy(), f_jax(x))
     with self.assertRaisesRegex(ValueError,
-                                _call_tf_non_compileable_error):
+                                _call_tf_non_compilable_error):
       jax.jit(f_jax)(x)
 
     with self.assertRaisesRegex(ValueError,
-                                _call_tf_non_compileable_error):
+                                _call_tf_non_compilable_error):
       lax.cond(True, lambda x: f_jax(x), lambda x: f_jax(x), x)
 
-  def test_error_non_compileable_dynamic_shape(self):
+  def test_error_non_compilable_dynamic_shape(self):
     # Check that in op-by-op we call a function in eager mode.
-    def f_tf_non_compileable(x):
+    def f_tf_non_compilable(x):
       return tf.cond(x[0], lambda: x[1:], lambda: x)
 
-    f_jax = jax2tf.call_tf(f_tf_non_compileable)
+    f_jax = jax2tf.call_tf(f_tf_non_compilable)
     x = np.array([True, False], dtype=np.bool_)
-    self.assertAllClose(f_tf_non_compileable(x), f_jax(x))  # Works in eager mode
+    self.assertAllClose(f_tf_non_compilable(x), f_jax(x))  # Works in eager mode
 
     with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       jax.jit(f_jax)(x)
 
   def test_error_bad_result_tensorarray(self):
     # Call a function that returns a tf.TensorArray. This should be detected
-    # early on. If we don't the function is actually compileable but returns
+    # early on. If we don't the function is actually compilable but returns
     # a tuple instead of a single result.
     def fun_tf():
       ta = tf.TensorArray(tf.int32, size=0, dynamic_size=True)
@@ -197,7 +197,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     def fun_tf():
       return tf.constant("foo")
 
-    # Now under jit, should fail because the function is not compileable
+    # Now under jit, should fail because the function is not compilable
     with self.assertRaisesRegex(ValueError,
                                 "The called TF function returns a result that is not convertible to JAX"):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
@@ -572,7 +572,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     res1 = jax2tf.call_tf(fun_tf)(x)
     self.assertAllClose(x[0:x[1]], res1)
 
-    # Now under jit, should fail because the function is not compileable
+    # Now under jit, should fail because the function is not compilable
     with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
       fun_jax(x)
@@ -1097,7 +1097,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     expected = x[1:]
     self.assertAllClose(expected, res1, check_dtypes=False)
 
-    # Now under jit, should fail because the function is not compileable
+    # Now under jit, should fail because the function is not compilable
     with self.assertRaisesRegex(ValueError, _call_tf_dynamic_shape_error):
       fun_jax = jax.jit(jax2tf.call_tf(fun_tf))
       fun_jax(x)
@@ -1231,7 +1231,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
     if kind == "bad_dim" and config.jax2tf_default_native_serialization:
       # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
-      expect_error = "Error compiling TensorFlow function. call_tf can used .* only with compileable functions with static output shapes"
+      expect_error = "Error compiling TensorFlow function. call_tf can used .* only with compilable functions with static output shapes"
     fun_tf_rt = _maybe_tf_jit(with_jit,
         jax2tf.convert(fun_jax, polymorphic_shapes=["b, ..."]))
     with self.assertRaisesRegex(expect_ex, expect_error):

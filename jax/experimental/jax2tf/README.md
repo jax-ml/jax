@@ -1242,17 +1242,17 @@ It is always a good idea to use XLA on the lowered function.
 Sometimes you cannot compile the entire TensorFlow function for your
 model, because in addition to the function that is lowered from JAX,
 it may include some pre-processing TensorFlow code that
-is not compileable with XLA, e.g., string parsing. Even in those situations
+is not compilable with XLA, e.g., string parsing. Even in those situations
 you can instruct TensorFlow to compile only the portion that originates
 from JAX:
 
 ```python
 def entire_tf_fun(x):
-  y = preprocess_tf_fun_not_compileable(x)
+  y = preprocess_tf_fun_not_compilable(x)
   # Compile the code that is lowered from JAX
   z = tf.function(jax2tf.convert(compute_jax_fn),
                   autograph=False, jit_compile=True)(y)
-  return postprocess_tf_fun_not_compileable(z)
+  return postprocess_tf_fun_not_compilable(z)
 ```
 
 You won't be able to compile the `entire_tf_fun`, but you can still execute
@@ -1260,7 +1260,7 @@ it knowing that the jax2tf-lowered code is compiled. You can even save
 the function to a SavedModel, knowing that upon restore the
 jax2tf-lowered code will be compiled.
 
-For a more elaborate example, see the test `test_tf_mix_jax_with_uncompileable`
+For a more elaborate example, see the test `test_tf_mix_jax_with_uncompilable`
 in [savedmodel_test.py](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/tests/savedmodel_test.py).
 
 # Calling TensorFlow functions from JAX
@@ -1283,7 +1283,7 @@ from jax.experimental import jax2tf
 # It should return a similar result. This function will be called using
 # TensorFlow eager mode if called from outside JAX staged contexts (`jit`,
 # `pmap`, or control-flow primitives), and will be called using TensorFlow
-# compiled mode otherwise. In the latter case, the function must be compileable
+# compiled mode otherwise. In the latter case, the function must be compilable
 # with XLA (`tf.function(func, jit_compile=True)`)
 def cos_tf(x):
   return tf.math.cos(x)
@@ -1407,7 +1407,7 @@ The shape polymorphism support for `call_tf` does not yet work for native serial
 
 ### Limitations of call_tf
 
-The TF function must be compileable (`tf.function(func, jit_compile=True)`)
+The TF function must be compilable (`tf.function(func, jit_compile=True)`)
 and must have static output shapes
 when used in a JAX staging context, e.g., `jax.jit`, `lax.scan`, `lax.cond`,
 but may have unknown output shapes when used in a JAX op-by-op mode.
@@ -1415,10 +1415,10 @@ For example, the following
 function uses strings operations that are not supported by XLA:
 
 ```python
-def f_tf_non_compileable(x):
+def f_tf_non_compilable(x):
    return tf.strings.length(tf.strings.format("Hello {}!", [x]))
 
-f_jax = jax2tf.call_tf(f_tf_non_compileable)
+f_jax = jax2tf.call_tf(f_tf_non_compilable)
 # Works in op-by-op mode
 f_jax(np.float32(42.))
 
@@ -1427,7 +1427,7 @@ jax.jit(f_jax)(np.float(42.))
 ```
 
 Yet another unsupported situation is when the TF function
-is compileable but with dynamic output shapes:
+is compilable but with dynamic output shapes:
 
 ```python
 def f_tf_dynamic_shape(x):

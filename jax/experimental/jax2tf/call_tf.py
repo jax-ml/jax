@@ -459,7 +459,7 @@ def _code_generator_and_avals(
     except Exception as e:
       msg = ("Error compiling TensorFlow function. call_tf can used " +
               "in a staged context (under jax.jit, lax.scan, etc.) only with " +
-              "compileable functions with static output shapes. " +
+              "compilable functions with static output shapes. " +
               "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg) from e
 
@@ -471,7 +471,7 @@ def _code_generator_and_avals(
       msg = ("Compiled TensorFlow function has dynamic output shape " +
              f"{res_shape}. call_tf can used " +
              "in a staged context (under jax.jit, lax.scan, etc.) only with " +
-             "compileable functions with static output shapes. " +
+             "compilable functions with static output shapes. " +
              "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#limitations-of-call_tf for a discussion.")
       raise ValueError(msg)
 

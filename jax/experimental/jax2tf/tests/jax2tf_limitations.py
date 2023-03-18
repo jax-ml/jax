@@ -654,12 +654,12 @@ class Jax2TfLimitation(primitive_harness.Limitation):
   def fft(cls, harness):
     return [
         Jax2TfLimitation(
-            "TF function not compileable",
+            "TF function not compilableble",
             devices=("cpu", "gpu"),
             dtypes=[np.float64],
             modes="compiled"),
         Jax2TfLimitation(
-            "TF function not compileable for IFFT and IRFFT",
+            "TF function not compilableble for IFFT and IRFFT",
             devices=("cpu", "gpu"),
             dtypes=[np.complex128],
             modes="compiled",

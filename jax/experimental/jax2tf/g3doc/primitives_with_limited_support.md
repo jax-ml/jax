@@ -79,8 +79,8 @@ More detailed information can be found in the
 | eigh | TF test skipped: Not implemented in JAX: unimplemented | bfloat16, float16 | cpu, gpu | compiled, eager, graph |
 | eigh | TF error: op not defined for dtype | bfloat16 | tpu | compiled, eager, graph |
 | erf_inv | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
-| fft | TF error: TF function not compileable | float64 | cpu, gpu | compiled |
-| fft | TF error: TF function not compileable for IFFT and IRFFT | complex128 | cpu, gpu | compiled |
+| fft | TF error: TF function not compilable | float64 | cpu, gpu | compiled |
+| fft | TF error: TF function not compilable for IFFT and IRFFT | complex128 | cpu, gpu | compiled |
 | igamma | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | igammac | TF error: op not defined for dtype | bfloat16, float16 | cpu, gpu | eager, graph |
 | lgamma | TF error: op not defined for dtype | bfloat16 | cpu, gpu | eager, graph |
