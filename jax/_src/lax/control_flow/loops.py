@@ -1829,7 +1829,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
   if core.is_special_dim_size(elems_flat[0].shape[axis]):
     raise NotImplementedError("associative scan over axis "
         f"of non-constant size: {elems_flat[0].shape[axis]}. You may be "
-        "able to avoid this on TPU.")
+        "able to avoid this on TPU. See b/274176030.")
   num_elems = int(elems_flat[0].shape[axis])
   if not all(int(elem.shape[axis]) == num_elems for elem in elems_flat[1:]):
     raise ValueError('Array inputs to associative_scan must have the same '
