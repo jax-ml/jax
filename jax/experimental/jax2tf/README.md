@@ -10,54 +10,84 @@ There are two interoperation directions:
 - `jax2tf.convert`: for calling JAX functions in a TensorFlow context, e.g.,
 for eager or graph TensorFlow execution,
 or for serializing as a TensorFlow SavedModel; and
-- `jax2tf.call_tf`: for calling TensorFlow functions in a JAX context, e.g., to call a
-TensorFlow library or a SavedModel inside a JAX function.
+- `jax2tf.call_tf`: for calling TensorFlow functions in a JAX context, e.g.,
+to call a TensorFlow library or to reload a TensorFlow SavedModel and call
+its functions in JAX.
 
-These APIs can be called in sequence, e.g., to reload in JAX a program that
+These APIs can be combined, e.g., to reload in JAX a program that
 has been serialized from JAX to a TensorFlow SavedModel, or to save to
 TensorFlow SavedModel a JAX program that uses a TensorFlow library.
 
-These APIs can be used in different modes, but in the default preferred mode
-the interoperation is by way of a StableHLO intermediate form. That is,
-the target function is lowered to StableHLO using standard native JAX or TensorFlow APIs,
-and then the StableHLO is invoked from TensorFlow or JAX. This has the advantage that
-it stays faithful to the semantics of the native target function, even as JAX and
-TensorFlow evolves. We refer to this usage mode as
-"native serialization".
+Tip: As of version 0.4.7 (March 2023), there is a new option
+`native_serialization` to use JAX's native lowering to StableHLO to obtain
+one StableHLO module for the entire JAX function instead of lowering each
+JAX primitive to a TensorFlow op.
 
-Note that at the moment when using JAX native serialization the whole
+The preferred mode of JAX-TensorFlow interoperation is by way of
+**native serialization** in which the target function is lowered to StableHLO
+using standard native JAX or TensorFlow APIs, and then the StableHLO module
+is invoked from the other framework.
+To enable this mode, set `native_serialization=True` (soon to be the default).
+This has several advantages:
+
+   * supports virtually all operations supported by native execution, e.g.,
+     `xmap`, `shard_map`, `pmap`, parallel collective operations, and all
+     primitives at all data types.
+   * uses standard native code paths in each framework, and thus it is easier
+     to trust that the semantics and performance stays faithful to the native
+     semantics, across platforms.
+   * the metadata associated with the operations, e.g., source location, is
+     identical to what native execution uses.
+
+At the moment when using JAX native serialization the whole
 JAX compilation unit is wrapped with a single thin TensorFlow op,
 called [`XlaCallModule`](https://github.com/tensorflow/tensorflow/blob/master/tensorflow/compiler/tf2xla/ops/xla_ops.cc#L1318),
-that carries a serialized version of the StableHLO obtained from JAX. This
-op simply compiles the StableHLO and invokes it.
-The reasons we still wrap the StableHLO in a TensorFlow op are:
+that carries the serialized version of the StableHLO obtained from JAX. This
+op is supported only on TensorFlow platforms that include the XLA compiler, and
+it compiles and then invokes the embedded StableHLO.
+The reasons we wrap the StableHLO in a TensorFlow op are:
 
   * it allows saving the serialization in a tf.SavedModel, for use with
     multiple mature tools for TensorFlow,
-  * it allows composing the JAX program with TensorFlow pre- and post-processing
-    functions,
+  * it allows composing the JAX program with TensorFlow pre-processing,
+    post-processing, and host callback functions,
   * the `XlaCallModule` contains the code that must be executed
-    to deserialize, compile, and execute the JAX program.
+    to deserialize, compile, and execute the JAX program, e.g., to
+    handle properly backward compatibility and to
+    do the just-in-time preprocessing needed for shape polymorphism.
   * the semantics of JAX program is still preserved faithfully because it
     is entirely captured by the StableHLO serialization.
 
-For backwards compatibility purposes, these interoperation APIs can be used also
-optionally without going through StableHLO.
+For backwards compatibility purposes, and for special uses,
+the JAX-TensorFlow interoperation APIs can be used also
+in a **graph serialization** mode (the only mode available before version 0.4.7),
+without going through StableHLO.
 
   * For calling JAX functions from TensorFlow,
-    it is possible to request that the JAX function be lowered not to StableHLO but to
-    TensorFlow ops. This can be achieved by setting `experimental_native_serialization=False`.
-    Even in this case, most of JAX's internals are used as in the
-    native mode, except that each JAX primitive is lowered to a TensorFlow op instead of
-    an StableHLO op. The result is a function that is pretty much 1:1 with the StableHLO program
-    that would be obtained through native serialization. As a result, we can execute
-    the lowered code in TensorFlow eager mode for debugging,
-    or trace to a `tf.Graph` for consumption by tooling that understands TensorFlow
-    ops but does not yet work with StableHLO, e.g., TFLite and TensorFlow.js.
+    it is possible to request that the JAX function be lowered with one TensorFlow
+    op for each JAX primitive.
+    This can be achieved by setting `native_serialization=False`.
+    This enables the following:
+
+       * TensorFlow eager mode execution, e.g., for debugging,
+       * producing a `tf.Graph` for consumption by tooling that understands
+         TensorFlow ops but does not yet work with StableHLO,
+         e.g., TFLite and TensorFlow.js.
+       * using the more mature support for dynamic shapes in TensorFlow.
+         StableHLO does have support for dynamic shapes, and in the near future
+         we expect it will support shape polymorphism to the same extent as
+         graph serialization.
+
+    Even in the graph serialization mode the resulting TensorFlow graph
+    is pretty much 1:1 with the StableHLO module
+    that would be obtained through native serialization.
+
   * For calling TensorFlow functions from JAX, if the resulting JAX program
-    is executed in op-by-op mode (i.e., not under `jax.jit` or `jax.pmap`)
+    is executed in op-by-op mode (i.e., not under `jax.jit` or `jax.pmap`
+    and not inside `lax.cond` or `lax.scan`)
     then the target TensorFlow function is executed in eager mode. This can
-    be useful if the target TensorFlow function is not lowerable to HLO.
+    be useful if the target TensorFlow function is not lowerable to HLO, e.g.,
+    is using strings.
 
 We describe below some general concepts and capabilities, first for
 `jax2tf.convert` and [later](#calling-tensorflow-functions-from-jax)
