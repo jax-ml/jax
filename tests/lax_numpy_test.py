@@ -2176,6 +2176,45 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                               rtol=3e-3, atol=1e-3)
       self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product([
+    dict(x=0.5, left='extrapolate', expected=5),
+    dict(x=1.5, left='extrapolate', expected=15),
+    dict(x=3.5, left='extrapolate', expected=30),
+    dict(x=3.9, right='extrapolate', expected=39),
+  ])
+  def testInterpExtrapoate(self, x, expected, **kwargs):
+    xp = jnp.array([1.0, 2.0, 3.0])
+    fp = jnp.array([10.0, 20.0, 30.0])
+    actual = jnp.interp(x, xp, fp, **kwargs)
+    self.assertAlmostEqual(actual, expected)
+
+  def testInterpErrors(self):
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        'xp and fp must be one-dimensional arrays of equal size'
+    ):
+      jnp.interp(0.0, jnp.arange(2.0), jnp.arange(3.0))
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "the only valid string value of `left` is 'extrapolate', but got: 'interpolate'"
+    ):
+      jnp.interp(0.0, jnp.arange(3.0), jnp.arange(3.0), left='interpolate')
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "the only valid string value of `right` is 'extrapolate', but got: 'interpolate'"
+    ):
+      jnp.interp(0.0, jnp.arange(3.0), jnp.arange(3.0), right='interpolate')
+    with self.assertRaisesWithLiteralMatch(
+        ValueError,
+        "jnp.interp: complex x values not supported."
+    ):
+      jnp.interp(1j, 1j * np.arange(3.0), np.arange(3.0))
+    with self.assertRaisesRegex(
+        ValueError,
+        "period must be a scalar; got"
+    ):
+      jnp.interp(0.0, jnp.arange(3.0), jnp.arange(3.0), period=np.array([1.0]))
+
   @jtu.sample_product(
     period=[None, 0.59],
     left=[None, 0],
