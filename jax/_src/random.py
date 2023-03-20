@@ -1836,3 +1836,47 @@ def ball(
   g = generalized_normal(k1, p, (*shape, d), dtype)
   e = exponential(k2, shape, dtype)
   return g / (((jnp.abs(g) ** p).sum(-1) + e) ** (1 / p))[..., None]
+
+
+def rayleigh(key: KeyArray,
+             scale: RealArray,
+             shape: Optional[Shape] = None,
+             dtype: DTypeLikeFloat = dtypes.float_) -> Array:
+  """Sample Rayleigh random values with given shape and float dtype.
+
+  Args:
+    key: a PRNG key used as the random key.
+    scale: a float or array of floats broadcast-compatible with ``shape``
+      representing the parameter of the distribution.
+    shape: optional, a tuple of nonnegative integers specifying the result
+      shape. Must be broadcast-compatible with ``scale``. The default (None)
+      produces a result shape equal to ``scale.shape``.
+    dtype: optional, a float dtype for the returned values (default float64 if
+      jax_enable_x64 is true, otherwise float32).
+
+  Returns:
+    A random array with the specified dtype and with shape given by ``shape`` if
+    ``shape`` is not None, or else by ``scale.shape``.
+  """
+  key, _ = _check_prng_key(key)
+  if not dtypes.issubdtype(dtype, np.floating):
+    raise ValueError("dtype argument to `rayleigh` must be a float "
+                     f"dtype, got {dtype}")
+  dtype = dtypes.canonicalize_dtype(dtype)
+  if shape is not None:
+    shape = core.canonicalize_shape(shape)
+  return _rayleigh(key, scale, shape, dtype)
+
+@partial(jit, static_argnums=(2, 3), inline=True)
+def _rayleigh(key, scale, shape, dtype) -> Array:
+  if shape is None:
+    shape = np.shape(scale)
+  else:
+    _check_shape("rayleigh", shape, np.shape(scale))
+  u = uniform(key, shape, dtype)
+  scale = scale.astype(dtype)
+  log_u = lax.log(u)
+  n_two = _lax_const(scale, -2)
+  sqrt_u = lax.sqrt(lax.mul(log_u, n_two))
+  ray = lax.mul(scale, sqrt_u)
+  return ray
