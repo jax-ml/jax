@@ -37,6 +37,10 @@ ATuple = collections.namedtuple("ATuple", ("foo", "bar"))
 class ANamedTupleSubclass(ATuple):
   pass
 
+ATuple2 = collections.namedtuple("ATuple2", ("foo", "bar"))
+tree_util.register_pytree_node(ATuple2, lambda o: ((o.foo,), o.bar),
+                               lambda bar, foo: ATuple2(foo[0], bar))
+
 class AnObject:
 
   def __init__(self, x, y, z):
@@ -557,6 +561,14 @@ class TreeTest(jtu.JaxTestCase):
     )
     self.assertEqual(tree_util.tree_flatten(tree)[0],
                      [l for _, l in tree_util.tree_flatten_with_path(tree)[0]])
+
+  def testPyTreeWithoutKeysIsntTreatedAsLeaf(self):
+    leaves, _ = tree_util.tree_flatten_with_path(Special([1, 2], [3, 4]))
+    self.assertLen(leaves, 4)
+
+  def testNamedTupleRegisteredWithoutKeysIsntTreatedAsLeaf(self):
+    leaves, _ = tree_util.tree_flatten_with_path(ATuple2(1, 'hi'))
+    self.assertLen(leaves, 1)
 
 
 class RavelUtilTest(jtu.JaxTestCase):
