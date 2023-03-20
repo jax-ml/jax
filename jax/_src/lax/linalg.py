@@ -1307,8 +1307,20 @@ def _geqrf_batching_rule(batched_args, batch_dims):
   bd, = batch_dims
   return geqrf(batching.moveaxis(x, bd, 0)), (0, 0)
 
-def _geqrf_translation_rule(ctx, avals_in, avals_out, operand):
-  return xops.QrDecomposition(operand)
+def _geqrf_lowering_rule(ctx, operand):
+  ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
+  r_type = mlir.aval_to_ir_type(ctx.avals_out[1])
+  op = hlo.CustomCallOp(
+      [ir.TupleType.get_tuple([ts_type, r_type])],
+      [operand],
+      call_target_name=ir.StringAttr.get("Qr"),
+      has_side_effect=ir.BoolAttr.get(False),
+      api_version=mlir.i32_attr(1),
+  )
+  return (
+      hlo.GetTupleElementOp(op, 0).result,
+      hlo.GetTupleElementOp(op, 1).result,
+  )
 
 def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
   if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
@@ -1342,7 +1354,7 @@ geqrf_p.multiple_results = True
 geqrf_p.def_impl(partial(xla.apply_primitive, geqrf_p))
 geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
 batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
-xla.register_translation(geqrf_p, _geqrf_translation_rule)
+mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
 
 mlir.register_lowering(
     geqrf_p, partial(_geqrf_cpu_gpu_lowering, lapack.geqrf_hlo, None),
@@ -1398,8 +1410,15 @@ def _householder_product_batching_rule(batched_args, batch_dims):
   return householder_product(batching.moveaxis(a, b_a, 0),
                batching.moveaxis(taus, b_taus, 0)), (0,)
 
-def _householder_product_translation_rule(ctx, avals_in, avals_out, a, taus):
-  return [xops.ProductOfElementaryHouseholderReflectors(a, taus)]
+def _householder_product_lowering_rule(ctx, a, taus):
+  op = hlo.CustomCallOp(
+      [mlir.aval_to_ir_type(ctx.avals_out[0])],
+      [a, taus],
+      call_target_name=ir.StringAttr.get("ProductOfElementaryHouseholderReflectors"),
+      has_side_effect=ir.BoolAttr.get(False),
+      api_version=mlir.i32_attr(1),
+  )
+  return [op.result]
 
 def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
   if any(not is_constant_shape(a.shape) for a in (ctx.avals_in + ctx.avals_out)):
@@ -1424,7 +1443,7 @@ householder_product_p = Primitive('householder_product')
 householder_product_p.def_impl(partial(xla.apply_primitive, householder_product_p))
 householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
 batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
-xla.register_translation(householder_product_p, _householder_product_translation_rule)
+mlir.register_lowering(householder_product_p, _householder_product_lowering_rule)
 
 mlir.register_lowering(
     householder_product_p,
