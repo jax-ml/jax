@@ -380,7 +380,7 @@ class Compiled(Stage):
   """
   __slots__ = ["args_info", "out_tree", "_executable", "_no_kwargs"]
 
-  args_info: Any                # PyTree of ArgInfo
+  args_info: Any  # PyTree of ArgInfo
   out_tree: tree_util.PyTreeDef
   _executable: Executable
   _no_kwargs: bool
@@ -526,9 +526,9 @@ class Compiled(Stage):
 
   def __call__(self, *args, **kwargs):
     if self._call is None:
-      self._call = self._executable.create_cpp_call(self._no_kwargs,
-                                                        self.in_tree,
-                                                        self.out_tree)
+      self._call = self._executable.create_cpp_call(
+          self._no_kwargs, self.in_tree, self.out_tree
+      )
       if self._call is None:
         params = self._params
         def cpp_call_fallback(*args, **kwargs):
@@ -549,7 +549,7 @@ class Lowered(Stage):
   """
   __slots__ = ["args_info", "out_tree", "_lowering", "_no_kwargs"]
 
-  args_info: Any                # PyTree of ArgInfo
+  args_info: Any  # PyTree of ArgInfo
   out_tree: tree_util.PyTreeDef
   _lowering: XlaLowering
   _no_kwargs: bool
