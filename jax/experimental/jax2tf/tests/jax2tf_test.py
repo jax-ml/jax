@@ -17,6 +17,7 @@ Specific JAX primitive conversion tests are in primitives_test."""
 import collections
 import contextlib
 import os
+import re
 from typing import Callable, Dict, Optional, Tuple
 import unittest
 
@@ -1517,6 +1518,34 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       with self.assertRaisesRegex(tf.errors.NotFoundError,
           "The current platform .* is not among the platforms required by the module"):
         f_tf(x)
+
+  def test_native_serialization_grad(self):
+    # Check that the grad function uses the same native serialization parameters
+    # as the primal function.
+    f_tf = jax2tf.convert(jnp.sin, native_serialization=True,
+                          native_serialization_platforms=('tpu',))
+    x = np.arange(4, dtype=np.float32)
+    x_v = tf.Variable(x)
+
+    @tf.function(autograph=False)
+    def f_grad_tf(x_v):
+      with tf.GradientTape() as tape:
+        tape.watch(x_v)
+        res_tf = f_tf(x_v)
+        return tape.gradient(res_tf, x_v)
+
+    # Make sure that we have 2x XlaCallModule in the graph of the gradient
+    # function
+    f_grad_tf_fun = tf.function(f_grad_tf, autograph=False)
+    graph_def = f_grad_tf_fun.get_concrete_function(x).graph.as_graph_def()
+    logging.info("Found graph_def: %s", graph_def)
+    self.assertLen(re.findall(r'op:\s*"XlaCallModule"', str(graph_def)), 2)
+
+    if jtu.device_under_test() != "tpu":
+      with self.assertRaisesRegex(
+          tf.errors.NotFoundError,
+          r"The current platform .* is not among the platforms required by the module: \[TPU\]"):
+        f_grad_tf(x_v)
 
 
 def get_serialized_computation(
