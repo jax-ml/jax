@@ -546,7 +546,7 @@ _register_keypaths(
 def register_pytree_with_keys(
     nodetype: Type[T],
     flatten_with_keys: Callable[
-        [T], Tuple[Iterable[Tuple[KeyPath, Any]], _AuxData]
+        [T], Tuple[Iterable[Tuple[KeyEntry, Any]], _AuxData]
     ],
     unflatten_func: Callable[[_AuxData, Iterable[Any]], T],
     flatten_func: Optional[
