@@ -45,7 +45,6 @@ from jax.errors import (ConcretizationTypeError, TracerArrayConversionError,
 from jax._src import linear_util as lu
 
 from jax._src import source_info_util
-from jax._src.tree_util import PyTreeDef
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
                            HashableFunction, HashableWrapper, weakref_lru_cache)
@@ -67,25 +66,22 @@ Effects = effects.Effects
 EffectTypeSet = effects.EffectTypeSet
 no_effects: Effects = effects.no_effects
 
-class DebugInfo(NamedTuple):
-  func_src_info: Optional[str]  # f'{fun.__name__} at {filename}:{lineno}'
-  signature: Optional[inspect.Signature]  # inspect.signature(fun)
-  in_tree: Optional[PyTreeDef]  # caller/constructor might not have this info
-  out_tree: Optional[Callable[[], PyTreeDef]]  # lazy, not avail at trace time
-  has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
-  traced_for: str  # "jit", "scan", "make_jaxpr", etc
-  # TODO(mattjj): add input type signature
-
+class JaxprDebugInfo(NamedTuple):
+  traced_for: str     # e.g. 'jit', 'scan', etc
+  func_src_info: str  # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  arg_names: Tuple[Optional[str], ...]     # e.g. ('args[0]', ... )
+  result_paths: Tuple[Optional[str], ...]  # e.g. ('[0]', '[1]', ...)
 
 class Jaxpr:
-  __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns', '_effects', '_debug_info']
+  __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
+               '_effects', '_debug_info']
 
   _constvars: List[Var]
   _invars: List[Var]
   _outvars: List[Atom]
   _eqns: List[JaxprEqn]
   _effects: Effects
-  _debug_info: Optional[DebugInfo]
+  _debug_info: Optional[JaxprDebugInfo]
 
   constvars = property(lambda self: self._constvars)
   invars = property(lambda self: self._invars)
@@ -97,17 +93,18 @@ class Jaxpr:
   def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
                outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
                effects: Effects = no_effects,
-               debug_info: Optional[DebugInfo] = None):
+               debug_info: Optional[JaxprDebugInfo] = None):
     """
     Args:
       constvars: list of variables introduced for constants. Array constants are
         replaced with such variables while scalar constants are kept inline.
       invars: list of input variables. Together, `constvars` and `invars` are
         the inputs to the Jaxpr.
-      outvars: list of output variables.
+      outvars: list of output atoms.
       eqns: list of equations.
       effects: set of effects. The effects on a jaxpr are a superset of the
         union of the effects for each equation.
+      debug_info: optional JaxprDebugInfo.
     """
     self._constvars = list(constvars)
     self._invars = list(invars)
@@ -115,6 +112,8 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
+    assert (not debug_info or len(debug_info.arg_names) == len(invars) and
+            len(debug_info.result_paths) == len(outvars))
 
   def __str__(self):
     return str(pp_jaxpr(self, JaxprPpContext(), JaxprPpSettings()))
@@ -135,14 +134,14 @@ class Jaxpr:
     return p.text(self.pretty_print(use_color=True))
 
   def replace(self, *, constvars=None, invars=None, outvars=None, eqns=None,
-              effects=None):
+              effects=None, debug_info=None):
     constvars = self.constvars if constvars is None else constvars
     invars =  self.invars if invars is None else invars
     outvars = self.outvars if outvars is None else outvars
     eqns = self.eqns if eqns is None else eqns
     effects = self.effects if effects is None else effects
     return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
-                 effects=effects)
+                 effects=effects, debug_info=debug_info)
 
 def join_effects(*effects: Effects) -> Effects:
   return set.union(*effects) if effects else no_effects

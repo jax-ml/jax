@@ -67,7 +67,7 @@ from jax._src.lib import pmap_lib
 from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import broadcast_prefix, _generate_key_paths
+from jax._src.tree_util import broadcast_prefix, generate_key_paths
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, split_list,
                            wrap_name, cache, wraps, HashableFunction,
                            weakref_lru_cache)
@@ -1298,16 +1298,16 @@ def _mapped_axis_size(fn, tree, vals, dims, name):
   if ba is None:
     args_paths = [f'args{keystr(p)} '
                   f'of type {shaped_abstractify(x).str_short()}'
-                  for p, x in _generate_key_paths(args)]
+                  for p, x in generate_key_paths(args)]
     kwargs_paths = [f'kwargs{keystr(p)} '
                     f'of type {shaped_abstractify(x).str_short()}'
-                    for p, x in _generate_key_paths(kwargs)]
+                    for p, x in generate_key_paths(kwargs)]
     key_paths = [*args_paths, *kwargs_paths]
   else:
     key_paths = [f'argument {name}{keystr(p)} '
                  f'of type {shaped_abstractify(x).str_short()}'
                  for name, arg in ba.arguments.items()
-                 for p, x in _generate_key_paths(arg)]
+                 for p, x in generate_key_paths(arg)]
   all_sizes = [_get_axis_size(name, np.shape(x), d) if d is not None else None
                for x, d in zip(vals, dims)]
   size_counts = collections.Counter(s for s in all_sizes if s is not None)

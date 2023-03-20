@@ -15,8 +15,8 @@
 import inspect
 import operator
 from functools import partial
-from typing import (Any, Callable, Dict, Iterable, List, Optional, Sequence,
-                    Set, Tuple, Union)
+from typing import (Any, Callable, Dict, Iterable, List, NamedTuple, Optional,
+                    Sequence, Set, Tuple, Union,)
 import warnings
 
 import numpy as np
@@ -27,7 +27,7 @@ from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ShapedArray
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
-    treedef_children)
+    treedef_children, generate_key_paths, keystr)
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
 from jax._src.util import safe_map, WrapKwArgs, Hashable, Unhashable
@@ -270,11 +270,7 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> Tuple[int, ...]:
-  """
-  Ensure argnum is within bounds.
-
-  Also resolves negative argnums
-  """
+  """Ensure argnum is within bounds. Also resolves negative argnums."""
   result = []
   for i in argnums:
     if i >= num_args and allow_invalid: continue
@@ -289,7 +285,7 @@ def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
 
 def argnums_partial_except(f: lu.WrappedFun, static_argnums: Tuple[int, ...],
                            args: Tuple[Any, ...], *, allow_invalid: bool):
-  """Version of ``argnums_partial`` that checks hashability of static_argnums."""
+  "Version of ``argnums_partial`` that checks hashability of static_argnums."
   if not static_argnums:
     return f, args
   static_argnums = _ensure_inbounds(allow_invalid, len(args), static_argnums)
@@ -587,3 +583,65 @@ _shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
 # By default it does nothing, but it can be monkey-patched to do other things.
 def api_hook(fun, tag: str):
   return fun
+
+
+class TracingDebugInfo(NamedTuple):
+  # Packages up trace/staging-time debug info about a func and its parameters,
+  # formed just before staging to a jaxpr and read in trace-time error messages.
+  # TODO(mattjj): delete partial_eval.DebugInfo, replace all uses with this cls
+  traced_for: str             # e.g. 'jit', 'scan', etc
+  func_src_info: str          # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  arg_names: Tuple[str, ...]  # e.g. ('args[0]', ... )
+
+def debug_info(traced_for: str, fun: Callable, args: Tuple[Any],
+               kwargs: Dict[str, Any], static_argnums: Tuple[int, ...],
+               static_argnames: Tuple[str, ...]) -> Optional[TracingDebugInfo]:
+  """Try to build trace-time debug info for fun when applied to args/kwargs."""
+  src = fun_sourceinfo(fun)
+  arg_names = _arg_names(fun, args, kwargs, static_argnums, static_argnames)
+  if src is None or arg_names is None: return None
+  return TracingDebugInfo(traced_for, src, arg_names)
+
+# TODO(mattjj): make this function internal to this module
+def fun_sourceinfo(fun: Callable) -> Optional[str]:
+  while isinstance(fun, partial):
+    fun = fun.func
+  fun = inspect.unwrap(fun)
+  try:
+    filename = fun.__code__.co_filename
+    lineno = fun.__code__.co_firstlineno
+    return f"{fun.__name__} at {filename}:{lineno}"
+  except AttributeError:
+    return None
+
+def _arg_names(fn, args, kwargs, static_argnums, static_argnames,
+               ) -> Optional[Tuple[str, ...]]:
+  static = object()
+  static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
+  static_argnames_ = set(static_argnames)
+  args_ = [static if i in static_argnums_ else x for i, x in enumerate(args)]
+  kwargs = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
+  try:
+    ba = inspect.signature(fn).bind(*args_, **kwargs)
+  except (ValueError, TypeError):
+    return None
+  return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()
+               for path, l in generate_key_paths(x) if l is not static)
+
+@lu.transformation_with_aux
+def result_paths(*args, **kwargs):
+  "linear_util transform to get output pytree paths of pre-flattened function."
+  ans = yield args, kwargs
+  yield ans, [keystr(path) for path, _ in generate_key_paths(ans)]
+
+def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: Optional[TracingDebugInfo],
+                     result_paths: Optional[Tuple[Optional[str], ...]]
+                     ) -> core.Jaxpr:
+  """Add debug info to jaxpr, given trace-time debug info and result paths."""
+  if trace_debug is not None and result_paths is not None:
+    debug_info = core.JaxprDebugInfo(
+        trace_debug.traced_for, trace_debug.func_src_info,
+        trace_debug.arg_names, result_paths)
+  else:
+    debug_info = None
+  return jaxpr.replace(debug_info=debug_info) if debug_info else jaxpr

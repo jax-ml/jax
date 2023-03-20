@@ -34,19 +34,19 @@ from jax._src import effects
 from jax._src import dtypes
 from jax._src import profiler
 from jax._src import source_info_util
-from jax._src.api_util import flattened_fun_in_tree, flatten_fun_nokwargs
+from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
+                               fun_sourceinfo)
 from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
                            AbstractValue, ClosedJaxpr, new_jaxpr_eqn,
                            ConcreteArray, Var, DropVar, raise_to_shaped, Atom,
                            JaxprEqn, Primitive, ShapedArray, DShapedArray,
                            mapped_aval, unmapped_aval, DBIdx, InDBIdx, OutDBIdx,
-                           InputType, OutputType, get_referent, DebugInfo)
+                           InputType, OutputType, get_referent)
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
-                                KeyPath, _generate_key_paths, keystr)
+                                KeyPath, generate_key_paths, keystr)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
-                           as_hashable_function, weakref_lru_cache,
-                           fun_sourceinfo)
+                           as_hashable_function, weakref_lru_cache)
 
 
 map, unsafe_map = safe_map, map
@@ -951,7 +951,7 @@ def tracers_to_jaxpr(
   outvars = map(get_atom, out_tracers)  # type: ignore[arg-type]
   jaxpr_effects = make_jaxpr_effects(const_vars, invars, outvars, eqns)
   jaxpr = Jaxpr(const_vars, invars,  # type: ignore[list-item,arg-type]
-                outvars, eqns, jaxpr_effects, None)
+                outvars, eqns, jaxpr_effects)
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   # del getvar  # needed to avoid cyclic-reference closure, apparently!
   return jaxpr, const_vals, env_vals
@@ -960,10 +960,12 @@ def tracers_to_jaxpr(
 def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
   """Moves the constvars to the start of invars."""
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
+  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
+      arg_names=(None,) * len(jaxpr.constvars) + jaxpr.debug_info.arg_names)
   lifted_jaxpr = Jaxpr(constvars=(),
                        invars=jaxpr.constvars + jaxpr.invars,
                        outvars=jaxpr.outvars, eqns=jaxpr.eqns,
-                       effects=jaxpr.effects, debug_info=jaxpr.debug_info)
+                       effects=jaxpr.effects, debug_info=dbg)
   config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
@@ -974,9 +976,10 @@ def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
     raise NotImplementedError
   config.jax_enable_checks and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
-  lifted_jaxpr = Jaxpr(constvars=tuple(constvars), invars=invars,
-                       outvars=jaxpr.outvars, eqns=jaxpr.eqns,
-                       effects=jaxpr.effects, debug_info=jaxpr.debug_info)
+  dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
+      arg_names=jaxpr.debug_info.arg_names[n:])
+  lifted_jaxpr = jaxpr.replace(constvars=tuple(constvars), invars=invars,
+                               debug_info=dbg)
   config.jax_enable_checks and core.check_jaxpr(lifted_jaxpr)
   return lifted_jaxpr
 
@@ -1387,8 +1390,11 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: Tuple[bool, ...],
   eqns = new_eqns[::-1]
   jaxpr_effects = make_jaxpr_effects(jaxpr.constvars, invars, outvars, eqns)
 
-  new_jaxpr = Jaxpr(jaxpr.constvars, invars, outvars, eqns, jaxpr_effects,
-                    jaxpr.debug_info)
+  dbg = jaxpr.debug_info and core.JaxprDebugInfo(
+      jaxpr.debug_info.traced_for, jaxpr.debug_info.func_src_info,
+      tuple(v for v, b in zip(jaxpr.debug_info.arg_names, used_inputs) if b),
+      tuple(v for v, b in zip(jaxpr.debug_info.result_paths, used_outputs) if b))
+  new_jaxpr = Jaxpr(jaxpr.constvars, invars, outvars, eqns, jaxpr_effects, dbg)
   config.jax_enable_checks and core.check_jaxpr(new_jaxpr)
 
   return new_jaxpr, used_inputs
@@ -1577,8 +1583,7 @@ class JaxprStackFrame:
     constvars, constvals = unzip2(self.constvar_to_val.items())
     jaxpr_effects = make_jaxpr_effects(constvars, self.invars, outvars,
                                         self.eqns)
-    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, jaxpr_effects,
-                  self.debug_info)
+    jaxpr = Jaxpr(constvars, self.invars, outvars, self.eqns, jaxpr_effects)
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
     return jaxpr, constvals
@@ -1591,7 +1596,7 @@ class JaxprStackFrame:
     jaxpr_effects = make_jaxpr_effects(constvars, self.invars, expl_outvars,
                                         self.eqns)
     jaxpr = Jaxpr(constvars, self.invars, expl_outvars, self.eqns,
-                  jaxpr_effects, self.debug_info)
+                  jaxpr_effects)
     # We can't run check_jaxpr until after we normalize.
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)
@@ -1979,6 +1984,16 @@ def _memoize(thunk):
     return cell[0]
   return memoized
 
+# TODO(mattjj): remove this DebugInfo and helper functions, replace with
+# api_util.py versions
+
+class DebugInfo(NamedTuple):
+  func_src_info: Optional[str]  # f'{fun.__name__} at {filename}:{lineno}'
+  signature: Optional[inspect.Signature]  # inspect.signature(fun)
+  in_tree: Optional[PyTreeDef]  # caller/constructor might not have this info
+  out_tree: Optional[Callable[[], PyTreeDef]]  # lazy, not avail at trace time
+  has_kwargs: bool  # whether in_tree corresponds to (args, kwargs) or args
+  traced_for: str  # "jit", "scan", "make_jaxpr", etc
 
 def debug_info(fn: Callable, in_tree: Optional[PyTreeDef],
                out_tree_thunk: Optional[Callable[[], PyTreeDef]],
@@ -1998,7 +2013,7 @@ def arg_info_all(dbg: DebugInfo) -> Optional[List[Tuple[str, KeyPath]]]:
   ba = None if dbg.in_tree is None else sig_info(dbg)
   if ba is None: return None
   return [(name, key_path) for name, dummy_arg in ba.arguments.items()
-          for key_path, _ in _generate_key_paths(dummy_arg)]
+          for key_path, _ in generate_key_paths(dummy_arg)]
 
 def sig_info(dbg: DebugInfo) -> Optional[inspect.BoundArguments]:
   if dbg.in_tree is None or dbg.signature is None: return None
@@ -2020,7 +2035,7 @@ def result_info(dbg: DebugInfo) -> Optional[List[KeyPath]]:
   except:
     return None
   else:
-    return [path for path, _ in _generate_key_paths(dummy_result)]
+    return [path for path, _ in generate_key_paths(dummy_result)]
 
 @profiler.annotate_function
 def trace_to_jaxpr_dynamic(fun: lu.WrappedFun,

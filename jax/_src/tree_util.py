@@ -633,10 +633,11 @@ def tree_flatten_with_path(
   return _generate_key_paths(tree, is_leaf), tree_def
 
 
-def _generate_key_paths(
+def generate_key_paths(
     tree: Any, is_leaf: Optional[Callable[[Any], bool]] = None
 ) -> List[Tuple[KeyPath, Any]]:
   return list(_generate_key_paths_((), tree, is_leaf))
+_generate_key_paths = generate_key_paths  # alias for backward compat
 
 
 # The overall logic should be same as PyTreeDef::FlattenIntoImpl

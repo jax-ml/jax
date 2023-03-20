@@ -49,8 +49,8 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
-    donation_vector, shaped_abstractify, check_callable,
-    argnames_partial_except, resolve_argnums, FLAGS)
+    donation_vector, shaped_abstractify, check_callable, resolve_argnums,
+    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info, FLAGS)
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -60,7 +60,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import (prefix_errors, _generate_key_paths)
+from jax._src.tree_util import prefix_errors, generate_key_paths
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
@@ -145,7 +145,7 @@ def _find_arg_mismatch(arg_list, fails, fun_name):
 def _device_assignment_mismatch_error(fun, fails, in_tree, args_flat, api_name):
   sig = _try_infer_args(fun, in_tree)
   args = tree_unflatten(in_tree, args_flat)
-  args_aug = _generate_key_paths(args)
+  args_aug = generate_key_paths(args)
 
   arg_list = []
   for arg_key, val in args_aug:
@@ -426,9 +426,12 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
         "Mesh context manager should not be used with jit when backend or "
         "device is also specified as an argument to jit.")
 
+  jit_name = 'jit' if resource_env is None else 'pjit'
+  dbg = debug_info(jit_name, fun, args, kwargs, static_argnums, static_argnames)
   f = lu.wrap_init(fun)
+  f, res_paths = result_paths(f)
   f, dyn_args = argnums_partial_except(f, static_argnums, args,
-                                        allow_invalid=True)
+                                       allow_invalid=True)
   del args
 
   # TODO(yashkatariya): Merge the nokwargs and kwargs path. One blocker is
@@ -469,9 +472,9 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       hashable_pytree(in_shardings), global_in_avals, in_tree, resource_env)
 
   jaxpr, consts, canonicalized_out_shardings_flat = _pjit_jaxpr(
-      flat_fun, hashable_pytree(out_shardings), global_in_avals,
+      flat_fun, hashable_pytree(out_shardings), global_in_avals, dbg,
       HashableFunction(out_tree, closure=()),
-      ('jit' if resource_env is None else 'pjit'))
+      HashableFunction(res_paths, closure=()))
 
   if any(_is_from_gda(i) for i in canonicalized_in_shardings_flat):
     canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
@@ -811,21 +814,23 @@ def _process_in_axis_resources(in_shardings_thunk, global_in_avals,
 
 
 @lu.cache
-def _create_pjit_jaxpr(fun, global_in_avals, api_name):
+def _create_pjit_jaxpr(fun, global_in_avals, debug_info, out_paths):
   with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                   "for pjit in {elapsed_time} sec",
                                   event=dispatch.JAXPR_TRACE_EVENT):
+    pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
     jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
-        fun, global_in_avals, debug_info=pe.debug_info_final(fun, api_name))
+        fun, global_in_avals, debug_info=pe_debug)
+
+  jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
   if any(isinstance(c, core.Tracer) for c in consts):
-    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
-    jaxpr = pe.close_jaxpr(jaxpr)
+    closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
     final_consts = consts
   else:
-    jaxpr = core.ClosedJaxpr(jaxpr, consts)
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     final_consts = []
-  return jaxpr, final_consts, global_out_avals
+  return closed_jaxpr, final_consts, global_out_avals
 
 
 @lru_cache(maxsize=4096)
@@ -854,9 +859,10 @@ def _check_and_canonicalize_out_shardings(
   return canonicalized_out_shardings_flat
 
 
-def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, out_tree, api_name):
+def _pjit_jaxpr(fun, out_shardings_thunk, global_in_avals, debug_info, out_tree,
+                result_paths):
   jaxpr, final_consts, global_out_avals = _create_pjit_jaxpr(
-      fun, global_in_avals, api_name)
+      fun, global_in_avals, debug_info, result_paths)
   canonicalized_out_shardings_flat = _check_and_canonicalize_out_shardings(
       out_shardings_thunk, out_tree, tuple(global_out_avals))
   # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
@@ -1616,9 +1622,8 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
 
 
 @lu.cache
-def _pjit_transpose_trace(fun, in_avals, api_name):
-  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
-      fun, in_avals, debug_info=pe.debug_info_final(fun, api_name))
+def _pjit_transpose_trace(fun, in_avals):
+  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
   return transpose_jaxpr
 
@@ -1641,8 +1646,7 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
   global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
                               for ct in primals_and_nz_cts_in)
 
-  api_name = 'jit' if resource_env is None else 'pjit'
-  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals, api_name)
+  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals)
   cts_out_treedef = cts_out_treedef_thunk()
   transpose_out_shardings = prune_type(
       ad.Zero,
