@@ -1531,19 +1531,15 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       ]
   ])
   def test_poly_unary_op(self, *, op=jnp.array):
-    if config.jax_enable_x64:
-      raise unittest.SkipTest("TODO(necula): dim_as_value in x64 mode")
-    if config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
     def f_jax(x):  # x: f32[b]
       poly = 2 * x.shape[0]
-      return op(poly)
+      return (op(poly), x)  # Make sure we are using x
 
     check_shape_poly(self,
                      f_jax,
                      arg_descriptors=[RandArg((3,), _f32)],
                      poly_axes=[0],
-                     expected_output_signature=tf.TensorSpec([]))
+                     expected_output_signature=(tf.TensorSpec([]), tf.TensorSpec((None,), _f32)))
 
   @parameterized.named_parameters([
       dict(testcase_name=f"_{op.__name__}_other={other}:{type(other)}{'_other_jnp_array' if other_jnp_array else ''}{'_swap' if swap else ''}",
@@ -1565,9 +1561,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                           other_jnp_array=False,
                           swap=True):
     # Test arithmetic operations with poly and a variety of other operand types
-    if config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("TODO(necula): dim_as_value in native mode")
-
     def f_jax(x):  # x: f32[b]
       poly = 2 * x.shape[0]  # This will allow divisions with 2
       other_wrapped = jnp.array(other) if other_jnp_array else other
@@ -1594,8 +1587,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         # is a Python or NumPy constant. So the result will be 64-bits. But under
         # jax2tf, x.shape[0] is rewritten to jnp.array(x.shape[0]) which when
         # used with int32 or float32 values will produce 32-bit values.
-        return lax.convert_element_type(res, np.float32)
-      return res
+        return (lax.convert_element_type(res, np.float32), x)
+      return (res, x)  # Make sure we are using x
 
     check_shape_poly(self,
                      f_jax,
