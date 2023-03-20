@@ -5692,6 +5692,4 @@ def _set_device_array_attributes(device_array):
 
 for t in device_array.device_array_types:
   _set_device_array_attributes(t)
-_set_device_array_attributes(pxla._ShardedDeviceArray)
-_set_device_array_attributes(pmap_lib.ShardedDeviceArray)
 _set_device_array_attributes(ArrayImpl)

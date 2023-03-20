@@ -108,8 +108,6 @@ class JaxJitTest(jtu.JaxTestCase):
       sda = pmaped_f(np.asarray([[1]]))
       output_buffer = device_put_function(sda, device=device)
 
-      self.assertNotIsInstance(output_buffer,
-                               jax.interpreters.pxla.ShardedDeviceArray)
       self.assertEqual(output_buffer.dtype, sda.dtype)
       self.assertEqual(output_buffer.aval, sda.aval)
       np.testing.assert_array_equal(output_buffer, np.asarray(sda))

@@ -759,14 +759,14 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = grad(lambda x: jnp.sum(baseline_fun(x)))(x)
     self.assertAllClose(ans, expected, atol=1e-3, rtol=1e-3)
 
-  def testShardedDeviceArrays(self):
+  def testArrays(self):
     f = lambda x: 2 * x
     f = self.pmap(f, axis_name='i')
 
     shape = (jax.device_count(), 4)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
-    # test that we can pass in and out ShardedDeviceArrays
+    # test that we can pass in and out Arrays
     y = f(x)
     self.assertIsInstance(y, jax.Array)
     self.assertIsInstance(y, array.ArrayImpl)
@@ -782,7 +782,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIsInstance(y, array.ArrayImpl)
     self.assertAllClose(y, 2 * x, check_dtypes=False)
 
-    # test that we can pass a ShardedDeviceArray to a regular jit computation
+    # test that we can pass an Array to a regular jit computation
     z = y + y
     self.assertAllClose(z, 2 * 2 * x, check_dtypes=False)
 
@@ -809,7 +809,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       for in_shape, out_shape in [
           [(1,1), (1,)], [(1,), (1,1)], [(1,), ()], [(4,7), (2,2,7)]
       ])
-  def testShardedDeviceArrayReshape(self, in_shape, out_shape):
+  def testArrayReshape(self, in_shape, out_shape):
     if jax.device_count() < max(in_shape[:1] + out_shape[:1]):
       raise SkipTest("not enough devices")
 
@@ -1551,7 +1551,7 @@ class PythonPmapTest(jtu.JaxTestCase):
         1, 2).reshape(shape)
     self.assertAllClose(fn(x, w), expected, check_dtypes=False)
 
-  def testShardedDeviceArrayBlockUntilReady(self):
+  def testArrayBlockUntilReady(self):
     x = np.arange(jax.device_count())
     x = self.pmap(lambda x: x)(x)
     x.block_until_ready()  # doesn't crash
@@ -1602,7 +1602,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     multi_step_pmap(jnp.zeros((device_count,)), count=1)
 
-  def testShardedDeviceArrayGetItem(self):
+  def testArrayGetItem(self):
     f = lambda x: 2 * x
     f = self.pmap(f, axis_name='i')
 
@@ -2612,7 +2612,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class ShardedDeviceArrayTest(jtu.JaxTestCase):
+class ArrayTest(jtu.JaxTestCase):
 
   def testThreadsafeIndexing(self):
     # NOTE(skye): I picked these values to be big enough to cause interesting
@@ -2868,7 +2868,7 @@ class ShardArgsTest(jtu.JaxTestCase):
   def device_array(x):
     return jax.device_put(x)
 
-  # TODO(skye): add coverage for ShardedDeviceArrays
+  # TODO(skye): add coverage for Arrays
 
   @parameterized.named_parameters(
       {"testcase_name":

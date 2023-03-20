@@ -1820,7 +1820,7 @@ class _PmapFastpathData(NamedTuple):
   input_devices: Sequence[xc.Device]
   input_indices: Sequence[pxla.Index]
   input_array_shardings: Sequence[Any]
-  # Data needed to build the ShardedDeviceArray from C++.
+  # Data needed to build the Array from C++.
   out_sharding_specs: Sequence[pxla.ShardingSpec]
   out_indices: Sequence[pxla.Index]
   out_avals: Sequence[Any]
@@ -1891,8 +1891,7 @@ def _cpp_pmap(
         # TODO(sharadmv): Enable effects in replicated computation
         not execute_replicated.has_unordered_effects
         and not execute_replicated.has_host_callbacks and
-        # No tracers in the outputs. Checking for ShardedDeviceArray should be
-        # sufficient, but we use the more general `DeviceArray`.
+        # No tracers in the outputs.
         all(
             isinstance(x, device_array.DeviceArray) or isinstance(x, xc.ArrayImpl)
             for x in out_flat))
@@ -2528,7 +2527,7 @@ def device_put(
 
 
 def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # noqa: F811
-  """Transfer array shards to specified devices and form ShardedDeviceArray(s).
+  """Transfer array shards to specified devices and form Array(s).
 
   Args:
     shards: A sequence of arrays, scalars, or (nested) standard Python
@@ -2540,7 +2539,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
   This function is always asynchronous, i.e. returns immediately.
 
   Returns:
-    A ShardedDeviceArray or (nested) Python container thereof representing the
+    A Array or (nested) Python container thereof representing the
     elements of ``shards`` stacked together, with each shard backed by physical
     device memory specified by the corresponding entry in ``devices``.
 
@@ -2603,7 +2602,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
 
 
 def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
-  """Transfer array(s) to each specified device and form ShardedDeviceArray(s).
+  """Transfer array(s) to each specified device and form Array(s).
 
   Args:
     x: an array, scalar, or (nested) standard Python container thereof
@@ -2614,7 +2613,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
   This function is always asynchronous, i.e. returns immediately.
 
   Returns:
-    A ShardedDeviceArray or (nested) Python container thereof representing the
+    An Array or (nested) Python container thereof representing the
     value of ``x`` broadcasted along a new leading axis of size
     ``len(devices)``, with each slice along that new leading axis backed by
     memory on the device specified by the corresponding entry in ``devices``.

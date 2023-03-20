@@ -54,7 +54,6 @@ from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
 from jax._src.interpreters import mlir
 from jax.interpreters import xla
-from jax.interpreters import pxla
 from jax.interpreters import batching
 from jax.interpreters import partial_eval as pe
 from jax.sharding import PartitionSpec as P
@@ -1489,13 +1488,9 @@ class APITest(jtu.JaxTestCase):
   def test_is_subclass(self):
     self.assertTrue(issubclass(device_array.DeviceArray, jax.Array))
     self.assertTrue(issubclass(device_array.Buffer, jax.Array))
-    self.assertTrue(issubclass(pxla.ShardedDeviceArray, jax.Array))
-    self.assertTrue(issubclass(pxla._ShardedDeviceArray, jax.Array))
     self.assertFalse(issubclass(np.ndarray, jax.Array))
     self.assertFalse(issubclass(device_array.DeviceArray, np.ndarray))
     self.assertFalse(issubclass(device_array.Buffer, np.ndarray))
-    self.assertFalse(issubclass(pxla.ShardedDeviceArray, np.ndarray))
-    self.assertFalse(issubclass(pxla._ShardedDeviceArray, np.ndarray))
 
   def test_is_instance(self):
     def f(x):

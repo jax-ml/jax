@@ -38,11 +38,11 @@ from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import math
-import operator as op
 import sys
 import threading
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
-                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast)
+                    Sequence, Set, Tuple, Type, Union, Iterable, Mapping, cast,
+                    TYPE_CHECKING)
 
 import numpy as np
 
@@ -51,9 +51,7 @@ from jax.errors import JAXTypeError
 from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map
 
-from jax._src import abstract_arrays
 from jax._src import api_util
-from jax._src import basearray
 from jax._src import core
 from jax._src import device_array
 from jax._src import dispatch
@@ -383,18 +381,8 @@ def shard_arg(arg, devices, arg_indices, sharding):
     devices: The list of devices to shard over.
     arg_indices: A list of `len(devices)` indices to use to shard the argument.
   """
-  if isinstance(arg, ShardedDeviceArray) and arg_indices == arg.indices:
-    # The shard_arg_handlers allow an extensible set of types to be sharded, but
-    # inline handling for ShardedDeviceArray as a special case for performance
-    # NOTE: we compare indices instead of sharding_spec because
-    # pmap_benchmark.pmapshard_args_benchmark indicates this is faster.
-    return [
-        buf if buf.device() == d else buf.copy_to_device(d)
-        for d, buf in zip(devices, arg.device_buffers)
-    ]
-  else:
-    arg = xla.canonicalize_dtype(arg)
-    return shard_arg_handlers[type(arg)](arg, devices, arg_indices, sharding)
+  arg = xla.canonicalize_dtype(arg)
+  return shard_arg_handlers[type(arg)](arg, devices, arg_indices, sharding)
 
 
 @profiler.annotate_function
@@ -626,9 +614,6 @@ global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 
 ### lazy device-memory persistence and result handling
 
-# TODO(jblespiau): Consider removing this option.
-_USE_CPP_SDA = True
-
 
 def _create_pmap_sharding_spec(aval, sharded_dim=0, sharded_dim_size=None):
   if sharded_dim is not None:
@@ -685,92 +670,15 @@ def make_sharded_device_array(
   return jax.make_array_from_single_device_arrays(
       aval.shape, sharding, device_buffers)  # type: ignore
 
-if _USE_CPP_SDA:
-  ShardedDeviceArrayBase = pmap_lib.ShardedDeviceArrayBase  # type: ignore
-  # We want the C++ SDA to extend the DeviceArrayBase. We want this both to
-  # benefit from its methods, and to have isinstance(x, DeviceArray) return true
-  ShardedDeviceArrayBase.__bases__ = ((device_array.DeviceArray,) +  # type: ignore
-                                      ShardedDeviceArrayBase.__bases__)
-  _SDA_BASE_CLASS = pmap_lib.ShardedDeviceArrayBase  # type: ignore
+
+
+if TYPE_CHECKING:
+  ShardedDeviceArray = Any
 else:
-  _SDA_BASE_CLASS: Type[device_array.DeviceArray] = device_array.DeviceArray  # type: ignore
-basearray.Array.register(_SDA_BASE_CLASS)
-
-
-class _ShardedDeviceArray(_SDA_BASE_CLASS):  # type: ignore
-  """A ShardedDeviceArray is an ndarray sharded across devices.
-
-  The purpose of a ShardedDeviceArray is to reduce the number of transfers when
-  executing replicated computations, by allowing results to persist on the
-  devices that produced them. That way dispatching a similarly replicated
-  computation that consumes the same sharded memory layout does not incur any
-  transfers.
-
-  A ShardedDeviceArray represents one logical ndarray value, and simulates the
-  behavior of an ndarray so that it can be treated by user code as an ndarray;
-  that is, it is only an optimization to reduce transfers.
-
-  Attributes:
-    aval: A ShapedArray indicating the shape and dtype of this array.
-    sharding_spec: describes how this array is sharded across `device_buffers`.
-    device_buffers: the buffers containing the data for this array. Each buffer
-      is the same shape and on a different device. Buffers are in row-major
-      order, with replication treated as an extra innermost dimension.
-    indices: the result of spec_to_indices(sharding_spec). Can optionally be
-      precomputed for efficiency. A list the same length as
-      `device_buffers`. Each index indicates what portion of the full array is
-      stored in the corresponding device buffer, i.e. `array[indices[i]] ==
-      np.asarray(device_buffers[i])`.
-  """
-  __slots__ = [
-      "aval", "device_buffers", "sharding_spec", "indices",
-      "_one_replica_buffer_indices", "_npy_value"
-  ]
-
-  def __init__(self,
-               aval: ShapedArray,
-               sharding_spec: ShardingSpec,
-               device_buffers: List[xb.xla_client.Buffer],
-               indices: Optional[Tuple[Index, ...]] = None):
-    super().__init__()
-
-    # TODO(skye): assert invariants. Keep performance in mind though.
-    if indices is None:
-      indices = spec_to_indices(aval.shape, sharding_spec)
-
-    self.aval = aval
-    self.device_buffers = device_buffers
-    self.sharding_spec = sharding_spec
-    self.indices = indices
-    self._npy_value = None
-    self._one_replica_buffer_indices = None
-    if config.jax_enable_checks:
-      assert type(aval) is ShapedArray
-
-  @property
-  def shape(self):
-    return self.aval.shape
-
-  @property
-  def dtype(self):
-    return self.aval.dtype
-
-  @property
-  def size(self):
-    return math.prod(self.aval.shape)
-
-  @property
-  def ndim(self):
-    return len(self.aval.shape)
-
-  def delete(self):
-    if self.device_buffers is None:
-      return
-    for buf in self.device_buffers:
-      buf.delete()
-    self.device_buffers = None
-    self._npy_value = None
-
+  class ShardedDeviceArray(object):
+    def __init__(self):
+      raise RuntimeError("ShardedDeviceArray is a backward compatibility shim "
+                         "and cannot be instantiated.")
 
 def _one_replica_buffer_indices(indices: Tuple[Index, ...]):
   """Returns a set of buffer-indices containing one complete copy of the array."""
@@ -782,120 +690,6 @@ def _one_replica_buffer_indices(indices: Tuple[Index, ...]):
       one_replica_indices.append(i)
       seen_index_hashes.add(hashed_index)
   return one_replica_indices
-
-
-def _sda_one_replica_buffer_indices(self):
-  """Indices of buffers containing one complete copy of the array data."""
-  if self._one_replica_buffer_indices is None:
-    self._one_replica_buffer_indices = _one_replica_buffer_indices(self.indices)
-  return self._one_replica_buffer_indices
-
-
-def _sda_copy_to_host_async(self):
-  for buffer_index in self.one_replica_buffer_indices:
-    self.device_buffers[buffer_index].copy_to_host_async()
-
-
-def _sda_check_if_deleted(self):
-  if self.device_buffers is None:
-    raise ValueError("ShardedDeviceArray has been deleted.")
-
-
-def _sda_block_until_ready(self):
-  self._check_if_deleted()
-  for buf in self.device_buffers:
-    buf.block_until_ready()
-  return self
-
-
-def _sda_value(self):
-  if self._npy_value is None:
-    self.copy_to_host_async()
-    npy_value = np.empty(self.aval.shape, self.aval.dtype)
-    for i in self.one_replica_buffer_indices:
-      npy_value[self.indices[i]] = np.asarray(self.device_buffers[i])
-    self._npy_value = npy_value
-  return self._npy_value
-
-
-def _sda__getitem__(self, idx):
-  self._check_if_deleted()
-  if not isinstance(idx, tuple):
-    cidx = (idx,) + (slice(None),) * (len(self.aval.shape) - 1)
-  else:
-    cidx = idx + (slice(None),) * (len(self.aval.shape) - len(idx))
-  if self._npy_value is None:
-    try:
-      buf_idx = self.indices.index(cidx)
-    except ValueError:
-      buf_idx = None
-    if buf_idx is not None:
-      buf = self.device_buffers[buf_idx]
-      aval = ShapedArray(buf.shape, self.aval.dtype)
-      return device_array.make_device_array(aval, None, buf)
-  return super(self.__class__, self).__getitem__(idx)
-
-
-def _sda__iter__(self):
-  if self.ndim == 0:
-    raise TypeError("iteration over a 0-d array")  # same as numpy error
-  else:
-    return (self[i] for i in range(self.shape[0]))
-
-def _sda__reversed__(self):
-  if self.ndim == 0:
-    raise TypeError("iteration over a 0-d array")  # same as numpy error
-  else:
-    return (self[i] for i in range(self.shape[0] - 1, -1, -1))
-
-
-def _sda_sharding(self):
-  has_unstacked = any(isinstance(s, Unstacked) for s in self.sharding_spec.sharding)
-  if has_unstacked:
-    devices = np.array([d.device() for d in self.device_buffers])
-    return sharding_impls.PmapSharding(devices, self.sharding_spec)
-  raise NotImplementedError(
-      'SDAs that are the output of pjit/xmap do not have the sharding attribute '
-      'implemented. If you are trying to pass the SDA to pjit/xmap, please '
-      'use multihost_utils.host_local_array_to_global_array(...) to convert '
-      'SDAs to global `jax.Array` and then pass them to pjit/xmap with '
-      '`jax_array` enabled.')
-
-# TODO(yashkatariya): Remove this when SDA is deleted. The local import of Array
-# will also go away.
-def _sda_addressable_shards(self):
-  from jax._src import array
-  out = []
-  for db in self.device_buffers:
-    db = dispatch._set_aval(db)
-    out.append(array.Shard(db.device(), self.sharding, self.shape, db))
-  return out
-
-
-for sda in [_ShardedDeviceArray, pmap_lib.ShardedDeviceArray]:
-  setattr(sda, "one_replica_buffer_indices",
-          property(_sda_one_replica_buffer_indices))
-  setattr(sda, "copy_to_host_async", _sda_copy_to_host_async)
-  setattr(sda, "_check_if_deleted", _sda_check_if_deleted)
-  setattr(sda, "block_until_ready", _sda_block_until_ready)
-  setattr(sda, "_value", property(_sda_value))
-  setattr(sda, "__getitem__", _sda__getitem__)
-  setattr(sda, "__iter__", _sda__iter__)
-  setattr(sda, "__reversed__", _sda__reversed__)
-  setattr(sda, "sharding", property(_sda_sharding))
-  setattr(sda, "addressable_shards", property(_sda_addressable_shards))
-
-del (_sda_one_replica_buffer_indices, _sda_copy_to_host_async,
-     _sda_check_if_deleted, _sda_block_until_ready, _sda_value, _sda__getitem__,
-     _sda_sharding, _sda_addressable_shards)
-
-
-ShardedDeviceArray: Type[object]
-if _USE_CPP_SDA:
-  ShardedDeviceArray = pmap_lib.ShardedDeviceArrayBase
-else:
-  ShardedDeviceArray = _ShardedDeviceArray
-
 
 def _hashable_index(idx):
   return tree_map(lambda x: (x.start, x.stop) if type(x) == slice else x, idx)
@@ -935,24 +729,6 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
       bufs.append(buf)
 
   return batched_device_put(x.aval, sharding, bufs, devices)
-
-
-def _sharded_device_array_mlir_constant_handler(val, canonicalize_types=True):
-  return mlir.ir_constants(np.asarray(val),
-                           canonicalize_types=canonicalize_types)
-
-def _register_handlers_for_sharded_device_array(sda):
-  shard_arg_handlers[sda] = shard_sharded_device_array_slow_path
-  mlir.register_constant_handler(sda,
-                                 _sharded_device_array_mlir_constant_handler)
-
-  core.pytype_aval_mappings[sda] = abstract_arrays.canonical_concrete_aval
-  xla.pytype_aval_mappings[sda] = op.attrgetter("aval")
-  xla.canonicalize_dtype_handlers[sda] = identity
-  api_util._shaped_abstractify_handlers[sda] = op.attrgetter("aval")
-
-_register_handlers_for_sharded_device_array(_ShardedDeviceArray)
-_register_handlers_for_sharded_device_array(pmap_lib.ShardedDeviceArray)
 
 ### the xla_pmap primitive and its rules are comparable to xla_call in xla.py
 
@@ -1049,7 +825,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
     with jax.disable_jit(False):
       donate_argnums_ = donate_argnums
-      if isinstance(outval, (ShardedDeviceArray, array.ArrayImpl)):
+      if isinstance(outval, array.ArrayImpl):
         # We don't want to donate if it's already sharded.
         donate_argnums_ = ()
       out = jax.pmap(
