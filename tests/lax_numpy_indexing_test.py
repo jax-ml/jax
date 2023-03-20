@@ -929,6 +929,13 @@ class IndexingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
       jnp.zeros(2).at[0.].set(1.)
 
+  def testStrIndexingError(self):
+    msg = "JAX does not support string indexing"
+    with self.assertRaisesRegex(TypeError, msg):
+      jnp.zeros(2)['abc']
+    with self.assertRaisesRegex(TypeError, msg):
+      jnp.zeros(2)[:, 'abc']
+
   def testIndexingPositionalArgumentWarning(self):
     x = jnp.arange(4)
     with self.assertWarnsRegex(
