@@ -101,7 +101,7 @@ map = util.safe_map
 zip = util.safe_zip
 
 # These are the JAX custom call target names that are guaranteed to be stable.
-# TODO: maybe we should differentiate the allow-list by platform?
+# They are tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
     "ducc_fft", "cu_threefry2x32",
@@ -111,6 +111,14 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     "cusolver_syevj", "cusolver_syevd",
     # eigh on TPU
     "Eigh",
+    # qr on CPU
+    "lapack_sgeqrf", "lapack_dgeqrf", "lapack_cgeqrf", "lapack_zgeqrf",
+    "lapack_sorgqr", "lapack_dorgqr", "lapack_cungqr", "lapack_zungqr",
+    # qr on GPU
+    "cusolver_geqrf", "cublas_geqrf_batched",
+    "cusolver_geqrf", "cusolver_orgqr",
+    # qr and svd on TPU
+    "Qr", "ProductOfElementaryHouseholderReflectors",
 ]
 
 def _sanitize_scope_name(name):

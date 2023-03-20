@@ -140,18 +140,12 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           skipCustomCallTest("lapack_zgetrf, lapack_sgetrf")
         if "svd_shape" in harness.fullname:
           skipCustomCallTest("lapack_sgesdd, lapack_zgesdd, lapack_cgesdd")
-        if "qr_" in harness.fullname:
-          skipCustomCallTest("lapack_dgeqrf, lapack_cgeqrf, lapack_zgeqrf")
         if "triangular_solve_" in harness.fullname:
           skipCustomCallTest("blas_ctrsm, blas_dtrsm, blas_ztrsm, blas_strsm")
         if "custom_linear_solve" in harness.fullname:
           skipCustomCallTest("lapack_sgetrf, lapack_dgetrf")
 
       elif device == "tpu":
-        if "qr_" in harness.fullname:
-          skipCustomCallTest("Qr")
-        if "svd_shape" in harness.fullname:
-          skipCustomCallTest("Qr")
         if "lu_shape" in harness.fullname:
           skipCustomCallTest("LuDecomposition")
         if "custom_linear_solve_" in harness.fullname:
@@ -160,8 +154,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
           skipCustomCallTest("PartialReduce")  # ApproxTopK
 
       elif device == "gpu":
-        if ("qr_" in harness.fullname or
-            "custom_linear_solve_" in harness.fullname):
+        if "custom_linear_solve_" in harness.fullname:
           skipCustomCallTest("cusolver_geqrf, cublas_geqrf_batched")
         if "svd_shape" in harness.fullname:
           skipCustomCallTest("cusolver_gesvdj")

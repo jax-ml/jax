@@ -61,10 +61,11 @@ Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
 import dataclasses
 import datetime
 from functools import partial
+import itertools
 import os
 import re
 import sys
-from typing import Callable, List, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Sequence
 
 # from absl import logging
 from absl.testing import absltest, parameterized
@@ -79,13 +80,15 @@ from jax.config import config
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft
+from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lapack_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_lapack_syev
+from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_cusolver_geqrf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_cusolver_syev
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
-
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
-
+from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Qr
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Sharding
+
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
@@ -149,12 +152,27 @@ dummy_data_dict = dict(
     xla_call_module_version=4,
 )  # End paste
 
-def load_testdata(testdata_dict):
+
+def load_testdata(testdata_dict: Dict[str, Any]) -> CompatTestData:
   if testdata_dict["testdata_version"] == CURRENT_TESTDATA_VERSION:
     return CompatTestData(**testdata_dict)
   else:
     raise NotImplementedError("testdata_version not recognized: " +
                               testdata_dict["testdata_version"])
+
+
+def load_testdata_nested(testdata_nest) -> Iterable[CompatTestData]:
+  # Load all the CompatTestData in a Python nest.
+  if isinstance(testdata_nest, dict) and "testdata_version" in testdata_nest:
+    yield load_testdata(testdata_nest)
+  elif isinstance(testdata_nest, dict):
+    for e in testdata_nest.values():
+      yield from load_testdata_nested(e)
+  elif isinstance(testdata_nest, list):
+    for e in testdata_nest:
+      yield from load_testdata_nested(e)
+  else:
+    assert False, testdata_nest
 
 dummy_data = load_testdata(dummy_data_dict)
 
@@ -289,6 +307,25 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     with self.assertRaisesRegex(AssertionError, "Lists differ"):
       self.run_one_test(jnp.sin, platform_dummy_data)
 
+  def test_custom_call_coverage(self):
+    targets_to_cover = set(jax2tf.jax2tf._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    # Add here all the testdatas that should cover the targets guaranteed
+    # stable
+    covering_testdatas = [
+        cpu_ducc_fft.data_2023_03_17, cpu_lapack_syev.data_2023_03_17,
+        cpu_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
+        cuda_cusolver_geqrf.data_2023_03_18, cuda_cusolver_syev.data_2023_03_17,
+        tpu_Eigh.data, tpu_Qr.data_2023_03_17, tpu_Sharding.data_2023_03_16]
+    covering_testdatas = itertools.chain(
+        *[load_testdata_nested(d) for d in covering_testdatas])
+    covered_targets = set()
+    for data in covering_testdatas:
+      self.assertIsInstance(data, CompatTestData)
+      covered_targets = covered_targets.union(data.custom_call_targets)
+
+    not_covered = targets_to_cover.difference(covered_targets)
+    self.assertEmpty(not_covered)
+
   def test_ducc_fft(self):
     def func(x):
       return lax.fft(x, fft_type="fft", fft_lengths=(4,))
@@ -308,6 +345,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128"))
   def test_cpu_lapack_syevd(self, dtype_name="f32"):
+    # For lax.linalg.eigh
     if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
       self.skipTest("Test disabled for x32 mode")
 
@@ -325,6 +363,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       # We use different custom calls for sizes <= 32
       for variant in ["syevj", "syevd"])
   def test_gpu_cusolver_syev(self, dtype_name="f32", variant="syevj"):
+    # For lax.linalg.eigh
     dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
     size = dict(syevj=8, syevd=36)[variant]
     rtol = dict(f32=1e-3, f64=1e-5)
@@ -333,8 +372,51 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     self.run_one_test(func, data, rtol=rtol)
 
   def test_tpu_Eigh(self):
+    # For lax.linalg.eigh
     func = lambda: CompatTest.eigh_harness((8, 8), np.float32)
     data = load_testdata(tpu_Eigh.data)
+    self.run_one_test(func, data, rtol=1e-3)
+
+  @staticmethod
+  def qr_harness(shape, dtype):
+    # In order to keep inputs small, we construct the input programmatically
+    operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
+    return lax.linalg.qr(operand, full_matrices=True)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
+      for dtype_name in ("f32", "f64", "c64", "c128"))
+  def test_cpu_lapack_geqrf(self, dtype_name="f32"):
+    # For lax.linalg.qr
+    if not config.jax_enable_x64 and dtype_name in ["f64", "c128"]:
+      self.skipTest("Test disabled for x32 mode")
+
+    dtype = dict(f32=np.float32, f64=np.float64,
+                 c64=np.complex64, c128=np.complex128)[dtype_name]
+    func = lambda: CompatTest.qr_harness((3, 3), dtype)
+    data = load_testdata(cpu_lapack_geqrf.data_2023_03_17[dtype_name])
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)
+    self.run_one_test(func, data, rtol=rtol)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_dtype={dtype_name}_{batched}",
+           dtype_name=dtype_name, batched=batched)
+      for dtype_name in ("f32",)
+      # For batched qr we use cublas_geqrf_batched
+      for batched in ("batched", "unbatched"))
+  def test_gpu_cusolver_geqrf(self, dtype_name="f32", batched="unbatched"):
+    # For lax.linalg.qr
+    dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
+    rtol = dict(f32=1e-3, f64=1e-5)
+    shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
+    func = lambda: CompatTest.qr_harness(shape, dtype)
+    data = load_testdata(cuda_cusolver_geqrf.data_2023_03_18[batched])
+    self.run_one_test(func, data, rtol=rtol)
+
+  def test_tpu_Qr(self):
+    # For lax.linalg.qr
+    func = lambda: CompatTest.qr_harness((3, 3), np.float32)
+    data = load_testdata(tpu_Qr.data_2023_03_17)
     self.run_one_test(func, data, rtol=1e-3)
 
   def test_cu_threefry2x32(self):
