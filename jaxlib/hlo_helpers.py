@@ -70,7 +70,7 @@ def custom_call(
           for input, output in operand_output_aliases.items()
       ]))
   if len(out_types) == 1:
-    return out.result
+    return (out.result,)
   else:
     return [
         hlo.GetTupleElementOp(out, ir.IntegerAttr.get(i32_type, i)).result
