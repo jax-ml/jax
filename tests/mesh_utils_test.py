@@ -140,6 +140,10 @@ def mock_8x8x16_devices(one_device_per_chip):
   """Hard-coded reproduction of jax.devices() output on 8x8x16."""
   return mock_tpu_devices(8, 8, 16, 'TPU v4', one_device_per_chip)
 
+def mock_4x8x32_devices(one_device_per_chip):
+  """Hard-coded reproduction of jax.devices() output on 4x8x16."""
+  return mock_tpu_devices(4, 8, 32, 'TPU v4', one_device_per_chip)
+
 
 class MeshUtilsTest(test_util.JaxTestCase):
 
@@ -173,7 +177,7 @@ class MeshUtilsTest(test_util.JaxTestCase):
           self.assertEqual(normalized[i, j, k].coords, (i, j, k))
 
   @parameterized.named_parameters(
-      ('2x2x1', mock_2x2x1_devices, [1, 1, 4], [(), (), (0, 1, 2)]),
+      ('2x2x1', mock_2x2x1_devices, [1, 1, 4], [(), (2,), (0, 1)]),
       ('2x2x4', mock_2x2x4_devices, [1, 4, 4], [(), (2,), (0, 1)]),
       ('4x4x4', mock_4x4x4_devices, [1, 16, 4], [(), (1, 2), (0,)]),
       ('4x4x8a', mock_4x4x8_devices, [1, 16, 8], [(), (0, 1), (2,)]),
@@ -182,7 +186,8 @@ class MeshUtilsTest(test_util.JaxTestCase):
       ('4x8x8', mock_4x8x8_devices, [1, 32, 8], [(), (0, 2), (1,)]),
       ('8x8x8', mock_8x8x8_devices, [1, 64, 8], [(), (1, 2), (0,)]),
       ('8x8x16', mock_8x8x16_devices, [1, 64, 16], [(), (0, 1), (2,)]),
-      ('8x8', mock_8x8_devices, [8, 8], [(1,), (0, 2)])
+      ('8x8', mock_8x8_devices, [8, 8], [(1,), (0, 2)]),
+      ('4x8x32', mock_4x8x32_devices, [8, 4, 32], [(1,), (0,), (2,)]),
   )
   def test_create_device_mesh_for_nd_torus(self, devices, mesh_shape,
                                            expected_assignment):

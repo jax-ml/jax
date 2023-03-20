@@ -109,11 +109,16 @@ def _create_device_mesh_for_nd_torus(
   # Map each logical axis to a subset of physical axes.
   assignment: List[Tuple[int, ...]] = [() for _ in mesh_shape]
 
-  # Assign logical axes from highest network intensity to lowest.
-  # `mesh_shape` is assumed to ordered by lowest network intensity first, so
-  # reverse it first.
-  for logical_axis_index, logical_axis_size in reversed(
-      list(enumerate(mesh_shape))):
+  def sort_key(i):
+    # Sort from smaller dims to larger dims. Because smaller dims have fewer
+    # choices. Use the index to break ties: `mesh_shape` is assumed to ordered
+    # by lowest network intensity first, so larger i comes earlier.
+    return (mesh_shape[i], -i)
+
+  sorted_dims = sorted(list(range(len(mesh_shape))), key=sort_key)
+
+  for logical_axis_index in sorted_dims:
+    logical_axis_size = mesh_shape[logical_axis_index]
     # Preferentially map to more physical axes first for higher bandwidth.
     for num_axes in range(3, 0, -1):
       # Try assign to any subset of size num_axes. Generate all candidates.
