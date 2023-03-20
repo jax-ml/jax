@@ -335,12 +335,7 @@ class KeyTyRules:
   def local_sharded_result_handler(aval, sharding, indices):
     phys_aval, = KeyTyRules.physical_avals(aval)
     key_shape = aval.dtype.impl.key_shape
-
-    # TODO(yashkatariya,frostig): remove this conditional and inline it when
-    # the transient config ever settles
-    output_type = pxla.OutputType.Array
-    phys_handler_maker = pxla.local_result_handlers[
-        (core.ShapedArray, output_type)]
+    phys_handler_maker = pxla.local_result_handlers[core.ShapedArray]
 
     # set up a grounded sharding (with a grounded sharding spec)
     if isinstance(sharding, (PmapSharding, NamedSharding)):
@@ -366,13 +361,7 @@ class KeyTyRules:
   def global_sharded_result_handler(aval, out_sharding, committed,
                                     is_out_sharding_from_xla):
     phys_aval, = KeyTyRules.physical_avals(aval)
-
-    # TODO(yashkatariya,frostig): remove this conditional and inline it when
-    # the transient config ever settles
-    output_type = pxla.OutputType.Array
-
-    phys_handler_maker = pxla.global_result_handlers[
-        (core.ShapedArray, output_type)]
+    phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
     phys_sharding = make_key_array_phys_sharding(
         aval, out_sharding, is_out_sharding_from_xla)

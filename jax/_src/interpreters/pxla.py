@@ -70,7 +70,7 @@ from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
 from jax._src.config import flags
-from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -566,12 +566,6 @@ def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
   return PartitionSpec(*partitions)
 
 
-class OutputType(enum.Enum):
-  Array = 0
-  GlobalDeviceArray = 1
-  ShardedDeviceArray = 2
-
-
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
     sharding: sharding_impls.XLACompatibleSharding,
@@ -591,26 +585,14 @@ def local_aval_to_result_handler(
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
-  output_type = OutputType.Array
   try:
-    return local_result_handlers[(type(aval), output_type)](aval, sharding, indices)
+    return local_result_handlers[(type(aval))](aval, sharding, indices)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
 PxlaResultHandler = Callable[..., Callable[[Sequence[xb.xla_client.Buffer]], Any]]
-local_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaResultHandler] = {}
-
-def sda_array_result_handler(aval: ShapedArray, sharding, indices):
-  sharding_spec = _get_sharding_specs([sharding], [aval])[0]
-  if core.is_opaque_dtype(aval.dtype):
-    return aval.dtype._rules.local_sharded_result_handler(
-        aval, sharding, indices)
-  else:
-    return lambda bufs: make_sharded_device_array(aval, sharding_spec, bufs,
-                                                  indices)
-local_result_handlers[(ShapedArray, OutputType.ShardedDeviceArray)] = sda_array_result_handler
-local_result_handlers[(ConcreteArray, OutputType.ShardedDeviceArray)] = sda_array_result_handler
+local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 
 
 def global_aval_to_result_handler(
@@ -633,15 +615,14 @@ def global_aval_to_result_handler(
     for this output. The function will return an object suitable for returning
     to the user, e.g. a ShardedDeviceArray.
   """
-  output_type = OutputType.Array
   try:
-    return global_result_handlers[(type(aval), output_type)](
+    return global_result_handlers[type(aval)](
         aval, out_sharding, committed, is_out_sharding_from_xla)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-global_result_handlers: Dict[Tuple[Type[core.AbstractValue], OutputType], PxlaResultHandler] = {}
+global_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 
 ### lazy device-memory persistence and result handling
 
