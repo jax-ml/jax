@@ -1212,8 +1212,21 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
   return [lu, pivot, perm]
 
 
-def _lu_tpu_translation_rule(ctx, avals_in, avals_out, operand):
-  return xops.LU(operand)
+def _lu_tpu_lowering_rule(ctx, operand):
+
+  op = hlo.CustomCallOp(
+      [ir.TupleType.get_tuple([mlir.aval_to_ir_type(ctx.avals_out[0]),
+                               mlir.aval_to_ir_type(ctx.avals_out[1]),
+                               mlir.aval_to_ir_type(ctx.avals_out[2])])],
+      [operand],
+      call_target_name=ir.StringAttr.get("LuDecomposition"),
+      has_side_effect=ir.BoolAttr.get(False),
+  )
+  return (
+      hlo.GetTupleElementOp(op, 0).result,
+      hlo.GetTupleElementOp(op, 1).result,
+      hlo.GetTupleElementOp(op, 2).result,
+  )
 
 
 lu_p = Primitive('lu')
@@ -1235,7 +1248,7 @@ mlir.register_lowering(
     lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.rocm_getrf),
     platform='rocm')
 
-xla.register_translation(lu_p, _lu_tpu_translation_rule, platform='tpu')
+mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
 
 
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
