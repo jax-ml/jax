@@ -189,5 +189,6 @@ from jax._src.random import (
   truncated_normal as truncated_normal,
   uniform as uniform,
   unsafe_rbg_key as unsafe_rbg_key,
+  wald as wald,
   weibull_min as weibull_min,
 )
