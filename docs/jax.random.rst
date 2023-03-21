@@ -49,5 +49,6 @@ List of Available Functions
     t
     truncated_normal
     uniform
+    wald
     weibull_min
 
