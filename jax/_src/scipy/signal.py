@@ -637,3 +637,31 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
 
   time = jnp.arange(x.shape[0], dtype=np.finfo(x.dtype).dtype) / fs
   return time, x
+
+@_wraps(osp_signal.hilbert)
+def hilbert(x, N=None, axis=-1):
+  x = jnp.asarray(x)
+  if jnp.iscomplexobj(x):
+    raise ValueError("x must be real.")
+  if N is None:
+    N = x.shape[axis]
+  if N <= 0:
+    raise ValueError("N must be positive.")
+
+  Xf = jnp.fft.fft(x, N, axis=axis)
+  if N % 2 == 0:
+    h = jnp.concatenate([jnp.ones(1), jnp.ones(N // 2 - 2) * 2, jnp.ones(1), jnp.zeros(N // 2)])
+    # h[0] = h[N // 2] = 1
+    # h[1:N // 2] = 2
+  else:
+    h = jnp.concatenate([jnp.ones(1), jnp.ones((N + 1) // 2 - 1) * 2, jnp.zeros(N // 2)])
+    # h[0] = 1
+    # h[1:(N + 1) // 2] = 2
+
+  if x.ndim > 1:
+    raise NotImplementedError("x must be 1D.")
+    # ind = [np.newaxis] * x.ndim
+    # ind[axis] = slice(None)
+    # h = h[tuple(ind)]
+  x = jnp.fft.ifft(Xf * h, axis=axis)
+  return x
