@@ -2865,6 +2865,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertListEqual(sorted([d.id for d in out1.devices()]),
                            [d.id for d in dev1])
 
+  def test_device_assignment_mismatch_apply_primitive(self):
+    if jax.device_count() < 2:
+      self.skipTest("Requires >=2 devices.")
+    arr = jax.device_put(np.arange(8), jax.devices()[0])
+    arr2 = jax.device_put(np.arange(8), jax.devices()[1])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Received incompatible devices for jitted computation. Got argument "
+        r"args\[0\] of concatenate with shape int.*\[8\].*and argument "
+        r"args\[1\].*"):
+      jnp.concatenate([arr, arr2])
+
 
 class TempSharding(Sharding):
 

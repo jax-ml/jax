@@ -141,13 +141,13 @@ def _find_arg_mismatch(arg_list, fails, fun_name):
         break
   return mismatched_args_msg
 
-
-def _device_assignment_mismatch_error(fun, fails, in_tree, args_flat, api_name):
+# TODO(yashkatariya): Try to use debug_info that is populated in
+# common_infer_params.
+def _get_arg_names(fun, in_tree, args_flat):
   sig = _try_infer_args(fun, in_tree)
-  args = tree_unflatten(in_tree, args_flat)
-  args_aug = generate_key_paths(args)
+  args_aug = generate_key_paths(tree_unflatten(in_tree, args_flat))
 
-  arg_list = []
+  arg_names = []
   for arg_key, val in args_aug:
     ak, *rem_keys = arg_key
     if sig is not None:
@@ -155,10 +155,17 @@ def _device_assignment_mismatch_error(fun, fails, in_tree, args_flat, api_name):
       arg_name = f'{list(sig.arguments.keys())[ak.idx]}{loc}'
     else:
       arg_name = ''
-    da = val.sharding._device_assignment if hasattr(val, 'sharding') else None
-    arg_list.append((arg_name, da, shaped_abstractify(val)))
+    arg_names.append(arg_name)
+  return arg_names
 
-  fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
+
+def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
+                                      arg_names):
+  arg_list = []
+  for a, n in safe_zip(args_flat, arg_names):
+    da = a.sharding._device_assignment if hasattr(a, 'sharding') else None
+    arg_list.append((n, da, shaped_abstractify(a)))
+
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
 
   if len(mismatched_args_msg) == 2:
@@ -186,8 +193,10 @@ def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     api_name = 'jit' if params['resource_env'] is None else 'pjit'
+    arg_names = _get_arg_names(fun, in_tree, args_flat)
+    fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
     msg = _device_assignment_mismatch_error(
-        fun, fails, in_tree, args_flat, api_name)
+        fun_name, fails, args_flat, api_name, arg_names)
     raise ValueError(msg) from None
   outs = tree_unflatten(out_tree, out_flat)
   return outs, out_flat, out_tree, args_flat
