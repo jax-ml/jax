@@ -86,6 +86,7 @@ from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_cusolver_geq
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_cusolver_syev
 from jax.experimental.jax2tf.tests.back_compat_testdata import cuda_threefry2x32
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Eigh
+from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Lu
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Qr
 from jax.experimental.jax2tf.tests.back_compat_testdata import tpu_Sharding
 
@@ -315,7 +316,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         cpu_ducc_fft.data_2023_03_17, cpu_lapack_syev.data_2023_03_17,
         cpu_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cuda_cusolver_geqrf.data_2023_03_18, cuda_cusolver_syev.data_2023_03_17,
-        tpu_Eigh.data, tpu_Qr.data_2023_03_17, tpu_Sharding.data_2023_03_16]
+        tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17, tpu_Sharding.data_2023_03_16]
     covering_testdatas = itertools.chain(
         *[load_testdata_nested(d) for d in covering_testdatas])
     covered_targets = set()
@@ -417,6 +418,17 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     # For lax.linalg.qr
     func = lambda: CompatTest.qr_harness((3, 3), np.float32)
     data = load_testdata(tpu_Qr.data_2023_03_17)
+    self.run_one_test(func, data, rtol=1e-3)
+
+  @staticmethod
+  def lu_harness(shape, dtype):
+    operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
+    return lax.linalg.lu(operand)
+
+  def test_tpu_Lu(self):
+    # For lax.linalg.lu
+    func = lambda: CompatTest.lu_harness((3, 3), np.float32)
+    data = load_testdata(tpu_Lu.data_2023_03_21)
     self.run_one_test(func, data, rtol=1e-3)
 
   def test_cu_threefry2x32(self):
