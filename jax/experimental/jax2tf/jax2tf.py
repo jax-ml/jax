@@ -474,7 +474,10 @@ def convert(fun_jax: Callable,
                       args_flat_tf=args_flat_tf,
                       args_avals_flat=args_avals_flat,
                       polymorphic_shapes_flat=polymorphic_shapes_flat,
-                      out_avals=out_avals))
+                      out_avals=out_avals,
+                      native_serialization=native_serialization,
+                      native_serialization_platforms=native_serialization_platforms,
+                      native_serialization_strict_checks=native_serialization_strict_checks))
 
         out_flat_tf = converted_fun_flat_with_custom_gradient_tf(*args_flat_tf)
       else:
@@ -589,12 +592,16 @@ def preprocess_arg_tf(arg_idx: int,
 
 
 # Prepare the grad_fn for tf.custom_gradient.
-def make_custom_gradient_fn_tf(
+def make_custom_gradient_fn_tf(*,
     fun_flat_jax: Callable,
     args_flat_tf: Sequence[TfVal],
     polymorphic_shapes_flat: Sequence[str],
     args_avals_flat: Sequence[core.ShapedArray],
-    out_avals: Sequence[core.ShapedArray]):
+    out_avals: Sequence[core.ShapedArray],
+    native_serialization: Union[str, bool],
+    native_serialization_platforms: Sequence[str],
+    native_serialization_strict_checks: bool
+):
 
   def grad_fn_tf(*out_cts_flat_tf: TfVal,
                  variables=None):
@@ -649,7 +656,11 @@ def make_custom_gradient_fn_tf(
       in_cts_flat = convert(
           fun_vjp_jax,
           with_gradient=False,
-          polymorphic_shapes=vjp_polymorphic_shapes)(args_flat_tf, out_cts_flat_tf)
+          polymorphic_shapes=vjp_polymorphic_shapes,
+          native_serialization=native_serialization,
+          native_serialization_platforms=native_serialization_platforms,
+          native_serialization_strict_checks=native_serialization_strict_checks
+      )(args_flat_tf, out_cts_flat_tf)
     return in_cts_flat
 
   return grad_fn_tf
