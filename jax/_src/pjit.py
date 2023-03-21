@@ -784,7 +784,7 @@ def flatten_axis_resources(what, tree, shardings, tupled_args):
 
   axis_tree = shardings
 
-  # Because ecause we only have the `tree` treedef and not the full pytree here,
+  # Because we only have the `tree` treedef and not the full pytree here,
   # we construct a dummy tree to compare against. Revise this in callers?
   dummy_tree = tree_unflatten(tree, [PytreeLeaf()] * tree.num_leaves)
   errors = prefix_errors(axis_tree, dummy_tree)

@@ -358,6 +358,58 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"custom_call_target.*Sharding", 2 + count_inner_sharding)
         ])
 
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_in_shardings={in_shardings}_out_shardings={out_shardings}",
+           in_shardings=in_shardings, out_shardings=out_shardings)
+      for in_shardings in ("missing", None, "P")
+      for out_shardings in ("missing", None, "P")
+  )
+  @jtu.with_mesh([("x", 2)])
+  def test_grad_pjit(self, in_shardings="missing", out_shardings="None"):
+    def f_jax(x):  # x: f32[10,20] -> f32[20,10]
+      return jnp.sin(x.T)
+
+    pjit_kwargs = {}
+    if in_shardings != "missing":
+      pjit_kwargs["in_shardings"] = (P(None, "x") if in_shardings == "P" else None)
+    if out_shardings != "missing":
+      pjit_kwargs["out_shardings"] = (P("x", None) if out_shardings == "P" else None)
+    f_jax = pjit.pjit(f_jax, **pjit_kwargs)
+    x_shape = (10, 20)
+    x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
+
+    def f_grad_tf(x_v, res_ct):
+      with tf.GradientTape(persistent=True) as tape:
+        tape.watch(x_v)
+        res_tf = jax2tf.convert(f_jax)(x_v)
+        return tape.gradient(res_tf, x_v, output_gradients=res_ct)
+
+    # Annotation count for the primal input and the grad output
+    count_in_P = self.GEQ(2) if in_shardings == "P" else 0
+    if config.jax2tf_default_native_serialization:
+      # With native serialization even unspecified in_shardings turn into replicated
+      count_in_replicated = self.GEQ(2) if in_shardings in [None, "missing"] else 0
+    else:
+      count_in_replicated = self.GEQ(2) if in_shardings is None else 0
+    # Annotation count for the contangent input
+    count_out_P = self.GEQ(1) if out_shardings == "P" else 0
+    if config.jax2tf_default_native_serialization:
+      # With native serialization even unspecified in_shardings turn into replicated
+      count_out_replicated = self.GEQ(1) if out_shardings in [None, "missing"] else 0
+    else:
+      count_out_replicated = self.GEQ(1) if out_shardings is None else 0
+
+    self.check_sharding(f_grad_tf, [x, x.T],
+        checks=[
+            # The input primal argument, and the output grad
+            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2\]", count_in_P),
+            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated", count_in_replicated),
+            # The primal result, and the input cotangent
+            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_out_P),
+            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*replicated", count_out_replicated),
+        ])
+
   @parameterized.named_parameters(
       dict(testcase_name=f"_kind={kind}_in_shardings={in_shardings}_out_shardings={out_shardings}",
            kind=kind, in_shardings=in_shardings, out_shardings=out_shardings)
@@ -460,8 +512,8 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     bshape = (2, 7)
     b = np.arange(np.prod(bshape), dtype=np.float32).reshape(bshape)
 
-    # f32[16,8,5], f32[2,7] -> f32[16,8,10], f32[2,28]
-    # f_jax: f32[5], f32[7] -> f32[10], f32[28]
+    # f_jax: f32[16,8,5], f32[2,7] -> f32[16,8,10], f32[2,28]
+    # lambda ...: f32[5], f32[7] -> f32[10], f32[28]
     f_jax = xmap(lambda a, b: (jnp.concatenate([a, a], axis=0) * 2.,
                                jnp.concatenate([b, b, b, b], axis=0) * 4.),
                  in_axes=({0: 'a', 1: 'b'}, ['c', ...]),
@@ -533,6 +585,34 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
               (r"f32\[16,8,5\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2,1\]", 1),
               (r"f32\[2,7\].*custom_call_target.*Sharding.*sharding.*replicated", 2),
               (r"f32\[8,5\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", 1),
+          ])
+
+  def test_grad_xmap(self):
+    devices = np.reshape(self.devices, (1, 2))
+    ashape = (16, 8, 5)
+    a = np.arange(np.prod(ashape), dtype=np.float32).reshape(ashape)
+
+    # f_jax: f32[16,8,5]-> f32[16,8,10]
+    # lambda ...: f32[5]-> f32[10]
+    f_jax = xmap(lambda a: jnp.concatenate([a, a], axis=0) * 2.,
+                 in_axes=({0: 'a', 1: 'b'}),
+                 out_axes={0: 'a', 1: 'b'},
+                 axis_resources={'a': 'x', 'b': 'y'})
+
+    def f_grad_tf(a, res_ct):
+      with tf.GradientTape(persistent=True) as tape:
+        tape.watch(a)
+        res_tf = jax2tf.convert(f_jax, native_serialization=True)(a)
+        return tape.gradient(res_tf, a, output_gradients=res_ct)
+
+
+    with Mesh(devices, ('x', 'y')):
+      self.check_sharding(f_grad_tf, [a, np.concatenate([a, a], axis=2)],
+          checks=[
+              # Primal input and grad output
+              (r"f32\[16,8,5\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2,1\]", self.GEQ(2)),
+              # Input cotangent
+              (r"f32\[16,8,10\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2,1\]", self.GEQ(1)),
           ])
 
   @jtu.ignore_warning(category=UserWarning,

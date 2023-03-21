@@ -1101,7 +1101,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         "Cannot serialize code with custom calls whose targets .*"):
       jax2tf.convert(
           lambda a, b: jax.lax.linalg.triangular_solve(a, b, left_side=True),
-          experimental_native_lowering=True)(a, b)
+          native_serialization=True)(a, b)
 
   def test_op_metadata_simple(self):
     self.skipTest("include_xla_op_metadata not yet enabled")
