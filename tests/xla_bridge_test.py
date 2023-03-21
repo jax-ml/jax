@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import time
 import warnings
 
@@ -90,9 +91,6 @@ class XlaBridgeTest(jtu.JaxTestCase):
         xb.tpu_client_timer_callback(0.01)
 
   def test_register_plugin(self):
-    if xc._version < 126:
-      return
-
     with self.assertLogs(level="WARNING") as log_output:
       xb.register_pjrt_plugin_factories("name1:path1,name2:path2,name3")
     client_factory, priotiy = xb._backend_factories["name1"]
@@ -111,7 +109,39 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(priotiy, 400)
     mock_load_plugin.assert_called_once_with("name1", "path1")
-    mock_make.assert_called_once_with("name1")
+    if xc._version >= 134:
+      mock_make.assert_called_once_with("name1", None)
+    else:
+      mock_make.assert_called_once_with("name1")
+
+  def test_register_plugin_with_config(self):
+    if xc._version < 134:
+      return
+    test_json_file_path = os.path.join(
+        os.path.dirname(__file__), "testdata/example_pjrt_plugin_config.json"
+    )
+    xb.register_pjrt_plugin_factories(f"name1:{test_json_file_path}")
+    client_factory, priority = xb._backend_factories["name1"]
+    with mock.patch.object(xc, "make_c_api_client", autospec=True) as mock_make:
+      with mock.patch.object(
+          xc, "load_pjrt_plugin_dynamically", autospec=True
+      ) as mock_load_plugin:
+        client_factory()
+
+    self.assertIn("name1", xb._backend_factories)
+    self.assertEqual(priority, 400)
+    mock_load_plugin.assert_called_once_with(
+        "name1", "/path/pjrt_plugin_name1.so"
+    )
+    mock_make.assert_called_once_with(
+        "name1",
+        {
+            "int_option": 64,
+            "int_list_option": [32, 64],
+            "string_option": "string",
+            "float_option": 1.0,
+        },
+    )
 
 
 class GetBackendTest(jtu.JaxTestCase):

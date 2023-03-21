@@ -20,11 +20,13 @@ XLA. There are also a handful of related casting utilities.
 """
 
 from functools import partial, lru_cache
+import io
+import json
 import logging
 import os
 import platform as py_platform
 import threading
-from typing import Any, Callable, Dict, List, Optional, Union, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 import warnings
 
 import numpy as np
@@ -286,19 +288,59 @@ def _get_pjrt_plugin_names_and_library_paths(
   return pjrt_plugins
 
 
+def _get_pjrt_plugin_config(
+    json_path: str,
+) -> Tuple[str, Optional[Mapping[str, Union[str, int, List[int], float]]]]:
+  """Gets PJRT plugin configuration from a json file.
+
+  The json file needs to have a "library_path" field for the plugin library
+  path. It can have an optional "create_option" field for the options used when
+  creating a PJRT plugin client. The value of "create_option" is key-value
+  pairs. Please see xla_client._NameValueMapping for the supported types of
+  values.
+  """
+  with io.open(json_path, 'r') as f:
+    config = json.load(f)
+  if 'library_path' not in config.keys():
+    raise ValueError(
+        'PJRT plugin config file should contain "library_path" field.'
+    )
+  return (config['library_path'], config.get('create_options'))
+
+
 def register_pjrt_plugin_factories(plugins_from_env: str) -> None:
   """Registers backend factories for PJRT plugins.
 
   A backend factory will be registered for every PJRT plugin in the input
   string, in the format of 'name1:path1,name2:path2' ('name1;path1,name2;path2'
-  for windows). TPU PJRT plugin will be loaded and registered separately in
-  make_tpu_client.
+  for windows). The path can be a path to the plugin library or a path to the
+  plugin configuration json file. The json file needs to have a "library_path"
+  field for the plugin library path. It can have an optional "create_option"
+  field for the options used when creating a PJRT plugin client. The value of
+  "create_option" is key-value pairs. Please see xla_client._NameValueMapping
+  for the supported types of values.
+
+  TPU PJRT plugin will be loaded and registered separately in make_tpu_client.
   """
 
-  def make_factory(name, path):
+  def make_factory(name: str, path: str):
     def factory():
-      xla_client.load_pjrt_plugin_dynamically(name, path)
-      return xla_client.make_c_api_client(name)
+      if path.endswith('.json'):
+        library_path, options = _get_pjrt_plugin_config(path)
+      else:
+        library_path = path
+        options = None
+
+      xla_client.load_pjrt_plugin_dynamically(name, library_path)
+      if lib.xla_extension_version >= 134:
+        return xla_client.make_c_api_client(name, options)
+      else:
+        if options:
+          raise ValueError(
+              'Setting PJRT plugin options through json file requires'
+              ' jaxlib.xla_extension_version >= 134.'
+          )
+        return xla_client.make_c_api_client(name)
 
     return factory
 

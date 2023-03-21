@@ -848,6 +848,7 @@ py_test(
 py_test(
     name = "xla_bridge_test",
     srcs = ["xla_bridge_test.py"],
+    data = ["testdata/example_pjrt_plugin_config.json"],
     deps = [
         "//jax",
         "//jax:test_util",
