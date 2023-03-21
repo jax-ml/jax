@@ -39,6 +39,7 @@ from jax._src import array
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src import api_util
 from jax._src import path
 from jax._src import profiler
 from jax._src import source_info_util
@@ -110,9 +111,23 @@ def arg_spec(x: Any) -> ArgSpec:
 
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
-  compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
-                                        **params)
+  from jax._src import pjit
+
+  try:
+    compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
+                                          **params)
+  except pxla.DeviceAssignmentMismatchError as e:
+    fails, = e.args
+    # TODO(yashkatariya): Thread through a signature_fun via every primitive
+    # using apply_primtive so that the error message has the right argument
+    # name instead of `args[0]`, etc.
+    arg_names = api_util._arg_names(prim.impl, args, {}, (), ())
+    msg = pjit._device_assignment_mismatch_error(
+        prim.name, fails, args, 'jit', arg_names)
+    raise ValueError(msg) from None
+
   return compiled_fun(*args)
+
 
 def simple_impl(prim):
   prim.def_impl(partial(apply_primitive, prim))
