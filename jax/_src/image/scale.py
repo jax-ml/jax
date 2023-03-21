@@ -120,7 +120,7 @@ class ResizeMethod(enum.Enum):
   LANCZOS3:
     `Lanczos resampling`_, using a kernel of radius 3.
 
-  LANCZOS3:
+  LANCZOS5:
     `Lanczos resampling`_, using a kernel of radius 5.
 
   CUBIC:
