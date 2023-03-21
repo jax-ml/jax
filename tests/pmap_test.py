@@ -45,7 +45,7 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
 from jax._src import config as jax_config
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 from jax.interpreters import xla
 from jax._src import array
 from jax._src.sharding_impls import PmapSharding

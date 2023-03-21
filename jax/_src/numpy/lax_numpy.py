@@ -44,7 +44,7 @@ import jax
 from jax import jit
 from jax import errors
 from jax import lax
-from jax.interpreters import pxla
+from jax._src.interpreters import pxla
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 from jax._src import api_util

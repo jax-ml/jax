@@ -24,6 +24,8 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * The type `jax.numpy.DeviceArray` is deprecated. Use `jax.Array` instead,
     for which it is an alias.
+  * The type `jax.interpreters.pxla.ShardedDeviceArray` is deprecated. Use
+    `jax.Array` instead.
   * Passing additional arguments to {func}`jax.numpy.ndarray.at` by position is deprecated.
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
   * `jax.interpreters.xla.device_put` is deprecated. Please use `jax.device_put`.
