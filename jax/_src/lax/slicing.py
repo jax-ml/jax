@@ -111,7 +111,7 @@ def dynamic_slice(
                               slice_sizes=tuple(static_sizes))
 
 
-def dynamic_update_slice(operand: Array, update: ArrayLike,
+def dynamic_update_slice(operand: Union[Array, np.ndarray], update: ArrayLike,
                          start_indices: Union[Array, Sequence[ArrayLike]]) -> Array:
   """Wraps XLA's `DynamicUpdateSlice
   <https://www.tensorflow.org/xla/operation_semantics#dynamicupdateslice>`_
@@ -640,7 +640,7 @@ def index_take(src: Array, idxs: Array, axes: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def slice_in_dim(operand: Array, start_index: Optional[int],
+def slice_in_dim(operand: Union[Array, np.ndarray], start_index: Optional[int],
                  limit_index: Optional[int],
                  stride: int = 1, axis: int = 0) -> Array:
   """Convenience wrapper around slice applying to only one dimension."""
@@ -669,7 +669,7 @@ def slice_in_dim(operand: Array, start_index: Optional[int],
   return slice(operand, start_indices, limit_indices, strides)
 
 
-def index_in_dim(operand: Array, index: int, axis: int = 0,
+def index_in_dim(operand: Union[Array, np.ndarray], index: int, axis: int = 0,
                  keepdims: bool = True) -> Array:
   """Convenience wrapper around slice to perform int indexing."""
   index, axis = core._canonicalize_dimension(index), int(axis)
@@ -685,7 +685,8 @@ def index_in_dim(operand: Array, index: int, axis: int = 0,
     return lax.squeeze(result, (axis,))
 
 
-def dynamic_slice_in_dim(operand: Array, start_index: ArrayLike,
+def dynamic_slice_in_dim(operand: Union[Array, np.ndarray],
+                         start_index: ArrayLike,
                          slice_size: int, axis: int = 0) -> Array:
   """Convenience wrapper around dynamic_slice applying to one dimension."""
   start_indices: List[ArrayLike] = [lax._const(start_index, 0)] * operand.ndim
@@ -697,7 +698,8 @@ def dynamic_slice_in_dim(operand: Array, start_index: ArrayLike,
   return dynamic_slice(operand, start_indices, slice_sizes)
 
 
-def dynamic_index_in_dim(operand: Array, index: Union[int, Array],
+def dynamic_index_in_dim(operand: Union[Array, np.ndarray],
+                         index: Union[int, Array],
                          axis: int = 0, keepdims: bool = True) -> Array:
   """Convenience wrapper around dynamic_slice to perform int indexing."""
   result = dynamic_slice_in_dim(operand, index, 1, axis)
@@ -707,7 +709,8 @@ def dynamic_index_in_dim(operand: Array, index: Union[int, Array],
     return lax.squeeze(result, (axis,))
 
 
-def dynamic_update_slice_in_dim(operand: Array, update: ArrayLike,
+def dynamic_update_slice_in_dim(operand: Union[Array, np.ndarray],
+                                update: ArrayLike,
                                 start_index: ArrayLike, axis: int) -> Array:
   """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
      in a single ``axis``.
@@ -718,7 +721,8 @@ def dynamic_update_slice_in_dim(operand: Array, update: ArrayLike,
   return dynamic_update_slice(operand, update, start_indices)
 
 
-def dynamic_update_index_in_dim(operand: Array, update: ArrayLike, index: ArrayLike,
+def dynamic_update_index_in_dim(operand: Union[Array, np.ndarray],
+                                update: ArrayLike, index: ArrayLike,
                                 axis: int) -> Array:
   """Convenience wrapper around :func:`dynamic_update_slice` to update a slice
      of size 1 in a single ``axis``.
