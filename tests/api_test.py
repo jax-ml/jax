@@ -1130,9 +1130,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @parameterized.parameters([0, 2, [(0, 2)]])
   def test_jit_lower_arg_info_static_argnums(self, static_argnums):
-    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + sum(kwargs.values())
 
@@ -1148,9 +1145,6 @@ class CPPJitTest(jtu.BufferDonationTestCase):
 
   @parameterized.parameters(['a', 'b', [('a', 'b')]])
   def test_jit_lower_arg_info_static_argnames(self, static_argnames):
-    if not config.jax_array or not jax.config.jax_jit_pjit_api_merge:
-      raise unittest.SkipTest("test only applies after jit-pjit api merge")
-
     def f(x, y, *args, **kwargs):
       return y['hi'] + args[1] + kwargs['z'] + kwargs['w']
 
