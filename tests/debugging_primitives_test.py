@@ -1184,12 +1184,18 @@ class InspectShardingTest(jtu.JaxTestCase):
       self.assertIsInstance(sd, jax.sharding.Sharding)
       self.assertLen(sd.device_set, 1)
 
-    def f(x):
+    def f_(x):
       debugging.inspect_array_sharding(x, callback=_cb)
       return jnp.square(x)
 
-    f = jax.jit(f)
+    f = jax.jit(f_)
     f(np.arange(8, dtype=jnp.int32))
+    self.assertTrue(is_called)
+
+    # Test in grad
+    is_called = False
+    f = jax.jit(jax.grad(lambda x: f_(x).sum()))
+    f(np.arange(8, dtype=jnp.float32))
     self.assertTrue(is_called)
 
 

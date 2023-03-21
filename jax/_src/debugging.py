@@ -294,7 +294,7 @@ batching.primitive_batchers[inspect_sharding_p] = (
     _inspect_sharding_batching_rule)
 
 def _inspect_sharding_jvp_rule(primals, _, **params):
-  return inspect_sharding_p.bind(*primals, **params)
+  return inspect_sharding_p.bind(*primals, **params), []
 ad.primitive_jvps[inspect_sharding_p] = _inspect_sharding_jvp_rule
 
 sharding_callbacks = weakref.WeakValueDictionary()  # type: ignore
