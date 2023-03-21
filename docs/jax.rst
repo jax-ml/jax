@@ -69,6 +69,7 @@ Just-in-time compilation (:code:`jit`)
     xla_computation
     make_jaxpr
     eval_shape
+    ShapeDtypeStruct
     device_put
     device_put_replicated
     device_put_sharded
