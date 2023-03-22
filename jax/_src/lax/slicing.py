@@ -916,7 +916,7 @@ def _dynamic_slice_staging_rule(trace, x, *starts_and_dyn_sizes, slice_sizes):
                                      *starts_and_dyn_sizes,
                                      slice_sizes=slice_sizes)
 
-def _dynamic_slice_typecheck_rule(x, *starts_and_dyn_sizes, slice_sizes):
+def _dynamic_slice_typecheck_rule(_, x, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.aval.ndim])
   if not dyn:
     out_aval, effects = dynamic_slice_p.abstract_eval(

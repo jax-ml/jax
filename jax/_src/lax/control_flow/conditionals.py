@@ -733,7 +733,9 @@ def _cond_axis_substitution(params, subst, traverse):
   branches = tuple(core.subst_axis_names_jaxpr(jaxpr, subst) for jaxpr in params['branches'])
   return dict(params, branches=branches)
 
-def _cond_typecheck(*in_atoms, branches, linear):
+def _cond_typecheck(bind_time, *in_atoms, branches, linear):
+  if not bind_time:
+    _, *in_atoms = in_atoms
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'cond')
   tc(branches, 'branches', 'tuple of ClosedJaxpr',
@@ -794,7 +796,7 @@ def cond_bind(*args, branches, linear):
   if config.jax_enable_checks:
     avals = map(core.get_aval, args)
     in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
-    _cond_typecheck(*in_atoms, branches=branches, linear=linear)
+    _cond_typecheck(True, *in_atoms, branches=branches, linear=linear)
     for jaxpr in branches:
       core.check_jaxpr(jaxpr.jaxpr)
   return core.AxisPrimitive.bind(cond_p, *args, branches=branches, linear=linear)
@@ -810,7 +812,7 @@ pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
 batching.spmd_axis_primitive_batchers[cond_p] = _cond_batching_rule
 batching.axis_primitive_batchers[cond_p] = partial(_cond_batching_rule, None)
 xla.register_initial_style_primitive(cond_p)
-core.custom_typechecks[cond_p] = _cond_typecheck
+core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule

@@ -2812,7 +2812,7 @@ def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
   return shape
 
 def _broadcast_in_dim_typecheck_rule(
-    operand, *dyn_shape, shape, broadcast_dimensions):
+    _, operand, *dyn_shape, shape, broadcast_dimensions):
   if not dyn_shape:
     out_aval, effects = broadcast_in_dim_p.abstract_eval(
         operand.aval, shape=shape, broadcast_dimensions=broadcast_dimensions)
@@ -3271,7 +3271,7 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
       raise TypeError(msg.format(dimensions, np.shape(operand)))
   return tuple(new_sizes)
 
-def _reshape_typecheck_rule(operand, *dyn_shape, new_sizes, dimensions):
+def _reshape_typecheck_rule(_, operand, *dyn_shape, new_sizes, dimensions):
   if not dyn_shape:
     out_aval, effects = reshape_p.abstract_eval(
         operand.aval, new_sizes=new_sizes, dimensions=dimensions)
@@ -4506,7 +4506,7 @@ def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension):
   return _dyn_shape_staging_rule(trace, iota_p, aval, *dyn_shape, **params)
 pe.custom_staging_rules[iota_p] = _iota_staging_rule
 
-def _iota_typecheck_rule(*dyn_shape, dtype, shape, dimension):
+def _iota_typecheck_rule(_, *dyn_shape, dtype, shape, dimension):
   if not dyn_shape:
     out_aval, effects = iota_p.abstract_eval(
         dtype=dtype, shape=shape, dimension=dimension)

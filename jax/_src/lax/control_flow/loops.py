@@ -908,8 +908,10 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   new_vars = [*new_inst, *intensive_res, *extensive_res]
   return eqn_known, eqn_staged, unks_out, inst_out, new_vars
 
-def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts, num_carry,
-                    jaxpr, linear, unroll):
+def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
+                    num_carry, jaxpr, linear, unroll):
+  if not bind_time:
+    _, *in_atoms = in_atoms
   avals = [x.aval for x in in_atoms]
   tc = partial(_typecheck_param, 'scan')
   tc(reverse, 'reverse', 'bool', type(reverse) is bool)
@@ -1546,7 +1548,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
   return z
 
-def _while_typecheck(*in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
+def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
                      body_nconsts):
   # TODO(frostig,mattjj): check cond_jaxpr, body_jaxpr types
   joined_effects = _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts,
