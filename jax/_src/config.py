@@ -749,6 +749,13 @@ log_compiles = config.define_bool_state(
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
 
+log_compiles = config.define_bool_state(
+    name='jax_log_checkpoint_residuals',
+    default=False,
+    help=('Log a message every time jax.checkpoint (aka jax.remat) is '
+          'partially evaluated (e.g. for autodiff), printing what residuals '
+          'are saved.'))
+
 parallel_functions_output_gda = config.define_bool_state(
     name='jax_parallel_functions_output_gda',
     default=False,
