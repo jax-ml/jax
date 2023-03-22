@@ -402,7 +402,7 @@ def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
 
 # Type-checking
 
-def _shard_map_typecheck(*in_atoms, jaxpr, mesh, in_names, out_names,
+def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
                          check_rep):
   for v, x, in_name in zip(jaxpr.invars, in_atoms, in_names):
     if not core.typecompat(v.aval, _shard_aval(mesh, in_name, x.aval)):
