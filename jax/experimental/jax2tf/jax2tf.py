@@ -1491,11 +1491,12 @@ class TensorFlowTrace(core.Trace):
   def post_process_custom_jvp_call(self, out_tracers, _):
     assert False  # unreachable assuming jax2tf runs with clean trace state
 
-  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees):
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
+                              symbolic_zeros):
     # Drop the custom differentiation rule and act like a call primitive. This
     # behavior is desirable because jax2tf stages code out of the JAX system, so
     # there are no more JAX differentiation transformations to be applied.
-    del fwd, bwd, out_trees  # Unused.
+    del fwd, bwd, out_trees, symbolic_zeros  # Unused.
     return self.process_call(core.call_p, fun, tracers, {})
 
   def post_process_custom_vjp_call(self, out_tracers, _):
