@@ -682,6 +682,9 @@ def _make_custom_gradient_fn_tf(*,
             s if not pxla._is_unspecified(s) else replicated_s
             for s in all_shardings]
       # Since fun_vjp_jax takes two tuples of arguments we must split the in_shardings
+      vjp_in_args_shardings: Any
+      vjp_in_out_ct_shardings: Any
+      vjp_in_shardings: Any
       vjp_in_args_shardings, vjp_in_out_ct_shardings = util.split_list(all_shardings,
                                                                        [len(exported_primal.in_avals)])
       # pjit front-end does not like all-unspecified
