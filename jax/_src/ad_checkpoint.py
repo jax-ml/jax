@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import logging
 from typing import (Any, Callable, FrozenSet, List, Optional, Sequence, Tuple,
                     Union)
 import types
@@ -46,6 +47,8 @@ traceback_util.register_exclusion(__file__)
 
 map = safe_map
 zip = safe_zip
+
+logger = logging.getLogger(__name__)
 
 allowed_effects: effects.EffectTypeSet = effects.remat_allowed_effects
 
@@ -392,6 +395,12 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
   jaxpr_, out_shape = out
   jaxpr = jaxpr_.jaxpr
   out_tree = lambda: tree_structure(out_shape)
+  assert len(jaxpr.invars) == len(in_leaves)
+  dbg = pe.debug_info(f, in_tree, out_tree, True, "saved_residuals")
+  arg_info = pe.arg_info_all(dbg)
+  return _saved_residuals(jaxpr, arg_info)
+
+def _saved_residuals(jaxpr, arg_info) -> List[Tuple[core.AbstractValue, str]]:
   res_lits = [x for x in jaxpr.outvars if     isinstance(x, core.Literal)]
   res_vars = {x for x in jaxpr.outvars if not isinstance(x, core.Literal)}
 
@@ -404,9 +413,6 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     if v in res_vars:
       results.append((v.aval, 'from a constant'))
 
-  assert len(jaxpr.invars) == len(in_leaves)
-  dbg = pe.debug_info(f, in_tree, out_tree, True, "saved_residuals")
-  arg_info = pe.arg_info_all(dbg)
   for i, v in enumerate(jaxpr.invars):
     if v in res_vars:
       if arg_info is not None:
@@ -509,6 +515,26 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   recipe = pe.new_eqn_recipe(in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
                              new_params, jaxpr_unknown.effects,
                              source_info_util.current())
+
+  # log info about saved residuals
+  try:
+    _, staged_unk = partition_list(in_used_staged, in_unknowns)
+    res_invars, _ = partition_list(staged_unk, jaxpr_unknown.invars[num_res:])
+    res_outvars = jaxpr_known.outvars[len(jaxpr_known.outvars) - num_res:]
+    body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars), None)
+    logger.log(logging.WARNING if jax.config.jax_log_checkpoint_residuals
+               else logging.DEBUG,
+               'remat-decorated function ' +
+               'saving inputs with shapes:\n' * bool(res_invars) +
+               '  %s\n' * len(res_invars) +
+               'and ' * bool(res_invars) * bool(body_res) +
+               'saving these intermediates:\n' * bool(body_res) +
+               '  %s from %s\n' * len(body_res),
+               *[v.aval.str_short() for v in res_invars],
+               *[elt for (a, s) in body_res for elt in [a.str_short(), s]])
+  except:
+    pass  # just don't log anything on failure
+
   for t in out_jaxpr_tracers: t.recipe = recipe
 
   # zip together known and unknown outputs
