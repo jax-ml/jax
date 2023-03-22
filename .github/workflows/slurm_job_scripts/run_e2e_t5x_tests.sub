@@ -40,12 +40,16 @@ EXPORTS="--export=ALL,PYTHONPATH=${T5X_DIR}"
 #-------------------------------------------------------------------------------
 
 # Setup command to be run before the actual pytest command
+# We remove cudf from the container as a temporary WAR to a protobuf
+# dependency issue between cudf and tensorflow-cpu that t5x try to
+# install.
 read -r -d '' setup_cmd <<EOF
 rm -rf ${E2E_TESTS_WORKSPACE_DIR}/* \
 && mkdir -p ${E2E_TESTS_WORKSPACE_DIR} \
 && mkdir -p ${TFDS_DATA_DIR} \
 && python3.8 -m pip install --upgrade "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html \
 && git clone https://github.com/google-research/t5x.git ${T5X_DIR} \
+&& python3.8 -m pip uninstall -y cudf \
 && python3.8 -m pip install ${T5X_DIR} \
 && python3.8 -m pip install ${T5X_DIR}/t5x/contrib/gpu/scripts_gpu/dummy_wikipedia_config \
 && hostname > ${E2E_TESTS_WORKSPACE_DIR}/hostname.txt
