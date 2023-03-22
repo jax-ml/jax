@@ -1539,18 +1539,17 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       mean= [0.2, 1., 2., 10. ,100.],
-      scale= [0.2, 1., 2., 10. ,100.],
       dtype=jtu.dtypes.floating)
-  def testWald(self, mean, scale, dtype):
+  def testWald(self, mean, dtype):
     key = self.seed_prng(0)
-    rand = lambda key: random.wald(key, mean, scale, shape = (10000, ), dtype = dtype)
+    rand = lambda key: random.wald(key, mean, shape=(10000, ), dtype=dtype)
     crand = jax.jit(rand)
 
     uncompiled_samples = rand(key)
     compiled_samples = crand(key)
 
     for samples in [uncompiled_samples, compiled_samples]:
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean / scale, scale = scale).cdf)
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
 
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
