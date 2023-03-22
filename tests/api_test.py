@@ -5715,6 +5715,56 @@ class RematTest(jtu.JaxTestCase):
     self.assertIn(' sin ', str(jaxpr))
     self.assertIn(' cos ', str(jaxpr))
 
+  def test_remat_residual_logging(self):
+    def f(x):
+      x = jnp.sin(x)
+      x = jnp.cos(x.sum())
+      return x
+
+    x = jnp.arange(3.)
+
+    f1 = jax.remat(f)
+    f2 = jax.remat(f, policy=lambda *_, **__: True)
+    f3 = jax.remat(f, policy=lambda p, *_, **__: str(p) == 'cos')
+
+    prev_level = logging.get_verbosity()
+    try:
+      logging.set_verbosity('DEBUG')
+      with self.assertLogs(level=logging.DEBUG) as l:
+        jax.grad(f1)(x)
+    finally:
+      logging.set_verbosity(prev_level)
+    self.assertTrue(any('remat-decorated function saving inputs with shapes:'
+                        in line for line in l.output))
+    self.assertFalse(any('intermediates' in line for line in l.output))
+
+    prev_level = logging.get_verbosity()
+    try:
+      logging.set_verbosity('DEBUG')
+      with self.assertLogs(level=logging.DEBUG) as l:
+        jax.grad(f2)(x)
+    finally:
+      logging.set_verbosity(prev_level)
+    self.assertFalse(any('saving inputs' in line for line in l.output))
+    self.assertTrue(any('remat-decorated function saving these intermediates:'
+                        in line for line in l.output))
+    self.assertTrue(any(' sin ' in line for line in l.output))
+    self.assertTrue(any(' cos ' in line for line in l.output))
+
+    prev_level = logging.get_verbosity()
+    try:
+      logging.set_verbosity('DEBUG')
+      with self.assertLogs(level=logging.DEBUG) as l:
+        jax.grad(f3)(x)
+    finally:
+      logging.set_verbosity(prev_level)
+    self.assertTrue(any('remat-decorated function saving inputs with shapes:'
+                        in line for line in l.output))
+    self.assertTrue(any('and saving these intermediates:'
+                        in line for line in l.output))
+    self.assertFalse(any(' sin ' in line for line in l.output))
+    self.assertTrue(any(' cos ' in line for line in l.output))
+
 
 class JaxprTest(jtu.JaxTestCase):
 
