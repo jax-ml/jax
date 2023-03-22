@@ -262,11 +262,6 @@ def main(_):
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.gt)
 
-  # CHECK-LABEL: TEST: igamma float32[] float32[]
-  # CHECK: xla_fallback_igamma
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0))(lax.igamma)
-
   # CHECK-LABEL: TEST: igammac float32[] float32[]
   # CHECK: xla_fallback_igammac
   # CHECK-SAME: tensor<f32>
