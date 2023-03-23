@@ -1762,31 +1762,92 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         'scan got value with no leading axis to scan over.*',
         lambda: lax.scan(plus_one, p0, list(range(5))))
 
-  def testScanTypeErrors(self):
-    """Test typing error messages for scan."""
-    a = jnp.arange(5)
-    # Body output not a tuple
-    with self.assertRaisesRegex(TypeError,
-        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
-      lax.scan(lambda c, x: np.float32(0.), 0, a)
-    with  self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, "
-                  f"got {tree_util.tree_structure((0, 0, 0,))} "
-                  f"and {tree_util.tree_structure((1, (2, 3)))}")):
-      lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), a)
-    with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, "
-                  f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure(None)}.")):
-      lax.scan(lambda c, x: (0, x), None, a)
-    with self.assertRaisesWithLiteralMatch(
+  def testScanBodyOutputError(self):
+    with self.assertRaisesRegex(
         TypeError,
-        "scan carry output and input must have identical types, got\n"
-        "DIFFERENT ShapedArray(int32[]) vs. ShapedArray(float32[])."):
-      lax.scan(lambda c, x: (np.int32(0), x), np.float32(1.0), a)
-    with self.assertRaisesRegex(TypeError,
-        re.escape("scan carry output and input must have same type structure, "
-                  f"got {tree_util.tree_structure(a)} and {tree_util.tree_structure((1, 2))}.")):
-      lax.scan(lambda c, x: (0, x), (1, 2), a)
+        re.escape("scan body output must be a pair, got ShapedArray(float32[]).")):
+      lax.scan(lambda c, x: np.float32(0.), 0, jnp.arange(5.))
+
+  def testScanBodyCarryPytreeMismatchErrors(self):
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have "
+                  "the same pytree structure, but they differ:\n"
+                  "  * the input carry c is a tuple of length 2")):
+      lax.scan(lambda c, x: ((0, 0, 0), x), (1, (2, 3)), jnp.arange(5.))
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n"
+                  "  * the input carry x is a tuple of length 2")):
+      lax.scan(lambda x, _: ((x[0].astype('float32'),), None),
+               (jnp.array(0, 'int32'),) * 2, None, length=1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n"
+                  "  * the input carry x is a <class 'tuple'> but the corres")):
+      jax.lax.scan(lambda x, _: ([x[0].astype('float32'),] * 2, None),
+                   (jnp.array(0, 'int32'),) * 2, None, length=1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n"
+                  "  * the input carry x is a <class 'dict'> with 1 child but")):
+      jax.lax.scan(lambda x, _: ({'a': x['a'], 'b': x['a']}, None),
+                   {'a': jnp.array(0, 'int32')}, None, length=1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have the "
+                  "same pytree structure, but they differ:\n"
+                  "  * the input carry component x[0] is a <class 'dict'> with "
+                  "1 child but the corresponding component of the carry "
+                  "output is a <class 'dict'> with 2 children")):
+      jax.lax.scan(lambda x, _: (({'a': x[0]['a'], 'b': x[0]['a']},) * 2, None),
+                   ({'a': jnp.array(0, 'int32')},) * 2, None, length=1)
+
+  def testScanBodyCarryTypeMismatchErrors(self):
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have equal "
+                  "types (e.g. shapes and dtypes of arrays), but they differ:\n"
+                  "  * the input carry x has type int32[] but the corresponding "
+                  "output carry component has type float32[], so the dtypes do "
+                  "not match"
+                  )):
+      jax.lax.scan(lambda x, _: (x.astype('float32'), None),
+                   jnp.array(0, 'int32'), None, length=1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have equal "
+                  "types (e.g. shapes and dtypes of arrays), but they differ:\n"
+                  "  * the input carry component x[1] has type int32[] but the "
+                  "corresponding output carry component has type float32[], "
+                  "so the dtypes do not match"
+                  )):
+      jax.lax.scan(lambda x, _: ((x[0], x[1].astype('float32')), None),
+                   (jnp.array(0, 'int32'),) * 2, None, length=1)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        re.escape("Scanned function carry input and carry output must have equal "
+                  "types (e.g. shapes and dtypes of arrays), but they differ:\n"
+                  "  * the input carry component x[0] has type int32[] but the "
+                  "corresponding output carry component has type float32[], "
+                  "so the dtypes do not match\n\n"
+                  "  * the input carry component x[1] has type int32[] but the "
+                  "corresponding output carry component has type float32[1,1], "
+                  "so the dtypes do not match and also the shapes do not match"
+                  )):
+      jax.lax.scan(lambda x, _: ((x[0].astype('float32'),
+                                  x[1].astype('float32').reshape(1, 1),
+                                  x[2]), None),
+                   (jnp.array(0, 'int32'),) * 3, None, length=1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",
