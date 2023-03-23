@@ -253,11 +253,13 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @jtu.sample_product(
-    [dict(lhs_shape=(b, i, 9, 10), rhs_shape=(j, i, 4, 5))
-     for b, i, j in itertools.product([2, 3], repeat=3)],
-    dtype=lax_test_util.float_dtypes,
-    strides=[(1, 1), (1, 2), (2, 1)],
-    padding=["VALID", "SAME"],
+      [
+          dict(lhs_shape=(b, i, 9, 10), rhs_shape=(j, i, 4, 5))
+          for b, i, j in itertools.product([2, 3], repeat=3)
+      ],
+      dtype=lax_test_util.float_dtypes,
+      strides=[(1, 1), (1, 2), (2, 1)],
+      padding=["VALID", "SAME", "SAME_LOWER"],
   )
   def testConv(self, lhs_shape, rhs_shape, dtype, strides, padding):
     rng = jtu.rand_small(self.rng())
