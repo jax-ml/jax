@@ -20,6 +20,10 @@ Remember to align the itemized text with the first line of an item within a list
     See [documentation](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
     As part of this change the config flag `--jax2tf_default_experimental_native_lowering`
     has been renamed to `--jax2tf_native_serialization`.
+  * JAX now depends on `ml_dtypes`, which contains definitions of NumPy types
+    like bfloat16. These definitions were previously internal to JAX, but have
+    been split into a separate package to facilitate sharing them with other
+    projects.
 
 * Deprecations
   * The type `jax.numpy.DeviceArray` is deprecated. Use `jax.Array` instead,
@@ -32,6 +36,12 @@ Remember to align the itemized text with the first line of an item within a list
   * `jax.interpreters.pxla.device_put` is deprecated. Please use `jax.device_put`.
 
 ## jaxlib 0.4.7
+
+Changes:
+  * jaxlib now depends on `ml_dtypes`, which contains definitions of NumPy types
+    like bfloat16. These definitions were previously internal to JAX, but have
+    been split into a separate package to facilitate sharing them with other
+    projects.
 
 ## jax 0.4.6 (Mar 9, 2023)
 

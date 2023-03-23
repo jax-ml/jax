@@ -299,7 +299,7 @@ for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
                      np.float16, np.float32, np.float64,
                      np.complex64, np.complex128,
                      np.bool_, np.longlong, dtypes.bfloat16]:
-  register_constant_handler(_scalar_type, _ndarray_constant_handler)
+  register_constant_handler(_scalar_type, _ndarray_constant_handler)  # type: ignore
 
 def _python_scalar_handler(dtype, val, canonicalize_dtypes):
   return _numpy_array_constant(np.array(val, dtype), canonicalize_dtypes)
