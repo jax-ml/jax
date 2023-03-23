@@ -100,7 +100,7 @@ class NameStackTest(jtu.JaxTestCase):
     hlo_text = _get_hlo(f)(2)
     self.assertIn('foo/jit(core_call)/bar', hlo_text)
 
-  def test_xla_call_primitive_jaxpr_should_not_store_outer_name_stack(self):
+  def test_jit_jaxpr_should_not_store_outer_name_stack(self):
     @jax.named_scope('foo')
     def f(x):
       @jax.jit

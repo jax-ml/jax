@@ -421,14 +421,7 @@ def eval_sparse(
         _raise_unimplemented_primitive(prim)
       out = sparse_rules_bcoo[prim](spenv, *invals, **eqn.params)
     else:
-      if prim is xla.xla_call_p:
-        # TODO(vanderplas,frostig): workaround for binding call primitives
-        # within a jaxpr interpreter
-        params = eqn.params.copy()
-        fun = lu.wrap_init(core.jaxpr_as_fun(pe.ClosedJaxpr(params.pop('call_jaxpr'), ())))
-        out_bufs = prim.bind(fun, *(spenv.data(val) for val in invals), **params)
-      else:
-        out_bufs = prim.bind(*(spenv.data(val) for val in invals), **eqn.params)
+      out_bufs = prim.bind(*(spenv.data(val) for val in invals), **eqn.params)
       out_bufs = out_bufs if prim.multiple_results else [out_bufs]
       out = []
       for buf, outvar in safe_zip(out_bufs, eqn.outvars):
@@ -758,18 +751,6 @@ def _while_sparse(spenv, *spvalues, cond_jaxpr, cond_nconsts, body_jaxpr, body_n
   return arrays_to_spvalues(spenv, tree_unflatten(out_tree, out_flat))
 
 sparse_rules_bcoo[lax.while_p] = _while_sparse
-
-def _xla_call_sparse(spenv, *spvalues, call_jaxpr, donated_invars, **params):
-  if any(donated_invars):
-    raise NotImplementedError("sparse xla_call with donated_invars")
-  sp_call_jaxpr, out_tree = _sparsify_jaxpr(spenv, pe.ClosedJaxpr(call_jaxpr, ()), *spvalues)
-  fun = lu.wrap_init(core.jaxpr_as_fun(sp_call_jaxpr))
-  args_flat, _ = tree_flatten(spvalues_to_arrays(spenv, spvalues))
-  donated_invars = tuple(False for arg in args_flat)
-  out_flat = xla.xla_call_p.bind(fun, *args_flat, donated_invars=donated_invars, **params)
-  return arrays_to_spvalues(spenv, tree_unflatten(out_tree, out_flat))
-
-sparse_rules_bcoo[xla.xla_call_p] = _xla_call_sparse
 
 
 def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,

@@ -267,13 +267,6 @@ register_pytree_node(ZeroSeries, lambda z: ((), None), lambda _, xs: zero_series
 
 call_param_updaters = {}
 
-def _xla_call_param_updater(params, num_inputs):
-  donated_invars = params['donated_invars']
-  if any(donated_invars):
-    raise NotImplementedError("donated_invars not supported with jet")
-  return dict(params, donated_invars=(False,) * num_inputs)
-call_param_updaters[xla.xla_call_p] = _xla_call_param_updater
-
 
 ### rule definitions
 
