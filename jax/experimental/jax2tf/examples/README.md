@@ -126,7 +126,7 @@ following sequence of steps:
 
    * train an MNIST model, and obtain a pair of an inference function and the
    parameters.
-   * convert the inference function with jax2tf, for one of more batch sizes.
+   * convert the inference function with jax2tf, for one or more batch sizes.
    * save a SavedModel and dump its contents.
    * reload the SavedModel and run it with TensorFlow to test that the inference
    function produces the same results as the JAX inference function.
