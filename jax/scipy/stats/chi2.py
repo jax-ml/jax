@@ -18,4 +18,7 @@
 from jax._src.scipy.stats.chi2 import (
   logpdf as logpdf,
   pdf as pdf,
+  cdf as cdf,
+  logcdf as logcdf,
+  sf as sf,
 )
