@@ -8,6 +8,13 @@
 # 'pre-commit run --all'
 
 repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.3.0
+  hooks:
+  - id: trailing-whitespace
+    # only include python files
+    files: \.py$
+
 - repo: https://github.com/pycqa/flake8
   rev: '6.0.0'
   hooks:
