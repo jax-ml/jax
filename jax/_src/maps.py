@@ -889,7 +889,7 @@ ad.primitive_transposes[xmap_p] = _xmap_transpose
 
 
 def _typecheck_xmap(
-    *in_atoms, call_jaxpr, name, in_axes, out_axes, donated_invars,
+    _, *in_atoms, call_jaxpr, name, in_axes, out_axes, donated_invars,
     global_axis_sizes, axis_resources, resource_env, backend,
     spmd_in_axes, spmd_out_axes):
   in_avals = [x.aval for x in in_atoms]

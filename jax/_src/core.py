@@ -2627,7 +2627,7 @@ class JaxprTypeError(TypeError): pass
 
 custom_typechecks: Dict[Primitive, Callable] = {}
 
-def _check_closed_call(*in_atoms, call_jaxpr):
+def _check_closed_call(_, *in_atoms, call_jaxpr):
   in_avals = [x.aval for x in in_atoms]
   if list(in_avals) != list(call_jaxpr.in_avals):
     raise JaxprTypeError("Closed call in_avals mismatch")
@@ -2726,7 +2726,8 @@ def _check_jaxpr(
 
       # Compute the type of the primitive application.
       if prim in custom_typechecks:
-        out_type, eqn_effects = custom_typechecks[prim](*in_atoms, **eqn.params)
+        out_type, eqn_effects = custom_typechecks[prim](
+          ctx_factory, *in_atoms, **eqn.params)
       elif prim.call_primitive:
         out_type, eqn_effects = _check_call(ctx_factory, prim, in_atoms,
                                             eqn.params)

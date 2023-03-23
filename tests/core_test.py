@@ -428,6 +428,15 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     core.check_jaxpr(jaxpr)
 
+  def test_check_jaxpr_jit_invalid(self):
+    jaxpr = make_jaxpr(jax.jit(lambda x, y: x + 1))(1., 2.).jaxpr
+    pjit_eqn, = jaxpr.eqns
+    jaxpr._eqns[0] = pjit_eqn._replace(invars=())
+    self.assertRaisesRegex(
+        core.JaxprTypeError,
+        '0 operands cannot call jaxpr with 2 inputs',
+        lambda: core.check_jaxpr(jaxpr))
+
   def test_check_jaxpr_cond_invalid(self):
     jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')

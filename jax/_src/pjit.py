@@ -1343,8 +1343,12 @@ def pjit_staging_rule(trace, *args, **params):
     return core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args)
   else:
     return trace.default_process_primitive(pjit_p, args, params)
-
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
+
+def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
+  return core._check_call(ctx_factory, pjit_p, in_atoms,
+                          dict(params, call_jaxpr=jaxpr.jaxpr))
+core.custom_typechecks[pjit_p] = _pjit_typecheck
 
 
 def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env, **_):
