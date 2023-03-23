@@ -21,7 +21,7 @@ The tests in this file refer to the test data in ./back_compat_testdata.
 There is one test for each version of a custom call target, e.g.,
 `test_ducc_fft` tests the FFT custom calls on CPU.
 Only custom call targets tested here should be listed in
-jax2tf._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE. All other custom
+jax_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE. All other custom
 call targets will result in an error when encountered during serialization.
 
 Once we stop using a custom call target in JAX, you can remove it from the
@@ -203,7 +203,7 @@ class CompatTest(jtu.JaxTestCase):
     res_from_jax = tuple(np.array(a) for a in res_from_jax)
 
     # Use the native exporter, to make sure we get the proper serialized module.
-    exported = jax2tf.jax2tf.serialize_native(
+    exported = jax2tf.jax_export.serialize_native(
         jax.jit(func),
         [core.ShapedArray(a.shape, a.dtype) for a in data.inputs],
         lowering_platform=default_jax_backend(),
@@ -309,7 +309,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       self.run_one_test(jnp.sin, platform_dummy_data)
 
   def test_custom_call_coverage(self):
-    targets_to_cover = set(jax2tf.jax2tf._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    targets_to_cover = set(jax2tf.jax_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [
