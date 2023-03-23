@@ -1554,7 +1554,7 @@ def get_serialized_computation(
     abstracted_axes: Optional[Tuple[Dict[int, str]]] = None,
     use_pjit: bool = False,
     in_shardings = None,
-    out_shardings = None) -> str:
+    out_shardings = None) -> Tuple[str, int]:
   if use_pjit:
     assert not abstracted_axes
     lowered = pjit.pjit(
@@ -1564,7 +1564,7 @@ def get_serialized_computation(
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
   logging.info(f'Serialized ir.Module = {stablehlo_module_text}')
-  return stablehlo_module_text
+  return stablehlo_module_text, 3
 
 
 class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
@@ -1577,9 +1577,10 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     x = np.ones((2, 3), dtype=np.float32)
 
     jax_res = f_jax(x)
+    module, version = get_serialized_computation(f_jax, x)
     res = tfxla.call_module([x],
-                            version=2,
-                            module=get_serialized_computation(f_jax, x),
+                            version=version,
+                            module=module,
                             Tout=[jax_res.dtype],
                             Sout=[jax_res.shape])
     self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
@@ -1595,9 +1596,10 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     x = np.ones((2, 3), dtype=np.float32)
 
     jax_res = f_jax(count, x)
+    module, version = get_serialized_computation(f_jax, count, x)
     res = tfxla.call_module([count, x],
-                            version=2,
-                            module=get_serialized_computation(f_jax, count, x),
+                            version=version,
+                            module=module,
                             Tout=[jax_res.dtype],
                             Sout=[jax_res.shape])
     self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
@@ -1612,43 +1614,17 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
     x2 = np.ones((3, 4), dtype=np.float32)
 
     jax_res = f_jax(x1, x2)
-
+    module, version = get_serialized_computation(f_jax, x1, x2)
     def f_tf(x1_tf, x2_tf):
       return tfxla.call_module([x1_tf, x2_tf],
-                               version=2,
-                               module=get_serialized_computation(f_jax, x1, x2),
+                               version=version,
+                               module=module,
                                Tout=[jax_res[0].dtype, jax_res[1].dtype],
                                Sout=[jax_res[0].shape, jax_res[1].shape])
 
     res = tf.function(f_tf, jit_compile=True, autograph=False)(x1, x2)
     self.assertAllClose(tf.nest.map_structure(lambda t: t.numpy(), res),
                         jax_res)
-
-  @unittest.skip("TODO(necula): 'dynamic_iota' op can't be translated to XLA HLO")
-  def test_shape_poly_arange(self):
-    if not config.jax_dynamic_shapes:
-      raise unittest.SkipTest("jax_dynamic_shapes must be enabled")
-    def f_jax(x):  # x: f32[b]
-      return jnp.arange(x.shape[0]) + x
-
-    x1 = np.ones((5,), dtype=np.float32)
-    jax_res = f_jax(x1)
-
-    def f_tf(x1_tf):
-      return tfxla.call_module([x1_tf],
-                               version=2,
-                               module=get_serialized_computation(
-                                   f_jax, x1,
-                                   abstracted_axes=({
-                                       0: 'b'
-                                   },)),
-                               Tout=[jax_res.dtype],
-                               Sout=[jax_res.shape],
-                               dim_args_spec=('0.0',))
-
-    res = tf.function(f_tf, jit_compile=True, autograph=False)(x1)
-    self.assertAllClose(
-        tf.nest.map_structure(lambda t: t.numpy(), res), jax_res)
 
   @jtu.with_mesh([("x", 2)])
   def test_pjit_basic1D(self):
@@ -1665,7 +1641,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
         in_shardings=in_axis_resources,
         out_shardings=out_axis_resources,
     )(x, x)
-    module = get_serialized_computation(
+    module, version = get_serialized_computation(
         func_jax,
         x,
         x,
@@ -1675,7 +1651,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
 
     def f_tf(x_tf, y_tf):
       return tfxla.call_module([x_tf, y_tf],
-                               version=2,
+                               version=version,
                                module=module,
                                Tout=[x.dtype],
                                Sout=[x.shape])
