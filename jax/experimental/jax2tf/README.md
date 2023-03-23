@@ -35,7 +35,8 @@ This has several advantages:
      primitives at all data types.
    * uses standard native code paths in each framework, and thus it is easier
      to trust that the semantics and performance stays faithful to the native
-     semantics, across platforms.
+     semantics, across platforms. Has optional checking that the code runs on
+     the platform for which it was serialized.
    * the metadata associated with the operations, e.g., source location, is
      identical to what native execution uses.
 
