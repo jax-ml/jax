@@ -2022,7 +2022,7 @@ def _canonicalize_dimension(dim: DimSize) -> DimSize:
   else:
     raise type_error
 
-def canonicalize_shape(shape: Shape, context: str="") -> Shape:
+def canonicalize_shape(shape: Shape, context: str="") -> Tuple[Any, ...]:
   """Canonicalizes and checks for errors in a user-provided shape value.
 
   Args:
