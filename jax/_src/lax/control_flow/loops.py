@@ -13,9 +13,9 @@
 # limitations under the License.
 """Module for the loop primitives."""
 from functools import partial
+import inspect
 import itertools
 import operator
-
 from typing import Any, Callable, List, Optional, Sequence, Tuple, TypeVar
 
 import jax
@@ -30,7 +30,8 @@ from jax._src.interpreters import mlir
 from jax.interpreters import partial_eval as pe
 from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
-                           tree_map)
+                           tree_map, tree_flatten_with_path, keystr)
+from jax._src.tree_util import equality_errors
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
@@ -45,26 +46,13 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.ufuncs import logaddexp
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (
-    partition_list,
-    safe_map,
-    safe_zip,
-    split_list,
-    unzip2,
-    weakref_lru_cache,
-    )
+from jax._src.util import (partition_list, safe_map, safe_zip, split_list,
+                           unzip2, weakref_lru_cache)
 import numpy as np
 
 from jax._src.lax.control_flow.common import (
-    _abstractify,
-    _avals_short,
-    _check_tree_and_avals,
-    _initial_style_jaxpr,
-    _make_closed_jaxpr,
-    _prune_zeros,
-    _typecheck_param,
-    allowed_effects,
-    )
+    _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
+    _make_closed_jaxpr, _prune_zeros, _typecheck_param, allowed_effects)
 
 _map = safe_map
 zip = safe_zip
@@ -260,14 +248,11 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
   init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
   new_init_flat, changed = _promote_weak_typed_inputs(init_flat, carry_avals, carry_avals_out)
   if changed:
-    new_init = tree_unflatten(init_tree, new_init_flat)
-    init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(new_init)
+    init = tree_unflatten(init_tree, new_init_flat)
+    init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
   in_flat, jaxpr, consts, out_tree, out_tree_children = rest
 
-  _check_tree_and_avals("scan carry output and input",
-                        # Extract the subtree and avals for the first element of the return tuple
-                        out_tree_children[0], carry_avals_out,
-                        init_tree, carry_avals)
+  _check_scan_carry_type(f, init, out_tree_children[0], carry_avals_out)
   disallowed_effects = allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
@@ -279,6 +264,71 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
                     linear=(False,) * (len(consts) + len(in_flat)),
                     unroll=unroll)
   return tree_unflatten(out_tree, out)
+
+def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
+  try:
+    sig = inspect.signature(body_fun)
+  except (ValueError, TypeError):
+    sig = None
+  carry_name = sig and list(sig.parameters)[0]
+  if carry_name:
+    component = lambda p: (f'the input carry component {carry_name}{keystr(p)}'
+                           if p else f'the input carry {carry_name}')
+  else:
+    component = lambda p: (f'the input carry at path {keystr(p)}'
+                           if p else 'the input carry')
+  leaves_and_paths, in_carry_tree = tree_flatten_with_path(in_carry)
+  paths, in_carry_flat = unzip2(leaves_and_paths)
+  in_avals = _map(_abstractify, in_carry_flat)
+  if in_carry_tree != out_carry_tree:
+    try:
+      out_carry = tree_unflatten(out_carry_tree, out_avals)
+    except:
+      out_carry = None
+
+    if out_carry is None:
+      differences = [f'the input tree structure is:\n{in_carry_tree}\n',
+                     f'the output tree structure is:\n{out_carry_tree}\n']
+    else:
+      differences = '\n'.join(
+          f'  * {component(path)} is a {thing1} but the corresponding component '
+          f'of the carry output is a {thing2}, so {explanation}\n'
+          for path, thing1, thing2, explanation
+          in equality_errors(in_carry, out_carry))
+    raise TypeError(
+        "Scanned function carry input and carry output must have the same "
+        "pytree structure, but they differ:\n"
+        f"{differences}\n"
+        "Revise the scanned function so that its output is a pair where the "
+        "first element has the same pytree structure as the first argument."
+    )
+  if not all(_map(core.typematch, in_avals, out_avals)):
+    differences = '\n'.join(
+        f'  * {component(path)} has type {in_aval.str_short()}'
+        ' but the corresponding output carry component has type '
+        f'{out_aval.str_short()}{_aval_mismatch_extra(in_aval, out_aval)}\n'
+        for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
+        if not core.typematch(in_aval, out_aval))
+    raise TypeError(
+        "Scanned function carry input and carry output must have equal types "
+        "(e.g. shapes and dtypes of arrays), "
+        "but they differ:\n"
+        f"{differences}\n"
+        "Revise the scanned function so that all output types (e.g. shapes "
+        "and dtypes) match the corresponding input types."
+    )
+
+def _aval_mismatch_extra(a1: core.AbstractValue, a2: core.AbstractValue) -> str:
+  assert not core.typematch(a1, a2)
+  if isinstance(a1, core.ShapedArray) and isinstance(a2, core.ShapedArray):
+    dtype_mismatch = a1.dtype != a2.dtype
+    shape_mismatch = a1.shape != a2.shape
+    return (', so ' * (dtype_mismatch or shape_mismatch) +
+            'the dtypes do not match' * dtype_mismatch +
+            ' and also ' * (dtype_mismatch and shape_mismatch) +
+            'the shapes do not match' * shape_mismatch)
+  return ''
+
 
 def _scan_impl_unrolled(*args, reverse, length, num_consts, num_carry, linear,
                         f_impl, x_avals, y_avals):
@@ -1110,6 +1160,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
                       cond_nconsts=len(cond_consts), cond_jaxpr=cond_jaxpr,
                       body_nconsts=len(body_consts), body_jaxpr=body_jaxpr)
   return tree_unflatten(body_tree, outs)
+
 
 def _join_while_effects(body_jaxpr, cond_jaxpr, body_nconsts, cond_nconsts
                        ) -> effects.Effects:
