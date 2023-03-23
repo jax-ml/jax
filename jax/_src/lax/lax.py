@@ -4710,4 +4710,21 @@ class BIntRules:
       return core.DArray(aval, buf)
     return handler
 
+  @staticmethod
+  def global_sharded_result_handler(aval, out_sharding, committed,
+                                    is_out_sharding_from_xla):
+    phys_aval, = BIntRules.physical_avals(aval)
+    phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
+
+    if not dispatch.is_single_device_sharding(out_sharding):
+      raise NotImplementedError  # TODO(mattjj)
+    else:
+      phys_sharding = out_sharding
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
+                                      is_out_sharding_from_xla)
+
+    def handler(bufs):
+      return core.DArray(aval, phys_handler(bufs))
+    return handler
+
 core.bint._rules = BIntRules

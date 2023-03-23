@@ -1732,6 +1732,7 @@ class DynamicJaxprTrace(core.Trace):
     tracer = self.frame.constid_to_tracer.get(id(c))
     if tracer is None:
       aval = raise_to_shaped(get_aval(c), weak_type=dtypes.is_weakly_typed(c))
+      aval = self._lift_tracers_in_aval(aval)
       tracer = self._new_const(aval, c)
     return tracer
 
@@ -1820,8 +1821,8 @@ class DynamicJaxprTrace(core.Trace):
     for aval, _ in out_type:
       if type(aval) is DShapedArray:
         shape = [[*consts, *in_tracers][d.val] if type(d) is InDBIdx else
-                out_tracers[d.val] if type(d) is OutDBIdx else
-                d for d in aval.shape]
+                 out_tracers[d.val] if type(d) is OutDBIdx else
+                 d for d in aval.shape]
         aval = aval.update(shape=tuple(get_referent(d) for d in shape))
       out_tracers.append(DynamicJaxprTracer(self, aval, source_info))
     invars = map(self.getvar, in_tracers)

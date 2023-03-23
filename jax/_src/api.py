@@ -308,7 +308,7 @@ def jit(
         out_shardings=out_shardings, static_argnums=static_argnums,
         static_argnames=static_argnames, donate_argnums=donate_argnums,
         device=device, backend=backend, keep_unused=keep_unused,
-        inline=inline, resource_env=None)
+        inline=inline, resource_env=None, abstracted_axes=abstracted_axes)
     return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
 
   has_explicit_sharding = pjit._pjit_explicit_sharding(
