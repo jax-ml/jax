@@ -107,7 +107,6 @@ def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
                     tree_unflatten(tree2, avals2))
     raise TypeError(f"{what} must have identical types, got\n{diff}.")
 
-
 def _check_tree(func_name, expected_name, actual_tree, expected_tree, has_aux=False):
   if has_aux:
     actual_tree_children = actual_tree.children()
