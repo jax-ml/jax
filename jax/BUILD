@@ -117,7 +117,6 @@ py_library_providing_imports_info(
         "_src/random.py",
         "_src/sharding_impls.py",
         "_src/stages.py",
-        "_src/typing.py",
     ] + glob(
         [
             "*.py",
@@ -185,6 +184,7 @@ py_library_providing_imports_info(
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
+        ":typing",
         ":util",
         ":version",
         ":xla_bridge",
@@ -332,6 +332,14 @@ pytype_library(
         ":util",
         "//jax/_src/lib",
     ],
+)
+
+pytype_library(
+    name = "typing",
+    srcs = [
+        "_src/typing.py",
+    ],
+    deps = [":basearray"] + py_deps("numpy"),
 )
 
 pytype_library(
