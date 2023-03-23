@@ -31,11 +31,9 @@ py_library(
 )
 
 py_library(
-    name = "jax2tf_internal",
+    name = "jax_export",
     srcs = [
-        "call_tf.py",
-        "impl_no_xla.py",
-        "jax2tf.py",
+        "jax_export.py",
         "shape_poly.py",
     ],
     srcs_version = "PY3",
@@ -43,5 +41,21 @@ py_library(
     tags = ["pytype_unchecked_annotations"],
     deps = [
         "//jax",
+    ] + py_deps("numpy"),
+)
+
+py_library(
+    name = "jax2tf_internal",
+    srcs = [
+        "call_tf.py",
+        "impl_no_xla.py",
+        "jax2tf.py",
+    ],
+    srcs_version = "PY3",
+    # TODO: b/255503696: enable pytype
+    tags = ["pytype_unchecked_annotations"],
+    deps = [
+        "//jax",
+        ":jax_export",
     ] + py_deps("numpy") + py_deps("tensorflow_core") + jax2tf_deps,
 )
