@@ -21,6 +21,7 @@ import threading
 from typing import (
     Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union,
     cast)
+import uuid
 import warnings
 
 from absl import logging
@@ -70,6 +71,8 @@ import tensorflow as tf  # type: ignore[import]
 from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
 from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
 from tensorflow.core.framework import attr_value_pb2  # type: ignore[import]
+from tensorflow.core.framework import function_pb2  # type: ignore[import]
+
 try:
   from tensorflow.python.compiler.xla.experimental import xla_sharding  # type: ignore[import]
 except ModuleNotFoundError:
@@ -218,7 +221,8 @@ def convert(fun_jax: Callable,
             experimental_native_lowering="default",
             native_serialization="default",
             native_serialization_platforms=(),
-            native_serialization_strict_checks=True) -> Callable:
+            native_serialization_strict_checks=True,
+            native_serialization_as_module=False) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
 
   See
@@ -296,6 +300,11 @@ def convert(fun_jax: Callable,
       checks: (A) the lowered computation is executed on a platform for which it
       was lowered; (B) the serialized computation contains only custom calls
       with targets that are guaranteed to be stable, (more to come).
+    native_serialization_as_module: If True, serialize the StableHLO into a
+      ModuleDef in SavedModel, and refer to the ModuleDef through a string name
+      attribute of XlaCallModuleOp. If False, serialize and embed the StableHLO
+      as a string attribute of XlaCallModuleOp. Default to False, setting to
+      True is experimental.
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or
@@ -394,7 +403,8 @@ def convert(fun_jax: Callable,
         ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
           outs_tf, out_avals = run_exported_as_tf(
               args_avals_flat, args_flat_tf, exported,  # type: ignore
-              native_serialization_strict_checks)
+              native_serialization_strict_checks,
+              native_serialization_as_module)
           return outs_tf, out_avals
       else:
         dim_vars = shape_poly.all_dim_vars(args_avals_flat)
@@ -695,6 +705,7 @@ def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
                        args_tf: Sequence[TfVal],
                        exported: jax_export.Exported,
                        native_serialization_strict_checks: bool,
+                       native_serialization_as_module: bool,
                        ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
   """Runs the `exported` as an XlaCallModule TF op."""
   out_shapes = tuple(
@@ -726,7 +737,17 @@ def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
     # We already logged the MLIR module when we exported it.
     logging.vlog(3, "XlaCallModule %s", str(call_module_attrs))
 
-  call_module_attrs["module"] = exported.mlir_module_serialized
+  if native_serialization_as_module:
+    module_def = function_pb2.ModuleDef()
+    module_def.type = function_pb2.ModuleDef.TYPE_STABLE_HLO
+    module_def.name = str(uuid.uuid4())
+    module_def.serialized = exported.mlir_module_serialized
+    tf_context.add_module_def(module_def)
+
+    call_module_attrs["use_module_name"] = True
+    call_module_attrs["module"] = module_def.name
+  else:
+    call_module_attrs["module"] = exported.mlir_module_serialized
 
   # Apply the shardings on arguments and results for pjit. This is redundant
   # because the mlir_module_text will already contain the shardings, but it
