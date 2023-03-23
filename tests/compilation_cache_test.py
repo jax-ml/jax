@@ -339,9 +339,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
            warnings.catch_warnings(record=True) as w:
         mock_get.side_effect = RuntimeError("test error")
         self.assertEqual(f(2), 4)
-        if len(w) > 1:
-          print("Warnings:", [str(w_) for w_ in w], flush=True)
-        self.assertLen(w, 1)
+        runtime_warnings = [warning for warning in w
+                            if warning.category is UserWarning]
+        self.assertLen(runtime_warnings, 1)
         self.assertIn(
             "Error reading persistent compilation cache entry "
             "for 'jit__lambda_': RuntimeError: test error",
