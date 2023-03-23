@@ -1655,16 +1655,6 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 jaxpr=new_jaxpr,
                 num_carry=num_carry + 2,
                 linear=linear[0:nr_const_and_carry] + (False, False) + linear[nr_const_and_carry:])))
-  elif eqn.primitive is xla.xla_call_p:
-    call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
-    eqns.append(
-        eqn.replace(
-            invars=eqn.invars + [input_token_var, input_itoken_var],
-            outvars=eqn.outvars + [output_token_var, output_itoken_var],
-            params=dict(
-                eqn.params,
-                call_jaxpr=_rewrite_jaxpr(call_jaxpr, True, True),
-                donated_invars=eqn.params["donated_invars"] + (False, False))))
   elif eqn.primitive is pxla.xla_pmap_p:
     # We broadcast the input token into an array of tokens
     call_jaxpr = cast(core.Jaxpr, eqn.params["call_jaxpr"])
@@ -1762,12 +1752,10 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
   eqns.append(
       core.new_jaxpr_eqn(
           eqn.invars[0:cond_nconsts] + carry_invars + [input_token_var, input_itoken_var],
-          pred1_and_token1, xla.xla_call_p,
+          pred1_and_token1, core.call_p,
           dict(
               call_jaxpr=transformed_cond_jaxpr.jaxpr,
-              name="cond_before",
-              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
-              inline=False),
+              name="cond_before"),
           transformed_cond_jaxpr.jaxpr.effects,
           eqn.source_info))
   # Make a new cond "lambda pred, carry, token, itoken: pred"
@@ -1808,22 +1796,18 @@ def _rewrite_while_outfeed_cond(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
           new_body_invars_body_constvars + new_body_invars_carry +
           [new_body_invars_token, new_body_invars_itoken],
           new_body_carry2 + [new_body_token2, new_body_itoken2],
-          xla.xla_call_p,
+          core.call_p,
           dict(
               call_jaxpr=transformed_body_jaxpr.jaxpr,
-              name="body",
-              donated_invars=(False,) * len(transformed_body_jaxpr.in_avals),
-              inline=False),
+              name="body"),
           transformed_body_jaxpr.effects,
           eqn.source_info),
       core.new_jaxpr_eqn(
           new_body_invars_cond_constvars + new_body_carry2 + [new_body_token2, new_body_itoken2],
-          [new_body_pred2, new_body_token3, new_body_itoken3], xla.xla_call_p,
+          [new_body_pred2, new_body_token3, new_body_itoken3], core.call_p,
           dict(
               call_jaxpr=transformed_cond_jaxpr.jaxpr,
-              name="cond_body",
-              donated_invars=(False,) * len(transformed_cond_jaxpr.in_avals),
-              inline=False),
+              name="cond_body"),
           transformed_cond_jaxpr.effects,
           eqn.source_info)
   ]

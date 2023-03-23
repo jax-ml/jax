@@ -29,8 +29,7 @@ from jax._src.interpreters.xla import (
   register_translation as register_translation,
   sharding_to_proto as sharding_to_proto,
   translations as translations,
-  xla_call as xla_call,
-  xla_call_p as xla_call_p,
+  xla_call_p as _deprecated_xla_call_p,
   xla_destructure as xla_destructure,
   xla_shape_handlers as xla_shape_handlers,
   device_put as _deprecated_device_put,
@@ -83,6 +82,13 @@ _deprecations = {
         ),
         _deprecated_device_put,
     ),
+    "xla_call_p": (
+        (
+            "jax.interpreters.xla.xla_call_p is deprecated. Please use"
+            " jax.experimental.pjit.pjit_p instead."
+        ),
+        _deprecated_xla_call_p,
+    ),
 }
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
@@ -98,4 +104,5 @@ if typing.TYPE_CHECKING:
   from jax._src.interpreters.xla import (
       device_put as device_put,
   )
+  from jax._src.interpreters.xla import xla_call_p as xla_call_p
 del typing

@@ -1479,28 +1479,9 @@ class TensorFlowTrace(core.Trace):
     avals: Sequence[core.ShapedArray] = tuple(t.aval for t in tracers)
     interpreted_fun = _interpret_subtrace(fun, self.main, avals)
     extra_name_stack = None
-    if call_primitive == xla.xla_call_p:
-      extra_name_stack = util.wrap_name(params["name"], "jit")
     with _extended_name_stack(extra_name_stack):
       with core.new_sublevel():
-        if call_primitive == xla.xla_call_p:
-          if _WRAP_JAX_JIT_WITH_TF_FUNCTION:
-            # Make a nested tf.function(jit_compile=True)
-            store_tf_res_avals: Sequence[core.ShapedArray] = []
-            def f_tf(*tf_args):
-              nonlocal store_tf_res_avals
-              tf_res_out: Sequence[Tuple[TfVal, core.ShapedArray]] = \
-                _call_wrapped_with_new_constant_cache(interpreted_fun, tf_args,
-                                                      fresh_constant_cache=False)
-              tf_res_vals, tf_res_avals = util.unzip2(tf_res_out)
-              store_tf_res_avals = tf_res_avals
-              return tf_res_vals
-            tf_vals_out = tf.function(f_tf, autograph=False, jit_compile=True)(*vals)
-            vals_out = zip(tf_vals_out, store_tf_res_avals)
-          else:
-            vals_out = interpreted_fun.call_wrapped(*vals)
-        else:
-          vals_out = interpreted_fun.call_wrapped(*vals)
+        vals_out = interpreted_fun.call_wrapped(*vals)
     return [TensorFlowTracer(self, v, a) for v, a in vals_out]
 
   def post_process_call(self, call_primitive: core.Primitive,
@@ -1572,7 +1553,7 @@ def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
 
 
 # Call primitives are inlined
-for unexpected in [core.call_p, xla.xla_call_p, maps.xmap_p]:
+for unexpected in [core.call_p, maps.xmap_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 # Primitives that are not yet implemented must be explicitly declared here.

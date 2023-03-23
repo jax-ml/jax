@@ -1276,20 +1276,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend, ctx, avals_in,
   tokens_out = tokens_in.update_tokens(TokenSet(zip(effects, tokens)))
   return out_nodes, tokens_out
 
-def _xla_call_lower(ctx, *args,
-                    backend=None, name, call_jaxpr, donated_invars, inline=None,
-                    device=None, keep_unused=None):
-  del device, donated_invars, inline, keep_unused  # Ignored.
-  out_nodes, tokens = _call_lowering(
-      name, util.wrap_name(name, "jit"), call_jaxpr, backend,
-      ctx.module_context, ctx.avals_in, ctx.avals_out, ctx.tokens_in,
-      *args, dim_var_values=ctx.dim_var_values)
-  ctx.set_tokens_out(tokens)
-  return out_nodes
-
-register_lowering(xla.xla_call_p, _xla_call_lower)
-
-def _core_call_lowering(ctx, *args, name, backend=None, call_jaxpr):
+def core_call_lowering(ctx, *args, name, backend=None, call_jaxpr):
   out_nodes, tokens = _call_lowering(
       name, name, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
@@ -1297,9 +1284,9 @@ def _core_call_lowering(ctx, *args, name, backend=None, call_jaxpr):
   ctx.set_tokens_out(tokens)
   return out_nodes
 
-register_lowering(core.call_p, partial(_core_call_lowering, name="core_call"))
+register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 register_lowering(core.closed_call_p,
-                  partial(_core_call_lowering, name="core_closed_call"))
+                  partial(core_call_lowering, name="core_closed_call"))
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:

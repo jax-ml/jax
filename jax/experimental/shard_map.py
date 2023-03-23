@@ -581,25 +581,8 @@ class ShardMapTrace(core.Trace):
     return ShardMapTracer(self, out_rep, out_vals)
 
   def process_call(self, call_primitive, fun, tracers, params):
-    if call_primitive is not xla.xla_call_p: raise NotImplementedError
-    fun, jaxpr = _grab_jaxpr_shadily(fun)  # TODO remove with initial-style jit
-    bind = partial(call_primitive.bind, fun)  # TODO caching (compat w/ jaxpr())
-    fake_primitive = pxla.FakePrimitive(multiple_results=True, bind=bind)
-    _rep_rules[fake_primitive] = lambda *_, **__: set()  # pytype: disable=container-type-mismatch
-    out_tracers_ = self.process_primitive(fake_primitive, tracers, params)
-    out_vals = [t.val for t in out_tracers_]
-    if self.check:
-      out_rep = _output_rep(self.mesh, jaxpr(), [t.rep for t in tracers])
-    else:
-      out_rep = [set()] * len(out_vals)
-    return map(partial(ShardMapTracer, self), out_rep, out_vals)
+    raise NotImplementedError
 
-@lu.transformation_with_aux
-def _grab_jaxpr_shadily(*args):
-  out = yield args, {}
-  main = core.thread_local_state.trace_state.trace_stack.dynamic  # forgive me
-  jaxpr, _ = main.jaxpr_stack[-1].to_jaxpr(out)
-  yield out, jaxpr
 
 class ShardMapTracer(core.Tracer):
   rep: Set[AxisName]
@@ -710,10 +693,6 @@ def _axis_index_rule(mesh, *, axis_name):
 @register_rule(pjit.pjit_p)
 def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
   return _output_rep(mesh, jaxpr.jaxpr, in_rep)
-
-@register_rule(xla.xla_call_p)
-def _jit_rule(mesh, *in_rep, jaxpr, **kwargs):
-  return _output_rep(mesh, jaxpr, in_rep)
 
 @register_rule(debugging.debug_callback_p)
 def _debug_callback_rule(mesh, *in_rep, **_):

@@ -902,12 +902,7 @@ class MapTrace(core.Trace):
     return MapTracer(self, outvals, out_shard_axes)
 
   def process_call(self, call_primitive, fun, tracers, params):
-    if call_primitive is not xla.xla_call_p: raise NotImplementedError
-    bind = HashableFunction(
-        lambda *args, **kwargs: call_primitive.bind(fun, *args, **kwargs),
-        (call_primitive, fun))
-    fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
-    return self.process_primitive(fake_primitive, tracers, params)
+    raise NotImplementedError
 
   def process_map(self, call_primitive, fun, tracers, params):
     if params['devices'] is not None:
@@ -1998,15 +1993,14 @@ def _pmap_dce_rule(used_outputs, eqn):
 
 
 # Set param update handlers to update `donated_invars` just like xla_call_p
-pe.call_param_updaters[xla_pmap_p] = pe.call_param_updaters[xla.xla_call_p]
+pe.call_param_updaters[xla_pmap_p] = xla.xla_call_partial_eval_update_params
 pe.partial_eval_jaxpr_custom_rules[xla_pmap_p] = \
     partial(pe.call_partial_eval_custom_rule,
             'call_jaxpr', _pmap_partial_eval_custom_params_updater,
             res_aval=_pmap_partial_eval_custom_res_maker)
 pe.dce_rules[xla_pmap_p] = _pmap_dce_rule
-ad.call_param_updaters[xla_pmap_p] = ad.call_param_updaters[xla.xla_call_p]
-ad.call_transpose_param_updaters[xla_pmap_p] = \
-    ad.call_transpose_param_updaters[xla.xla_call_p]
+ad.call_param_updaters[xla_pmap_p] = xla.xla_call_jvp_update_params
+ad.call_transpose_param_updaters[xla_pmap_p] = xla.xla_call_transpose_update_params
 
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 
