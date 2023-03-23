@@ -59,6 +59,28 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_jax = lambda x, y: x
     self.ConvertAndCompare(f_jax, 0.7, 1)
 
+  def test_sin(self):
+    f_tf = jax2tf.convert(jnp.sin)
+    x = np.float32(.5)
+    sin_x = np.sin(x)
+    self.assertAllClose(sin_x, f_tf(x))
+    self.assertAllClose(sin_x, tf.function(f_tf, autograph=False,
+                                           jit_compile=True)(x))
+    # TODO: The following, with jit_compile=False, fails with
+    # native serialization because the tf.function() somehow executes the
+    # XlaCallModule op on CPU. This is despite the `with tf.device()`
+    # tf_preferred_device = (
+    #     tf.config.list_logical_devices("TPU") +
+    #     tf.config.list_logical_devices("GPU") +
+    #     tf.config.list_logical_devices())[0]
+    # logging.info("Running TF on %s", tf_preferred_device)
+    # with tf.device(tf_preferred_device):
+    #   self.assertAllClose(sin_x, tf.function(f_tf, autograph=False,
+    #                                         jit_compile=False)(x))
+
+    # self.assertAllClose(sin_x, tf.function(f_tf, autograph=False,
+    #                                       jit_compile=False)(x))
+
   def test_basics(self):
     f_jax = lambda x: jnp.sin(jnp.cos(x))
     self.ConvertAndCompare(f_jax, 0.7)
@@ -1564,7 +1586,7 @@ def get_serialized_computation(
   else:
     lowered = jax.jit(f_jax, abstracted_axes=abstracted_axes).lower(*args)
   stablehlo_module_text = mlir.module_to_string(lowered._lowering.stablehlo())
-  logging.info(f'Serialized ir.Module = {stablehlo_module_text}')
+  logging.info("Serialized ir.Module = %s", stablehlo_module_text)
   return stablehlo_module_text, 3
 
 
