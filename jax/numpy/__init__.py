@@ -420,6 +420,11 @@ from jax._src.numpy.ufuncs import (
 
 from jax._src.numpy.vectorize import vectorize as vectorize
 
+# Dynamically register numpy-style methods on JAX arrays.
+from jax._src.numpy.array_methods import register_jax_array_methods
+register_jax_array_methods()
+del register_jax_array_methods
+
 
 # Deprecations
 

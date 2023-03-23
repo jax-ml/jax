@@ -42,7 +42,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy.lax_numpy import _set_device_array_base_attributes
+from jax._src.numpy.array_methods import _set_device_array_base_attributes
 from jax._src.numpy.util import _register_stackable
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, GSPMDSharding)
