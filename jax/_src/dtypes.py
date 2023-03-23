@@ -22,13 +22,14 @@
 
 import builtins
 import functools
-from typing import cast, overload, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import (cast, overload, Any, Dict, List, Literal, Optional, Set,
+                    Tuple, Type, Union)
 import warnings
 
+import ml_dtypes
 import numpy as np
 
 from jax._src.config import flags, config
-from jax._src.lib import xla_client
 from jax._src.typing import DType, DTypeLike, OpaqueDType
 
 from jax._src import traceback_util
@@ -37,15 +38,13 @@ traceback_util.register_exclusion(__file__)
 FLAGS = flags.FLAGS
 
 # fp8 support
-_fp8_enabled = xla_client._version >= 117
-if _fp8_enabled:
-  float8_e4m3fn: type = xla_client.float8_e4m3fn  # pytype: disable=annotation-type-mismatch  # typed-numpy
-  float8_e5m2: type = xla_client.float8_e5m2  # pytype: disable=annotation-type-mismatch  # typed-numpy
-  _float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
-  _float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
+float8_e4m3fn: Type[np.generic] = ml_dtypes.float8_e4m3fn
+float8_e5m2: Type[np.generic] = ml_dtypes.float8_e5m2
+_float8_e4m3fn_dtype: np.dtype = np.dtype(float8_e4m3fn)
+_float8_e5m2_dtype: np.dtype = np.dtype(float8_e5m2)
 
 # bfloat16 support
-bfloat16: type = xla_client.bfloat16  # pytype: disable=annotation-type-mismatch  # typed-numpy
+bfloat16: Type[np.generic] = ml_dtypes.bfloat16
 _bfloat16_dtype: np.dtype = np.dtype(bfloat16)
 
 # Default types.
@@ -139,9 +138,9 @@ def scalar_type_of(x: Any) -> type:
   typ = dtype(x)
   if typ == bfloat16:
     return float
-  elif _fp8_enabled and typ == float8_e4m3fn:
+  elif typ == float8_e4m3fn:
     return float
-  elif _fp8_enabled and typ == float8_e5m2:
+  elif typ == float8_e5m2:
     return float
   elif np.issubdtype(typ, np.bool_):
     return bool
@@ -352,15 +351,14 @@ class finfo(np.finfo):
       if _bfloat16_dtype not in cls._finfo_cache:
         cls._finfo_cache[_bfloat16_dtype] = cls._bfloat16_finfo()
       return cls._finfo_cache[_bfloat16_dtype]
-    if _fp8_enabled:
-      if isinstance(dtype, str) and dtype == 'float8_e4m3fn' or dtype == _float8_e4m3fn_dtype:
-        if _float8_e4m3fn_dtype not in cls._finfo_cache:
-          cls._finfo_cache[_float8_e4m3fn_dtype] = cls._float8_e4m3fn_finfo()
-        return cls._finfo_cache[_float8_e4m3fn_dtype]
-      if isinstance(dtype, str) and dtype == 'float8_e5m2' or dtype == _float8_e5m2_dtype:
-        if _float8_e5m2_dtype not in cls._finfo_cache:
-          cls._finfo_cache[_float8_e5m2_dtype] = cls._float8_e5m2_finfo()
-        return cls._finfo_cache[_float8_e5m2_dtype]
+    if isinstance(dtype, str) and dtype == 'float8_e4m3fn' or dtype == _float8_e4m3fn_dtype:
+      if _float8_e4m3fn_dtype not in cls._finfo_cache:
+        cls._finfo_cache[_float8_e4m3fn_dtype] = cls._float8_e4m3fn_finfo()
+      return cls._finfo_cache[_float8_e4m3fn_dtype]
+    if isinstance(dtype, str) and dtype == 'float8_e5m2' or dtype == _float8_e5m2_dtype:
+      if _float8_e5m2_dtype not in cls._finfo_cache:
+        cls._finfo_cache[_float8_e5m2_dtype] = cls._float8_e5m2_finfo()
+      return cls._finfo_cache[_float8_e5m2_dtype]
     return super().__new__(cls, dtype)
 
 def _issubclass(a: Any, b: Any) -> bool:
@@ -380,21 +378,20 @@ def issubdtype(a: DTypeLike, b: DTypeLike) -> bool:
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
   :obj:`jax.dtypes.bfloat16`.
   '"""
-  if _fp8_enabled:
-    if a == "float8_e4m3fn":
-      a = float8_e4m3fn
-    if a == float8_e4m3fn:
-      if isinstance(b, np.dtype):
-        return b == _float8_e4m3fn_dtype
-      else:
-        return b in [float8_e4m3fn, np.floating, np.inexact, np.number]
-    if a == "float8_e5m2":
-      a = float8_e5m2
-    if a == float8_e5m2:
-      if isinstance(b, np.dtype):
-        return b == _float8_e5m2_dtype
-      else:
-        return b in [float8_e5m2, np.floating, np.inexact, np.number]
+  if a == "float8_e4m3fn":
+    a = float8_e4m3fn
+  if a == float8_e4m3fn:
+    if isinstance(b, np.dtype):
+      return b == _float8_e4m3fn_dtype
+    else:
+      return b in [float8_e4m3fn, np.floating, np.inexact, np.number]
+  if a == "float8_e5m2":
+    a = float8_e5m2
+  if a == float8_e5m2:
+    if isinstance(b, np.dtype):
+      return b == _float8_e5m2_dtype
+    else:
+      return b in [float8_e5m2, np.floating, np.inexact, np.number]
   if a == "bfloat16":
     a = bfloat16
   if a == bfloat16:
@@ -432,22 +429,14 @@ _int_types: List[JAXType] = [
     np.dtype('int64'),
 ]
 _float_types: List[JAXType]
-if _fp8_enabled:
-  _float_types = [
-    np.dtype(float8_e4m3fn),
-    np.dtype(float8_e5m2),
-    np.dtype(bfloat16),
-    np.dtype('float16'),
-    np.dtype('float32'),
-    np.dtype('float64'),
-  ]
-else:
-  _float_types = [
-    np.dtype(bfloat16),
-    np.dtype('float16'),
-    np.dtype('float32'),
-    np.dtype('float64'),
-  ]
+_float_types = [
+  np.dtype(float8_e4m3fn),
+  np.dtype(float8_e5m2),
+  np.dtype(bfloat16),
+  np.dtype('float16'),
+  np.dtype('float32'),
+  np.dtype('float64'),
+]
 _complex_types: List[JAXType] = [
     np.dtype('complex64'),
     np.dtype('complex128'),
@@ -460,9 +449,7 @@ def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
   if weak_type:
     if dtype == bool:
       return dtype
-    if _fp8_enabled and dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype]:
-      return float
-    if dtype == _bfloat16_dtype:
+    if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype]:
       return float
     return type(dtype.type(0).item())
   return dtype
@@ -478,26 +465,15 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> Dict[JAXType, Lis
   """
   b1, = _bool_types
   u1, u2, u4, u8, i1, i2, i4, i8 = _int_types
-  if _fp8_enabled:
-    f1_e4m3fn, f1_e5m2, bf, f2, f4, f8 = _float_types  # pytype: disable=bad-unpacking
-  else:
-    bf, f2, f4, f8 = _float_types  # pytype: disable=bad-unpacking
+  f1_e4m3fn, f1_e5m2, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
   if jax_numpy_dtype_promotion == 'standard':
-    if _fp8_enabled:
-      return {
-        b1: [i_],
-        u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-        i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
-        f_: [f1_e4m3fn, f1_e5m2, bf, f2, c_], f1_e4m3fn: [], f1_e5m2: [], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
-        c_: [c4], c4: [c8], c8: [],
-      }
     return {
       b1: [i_],
       u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
       i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
-      f_: [bf, f2, c_], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
+      f_: [f1_e4m3fn, f1_e5m2, bf, f2, c_], f1_e4m3fn: [], f1_e5m2: [], bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
   elif jax_numpy_dtype_promotion == 'strict':
@@ -684,12 +660,8 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
     raise ValueError("at least one array or dtype is required")
   dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
   if weak_type:
-    if _fp8_enabled:
-      dtype = canonicalize_dtype(
-        _default_types['f' if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype] else dtype.kind])
-    else:
-      dtype = canonicalize_dtype(
-        _default_types['f' if dtype == _bfloat16_dtype else dtype.kind])
+    dtype = canonicalize_dtype(
+      _default_types['f' if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype] else dtype.kind])
   else:
     dtype = canonicalize_dtype(dtype)
   return (dtype, weak_type) if return_weak_type_flag else dtype
@@ -699,10 +671,7 @@ def check_user_dtype_supported(dtype, fun_name=None):
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:
     return
   np_dtype = np.dtype(dtype)
-  if _fp8_enabled:
-    is_custom_dtype = np_dtype.type in [float8_e4m3fn, float8_e5m2, bfloat16]
-  else:
-    is_custom_dtype = np_dtype.type in [bfloat16]
+  is_custom_dtype = np_dtype.type in [float8_e4m3fn, float8_e5m2, bfloat16]
   if np_dtype.kind not in "biufc" and not is_custom_dtype:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""
