@@ -74,25 +74,30 @@ def conv_general_dilated(
     rhs: a rank `n+2` dimensional array of kernel weights.
     window_strides: a sequence of `n` integers, representing the inter-window
       strides.
-    padding: either the string `'SAME'`, the string `'VALID'`, or a sequence of
-      `n` `(low, high)` integer pairs that give the padding to apply before and
-      after each spatial dimension.
-    lhs_dilation: `None`, or a sequence of `n` integers, giving the
-      dilation factor to apply in each spatial dimension of `lhs`. LHS dilation
-      is also known as transposed convolution.
-    rhs_dilation: `None`, or a sequence of `n` integers, giving the
-      dilation factor to apply in each spatial dimension of `rhs`. RHS dilation
-      is also known as atrous convolution.
-    dimension_numbers: either `None`, a ``ConvDimensionNumbers`` object, or
-      a 3-tuple ``(lhs_spec, rhs_spec, out_spec)``, where each element is a
-      string of length `n+2`.
+    padding: either the strings `'SAME'`, `'SAME_LOWER'`, or `'VALID'`, or a
+      sequence of `n` `(low, high)` integer pairs that give the padding to apply
+      before and after each spatial dimension. `'SAME'` and `'SAME_LOWER'` add
+      padding to produce same output size as the input. The padding is split
+      between the two sides equally or almost equally. In case the padding is an
+      odd number, the extra padding is added at the end for `'SAME'` and at the
+      beginning for `'SAME_LOWER'`.
+    lhs_dilation: `None`, or a sequence of `n` integers, giving the dilation
+      factor to apply in each spatial dimension of `lhs`. LHS dilation is also
+      known as transposed convolution.
+    rhs_dilation: `None`, or a sequence of `n` integers, giving the dilation
+      factor to apply in each spatial dimension of `rhs`. RHS dilation is also
+      known as atrous convolution.
+    dimension_numbers: either `None`, a ``ConvDimensionNumbers`` object, or a
+      3-tuple ``(lhs_spec, rhs_spec, out_spec)``, where each element is a string
+      of length `n+2`.
     feature_group_count: integer, default 1. See XLA HLO docs.
     batch_group_count: integer, default 1. See XLA HLO docs.
     precision: Optional. Either ``None``, which means the default precision for
-      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
-      ``Precision.HIGH`` or ``Precision.HIGHEST``), a string (e.g. 'highest' or
-      'fastest', see the ``jax.default_matmul_precision`` context manager), or a
-      tuple of two :class:`~jax.lax.Precision` enums or strings indicating precision of
+      the backend, a :class:`~jax.lax.Precision` enum value
+      (``Precision.DEFAULT``, ``Precision.HIGH`` or ``Precision.HIGHEST``), a
+      string (e.g. 'highest' or 'fastest', see the
+      ``jax.default_matmul_precision`` context manager), or a tuple of two
+      :class:`~jax.lax.Precision` enums or strings indicating precision of
       ``lhs`` and ``rhs``.
     preferred_element_type: Optional. Either ``None``, which means the default
       accumulation type for the input types, or a datatype, indicating to
