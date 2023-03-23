@@ -5075,6 +5075,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     actual = jnp.fromstring(s, sep=',', dtype=int)
     self.assertArraysEqual(expected, actual)
 
+  def testMeanLargeArray(self):
+    # https://github.com/google/jax/issues/15068
+    raise unittest.SkipTest("test is slow, but it passes!")
+    x = jnp.ones((16, 32, 1280, 4096), dtype='int8')
+    self.assertEqual(1.0, jnp.mean(x))
+    self.assertEqual(1.0, jnp.mean(x, where=True))
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
