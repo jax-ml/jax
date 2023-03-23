@@ -116,12 +116,12 @@ def _check_prng_key_data(impl, key_data: jax.Array):
 class PRNGKeyArrayMeta(abc.ABCMeta):
   """Metaclass for overriding PRNGKeyArray isinstance checks."""
 
-  def __instancecheck__(self, instance):
+  def __instancecheck__(cls, instance):
     try:
       return (isinstance(instance.aval, core.ShapedArray) and
               type(instance.aval.dtype) is KeyTy)
     except AttributeError:
-      super().__instancecheck__(instance)
+      return super().__instancecheck__(instance)
 
 
 class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
