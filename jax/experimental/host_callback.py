@@ -1980,9 +1980,16 @@ def _initialize_outfeed_receiver(
         device_repr = ", ".join([str(d) for d in devices_with_outfeed])
         logger.debug("Starting outfeed_receiver for %s. max_callback_queue_size_bytes=%s",
                        device_repr, max_callback_queue_size_bytes)
-      _callback_handler_data.receiver = outfeed_receiver_module.start(
-          _callback_input_received, tuple(clients_with_outfeed),
-          max_callback_queue_size_bytes)
+      if jaxlib.xla_extension_version > 143:
+        # TODO(phawkins): remove type:ignore after minimum jaxlib version bump
+        _callback_handler_data.receiver = outfeed_receiver_module.start(
+            _callback_input_received, tuple(clients_with_outfeed),
+            max_callback_queue_size_bytes,
+            xb.get_compile_options(1, 1).executable_build_options)  # type:ignore
+      else:
+        _callback_handler_data.receiver = outfeed_receiver_module.start(
+            _callback_input_received, tuple(clients_with_outfeed),
+            max_callback_queue_size_bytes)
 
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
