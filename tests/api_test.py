@@ -7459,10 +7459,10 @@ class CustomJVPTest(jtu.JaxTestCase):
     primal_outs, tangent_outs = run(primal_ins, tangent_ins)
     primal_out1, primal_out2 = primal_outs
     tangent_out1, tangent_out2 = tangent_outs
-    scalar_dtype = jax.Array if maybe_jit or maybe_vmap else float
-    self.assertIsInstance(primal_out1, scalar_dtype)
+    scalar_type = jax.Array if maybe_jit or maybe_vmap else float
+    self.assertIsInstance(primal_out1, scalar_type)
     self.assertAllClose(primal_out1, 5.)
-    self.assertIsInstance(tangent_out1, scalar_dtype)
+    self.assertIsInstance(tangent_out1, scalar_type)
     self.assertAllClose(tangent_out1, 91.)
     self.assertIsInstance(primal_out2, jax.Array)
     self.assertArraysAllClose(primal_out2, jnp.array([7., 9.]))
@@ -8540,6 +8540,245 @@ class CustomVJPTest(jtu.JaxTestCase):
     f_vjp(jnp.array([3.]))
     f_vjp(jnp.array([3.]))  # doesn't crash
 
+  def test_symbolic_zero_custom_vjp_basic(self):
+    ZERO = custom_derivatives_public.SymbolicZero
+
+    @jax.custom_vjp
+    def f(x, y, z):
+      return x, x
+
+    def fwd(x, y, z):
+      self.assertTrue(x.perturbed)
+      self.assertFalse(y.perturbed)
+      self.assertFalse(z.perturbed)
+      return (x.value, x.value), None
+
+    def fwd_all(x, y, z):
+      self.assertTrue(x.perturbed)
+      self.assertTrue(y.perturbed)
+      self.assertTrue(z.perturbed)
+      return (x.value, x.value), None
+
+    def bwd_all(_, g):
+      x1, x2 = g
+      self.assertFalse(type(x1) is ZERO)
+      self.assertFalse(type(x2) is ZERO)
+      return x1, x1, x2
+
+    def bwd_fst(_, g):
+      x1, x2 = g
+      self.assertFalse(type(x1) is ZERO)
+      self.assertIs(type(x2), ZERO)
+      return x1, x1, x2
+
+    def bwd_snd(_, g):
+      x1, x2 = g
+      self.assertIs(type(x1), ZERO)
+      self.assertFalse(type(x2) is ZERO)
+      return x1, x1, x2
+
+    x, y, z = 4., 5., 6.
+    i = np.array(7, np.int32)
+    zero = np.array(0.)
+
+    f.defvjp(fwd, bwd_all, symbolic_zeros=True)
+    h = jax.jit(f)
+    jax.jacrev(h)(x, y, z)
+    jax.jacrev(lambda x: h(x, y, z))(x)
+    jax.jacrev(h, argnums=(0, 1, 2), allow_int=True)(x, i, i)
+
+    f.defvjp(fwd_all, bwd_fst, symbolic_zeros=True)
+    fst_f = lambda *xs: f(*xs)[0]
+    _, vjp = jax.vjp(fst_f, x, y, z)
+    _, _, gz = vjp(x)
+    self.assertArraysAllClose(gz, zero)
+
+    f.defvjp(fwd_all, bwd_snd, symbolic_zeros=True)
+    snd_f = lambda *xs: f(*xs)[1]
+    _, vjp = jax.vjp(snd_f, x, y, z)
+    gx, gy, _ = vjp(x)
+    self.assertArraysAllClose(gx, zero)
+    self.assertArraysAllClose(gy, zero)
+
+    f.defvjp(fwd, bwd_snd, symbolic_zeros=True)
+    _, vjp = jax.vjp(lambda x: snd_f(x, y, z), x)
+    gx, = vjp(x)
+    self.assertArraysAllClose(gx, zero)
+
+  @parameterized.named_parameters(
+      ('jit_vmap', True, True),
+      ('jit', True, False),
+      ('vmap', False, True),
+      ('', False, False),
+  )
+  def test_symbolic_zero_custom_vjp(self, maybe_jit, maybe_vmap):
+    # below:
+    # * static_scalar will be static in and out
+    # * static_array will be static in, but dynamic out
+    # * dyn_scalar and dyn_array will be dynamic in and out
+
+    ZERO = custom_derivatives_public.SymbolicZero
+
+    def f(static_scalar, static_array, dyn_scalar, dyn_array):
+      out1 = static_scalar + dyn_scalar
+      out2 = static_array + dyn_array
+      return static_scalar, static_array, out1, out2
+
+    def _pack(x):
+      return lax.broadcast(x, (1,))
+
+    def _unpack(x):
+      (x,) = x
+      return x
+
+    def _vmap(fun):
+      def _fun(*args):
+        args = tree_util.tree_map(_pack, args)
+        out = jax.vmap(fun)(*args)
+        out = tree_util.tree_map(_unpack, out)
+        return out
+      return _fun
+
+    f = jax.custom_vjp(f)
+
+    def fwd(*args):
+      xs, pert = [x.value for x in args], [x.perturbed for x in args]
+      self.assertFalse(pert[0])
+      self.assertFalse(pert[1])
+      self.assertTrue(pert[2])
+      self.assertTrue(pert[3])
+      return f(*xs), xs
+
+    def bwd(res, g):
+      static_scalar, *_ = res
+      t_static, t_static_arr, t_dyn_scalar, t_dyn_array = g
+      self.assertIs(type(t_static), ZERO)
+      self.assertFalse(type(t_static_arr) is ZERO)
+      self.assertFalse(type(t_dyn_scalar) is ZERO)
+      self.assertFalse(type(t_dyn_array)  is ZERO)
+      self.assertEqual(t_static.shape, ())
+      self.assertEqual(t_static_arr.shape, (2,))
+      return (static_scalar + 90,
+              t_static_arr  + 91,
+              t_dyn_scalar  + 92,
+              t_dyn_array   + 93)
+
+    f.defvjp(fwd, bwd, symbolic_zeros=True)
+
+    def g(dyn_scalar, dyn_array):
+      if maybe_vmap:
+        f_ = _vmap(f)
+      else:
+        f_ = f
+      outs = f_(1., jnp.array([2., 3.]), dyn_scalar, dyn_array)
+      return outs[1:]
+
+    def run(primal_ins, cotangent_outs):
+      primal_outs, vjp = jax.vjp(g, *primal_ins)
+      cotangent_ins = vjp(cotangent_outs)
+      return primal_outs, cotangent_ins
+
+    if maybe_jit:
+      run = jax.jit(run)
+
+    scalar_type = jax.Array if maybe_jit or maybe_vmap else float
+    primal_ins = (4., jnp.array([5., 6.]))
+    cotangent_outs = (jnp.array([10., 11.]), 7., jnp.array([8., 9.]))
+    primal_outs, cotangent_ins = run(primal_ins, cotangent_outs)
+
+    primal_out1, primal_out2, primal_out3 = primal_outs
+    self.assertIsInstance(primal_out1, jax.Array)
+    self.assertAllClose(primal_out1, jnp.array([2., 3.]))
+    self.assertIsInstance(primal_out2, scalar_type)
+    self.assertAllClose(primal_out2, 5.)
+    self.assertIsInstance(primal_out3, jax.Array)
+    self.assertAllClose(primal_out3, jnp.array([7., 9.]))
+
+    ct_in1, ct_in2 = cotangent_ins
+    self.assertIsInstance(ct_in1, scalar_type)
+    self.assertAllClose(ct_in1, 99.)
+    self.assertIsInstance(ct_in2, jax.Array)
+    self.assertArraysAllClose(ct_in2, jnp.array([101., 102.]))
+
+  def test_symbolic_zero_custom_vjp_vmap_output(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x, y
+
+    def fwd(x, y):
+      self.assertTrue(x.perturbed)
+      self.assertFalse(y.perturbed)
+      return f(x.value, y.value), None
+
+    def bwd(_, g):
+      _, ct_y = g
+      self.assertIs(type(ct_y), custom_derivatives_public.SymbolicZero)
+      return g
+
+    f.defvjp(fwd, bwd, symbolic_zeros=True)
+    jax.grad(lambda x, y: jax.vmap(f)(x, y)[0].sum())(jnp.ones(3), jnp.ones(3))
+
+  def test_symbolic_zero_custom_vjp_custom_pytree(self):
+    tree_values = custom_derivatives_public.custom_vjp_primal_tree_values
+
+    @tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self_, strict, val):
+        if strict:
+          # make sure we aren't getting special arguments that should only
+          # come up when symbolic_zeros is True
+          self.assertFalse(hasattr(val, 'perturbed'))
+        self_.strict = strict
+        self_.x = val
+
+      def tree_flatten(self_):
+        return [self_.x], self_.strict
+
+      @classmethod
+      def tree_unflatten(cls, strict, xs):
+        x, = xs
+        return cls(strict, x)
+
+    x, y = Box(False, jnp.array(72.)), jnp.array(73.)
+
+    @jax.custom_vjp
+    def f(box, y):
+      return box.x * y
+
+    def fwd0(box, y):
+      self.assertTrue(box.x.perturbed)
+      self.assertFalse(y.perturbed)
+      box, y = map(tree_values, [box, y])
+      return f(box, y), (box, y)
+
+    def bwd0(res, g):
+      box, y = res
+      return y * g, box.x * g
+
+    def fwd1(box, y):
+      self.assertFalse(box.x.perturbed)
+      self.assertTrue(y.perturbed)
+      box, y = map(tree_values, [box, y])
+      return f(box, y), (box, y)
+
+    def bwd1(res, g):
+      box, y = res
+      return y * g, box.x * g
+
+    f.defvjp(fwd0, bwd0, symbolic_zeros=True)
+    jax.grad(f, argnums=0)(x, y)
+    f.defvjp(fwd1, bwd1, symbolic_zeros=True)
+    jax.grad(f, argnums=1)(x, y)
+
+    def fwd_strict(box, y):
+      return f(box, y), (box, y)
+
+    def bwd_strict(res, g):
+      box, y = res
+      return y * g, box.x * g
+
+    f.defvjp(fwd_strict, bwd_strict)
+    jax.grad(f)(x, y)
 
 def transpose_unary(f, x_example):
   def transposed(y):
