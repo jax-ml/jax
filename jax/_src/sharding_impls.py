@@ -113,7 +113,7 @@ def _check_mesh_resource_axis(mesh, parsed_pspec):
                      "undefined.") from None
 
 
-def _hashed_index(x) -> int:
+def hashed_index(x) -> int:
   # This works for both `pjit`/`xmap` indices and `pmap` indices (which might
   # have an integer instead of a slice).
   assert all(v.step is None for v in x if isinstance(v, slice))
@@ -133,7 +133,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   index_to_replica: Dict[int, int] = Counter()
   out = {}
   for device, index in device_indices_map_fn(global_shape).items():
-    h_index = _hashed_index(index)
+    h_index = hashed_index(index)
     replica_id = index_to_replica[h_index]
     index_to_replica[h_index] += 1
     out[device] = replica_id

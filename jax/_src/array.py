@@ -41,7 +41,7 @@ from jax._src.interpreters import xla
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
-    device_replica_id_map)
+    device_replica_id_map, hashed_index)
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -130,6 +130,42 @@ def _is_reduced_on_dim(idx):
              (isinstance(i, (np.ndarray, jax.Array)) and not i.shape and
               np.issubdtype(i.dtype, np.integer))
              for i in idx)
+
+
+@functools.lru_cache(maxsize=4096)
+def _cached_index_calc(s, shape):
+  map_ = s.addressable_devices_indices_map(shape)
+  seen_h_indices = set()
+  m = {}
+  for d, index in map_.items():
+    h_index = hashed_index(index)
+    if h_index not in seen_h_indices:
+      seen_h_indices.add(h_index)
+      m[d] = index
+  return m
+
+
+def _create_copy_plan(arrays, s: Sharding, shape: Shape):
+  di_map = _cached_index_calc(s, shape)
+  copy_plan = []
+  for a in arrays:
+    ind = di_map.get(a.device(), None)
+    if ind is not None:
+      copy_plan.append((ind, a))
+  return copy_plan
+
+
+@functools.lru_cache(maxsize=4096)
+def _process_has_full_value_in_mcjax(s, shape):
+  # Return False for single host as a fast path.
+  if jax.process_count() == 1:
+    return False
+
+  num_unique_indices = len(
+      set(hashed_index(v) for v in s.devices_indices_map(shape).values()))
+  num_addressable_unique_indices = len(
+      set(hashed_index(v) for v in s.addressable_devices_indices_map(shape).values()))
+  return num_unique_indices == num_addressable_unique_indices
 
 
 class ArrayImpl(basearray.Array):
@@ -503,15 +539,12 @@ class ArrayImpl(basearray.Array):
       if self.is_fully_replicated:
         self._copy_single_device_array_to_host_async()
         return
-      # Only calculate the device_to_replica_id map once for performance
-      device_to_replica_id_map = (
-          device_replica_id_map(self.sharding, self.shape))
-      for arr in self._arrays:
-        if device_to_replica_id_map[arr.device()] == 0:
-          if xla_extension_version >= 140:
-            arr._copy_single_device_array_to_host_async()
-          else:
-            arr.copy_to_host_async()
+      copy_plan = _create_copy_plan(self._arrays, self.sharding, self.shape)
+      for _, arr in copy_plan:
+        if xla_extension_version >= 140:
+          arr._copy_single_device_array_to_host_async()
+        else:
+          arr.copy_to_host_async()
 
   @property
   @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
@@ -524,32 +557,28 @@ class ArrayImpl(basearray.Array):
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
-      if not self.is_fully_addressable:
+      # TODO(yashkatariya): Merge `_process_has_full_value_in_mcjax` with
+      # is_fully_addressable.
+      if (not self.is_fully_addressable and
+          not _process_has_full_value_in_mcjax(self.sharding, self.shape)):
         raise RuntimeError("Fetching value for `jax.Array` that spans "
                            "non-addressable devices is not possible. You can use "
                            "`jax.experimental.multihost_utils.process_allgather` "
                            "for this use case.")
 
-      # Only calculate the device_to_replica_id map once for performance
-      device_to_replica_id_map = device_replica_id_map(self.sharding, self.shape)
-      # device() is slow so compute it only once for the rest of the function.
-      devices = [arr.device() for arr in self._arrays]
-      for arr, d in zip(self._arrays, devices):
-        if device_to_replica_id_map[d] == 0:
-          if xla_extension_version >= 140:
-            arr._copy_single_device_array_to_host_async()
-          else:
-            arr.copy_to_host_async()
-      # Only calculate the device_to_index map once for performance
-      device_to_index_map = self.sharding.devices_indices_map(self.shape)
+      copy_plan = _create_copy_plan(self._arrays, self.sharding, self.shape)
+      for _, arr in copy_plan:
+        if xla_extension_version >= 140:
+          arr._copy_single_device_array_to_host_async()
+        else:
+          arr.copy_to_host_async()
+
       npy_value = np.empty(self.shape, self.dtype)
-      for arr, d in zip(self._arrays, devices):
-        if device_to_replica_id_map[d] == 0:
-          if xla_extension_version >= 140:
-            npy_value[device_to_index_map[d]] = (
-                arr._single_device_array_to_np_array())
-          else:
-            npy_value[device_to_index_map[d]] = np.asarray(arr)
+      for ind, arr in copy_plan:
+        if xla_extension_version >= 140:
+          npy_value[ind] = arr._single_device_array_to_np_array()
+        else:
+          npy_value[ind] = np.asarray(arr)
       self._npy_value = npy_value  # type: ignore
       self._npy_value.flags.writeable = False
     # https://docs.python.org/3/library/typing.html#typing.cast
