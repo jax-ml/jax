@@ -60,7 +60,8 @@ jobs:
           echo "Host headnode
             User ${USER}
             HostName ${IP}
-            IdentityFile ${GITHUB_WORKSPACE}/.ssh/id_rsa" > ./.ssh/config
+            IdentityFile ${GITHUB_WORKSPACE}/.ssh/id_rsa
+            ServerAliveInterval 30" > ./.ssh/config
 
       - name: Check SLURM is working
         run: |
