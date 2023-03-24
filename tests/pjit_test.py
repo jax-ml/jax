@@ -800,7 +800,6 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     self.assertAllClose(res0, res, check_dtypes=True)
 
-  @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # outfeed
   def testOutfeed(self):
     if xla_bridge.using_pjrt_c_api():
       raise unittest.SkipTest('outfeed not implemented in PJRT C API')
@@ -1109,12 +1108,13 @@ class PJitTest(jtu.BufferDonationTestCase):
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
-  @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # custom partitoner
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
   @jtu.with_mesh([('x', 4), ('y', 2)])
   def test_custom_partitioner(self):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
+    if xla_bridge.using_pjrt_c_api():
+      raise unittest.SkipTest('custom partitioning not implemented in PJRT C API')
 
     def partition(
         precision, arg_shapes, arg_shardings, result_shape, result_sharding

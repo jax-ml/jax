@@ -30,7 +30,6 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # infeed
 class InfeedTest(jtu.JaxTestCase):
 
   def setUp(self):
