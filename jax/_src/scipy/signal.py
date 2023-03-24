@@ -639,7 +639,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   return time, x
 
 @_wraps(osp_signal.hilbert)
-def hilbert(x: Array, N: int = None, axis: int = -1):
+def hilbert(x: Array, N: Union[int, None] = None, axis: int = -1):
   check_arraylike('hilbert', x)
   x = jnp.asarray(x)
   if x.ndim > 1:
@@ -663,7 +663,6 @@ def hilbert(x: Array, N: int = None, axis: int = -1):
     h = jnp.zeros(N, Xf.dtype).at[0].set(1).at[1:(N+1) // 2].set(2)
     # h[0] = 1
     # h[1:(N + 1) // 2] = 2
-
 
   x = jnp.fft.ifft(Xf * h, axis=axis)
   return x
