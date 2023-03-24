@@ -508,7 +508,7 @@ class ArrayImpl(basearray.Array):
           device_replica_id_map(self.sharding, self.shape))
       for arr in self._arrays:
         if device_to_replica_id_map[arr.device()] == 0:
-          if isinstance(arr, ArrayImpl):
+          if xla_extension_version >= 140:
             arr._copy_single_device_array_to_host_async()
           else:
             arr.copy_to_host_async()
@@ -536,7 +536,7 @@ class ArrayImpl(basearray.Array):
       devices = [arr.device() for arr in self._arrays]
       for arr, d in zip(self._arrays, devices):
         if device_to_replica_id_map[d] == 0:
-          if isinstance(arr, ArrayImpl):
+          if xla_extension_version >= 140:
             arr._copy_single_device_array_to_host_async()
           else:
             arr.copy_to_host_async()
@@ -545,7 +545,7 @@ class ArrayImpl(basearray.Array):
       npy_value = np.empty(self.shape, self.dtype)
       for arr, d in zip(self._arrays, devices):
         if device_to_replica_id_map[d] == 0:
-          if isinstance(arr, ArrayImpl):
+          if xla_extension_version >= 140:
             npy_value[device_to_index_map[d]] = (
                 arr._single_device_array_to_np_array())
           else:

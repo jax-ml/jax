@@ -39,6 +39,7 @@ from jax.interpreters import xla
 from jax._src.interpreters import mlir
 from jax.interpreters import batching
 from jax._src import array
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir.dialects import hlo
 from jax._src import dtypes
 from jax._src.interpreters import pxla
@@ -2854,7 +2855,8 @@ class FooTyRules:
         buf, = arr._arrays
       else:
         buf, = arr
-      buf.aval = core.ShapedArray(buf.shape, buf.dtype)
+      if xla_extension_version < 140:
+        buf.aval = core.ShapedArray(buf.shape, buf.dtype)
       return FooArray(aval.shape, buf)
     return handler
 
