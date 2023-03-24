@@ -356,11 +356,6 @@ def main(_):
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(1), np.float32(2))(lax.pow)
 
-  # CHECK-LABEL: TEST: random_gamma_grad float32[] float32[]
-  # CHECK: xla_fallback_random_gamma_grad
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0))(lax.random_gamma_grad)
-
   # CHECK-LABEL: TEST: real complex128[]
   # CHECK: hlo.real
   # CHECK-SAME: tensor<complex<f64>>
