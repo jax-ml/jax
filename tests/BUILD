@@ -30,7 +30,6 @@ jax_generate_backend_suites()
 jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
-    pjrt_c_api_bypass = True,
     shard_count = 10,
 )
 
@@ -165,7 +164,6 @@ jax_test(
     backend_tags = {
         "tpu": ["noasan"],  # Times out.
     },
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 10,
         "gpu": 4,
@@ -183,7 +181,6 @@ jax_test(
     backend_tags = {
         "tpu": ["notsan"],  # Times out under tsan.
     },
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 5,
         "gpu": 5,
@@ -198,7 +195,6 @@ jax_test(
 jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
-    pjrt_c_api_bypass = True,
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -220,7 +216,6 @@ jax_test(
 jax_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
-    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental_host_callback",
     ],
@@ -300,7 +295,6 @@ jax_test(
         "cpu": ["noasan"],  # Test times out.
         "tpu": ["noasan"],  # Test times out.
     },
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -311,7 +305,6 @@ jax_test(
 jax_test(
     name = "lax_numpy_operators_test",
     srcs = ["lax_numpy_operators_test.py"],
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -322,7 +315,6 @@ jax_test(
 jax_test(
     name = "lax_numpy_reducers_test",
     srcs = ["lax_numpy_reducers_test.py"],
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 20,
         "gpu": 20,
@@ -412,7 +404,6 @@ jax_test(
 jax_test(
     name = "lax_test",
     srcs = ["lax_test.py"],
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -558,7 +549,6 @@ jax_test(
             "noasan",  # Times out under asan.
         ],
     },
-    pjrt_c_api_bypass = True,
     shard_count = {
         "cpu": 30,
         "gpu": 30,
@@ -785,7 +775,6 @@ jax_test(
 jax_test(
     name = "checkify_test",
     srcs = ["checkify_test.py"],
-    pjrt_c_api_bypass = True,
     shard_count = {
         "gpu": 2,
         "tpu": 2,
@@ -871,7 +860,6 @@ jax_test(
     backend_tags = {
         "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
     },
-    pjrt_c_api_bypass = True,
     deps = [
         "//jax:compilation_cache",
         "//jax:experimental",
@@ -891,7 +879,6 @@ jax_test(
     name = "host_callback_test",
     srcs = ["host_callback_test.py"],
     args = ["--jax_host_callback_outfeed=true"],
-    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -921,7 +908,6 @@ jax_test(
 jax_test(
     name = "host_callback_to_tf_test",
     srcs = ["host_callback_to_tf_test.py"],
-    pjrt_c_api_bypass = True,
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
