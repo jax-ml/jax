@@ -22,9 +22,10 @@ For examples and details, see
 https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax.
 
 """
+import base64
 import enum
 import functools
-from typing import Any, Callable, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple, List
 
 from absl import logging
 
@@ -62,8 +63,13 @@ TfVal = jax2tf_internal.TfVal
 # DLPack, if we are careful.
 _DLPACK_PLATFORMS = ("gpu",)
 
-def call_tf(callable_tf: Callable, has_side_effects=True,
-            output_shape_dtype=None) -> Callable:
+
+def call_tf(
+    callable_tf: Callable,
+    has_side_effects=True,
+    output_shape_dtype=None,
+    use_custom_call=False,
+) -> Callable:
   """Calls a TensorFlow function from JAX, with support for reverse autodiff.
 
   The ``callable_tf`` will be called with TensorFlow-compatible arguments (
@@ -72,7 +78,8 @@ def call_tf(callable_tf: Callable, has_side_effects=True,
 
   If ``call_tf`` appears in a JAX staging context (:func:`jax.jit`,
   or :func:`jax.pmap`, or :func:`jax.xmap`, or a control-flow primitive) then
-  ``callable_tf`` will be compiled with ``tf.function(callable_tf, jit_compile=True)``
+  ``callable_tf`` will be compiled with ``tf.function(callable_tf,
+  jit_compile=True)``
   and the resulting XLA computation will be embedded in JAX's XLA computation.
 
   If ``call_tf`` appears outside a JAX staging context, it will be called inline
@@ -84,7 +91,8 @@ def call_tf(callable_tf: Callable, has_side_effects=True,
   custom gradients that may be defined for the code in ``callable_tf``.
 
   For an example and more details see the
-  `README <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
+  `README
+  <https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#calling-tensorflow-functions-from-jax>`_.
 
   Args:
     callable_tf: a TensorFlow Callable that can take a pytree of TensorFlow
@@ -92,19 +100,28 @@ def call_tf(callable_tf: Callable, has_side_effects=True,
     has_side_effects: if True then it ensures that instances of this primitive
       are not removed or replicated by JAX optimizations such as dead-code
       elimination.
-    output_shape_dtype: An optional declaration of the expected shapes and dtypes
-      from the called TensorFlow function. If given it will be used during JAX
-      tracing to form the abstract values of the results of the `call_tf`. If
-      not given then we form a `tf.Graph` for the called TensorFlow function and
-      we use the TensorFlow-inferred shapes and types. Must be a pytree matching the
-      structure of the nested structure returned from the TensorFlow function,
-      containing objects with `.shape` and `.dtype` attributes,
-      e.g., `jax.ShapeDtypeStruct` or `jax.Array`.
-
+    output_shape_dtype: An optional declaration of the expected shapes and
+      dtypes from the called TensorFlow function. If given it will be used
+      during JAX tracing to form the abstract values of the results of the
+      `call_tf`. If not given then we form a `tf.Graph` for the called
+      TensorFlow function and we use the TensorFlow-inferred shapes and types.
+      Must be a pytree matching the structure of the nested structure returned
+      from the TensorFlow function, containing objects with `.shape` and
+      `.dtype` attributes, e.g., `jax.ShapeDtypeStruct` or `jax.Array`.
+    use_custom_call: PLEASE DO NOT USE IT since it is experimental. We may
+      change the name in the future.
   Returns: a JAX callable that can be invoked with JAX pytree arguments, in
-    op-by-op mode or in a staged context. This callable can be used with
-    JAX's reverse-mode autodiff (:func:`jax.grad`).
+    op-by-op mode or in a staged context. This callable can be used with JAX's
+    reverse-mode autodiff (:func:`jax.grad`).
   """
+
+  # TODO(johnqiangzhang): use_custom_call only work together with jax.convert
+  # native_serialization. currently we need users set both options manually.
+  # We need derive this automatically from jax2tf.convert context automatically.
+  if use_custom_call and output_shape_dtype is None:
+    raise ValueError(
+        "Please provide the output_shape_dtype if enable use_custom_call."
+    )
 
   @jax.custom_vjp
   def make_call(*args_jax):
@@ -153,13 +170,30 @@ def call_tf(callable_tf: Callable, has_side_effects=True,
               f"results pytree: {res_treedef}\noutput_shape_dtype tree: {output_shape_dtype_tree}")
         assert len(output_avals) == len(res_tf_flat)
 
-      checked_res_tf_flat = [
-          check_tf_result(i, r_tf, r_aval)
-          for i, (r_tf, r_aval) in enumerate(
-              zip(res_tf_flat,
-                  (output_avals if output_avals is not None
-                   else (None,) * len(res_tf_flat))))]
-      return checked_res_tf_flat
+      try:
+        checked_res_tf_flat = [
+            check_tf_result(i, r_tf, r_aval)
+            for i, (r_tf, r_aval) in enumerate(
+                zip(
+                    res_tf_flat,
+                    (
+                        output_avals
+                        if output_avals is not None
+                        else (None,) * len(res_tf_flat)
+                    ),
+                )
+            )
+        ]
+        return checked_res_tf_flat
+      except Exception as e:  # pylint: disable=broad-except
+        # When a TensorFlow function is not XLA-compilable.
+        # TODO(johnqiangzhang): We skip the output shape check for use_custom_call.
+        # Since non-compilable functions may not have a defined output shape in the
+        # concrete_fn. I will add this check later.
+        if use_custom_call:
+          return []
+        else:
+          raise e
 
     # Prepare a tf.function ahead of time, to cache the concrete functions. This
     # won't be used in op-by-op execution mode.
@@ -172,7 +206,9 @@ def call_tf(callable_tf: Callable, has_side_effects=True,
         function_flat_tf=function_flat_tf,
         args_flat_sig_tf=args_flat_sig_tf,
         output_avals=output_avals,
-        has_side_effects=has_side_effects)
+        has_side_effects=has_side_effects,
+        use_custom_call=use_custom_call,
+    )
 
     # We must have called callable_flat_tf by nοw
     assert res_treedef is not None
@@ -388,8 +424,17 @@ def _call_tf_abstract_eval(*args_flat_avals,
 call_tf_p.def_effectful_abstract_eval(_call_tf_abstract_eval)
 
 
-def _call_tf_lowering(ctx, *args_op, platform,
-                      function_flat_tf, args_flat_sig_tf, **_):
+def _call_tf_lowering(
+    ctx,
+    *args_op,
+    platform,
+    function_flat_tf,
+    args_flat_sig_tf,
+    has_side_effects,
+    use_custom_call,
+    output_avals,
+    **_,
+):
   # This will most likely hit the cache, because we used it for abstract_eval
   # We use the same TF lowering device as for the embedding JAX computation.
   # One example when this is needed is when the code refers to variables on one
@@ -400,8 +445,14 @@ def _call_tf_lowering(ctx, *args_op, platform,
     tf_platform = "GPU"
   else:
     raise ValueError("platform {platform} not supported")
-  code_gen, _ = _code_generator_and_avals(function_flat_tf, args_flat_sig_tf,  # type: ignore
-                                          tf_platform)
+  code_gen, _ = _code_generator_and_avals(
+      function_flat_tf,
+      args_flat_sig_tf,  # type: ignore
+      tf_platform,
+      use_custom_call,
+      has_side_effects,
+      output_avals,
+  )
   assert code_gen is not None
   return code_gen(ctx.module_context, args_op)
 
@@ -411,9 +462,15 @@ def _code_generator_and_avals(
     function_flat_tf,
     args_flat_sig_tf,
     tf_platform,
-) -> Tuple[Optional[Callable[[mlir.ModuleContext, Sequence[ir.Value]],
-                             Sequence[ir.Value]]],
-           Sequence[core.ShapedArray]]:
+    use_custom_call,
+    has_side_effects,
+    output_avals,
+) -> Tuple[
+    Optional[
+        Callable[[mlir.ModuleContext, Sequence[ir.Value]], Sequence[ir.Value]]
+    ],
+    Sequence[core.ShapedArray],
+]:
   # TODO(necula): we have refactored the code to not need to lower the code
   # just in order to get the avals, so in fact the returned avals from this
   # function are never used. We keep it here for now in case we detect
@@ -440,6 +497,22 @@ def _code_generator_and_avals(
         captured_inputs.append(inp_vars[0])
       else:
         captured_inputs.append(inp)
+
+  def code_gen_custom_call(ctx, args_op):  # pylint: disable=unused-argument
+    captured_ops = tuple(
+        mlir.ir_constant(np.asarray(inp), canonicalize_types=False)
+        for inp in captured_inputs
+    )
+    with jax2tf_internal.inside_call_tf():
+      return emit_tf_embedded_graph_custom_call(
+          concrete_function_flat_tf,
+          tuple(args_op) + captured_ops,
+          has_side_effects,
+          output_avals,
+      )
+
+  if use_custom_call:
+    return code_gen_custom_call, ()
 
   def convert_to_spec(x):
     if isinstance(x, tf.TensorSpec):
@@ -534,3 +607,60 @@ def _jax2tf_call_tf(*args: TfVal,
   return res_tf_flat
 
 jax2tf_internal.tf_impl[call_tf_p] = _jax2tf_call_tf
+
+
+def emit_tf_embedded_graph_custom_call(
+    concrete_function_flat_tf,
+    operands: List[ir.Value],
+    has_side_effects,
+    output_avals,
+):
+  """Emits MLIR about tf.graph custom_call.
+
+  All call_tf caller function information is stored in tf.metadata.
+  This includes:
+  (1) The caller function name: This name will be used by the runtime to execute
+  the callback.
+  (2) The FunctionDef Dict: This list includes the caller function and all
+  related callees. By storing this information in tf.metadata, we can easily
+  retrieve it at runtime.
+  (3) The platform where to run this call_tf function.
+  """
+  call_target_name = "tf_embedded_graph"
+
+  # Generate metadata as attributes:
+  func_def_list = [concrete_function_flat_tf.function_def] + [
+      func.definition
+      for func in concrete_function_flat_tf.graph._functions.values()
+  ]
+  # TODO(gleasonk): Here, we encode the tf.FunctionDef bytes using the base64
+  # algorithm. We do this because StableHLO does not currently have a standard
+  # way to store bytes.
+  tf_metadata = {
+      "call_tf_func_name": ir.StringAttr.get(concrete_function_flat_tf.name),
+      "function_def_list": ir.ArrayAttr.get(
+          [
+              ir.StringAttr.get(base64.b64encode(f.SerializeToString()))
+              for f in func_def_list
+          ],
+      ),
+  }
+
+  result_avals = output_avals
+
+  result_types = util.flatten(
+      [mlir.aval_to_ir_types(aval) for aval in result_avals]
+  )
+
+  result = hlo.CustomCallOp(
+      result_types,
+      operands,
+      call_target_name=ir.StringAttr.get(call_target_name),
+      has_side_effect=ir.BoolAttr.get(has_side_effects),
+      api_version=mlir.i32_attr(2),
+      called_computations=ir.ArrayAttr.get([]),
+      backend_config=ir.StringAttr.get(""),
+  )
+  # Store TF metadata in unregistered attribute
+  result.attributes["tf_metadata"] = ir.DictAttr.get(tf_metadata)
+  return result.results

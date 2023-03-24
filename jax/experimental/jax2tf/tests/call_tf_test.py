@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for call_tf."""
+import base64
 from functools import partial
 from typing import Callable, Dict, Tuple
 import unittest
 
+from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 
@@ -27,6 +29,8 @@ from jax._src import test_util as jtu
 from jax.config import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
+from jax._src.lib.mlir import ir
+from tensorflow.core.framework import function_pb2
 
 import numpy as np
 
@@ -541,11 +545,11 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       grad_jax_pure = jax.grad(grad_jax_pure)
 
     res_jax = grad_jax(np.float32(5.))
-    print(f"Grad of {degree} degree is {res_jax}")
+    logging.info("Grad of %s degree is %s", degree, res_jax)
     self.assertAllClose(res_jax, grad_jax_pure(np.float32(5.)))
 
   def test_pmap(self):
-    print(f"Running test_pmap on {jax.local_device_count()} devices")
+    logging.info("Running test_pmap on %s devices", jax.local_device_count())
 
     def plus_2_tf(x):
       return tf.math.add(2., x)
@@ -695,8 +699,8 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     # Uses TF gradient for `cos_tf` and JAX gradient for `sin`
     jax.grad(cos_tf_sin_jax)(x)
 
-    print(jax.make_jaxpr(cos_tf_sin_jax)(x))
-    print(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
+    logging.info(jax.make_jaxpr(cos_tf_sin_jax)(x))
+    logging.info(jax.xla_computation(cos_tf_sin_jax)(x).as_hlo_text())
 
   def test_tf_gather(self):
     """tf_gather gradient output is tf.IndexSlices."""
@@ -1302,6 +1306,131 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f(4)(x), f4_tf(x).numpy())
     _, (g_f4_ft,) = tf_test_util.ComputeTfValueAndGrad(f4_tf, [x])
     self.assertAllClose(jax.grad(f(4))(x), g_f4_ft.numpy())
+
+  @classmethod
+  def _walk_stablehlo_operations(cls, op, cb):
+    """walk the stablehlo operation recursive with callback function."""
+    cb(op)
+    for region in op.operation.regions:
+      for block in region:
+        for op in block:
+          cls._walk_stablehlo_operations(op, cb)
+
+  def test_use_custom_call(self):
+    const = tf.Variable(0.0, dtype=tf.float32)
+
+    @tf.function(jit_compile=True)
+    def tf_func_1(x):
+      return x * x + const
+
+    @tf.function
+    def tf_func_2(x, y):
+      return tf_func_1(x) + y
+
+    @tf.function
+    def tf_func_3(x, y, z):
+      return tf_func_2(x, y) + z, z
+
+    x = jnp.array(3.0, dtype=jnp.float32)
+    y = jnp.array(3.0, dtype=jnp.float32)
+    z = jnp.array(5.0, dtype=jnp.float32)
+    output_shape_dtype = (
+        jax.ShapeDtypeStruct(x.shape, x.dtype),
+        jax.ShapeDtypeStruct(z.shape, z.dtype),
+    )
+    f_jax = jax.jit(jax2tf.call_tf(tf_func_3, use_custom_call=False))
+    stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
+    self.assertNotIn("stablehlo.custom_call", str(stablehlo_module))
+
+    f_jax = jax.jit(
+        jax2tf.call_tf(
+            tf_func_3,
+            use_custom_call=True,
+            output_shape_dtype=output_shape_dtype,
+        )
+    )
+    stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
+    self.assertIn("stablehlo.custom_call", str(stablehlo_module))
+
+    concrete_function_flat_tf = tf_func_3.get_concrete_function(x, y, z)
+    expect_function_def_dict = {}
+    expect_function_def_dict[
+        concrete_function_flat_tf.function_def.signature.name
+    ] = concrete_function_flat_tf.function_def
+    for k, v in concrete_function_flat_tf.graph._functions.items():
+      expect_function_def_dict[k] = v.definition
+
+    deserialized_function_def_dict = {}
+
+    def extract_func_def(op):
+      if op.operation.name != "stablehlo.custom_call":
+        return
+      tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
+      function_def_list = ir.ArrayAttr(tf_metadata["function_def_list"])
+
+      for fdef_str in function_def_list:
+        fdef_str_bytes = base64.b64decode(str(fdef_str)[1:-1])
+        fdef = function_pb2.FunctionDef()
+        fdef.ParseFromString(fdef_str_bytes)
+        deserialized_function_def_dict.update({fdef.signature.name: fdef})
+
+    self._walk_stablehlo_operations(stablehlo_module, extract_func_def)
+
+    for k, _ in expect_function_def_dict.items():
+      self.assertEqual(
+          expect_function_def_dict[k], deserialized_function_def_dict[k]
+      )
+
+  def test_use_custom_call_non_compilable(self):
+    deserialized_function_def_dict = {}
+
+    def extract_func_def(op):
+      if op.operation.name != "stablehlo.custom_call":
+        return
+      tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
+      function_def_list = ir.ArrayAttr(tf_metadata["function_def_list"])
+
+      for fdef_str in function_def_list:
+        fdef_str_bytes = base64.b64decode(str(fdef_str)[1:-1])
+        fdef = function_pb2.FunctionDef()
+        fdef.ParseFromString(fdef_str_bytes)
+        deserialized_function_def_dict.update({fdef.signature.name: fdef})
+
+    @tf.function(jit_compile=False)
+    def my_op(x):
+      return tf.py_function(np.sin, [x], tf.float32)
+
+    x = jnp.ones([10], dtype=jnp.float32)
+    output_shape_dtype = jax.ShapeDtypeStruct(x.shape, x.dtype)
+    f_jax = jax.jit(
+        jax2tf.call_tf(
+            my_op,
+            use_custom_call=False,
+            output_shape_dtype=output_shape_dtype,
+        )
+    )
+
+    f_jax = jax.jit(
+        jax2tf.call_tf(
+            my_op,
+            use_custom_call=True,
+            output_shape_dtype=output_shape_dtype,
+        )
+    )
+    stablehlo_module = f_jax.lower(x).compiler_ir("stablehlo")
+    concrete_function_flat_tf = my_op.get_concrete_function(x)
+    expect_function_def_dict = {}
+    expect_function_def_dict[
+        concrete_function_flat_tf.function_def.signature.name
+    ] = concrete_function_flat_tf.function_def
+    for k, v in concrete_function_flat_tf.graph._functions.items():
+      expect_function_def_dict[k] = v.definition
+
+    self._walk_stablehlo_operations(stablehlo_module, extract_func_def)
+    for k, _ in expect_function_def_dict.items():
+      self.assertEqual(
+          expect_function_def_dict[k], deserialized_function_def_dict[k]
+      )
 
 
 if __name__ == "__main__":
