@@ -261,6 +261,8 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
   See https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html#lstm
   https://docs.nvidia.com/deeplearning/cudnn/api/index.html#cudnnRNNMode_t
   """
+  if seq_lengths.dtype != jnp.dtype("int32"):
+    raise NotImplementedError("`seq_lengths` can only be int32.")
   if dropout != 0.0:
     raise NotImplementedError(
         'Dropout not supported in LSTM reference because we cannot determine CUDNN dropout mask.'
@@ -326,6 +328,8 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
 def lstm_fwd(x: Array, h_0: Array, c_0: Array, w: Array, seq_lengths: Array,
              input_size: int, hidden_size: int, num_layers: int, dropout: float,
              bidirectional: bool):
+  if seq_lengths.dtype != jnp.dtype("int32"):
+    raise NotImplementedError("`seq_lengths` can only be int32.")
   y, h_n, c_n, workspace, reserve_space = rnn_fwd_p.bind(
       x,
       h_0,

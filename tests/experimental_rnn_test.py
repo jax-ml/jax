@@ -96,6 +96,70 @@ class RnnTest(jtu.JaxTestCase):
     np.testing.assert_allclose(h_n_ref, h_n, rtol=1e-05, atol=1e-5)
     np.testing.assert_allclose(c_n_ref, c_n, rtol=1e-05, atol=1e-5)
 
+  @jtu.skip_on_devices("cpu", "tpu", "rocm")
+  def test_lstm_with_varying_seq_lens(self):
+    batch_size = 6
+    seq_len = 7
+    input_size = 8
+    hidden_size = 12
+    num_layers = 5
+    bidirectional = False
+    num_directions = 2 if bidirectional else 1
+
+    seq_lengths = jnp.array([4, 5, 1, 1, 1, 1], dtype=jnp.dtype("int32"))
+
+    root_key = jax.random.PRNGKey(1)
+    k1, k2, k3, k4 = jax.random.split(root_key, 4)
+    x = jax.random.normal(
+        k1, (batch_size, seq_len, input_size), dtype=jnp.float32)
+    h_0 = jax.random.normal(
+        k2, (num_directions * num_layers, batch_size, hidden_size),
+        dtype=jnp.float32)
+    c_0 = jax.random.normal(
+        k3, (num_directions * num_layers, batch_size, hidden_size),
+        dtype=jnp.float32)
+    weights = rnn.init_lstm_weight(k4, input_size, hidden_size, num_layers,
+                                   bidirectional)
+
+    @jax.jit
+    def f(x, h_0, c_0, weights):
+      return rnn.lstm(
+          x,
+          h_0,
+          c_0,
+          weights,
+          seq_lengths=seq_lengths,
+          input_size=input_size,
+          hidden_size=hidden_size,
+          num_layers=num_layers,
+          dropout=False,
+          bidirectional=bidirectional)
+
+    jtu.check_grads(f, (x, h_0, c_0, weights), modes=['rev'], order=1)
+
+    # TODO(sharadmv): enable when lstm_ref works with seq_lengths
+    # W_ih, W_hh, b_ih, b_hh = rnn.unpack_lstm_weights(weights, input_size,
+    #                                                  hidden_size, num_layers,
+    #                                                  bidirectional)
+    # y_ref, h_n_ref, c_n_ref = rnn.lstm_ref(
+    #     x,
+    #     h_0,
+    #     c_0,
+    #     W_ih,
+    #     W_hh,
+    #     b_ih,
+    #     b_hh,
+    #     seq_lengths=seq_lengths,
+    #     input_size=input_size,
+    #     hidden_size=hidden_size,
+    #     num_layers=num_layers,
+    #     dropout=False,
+    #     bidirectional=bidirectional)
+
+    # np.testing.assert_allclose(y_ref, y, rtol=1e-05, atol=1e-5)
+    # np.testing.assert_allclose(h_n_ref, h_n, rtol=1e-05, atol=1e-5)
+    # np.testing.assert_allclose(c_n_ref, c_n, rtol=1e-05, atol=1e-5)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
