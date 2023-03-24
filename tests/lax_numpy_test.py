@@ -858,6 +858,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         jround(jnp.array(1.234, jnp.float32)),
                         check_dtypes=False)
 
+  def testRoundMethod(self):
+    # https://github.com/google/jax/issues/15190
+    (jnp.arange(3.) / 5.).round()  # doesn't crash
+
   @jtu.sample_product(shape=[(5,), (5, 2)])
   def testOperatorReversed(self, shape):
     rng = jtu.rand_default(self.rng())
