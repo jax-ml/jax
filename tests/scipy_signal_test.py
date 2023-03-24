@@ -392,23 +392,17 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    shape=onedim_shapes,
-    N=[None, 1, 7, 13, 20],
-    axis=[-1, 0],
+    shape=onedim_shapes, N=[None, 1, 7, 13, 20], axis=[-1, 0],
     dtype=real_dtypes,
   )
   def testHilbert(self, shape, N, axis, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    name = 'hilbert'
-    jnp_op = getattr(jsp_signal, name)
-    osp_op = getattr(osp_signal, name)
-    jnp_fn = lambda a: jnp_op(a, N=N, axis=axis)
-    osp_fn = lambda a: osp_op(a, N=N, axis=axis)
-    # Numpy promotes to complex128 aggressively.
+    jnp_fn = lambda a: jsp_signal.hilbert(a, N=N, axis=axis)
+    osp_fn = lambda a: osp_signal.hilbert(a, N=N, axis=axis)
     self._CheckAgainstNumpy(osp_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
-    self._CompileAndCheck(jnp_op, args_maker)
+    self._CompileAndCheck(jnp_fn, args_maker)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())
