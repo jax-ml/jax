@@ -16,6 +16,7 @@
 import collections
 from functools import partial
 import itertools
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -654,6 +655,104 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         np_fun, jnp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, atol=tol,
                           rtol=tol)
+
+  @jtu.sample_product(
+    [dict(op=op, q_rng=q_rng)
+      for (op, q_rng) in (
+        ("percentile", partial(jtu.rand_uniform, low=0., high=100.)),
+        ("quantile", partial(jtu.rand_uniform, low=0., high=1.)),
+        ("nanpercentile", partial(jtu.rand_uniform, low=0., high=100.)),
+        ("nanquantile", partial(jtu.rand_uniform, low=0., high=1.)),
+      )
+    ],
+    [dict(a_shape=a_shape, axis=axis)
+      for a_shape, axis in (
+        ((7,), None),
+        ((47, 7), 0),
+        ((47, 7), ()),
+        ((4, 101), 1),
+        ((4, 47, 7), (1, 2)),
+        ((4, 47, 7), (0, 2)),
+        ((4, 47, 7), (1, 0, 2)),
+      )
+    ],
+    a_dtype=default_dtypes,
+    q_dtype=[np.float32],
+    q_shape=scalar_shapes + [(1,), (4,)],
+    keepdims=[False, True],
+    method=['linear', 'lower', 'higher', 'nearest', 'midpoint'],
+  )
+  def testQuantile(self, op, q_rng, a_shape, a_dtype, q_shape, q_dtype,
+                   axis, keepdims, method):
+    a_rng = jtu.rand_some_nan(self.rng())
+    q_rng = q_rng(self.rng())
+    if "median" in op:
+      args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    else:
+      args_maker = lambda: [a_rng(a_shape, a_dtype), q_rng(q_shape, q_dtype)]
+
+    @jtu.ignore_warning(category=RuntimeWarning,
+                        message="All-NaN slice encountered")
+    def np_fun(*args):
+      args = [x if jnp.result_type(x) != jnp.bfloat16 else
+              np.asarray(x, np.float32) for x in args]
+      if numpy_version <= (1, 22):
+        return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
+                               interpolation=method)
+      else:
+        return getattr(np, op)(*args, axis=axis, keepdims=keepdims,
+                               method=method)
+    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims,
+                      method=method)
+
+    # TODO(phawkins): we currently set dtype=False because we aren't as
+    # aggressive about promoting to float64. It's not clear we want to mimic
+    # Numpy here.
+    tol_spec = {np.float16: 1E-2, np.float32: 2e-4, np.float64: 5e-6}
+    tol = max(jtu.tolerance(a_dtype, tol_spec),
+              jtu.tolerance(q_dtype, tol_spec))
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
+
+  @unittest.skipIf(not config.jax_enable_x64, "test requires X64")
+  @unittest.skipIf(jtu.device_under_test() != 'cpu', "test is for CPU float64 precision")
+  def testPercentilePrecision(self):
+    # Regression test for https://github.com/google/jax/issues/8513
+    x = jnp.float64([1, 2, 3, 4, 7, 10])
+    self.assertEqual(jnp.percentile(x, 50), 3.5)
+
+  @jtu.sample_product(
+    [dict(a_shape=a_shape, axis=axis)
+      for a_shape, axis in (
+        ((7,), None),
+        ((47, 7), 0),
+        ((4, 101), 1),
+      )
+    ],
+    a_dtype=default_dtypes,
+    keepdims=[False, True],
+    op=["median", "nanmedian"],
+  )
+  def testMedian(self, op, a_shape, a_dtype, axis, keepdims):
+    if op == "median":
+      a_rng = jtu.rand_default(self.rng())
+    else:
+      a_rng = jtu.rand_some_nan(self.rng())
+    args_maker = lambda: [a_rng(a_shape, a_dtype)]
+    def np_fun(*args):
+      args = [x if jnp.result_type(x) != jnp.bfloat16 else
+              np.asarray(x, np.float32) for x in args]
+      return getattr(np, op)(*args, axis=axis, keepdims=keepdims)
+    jnp_fun = partial(getattr(jnp, op), axis=axis, keepdims=keepdims)
+    # TODO(phawkins): we currently set dtype=False because we aren't as
+    # aggressive about promoting to float64. It's not clear we want to mimic
+    # Numpy here.
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(a_dtype, tol_spec)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
 
 
 if __name__ == "__main__":

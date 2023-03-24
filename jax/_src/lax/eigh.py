@@ -33,6 +33,7 @@ from typing import NamedTuple
 import jax
 import jax._src.numpy.lax_numpy as jnp
 import jax._src.numpy.linalg as jnp_linalg
+from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax import lax
 from jax._src.lax import qdwh
@@ -360,7 +361,7 @@ def _eigh_work(H, n, termination_size=256):
     def default_case(agenda, blocks, eigenvectors):
       V = _slice(eigenvectors, (0, offset), (n, b), (N, B))
       # TODO: Improve this?
-      split_point = jnp.nanmedian(_mask(jnp.diag(ufuncs.real(H)), (b,), jnp.nan))
+      split_point = reductions.nanmedian(_mask(jnp.diag(ufuncs.real(H)), (b,), jnp.nan))
       H_minus, V_minus, H_plus, V_plus, rank = split_spectrum(
           H, b, split_point, V0=V)
 
