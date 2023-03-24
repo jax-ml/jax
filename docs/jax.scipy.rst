@@ -85,6 +85,7 @@ jax.scipy.signal
    istft
    stft
    welch
+   hilbert
 
 jax.scipy.sparse.linalg
 -----------------------
