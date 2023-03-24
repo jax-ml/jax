@@ -14,6 +14,7 @@
 
 
 import threading
+from unittest import SkipTest
 
 from absl.testing import absltest
 import jax
@@ -21,6 +22,7 @@ from jax import lax, numpy as jnp
 from jax import config
 from jax.experimental import host_callback as hcb
 from jax._src import core
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 import jax._src.test_util as jtu
 import numpy as np
@@ -30,6 +32,11 @@ config.parse_flags_with_absl()
 
 @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # infeed
 class InfeedTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if xla_bridge.using_pjrt_c_api():
+      raise SkipTest("infeed not implemented in PJRT C API")
+    super().setUp()
 
   @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
   def testInfeed(self):
