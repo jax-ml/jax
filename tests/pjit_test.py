@@ -802,9 +802,6 @@ class PJitTest(jtu.BufferDonationTestCase):
 
   @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # outfeed
   def testOutfeed(self):
-    if xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest('outfeed not implemented in PJRT C API')
-
     devices = np.array(jax.local_devices())
     nr_devices = len(devices)
     shape = (nr_devices * 3, nr_devices * 5)
