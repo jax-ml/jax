@@ -492,8 +492,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp_op(x, axis, keepdims=keepdims, where=where)
     jnp_fun = jtu.ignore_warning(category=jnp.ComplexWarning)(jnp_fun)
     args_maker = lambda: [rng(shape, dtype)]
-    if numpy_version >= (1, 20, 2) or np_op.__name__ in ("all", "any"):
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, atol=tol, rtol=tol)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, atol=tol, rtol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
   def testReductionOfOutOfBoundsAxis(self):  # Issue 888
