@@ -27,18 +27,9 @@ Conceptually, this is not very different from vectorisation, where the same oper
 
 +++ {"id": "7mCgBzix2fd3"}
 
-## Colab TPU Setup
+## TPU Setup
 
-If you're running this code in Google Colab, be sure to choose *Runtime*→*Change Runtime Type* and choose **TPU** from the Hardware Accelerator menu.
-
-Once this is done, you can run the following to set up the Colab TPU for use with JAX:
-
-```{code-cell} ipython3
-:id: hn7HtC2QS92b
-
-import jax.tools.colab_tpu
-jax.tools.colab_tpu.setup_tpu()
-```
+This notebook requires multiple accelerators and we recommend running it using Kaggle TPU VMs.
 
 +++ {"id": "gN6VbcdRTcdE"}
 

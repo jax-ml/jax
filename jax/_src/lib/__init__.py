@@ -114,12 +114,6 @@ import jaxlib.gpu_rnn as gpu_rnn  # pytype: disable=import-error
 # Version number for MLIR:Python APIs, provided by jaxlib.
 mlir_api_version = xla_client.mlir_api_version
 
-try:
-  from jaxlib import tpu_client as tpu_driver_client  # pytype: disable=import-error
-except:
-  tpu_driver_client = None  # type: ignore
-
-
 # TODO(rocm): check if we need the same for rocm.
 cuda_path: Optional[str]
 cuda_path = os.path.join(os.path.dirname(jaxlib.__file__), "cuda")
