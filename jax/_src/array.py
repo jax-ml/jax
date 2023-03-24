@@ -304,14 +304,15 @@ class ArrayImpl(basearray.Array):
           arr = self._arrays[arr_idx]
           return _single_device_array_from_buf(arr, committed=False)
       return lax_numpy._rewriting_take(self, idx)
-    elif (dispatch.is_single_device_sharding(self.sharding) or
-        self.is_fully_replicated or _is_reduced_on_dim(idx)):
-      return lax_numpy._rewriting_take(self, idx)
     else:
-      # TODO(yashkatariya): Don't bounce to host and use `_rewriting_take` or
-      # the fast path (see PmapSharding branch above) after after uneven
-      # partitioning support is added
-      return api.device_put(self._value[idx])
+      if xla_extension_version >= 144:
+        return lax_numpy._rewriting_take(self, idx)
+      else:
+        if (dispatch.is_single_device_sharding(self.sharding) or
+            self.is_fully_replicated or _is_reduced_on_dim(idx)):
+          return lax_numpy._rewriting_take(self, idx)
+        else:
+          return api.device_put(self._value[idx])
 
   def __iter__(self):
     if self.ndim == 0:

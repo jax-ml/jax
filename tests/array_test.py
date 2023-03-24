@@ -469,11 +469,9 @@ class JaxArrayTest(jtu.JaxTestCase):
     arr, input_data = create_array(
         input_shape, jax.sharding.NamedSharding(global_mesh, P('x', 'y')))
 
-    # TODO(yashkatariya): `__getitem__` with a specific index takes the fast
-    # path after b/245667823 is fixed.
     s = arr[2:4, 0:1]
     self.assertIsInstance(s, array.ArrayImpl)
-    self.assertArraysEqual(s, np.array([[4], [6]]))
+    self.assertArraysEqual(s, input_data[2:4, 0:1])
 
     p = arr[:2]
     self.assertIsInstance(p, array.ArrayImpl)
