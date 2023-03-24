@@ -48,6 +48,10 @@ parser.add_argument(
   default=None,
   required=True,
   help="Target CPU architecture. Required.")
+parser.add_argument(
+  "--editable",
+  action="store_true",
+  help="Create an 'editable' jaxlib build instead of a wheel.")
 args = parser.parse_args()
 
 r = runfiles.Create()
@@ -299,6 +303,15 @@ def build_wheel(sources_path, output_path, cpu):
     shutil.copy(wheel, output_path)
 
 
+def build_editable(sources_path, output_path):
+  sys.stderr.write(
+    "To install the editable jaxlib build, run:\n\n"
+    f"  pip install -e {output_path}\n\n"
+  )
+  shutil.rmtree(output_path, ignore_errors=True)
+  shutil.copytree(sources_path, output_path)
+
+
 tmpdir = None
 sources_path = args.sources_path
 if sources_path is None:
@@ -308,7 +321,10 @@ if sources_path is None:
 try:
   os.makedirs(args.output_path, exist_ok=True)
   prepare_wheel(sources_path)
-  build_wheel(sources_path, args.output_path, args.cpu)
+  if args.editable:
+    build_editable(sources_path, args.output_path)
+  else:
+    build_wheel(sources_path, args.output_path, args.cpu)
 finally:
   if tmpdir:
     tmpdir.cleanup()
