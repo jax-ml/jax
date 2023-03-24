@@ -80,11 +80,6 @@ def main(_):
   # CHECK-SAME: tensor<f32>
   print_ir(np.float32(0))(lax.bessel_i1e)
 
-  # CHECK-LABEL: TEST: betainc float32[] float32[] float32[]
-  # CHECK: xla_fallback_regularized_incomplete_beta
-  # CHECK-SAME: tensor<f32>
-  print_ir(np.float32(0), np.float32(0), np.float32(0))(lax.betainc)
-
   # CHECK-LABEL: TEST: bitcast_convert_type uint32[7]
   # CHECK: hlo.bitcast_convert
   # CHECK-SAME: tensor<7xui32>
