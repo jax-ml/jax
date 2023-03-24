@@ -725,7 +725,7 @@ _array_methods = {
   "ravel": lax_numpy.ravel,
   "repeat": lax_numpy.repeat,
   "reshape": _reshape,
-  "round": round,
+  "round": lax_numpy.round,
   "searchsorted": lax_numpy.searchsorted,
   "sort": lax_numpy.sort,
   "squeeze": lax_numpy.squeeze,
