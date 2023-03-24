@@ -34,7 +34,6 @@ import numpy as np
 from jax._src import lib
 from jax._src import distributed
 from jax._src.config import flags, bool_env, config, int_env
-from jax._src.lib import tpu_driver_client
 from jax._src.lib import xla_client
 from jax._src import traceback_util
 from jax._src import util
@@ -164,16 +163,6 @@ def get_compile_options(
 
 # Backends
 
-def _make_tpu_driver_client() -> Optional[xla_client.Client]:
-  if tpu_driver_client is None:
-    logger.info("Remote TPU is not linked into jax; skipping remote TPU.")
-    return None
-  if FLAGS.jax_backend_target is None:
-    logger.info("No --jax_backend_target was provided; skipping remote TPU.")
-    return None
-  return tpu_driver_client.TpuBackend.create(worker=FLAGS.jax_backend_target)
-
-
 def tpu_client_timer_callback(timer_secs: float) -> Optional[xla_client.Client]:
   def _log_warning():
     warnings.warn(
@@ -218,8 +207,6 @@ register_backend_factory('interpreter', xla_client.make_interpreter_client,
 register_backend_factory('cpu',
                          partial(xla_client.make_cpu_client, use_tfrt=True),
                          priority=0)
-register_backend_factory('tpu_driver', _make_tpu_driver_client,
-                         priority=100)
 
 
 def make_gpu_client(

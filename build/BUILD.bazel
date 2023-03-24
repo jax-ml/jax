@@ -23,18 +23,6 @@ licenses(["notice"])  # Apache 2
 
 package(default_visibility = ["//visibility:public"])
 
-bool_flag(
-    name = "enable_remote_tpu",
-    build_setting_default = False,
-)
-
-config_setting(
-    name = "remote_tpu_enabled",
-    flag_values = {
-        ":enable_remote_tpu": "True",
-    },
-)
-
 py_binary(
     name = "build_wheel",
     srcs = ["build_wheel.py"],
@@ -47,10 +35,7 @@ py_binary(
         "@xla//xla/python:xla_client",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
-    ]) + select({
-        ":remote_tpu_enabled": ["@xla//xla/python/tpu_driver/client:py_tpu_client"],
-        "//conditions:default": [],
-    }) + if_cuda([
+    ]) + if_cuda([
         "//jaxlib/cuda:cuda_gpu_support",
         "@local_config_cuda//cuda:cuda-nvvm",
     ]) + if_rocm([

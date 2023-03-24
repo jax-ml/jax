@@ -117,19 +117,6 @@ def patch_copy_xla_extension_stubs(dst_dir):
       f.write(src)
 
 
-def patch_copy_tpu_client_py(dst_dir):
-  with open(r.Rlocation("xla/xla/python/tpu_driver/client/tpu_client.py")) as f:
-    src = f.read()
-    src = src.replace("from xla.python import xla_extension as _xla",
-                      "from . import xla_extension as _xla")
-    src = src.replace("from xla.python import xla_client",
-                      "from . import xla_client")
-    src = src.replace(
-        "from xla.python.tpu_driver.client import tpu_client_extension as _tpu_client",
-        "from . import tpu_client_extension as _tpu_client")
-    with open(os.path.join(dst_dir, "tpu_client.py"), "w") as f:
-      f.write(src)
-
 def verify_mac_libraries_dont_reference_chkstack():
   """Verifies that xla_extension.so doesn't depend on ____chkstk_darwin.
 
@@ -249,10 +236,6 @@ def prepare_wheel(sources_path):
   else:
     copy_file("__main__/jaxlib/mlir/_mlir_libs/libjaxlib_mlir_capi.so", dst_dir=mlir_libs_dir)
   patch_copy_xla_extension_stubs(jaxlib_dir)
-
-  if exists("xla/xla/python/tpu_driver/client/tpu_client_extension.so"):
-    copy_to_jaxlib("xla/xla/python/tpu_driver/client/tpu_client_extension.so")
-    patch_copy_tpu_client_py(jaxlib_dir)
 
 
 def edit_jaxlib_version(sources_path):
