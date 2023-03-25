@@ -58,14 +58,12 @@ jobs:
         env:
           JAX_PLATFORMS: tpu,cpu
           JAX_USE_PJRT_C_API_ON_TPU: ${{ matrix.pjrt }}
-          EXTRA_TAGS: "${{ matrix.pjrt == 'true' && 'and not pjrt_c_api_unimplemented' || '' }}"
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python -m pytest -n=4 --tb=short \
-            --maxfail=20 -m "not multiaccelerator ${EXTRA_TAGS}" tests examples
+            --maxfail=20 -m "not multiaccelerator" tests examples
           # Run multi-accelerator across all chips
-          python -m pytest --tb=short --maxfail=20 \
-            -m "multiaccelerator ${EXTRA_TAGS}" tests
+          python -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure
         # Don't notify when testing the workflow from a branch.
         if: ${{ (failure() || cancelled()) && github.ref_name == 'main' }}

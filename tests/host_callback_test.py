@@ -232,7 +232,6 @@ def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,
   return assertMultiLineStrippedEqual(tst, expected, what)
 
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # crashes runtime
 class HostCallbackTapTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -2022,7 +2021,6 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     self.assertMultiLineStrippedEqual(expected, testing_stream.output)
 
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # crashes runtime
 class HostCallbackCallTest(jtu.JaxTestCase):
   """Tests for hcb.call"""
 
@@ -2453,7 +2451,6 @@ def call_jax_other_device(jax_outside_fun, arg, *, device):
   return make_call(arg)
 
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # crashes runtime
 class CallJaxTest(jtu.JaxTestCase):
   """Tests using `call_jax_other_device`."""
 
@@ -2530,7 +2527,6 @@ class CallJaxTest(jtu.JaxTestCase):
     self.assertAllClose(res_jax, res_outside)
 
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # crashes runtime
 class OutfeedRewriterTest(jtu.JaxTestCase):
 
   def setUp(self):

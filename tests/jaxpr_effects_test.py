@@ -590,7 +590,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     self.assertIsNot(foo_token, dispatch.runtime_tokens.tokens[foo_effect][0])
     self.assertIs(foo2_token, dispatch.runtime_tokens.tokens[foo2_effect][0])
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class EffectOrderingTest(jtu.JaxTestCase):
 
   def test_can_execute_python_callback(self):
@@ -704,7 +703,6 @@ class ParallelEffectsTest(jtu.JaxTestCase):
       return x
     jax.pmap(f)(jnp.arange(jax.local_device_count()))
 
-  @jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
   def test_can_pmap_unordered_callback(self):
     # TODO(sharadmv): enable this test on GPU and TPU when backends are
     # supported

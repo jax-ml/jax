@@ -125,7 +125,6 @@ mlir.register_lowering(callback_p, callback_lowering, platform="gpu")
 mlir.register_lowering(callback_p, callback_lowering, platform="tpu")
 
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class PythonCallbackTest(jtu.JaxTestCase):
 
   def tearDown(self):
@@ -455,7 +454,6 @@ class PythonCallbackTest(jtu.JaxTestCase):
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class PurePythonCallbackTest(jtu.JaxTestCase):
 
   def tearDown(self):
@@ -877,7 +875,6 @@ class PurePythonCallbackTest(jtu.JaxTestCase):
     x = np.arange(6, dtype=np.int32).reshape((3, 2))
     np.testing.assert_allclose(g(x), x)
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class IOPythonCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):

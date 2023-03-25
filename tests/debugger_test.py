@@ -54,7 +54,6 @@ def tearDownModule():
 
 foo = 2
 
-@jtu.pytest_mark_if_available('pjrt_c_api_unimplemented')  # host callback
 class CliDebuggerTest(jtu.JaxTestCase):
 
   def test_debugger_eof(self):
