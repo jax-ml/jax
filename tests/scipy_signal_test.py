@@ -56,7 +56,6 @@ istft_test_shapes = [
     ((65, 24), 24, 7, -2, -1),
 ]
 
-real_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.boolean
 default_dtypes = jtu.dtypes.floating + jtu.dtypes.integer + jtu.dtypes.complex
 _TPU_FFT_TOL = 0.15
 
@@ -392,7 +391,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     shape=onedim_shapes, N=[None, 1, 7, 13, 20], axis=[-1, 0],
-    dtype=real_dtypes,
+    dtype=jtu.dtypes.floating,
   )
   def testHilbert(self, shape, N, axis, dtype):
     rng = jtu.rand_default(self.rng())

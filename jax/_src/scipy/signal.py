@@ -644,9 +644,6 @@ def hilbert(x: Array, N: Optional[int] = None, axis: int = -1):
   x = jnp.asarray(x)
   if x.ndim > 1:
     raise NotImplementedError("x must be 1D.")
-    # ind = [np.newaxis] * x.ndim
-    # ind[axis] = slice(None)
-    # h = h[tuple(ind)]
   if jnp.iscomplexobj(x):
     raise ValueError("x must be real.")
   if N is None:
@@ -657,12 +654,8 @@ def hilbert(x: Array, N: Optional[int] = None, axis: int = -1):
   Xf = jnp.fft.fft(x, N, axis=axis)
   if N % 2 == 0:
     h = jnp.zeros(N, Xf.dtype).at[0].set(1).at[1:N // 2].set(2).at[N // 2].set(1)
-    # h[0] = h[N // 2] = 1
-    # h[1:N // 2] = 2
   else:
     h = jnp.zeros(N, Xf.dtype).at[0].set(1).at[1:(N+1) // 2].set(2)
-    # h[0] = 1
-    # h[1:(N + 1) // 2] = 2
 
   x = jnp.fft.ifft(Xf * h, axis=axis)
   return x

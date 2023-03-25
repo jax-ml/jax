@@ -83,9 +83,9 @@ jax.scipy.signal
    correlate2d
    csd
    istft
+   hilbert
    stft
    welch
-   hilbert
 
 jax.scipy.sparse.linalg
 -----------------------
