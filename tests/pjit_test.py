@@ -2880,6 +2880,56 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"args\[1\].*"):
       jnp.concatenate([arr, arr2])
 
+  def test_device_put_grad(self):
+    if jax.device_count() < 8:
+      self.skipTest("Requires >=8 devices.")
+
+    def _test(fun, inp, np_inp, in_s):
+      out = fun(inp)
+      self.assertArraysEqual(out, np.sum(np_inp ** 2 * 3))
+      self.assertArraysEqual(
+          [d.id for d in out.sharding._device_assignment], [4, 5, 6, 7])
+
+      gout = jax.grad(fun)(inp)
+      self.assertTrue(gout.sharding.is_equivalent_to(in_s, gout.ndim))
+      self.assertArraysEqual(
+          [d.id for d in gout.sharding._device_assignment], [0, 1, 2, 3])
+      self.assertArraysEqual(gout, jax.grad(fun)(np_inp))
+
+    mesh1 = jax.sharding.Mesh(jax.devices()[:4], 'x')
+    mesh2 = jax.sharding.Mesh(jax.devices()[4:8], 'x')
+
+    @pjit
+    def stage1(x):
+      return x ** 2
+
+    @pjit
+    def stage2(x):
+      return x * 3
+
+    def f(x):
+      y = stage1(x)
+      y = jax.device_put(y, device=NamedSharding(mesh2, P('x')))
+      z = stage2(y)
+      return jnp.sum(z)
+
+    def g(x):
+      y = stage1(x)
+      y = jax.device_put(y, src=NamedSharding(mesh1, P('x')),
+                         device=NamedSharding(mesh2, P('x')))
+      z = stage2(y)
+      return jnp.sum(z)
+
+    np_inp = np.arange(4.)
+    in_s = NamedSharding(mesh1, P('x'))
+    arr = jax.device_put(np_inp, in_s)
+
+    _test(f, arr, np_inp, in_s)
+
+    _test(g, arr, np_inp, in_s)
+    # Test second order autodiff with src argument specified in device_put.
+    jtu.check_grads(g, (arr,), order=2)
+
 
 class TempSharding(Sharding):
 

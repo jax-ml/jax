@@ -2492,9 +2492,16 @@ def make_jaxpr(fun: Callable,
   make_jaxpr_f.__name__ = f"make_jaxpr({make_jaxpr.__name__})"
   return make_jaxpr_f
 
+def _infer_src_sharding(src, x):
+  if src is not None:
+    return src
+  return x.sharding if isinstance(x, array.ArrayImpl) else None
+
 
 def device_put(
-    x, device: Union[None, xc.Device, jax.sharding.Sharding, Any] = None):
+    x,
+    device: Union[None, xc.Device, jax.sharding.Sharding, Any] = None,
+    *, src: Union[None, xc.Device, jax.sharding.Sharding, Any] = None):
   """Transfers ``x`` to ``device``.
 
   Args:
@@ -2518,14 +2525,18 @@ def device_put(
   blocking the calling Python thread until any transfers are completed.
   """
   with config_explicit_device_put_scope():
-    if device is None or isinstance(device, (xc.Device, jax.sharding.Sharding)):
-      return tree_map(lambda y: dispatch.device_put_p.bind(y, device=device), x)
+    if ((device is None or isinstance(device, (xc.Device, jax.sharding.Sharding))) and
+        (src is None or isinstance(src, (xc.Device, jax.sharding.Sharding)))):
+      return tree_map(
+          lambda y: dispatch.device_put_p.bind(
+              y, device=device, src=_infer_src_sharding(src, y)), x)
 
     x_flat, treedef = tree_flatten(x)
     device_flat = flatten_axes("device_put device", treedef, device)
+    src_flat = flatten_axes("device_put source", treedef, src)
     out_flat = [
-        dispatch.device_put_p.bind(y, device=d)
-        for y, d in zip(x_flat, device_flat)
+        dispatch.device_put_p.bind(y, device=d, src=_infer_src_sharding(s, y))
+        for y, d, s in zip(x_flat, device_flat, src_flat)
     ]
     return tree_unflatten(treedef, out_flat)
 

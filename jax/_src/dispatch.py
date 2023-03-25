@@ -610,7 +610,9 @@ def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
 
 
 def _device_put_impl(
-    x, device: Optional[Union[Device, jax.sharding.Sharding]] = None):
+    x,
+    device: Optional[Union[Device, jax.sharding.Sharding]] = None,
+    src: Optional[Union[Device, jax.sharding.Sharding]] = None):
   try:
     aval = xla.abstractify(x)
   except TypeError as err:
@@ -623,9 +625,7 @@ def _device_put_impl(
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {s}")
-
     _check_sharding(aval, s)
-
     if getattr(x, 'sharding', None) == s:
       return x
     return _put_x(x, s, aval, True)
@@ -649,11 +649,14 @@ def _device_put_impl(
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
-device_put_p.def_abstract_eval(lambda x, device=None: x)
-ad.deflinear2(device_put_p, lambda cotangent, _, **kwargs: [cotangent])
+device_put_p.def_abstract_eval(lambda x, device=None, src=None: x)
+
+def device_put_transpose_rule(ct, _, device, src):
+  return [device_put_p.bind(ct, device=src, src=device)]
+ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
-def _device_put_lowering(ctx, x, *, device):
+def _device_put_lowering(ctx, x, *, device, src):
   return [x]
 
 
