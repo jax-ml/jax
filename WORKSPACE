@@ -8,9 +8,9 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "xla",
     sha256 = "e1f99fbc3d149a8a2f83986f6ed4c0895d2901c0faf41fa6b26efc58948ac82e",
-    strip_prefix = "xla-0f31407ee498e6dba242d03f8d382ebcfcc61790",
+    strip_prefix = "xla-79ca8d03c296ede04dc9a86ce9dde79ed909dda8",
     urls = [
-        "https://github.com/openxla/xla/archive/0f31407ee498e6dba242d03f8d382ebcfcc61790.tar.gz",
+        "https://github.com/openxla/xla/archive/79ca8d03c296ede04dc9a86ce9dde79ed909dda8.tar.gz",
     ],
 )
 
