@@ -89,12 +89,7 @@ setup(
         # $ pip install jax[australis]
         'australis': ['protobuf>=3.13,<4'],
 
-        # CUDA installations require adding the JAX CUDA releases URL.
-        # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-        'cuda': [
-          f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}",
-        ],
-
+        # CUDA installations require adding the JAX CUDA releases URL, e.g.,
         # Cuda installation defaulting to a CUDA and Cudnn version defined above.
         # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
         'cuda': [f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}"],
