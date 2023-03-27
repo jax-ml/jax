@@ -72,7 +72,13 @@ Installation
 
           pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
-For more information about supported accelerators and platforms, and for other
+JAX is available to install via the `Python Package Index`_.
+For more information about supported accelerators, platforms, installation options
+please refer to the `Install Guide`_ in the project README.
+
+.. _Python Package Index: https://pypi.org/project/jax/
+.. _Install Guide: https://github.com/google/jax#installation
+
 installation options, see the `Install Guide`_ in the project README.
 
 .. toctree::
@@ -80,7 +86,6 @@ installation options, see the `Install Guide`_ in the project README.
    :maxdepth: 1
    :caption: Getting Started
 
-   installation
    notebooks/quickstart
    notebooks/thinking_in_jax
    notebooks/Common_Gotchas_in_JAX
