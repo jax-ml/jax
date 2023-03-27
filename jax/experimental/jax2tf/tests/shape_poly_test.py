@@ -635,12 +635,70 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      polymorphic_shapes=PS("h", "h"),
                      expected_output_signature=tf.TensorSpec([None, None]))
 
-  def test_arange(self):
-    def f_jax(x):
-      return x + jnp.arange(x.shape[0], dtype=np.float32)
-    x = np.ones((3,), dtype=np.float32)
+  @parameterized.named_parameters([
+      dict(testcase_name=f"_{name}",
+           make_args=make_args)
+      for name, make_args in [
+          # make_args invoked with op.shape[0]: start, stop, step, dtype
+          ("b", lambda b: (b, None, None, None)),
+          ("0_b+1", lambda b: (0, b + 1, None, None)),
+          ("0_5b_2", lambda b: (0, 5 * b, 2, None)),
+          ("0_5b+1_2", lambda b: (0, 5 * b + 1, 2, None)),
+          ("b_5b+2_2", lambda b: (b, 5 * b + 2, 2, None)),
+          ("0_b-1_2", lambda b: (0, b - 1, 2, None)),
+          ("0_b-2_2", lambda b: (0, b - 2, 2, None)),
+          ("0_-b_2", lambda b: (0, -b, 2, None)),
+          ("0_1-b_2", lambda b: (0, 1 - b, 2, None)),
+          # Negative step
+          ("b_0_-1", lambda b: (b, 0, -1, None)),
+          ("b_1_-2", lambda b: (b, 1, -2, None)),
+          ("b_-1_-1", lambda b: (b, -1, -1, None)),
+          ("5b+1_0_-2", lambda b: (5 * b + 1, 0, -2, None)),
+          ("5b+2_0_-2", lambda b: (5 * b + 2, 0, -2, None)),
+          # Symbolic step
+          ("0_10_b", lambda b: (0, 10, b)),
+          ("0_0_b", lambda b: (0, 0, b)),
+          ("10_0_-b", lambda b: (10, 0, -b)),
+          ("b_1_-b", lambda b: (b, 1, -b)),
+          # Float return type
+          ("0_b_1_f32", lambda b: (0, b, 1, np.float32))
+      ]
+  ])
+  def test_arange(self, make_args=lambda b: (0, 0, b)):
+    def f_jax(x):  # x: i32[b]
+      return x[0] + jnp.arange(*(make_args(x.shape[0])))
+    x = np.ones((3,), dtype=np.int32)
     self.assertAllClose(jax2tf.convert(f_jax, polymorphic_shapes="b")(x),
                         f_jax(x))
+
+  @parameterized.named_parameters([
+      dict(testcase_name=f"_{name}",
+           make_args=make_args,
+           expect_error=expect_error, expect_msg=expect_msg)
+      for name, make_args, expect_error, expect_msg in [
+          # make_args invoked with op.shape[0]: start, stop, step, dtype
+          ("float_start", lambda b: (0., b, None),
+           ValueError, "must be either dimension expressions or integers"),
+          ("float_step", lambda b: (0, b, 0.5),
+           ValueError, "must be either dimension expressions or integers"),
+          ("step_0", lambda b: (0, b, 0),
+           ValueError, "has step == 0"),
+          ("inconclusive_step_sign", lambda b: (0, b, b - 2),
+           core.InconclusiveDimensionOperation,
+           "must be resolved statically if it is > 0 or < 0"),
+          ("inconclusive_distance", lambda b: (0, b - 3, 2),
+           core.InconclusiveDimensionOperation,
+           "must be resolved statically if it is >= -1 or >= 1"),
+      ]
+  ])
+  def test_arange_error(self, make_args=lambda b: (0., b, 2),
+                        expect_error=ValueError,
+                        expect_msg="must be either dimension expressions or integers"):
+    def f_jax(x):  # x: i32[b]
+      return x[0] + jnp.arange(*(make_args(x.shape[0])))
+    x = np.ones((3,), dtype=np.int32)
+    with self.assertRaisesRegex(expect_error, expect_msg):
+      jax2tf.convert(f_jax, polymorphic_shapes="b")(x)
 
   def test_argmax(self):
     def f_jax(x):  # x: f32[b, 4, 5]
@@ -1687,29 +1745,6 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 jax.grad(lambda x: jnp.sum(jnp.sum(x, axis=0, keepdims=False) + jnp.sin(x))),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 poly_axes=[0]),
-    PolyHarness("arange", "start",
-                lambda op: jnp.arange(2 * op.shape[0], dtype=_f32) + op[0],
-                arg_descriptors=[RandArg((3,), _f32)],
-                poly_axes=[0]).both_enable_and_disable_xla(),
-    PolyHarness("arange", "start_no_dtype",
-                lambda op: jnp.arange(op.shape[0]) + op[0],
-                arg_descriptors=[RandArg((3,), _f32)],
-                poly_axes=[0]),
-    PolyHarness("arange", "error1",
-                lambda op: jnp.arange(op.shape[0], 10),
-                arg_descriptors=[RandArg((3,), _f32)],
-                poly_axes=[0],
-                expect_error=(ValueError, "jax.numpy.arange supports non-constant arguments only in single-argument form")),
-    PolyHarness("arange", "error2",
-                lambda op: jnp.arange(1, op.shape[0]),
-                arg_descriptors=[RandArg((3,), _f32)],
-                poly_axes=[0],
-                expect_error=(ValueError, "jax.numpy.arange supports non-constant arguments only in single-argument form")),
-    PolyHarness("arange", "error3",
-                lambda op: jnp.arange(1, 5, op.shape[0]),
-                arg_descriptors=[RandArg((3,), _f32)],
-                poly_axes=[0],
-                expect_error=(ValueError, "jax.numpy.arange supports non-constant arguments only in single-argument form")),
     # Reduce the poly dimension
     PolyHarness("argmax", "0",
                 lambda op: lax.argmax(op, axis=0, index_dtype=np.int32),

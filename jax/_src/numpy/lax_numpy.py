@@ -2232,12 +2232,13 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
     if val is not None and np.ndim(val) != 0:
       raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
   if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
-    if stop is not None or step is not None:
-      raise ValueError(
-          "jax.numpy.arange supports non-constant arguments only in "
-          "single-argument form. Found "
-          f"jax.numpy.arange({start=}, {stop=}, {step=})")
-    return lax.iota(dtype or int_, start)
+    if stop is None and step is None:
+      stop = start
+      start = 0
+      step = 1
+    elif stop is not None and step is None:
+      step = 1
+    return _arange_dynamic(start, stop, step, dtype or int_)
   if dtype is None:
     dtype = result_type(start, *(x for x in [stop, step] if x is not None))
   dtype = _jnp_dtype(dtype)
@@ -2254,6 +2255,46 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
       return lax.iota(dtype, stop)
     return array(np.arange(start, stop=stop, step=step, dtype=dtype))
 
+
+def _arange_dynamic(
+    start: DimSize, stop: DimSize, step: DimSize, dtype: DTypeLike) -> Array:
+  # Here if at least one of start, stop, step are dynamic.
+  if any([(not core.is_special_dim_size(v) and not isinstance(v, int))
+          for v in (start, stop, step)]):
+    raise ValueError(
+        "In arange with non-constant arguments all of start, stop, and step "
+        f"must be either dimension expressions or integers: start={start}, "
+        f"stop={stop}, step={step}")
+  # Must resolve statically if step is {<0, ==0, >0}
+  try:
+    if step == 0:
+      raise ValueError("arange has step == 0")
+    step_gt_0 = (step > 0)
+  except core.InconclusiveDimensionOperation as e:
+    raise core.InconclusiveDimensionOperation(
+        f"In arange with non-constant arguments the step ({step}) must " +
+        f"be resolved statically if it is > 0 or < 0.\nDetails: {e}")
+  gap = step if step_gt_0 else - step
+  distance = (stop - start) if step_gt_0 else (start - stop)
+  try:
+    if distance >= 1 - gap:
+      size = (distance + gap - 1) // gap
+    else:
+      size = 0
+  except core.InconclusiveDimensionOperation:
+    # Cannot resolve "distance >= 1 - gap". Perhaps we can resolve "distance >= 1"
+    try:
+        if distance >= 1:
+          assert False
+        else:
+          size = 0
+    except core.InconclusiveDimensionOperation:
+      raise core.InconclusiveDimensionOperation(
+          "In arange with non-constant dimensions the distance between "
+          f"start ({start}) and stop ({stop}) must be resolved statically "
+          f"if it is >= {1 - gap} or >= 1.")
+  return (array(start, dtype=dtype) +
+          array(step, dtype=dtype) * lax.iota(dtype, size))
 
 @overload
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
