@@ -1051,11 +1051,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         lambda x_unused, y: y * 2.0,
         arg_descriptors=[RandArg((4,), _f32), RandArg((3,), _f32)],
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-        polymorphic_shapes=["b1", "b2"],
-        expect_error=(
-            (None, None) if not config.jax2tf_default_native_serialization else
-            (ValueError,
-             "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
+        polymorphic_shapes=["b1", "b2"])
 
     # A polymorphic arg is not used, and the dimension var does appear
     # elsewhere but not as a trivial monomial.
@@ -1063,22 +1059,14 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         lambda x_unused, y: y * 2.0,
         arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-        polymorphic_shapes=["b1", "b1 * b1"],
-        expect_error=(
-            (None, None) if not config.jax2tf_default_native_serialization else
-            (ValueError,
-             "The following dimension variables cannot be computed from the static shapes of the kept lowered arguments")))
+        polymorphic_shapes=["b1", "b1 * b1"])
 
     # It is not sufficient to just use the shape of an input; it is still unused
     check_shape_poly(self,
         lambda x_unused, y: y + x_unused.shape[0],
         arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],
         input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None])],
-        polymorphic_shapes=["b1", "b2"],
-        expect_error=(
-            (None, None) if not config.jax2tf_default_native_serialization else
-            (KeyError,
-             "Encountered dimension variable 'b1' that is not appearing in the shapes")))
+        polymorphic_shapes=["b1", "b2"])
 
   def test_with_custom_vjp(self):
     """Shape-polymorphic custom VJP."""

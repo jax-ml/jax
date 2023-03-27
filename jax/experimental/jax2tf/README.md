@@ -716,25 +716,6 @@ polymorphic_shapes = ["a, 2*a, b"]
 polymorphic_shapes = ["a * a, a"]
 ```
 
-Furthermore, when using the native serialization the inputs that are not needed in the computation
-are ignored, so the dimension variables must be derivable only from used inputs.
-In the following example, the `x_unused` is not part of the computation so its
-input shapes cannot be used for deriving the dimension variables, and you will
-get an error that `a` cannot be derived:
-
-```python
-jax2tf.convert(lambda x_unused, y: y * 2.,
-               polymorphic_shapes=["b, a", "b, _"])(x, y)
-```
-
-An input is still considered unused if the computation uses only its shape.
-The code below gives the same error:
-
-```python
-jax2tf.convert(lambda x_unused, y: y * x_unused.shape[0],
-               polymorphic_shapes=["b, a", "b, _"])(x, y)
-```
-
 ## Known issues
 
 `jax2tf` has been in use since 2020 and the vast majority of users encounter
@@ -954,7 +935,7 @@ g_tf_native_0 = tape.gradient(res, xs,
 
 # Now with jax2tf.convert
 with tf.GradientTape() as tape:
-  res = jax2tf.convert(fn, with_gradient=True)(*xs0
+  res = jax2tf.convert(fn, with_gradient=True)(*xs)
 
 g_jax2tf = tape.gradient(res, xs)
 # Returns: 0., 0., 2., None
