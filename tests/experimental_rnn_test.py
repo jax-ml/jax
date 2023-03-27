@@ -15,6 +15,7 @@ from absl.testing import absltest
 import numpy as np
 import jax
 import jax.numpy as jnp
+from jax._src import lib
 from jax._src import test_util as jtu
 from jax.experimental import rnn
 
@@ -98,6 +99,10 @@ class RnnTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu", "tpu", "rocm")
   def test_lstm_with_varying_seq_lens(self):
+    if lib.version < (0, 4, 7):
+      # TODO(sharadmv, zhangqiaorjc): remove this when minimum jaxlib version is
+      # bumped
+      self.skipTest("Need latest jaxlib for this test to pass.")
     batch_size = 6
     seq_len = 7
     input_size = 8
