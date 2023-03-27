@@ -1,7 +1,7 @@
 .. _user-guides:
 
 User guides are deeper dives into particular topics within JAX
-that become relevant as your JAX project matures into a larger
+that become relevant as your JAX project matures into larger
 or deployed codebases.
 
 Debugging and Performance
