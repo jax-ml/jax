@@ -316,8 +316,12 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   cudnnRNNDataLayout_t layout = CUDNN_RNN_DATA_LAYOUT_BATCH_MAJOR_UNPACKED;
   float padding = 0.0f;
 
+  auto seq_lengths_buf = buffers[11];
   std::vector<int32_t> seq_length_vector(d.batch_size, d.max_seq_length);
   int32_t* seq_length_array = &seq_length_vector[0];
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpy(
+      seq_length_array, seq_lengths_buf,
+      seq_length_vector.size() * sizeof(int32_t), gpuMemcpyDeviceToHost)));
 
   cudnnRNNDataDescriptor_t input_data_desc;
   JAX_RETURN_IF_ERROR(
@@ -367,7 +371,6 @@ static absl::Status DnnRNNBackward_(gpuStream_t stream, void** buffers,
   auto workspace_buf = buffers[8];
   auto reserve_space_buf = buffers[9];
   auto zeroed_dw_buf = buffers[10];
-  auto seq_lengths_buf = buffers[11];
   auto dx_buf = buffers[12];
   auto dh_0_buf = buffers[13];
   auto dc_0_buf = buffers[14];
