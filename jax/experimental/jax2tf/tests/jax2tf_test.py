@@ -1542,6 +1542,23 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           "The current platform .* is not among the platforms required by the module"):
         f_tf(x)
 
+  @jtu.ignore_warning(message="using native_serialization_platforms without native_serialization")
+  def test_native_parameters_for_non_native(self):
+    # We can use the native_serialization_platforms even for non-native
+    # serialization.
+    f_tf = jax2tf.convert(jnp.sin,
+                          native_serialization_platforms=('cpu',))
+    x = np.float32(.5)
+    # Run the TF code on CPU
+    tf_cpus = tf.config.list_logical_devices("CPU")
+    self.assertNotEmpty(tf_cpus)
+    with tf.device(tf_cpus[0]):
+      self.assertAllClose(jnp.sin(x), f_tf(x))
+
+    f_tf = jax2tf.convert(jnp.sin,
+                          native_serialization_strict_checks=False)
+    self.assertAllClose(jnp.sin(x), f_tf(x))
+
   def test_native_serialization_grad(self):
     # Check that the grad function uses the same native serialization parameters
     # as the primal function.

@@ -332,9 +332,11 @@ def convert(fun_jax: Callable,
 
   if native_serialization_platforms:
     if not native_serialization:
-      raise ValueError(
-          "native_serialization_platforms is not supported without "
-          "native_serialization")
+      warnings.warn(
+          "using native_serialization_platforms without native_serialization. "
+          "The parameter will have no effect, since the same code is serialized "
+          "for all platforms without native_serialization.")
+
     if (not isinstance(native_serialization_platforms, (list, tuple)) or
         not all(p in ["tpu", "cpu", "gpu"] for p in native_serialization_platforms)):
       raise ValueError(
@@ -344,7 +346,7 @@ def convert(fun_jax: Callable,
     native_serialization_platforms = tuple(native_serialization_platforms)
     if len(native_serialization_platforms) > 1:
       raise NotImplementedError(
-          "native_serialization_platforms is not implemented for multiple platforms")
+          "native_serialization_platforms is not yet implemented for multiple platforms")
 
   api.check_callable(fun_jax)
   fun_name = getattr(fun_jax, "__name__", "unknown")
