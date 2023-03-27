@@ -316,7 +316,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
         cpu_ducc_fft.data_2023_03_17, cpu_lapack_syev.data_2023_03_17,
         cpu_lapack_geqrf.data_2023_03_17, cuda_threefry2x32.data_2023_03_15,
         cuda_cusolver_geqrf.data_2023_03_18, cuda_cusolver_syev.data_2023_03_17,
-        tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17, tpu_Sharding.data_2023_03_16]
+        tpu_Eigh.data, tpu_Lu.data_2023_03_21, tpu_Qr.data_2023_03_17, tpu_Sharding.data_2023_03_16,
+        tf_embedded_graph]
     covering_testdatas = itertools.chain(
         *[load_testdata_nested(d) for d in covering_testdatas])
     covered_targets = set()

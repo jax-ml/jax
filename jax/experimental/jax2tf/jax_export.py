@@ -64,6 +64,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
     # "hipblas_getrf_batched", "hipsolver_getrf",
     # lu on TPU
     "LuDecomposition",
+    "tf_embedded_graph",
 ]
 
 
