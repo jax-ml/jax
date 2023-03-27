@@ -19,11 +19,11 @@ from jax import tree_util
 from jax._src import linear_util as lu
 from jax.experimental import pjit
 from jax.errors import UnexpectedTracerError
+from jax._src import mesh as mesh_lib
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import ir
-import jax.interpreters.pxla as pxla
 from jax._src.interpreters import mlir
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
 from jax._src.api_util import flatten_fun_nokwargs
@@ -370,7 +370,7 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
                                        propagate_user_sharding, partition,
                                        infer_sharding_from_operands,
                                        static_args):
-  mesh = pxla.thread_resources.env.physical_mesh
+  mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
   if isinstance(axis_context, mlir.ShardingContext):

@@ -36,7 +36,6 @@ from jax.experimental.sparse.util import (
   SparseEfficiencyError, SparseEfficiencyWarning, Shape,
   SparseInfo)
 from jax.experimental.sparse._lowerings import coo_spmv_p, coo_spmm_p
-from jax.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 import jax.numpy as jnp
 from jax.util import safe_zip, unzip2, split_list
@@ -45,6 +44,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.lax import (
   _const, ranges_like, remaining, _dot_general_batch_dim_nums, DotDimensionNumbers)
 from jax._src.lax.slicing import GatherDimensionNumbers, GatherScatterMode

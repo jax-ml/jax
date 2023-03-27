@@ -79,8 +79,8 @@ from jax.custom_batching import custom_vmap
 from jax.custom_derivatives import (custom_gradient, custom_jvp,
                                     custom_vjp, linear_call)
 from jax.custom_transpose import custom_transpose
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 
 from jax._src.config import (

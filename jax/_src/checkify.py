@@ -26,8 +26,6 @@ import jax.tree_util as jtu
 from jax import lax
 from jax.api_util import flatten_fun
 from jax.experimental import pjit
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten
 from jax.tree_util import tree_map
 from jax.tree_util import tree_unflatten
@@ -42,6 +40,8 @@ from jax._src import traceback_util
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache)

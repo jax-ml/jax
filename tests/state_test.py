@@ -24,7 +24,7 @@ from jax._src import core
 from jax import lax
 from jax._src import linear_util as lu
 from jax.config import config
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 from jax._src import test_util as jtu
 from jax._src.util import tuple_insert
 import jax.numpy as jnp

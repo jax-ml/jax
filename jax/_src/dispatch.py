@@ -32,8 +32,6 @@ import numpy as np
 
 import jax
 from jax.monitoring import record_event_duration_secs
-import jax.interpreters.mlir as mlir
-import jax.interpreters.partial_eval as pe
 
 from jax._src import array
 from jax._src import core
@@ -49,6 +47,8 @@ from jax._src import xla_bridge as xb
 from jax._src.config import config, flags
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir

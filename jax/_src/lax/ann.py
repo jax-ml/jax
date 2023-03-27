@@ -78,6 +78,7 @@ from jax.interpreters import xla
 
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -362,7 +363,7 @@ def _approx_top_k_jvp(primals, tangents, *, k, reduction_dimension,
 
 approx_top_k_p = core.Primitive('approx_top_k')
 approx_top_k_p.multiple_results = True
-approx_top_k_p.def_impl(partial(xla.apply_primitive, approx_top_k_p))
+approx_top_k_p.def_impl(partial(dispatch.apply_primitive, approx_top_k_p))
 approx_top_k_p.def_abstract_eval(_approx_top_k_abstract_eval)
 xla.register_translation(approx_top_k_p, _approx_top_k_fallback_translation)
 xla.register_translation(approx_top_k_p, _approx_top_k_tpu_translation,

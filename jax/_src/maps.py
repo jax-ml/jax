@@ -39,7 +39,7 @@ from jax.errors import JAXTypeError
 from jax._src.array import ArrayImpl
 from jax._src.sharding_impls import NamedSharding
 from jax._src.interpreters import mlir
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax.interpreters import batching
@@ -965,7 +965,7 @@ pxla.custom_resource_typing_rules[xmap_p] = _resource_typing_xmap
 
 # This is DynamicJaxprTrace.process_map with some very minor modifications
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
-  from jax.interpreters.partial_eval import (
+  from jax._src.interpreters.partial_eval import (
     trace_to_subjaxpr_dynamic, DynamicJaxprTracer,
     convert_constvars_jaxpr, new_jaxpr_eqn)
   assert primitive is xmap_p

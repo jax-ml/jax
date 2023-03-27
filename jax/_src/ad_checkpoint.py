@@ -21,12 +21,10 @@ import types
 import numpy as np
 
 import jax
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten, tree_structure, keystr
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import linear_util as lu
 from jax._src import effects
 from jax._src import source_info_util
@@ -35,6 +33,8 @@ from jax._src import util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
@@ -737,7 +737,7 @@ def _optimization_barrier(arg):
 optimization_barrier_p = core.Primitive('optimization_barrier')
 optimization_barrier_p.multiple_results = True
 optimization_barrier_p.def_impl(
-    partial(xla.apply_primitive, optimization_barrier_p))
+    partial(dispatch.apply_primitive, optimization_barrier_p))
 optimization_barrier_p.def_abstract_eval(_optimization_barrier_abstract_eval)
 mlir.register_lowering(optimization_barrier_p,
                        _optimization_barrier_lowering_rule)

@@ -23,6 +23,7 @@ from typing import Callable
 
 from jax.interpreters import xla
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.util import safe_zip
 from jax._src.lib import xla_client
@@ -44,7 +45,7 @@ def standard_primitive(shape_rule, dtype_rule, name, translation_rule=None,
   weak_type_rule = weak_type_rule or _standard_weak_type_rule
   named_shape_rule = named_shape_rule or standard_named_shape_rule
   prim = core.Primitive(name)
-  prim.def_impl(partial(xla.apply_primitive, prim))
+  prim.def_impl(partial(dispatch.apply_primitive, prim))
   prim.def_abstract_eval(
       partial(standard_abstract_eval, prim, shape_rule, dtype_rule,
               weak_type_rule, named_shape_rule))

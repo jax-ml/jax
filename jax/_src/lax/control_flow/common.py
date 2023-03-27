@@ -25,7 +25,7 @@ from jax._src import ad_util
 from jax._src import util
 from jax._src.util import cache, weakref_lru_cache, safe_map, unzip3
 from jax.api_util import flatten_fun_nokwargs
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_map, tree_unflatten
 
 map, unsafe_map = safe_map, map

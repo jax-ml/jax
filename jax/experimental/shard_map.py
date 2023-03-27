@@ -43,10 +43,10 @@ from jax._src.util import (HashableFunction, HashablePartial, unzip2,
                            as_hashable_function, memoize, partition_list,
                            merge_lists)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
-from jax.interpreters import batching
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,

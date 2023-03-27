@@ -28,9 +28,9 @@ import jax
 from jax._src import core
 from jax import stages
 from jax.errors import JAXTypeError
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.pxla import PartitionSpec
+from jax._src.interpreters import xla
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
     treedef_tuple, broadcast_prefix, all_leaves)

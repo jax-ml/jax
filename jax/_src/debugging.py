@@ -38,7 +38,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import GSPMDSharding, NamedSharding
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 
 # pytype: disable=import-error
 try:

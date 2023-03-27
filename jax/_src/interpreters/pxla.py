@@ -48,7 +48,6 @@ import numpy as np
 
 import jax
 from jax.errors import JAXTypeError
-from jax.interpreters import partial_eval as pe
 from jax.tree_util import tree_flatten, tree_map
 
 from jax._src import api_util
@@ -71,6 +70,7 @@ from jax._src.config import flags
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc

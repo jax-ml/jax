@@ -27,14 +27,15 @@ from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.interpreters import ad
 from jax.interpreters import batching
 from jax._src.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map, tree_flatten_with_path, keystr)
 from jax._src.tree_util import equality_errors
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import source_info_util
@@ -1032,7 +1033,7 @@ def scan_bind(*args, **params):
 scan_p = core.AxisPrimitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
-scan_p.def_impl(partial(xla.apply_primitive, scan_p))
+scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp
 ad.reducing_transposes[scan_p] = _scan_transpose
@@ -1612,7 +1613,7 @@ def _while_typecheck(_, *in_atoms, cond_jaxpr, body_jaxpr, cond_nconsts,
 
 while_p = core.AxisPrimitive('while')
 while_p.multiple_results = True
-while_p.def_impl(partial(xla.apply_primitive, while_p))
+while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)
 ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval

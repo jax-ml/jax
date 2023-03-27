@@ -35,7 +35,7 @@ from jax._src import linear_util as lu
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 
 Array = Any
 map, unsafe_map = safe_map, map

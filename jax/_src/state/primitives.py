@@ -19,13 +19,13 @@ from typing import Any, List, Tuple, Union
 import numpy as np
 
 from jax import lax
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
 
 from jax._src import ad_util
 from jax._src import core
 from jax._src import pretty_printer as pp
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src.typing import Array
 from jax._src.state.types import (AbstractRef, ReadEffect, WriteEffect,
                                   AccumEffect)

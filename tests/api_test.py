@@ -55,7 +55,7 @@ from jax.interpreters import ad
 from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax.experimental import pjit

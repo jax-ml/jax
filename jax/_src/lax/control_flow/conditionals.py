@@ -22,14 +22,10 @@ import operator
 from typing import Callable, Sequence, List, Tuple
 
 from jax.config import config
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
@@ -37,6 +33,11 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import state
 from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 from jax._src.lax import lax
 from jax._src.traceback_util import api_boundary
 from jax._src.util import (safe_map, split_list, partition_list)
@@ -803,7 +804,7 @@ def cond_bind(*args, branches, linear):
 
 cond_p = core.AxisPrimitive('cond')
 cond_p.multiple_results = True
-cond_p.def_impl(partial(xla.apply_primitive, cond_p))
+cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp

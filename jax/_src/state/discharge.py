@@ -21,10 +21,10 @@ from typing import Any, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 import numpy as np
 
 from jax import lax
-from jax.interpreters import partial_eval as pe
 
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src.interpreters import partial_eval as pe
 from jax._src.state.types import AbstractRef
 from jax._src.state.primitives import get_p, swap_p, addupdate_p
 from jax._src.util import safe_map, safe_zip, split_list

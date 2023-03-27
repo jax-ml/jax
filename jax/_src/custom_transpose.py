@@ -15,9 +15,6 @@
 import functools
 from typing import Any, Callable, Optional, Tuple
 
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_leaves, tree_map,
                            tree_structure, treedef_tuple, tree_unflatten)
 from jax._src import ad_util
@@ -29,6 +26,9 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import ad
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 
 
 source_info_util.register_exclusion(__file__)

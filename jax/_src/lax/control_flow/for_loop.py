@@ -20,16 +20,16 @@ from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple,
 import jax.numpy as jnp
 from jax import lax
 from jax.api_util import flatten_fun_nokwargs
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_structure, tree_unflatten,
                            treedef_tuple, tree_map, tree_leaves, PyTreeDef)
 
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import source_info_util
@@ -299,7 +299,7 @@ def _for_impl_unrolled(body, nsteps, unroll, *args):
   return state
 
 mlir.register_lowering(for_p, mlir.lower_fun(_for_impl, multiple_results=True))
-for_p.def_impl(functools.partial(xla.apply_primitive, for_p))
+for_p.def_impl(functools.partial(dispatch.apply_primitive, for_p))
 
 def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
               jaxpr, nsteps, reverse, which_linear, unroll):

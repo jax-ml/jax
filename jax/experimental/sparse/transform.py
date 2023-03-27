@@ -62,9 +62,9 @@ from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_spar
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
-from jax.interpreters import pxla
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
 from jax._src.config import config

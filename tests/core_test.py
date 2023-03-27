@@ -29,7 +29,6 @@ from jax import numpy as jnp
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.api_util import flatten_fun_nokwargs
 from jax.config import config
-from jax.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_unflatten, tree_map, tree_reduce,
                            tree_leaves)
 
@@ -38,6 +37,7 @@ from jax._src import linear_util as lu
 from jax._src import util
 from jax._src import test_util as jtu
 from jax._src.core import UnshapedArray, ShapedArray, DBIdx
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 

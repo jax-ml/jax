@@ -27,8 +27,6 @@ import numpy as np
 
 import jax
 from jax import tree_util
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import xla
 from jax.tree_util import tree_map
 
 from jax._src import ad_util
@@ -51,7 +49,9 @@ from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
+from jax._src.interpreters import xla
 from jax._src.interpreters.batching import ConcatAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
@@ -2264,7 +2264,7 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
-convert_element_type_p.def_impl(partial(xla.apply_primitive, convert_element_type_p))
+convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
@@ -3475,7 +3475,7 @@ def _reduce_named_shape_rule(*avals, computation, jaxpr, consts, dimensions):
 
 reduce_p = core.Primitive('reduce')
 reduce_p.multiple_results = True
-reduce_p.def_impl(partial(xla.apply_primitive, reduce_p))
+reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
             _reduce_dtype_rule, _reduce_weak_type_rule,
@@ -3869,7 +3869,7 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys
 
 sort_p = Primitive('sort')
 sort_p.multiple_results = True
-sort_p.def_impl(partial(xla.apply_primitive, sort_p))
+sort_p.def_impl(partial(dispatch.apply_primitive, sort_p))
 sort_p.def_abstract_eval(_sort_abstract_eval)
 ad.primitive_jvps[sort_p] = _sort_jvp
 batching.primitive_batchers[sort_p] = _sort_batch_rule
@@ -3960,7 +3960,7 @@ def _top_k_translation_rule(ctx, avals_in, avals_out, x, *, k):
 
 top_k_p = Primitive('top_k')
 top_k_p.multiple_results = True
-top_k_p.def_impl(partial(xla.apply_primitive, top_k_p))
+top_k_p.def_impl(partial(dispatch.apply_primitive, top_k_p))
 top_k_p.def_abstract_eval(_top_k_abstract_eval)
 def _top_k_lower(ctx, operand, k):
   return chlo.TopKOp(operand, mlir.i64_attr(k)).results
@@ -3993,7 +3993,7 @@ def create_token(_=None):
   return create_token_p.bind()
 
 create_token_p = Primitive("create_token")
-create_token_p.def_impl(partial(xla.apply_primitive, create_token_p))
+create_token_p.def_impl(partial(dispatch.apply_primitive, create_token_p))
 create_token_p.def_abstract_eval(lambda *_: abstract_token)
 
 def _create_token_lowering(ctx, *operands):
@@ -4015,7 +4015,7 @@ def _after_all_abstract_eval(*operands):
 
 
 after_all_p = Primitive("after_all")
-after_all_p.def_impl(partial(xla.apply_primitive, after_all_p))
+after_all_p.def_impl(partial(dispatch.apply_primitive, after_all_p))
 after_all_p.def_abstract_eval(_after_all_abstract_eval)
 
 def _after_all_lowering(ctx, *operands):
@@ -4060,7 +4060,7 @@ def _infeed_abstract_eval(token, *, shapes, partitions):
 
 infeed_p = Primitive("infeed")
 infeed_p.multiple_results = True
-infeed_p.def_impl(partial(xla.apply_primitive, infeed_p))
+infeed_p.def_impl(partial(dispatch.apply_primitive, infeed_p))
 infeed_p.def_effectful_abstract_eval(_infeed_abstract_eval)
 mlir.lowerable_effects.add_type(InOutFeedEffect)
 
@@ -4111,7 +4111,7 @@ def _outfeed_abstract_eval(token, *xs, partitions):
   return abstract_token, {outfeed_effect}
 
 outfeed_p = Primitive("outfeed")
-outfeed_p.def_impl(partial(xla.apply_primitive, outfeed_p))
+outfeed_p.def_impl(partial(dispatch.apply_primitive, outfeed_p))
 outfeed_p.def_effectful_abstract_eval(_outfeed_abstract_eval)
 mlir.lowerable_effects.add_type(InOutFeedEffect)
 
@@ -4153,7 +4153,7 @@ def _rng_uniform_abstract_eval(a, b, *, shape):
                   weak_type=(a.weak_type and b.weak_type))
 
 rng_uniform_p = Primitive("rng_uniform")
-rng_uniform_p.def_impl(partial(xla.apply_primitive, rng_uniform_p))
+rng_uniform_p.def_impl(partial(dispatch.apply_primitive, rng_uniform_p))
 rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 
 def _rng_uniform_lowering(ctx, a, b, *, shape):
@@ -4247,7 +4247,7 @@ def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
 rng_bit_generator_p = Primitive("rng_bit_generator")
 rng_bit_generator_p.multiple_results = True
 rng_bit_generator_p.def_impl(
-    partial(xla.apply_primitive, rng_bit_generator_p))
+    partial(dispatch.apply_primitive, rng_bit_generator_p))
 rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
@@ -4298,7 +4298,7 @@ def _copy_impl(prim, *args, **kwargs):
   if isinstance(a, jax.Array) and isinstance(a.sharding, PmapSharding):
     sharded_dim = _which_dim_sharded(a.sharding)
     return _copy_impl_pmap_sharding(sharded_dim, *args, **kwargs)
-  return xla.apply_primitive(prim, *args, **kwargs)
+  return dispatch.apply_primitive(prim, *args, **kwargs)
 
 # The copy_p primitive exists for expressing making copies of runtime arrays.
 # For that reason we don't simplify it out of jaxprs (e.g. for jit invariance).
@@ -4354,7 +4354,7 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
   return core.DShapedArray(shape, dtype, False)
 
 iota_p = Primitive('iota')
-iota_p.def_impl(partial(xla.apply_primitive, iota_p))
+iota_p.def_impl(partial(dispatch.apply_primitive, iota_p))
 iota_p.def_abstract_eval(_iota_abstract_eval)
 
 def _iota_staging_rule(trace, *dyn_shape, dtype, shape, dimension):

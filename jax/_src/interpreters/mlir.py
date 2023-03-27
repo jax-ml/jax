@@ -32,9 +32,6 @@ import numpy as np
 
 from jax._src import linear_util as lu
 from jax.config import config
-from jax._src.interpreters import ad
-from jax.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
 from jax._src import ad_util
 from jax._src import core
 from jax._src import device_array
@@ -43,6 +40,9 @@ from jax._src import effects as effects_lib
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src.interpreters import ad
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo

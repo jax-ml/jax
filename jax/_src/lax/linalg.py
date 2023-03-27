@@ -23,10 +23,10 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.interpreters import xla
 
 from jax._src import ad_util
 from jax._src import api
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.core import (
     Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
@@ -448,10 +448,12 @@ mlir.register_lowering(
 # Asymmetric eigendecomposition
 
 def eig_impl(operand, *, compute_left_eigenvectors, compute_right_eigenvectors):
-  return (
-    xla.apply_primitive(eig_p, operand,
-                        compute_left_eigenvectors=compute_left_eigenvectors,
-                        compute_right_eigenvectors=compute_right_eigenvectors))
+  return dispatch.apply_primitive(
+      eig_p,
+      operand,
+      compute_left_eigenvectors=compute_left_eigenvectors,
+      compute_right_eigenvectors=compute_right_eigenvectors,
+  )
 
 def eig_lower(*args, **kw):
   raise NotImplementedError(
@@ -577,8 +579,8 @@ def eigh_jacobi(x: ArrayLike, *, lower: bool = True,
   return w, v
 
 def _eigh_jacobi_impl(operand, *, lower, sort_eigenvalues):
-  w, v = xla.apply_primitive(eigh_jacobi_p, operand, lower=lower,
-                             sort_eigenvalues=sort_eigenvalues)
+  w, v = dispatch.apply_primitive(eigh_jacobi_p, operand, lower=lower,
+                                  sort_eigenvalues=sort_eigenvalues)
   return w, v
 
 def _eigh_jacobi_abstract_eval(operand, *, lower, sort_eigenvalues):
@@ -634,8 +636,8 @@ mlir.register_lowering(eigh_jacobi_p, _eigh_jacobi_lowering_rule)
 
 
 def _eigh_impl(operand, *, lower, sort_eigenvalues):
-  v, w = xla.apply_primitive(eigh_p, operand, lower=lower,
-                             sort_eigenvalues=sort_eigenvalues)
+  v, w = dispatch.apply_primitive(eigh_p, operand, lower=lower,
+                                  sort_eigenvalues=sort_eigenvalues)
   return v, w
 
 def _eigh_abstract_eval(operand, *, lower, sort_eigenvalues):
@@ -1016,7 +1018,7 @@ def _lu_pivots_to_permutation_gpu_lowering(lowering, ctx, pivots, *,
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
 lu_pivots_to_permutation_p.multiple_results = False
 lu_pivots_to_permutation_p.def_impl(
-    partial(xla.apply_primitive, lu_pivots_to_permutation_p))
+    partial(dispatch.apply_primitive, lu_pivots_to_permutation_p))
 lu_pivots_to_permutation_p.def_abstract_eval(
     _lu_pivots_to_permutation_abstract_eval)
 batching.primitive_batchers[lu_pivots_to_permutation_p] = (
@@ -1111,7 +1113,7 @@ def _lu_python(x):
   return fn(x)
 
 def _lu_impl(operand):
-  lu, pivot, perm = xla.apply_primitive(lu_p, operand)
+  lu, pivot, perm = dispatch.apply_primitive(lu_p, operand)
   return lu, pivot, perm
 
 def _lu_abstract_eval(operand):
@@ -1385,7 +1387,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a):
 
 geqrf_p = Primitive('geqrf')
 geqrf_p.multiple_results = True
-geqrf_p.def_impl(partial(xla.apply_primitive, geqrf_p))
+geqrf_p.def_impl(partial(dispatch.apply_primitive, geqrf_p))
 geqrf_p.def_abstract_eval(_geqrf_abstract_eval)
 batching.primitive_batchers[geqrf_p] = _geqrf_batching_rule
 mlir.register_lowering(geqrf_p, _geqrf_lowering_rule)
@@ -1474,7 +1476,7 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus):
 
 
 householder_product_p = Primitive('householder_product')
-householder_product_p.def_impl(partial(xla.apply_primitive, householder_product_p))
+householder_product_p.def_impl(partial(dispatch.apply_primitive, householder_product_p))
 householder_product_p.def_abstract_eval(_householder_product_abstract_eval)
 batching.primitive_batchers[householder_product_p] = _householder_product_batching_rule
 mlir.register_lowering(householder_product_p, _householder_product_lowering_rule)
@@ -1494,7 +1496,7 @@ mlir.register_lowering(
 
 
 def _qr_impl(operand, *, full_matrices):
-  q, r = xla.apply_primitive(qr_p, operand, full_matrices=full_matrices)
+  q, r = dispatch.apply_primitive(qr_p, operand, full_matrices=full_matrices)
   return q, r
 
 def _qr_abstract_eval(operand, *, full_matrices):
@@ -1572,7 +1574,7 @@ mlir.register_lowering(qr_p, mlir.lower_fun(_qr_lowering));
 # Singular value decomposition
 
 def _svd_impl(operand, *, full_matrices, compute_uv):
-  return xla.apply_primitive(svd_p, operand, full_matrices=full_matrices,
+  return dispatch.apply_primitive(svd_p, operand, full_matrices=full_matrices,
                              compute_uv=compute_uv)
 
 def _svd_abstract_eval(operand, *, full_matrices, compute_uv):
@@ -1762,7 +1764,7 @@ def _tridiagonal_solve_gpu_lowering(lowering, ctx, dl, d, du, b, *, m, n, ldb, t
 tridiagonal_solve_p = Primitive('tridiagonal_solve')
 tridiagonal_solve_p.multiple_results = False
 tridiagonal_solve_p.def_impl(
-    functools.partial(xla.apply_primitive, tridiagonal_solve_p))
+    functools.partial(dispatch.apply_primitive, tridiagonal_solve_p))
 tridiagonal_solve_p.def_abstract_eval(lambda dl, d, du, b, *, m, n, ldb, t: b)
 # TODO(tomhennigan): Consider AD rules using lax.custom_linear_solve?
 
@@ -1873,7 +1875,7 @@ def schur(x: ArrayLike, *,
 
 def _schur_impl(operand, *, compute_schur_vectors, sort_eig_vals,
                 select_callable):
-  return xla.apply_primitive(
+  return dispatch.apply_primitive(
       schur_p,
       operand,
       compute_schur_vectors=compute_schur_vectors,
@@ -2000,7 +2002,7 @@ def _hessenberg_abstract_eval(a):
   return [a, ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype)]
 
 hessenberg_p = Primitive("hessenberg")
-hessenberg_p.def_impl(partial(xla.apply_primitive, hessenberg_p))
+hessenberg_p.def_impl(partial(dispatch.apply_primitive, hessenberg_p))
 hessenberg_p.def_abstract_eval(_hessenberg_abstract_eval)
 hessenberg_p.multiple_results = True
 
@@ -2098,7 +2100,7 @@ def _tridiagonal_abstract_eval(a, *, lower):
   ]
 
 tridiagonal_p = Primitive("tridiagonal")
-tridiagonal_p.def_impl(partial(xla.apply_primitive, tridiagonal_p))
+tridiagonal_p.def_impl(partial(dispatch.apply_primitive, tridiagonal_p))
 tridiagonal_p.def_abstract_eval(_tridiagonal_abstract_eval)
 tridiagonal_p.multiple_results = True
 

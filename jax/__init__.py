@@ -127,6 +127,7 @@ from jax._src.api import xla_computation as xla_computation
 
 from jax.interpreters import ad # TODO(phawkins): update users to avoid this.
 from jax.interpreters import pxla # TODO(phawkins): update users to avoid this.
+from jax.interpreters import partial_eval # TODO(phawkins): update users to avoid this.
 from jax.interpreters import xla # TODO(phawkins): update users to avoid this.
 
 from jax._src.array import (
