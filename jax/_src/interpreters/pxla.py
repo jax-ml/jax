@@ -2462,7 +2462,8 @@ def lower_sharding_computation(
               "Argument mapping: %s.",
               fun_name, global_in_avals, in_shardings)
 
-  if keep_unused:
+  if keep_unused or any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
+                        for a in global_in_avals):
     kept_var_idx = set(range(len(global_in_avals)))
   else:
     jaxpr, kept_const_idx, kept_var_idx = dispatch._prune_unused_inputs(jaxpr)
