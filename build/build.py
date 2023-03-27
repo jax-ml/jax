@@ -439,6 +439,10 @@ def main():
       default=None,
       help="CPU platform to target. Default is the same as the host machine. "
            "Currently supported values are 'darwin_arm64' and 'darwin_x86_64'.")
+  parser.add_argument(
+      "--editable",
+      action="store_true",
+      help="Create an 'editable' jaxlib build instead of a wheel.")
   add_boolean_argument(
       parser,
       "configure_only",
@@ -549,6 +553,8 @@ def main():
     [":build_wheel", "--",
     f"--output_path={output_path}",
     f"--cpu={wheel_cpu}"])
+  if args.editable:
+    command += ["--editable"]
   print(" ".join(command))
   shell(command)
   shell([bazel_path] + args.bazel_startup_options + ["shutdown"])
