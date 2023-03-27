@@ -143,7 +143,7 @@ reverse-mode vector-Jacobian products and
 forward-mode Jacobian-vector products. The two can be composed arbitrarily with
 one another, and with other JAX transformations. Here's one way to compose those
 to make a function that efficiently computes [full Hessian
-matrices](https://jax.readthedocs.io/en/latest/jax.html#jax.hessian):
+matrices](https://jax.readthedocs.io/en/latest/_autosummary/jax.hessian.html#jax.hessian):
 
 ```python
 from jax import jit, jacfwd, jacrev
