@@ -70,6 +70,7 @@ build:cuda --action_env TF_CUDA_COMPUTE_CAPABILITIES="sm_52,sm_60,sm_70,compute_
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 build:cuda --@xla//xla/python:enable_gpu=true
+build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
 build:cuda --define=xla_python_enable_gpu=true
 
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
