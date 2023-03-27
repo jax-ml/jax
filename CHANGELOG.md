@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.7
+## jax 0.4.8
+
+## jaxlib 0.4.8
+
+## jax 0.4.7 (March 27, 2023)
 
 * Changes
   * As per https://jax.readthedocs.io/en/latest/jax_array_migration.html#jax-array-migration
@@ -39,7 +43,7 @@ Remember to align the itemized text with the first line of an item within a list
     jax.Arrays as input and remove the `in_shardings` argument to pjit since
     it is optional.
 
-## jaxlib 0.4.7
+## jaxlib 0.4.7 (March 27, 2023)
 
 Changes:
   * jaxlib now depends on `ml_dtypes`, which contains definitions of NumPy types
