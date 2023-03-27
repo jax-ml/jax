@@ -29,11 +29,14 @@ from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
+from jax._src.numpy.util import promote_dtypes_inexact
 from jax._src import test_util as jtu
 
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
+
+scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
 
 T = lambda x: np.swapaxes(x, -1, -2)
 
@@ -1240,18 +1243,21 @@ class ScipyLinalgTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
-    dtype=float_types + complex_types,
+    batch_size=[(), (2,), (3, 4)] if scipy_version >= (1, 9, 0) else [()],
+    dtype=int_types + float_types + complex_types
   )
-  def testExpm(self, n, dtype):
+  def testExpm(self, n, batch_size, dtype):
     rng = jtu.rand_small(self.rng())
-    args_maker = lambda: [rng((n, n), dtype)]
+    args_maker = lambda: [rng((*batch_size, n, n), dtype)]
 
-    osp_fun = lambda a: osp.linalg.expm(a)
-    jsp_fun = lambda a: jsp.linalg.expm(a)
+    # Compare to numpy with JAX type promotion semantics.
+    def osp_fun(A):
+      return osp.linalg.expm(np.array(*promote_dtypes_inexact(A)))
+    jsp_fun = jsp.linalg.expm
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
     self._CompileAndCheck(jsp_fun, args_maker)
 
-    args_maker_triu = lambda: [np.triu(rng((n, n), dtype))]
+    args_maker_triu = lambda: [np.triu(rng((*batch_size, n, n), dtype))]
     jsp_fun_triu = lambda a: jsp.linalg.expm(a, upper_triangular=True)
     self._CheckAgainstNumpy(osp_fun, jsp_fun_triu, args_maker_triu)
     self._CompileAndCheck(jsp_fun_triu, args_maker_triu)
