@@ -18,6 +18,7 @@ load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
     "if_windows",
+    "py_library_providing_imports_info",
     "pybind_extension",
     "pytype_library",
 )
@@ -26,7 +27,7 @@ licenses(["notice"])
 
 package(default_visibility = ["//:__subpackages__"])
 
-pytype_library(
+py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
         "ducc_fft.py",
@@ -42,6 +43,7 @@ pytype_library(
         ":xla_client",
     ],
     data = [":xla_extension"],
+    lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
         "//jaxlib/cpu:_ducc_fft",

@@ -15,7 +15,7 @@
 import os
 from typing import Optional
 from jax._src import xla_bridge
-from jax._src.clusters import ClusterEnv
+from jax._src import clusters
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 
 
@@ -44,7 +44,7 @@ def get_metadata(key):
   return api_resp.text
 
 
-class TpuCluster(ClusterEnv):
+class TpuCluster(clusters.ClusterEnv):
   @classmethod
   def is_env_present(cls) -> bool:
     return running_in_cloud_tpu_vm

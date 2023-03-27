@@ -12,22 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:jax.bzl", "pytype_library")
+load(
+    "//jaxlib:jax.bzl",
+    "jax_visibility",
+    "py_library_providing_imports_info",
+    "pytype_strict_library",
+)
 
 package(default_visibility = ["//:__subpackages__"])
 
-pytype_library(
+py_library_providing_imports_info(
     name = "lib",
     srcs = [
         "__init__.py",
         "mlir/__init__.py",
         "mlir/dialects/__init__.py",
     ],
+    lib_rule = pytype_strict_library,
+    visibility = ["//jax:internal"] + jax_visibility("lib"),
     deps = [
         "//jax:version",
     ] + select({
         "//jax:enable_jaxlib_build": [
+            "//jaxlib/mlir:builtin_dialect",
+            "//jaxlib/mlir:chlo_dialect",
+            "//jaxlib/mlir:func_dialect",
+            "//jaxlib/mlir:ir",
+            "//jaxlib/mlir:mhlo_dialect",
+            "//jaxlib/mlir:ml_program_dialect",
+            "//jaxlib/mlir:sparse_tensor_dialect",
+            "//jaxlib/mlir:stablehlo_dialect",
             "//jaxlib",
+            "//jaxlib:cpu_feature_guard",
+            # xla_client
         ],
         "//conditions:default": [],
     }),

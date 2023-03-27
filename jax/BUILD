@@ -192,7 +192,7 @@ py_library_providing_imports_info(
     ] + py_deps("numpy") + py_deps("scipy") + jax_extra_deps,
 )
 
-pytype_library(
+pytype_strict_library(
     name = "basearray",
     srcs = ["_src/basearray.py"],
     pytype_srcs = ["_src/basearray.pyi"],
@@ -202,12 +202,12 @@ pytype_library(
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "cloud_tpu_init",
     srcs = ["_src/cloud_tpu_init.py"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "config",
     srcs = ["_src/config.py"],
     deps = [
@@ -215,22 +215,22 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "custom_api_util",
     srcs = ["_src/custom_api_util.py"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "deprecations",
     srcs = ["_src/deprecations.py"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "effects",
     srcs = ["_src/effects.py"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "environment_info",
     srcs = ["_src/environment_info.py"],
     deps = [
@@ -249,12 +249,12 @@ pytype_library(
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "lazy_loader",
     srcs = ["_src/lazy_loader.py"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "mesh",
     srcs = ["_src/mesh.py"],
     deps = [
@@ -265,24 +265,24 @@ pytype_library(
     ] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "monitoring",
     srcs = ["_src/monitoring.py"],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "path",
     srcs = ["_src/path.py"],
     deps = py_deps("epath"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "pretty_printer",
     srcs = ["_src/pretty_printer.py"],
     deps = [":config"] + py_deps("colorama"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "profiler",
     srcs = ["_src/profiler.py"],
     deps = [
@@ -292,7 +292,7 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "sharding",
     srcs = ["_src/sharding.py"],
     deps = [
@@ -301,7 +301,7 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "source_info_util",
     srcs = ["_src/source_info_util.py"],
     visibility = [":internal"] + jax_visibility("source_info_util"),
@@ -312,7 +312,7 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "tree_util",
     srcs = ["_src/tree_util.py"],
     visibility = [":internal"] + jax_visibility("tree_util"),
@@ -323,7 +323,7 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "traceback_util",
     srcs = ["_src/traceback_util.py"],
     visibility = [":internal"] + jax_visibility("traceback_util"),
@@ -334,7 +334,7 @@ pytype_library(
     ],
 )
 
-pytype_library(
+pytype_strict_library(
     name = "typing",
     srcs = [
         "_src/typing.py",
@@ -342,13 +342,13 @@ pytype_library(
     deps = [":basearray"] + py_deps("numpy"),
 )
 
-pytype_library(
+pytype_strict_library(
     name = "util",
     srcs = ["_src/util.py"],
     deps = [
         ":config",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -357,7 +357,7 @@ pytype_strict_library(
 )
 
 # TODO(phawkins): break up this SCC.
-pytype_library(
+pytype_strict_library(
     name = "xla_bridge",
     srcs = [
         "_src/clusters/__init__.py",

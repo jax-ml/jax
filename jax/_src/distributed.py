@@ -18,7 +18,7 @@ import os
 
 from typing import Any, Optional, Union, Sequence
 
-from jax._src.clusters import ClusterEnv
+from jax._src import clusters
 from jax._src.config import config
 from jax._src.lib import xla_extension
 
@@ -41,11 +41,11 @@ class State:
     if isinstance(local_device_ids, int):
       local_device_ids = [local_device_ids]
 
-    (coordinator_address,
-     num_processes,
-     process_id,
-     local_device_ids) = ClusterEnv.auto_detect_unset_distributed_params(
-      coordinator_address, num_processes, process_id, local_device_ids)
+    (coordinator_address, num_processes, process_id, local_device_ids) = (
+        clusters.ClusterEnv.auto_detect_unset_distributed_params(
+            coordinator_address, num_processes, process_id, local_device_ids
+        )
+    )
 
     if coordinator_address is None:
       raise ValueError('coordinator_address should be defined.')

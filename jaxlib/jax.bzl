@@ -24,7 +24,6 @@ load("@tsl//tsl/platform:build_config_root.bzl", _tf_cuda_tests_tags = "tf_cuda_
 # lint tools.
 cuda_library = _cuda_library
 rocm_library = _rocm_library
-pytype_strict_library = native.py_library
 pytype_test = native.py_test
 pybind_extension = _pybind_extension
 if_cuda_is_configured = _if_cuda_is_configured
@@ -56,6 +55,10 @@ jax_extra_deps = []
 jax2tf_deps = []
 
 def pytype_library(name, pytype_srcs = None, **kwargs):
+    _ = pytype_srcs  # @unused
+    native.py_library(name = name, **kwargs)
+
+def pytype_strict_library(name, pytype_srcs = None, **kwargs):
     _ = pytype_srcs  # @unused
     native.py_library(name = name, **kwargs)
 

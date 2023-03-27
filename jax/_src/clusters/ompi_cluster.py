@@ -15,7 +15,7 @@
 import os
 import re
 from typing import Optional
-from jax._src.clusters import ClusterEnv
+from jax._src import clusters
 
 #  OMPI_MCA_orte_hnp_uri exists only when processes are launched via mpirun or mpiexec
 _ORTE_URI = 'OMPI_MCA_orte_hnp_uri'
@@ -23,7 +23,7 @@ _PROCESS_COUNT = 'OMPI_COMM_WORLD_SIZE'
 _PROCESS_ID = 'OMPI_COMM_WORLD_RANK'
 _LOCAL_PROCESS_ID = 'OMPI_COMM_WORLD_LOCAL_RANK'
 
-class OmpiCluster(ClusterEnv):
+class OmpiCluster(clusters.ClusterEnv):
   @classmethod
   def is_env_present(cls) -> bool:
     return _ORTE_URI in os.environ
