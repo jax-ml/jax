@@ -221,7 +221,7 @@ def _coo_todense_gpu_lowering(coo_todense_hlo, ctx, data, row, col, *, spinfo):
     shape = spinfo.shape[::-1]
   else:
     warnings.warn("coo_todense GPU lowering requires matrices with sorted rows or sorted cols. "
-                  "To sort the rows in your matrix, use e.g. mat = mat._sort_rows(). Falling "
+                  "To sort the rows in your matrix, use e.g. mat = mat._sort_indices(). Falling "
                   "back to the default implementation.", CuSparseEfficiencyWarning)
     return _coo_todense_lowering(ctx, data, row, col, spinfo=spinfo)
 
@@ -460,7 +460,7 @@ def _coo_matvec_gpu_lowering(coo_matvec_hlo, ctx, data, row, col, v, *, spinfo,
     shape = spinfo.shape[::-1]
   else:
     warnings.warn("coo_matvec GPU lowering requires matrices with sorted rows or sorted cols. "
-                  "To sort the rows in your matrix, use e.g. mat = mat._sort_rows(). Falling "
+                  "To sort the rows in your matrix, use e.g. mat = mat._sort_indices(). Falling "
                   "back to the default implementation.", CuSparseEfficiencyWarning)
     return _coo_matvec_lowering(ctx, data, row, col, v, spinfo=spinfo,
                                 transpose=transpose)
@@ -583,7 +583,7 @@ def _coo_matmat_gpu_lowering(coo_matmat_hlo, ctx, data, row, col, B, *, spinfo,
     shape = spinfo.shape[::-1]
   else:
     warnings.warn("coo_matmat GPU lowering requires matrices with sorted rows or sorted cols. "
-                  "To sort the rows in your matrix, use e.g. mat = mat._sort_rows(). Falling "
+                  "To sort the rows in your matrix, use e.g. mat = mat._sort_indices(). Falling "
                   "back to the default implementation.", CuSparseEfficiencyWarning)
     return _coo_matmat_lowering(ctx, data, row, col, B, spinfo=spinfo,
                                 transpose=transpose)
