@@ -16,7 +16,6 @@
 
 from jax._src.pjit import (
   AUTO as AUTO,
-  FROM_GDA as FROM_GDA,
   ParsedPartitionSpec as ParsedPartitionSpec,
   get_array_mapping as get_array_mapping,
   hashable_pytree as hashable_pytree,
@@ -38,6 +37,7 @@ from jax._src.pjit import (_UNSPECIFIED, _prepare_axis_resources,
 from jax._src.pjit import (
   NamedSharding as _deprecated_NamedSharding,
   PartitionSpec as _deprecated_PartitionSpec,
+  FROM_GDA as _deprecated_FROM_GDA,
 )
 
 import typing
@@ -45,21 +45,34 @@ if typing.TYPE_CHECKING:
   from jax._src.pjit import (
     NamedSharding as NamedSharding,
     PartitionSpec as PartitionSpec,
+    FROM_GDA as FROM_GDA,
   )
 del typing
 
 _deprecations = {
-  # Added Feb 13, 2023:
-  "NamedSharding": (
-    ("jax.experimental.pjit.NamedSharding is deprecated. Use "
-     "jax.sharding.NamedSharding."),
-    _deprecated_NamedSharding,
-  ),
-  "PartitionSpec": (
-    ("jax.experimental.pjit.PartitionSpec is deprecated. Use "
-     "jax.sharding.PartitionSpec."),
-     _deprecated_PartitionSpec,
-  ),
+    # Added Feb 13, 2023:
+    "NamedSharding": (
+        (
+            "jax.experimental.pjit.NamedSharding is deprecated. Use "
+            "jax.sharding.NamedSharding."
+        ),
+        _deprecated_NamedSharding,
+    ),
+    "PartitionSpec": (
+        (
+            "jax.experimental.pjit.PartitionSpec is deprecated. Use "
+            "jax.sharding.PartitionSpec."
+        ),
+        _deprecated_PartitionSpec,
+    ),
+    "FROM_GDA": (
+        (
+            "jax.experimental.pjit.FROM_GDA is deprecated. Please pass in"
+            " sharded jax.Arrays as input and remove the in_shardings argument"
+            " to pjit since it is optional."
+        ),
+        _deprecated_FROM_GDA,
+    ),
 }
 
 from jax._src.deprecations import deprecation_getattr as _deprecation_getattr

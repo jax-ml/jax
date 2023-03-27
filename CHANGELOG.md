@@ -35,6 +35,9 @@ Remember to align the itemized text with the first line of an item within a list
     For example, instead of `x.at[i].get(True)`, use `x.at[i].get(indices_are_sorted=True)`
   * `jax.interpreters.xla.device_put` is deprecated. Please use `jax.device_put`.
   * `jax.interpreters.pxla.device_put` is deprecated. Please use `jax.device_put`.
+  * `jax.experimental.pjit.FROM_GDA` is deprecated. Please pass in sharded
+    jax.Arrays as input and remove the `in_shardings` argument to pjit since
+    it is optional.
 
 ## jaxlib 0.4.7
 

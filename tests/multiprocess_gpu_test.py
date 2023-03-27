@@ -420,9 +420,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     }
 
     with jax.sharding.Mesh(global_mesh.devices, global_mesh.axis_names):
-      f = pjit.pjit(
-          lambda x: x, in_shardings=pjit.FROM_GDA, out_shardings=mesh_axes
-      )
+      f = pjit.pjit(lambda x: x, out_shardings=mesh_axes)
       out = f(gda1)
       for s in out.addressable_shards:
         device_id = s.device.id
@@ -471,9 +469,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     }
 
     with global_mesh:
-      f = pjit.pjit(
-          lambda x: x, in_shardings=pjit.FROM_GDA, out_shardings=mesh_axes
-      )
+      f = pjit.pjit(lambda x: x, out_shardings=mesh_axes)
       out = f(gda1)
 
       for s in out.addressable_shards:
