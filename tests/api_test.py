@@ -9648,5 +9648,22 @@ class GarbageCollectionTest(jtu.JaxTestCase):
 
     assert x_np_weakref() is None
 
+class DeprecationsTest(jtu.JaxTestCase):
+  def test_jax_deprecations(self):
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.ShapedArray, jax.core.ShapedArray)
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.ad, jax.interpreters.ad)
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.partial_eval, jax.interpreters.partial_eval)
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.pxla, jax.interpreters.pxla)
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.xla, jax.interpreters.xla)
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.curry, jax._src.util.curry)
+    with self.assertWarns(DeprecationWarning):
+      self.assertIs(jax.flatten_fun_nokwargs, jax.api_util.flatten_fun_nokwargs)
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
