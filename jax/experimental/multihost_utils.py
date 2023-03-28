@@ -76,10 +76,12 @@ def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
   return jax.tree_util.tree_map(post_pmap, in_tree)
 
 
-def sync_global_devices(name: str):
+def sync_global_devices(name: str, fail_message: str = ''):
   """Creates a barrier across all hosts/devices."""
   h = np.uint32(zlib.crc32(name.encode()))
-  assert_equal(h, f"sync_global_devices name mismatch ('{name}')")
+  if not fail_message:
+    fail_message = f"sync_global_devices name mismatch ('{name}')"
+  assert_equal(h, fail_message)
 
 
 # Identity function is at the top level so that `process_allgather` doesn't
