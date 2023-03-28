@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.8
 
+* Changes
+  * The minimum jaxlib version has been bumped from 0.4.6 to 0.4.7.
+
 * Deprecations
   * CUDA 11.4 support has been dropped. JAX GPU wheels only support
     CUDA 11.8 and CUDA 12. Older CUDA versions may work if jaxlib is built

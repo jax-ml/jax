@@ -64,7 +64,6 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
-from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import broadcast_prefix, generate_key_paths
@@ -2605,8 +2604,6 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
-    if xla_extension_version < 139:
-      xs = [xla.canonicalize_dtype(arg) for arg in xs]
     sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
     return pxla.batched_device_put(
         stacked_aval, PmapSharding(np.array(devices), sharding_spec),
@@ -2656,8 +2653,6 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     assert (isinstance(aval, ShapedArray) and
             len(xla.aval_to_xla_shapes(aval)) == 1)
     sharding_spec = pxla._create_pmap_sharding_spec(aval)
-    if xla_extension_version < 139:
-      x = xla.canonicalize_dtype(x)
     buf = jax.device_put(x, devices[0])
     return pxla.batched_device_put(
         aval, PmapSharding(np.array(devices), sharding_spec),

@@ -2631,17 +2631,6 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if harness.group_name in require_stablehlo_feature_support:
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
-      # API version 47 supports CHLO ops that decompose into shape dialect ops
-      if xla_client.mlir_api_version < 47:
-        require_stablehlo_feature_support_shape_dialect = {
-          "vmap_acosh", "vmap_asin", "vmap_asinh", "vmap_atan", "vmap_atanh",
-          "vmap_bessel_i1e", "vmap_cosh", "vmap_digamma", "vmap_erf",
-          "vmap_erfc", "vmap_lgamma", "vmap_nextafter",
-          "vmap_nextafter_broadcasting", "vmap_sinh"
-        }
-        if harness.group_name in require_stablehlo_feature_support_shape_dialect:
-          raise unittest.SkipTest(
-              "native lowering with shape polymorphism requires additional StableHLO feature support")
       if (jtu.device_under_test() == "tpu" and
           harness.fullname in [
               "jnp.cumsum_reduce_axis=poly",
