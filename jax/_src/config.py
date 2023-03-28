@@ -680,19 +680,10 @@ jax2tf_default_native_serialization = config.define_bool_state(
     default=bool_env('JAX2TF_DEFAULT_NATIVE_SERIALIZATION', False),
     help=(
         'Sets the default value of the native_serialization parameter to '
-        'jax2tf.convert. Prefer using the parameter instead of the flag, the '
-        'flag may be removed in the future.'
+        'jax2tf.convert. Prefer using the parameter instead of the flag, '
+        'the flag may be removed in the future.'
     )
 )
-
-# TODO(necula): remove jax2tf_default_experimental_native_lowering
-jax2tf_default_experimental_native_lowering = config.define_bool_state(
-    name='jax2tf_default_experimental_native_lowering',
-    default=bool_env('JAX2TF_DEFAULT_EXPERIMENTAL_NATIVE_LOWERING', False),
-    help=(
-        'DO NOT USE, deprecated in favor of jax2tf_default_native_serialization.')
-)
-
 
 jax_platforms = config.define_string_state(
     name='jax_platforms',

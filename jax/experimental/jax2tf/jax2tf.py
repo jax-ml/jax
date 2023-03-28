@@ -287,7 +287,6 @@ def convert(fun_jax: Callable,
       is set to `False` or to the configuration flag
       `--jax2tf_default_native_serialization` otherwise.
       Native serialization cannot be used with `enable_xla=False`.
-    experimental_native_lowering: DEPRECATED, use `native_serialization.
     native_serialization_platforms: In conjunction with
       `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
@@ -309,22 +308,7 @@ def convert(fun_jax: Callable,
     if not enable_xla:
       native_serialization = False
     else:
-      # TODO(necula): remove the experimental_native_lowering parameter
-      if experimental_native_lowering != "default":
-        warnings.warn(
-            ("experimental_native_lowering is deprecated. Use "
-             "native_serialization instead"),
-            DeprecationWarning)
-        native_serialization = experimental_native_lowering
-      else:
-        if config.jax2tf_default_experimental_native_lowering:
-          warnings.warn(
-              ("jax2tf_default_experimental_native_lowering is "
-              "deprecated. Use jax2tf_default_native_serialization instead"),
-              DeprecationWarning)
-          native_serialization = config.jax2tf_default_experimental_native_lowering
-        else:
-          native_serialization = config.jax2tf_default_native_serialization
+      native_serialization = config.jax2tf_default_native_serialization
 
   if native_serialization and not enable_xla:
     raise ValueError(
