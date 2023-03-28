@@ -341,12 +341,11 @@ class CompilationCacheTest(jtu.JaxTestCase):
         self.assertEqual(f(2), 4)
         if len(w) > 1:
           print("Warnings:", [str(w_) for w_ in w], flush=True)
-        # TODO(yashkatariya): Uncomment this after jax 0.4.7 is released
-        # self.assertLen(w, 1)
+        self.assertLen(w, 1)
         self.assertIn(
             "Error reading persistent compilation cache entry "
             "for 'jit__lambda_': RuntimeError: test error",
-            str(w[-1].message))
+            str(w[0].message))
 
   def test_min_compile_time(self):
     with tempfile.TemporaryDirectory() as tmpdir, \
