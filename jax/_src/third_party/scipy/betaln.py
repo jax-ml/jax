@@ -10,7 +10,7 @@ def algdiv(a, b):
     """
     Compute ``log(gamma(a))/log(gamma(a + b))`` when ``b >= 8``.
 
-    Derived from scipy's implmentation of `algdiv`_.
+    Derived from scipy's implementation of `algdiv`_.
 
     This differs from the scipy implementation in that it assumes a <= b
     because recomputing ``a, b = jnp.minimum(a, b), jnp.maximum(a, b)`` might
