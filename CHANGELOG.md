@@ -81,6 +81,7 @@ Changes:
 * Deprecations
   * `jax.sharding.OpShardingSharding` has been renamed to `jax.sharding.GSPMDSharding`.
     `jax.sharding.OpShardingSharding` will be removed in 3 months from Feb 17, 2023.
+  * `experimental/global_device_array` has been deprecated and removed .
   * The following `jax.Array` methods are deprecated and will be removed 3 months from
     Feb 23 2023:
     * `jax.Array.broadcast`: use {func}`jax.lax.broadcast` instead.
