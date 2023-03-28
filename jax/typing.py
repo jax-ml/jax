@@ -41,7 +41,10 @@ For example, your function might look like this::
     from jax.typing import ArrayLike
 
     def my_function(x: ArrayLike) -> Array:
-      # Runtime type validation:
+      # Runtime type validation, Python 3.10 or newer:
+      if not isinstance(x, ArrayLike):
+        raise TypeError(f"Expected arraylike input; got {x}")
+      # Runtime type validation, any Python version:
       if not (isinstance(x, (np.ndarray, Array)) or np.isscalar(x)):
         raise TypeError(f"Expected arraylike input; got {x}")
 
