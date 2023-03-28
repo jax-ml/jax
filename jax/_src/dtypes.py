@@ -685,3 +685,13 @@ def check_user_dtype_supported(dtype, fun_name=None):
     fun_name = f"requested in {fun_name}" if fun_name else ""
     truncated_dtype = canonicalize_dtype(dtype).name
     warnings.warn(msg.format(dtype, fun_name , truncated_dtype), stacklevel=3)
+
+def check_ndarray_for_int_overflow(x: np.ndarray):
+  dtype = canonicalize_dtype(x.dtype)
+  if np.issubdtype(dtype, np.integer) and (
+      (x < np.iinfo(dtype).min).any() or (x > np.iinfo(dtype).max).any()):
+    raise OverflowError(
+        f"Some values in a NumPy array of dtype {x.dtype} are too large in "
+        f"magnitude to convert to dtype {dtype}. Try setting "
+        "jax_enble_x64=True. See "
+        "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#double-64bit-precision")

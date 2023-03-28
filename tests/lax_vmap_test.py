@@ -389,7 +389,7 @@ class LaxVmapTest(jtu.JaxTestCase):
   )
   def testReduce(self, op, init_val, shape, dtype, dims, bdims):
     rng = jtu.rand_small(self.rng())
-    init_val = np.asarray(init_val, dtype=dtype)
+    init_val = np.asarray(init_val, dtype=dtypes.canonicalize_dtype(dtype))
     fun = lambda operand: lax.reduce(operand, init_val, op, dims)
     self._CheckBatching(fun, 5, bdims, (shape,), (dtype,), rng)
 

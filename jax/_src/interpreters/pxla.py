@@ -432,6 +432,11 @@ def _shard_array(x, devices, indices, sharding):
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
+def _shard_numpy_ndarray(x, devices, indices, sharding):
+  dtypes.check_ndarray_for_int_overflow(x)
+  return _shard_array(x, devices, indices, sharding)
+shard_arg_handlers[np.ndarray] = _shard_numpy_ndarray
+
 def shard_device_array(x, devices, indices, sharding):
   start_indices, limit_indices, removed_dims = unzip3(
       as_slice_indices(x, idx) for idx in indices)

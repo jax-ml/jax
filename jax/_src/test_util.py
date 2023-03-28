@@ -19,10 +19,12 @@ import functools
 from functools import partial
 import math
 import re
+import operator
 import os
 import tempfile
 import textwrap
-from typing import Callable, List, Generator, Optional, Sequence, Tuple, Union
+from typing import (Callable, List, Generator, Optional, Sequence, Tuple, Union,
+                    NamedTuple)
 import unittest
 import warnings
 import zlib
@@ -1016,14 +1018,14 @@ class JaxTestCase(parameterized.TestCase):
                         atol=atol or tol, rtol=rtol or tol,
                         canonicalize_dtypes=canonicalize_dtypes)
 
-_PJIT_IMPLEMENTATION = jax.jit
-_PJIT_IMPLEMENTATION._name = "jit"
-_NOOP_JIT_IMPLEMENTATION = lambda x, *args, **kwargs: x
-_NOOP_JIT_IMPLEMENTATION._name = "noop"
+class JitImplementation(NamedTuple):
+  name: str
+  fun: Callable
+  __call__ = property(operator.attrgetter('fun.__call__'))  # type: ignore
 
 JIT_IMPLEMENTATION = (
-  _PJIT_IMPLEMENTATION,
-  _NOOP_JIT_IMPLEMENTATION,
+    JitImplementation('jit', jax.jit),  # type: ignore
+    JitImplementation('noop', lambda f, *_, **__: f),  # type: ignore
 )
 
 class BufferDonationTestCase(JaxTestCase):

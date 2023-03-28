@@ -169,10 +169,13 @@ def canonicalize_dtype(x):
   raise TypeError(f"No canonicalize_dtype handler for type: {type(x)}")
 
 def _canonicalize_masked_array_dtype(x):
-  raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
-                   "Use arr.filled() to convert the value to a standard numpy array.")
+  raise ValueError("numpy masked arrays are not supported as direct inputs to "
+                   "JAX functions. "
+                   "Use arr.filled() to convert the value to a standard numpy "
+                   "array.")
 
 def _canonicalize_ndarray_dtype(x):
+  dtypes.check_ndarray_for_int_overflow(x)
   return np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
 
 def _canonicalize_python_scalar_dtype(typ, x):

@@ -1941,8 +1941,11 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
   # to be used for type inference below.
   if isinstance(object, (bool, int, float, complex)):
     _ = dtypes.coerce_to_array(object, dtype)
+  if isinstance(object, np.ndarray):
+    dtypes.check_ndarray_for_int_overflow(object)
 
-  object = tree_map(lambda leaf: leaf.__jax_array__() if hasattr(leaf, "__jax_array__") else leaf,
+  object = tree_map(lambda leaf: leaf.__jax_array__()
+                    if hasattr(leaf, "__jax_array__") else leaf,
                     object)
   leaves = tree_leaves(object)
   if dtype is None:

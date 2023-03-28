@@ -231,6 +231,7 @@ def ir_constant(val: Any, canonicalize_types: bool = True) -> ir.Value:
 def _numpy_array_constant(x: np.ndarray, canonicalize_types
                          ) -> Sequence[ir.Value]:
   if canonicalize_types:
+    dtypes.check_ndarray_for_int_overflow(x)  # TODO(mattjj): test coverage
     x = np.asarray(x, dtypes.canonicalize_dtype(x.dtype))
   element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape

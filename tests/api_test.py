@@ -9550,16 +9550,18 @@ class NamedCallTest(jtu.JaxTestCase):
     out = f(5)
     self.assertEqual(out, 5)
 
-  @jtu.sample_product(
-    [dict(func=func, jit=jit)
-      for func in ['identity', 'asarray', 'device_put']
-      for jit in jtu.JIT_IMPLEMENTATION
-      if not (jit._name == "noop" and func == 'identity')
-    ],
-  )
-  def test_integer_overflow(self, jit, func):
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_func={func}_jit={jit.name}", func=func, jit=jit)
+    for func in ['identity', 'identity_trivial', 'closure', 'closure_trivial',
+                 'asarray', 'device_put']
+    for jit in jtu.JIT_IMPLEMENTATION
+    if not (jit.name == "noop" and func in ('identity', 'identity_trivial')))
+  def test_builtin_integer_overflow(self, jit, func):
     funcdict = {
-      'identity': lambda x: x,
+      'identity_trivial': lambda x: x,    # may hit a trivial dispatch path
+      'identity': lambda x: x + 0,  # won't hit trivial dispatch path
+      'closure_trivial': lambda x: jax.jit(lambda: x)(),
+      'closure': lambda x: jax.jit(lambda: x + 0)(),
       'asarray': jnp.asarray,
       'device_put': api.device_put,
     }
@@ -9570,10 +9572,58 @@ class NamedCallTest(jtu.JaxTestCase):
     int_max = np.iinfo(int_dtype).max
     int_min = np.iinfo(int_dtype).min
 
-    self.assertEqual(f(int_max).dtype, int_dtype)
-    self.assertEqual(f(int_min).dtype, int_dtype)
+    # check before any jit cache entries
     self.assertRaises(OverflowError, f, int_max + 1)
     self.assertRaises(OverflowError, f, int_min - 1)
+
+    self.assertEqual(f(int_max).dtype, int_dtype)
+    self.assertEqual(f(int_min).dtype, int_dtype)
+    self.assertAllClose(f(int_max), int_max)
+    self.assertAllClose(f(int_min), int_min)
+
+    # check after any jit cache entries
+    self.assertRaises(OverflowError, f, int_max + 1)
+    self.assertRaises(OverflowError, f, int_min - 1)
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_func={func}_jit={jit.name}", func=func, jit=jit)
+    for func in ['identity', 'identity_trivial', 'closure', 'closure_trivial',
+                 'asarray', 'device_put']
+    for jit in jtu.JIT_IMPLEMENTATION
+    if not (jit.name == "noop" and func in ('identity', 'identity_trivial')))
+  def test_numpy_int64_overflow(self, jit, func):
+    funcdict = {
+      'identity_trivial': lambda x: x,    # may hit a trivial dispatch path
+      'identity': lambda x: x + 0,  # won't hit trivial dispatch path
+      'closure_trivial': lambda x: jax.jit(lambda: x)(),
+      'closure': lambda x: jax.jit(lambda: x + 0)(),
+      'asarray': jnp.asarray,
+      'device_put': api.device_put,
+    }
+
+    f = jit(funcdict[func])
+
+    int_max = np.array([np.iinfo(np.dtype('int32')).max])
+    int_min = np.array([np.iinfo(np.dtype('int32')).min])
+
+    # check before any jit cache entries
+    if config.x64_enabled:
+      self.assertAllClose(f(int_max + 1), int_max + 1)
+      self.assertAllClose(f(int_min - 1), int_min - 1)
+    else:
+      self.assertRaises(OverflowError, f, int_max + 1)
+      self.assertRaises(OverflowError, f, int_min - 1)
+
+    self.assertAllClose(f(int_max), int_max, check_dtypes=not config.x64_enabled)
+    self.assertAllClose(f(int_min), int_min, check_dtypes=not config.x64_enabled)
+
+    # check after any jit cache entries
+    if config.x64_enabled:
+      self.assertAllClose(f(int_max + 1), int_max + 1)
+      self.assertAllClose(f(int_min - 1), int_min - 1)
+    else:
+      self.assertRaises(OverflowError, f, int_max + 1)
+      self.assertRaises(OverflowError, f, int_min - 1)
 
 
 class BackendsTest(jtu.JaxTestCase):
