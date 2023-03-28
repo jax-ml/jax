@@ -63,7 +63,7 @@ from jax._src.lax.utils import (
 )
 from jax._src.lib import pytree
 from jax._src import xla_bridge
-from jax._src.lib import xla_client, xla_extension_version
+from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -4209,14 +4209,8 @@ def _rng_bit_generator_lowering(
           (key_shape == [2] and key_etype == u64_type)), (key_shape, key_etype)
   dtype = np.dtype(dtype)
   etype = mlir.dtype_to_ir_type(dtype)
-  if (
-      dtype == np.dtype('uint32')
-      or dtype == np.dtype('uint64')
-      or (
-          xla_extension_version >= 140
-          and (dtype == np.dtype('uint16') or dtype == np.dtype('uint8'))
-      )
-  ):
+  if dtype in (np.dtype('uint8'), np.dtype('uint16'), np.dtype('uint32'),
+               np.dtype('uint64')):
     rbg_etype = etype
   else:
     rbg_etype = u32_type

@@ -17,7 +17,6 @@ from jax._src import device_array
 from jax._src import array
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 
 
 SUPPORTED_DTYPES = frozenset({
@@ -40,24 +39,12 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
       undefined behavior if the DLPack consumer writes to a buffer that JAX
       owns.
   """
-  if xla_extension_version >= 140:
-    if not isinstance(x, array.ArrayImpl):
-      raise TypeError("Argument to to_dlpack must be a jax.Array, "
-                      f"got {type(x)}")
-    assert len(x.devices()) == 1
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        x.addressable_data(0), take_ownership=take_ownership)  # type: ignore
-  else:
-    if not isinstance(x, (device_array.DeviceArray, array.ArrayImpl)):
-      raise TypeError("Argument to to_dlpack must be a DeviceArray or Array, "
-                      f"got {type(x)}")
-    if isinstance(x, array.ArrayImpl):
-      assert len(x._arrays) == 1
-      buf = x._arrays[0]
-    else:
-      buf = x.device_buffer
-    return xla_client._xla.buffer_to_dlpack_managed_tensor(
-        buf, take_ownership=take_ownership)
+  if not isinstance(x, array.ArrayImpl):
+    raise TypeError("Argument to to_dlpack must be a jax.Array, "
+                    f"got {type(x)}")
+  assert len(x.devices()) == 1
+  return xla_client._xla.buffer_to_dlpack_managed_tensor(
+      x.addressable_data(0), take_ownership=take_ownership)  # type: ignore
 
 def from_dlpack(dlpack):
   """Returns a ``DeviceArray`` representation of a DLPack tensor.
@@ -80,14 +67,5 @@ def from_dlpack(dlpack):
     except RuntimeError:
       gpu_backend = None
 
-  if xla_extension_version >= 140:
-    return jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-        dlpack, cpu_backend, gpu_backend))
-  else:
-    buf = xla_client._xla.dlpack_managed_tensor_to_buffer(
-        dlpack, cpu_backend, gpu_backend)
-    if isinstance(buf, array.ArrayImpl):
-      return jnp.asarray(buf)  # asarray ensures dtype canonicalization
-    else:
-      return jnp.asarray(array._single_device_array_from_buf(
-          buf, committed=buf.device() is not None))
+  return jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
+      dlpack, cpu_backend, gpu_backend))

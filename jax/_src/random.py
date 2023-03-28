@@ -32,7 +32,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension_version
 from jax._src.api import jit, vmap
 from jax._src.core import NamedShape
 from jax._src.interpreters import ad
@@ -286,7 +285,7 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
     raise TypeError("uniform only accepts 32- or 64-bit dtypes.")
 
   rng_bits = nbits
-  if xla_extension_version >= 140 and nmant < 8:
+  if nmant < 8:
     rng_bits = 8
   bits = _random_bits(key, rng_bits, shape)
   uint_dtype = UINT_DTYPES[nbits]

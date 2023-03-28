@@ -25,7 +25,6 @@ from jax._src import lib
 from jax._src.lib import jax_jit
 from jax._src.lib import transfer_guard_lib
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -758,8 +757,6 @@ def _update_jax_array_global(val):
         'jax.config.jax_array cannot be disabled after jax 0.4.7 release.'
         ' Please downgrade to jax and jaxlib 0.4.6 if you want to disable'
         ' jax.config.jax_array.')
-  if xla_extension_version < 141:
-    lib.jax_jit.global_state().jax_array = val
 
 def _update_jax_array_thread_local(val):
   if val is not None and not val:
@@ -767,8 +764,6 @@ def _update_jax_array_thread_local(val):
         'jax.config.jax_array cannot be disabled after jax 0.4.7 release.'
         ' Please downgrade to jax and jaxlib 0.4.6 if you want to disable'
         ' jax.config.jax_array.')
-  if xla_extension_version < 141:
-    lib.jax_jit.thread_local_state().jax_array = val
 
 jax_array = config.define_bool_state(
     name='jax_array',

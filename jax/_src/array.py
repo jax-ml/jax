@@ -32,7 +32,6 @@ from jax._src import profiler
 from jax._src.config import config
 from jax._src.util import use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src import api
 from jax._src.typing import ArrayLike
 from jax.interpreters import mlir
@@ -341,14 +340,7 @@ class ArrayImpl(basearray.Array):
           return _single_device_array_from_buf(arr, committed=False)
       return lax_numpy._rewriting_take(self, idx)
     else:
-      if xla_extension_version >= 144:
-        return lax_numpy._rewriting_take(self, idx)
-      else:
-        if (dispatch.is_single_device_sharding(self.sharding) or
-            self.is_fully_replicated or _is_reduced_on_dim(idx)):
-          return lax_numpy._rewriting_take(self, idx)
-        else:
-          return api.device_put(self._value[idx])
+      return lax_numpy._rewriting_take(self, idx)
 
   def __iter__(self):
     if self.ndim == 0:
@@ -404,7 +396,7 @@ class ArrayImpl(basearray.Array):
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
-  @use_cpp_method(xla_extension_version >= 138)
+  @use_cpp_method()
   def unsafe_buffer_pointer(self):
     if len(self._arrays) != 1:
       raise ValueError("unsafe_buffer_pointer() is supported only for unsharded"
@@ -412,14 +404,14 @@ class ArrayImpl(basearray.Array):
     return self._arrays[0].unsafe_buffer_pointer()
 
   @property
-  @use_cpp_method(xla_extension_version >= 138)
+  @use_cpp_method()
   def __cuda_array_interface__(self):
     if len(self._arrays) != 1:
       raise ValueError("__cuda_array_interface__() is supported only for "
                        "unsharded arrays.")
     return self._arrays[0].__cuda_array_interface__  # pytype: disable=attribute-error  # bind-properties
 
-  @use_cpp_method(xla_extension_version >= 138)
+  @use_cpp_method()
   def on_device_size_in_bytes(self):
     """Returns the total global on-device size of the array in bytes."""
     arr = self._arrays[0]
@@ -495,7 +487,7 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(global_d, self.sharding, self.shape, array))
     return out
 
-  @use_cpp_method(xla_extension_version >= 138)
+  @use_cpp_method()
   def delete(self):
     if self._arrays is None:
       return
@@ -524,11 +516,11 @@ class ArrayImpl(basearray.Array):
       db.block_until_ready()
     return self
 
-  @use_cpp_method(xla_extension_version >= 138)
+  @use_cpp_method()
   def _single_device_array_to_np_array(self):
     return np.asarray(self._arrays[0])
 
-  @use_cpp_method(xla_extension_version >= 138)
+  @use_cpp_method()
   def _copy_single_device_array_to_host_async(self):
     self._arrays[0].copy_to_host_async()
 
@@ -541,10 +533,7 @@ class ArrayImpl(basearray.Array):
         return
       copy_plan = _create_copy_plan(self._arrays, self.sharding, self.shape)
       for _, arr in copy_plan:
-        if xla_extension_version >= 140:
-          arr._copy_single_device_array_to_host_async()
-        else:
-          arr.copy_to_host_async()
+        arr._copy_single_device_array_to_host_async()
 
   @property
   @functools.partial(profiler.annotate_function, name="np.asarray(jax.Array)")
@@ -568,17 +557,11 @@ class ArrayImpl(basearray.Array):
 
       copy_plan = _create_copy_plan(self._arrays, self.sharding, self.shape)
       for _, arr in copy_plan:
-        if xla_extension_version >= 140:
-          arr._copy_single_device_array_to_host_async()
-        else:
-          arr.copy_to_host_async()
+        arr._copy_single_device_array_to_host_async()
 
       npy_value = np.empty(self.shape, self.dtype)
       for ind, arr in copy_plan:
-        if xla_extension_version >= 140:
-          npy_value[ind] = arr._single_device_array_to_np_array()
-        else:
-          npy_value[ind] = np.asarray(arr)
+        npy_value[ind] = arr._single_device_array_to_np_array()
       self._npy_value = npy_value  # type: ignore
       self._npy_value.flags.writeable = False
     # https://docs.python.org/3/library/typing.html#typing.cast

@@ -129,15 +129,11 @@ def serialize_native(fun_jax: Callable,
     assert len(module_kept_var_idx) == len(args_avals)
     mlir_module = compute_dim_vars(mlir_module, args_avals)
 
-  if xla_client.mlir_api_version >= 46:
-    xla_call_module_version = 4
-    mlir_str = mlir.module_to_bytecode(mlir_module)
-    target_version = stablehlo.get_earliest_forward_compatible_version()
-    mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
-        mlir_str, target_version)
-  else:
-    xla_call_module_version = 3
-    mlir_module_serialized = mlir.module_to_bytecode(mlir_module)
+  xla_call_module_version = 4
+  mlir_str = mlir.module_to_bytecode(mlir_module)
+  target_version = stablehlo.get_earliest_forward_compatible_version()
+  mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+      mlir_str, target_version)
 
   # Figure out the result types and shapes
   if "global_out_avals" in lowered.compile_args:

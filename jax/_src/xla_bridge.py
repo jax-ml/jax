@@ -319,15 +319,7 @@ def register_pjrt_plugin_factories(plugins_from_env: str) -> None:
         options = None
 
       xla_client.load_pjrt_plugin_dynamically(name, library_path)
-      if lib.xla_extension_version >= 134:
-        return xla_client.make_c_api_client(name, options)
-      else:
-        if options:
-          raise ValueError(
-              'Setting PJRT plugin options through json file requires'
-              ' jaxlib.xla_extension_version >= 134.'
-          )
-        return xla_client.make_c_api_client(name)
+      return xla_client.make_c_api_client(name, options)
 
     return factory
 
