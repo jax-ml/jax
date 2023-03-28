@@ -67,3 +67,6 @@ def cloud_tpu_init() -> None:
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
   os.environ.setdefault('JAX_PLATFORMS', 'tpu,cpu')
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
+
+  if 'JAX_USE_PJRT_C_API_ON_TPU' not in os.environ:
+    os.environ['JAX_USE_PJRT_C_API_ON_TPU'] = 'true'

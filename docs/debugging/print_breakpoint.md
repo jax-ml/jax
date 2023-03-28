@@ -17,7 +17,7 @@ def f(x):
   y = jnp.sin(x)
   jax.debug.print("🤯 {y} 🤯", y=y)
   return y
-  
+
 f(2.)
 # Prints:
 # 🤯 2.0 🤯
@@ -225,8 +225,7 @@ Furthermore, when using `jax.debug.print` with `jax.pjit`, a global synchronizat
 #### Limitations
 * Adding print statements is a manual process
 * Can have performance impacts
-* Unsupported on Cloud TPUs
-  
+
 ## Interactive inspection with `jax.debug.breakpoint()`
 
 **TL;DR** Use `jax.debug.breakpoint()` to pause the execution of your JAX program to inspect values:
@@ -296,4 +295,3 @@ Because `jax.debug.breakpoint` is a just an application of `jax.debug.callback`,
 #### Limitations
 * Need to potentially use many breakpoints to pinpoint the source of an error
 * Materializes many intermediates
-* Unsupported on Cloud TPUs

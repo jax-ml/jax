@@ -8,6 +8,25 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.8
 
+* Breaking changes
+  * A major component of the Cloud TPU runtime has been upgraded. This enables
+    the following new features on Cloud TPU:
+    * {func}`jax.debug.print`, {func}`jax.debug.callback`, and
+      {func}`jax.debug.breakpoint()` now work on Cloud TPU
+    * Automatic TPU memory defragmentation
+
+    {func}`jax.experimental.host_callback` is no longer supported on Cloud TPU
+    with the new runtime component. Please file an issue on the [JAX issue
+    tracker](https://github.com/google/jax/issues) if the new `jax.debug` APIs
+    are insufficient for your use case.
+
+    The old runtime component will be available for at least the next three
+    months by setting the environment variable
+    `JAX_USE_PJRT_C_API_ON_TPU=false`. If you find you need to disable the new
+    runtime for any reason, please let us know on the [JAX issue
+    tracker](https://github.com/google/jax/issues).
+
+
 * Changes
   * The minimum jaxlib version has been bumped from 0.4.6 to 0.4.7.
 
