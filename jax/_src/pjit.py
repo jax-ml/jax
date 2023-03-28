@@ -39,7 +39,6 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
-from jax._src import array
 from jax._src import dispatch
 from jax._src import mesh
 from jax._src import linear_util as lu
@@ -71,15 +70,6 @@ zip, unsafe_zip = safe_zip, zip
 
 traceback_util.register_exclusion(__file__)
 
-class _FromGdaSingleton:
-  pass
-FROM_GDA = _FromGdaSingleton()
-
-def _is_from_gda(x):
-  # It's occasionally possible to end up with two FROM_GDA singletons (e.g. if
-  # pickling in_axis_resources and sending to other processes). Make sure this
-  # doesn't cause an error to avoid user confusion.
-  return isinstance(x, type(FROM_GDA))
 
 _AUTOAxisResource = pxla.AUTOAxisResource
 AUTO = pxla.AUTO
@@ -89,8 +79,8 @@ _UnspecifiedValue = pxla.UnspecifiedValue
 _UNSPECIFIED = pxla._UNSPECIFIED
 _is_unspecified = pxla._is_unspecified
 
-def _is_unspecified_or_from_gda_or_auto(x):
-  return _is_from_gda(x) or is_auto(x) or _is_unspecified(x)
+def _is_unspecified_or_auto(x):
+  return is_auto(x) or _is_unspecified(x)
 
 
 PjitSharding = Union[GSPMDSharding, _UnspecifiedValue, _AUTOAxisResource]
@@ -480,7 +470,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   if config.jax_dynamic_shapes:
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
-    in_avals = tuple([a for a, e in in_type if e])
+    in_avals = tuple(a for a, e in in_type if e)
   else:
     in_type = in_avals = tuple(shaped_abstractify(a) for a in explicit_args)
 
@@ -492,9 +482,6 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       HashableFunction(out_tree, closure=()),
       HashableFunction(res_paths, closure=()))
 
-  if any(_is_from_gda(i) for i in canonicalized_in_shardings_flat):
-    canonicalized_in_shardings_flat = _maybe_replace_from_gda_with_pspec(
-        canonicalized_in_shardings_flat, explicit_args)
   assert len(explicit_args) == len(canonicalized_in_shardings_flat)
 
   if config.jax_dynamic_shapes:
@@ -757,15 +744,13 @@ def hashable_pytree(pytree):
 
 @lru_cache(maxsize=4096)
 def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
-  if _is_unspecified_or_from_gda_or_auto(x):
+  if _is_unspecified_or_auto(x):
     return x
   return pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x)
 
 
 def _create_sharding_for_array(mesh, x):
-  # TODO(yashkatariya): Only check for auto and unspecified here after
-  # FROM_GDA is removed.
-  if isinstance(x, XLACompatibleSharding) or _is_unspecified_or_from_gda_or_auto(x):
+  if isinstance(x, XLACompatibleSharding) or _is_unspecified_or_auto(x):
     return x
   if mesh is None:
     raise RuntimeError(
@@ -855,26 +840,24 @@ class PytreeLeaf:
 
 
 @lru_cache(maxsize=4096)
-def _process_in_axis_resources(in_shardings_thunk, in_type,
-                               in_tree, resource_env):
+def _process_in_axis_resources(in_shardings_thunk, in_avals, in_tree,
+                               resource_env):
   orig_in_shardings = in_shardings_thunk()
-  # Only do this if original in_shardings are unspecified. If they are
-  # FROM_GDA or AUTO, go via flatten_axis_resources.
+  # Only do this if original in_shardings are unspecified. If it is AUTO, go
+  # via flatten_axis_resources.
   if _is_unspecified(orig_in_shardings):
-    in_shardings_flat = (orig_in_shardings,) * len(in_type)
+    in_shardings_flat = (orig_in_shardings,) * len(in_avals)
   else:
     in_shardings_flat = flatten_axis_resources(
           "pjit in_shardings", in_tree, orig_in_shardings,
           tupled_args=True)
 
   if not config.jax_dynamic_shapes:
-    pjit_check_aval_sharding(in_shardings_flat, in_type,
+    pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              "pjit arguments", allow_uneven_sharding=False)
-  # TODO(yashkatariya): Only check for is_auto or _is_unspecified when
-  # FROM_GDA is removed.
   canonicalized_shardings = tuple(
-      i if _is_unspecified_or_from_gda_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
-      for i, aval in zip(in_shardings_flat, in_type))
+      i if _is_unspecified_or_auto(i) else to_gspmd_sharding(i, aval.ndim)
+      for i, aval in zip(in_shardings_flat, in_avals))
   return canonicalized_shardings
 
 
@@ -943,7 +926,7 @@ def _pjit_jaxpr(fun, out_shardings_thunk, in_type, debug_info, out_tree,
 def pjit_check_aval_sharding(
     shardings, flat_avals, what_aval: str, allow_uneven_sharding: bool):
   for aval, s in zip(flat_avals, shardings):
-    if _is_unspecified_or_from_gda_or_auto(s):
+    if _is_unspecified_or_auto(s):
       continue
     global_str = "" if s.is_fully_addressable else " global"
     shape = aval.shape
@@ -1104,7 +1087,7 @@ def _prepare_axis_resources(axis_resources,
 
   new_entries = []
   for entry in entries:
-    if _is_unspecified_or_from_gda_or_auto(entry):
+    if _is_unspecified_or_auto(entry):
       new_entries.append(entry)
     elif isinstance(entry, Sharding):
       if isinstance(entry, PmapSharding):
@@ -1125,7 +1108,7 @@ def _prepare_axis_resources(axis_resources,
 def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
-    if (_is_unspecified_or_from_gda_or_auto(arg_axis_resources) or
+    if (_is_unspecified_or_auto(arg_axis_resources) or
         isinstance(arg_axis_resources, XLACompatibleSharding)):
       continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
@@ -2058,34 +2041,6 @@ def _fast_path_get_device_assignment(
     da = i._device_assignment  # type: ignore
     break
   return da
-
-
-def _maybe_replace_from_gda_with_pspec(
-    in_shardings_flat, args_flat) -> Sequence[XLACompatibleSharding]:
-
-  @lru_cache()
-  def _gda_check_and_get_sharding(
-      gda_sharding: NamedSharding, in_sharding: GSPMDSharding, ndim: int):
-    if not _is_from_gda(in_sharding) and not pxla.are_op_shardings_equal(
-        gda_sharding._to_xla_op_sharding(ndim),
-        in_sharding._to_xla_op_sharding(ndim)):
-      raise ValueError(
-          f"Got an input GDA to pjit with different partitioning than specified in "
-          "the in_axis_resources argument to pjit. The partitioning must match, or "
-          "use `jax.experimental.pjit.FROM_GDA` in `in_axis_resources` for GDA. "
-          f"Got GDA sharding: {gda_sharding} and "
-          f"pjit sharding: {in_sharding._original_sharding}")  # type: ignore
-    return to_gspmd_sharding(gda_sharding, ndim)
-
-  out = []
-  for in_sharding_flat, arg in zip(in_shardings_flat, args_flat):
-    if is_auto(in_sharding_flat):
-      out.append(in_sharding_flat)
-    elif isinstance(arg, array.ArrayImpl):
-      out.append(to_gspmd_sharding(arg.sharding, arg.ndim))
-    else:
-      out.append(in_sharding_flat)
-  return tuple(out)
 
 
 # -------------------- XLA OpSharding to PartitionSpec --------------------

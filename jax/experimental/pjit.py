@@ -37,7 +37,6 @@ from jax._src.pjit import (_UNSPECIFIED, _prepare_axis_resources,
 from jax._src.pjit import (
   NamedSharding as _deprecated_NamedSharding,
   PartitionSpec as _deprecated_PartitionSpec,
-  FROM_GDA as _deprecated_FROM_GDA,
 )
 
 import typing
@@ -45,7 +44,6 @@ if typing.TYPE_CHECKING:
   from jax._src.pjit import (
     NamedSharding as NamedSharding,
     PartitionSpec as PartitionSpec,
-    FROM_GDA as FROM_GDA,
   )
 del typing
 
@@ -67,11 +65,11 @@ _deprecations = {
     ),
     "FROM_GDA": (
         (
-            "jax.experimental.pjit.FROM_GDA is deprecated. Please pass in"
+            "jax.experimental.pjit.FROM_GDA has been removed. Please pass in"
             " sharded jax.Arrays as input and remove the in_shardings argument"
-            " to pjit since it is optional."
+            " to pjit since pjit will infer the shardings from jax.Array."
         ),
-        _deprecated_FROM_GDA,
+        None,
     ),
 }
 
