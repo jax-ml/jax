@@ -305,10 +305,6 @@ class NamedSharding(XLACompatibleSharding):
     return sharding_spec.sharding_proto(special_axes=special_axes)
 
 
-# TODO(yashkatariya); Remove this after 3 months per the deprecation policy.
-MeshPspecSharding = NamedSharding
-
-
 @functools.lru_cache()
 def get_replicated_op_sharding():
   proto = xc.OpSharding()

@@ -18,9 +18,6 @@
 from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
     XLACompatibleSharding as XLACompatibleSharding,
-    # TODO(yashkatariya): Remove MeshPspecSharding in 3 months.
-    MeshPspecSharding as MeshPspecSharding,
-    # New name of MeshPspecSharding to match PositionalSharding below.
     NamedSharding as NamedSharding,
     PartitionSpec as PartitionSpec,
     SingleDeviceSharding as SingleDeviceSharding,
@@ -28,8 +25,35 @@ from jax._src.sharding_impls import (
     GSPMDSharding as GSPMDSharding,
     # TODO(yashkatariya): Remove OpShardingSharding in 3 months from
     # Feb 17, 2023.
-    GSPMDSharding as OpShardingSharding,
+    GSPMDSharding as _deprecated_OpShardingSharding,
     PositionalSharding as PositionalSharding,
 )
 
 from jax._src.interpreters.pxla import Mesh as Mesh
+
+
+_deprecations = {
+    "OpShardingSharding": (
+        (
+            "jax.sharding.OpShardingSharding is deprecated. Please use"
+            " jax.sharding.GSPMDSharding."
+        ),
+        _deprecated_OpShardingSharding,
+    ),
+    "MeshPspecSharding": (
+        (
+            "jax.sharding.MeshPspecSharding has been removed. Please use"
+            " jax.sharding.NamedSharding."
+        ),
+        None,
+    ),
+}
+
+import typing
+if typing.TYPE_CHECKING:
+  from jax._src.sharding_impls import GSPMDSharding as OpShardingSharding
+else:
+  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  del _deprecation_getattr
+del typing
