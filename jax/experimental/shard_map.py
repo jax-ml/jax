@@ -258,7 +258,7 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
          + '\n\n'.join(msgs) + '\n\n' +
          "Check if these output values are meant to be replicated over those "
          "mesh axes. If not, consider revising the corresponding out_specs "
-         "entries. If so, consider ddisabling the check by passing the "
+         "entries. If so, consider disabling the check by passing the "
          "check_rep=False argument to shard_map.")
   return msg
 
