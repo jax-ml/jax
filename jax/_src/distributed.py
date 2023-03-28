@@ -30,6 +30,7 @@ class State:
   service: Optional[Any] = None
   client: Optional[Any] = None
   preemption_sync_manager: Optional[Any] = None
+  coordinator_address: Optional[str] = None
 
   def initialize(self,
                  coordinator_address: Optional[str] = None,
@@ -53,6 +54,8 @@ class State:
       raise ValueError('Number of processes must be defined.')
     if process_id is None:
       raise ValueError('The process id of the current process must be defined.')
+
+    self.coordinator_address = coordinator_address
 
     if local_device_ids:
       visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]

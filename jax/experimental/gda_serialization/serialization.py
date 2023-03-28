@@ -142,7 +142,9 @@ class _LimitInFlightBytes:
       self._cv.notify_all()
 
 
-async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
+async def async_serialize(
+    arr_inp, tensorstore_spec, commit_future=None, context=TS_CONTEXT
+):
   if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
       arr_inp.is_fully_addressable):
     raise ValueError('Passing fully addressable Arrays to a multiprocess '
@@ -154,7 +156,11 @@ async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
 
   if jax.process_index() == 0:
     open_future = ts.open(
-        ts.Spec(tensorstore_spec), create=True, open=True, context=TS_CONTEXT)
+        ts.Spec(tensorstore_spec),
+        create=True,
+        open=True,
+        context=context,
+    )
     # Asynchronous case.
     if commit_future is not None:
       assert isinstance(commit_future, list)
@@ -168,7 +174,11 @@ async def async_serialize(arr_inp, tensorstore_spec, commit_future=None):
   # tensorstore object.
   # For every process other than `0`, we open with `assume_metadata=True`.
   t = await ts.open(
-      ts.Spec(tensorstore_spec), open=True, assume_metadata=True, context=TS_CONTEXT)
+      ts.Spec(tensorstore_spec),
+      open=True,
+      assume_metadata=True,
+      context=context,
+  )
 
   async def _write_array(shard):
     if shard.replica_id == 0:
@@ -225,10 +235,15 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
   return num_bytes
 
 
-async def async_deserialize(in_sharding, tensorstore_spec,
-                            global_shape=None, dtype=None,
-                            byte_limiter: Optional[_LimitInFlightBytes] = None):
-  t = await ts.open(ts.Spec(tensorstore_spec), open=True, context=TS_CONTEXT)
+async def async_deserialize(
+    in_sharding,
+    tensorstore_spec,
+    global_shape=None,
+    dtype=None,
+    byte_limiter: Optional[_LimitInFlightBytes] = None,
+    context=TS_CONTEXT,
+):
+  t = await ts.open(ts.Spec(tensorstore_spec), open=True, context=context)
   shape = t.shape if global_shape is None else global_shape
   new_shard_shape = in_sharding.shard_shape(tuple(shape))
 
