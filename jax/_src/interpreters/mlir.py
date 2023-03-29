@@ -34,7 +34,6 @@ from jax._src import linear_util as lu
 from jax.config import config
 from jax._src import ad_util
 from jax._src import core
-from jax._src import device_array
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import source_info_util
@@ -306,12 +305,6 @@ def _python_scalar_handler(dtype, val, canonicalize_dtypes):
 
 for ptype, dtype in dtypes.python_scalar_dtypes.items():
   register_constant_handler(ptype, partial(_python_scalar_handler, dtype))
-
-def _device_array_constant_handler(val, canonicalize_types):
-  return _ndarray_constant_handler(np.asarray(val.device_buffer),
-                                   canonicalize_types)
-for t in device_array.device_array_types:
-  register_constant_handler(t, _device_array_constant_handler)
 
 def _token_constant_handler(val, canonicalize_types):
   return [hlo.CreateTokenOp().result]

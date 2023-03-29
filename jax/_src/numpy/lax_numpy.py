@@ -47,7 +47,6 @@ from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 from jax._src import api_util
 from jax._src import core
-from jax._src import device_array
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.core import ShapedArray, ConcreteArray
@@ -1961,7 +1960,7 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
 
   # We can't use the ndarray class because we need to handle internal buffers
   # (See https://github.com/google/jax/issues/8950)
-  ndarray_types = (device_array.DeviceArray, core.Tracer, ArrayImpl)
+  ndarray_types = (core.Tracer, ArrayImpl)
 
   out: ArrayLike
 

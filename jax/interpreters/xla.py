@@ -14,6 +14,7 @@
 
 from jax._src.interpreters.xla import (
   AxisEnv as AxisEnv,
+  DeviceArray as _deprecated_DeviceArray,
   TranslationContext as TranslationContext,
   TranslationRule as TranslationRule,
   abstractify as abstractify,
@@ -56,12 +57,6 @@ Backend = xe.Client
 Buffer = xc.Buffer
 _CppDeviceArray = xe.Buffer
 
-from jax._src.device_array import (
-  make_device_array as make_device_array,
-  _DeviceArray as _DeviceArray,
-  DeviceArray as _deprecated_DeviceArray,
-)
-
 _deprecations = {
     # Added Feb 9, 2023:
     "Device": (
@@ -98,11 +93,9 @@ del _deprecation_getattr
 import typing
 if typing.TYPE_CHECKING:
   Device = xc.Device
-  from jax._src.device_array import (
-    DeviceArray as DeviceArray,
-  )
   from jax._src.interpreters.xla import (
-      device_put as device_put,
+    DeviceArray as DeviceArray,
+    device_put as device_put,
   )
   from jax._src.interpreters.xla import xla_call_p as xla_call_p
 del typing

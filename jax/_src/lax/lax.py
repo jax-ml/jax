@@ -34,7 +34,6 @@ from jax._src import api
 from jax._src import api_util
 from jax._src import array
 from jax._src import core
-from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -1473,11 +1472,8 @@ def zeros_like_array(x: ArrayLike) -> Array:
   return full_like(x, 0)
 
 for t in itertools.chain(
-    dtypes.python_scalar_dtypes.keys(), array_types,
-    device_array.device_array_types, [array.ArrayImpl]):
+    dtypes.python_scalar_dtypes.keys(), array_types, [array.ArrayImpl]):
   ad_util.jaxval_adders[t] = add
-ad_util.jaxval_zeros_likers[device_array._DeviceArray] = zeros_like_array
-ad_util.jaxval_zeros_likers[device_array.Buffer] = zeros_like_array
 ad_util.jaxval_zeros_likers[array.ArrayImpl] = zeros_like_array
 
 

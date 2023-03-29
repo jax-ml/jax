@@ -31,7 +31,6 @@ import jax
 from jax import lax
 from jax._src import core
 from jax._src import dtypes
-from jax._src import device_array
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.lax import lax as lax_internal
@@ -277,7 +276,7 @@ def _deepcopy(self: Array, memo: Any) -> Array:
 
 # Experimental support for NumPy's module dispatch with NEP-37.
 # Currently requires https://github.com/seberg/numpy-dispatch
-_JAX_ARRAY_TYPES = (device_array.DeviceArray, core.Tracer, ArrayImpl)
+_JAX_ARRAY_TYPES = (core.Tracer, ArrayImpl)
 _HANDLED_ARRAY_TYPES = _JAX_ARRAY_TYPES + (np.ndarray,)
 
 def __array_module__(self, types):
@@ -807,11 +806,7 @@ def register_jax_array_methods():
   _set_shaped_array_attributes(core.ShapedArray)
   _set_shaped_array_attributes(core.DShapedArray)
 
-  _set_device_array_base_attributes(device_array.DeviceArray)
   _set_device_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
-
-  for t in device_array.device_array_types:
-    _set_device_array_attributes(t)
-    _set_device_array_attributes(ArrayImpl)
+  _set_device_array_attributes(ArrayImpl)
 
   Array.at.__doc__ = _IndexUpdateHelper.__doc__

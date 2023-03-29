@@ -61,7 +61,6 @@ from jax._src import array
 from jax.experimental import pjit
 from jax._src import custom_derivatives
 from jax import custom_derivatives as custom_derivatives_public
-from jax._src import device_array
 from jax._src import prng
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
@@ -1480,11 +1479,7 @@ class APITest(jtu.JaxTestCase):
                      "Transpose rule (for reverse-mode differentiation) for 'foo' not implemented")
 
   def test_is_subclass(self):
-    self.assertTrue(issubclass(device_array.DeviceArray, jax.Array))
-    self.assertTrue(issubclass(device_array.Buffer, jax.Array))
     self.assertFalse(issubclass(np.ndarray, jax.Array))
-    self.assertFalse(issubclass(device_array.DeviceArray, np.ndarray))
-    self.assertFalse(issubclass(device_array.Buffer, np.ndarray))
 
   def test_is_instance(self):
     def f(x):

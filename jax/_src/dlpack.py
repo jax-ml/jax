@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from jax import numpy as jnp
-from jax._src import device_array
 from jax._src import array
+from jax._src.typing import Array
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 
@@ -25,7 +25,7 @@ SUPPORTED_DTYPES = frozenset({
     jnp.float64, jnp.complex64, jnp.complex128})
 
 
-def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False):
+def to_dlpack(x: Array, take_ownership: bool = False):
   """Returns a DLPack tensor that encapsulates a ``DeviceArray`` `x`.
 
   Takes ownership of the contents of ``x``; leaves `x` in an invalid/deleted
@@ -45,6 +45,7 @@ def to_dlpack(x: device_array.DeviceArrayProtocol, take_ownership: bool = False)
   assert len(x.devices()) == 1
   return xla_client._xla.buffer_to_dlpack_managed_tensor(
       x.addressable_data(0), take_ownership=take_ownership)  # type: ignore
+
 
 def from_dlpack(dlpack):
   """Returns a ``DeviceArray`` representation of a DLPack tensor.

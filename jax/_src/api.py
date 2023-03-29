@@ -43,7 +43,6 @@ from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            Partial, PyTreeDef, all_leaves, keystr)
 from jax._src import callback as jcb
 from jax._src import core
-from jax._src import device_array
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import array
@@ -1876,9 +1875,7 @@ def _cpp_pmap(
         not execute_replicated.has_unordered_effects
         and not execute_replicated.has_host_callbacks and
         # No tracers in the outputs.
-        all(
-            isinstance(x, device_array.DeviceArray) or isinstance(x, xc.ArrayImpl)
-            for x in out_flat))
+        all(isinstance(x, xc.ArrayImpl) for x in out_flat))
 
     ### If we can use the fastpath, we return required info to the caller.
     if use_fastpath:

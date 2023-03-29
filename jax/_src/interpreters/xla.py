@@ -23,14 +23,13 @@ import math
 import operator
 import re
 from typing import (Any, Callable, Dict, NamedTuple, Optional, Protocol,
-                    Sequence, Set, Type, Tuple, Union)
+                    Sequence, Set, Type, Tuple, Union, TYPE_CHECKING)
 
 import numpy as np
 
 from jax.config import config
 
 from jax._src import core
-from jax._src import device_array
 from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
@@ -180,8 +179,6 @@ def _canonicalize_python_scalar_dtype(typ, x):
       x, dtypes.canonicalize_dtype(dtypes._scalar_type_to_dtype(typ, x)))
 
 canonicalize_dtype_handlers: Dict[Any, Callable] = {}
-for t in device_array.device_array_types:
-  canonicalize_dtype_handlers[t] = identity
 canonicalize_dtype_handlers.update(
     (t, _canonicalize_ndarray_dtype) for t in numpy_scalar_types)
 canonicalize_dtype_handlers[np.ndarray] = _canonicalize_ndarray_dtype
@@ -220,8 +217,6 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
 
 
 pytype_aval_mappings: Dict[Any, Callable[[Any], core.AbstractValue]] = {}
-for t in device_array.device_array_types:
-  pytype_aval_mappings[t] = operator.attrgetter('aval')
 pytype_aval_mappings[core.DArray] = operator.attrgetter('_aval')
 pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
 pytype_aval_mappings.update((t, _make_shaped_array_for_numpy_scalar)
@@ -465,3 +460,12 @@ backend_specific_translations = _BackendSpecificTranslationsAdapter()
 def device_put(x, device=None):
   from jax._src import api
   return api.device_put(x, device)
+
+
+if TYPE_CHECKING:
+  DeviceArray = Any
+else:
+  class DeviceArray(object):
+    def __init__(self):
+      raise RuntimeError("DeviceArray is a backward compatibility shim "
+                         "and cannot be instantiated.")

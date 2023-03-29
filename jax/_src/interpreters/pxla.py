@@ -52,7 +52,6 @@ from jax.tree_util import tree_flatten, tree_map
 
 from jax._src import api_util
 from jax._src import core
-from jax._src import device_array
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
@@ -439,9 +438,6 @@ def shard_device_array(x, devices, indices, sharding):
   aval = api_util.shaped_abstractify(x)
   out = batched_device_put(aval, sharding, shards, devices)
   return out
-for t in device_array.device_array_types:
-  shard_arg_handlers[t] = shard_device_array
-
 
 def batched_device_put(aval: core.ShapedArray,
                        sharding: jax.sharding.Sharding, xs: Sequence[Any],
@@ -462,7 +458,7 @@ def batched_device_put(aval: core.ShapedArray,
 # from the input ShardingSpec, rather than the indices. However, this would
 # require duplicating the ordering logic of spec_to_indices, which is more
 # subtle and more likely to change than the index logic we have to support here.
-def as_slice_indices(arr: device_array.DeviceArrayProtocol, idx: Index) -> Tuple[
+def as_slice_indices(arr: Any, idx: Index) -> Tuple[
     Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
   """Returns start_indices, limit_indices, removed_dims"""
   start_indices = [0] * arr.ndim

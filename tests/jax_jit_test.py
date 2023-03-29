@@ -86,7 +86,6 @@ class JaxJitTest(jtu.JaxTestCase):
     device = jax.devices()[0]
     jitted_f = jax.jit(lambda x: x + 1)
 
-    # We run it twice, to cover `_DeviceArray` and the C++ `Buffer`.
     for value in range(2):
       buffer = jitted_f(value)
       output_buffer = device_put_function(buffer, device=device)
