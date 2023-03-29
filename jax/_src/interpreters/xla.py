@@ -191,7 +191,7 @@ canonicalize_dtype_handlers.update(
 canonicalize_dtype_handlers[core.Token] = identity
 canonicalize_dtype_handlers[core.DArray] = identity
 
-def abstractify(x) -> core.AbstractValue:
+def abstractify(x) -> Any:
   typ = type(x)
   aval_fn = pytype_aval_mappings.get(typ)
   if aval_fn: return aval_fn(x)

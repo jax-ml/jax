@@ -443,7 +443,7 @@ for t in device_array.device_array_types:
   shard_arg_handlers[t] = shard_device_array
 
 
-def batched_device_put(aval: core.AbstractValue,
+def batched_device_put(aval: core.ShapedArray,
                        sharding: jax.sharding.Sharding, xs: Sequence[Any],
                        devices: Sequence[jax.Device], committed: bool = True):
   from jax._src import array
@@ -1794,7 +1794,7 @@ def replicate(val, axis_size, nrep, devices=None, backend=None, in_axis=0):
     devices = xb.get_backend(backend).get_default_device_assignment(nrep)
   assert nrep == len(devices)
 
-  aval = xla.abstractify(val)  # type: ShapedArray
+  aval = xla.abstractify(val)
   if in_axis is not None:
     replicated_aval = aval.update(shape=(axis_size,) + aval.shape)
   else:

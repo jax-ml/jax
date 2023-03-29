@@ -96,7 +96,6 @@ py_library_providing_imports_info(
         "_src/array.py",
         "_src/callback.py",
         "_src/checkify.py",
-        "_src/core.py",
         "_src/custom_batching.py",
         "_src/custom_derivatives.py",
         "_src/custom_transpose.py",
@@ -104,12 +103,9 @@ py_library_providing_imports_info(
         "_src/device_array.py",
         "_src/dispatch.py",
         "_src/dlpack.py",
-        "_src/dtypes.py",
-        "_src/errors.py",
         "_src/flatten_util.py",
         "_src/__init__.py",
         "_src/lax_reference.py",
-        "_src/linear_util.py",
         "_src/maps.py",
         "_src/pjit.py",
         "_src/prng.py",
@@ -172,6 +168,7 @@ py_library_providing_imports_info(
         ":custom_api_util",
         ":config",
         ":deprecations",
+        ":core",
         ":effects",
         ":environment_info",
         ":lazy_loader",
@@ -213,6 +210,27 @@ pytype_strict_library(
     deps = [
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "core",
+    srcs = [
+        "_src/core.py",
+        "_src/dtypes.py",
+        "_src/errors.py",
+        "_src/linear_util.py",
+    ],
+    deps = [
+        ":config",
+        ":effects",
+        ":pretty_printer",
+        ":source_info_util",
+        ":traceback_util",
+        ":tree_util",
+        ":typing",
+        ":util",
+        "//jax/_src/lib",
+    ] + py_deps("ml_dtypes") + py_deps("numpy"),
 )
 
 pytype_strict_library(

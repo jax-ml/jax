@@ -2387,6 +2387,26 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
   return broadcast_prefix(abstracted_axes, args, ax_leaf)
 
 
+# TODO(phawkins): for some reason mypy cannot determine these overloads are
+# non-overlapping. Pytype is happy with them.
+@overload
+def make_jaxpr(fun: Callable,  # type: ignore
+               static_argnums: Union[int, Iterable[int]] = (),
+               axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+               return_shape: Literal[False] = ...,
+               abstracted_axes: Optional[Any] = None,
+               ) -> Callable[..., core.ClosedJaxpr]:
+  ...
+
+@overload
+def make_jaxpr(fun: Callable,  # type: ignore
+               static_argnums: Union[int, Iterable[int]] = (),
+               axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
+               return_shape: Literal[True] = ...,
+               abstracted_axes: Optional[Any] = None,
+               ) -> Callable[..., Tuple[core.ClosedJaxpr, Any]]:
+  ...
+
 def make_jaxpr(fun: Callable,
                static_argnums: Union[int, Iterable[int]] = (),
                axis_env: Optional[Sequence[Tuple[AxisName, int]]] = None,
@@ -3062,7 +3082,7 @@ def clear_backends():
   jax.lib.xla_bridge._backends = {}
   dispatch.xla_primitive_callable.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
-  pjit._create_pjit_jaxpr.cache_clear()
+  pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache.clear()
   xc._xla.PjitFunctionCache.clear_all()
 

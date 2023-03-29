@@ -67,8 +67,8 @@ from functools import partial
 from typing import Any, Tuple, Callable, Optional, NamedTuple
 import weakref
 
-from jax.tree_util import tree_map
-from jax.config import config
+from jax._src.tree_util import tree_map
+from jax._src.config import config
 from jax._src import core
 from jax._src import traceback_util
 from jax._src.util import curry

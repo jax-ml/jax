@@ -600,6 +600,7 @@ def _check_sharding(aval, s):
     pjit.pjit_check_aval_sharding(
         (s,), (aval,), "device_put args", allow_uneven_sharding=False)
 
+  assert isinstance(aval, core.ShapedArray), aval
   s.shard_shape(aval.shape)  # should raise an Error if incompatible
 
 
