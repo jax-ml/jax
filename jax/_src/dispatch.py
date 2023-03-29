@@ -585,12 +585,6 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
         f"'{module_name}': {type(ex).__name__}: {ex}")
 
 
-def _set_aval(val):
-  if val.aval is None:
-    val.aval = core.ShapedArray(val.shape, val.dtype)
-  return val
-
-
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.
 def _check_sharding(aval, s):
