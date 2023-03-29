@@ -16,7 +16,7 @@ from functools import partial
 import math
 import operator
 from textwrap import dedent as _dedent
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, cast
 
 import numpy as np
 
@@ -90,15 +90,15 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
   if arr1.size == 0:
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
-    arr1 = unique(arr1, size=size and arr1.size)
+    arr1 = cast(Array, unique(arr1, size=size and arr1.size))
   mask = in1d(arr1, ar2, invert=True)
   if size is None:
     return arr1[mask]
   else:
     if not (assume_unique or size is None):
       # Set mask to zero at locations corresponding to unique() padding.
-      n_unique = arr1.size + 1 - (arr1 == arr1[0]).sum()  # pytype: disable=attribute-error  # always-use-return-annotations
-      mask = where(arange(arr1.size) < n_unique, mask, False)  # pytype: disable=attribute-error  # always-use-return-annotations
+      n_unique = arr1.size + 1 - (arr1 == arr1[0]).sum()
+      mask = where(arange(arr1.size) < n_unique, mask, False)
     return where(arange(size) < mask.sum(), arr1[where(mask, size=size)], fill_value)
 
 
@@ -124,7 +124,9 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
     ar2 = core.concrete_or_error(None, ar2, "The error arose in union1d()")
   else:
     size = core.concrete_or_error(operator.index, size, "The error arose in union1d()")
-  return unique(concatenate((ar1, ar2), axis=None), size=size, fill_value=fill_value)  # pytype: disable=bad-return-type  # always-use-return-annotations
+  out = unique(concatenate((ar1, ar2), axis=None), size=size,
+               fill_value=fill_value)
+  return cast(Array, out)
 
 
 @_wraps(np.setxor1d, lax_description="""
