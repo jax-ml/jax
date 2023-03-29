@@ -1551,6 +1551,22 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
 
+  @jtu.sample_product(
+      p= [0.2, 0.3, 0.4, 0.5 ,0.6],
+      dtype= [np.int16, np.int32, np.int64])
+  def testGeometric(self, p, dtype):
+    key = self.seed_prng(1)
+    rand = lambda key: random.geometric(key, p, shape=(10000, ), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckChiSquared(samples, scipy.stats.geom(p).pmf)
+      self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
+      self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05, check_dtypes=False)
+
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
   # * a Python key array type, backed by an underlying uint32 "base" array,

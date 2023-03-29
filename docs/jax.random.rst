@@ -30,6 +30,7 @@ List of Available Functions
     fold_in
     gamma
     generalized_normal
+    geometric
     gumbel
     laplace
     loggamma
