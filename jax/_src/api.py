@@ -1437,12 +1437,6 @@ def pmap(
       For more details on buffer donation see the
       `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
 
-    global_arg_shapes: Optional, must be set when using pmap(sharded_jit) and
-      the partitioned values span multiple processes. The global cross-process
-      per-replica shape of each argument, i.e. does not include the leading
-      pmapped dimension. Can be None for replicated arguments. This API is
-      likely to change in the future.
-
   Returns:
     A parallelized version of ``fun`` with arguments that correspond to those of
     ``fun`` but with extra array axes at positions indicated by ``in_axes`` and
@@ -1565,6 +1559,12 @@ def pmap(
   >>> print(f2(jnp.array([2., 3.])))  # doctest: +SKIP
   [ 13.  13.]
   """
+  if global_arg_shapes is not None:
+    raise ValueError(
+        "global_arg_shapes only worked with sharded_jit which has long been"
+        " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
+        " from pmap.")
+
   if FLAGS.experimental_cpp_pmap:
     func = _cpp_pmap
   else:
@@ -1579,8 +1579,7 @@ def pmap(
       devices=devices,
       backend=backend,
       axis_size=axis_size,
-      donate_argnums=donate_argnums,
-      global_arg_shapes=global_arg_shapes)
+      donate_argnums=donate_argnums)
 
 
 class PmapCallInfo(NamedTuple):
@@ -1591,7 +1590,6 @@ class PmapCallInfo(NamedTuple):
   donated_invars: Sequence[bool]
   in_axes_flat: Sequence[Optional[int]]
   local_axis_size: int
-  global_arg_shapes_flat: Sequence[Optional[Tuple[int, ...]]]
   out_axes_thunk: HashableFunction
   devices: Optional[Sequence[xc.Device]]
   global_axis_size: int
@@ -1628,7 +1626,7 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
   return global_axis_size
 
 def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                  donate_tuple, global_arg_shapes, in_devices, backend_name,
+                  donate_tuple, in_devices, backend_name,
                   axis_size, args, kwargs):
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
@@ -1651,15 +1649,8 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
       dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
     else:
       dyn_in_axes = in_axes
-      dyn_global_arg_shapes = global_arg_shapes
-
-    if isinstance(global_arg_shapes, tuple):
-      dyn_global_arg_shapes = tuple(global_arg_shapes[i] for i in dyn_argnums)
-    else:
-      dyn_global_arg_shapes = global_arg_shapes
   else:
     dyn_args, dyn_in_axes = args, in_axes
-    dyn_global_arg_shapes = global_arg_shapes
   args, in_tree = tree_flatten((dyn_args, kwargs))
 
   if donate_tuple and not config.jax_debug_nans:
@@ -1667,9 +1658,6 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   else:
     donated_invars = (False,) * len(args)
   in_axes_flat = tuple(flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0)))
-  global_arg_shapes_flat = tuple(flatten_axes(
-      "pmap global_arg_shapes", in_tree, (dyn_global_arg_shapes, None),
-      kws=True))
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
   f, res_paths = result_paths(f)
@@ -1709,7 +1697,6 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       donated_invars=donated_invars,
                       in_axes_flat=in_axes_flat,
                       local_axis_size=local_axis_size,
-                      global_arg_shapes_flat=global_arg_shapes_flat,
                       out_axes_thunk=out_axes_thunk,
                       devices=None if in_devices is None else tuple(in_devices),
                       global_axis_size=global_axis_size,
@@ -1727,12 +1714,11 @@ def _get_f_mapped(
     backend: Optional[str],
     axis_size: Optional[int],
     donate_tuple: Tuple[int, ...],
-    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]],
   ):
   def pmap_f(*args, **kwargs):
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        global_arg_shapes, devices, backend, axis_size, args, kwargs)
+        devices, backend, axis_size, args, kwargs)
     for arg in p.flat_args:
       dispatch.check_arg(arg)
     out = pxla.xla_pmap(
@@ -1741,7 +1727,6 @@ def _get_f_mapped(
         devices=p.devices,
         in_axes=p.in_axes_flat, out_axes_thunk=p.out_axes_thunk,
         name=p.flat_fun.__name__, donated_invars=p.donated_invars,
-        global_arg_shapes=p.global_arg_shapes_flat,
         is_explicit_global_axis_size=p.is_explicit_global_axis_size)
     return p.out_tree, out
 
@@ -1780,7 +1765,6 @@ def _python_pmap(
     backend: Optional[str] = None,
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
-    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
   ) -> stages.Wrapped:
   """The Python only implementation."""
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
@@ -1799,7 +1783,6 @@ def _python_pmap(
         devices=devices,
         backend=backend,
         axis_size=axis_size,
-        global_arg_shapes=global_arg_shapes,
         donate_tuple=donate_tuple)
 
     out_tree, out_flat = f_pmapped_(*args, **kwargs)
@@ -1807,7 +1790,7 @@ def _python_pmap(
 
   pmap_f.lower = _pmap_lower(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
-      backend, axis_size, global_arg_shapes, donate_tuple)
+      backend, axis_size, donate_tuple)
 
   return cast(stages.Wrapped, pmap_f)
 
@@ -1842,7 +1825,6 @@ def _cpp_pmap(
     backend: Optional[str] = None,
     axis_size: Optional[int] = None,
     donate_argnums: Union[int, Iterable[int]] = (),
-    global_arg_shapes: Optional[Tuple[Tuple[int, ...], ...]] = None,
   ) -> Any:
   axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       fun, axis_name, static_broadcasted_argnums, donate_argnums, in_axes,
@@ -1852,7 +1834,7 @@ def _cpp_pmap(
   @api_boundary
   def cache_miss(*args, **kwargs):
     p = _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
-                      donate_tuple, global_arg_shapes, devices, backend,
+                      donate_tuple, devices, backend,
                       axis_size, args, kwargs)
     for arg in p.flat_args:
       dispatch.check_arg(arg)
@@ -1867,7 +1849,6 @@ def _cpp_pmap(
         out_axes_thunk=p.out_axes_thunk,
         name=p.flat_fun.__name__,
         donated_invars=p.donated_invars,
-        global_arg_shapes=p.global_arg_shapes_flat,
         is_explicit_global_axis_size=p.is_explicit_global_axis_size,
     )
 
@@ -1939,13 +1920,13 @@ def _cpp_pmap(
 
   pmap_f.lower = _pmap_lower(
       fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
-      backend, axis_size, global_arg_shapes, donate_tuple)
+      backend, axis_size, donate_tuple)
 
   return pmap_f
 
 
 def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
-                devices, backend, axis_size, global_arg_shapes, donate_tuple):  # noqa: F811
+                devices, backend, axis_size, donate_tuple):  # noqa: F811
   """Make a ``lower`` method for pmapped functions."""
   # If the function we returned from ``pmap`` were a class instance,
   # this might naturally be a method, with ``fun`` as a ``self`` and
@@ -1966,7 +1947,7 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
     """
     p = _prepare_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        global_arg_shapes, devices, backend, axis_size, args, kwargs)
+        devices, backend, axis_size, args, kwargs)
     abstract_args = list(map(shaped_abstractify, p.flat_args))
     computation = pxla.lower_parallel_callable(
         p.flat_fun, backend, axis_name,
@@ -1976,7 +1957,6 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         in_axes=p.in_axes_flat,
         out_axes_thunk=p.out_axes_thunk,
         donated_invars=p.donated_invars,
-        global_arg_shapes=p.global_arg_shapes_flat,
         is_explicit_global_axis_size=p.is_explicit_global_axis_size,
         avals=abstract_args,
         lowering_platform=_experimental_lowering_platform)

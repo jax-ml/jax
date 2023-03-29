@@ -2999,7 +2999,6 @@ class OutfeedRewriterTest(jtu.JaxTestCase):
                                              in (c, f, g) }
                                 devices=None
                                 donated_invars=(False, False, False)
-                                global_arg_shapes=(None,)
                                 global_axis_size=None
                                 in_axes=(0, 0, 0)
                                 name=<lambda>

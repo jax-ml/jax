@@ -745,25 +745,22 @@ def xla_pmap_impl_lazy(
     in_axes: Sequence[Optional[int]],
     out_axes_thunk: Callable[[], Sequence[Optional[int]]],
     donated_invars: Sequence[bool],
-    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
     is_explicit_global_axis_size: bool,
 ) -> Callable:
   if (config.jax_disable_jit and config.jax_eager_pmap and
-      not is_explicit_global_axis_size and not any(d for d in donated_invars)
-      and not all(g is not None for g in global_arg_shapes)):
+      not is_explicit_global_axis_size and not any(d for d in donated_invars)):
     def _emap_apply_fn(*args):
       return _emap_impl(fun, *args, backend=backend, axis_name=axis_name,
                         axis_size=axis_size, global_axis_size=global_axis_size,
                         devices=devices, name=name, in_axes=in_axes,
                         out_axes_thunk=out_axes_thunk,
                         donated_invars=donated_invars,
-                        global_arg_shapes=global_arg_shapes,
                         is_explicit_global_axis_size=is_explicit_global_axis_size)
     return _emap_apply_fn
   abstract_args = unsafe_map(xla.abstractify, args)
   compiled_fun, fingerprint = parallel_callable(
       fun, backend, axis_name, axis_size, global_axis_size, devices, name,
-      in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
+      in_axes, out_axes_thunk, donated_invars,
       is_explicit_global_axis_size, *abstract_args)
 
   # Don't re-abstractify args unless logging is enabled for performance.
@@ -793,15 +790,12 @@ def _emap_impl(fun: lu.WrappedFun, *args,
                in_axes: Sequence[Optional[int]],
                out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                donated_invars: Sequence[bool],
-               global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
                is_explicit_global_axis_size: bool,
                ):
   from jax._src import array
   # TODO(sharadmv,mattjj): implement these cases
   if any(d for d in donated_invars):
     raise NotImplementedError("Buffer donation not supported in eager pmap.")
-  if any(g is not None for g in global_arg_shapes):
-    raise NotImplementedError("Global arg shapes not supported in eager pmap.")
   if is_explicit_global_axis_size:
     raise NotImplementedError("Non-default global_axis_size not supported in "
                               "eager pmap.")
@@ -1029,12 +1023,11 @@ def parallel_callable(fun: lu.WrappedFun,
                       in_axes: Sequence[Optional[int]],
                       out_axes_thunk: Callable[[], Sequence[Optional[int]]],
                       donated_invars: Sequence[bool],
-                      global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
                       is_explicit_global_axis_size: bool,
                       *avals):
   pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
-      in_axes, out_axes_thunk, donated_invars, global_arg_shapes,
+      in_axes, out_axes_thunk, donated_invars,
       is_explicit_global_axis_size, avals, lowering_platform=None)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
@@ -1091,26 +1084,17 @@ def find_replicas(jaxpr, axis_size, global_axis_size):
 
 def stage_parallel_callable(
     pci: ParallelCallableInfo,
-    fun: lu.WrappedFun,
-    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]]):
+    fun: lu.WrappedFun):
   sharded_avals = tuple(
       shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
-  if any(s is not None for s in global_arg_shapes):
-    # TODO(skye): we could take this branch unconditionally if we handled
-    # grad of global_arg_shapes correctly.
-    global_sharded_avals = [
-        aval.update(shape=shape) if shape is not None else aval
-        for shape, aval in safe_zip(global_arg_shapes, sharded_avals)]
-  else:
-    global_sharded_avals = sharded_avals  # type: ignore
 
   with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
     with dispatch.log_elapsed_time(f"Finished tracing + transforming {fun.__name__} "
                                    "for pmap in {elapsed_time} sec",
                                    event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
-          fun, global_sharded_avals, pe.debug_info_final(fun, "pmap"))
+          fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = api_util.jaxpr_debug_info(jaxpr, fun.debug_info)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
@@ -1133,7 +1117,7 @@ def stage_parallel_callable(
   num_global_shards = replicas.num_global_replicas * parts.num_partitions
 
   shards = ShardInfo(
-      sharded_avals, out_sharded_avals, global_sharded_avals,
+      sharded_avals, out_sharded_avals, sharded_avals,
       num_local_shards, num_global_shards)
 
   return jaxpr, consts, replicas, parts, shards
@@ -1158,7 +1142,6 @@ def lower_parallel_callable(
     in_axes: Iterable[Optional[int]],
     out_axes_thunk: Callable[[], Sequence[Optional[int]]],
     donated_invars: Sequence[bool],
-    global_arg_shapes: Sequence[Optional[Tuple[int, ...]]],
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
@@ -1197,8 +1180,7 @@ def lower_parallel_callable(
   pci = ParallelCallableInfo(
       name, backend, axis_name, axis_size, global_axis_size, devices,
       in_axes, out_axes_thunk, avals)
-  jaxpr, consts, replicas, parts, shards = stage_parallel_callable(
-      pci, fun, global_arg_shapes)
+  jaxpr, consts, replicas, parts, shards = stage_parallel_callable(pci, fun)
   if logger.isEnabledFor(logging.DEBUG):
     logger.debug("sharded_avals: %s", shards.sharded_avals)
     logger.debug("global_sharded_avals: %s", shards.global_sharded_avals)
@@ -1976,7 +1958,6 @@ def _pmap_dce_rule(used_outputs, eqn):
                              eqn.params['global_axis_size'], None):
     new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   _, donated_invars = partition_list(used_inputs, eqn.params['donated_invars'])
-  # TODO(yashkatariya,mattjj): Handle global_arg_shapes here too.
   _, in_axes = partition_list(used_inputs, eqn.params['in_axes'])
   _, out_axes = partition_list(used_outputs, eqn.params['out_axes'])
   new_params = dict(eqn.params, call_jaxpr=new_jaxpr,
@@ -2095,8 +2076,7 @@ def _hlo_unshard(ctx: mlir.LoweringRuleContext, aval, axis_env, out_axis, xs, pl
 def _pmap_lowering(ctx, *in_nodes, axis_name,
                    axis_size, global_axis_size, devices, name,
                    call_jaxpr, backend=None, in_axes, out_axes,
-                   donated_invars, global_arg_shapes,
-                   is_explicit_global_axis_size):
+                   donated_invars, is_explicit_global_axis_size):
   del donated_invars  # Unused.
   xla.check_backend_matches(backend, ctx.module_context.platform)
   # We in-line here rather than generating a Call HLO as in the xla_call

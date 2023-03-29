@@ -34,6 +34,9 @@ Remember to align the itemized text with the first line of an item within a list
   * CUDA 11.4 support has been dropped. JAX GPU wheels only support
     CUDA 11.8 and CUDA 12. Older CUDA versions may work if jaxlib is built
     from source.
+  * `global_arg_shapes` argument of pmap only worked with sharded_jit and has
+    been removed from pmap. Please migrate to pjit and remove global_arg_shapes
+    from pmap.
 
 ## jaxlib 0.4.8
 
