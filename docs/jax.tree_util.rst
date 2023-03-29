@@ -16,10 +16,13 @@ List of Functions
    build_tree
    register_pytree_node
    register_pytree_node_class
+   register_pytree_with_keys
+   register_pytree_with_keys_class
    tree_all
    tree_flatten
    tree_leaves
    tree_map
+   tree_map_with_path
    tree_reduce
    tree_structure
    tree_transpose
