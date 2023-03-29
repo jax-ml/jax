@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from distutils import spawn
+import shutil
 import subprocess
 import os
 import sys
@@ -35,7 +35,7 @@ _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
 if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
   protoc = os.environ['PROTOC']
 else:
-  protoc = spawn.find_executable('protoc')
+  protoc = shutil.which('protoc')
 
 def generate_proto(source):
   if not protoc or not os.path.exists(source):
