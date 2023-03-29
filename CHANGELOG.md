@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.8
+## jax 0.4.9
+
+## jaxlib 0.4.9
+
+## jax 0.4.8 (March 29, 2023)
 
 * Breaking changes
   * A major component of the Cloud TPU runtime has been upgraded. This enables
@@ -26,7 +30,6 @@ Remember to align the itemized text with the first line of an item within a list
     runtime for any reason, please let us know on the [JAX issue
     tracker](https://github.com/google/jax/issues).
 
-
 * Changes
   * The minimum jaxlib version has been bumped from 0.4.6 to 0.4.7.
 
@@ -37,8 +40,6 @@ Remember to align the itemized text with the first line of an item within a list
   * `global_arg_shapes` argument of pmap only worked with sharded_jit and has
     been removed from pmap. Please migrate to pjit and remove global_arg_shapes
     from pmap.
-
-## jaxlib 0.4.8
 
 ## jax 0.4.7 (March 27, 2023)
 
