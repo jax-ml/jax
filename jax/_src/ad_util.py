@@ -16,15 +16,14 @@ from __future__ import annotations
 import types
 from typing import Any, Callable, Dict, TypeVar, Union, cast
 
-from jax.tree_util import register_pytree_node
-
 from jax._src import core
+from jax._src import traceback_util
 from jax._src.core import (lattice_join, Primitive, valid_jaxtype,
                            raise_to_shaped, get_aval)
-from jax._src.util import safe_map
+from jax._src.tree_util import register_pytree_node
 from jax._src.typing import Array, ArrayLike
+from jax._src.util import safe_map
 
-from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar('T')

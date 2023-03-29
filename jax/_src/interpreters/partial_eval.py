@@ -27,7 +27,7 @@ from weakref import ref
 import numpy as np
 
 from jax._src import linear_util as lu
-from jax.config import config
+from jax._src.config import config
 from jax._src import api_util
 from jax._src import core
 from jax._src import effects
