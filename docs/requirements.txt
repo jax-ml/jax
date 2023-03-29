@@ -1,5 +1,6 @@
 absl-py
 ipython>=8.8.0  # 8.7.0 has ipython3 lexer error
+pydata-sphinx-theme==0.13.1  # 0.13.2 is incompatible with sphinx-book-theme 1.0.0
 # TODO(jakevdp) Update to sphinx>=6 when myst-nb supports it.
 sphinx>=5
 sphinx-autodoc-typehints
