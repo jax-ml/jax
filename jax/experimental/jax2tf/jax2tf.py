@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Provides JAX and TensorFlow interoperation APIs."""
-import dataclasses
 from functools import partial
 import contextlib
 import operator
@@ -55,7 +54,6 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.interpreters import ad
-from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
@@ -382,7 +380,7 @@ def convert(fun_jax: Callable,
       args_flat_tf, args_avals_flat = util.unzip2(args_and_avals)
 
       if native_serialization:
-        shape_env = ()
+        shape_env: Sequence[Tuple[str, TfVal]] = ()
         if native_serialization_platforms:
           lowering_platform = native_serialization_platforms[0]
         else:
@@ -399,14 +397,11 @@ def convert(fun_jax: Callable,
               native_serialization_strict_checks)
           return outs_tf, out_avals
       else:
-        def get_dimension_size(args, arg_idx: int, dim_idx: int) -> shape_poly.DimExprValue:
-          return shape_poly.dimension_size_p.bind(args[arg_idx], dimension=dim_idx)
-        dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
-            args_avals_flat, get_dimension_size)
-
-        dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
-                                           args_avals_flat, name_stack)
-        shape_env = zip(dim_vars, dim_values)  # type: ignore
+        dim_vars = shape_poly.all_dim_vars(args_avals_flat)
+        dim_values, _ = _interpret_fun_jax(
+            partial(shape_poly.compute_dim_values, args_avals_flat, dim_vars),
+            args_flat_tf, args_avals_flat, name_stack)
+        shape_env = zip(dim_vars, dim_values)
         exported = None
         def run_fun_flat_as_tf(
             args_flat_tf: Sequence[TfVal]
@@ -984,10 +979,9 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
     return tuple(int(d) for d in shape)
 
   dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
-  eval_shape_jax = shape_poly.get_shape_evaluator(dim_vars, shape)
-  dim_aval = shape_poly.dim_as_value_abstract()
-  shape_values_tf, _ = _interpret_fun_jax(eval_shape_jax,
-                                          dim_values, [dim_aval] * len(dim_values), "")  # type: ignore
+  shape_values_tf, _ = _interpret_fun_jax(
+      partial(core.evaluate_shape, shape, dim_vars),
+      dim_values, [core.dim_value_aval()] * len(dim_values), "")  # type: ignore
   # Keep only the non-constant dimensions
   return tuple(operator.index(d) if core.is_constant_dim(d) else d_tf
                for d, d_tf in zip(shape, shape_values_tf))

@@ -16,8 +16,10 @@
 This module is used with jax2tf, but should have no TensorFlow dependencies.
 """
 import dataclasses
+import functools
+import itertools
 import re
-from typing import Callable, List, Optional, Sequence, Union
+from typing import  Callable, List, Optional, Sequence, Union
 
 from absl import logging
 
@@ -25,6 +27,7 @@ import jax
 from jax import sharding
 
 from jax._src import core
+from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
@@ -34,6 +37,7 @@ from jax._src.lib.mlir.dialects import stablehlo
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+
 from jax.experimental.jax2tf import shape_poly
 
 map = util.safe_map
@@ -283,7 +287,14 @@ def add_dim_arg_computation(module: mlir.ir.Module,
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
       orig_main_args: List[mlir.ir.Value] = []
-      dim_args = compute_dim_args(args_avals, tuple(new_main_op.arguments),
+      module_context = mlir.ModuleContext(
+          "cpu", "cpu", mlir.ShardingContext([]),
+          source_info_util.new_name_stack(),
+          [], itertools.count(1), [], module=new_module, context=context)
+      ctx = mlir.LoweringRuleContext(module_context=module_context,
+          primitive=None, avals_in=args_avals, avals_out=None,
+          tokens_in=mlir.TokenSet(), tokens_out=None)
+      dim_args = compute_dim_args(ctx, args_avals, tuple(new_main_op.arguments),
                                   orig_input_types[:len(dim_vars)])
       # The first arguments are the dimension variable
       orig_main_args.extend(dim_args)
@@ -298,6 +309,7 @@ def add_dim_arg_computation(module: mlir.ir.Module,
 
 
 def compute_dim_args(
+    ctx: mlir.LoweringRuleContext,
     args_avals: Sequence[core.ShapedArray],
     array_args: Sequence[mlir.ir.Value],
     dim_arg_types: Sequence[mlir.ir.Type]) -> Sequence[mlir.ir.Value]:
@@ -312,20 +324,12 @@ def compute_dim_args(
     the values of the dimension variables, in the sorted order of the
     dimension variables.
   """
-  def get_dimension_size(args, arg_idx: int, dim_idx: int) -> mlir.DimExprValueMlir:
-    dim_size = hlo.GetDimensionSizeOp(args[arg_idx], dim_idx).result
-    dim_type = mlir.aval_to_ir_type(shape_poly.dim_as_value_abstract())
-    if dim_size.type != dim_type:
-      dim_size = hlo.ConvertOp(dim_type, dim_size).result
-    return mlir.DimExprValueMlir(dim_size)
-
-  all_dim_vars, dim_arg_builders = shape_poly.prepare_dim_var_env(
-      args_avals, get_dimension_size)
-  all_dim_args: Sequence[mlir.DimExprValueMlir] = dim_arg_builders(*array_args)
-
+  dim_vars = shape_poly.all_dim_vars(args_avals)
+  dim_values = mlir.lower_fun(
+      functools.partial(shape_poly.compute_dim_values, args_avals, dim_vars),
+      multiple_results=True)(ctx, *array_args)
   res = []
-  for dim_arg, dim_arg_type in zip(all_dim_args, dim_arg_types):
-    dim_arg = dim_arg.value
+  for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_arg_types):
     if dim_arg.type != dim_arg_type:
       res.append(hlo.ConvertOp(dim_arg_type, dim_arg).result)
     else:
