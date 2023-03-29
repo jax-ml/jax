@@ -56,10 +56,11 @@ from jax._src.typing import DimSize, Shape
 
 TfVal = Any
 # A dimension environment maps dimension variables to expressions that
-# compute the values of the dimension. An expression must support addition
+# denote the values of the dimension (DimExprValue). A DimExprValue must support addition
 # and multiplication with other expressions or with int32/int64, e.g.,
 # by overloading __add__, __radd__, __mul__, __rmul__, __divmod__, __rdivmod__.
-ShapeEnv = Dict[str, Any]
+DimExprValue = Any
+ShapeEnv = Dict[str, DimExprValue]
 DType = Any
 
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
@@ -324,7 +325,7 @@ class _DimExpr():
   """Symbolic expression in terms of dimension variables.
 
   A dimension expression is an addition of products (_DimMon)
-  f atoms (_DimAtom).
+  of atoms (_DimAtom).
 
   We overload integer operations, but we do that soundly, raising
   :class:`InconclusiveDimensionOperation` when the result is not
@@ -647,7 +648,7 @@ class _DimExpr():
 
   @staticmethod
   def get_aval(dim: "_DimExpr"):
-    return dim_as_value_abstract(dim)
+    return dim_as_value_abstract()
 
   def dimension_as_value(self):
     """Turns a dimension size into a Jax value that we can compute with."""
@@ -786,10 +787,10 @@ def dim_as_value_dtype():
 def dim_constant(ct: int):
   return np.array(ct, dtype=dim_as_value_dtype())
 
-def dim_as_value_abstract(dim: DimSize) -> core.AbstractValue:
+def dim_as_value_abstract() -> core.AbstractValue:
   return core.ShapedArray((), dim_as_value_dtype(), weak_type=True)
 
-dim_as_value_p.def_abstract_eval(dim_as_value_abstract)
+dim_as_value_p.def_abstract_eval(lambda dim: dim_as_value_abstract())
 
 def dim_as_value_impl(dim: DimSize):
   raise NotImplementedError(
@@ -992,7 +993,7 @@ def _is_known_constant(v) -> Optional[int]:
 # value of type shape_poly.dim_as_value_dtype().
 dimension_size_p = core.Primitive("dimension_size")
 def _dimension_size_abstract(aval: core.AbstractValue, **_) -> core.AbstractValue:
-  return dim_as_value_abstract(aval)
+  return dim_as_value_abstract()
 
 dimension_size_p.def_abstract_eval(_dimension_size_abstract)
 
@@ -1004,9 +1005,13 @@ _JaxValue = Any
 
 @dataclasses.dataclass
 class DimEquation:
-  # Represents poly == _expr
-  poly: _DimExpr
-  dim_expr: _JaxValue  # Of type dim_as_value_dtype()
+  # Represents args[arg_idx].shape[dim_idx] == dim_expr
+  arg_idx: int
+  dim_idx: int
+  dim_expr: _DimExpr
+
+  def __str__(self):
+    return f"{self.dim_expr} == args[{self.arg_idx}].shape[{self.dim_idx}]"
 
 
 def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
@@ -1041,37 +1046,50 @@ def arg_aval(
   aval_shape = _parse_spec(polymorphic_shape, arg_shape)
   return core.ShapedArray(aval_shape, arg_jax_dtype)
 
-def prepare_dim_var_env(args_avals: Sequence[core.AbstractValue]) -> \
-    Tuple[Sequence[str],
-          Callable[..., Sequence[TfVal]]]:
-  """Get the dimension variables and the function to compute them.
 
-  Returns a tuple of dimension variables that appear in `args_avals` along
-  with a function that given the actual arguments of the top-level function
-  returns a tuple of dimension variable values, in the same order as the
-  dimension variables returned in the first component.
-  The dimension variables are TfVal with type dim_as_value_dtype().
-  """
+def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Set[str]:
   dim_vars: Set[str] = set()
   for a in args_avals:
     for d in a.shape:
       if is_poly_dim(d):
         dim_vars = dim_vars.union(d.get_vars())
+  return dim_vars
 
+def prepare_dim_var_env(
+    args_avals: Sequence[core.AbstractValue],
+    get_dimension_size: Callable[[Sequence[Any], int, int], DimExprValue]) -> \
+    Tuple[Sequence[str],
+          Callable[..., Sequence[DimExprValue]]]:
+  """Get the dimension variables and the function to compute them.
+
+  Args:
+    args_aval: the abstract values of the array arguments
+    get_dimension_size: a function that given the array arguments, the argument
+      index, and the dimension index, computes the value of args[arg_idx].shape[dim_idx].
+
+  Returns: a tuple of dimension variables that appear in `args_avals` along
+  with a function that given the actual arguments of the top-level function
+  returns a tuple of dimension variable values, in the same order as the
+  dimension variables returned in the first component.
+  """
+  # TODO(necula): clean up the notion of shape environments, and solving for dimension
+  #   variables.
+  dim_vars: Set[str] = all_dim_vars(args_avals)
+  dim_vars_sorted = sorted(tuple(dim_vars))
   def get_dim_var_values(*args: Any) -> Sequence[Any]:
     dim_equations: List[DimEquation] = []
-    for a in args:
-      for i, d in enumerate(a.shape):
+    for arg_idx, a in enumerate(args_avals):
+      for dim_idx, d in enumerate(a.shape):
         if is_poly_dim(d):
-          dim_equations.append(DimEquation(
-              poly=d, dim_expr=dimension_size_p.bind(a, dimension=i)))
+          dim_equations.append(
+              DimEquation(arg_idx=arg_idx, dim_idx=dim_idx, dim_expr=d))
+    dim_env = _solve_dim_equations(dim_equations,
+                                   functools.partial(get_dimension_size, args))
+    return tuple(dim_env[dv] for dv in dim_vars_sorted)
+  return dim_vars_sorted, get_dim_var_values
 
-    dim_env = _solve_dim_equations(dim_equations)
-    assert all(dim_env[dv].dtype == dim_as_value_dtype() for dv in dim_vars)
-    return tuple(dim_env[dv] for dv in dim_vars)
-  return tuple(dim_vars), get_dim_var_values
-
-def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
+def _solve_dim_equations(eqns: List[DimEquation],
+                         get_dimension_size: Callable[[int, int], DimExprValue]) -> ShapeEnv:
   # Returns a shape environment if it can solve all dimension variables.
   # Raises an exception if it cannot.
   shapeenv: ShapeEnv = {}
@@ -1084,19 +1102,19 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
       return ""
 
   def process_one_eqn(eqn: DimEquation) -> bool:
-    # Try to rewrite the equation as "var * factor_var = dim_expr" (a linear
-    # uni-variate equation. Return False if this rewrite fails.
+    # Try to rewrite the equation as "var * factor_var = dim_value" (a linear
+    # uni-variate equation). Return False if this rewrite fails.
     # Otherwise, add the variable to shapeenv and return True.
 
-    # The invariant is: var * factor_var + rest_eqn_poly = dim_expr
     var, factor_var = None, None
-    dim_expr = eqn.dim_expr
+    dim_value = get_dimension_size(eqn.arg_idx, eqn.dim_idx)
+    # The invariant is: var * factor_var + rest_eqn_dim_expr = dim_value
 
-    for mon, factor in eqn.poly.monomials():
+    for mon, factor in eqn.dim_expr.monomials():
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
-        dim_expr = dim_expr - _evaluate_multiply(mon_value, dim_constant(factor))
+        dim_value = dim_value + -1 * _evaluate_multiply(mon_value, dim_constant(factor))
         continue
       except KeyError:
         # There are some indeterminate variables. We handle only the case of
@@ -1110,10 +1128,9 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
 
     if var is not None:
       if factor_var == 1:
-        var_value, var_remainder = dim_expr, dim_constant(0)
+        var_value, var_remainder = dim_value, dim_constant(0)
       else:
-        var_value = lax.div(dim_expr, dim_constant(factor_var))  # type: ignore
-        var_remainder = lax.rem(dim_expr, dim_constant(factor_var))  # type: ignore
+        var_value, var_remainder = divmod(dim_value, dim_constant(factor_var))  # type: ignore
 
       # Check that the division is even. Works only in eager mode.
       var_remainder_int = _is_known_constant(var_remainder)
@@ -1121,25 +1138,25 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
         # TODO(necula): check even in graph mode, by embedding the checks in
         # the graph.
         msg = (f"Dimension variable {var} must have integer value >= 1. "  # type: ignore
-               f"Found value {int(_is_known_constant(dim_expr)) / factor_var} when solving "  # type: ignore
-               f"{eqn.poly} == {eqn.dim_expr}.{_shapeenv_to_str()}")
+               f"Found value {int(_is_known_constant(dim_value)) / factor_var} when solving "  # type: ignore
+               f"{eqn}.{_shapeenv_to_str()}")
         raise ValueError(msg)
       var_value_int = _is_known_constant(var_value)
       if var_value_int is not None and var_value_int <= 0:
         msg = (f"{var_value_int} Dimension variable {var} must have integer value >= 1. "
                f"Found value {int(var_value_int)} when solving "
-               f"{eqn.poly} == {eqn.dim_expr}.{_shapeenv_to_str()}")
+               f"{eqn}.{_shapeenv_to_str()}")
         raise ValueError(msg)
 
       shapeenv[var] = var_value
       return True
     else:
       # All variables are resolved for this equation
-      dim_expr_int = _is_known_constant(dim_expr)
-      if dim_expr_int is not None and dim_expr_int != 0:
+      dim_value_int = _is_known_constant(dim_value)
+      if dim_value_int is not None and dim_value_int != 0:
         err_msg = (
             "Found inconsistency when solving "
-            f"{eqn.poly} == {eqn.dim_expr}.{_shapeenv_to_str()}")
+            f"{eqn}.{_shapeenv_to_str()}")
         raise ValueError(err_msg)
       return True
 
@@ -1155,10 +1172,10 @@ def _solve_dim_equations(eqns: List[DimEquation]) -> ShapeEnv:
   unsolved_vars: Set[str] = set()
   unsolved_polys: List[_DimExpr] = []
   for eqn in eqns:
-    unsolved_vars = unsolved_vars.union(eqn.poly.get_vars())
-    unsolved_polys.append(eqn.poly)
+    unsolved_vars = unsolved_vars.union(eqn.dim_expr.get_vars())
+    unsolved_polys.append(eqn.dim_expr)
   unsolved_vars = unsolved_vars.difference(shapeenv.keys())
-  eqns_str = "\n  ".join([str(eqn.poly) for eqn in eqns])
+  eqns_str = "\n  ".join([str(eqn.dim_expr) for eqn in eqns])
   err_msg = (
       f"Cannot solve for values of dimension variables {unsolved_vars} from "
       f"the remaining dimension polynomials\n  {eqns_str}.{_shapeenv_to_str()} "

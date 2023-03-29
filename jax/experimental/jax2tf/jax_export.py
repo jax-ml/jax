@@ -35,7 +35,7 @@ from jax._src.lib.mlir.dialects import stablehlo
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
-
+from jax.experimental.jax2tf import shape_poly
 
 map = util.safe_map
 zip = util.safe_zip
@@ -127,7 +127,7 @@ def serialize_native(fun_jax: Callable,
   if not all(core.is_constant_shape(a.shape) for a in args_avals):
     # All arguments are kept if we have dimension variables.
     assert len(module_kept_var_idx) == len(args_avals)
-    mlir_module = compute_dim_vars(mlir_module, args_avals)
+    mlir_module = add_dim_arg_computation(mlir_module, args_avals)
 
   xla_call_module_version = 4
   mlir_str = mlir.module_to_bytecode(mlir_module)
@@ -168,9 +168,9 @@ def serialize_native(fun_jax: Callable,
       xla_call_module_version=xla_call_module_version)
 
 
-def compute_dim_vars(module: mlir.ir.Module,
-                     args_avals: Sequence[core.ShapedArray]) -> mlir.ir.Module:
-  """Wraps the lowered module with a new "main" that computes the dim vars.
+def add_dim_arg_computation(module: mlir.ir.Module,
+                            args_avals: Sequence[core.ShapedArray]) -> mlir.ir.Module:
+  """Wraps the lowered module with a new "main" that computes the dim args.
 
   JAX lowering in presence of shape polymorphism produces a `module` that
   takes one or more dimension arguments, specified using 0-dimensional tensors
@@ -203,7 +203,7 @@ def compute_dim_vars(module: mlir.ir.Module,
 
   Returns the wrapped module.
   """
-  dim_args_builders = get_dim_arg_builders(args_avals)
+  dim_vars = shape_poly.all_dim_vars(args_avals)
 
   # Make a new module, do not mutate the "module" because it may be cached
   context = mlir.make_ir_context()
@@ -216,7 +216,7 @@ def compute_dim_vars(module: mlir.ir.Module,
     symbol_table.set_symbol_name(orig_main, orig_main_name)
 
     orig_input_types = orig_main.type.inputs
-    nr_array_args = len(orig_input_types) - len(dim_args_builders)
+    nr_array_args = len(orig_input_types) - len(dim_vars)
     assert nr_array_args >= 0
 
     new_main_input_types = orig_input_types[- nr_array_args:]
@@ -237,11 +237,11 @@ def compute_dim_vars(module: mlir.ir.Module,
     symbol_table.insert(new_main_op)
     entry_block = new_main_op.add_entry_block()
     with ir.InsertionPoint(entry_block):
-      orig_main_args = []
+      orig_main_args: List[mlir.ir.Value] = []
+      dim_args = compute_dim_args(args_avals, tuple(new_main_op.arguments),
+                                  orig_input_types[:len(dim_vars)])
       # The first arguments are the dimension variable
-      for dim_arg_idx, dim_arg_builder in enumerate(dim_args_builders):
-        orig_main_args.append(
-            dim_arg_builder(new_main_op.arguments, orig_input_types[dim_arg_idx]))
+      orig_main_args.extend(dim_args)
       # Then the array arguments
       orig_main_args.extend(new_main_op.arguments)
       call = func_dialect.CallOp(orig_output_types,
@@ -252,60 +252,40 @@ def compute_dim_vars(module: mlir.ir.Module,
     return new_module
 
 
-# A dimension argument builder computes a dimension argument given
-# the array arguments and the desired type of the dimension argument.
-DimArgBuilder = Callable[[Sequence[mlir.ir.Value], mlir.ir.Type], mlir.ir.Value]
-
-def get_dim_arg_builders(
-    args_avals: Sequence[core.ShapedArray]) -> Sequence[DimArgBuilder]:
-  """For each dimension variable, return a builder.
+def compute_dim_args(
+    args_avals: Sequence[core.ShapedArray],
+    array_args: Sequence[mlir.ir.Value],
+    dim_arg_types: Sequence[mlir.ir.Type]) -> Sequence[mlir.ir.Value]:
+  """Compute the values of the dimension arguments.
 
   Args:
     args_avals: the abstract values of the array arguments.
+    array_args: the values of the array arguments.
+    dim_arg_types: the desired types for the dimension arguments.
 
   Returns:
-    a list of DimArgBuilder, for each dimension variable appearing in `args_avals`
-    in the sorted order of dimension variable name.
+    the values of the dimension variables, in the sorted order of the
+    dimension variables.
   """
-  def get_dim_arg(array_arg_idx: int, dim_idx: int,
-                  array_args: Sequence[mlir.ir.Value],
-                  dim_arg_type: mlir.ir.Type) -> mlir.ir.Value:
-    dim_arg = hlo.GetDimensionSizeOp(array_args[array_arg_idx], dim_idx)
-    if dim_arg.result.type != dim_arg_type:
-      return hlo.ConvertOp(dim_arg_type, dim_arg).result
+  def get_dimension_size(args, arg_idx: int, dim_idx: int) -> mlir.DimExprValueMlir:
+    dim_size = hlo.GetDimensionSizeOp(args[arg_idx], dim_idx).result
+    dim_type = mlir.aval_to_ir_type(shape_poly.dim_as_value_abstract())
+    if dim_size.type != dim_type:
+      dim_size = hlo.ConvertOp(dim_type, dim_size).result
+    return mlir.DimExprValueMlir(dim_size)
+
+  all_dim_vars, dim_arg_builders = shape_poly.prepare_dim_var_env(
+      args_avals, get_dimension_size)
+  all_dim_args: Sequence[mlir.DimExprValueMlir] = dim_arg_builders(*array_args)
+
+  res = []
+  for dim_arg, dim_arg_type in zip(all_dim_args, dim_arg_types):
+    dim_arg = dim_arg.value
+    if dim_arg.type != dim_arg_type:
+      res.append(hlo.ConvertOp(dim_arg_type, dim_arg).result)
     else:
-      return dim_arg.result
-
-  dim_args_builder_dict: Dict[str, DimArgBuilder] = {}  # a builder for each dim var by name
-  all_dim_vars: Set[str] = set()
-  for arg_idx, aval in enumerate(args_avals):
-    for axis_idx, d in enumerate(aval.shape):
-      if not core.is_constant_dim(d):
-        all_dim_vars = all_dim_vars.union(d.get_vars())
-        d_var = d.to_var()
-        # TODO(necula): compute dim vars from non-trivial expressions also
-        if d_var is None: continue
-        if not d_var in dim_args_builder_dict:
-          dim_args_builder_dict[d_var] = partial(get_dim_arg, arg_idx, axis_idx)
-
-  if all_dim_vars:
-    dim_vars_with_builders_set = set(dim_args_builder_dict.keys())
-    if dim_vars_with_builders_set != all_dim_vars:
-      missing = all_dim_vars.difference(dim_vars_with_builders_set)
-      args_list = [f"  Arg[{arg_idx}]: {aval}"
-                   for arg_idx, aval in enumerate(args_avals)]
-      raise ValueError(
-          "The following dimension variables cannot be computed from the static "
-          f"shapes of the array arguments: {missing}. The argument shapes are:\n" +
-          "\n".join(args_list) +
-          "\n"
-          "Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
-
-    # In sorted order by name
-    builders = [dim_args_builder_dict[d_var] for d_var in sorted(dim_args_builder_dict.keys())]
-  else:
-    builders = []
-  return builders
+      res.append(dim_arg)
+  return tuple(res)
 
 
 def check_module(mod: mlir.ir.Module, *,

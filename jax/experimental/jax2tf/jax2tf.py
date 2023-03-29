@@ -399,8 +399,11 @@ def convert(fun_jax: Callable,
               native_serialization_strict_checks)
           return outs_tf, out_avals
       else:
+        def get_dimension_size(args, arg_idx: int, dim_idx: int) -> shape_poly.DimExprValue:
+          return shape_poly.dimension_size_p.bind(args[arg_idx], dimension=dim_idx)
         dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(
-            args_avals_flat)
+            args_avals_flat, get_dimension_size)
+
         dim_values, _ = _interpret_fun_jax(get_dim_values_jax, args_flat_tf,
                                            args_avals_flat, name_stack)
         shape_env = zip(dim_vars, dim_values)  # type: ignore
@@ -984,6 +987,7 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
 
 def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
   # Returns a tuple of shape_poly.dim_as_value_dtype
+  # Used only for non-native lowering
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
   if dtype is not None:
@@ -993,7 +997,7 @@ def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfV
 
   dim_vars, dim_values = util.unzip2(_thread_local_state.shape_env)
   eval_shape_jax = shape_poly.get_shape_evaluator(dim_vars, shape)
-  dim_aval = shape_poly.dim_as_value_abstract(1)
+  dim_aval = shape_poly.dim_as_value_abstract()
   shape_values_tf, _ = _interpret_fun_jax(eval_shape_jax,
                                           dim_values, [dim_aval] * len(dim_values), "")  # type: ignore
   # Keep only the non-constant dimensions

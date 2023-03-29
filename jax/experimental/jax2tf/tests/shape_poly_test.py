@@ -739,7 +739,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       arg_dtypes = (_f32,) * len(arg_shapes)
       def f_tf(*args_tf):
         avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
-        dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(avals)
+        def get_dimension_size(args, arg_idx: int, dim_idx: int) -> shape_poly.DimExprValue:
+          return shape_poly.dimension_size_p.bind(args[arg_idx], dimension=dim_idx)
+        dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(avals, get_dimension_size)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(get_dim_values_jax,
                                                          args_tf, avals, "")
         if expected_avals is not None:
@@ -1007,16 +1009,25 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      arg_descriptors=[RandArg((3, 4), _f32)],
                      poly_axes=[(0, 1)])
 
-  def test_non_trivial_polynomials_spec(self):
-    if config.jax_dynamic_shapes:
-      raise unittest.SkipTest("--jax_dynamic_shapes supports only trivial polynomials")
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_{str(polymorphic_shapes)}",
+           polymorphic_shapes=polymorphic_shapes)
+      # The polymorphic_shapes should have three comma-separated DimExpr matching
+      # 16, 24, 32
+      for polymorphic_shapes in [
+          "b1+6,b1+14,b2",  # b1=10, b2=32
+          "2*b1,4*b2,b1+b2+18",  # b1=8,b2=6
+          "b1+2*b2,4*b2,b1*b1+16",  # b1=4,b2=6
+  ])
+  def test_non_trivial_polynomials_spec(self,
+                                        polymorphic_shapes="2*b1,4*b2,b1+b2+18"):
     # We can handle non-trivial polynomials in the input shape,
-    # as long as all variables also occur in trivial polynoamials
+    # as long as all variables also occur in trivial expressions
     check_shape_poly(self,
-                     lambda x, y: x + y.reshape((-1,)),
-                     arg_descriptors=[RandArg((9,), _f32), RandArg((3, 3), _f32)],
-                     input_signature=[tf.TensorSpec([None]), tf.TensorSpec([None, None])],
-                     polymorphic_shapes=["b * b", "b, b"])
+        lambda x: 2 * x.shape[0] + 3 * x.shape[1] + 4 * x.shape[2],
+        arg_descriptors=[RandArg((16, 24, 32), _f32)],
+        input_signature=[tf.TensorSpec([None, None, None])],
+        polymorphic_shapes=polymorphic_shapes)
 
   def test_unused_args(self):
     # Tests with functions that do not use their inputs.
@@ -1166,9 +1177,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertEqual((None, 3, 4), tuple(tf_grad.output_shapes[1]["grad"]))
 
   def test_grad_not_var_output(self):
-    # Output of the function has poly shapes, non-variable
-    if config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("Not supported with native serialization")
     def f_jax(x):  # :[b, 3]
       return jnp.reshape(x, (-1,))  # : [3b]
     x = np.arange(12, dtype=np.float32).reshape((4, 3))
@@ -1181,7 +1189,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       res_tf = f_tf(xv)
     grad_tf = tape.gradient(res_tf, xv)
     self.assertAllClose(np.ones(x.shape, dtype=np.float32), grad_tf.numpy())
-
 
   def test_cond(self):
     # Test the primitive under conditional
@@ -1280,9 +1287,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(y), restored_f(y))
 
   def test_saved_model_int_function(self):
-    # TODO(https://github.com/google/jax/issues/14437)
-    if config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("Gradient function does not use the dimension  variables")
 
     def f_jax(x):  # x:s32[b, 3, 4]
       return jnp.reshape(x, (-1,))  # : s32[b * 12]
@@ -1301,10 +1305,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f_jax(x), res_jax_rt)
 
   def test_saved_model_constant_gradient(self):
-    # TODO(https://github.com/google/jax/issues/14437)
-    if config.jax2tf_default_native_serialization:
-      raise unittest.SkipTest("Gradient function does not use the dimension  variables")
-
     def f_jax(x):  # A function whose gradient is a constant
       return x
 
@@ -1369,10 +1369,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (-1, x.shape[0])),
                    polymorphic_shapes=["(b1, b2, ...)"])(np.ones((4, 5, 6)))
 
-    if not config.jax2tf_default_native_serialization:
-      # Does not support 2*b constraints
-      jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
-                     polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
+    jax2tf.convert(lambda x: jnp.reshape(x, (2, -1)),
+                   polymorphic_shapes=["(2*b, ...)"])(np.ones((4, 5, 7)))
 
     with self.assertRaisesRegex(
         core.InconclusiveDimensionOperation,
@@ -1398,7 +1396,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                      native_serialization=False)(x0)
 
-    # TODO(https://github.com/google/jax/issues/14437)
     # In native serialization, or if we trace to a TF graph, we miss this
     res1_tf = jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                              native_serialization=True)(x0)
@@ -1427,7 +1424,6 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
                      native_serialization=False)(x45)
 
-    # TODO(https://github.com/google/jax/issues/14437)
     # In native serialization, or if we trace to a TF graph, we miss this
     res2_tf = jax2tf.convert(f2_jax, polymorphic_shapes=["b, b"],
                              native_serialization=True)(x45)
@@ -1443,13 +1439,8 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     with self.assertRaisesRegex(
         ValueError,
         "Cannot solve for values of dimension variables"):
-      jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
-                     native_serialization=False)(x)
-    with self.assertRaisesRegex(
-        ValueError,
-        "dimension variables cannot be computed from the static shapes of the array arguments"):
-      jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"],
-                     native_serialization=True)(x)
+      jax2tf.convert(lambda x: jnp.sum(x), polymorphic_shapes=["a + b"])(x)
+
 
   def test_dynamic_shapes(self):
     # Test dim_as_value with dynamic shapes.
@@ -1470,11 +1461,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         polymorphic_shapes=["b", "b"])(x, np.array([0.1, 0.2, 0.3]))
     self.assertAllClose((9., 1.8), (res_primal, res_tangent))
 
-    # TODO(https://github.com/google/jax/issues/14437)
-    if not config.jax2tf_default_native_serialization:
-      self.assertAllClose(
-          np.array([3., 3., 3.]),
-          jax2tf.convert(jax.grad(f), polymorphic_shapes=["b"])(x))
+    self.assertAllClose(
+        np.array([3., 3., 3.]),
+        jax2tf.convert(jax.grad(f), polymorphic_shapes=["b"])(x))
 
     xv = np.arange(24.).reshape((2, 3, 4))
     res_vmap = jax.vmap(f, in_axes=1)(xv)
