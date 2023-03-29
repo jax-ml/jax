@@ -245,6 +245,7 @@ class finfo(np.finfo):
     obj.nmant = 7
     obj.iexp = obj.nexp
     obj.maxexp = 128
+    obj.minexp = -126
     obj.precision = 2
     obj.resolution = bfloat16(resolution)
     obj._machar = _Bfloat16MachArLike()
@@ -256,6 +257,7 @@ class finfo(np.finfo):
 
     obj._str_tiny = float_to_str(tiny)
     obj._str_smallest_normal = float_to_str(tiny)
+    obj._str_smallest_subnormal = float_to_str(obj.smallest_subnormal)
     obj._str_max = float_to_str(max)
     obj._str_epsneg = float_to_str(epsneg)
     obj._str_eps = float_to_str(eps)
@@ -287,6 +289,7 @@ class finfo(np.finfo):
     obj.nmant = 3
     obj.iexp = obj.nexp
     obj.maxexp = 9
+    obj.minexp = -6
     obj.precision = 1
     obj.resolution = float8_e4m3fn(resolution)
     obj._machar = _Float8E4m3FnMachArLike()
@@ -298,6 +301,7 @@ class finfo(np.finfo):
 
     obj._str_tiny = float_to_str(tiny)
     obj._str_smallest_normal = float_to_str(tiny)
+    obj._str_smallest_subnormal = float_to_str(obj.smallest_subnormal)
     obj._str_max = float_to_str(max)
     obj._str_epsneg = float_to_str(epsneg)
     obj._str_eps = float_to_str(eps)
@@ -329,6 +333,7 @@ class finfo(np.finfo):
     obj.nmant = 2
     obj.iexp = obj.nexp
     obj.maxexp = 16
+    obj.minexp = -14
     obj.precision = 1
     obj.resolution = float8_e5m2(resolution)
     obj._machar = _Float8E5m2MachArLike()
@@ -340,6 +345,7 @@ class finfo(np.finfo):
 
     obj._str_tiny = float_to_str(tiny)
     obj._str_smallest_normal = float_to_str(tiny)
+    obj._str_smallest_subnormal = float_to_str(obj.smallest_subnormal)
     obj._str_max = float_to_str(max)
     obj._str_epsneg = float_to_str(epsneg)
     obj._str_eps = float_to_str(eps)
