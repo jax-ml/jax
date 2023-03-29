@@ -17,7 +17,7 @@ import subprocess
 import os
 import sys
 
-from setuptools import setup, find_packages
+from setuptools import setup
 
 _current_jaxlib_version = '0.4.7'
 # The following should be updated with each new jaxlib release.
@@ -30,11 +30,7 @@ _libtpu_version = '0.1.dev20230327'
 _dct = {}
 with open('jax/version.py', encoding='utf-8') as f:
   exec(f.read(), _dct)
-__version__ = _dct['__version__']
 _minimum_jaxlib_version = _dct['_minimum_jaxlib_version']
-
-with open('README.md', encoding='utf-8') as f:
-  _long_description = f.read()
 
 if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
   protoc = os.environ['PROTOC']
@@ -52,22 +48,6 @@ generate_proto("jax/experimental/australis/executable.proto")
 generate_proto("jax/experimental/australis/petri.proto")
 
 setup(
-    name='jax',
-    version=__version__,
-    description='Differentiate, compile, and transform Numpy code.',
-    long_description=_long_description,
-    long_description_content_type='text/markdown',
-    author='JAX team',
-    author_email='jax-dev@google.com',
-    packages=find_packages(exclude=["examples", "jax/src/internal_test_util"]),
-    package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
-    python_requires='>=3.8',
-    install_requires=[
-        'ml_dtypes>=0.0.3',
-        'numpy>=1.21',
-        'opt_einsum',
-        'scipy>=1.7',
-    ],
     extras_require={
         # Minimum jaxlib version; used in testing.
         'minimum-jaxlib': [f'jaxlib=={_minimum_jaxlib_version}'],
@@ -131,13 +111,4 @@ setup(
         **{f'cuda11_cudnn{cudnn_version}': f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{cudnn_version}"
            for cudnn_version in _available_cuda11_cudnn_versions}
     },
-    url='https://github.com/google/jax',
-    license='Apache-2.0',
-    classifiers=[
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-    ],
-    zip_safe=False,
 )
