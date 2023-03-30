@@ -33,7 +33,6 @@ from jax._src.interpreters.xla import (
   xla_call_p as _deprecated_xla_call_p,
   xla_destructure as xla_destructure,
   xla_shape_handlers as xla_shape_handlers,
-  device_put as _deprecated_device_put,
 )
 
 from jax._src.core import (
@@ -49,6 +48,8 @@ from jax._src.dispatch import (
 
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc  # type: ignore
+
+from jax._src.api import device_put as _deprecated_device_put
 
 _deprecated_Device = xc.Device
 XlaOp = xc.XlaOp
@@ -95,7 +96,7 @@ if typing.TYPE_CHECKING:
   Device = xc.Device
   from jax._src.interpreters.xla import (
     DeviceArray as DeviceArray,
-    device_put as device_put,
   )
+  from jax._src.api import device_put as device_put
   from jax._src.interpreters.xla import xla_call_p as xla_call_p
 del typing

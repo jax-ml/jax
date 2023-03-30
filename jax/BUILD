@@ -104,9 +104,7 @@ py_library_providing_imports_info(
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",
         "_src/interpreters/batching.py",
-        "_src/interpreters/mlir.py",
         "_src/interpreters/pxla.py",
-        "_src/interpreters/xla.py",
         "_src/maps.py",
         "_src/pjit.py",
         "_src/prng.py",
@@ -176,6 +174,7 @@ py_library_providing_imports_info(
         ":environment_info",
         ":lazy_loader",
         ":mesh",
+        ":mlir",
         ":monitoring",
         ":partial_eval",
         ":path",
@@ -188,6 +187,7 @@ py_library_providing_imports_info(
         ":typing",
         ":util",
         ":version",
+        ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + jax_extra_deps,
@@ -333,6 +333,23 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "mlir",
+    srcs = ["_src/interpreters/mlir.py"],
+    deps = [
+        ":ad_util",
+        ":config",
+        ":core",
+        ":effects",
+        ":partial_eval",
+        ":source_info_util",
+        ":util",
+        ":xla",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "monitoring",
     srcs = ["_src/monitoring.py"],
 )
@@ -436,6 +453,21 @@ pytype_strict_library(
 pytype_strict_library(
     name = "version",
     srcs = ["version.py"],
+)
+
+pytype_strict_library(
+    name = "xla",
+    srcs = ["_src/interpreters/xla.py"],
+    deps = [
+        ":abstract_arrays",
+        ":config",
+        ":core",
+        ":source_info_util",
+        ":typing",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 # TODO(phawkins): break up this SCC.

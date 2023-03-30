@@ -30,19 +30,19 @@ import warnings
 
 import numpy as np
 
-from jax._src import linear_util as lu
-from jax.config import config
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
+from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src.interpreters import ad
+from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -332,7 +332,6 @@ def _source_info_to_location(
 # Translation rules
 def make_ir_context() -> ir.Context:
   """Creates an MLIR context suitable for JAX IR."""
-  from jax._src.lib.mlir import dialects
   context = ir.Context()
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
@@ -1622,7 +1621,6 @@ def xla_fallback_lowering(prim: core.Primitive):
     return util.unflatten(flat_results, map(len, output_types))
   return fallback
 
-register_lowering(ad.custom_lin_p, ad.raise_custom_vjp_error_on_jvp)
 
 DEVICE_TO_DEVICE_TYPE = 1
 SEND_TO_HOST_TYPE = 2

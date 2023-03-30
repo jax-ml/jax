@@ -27,7 +27,7 @@ from typing import (Any, Callable, Dict, NamedTuple, Optional, Protocol,
 
 import numpy as np
 
-from jax.config import config
+from jax._src.config import config
 
 from jax._src import core
 from jax._src import dtypes
@@ -454,12 +454,6 @@ class _BackendSpecificTranslationsAdapter(defaultdict):
 
 backend_specific_translations: Dict[str, _TranslationRuleAdapter]
 backend_specific_translations = _BackendSpecificTranslationsAdapter()
-
-
-# TODO(yashkatariya): Delete this.
-def device_put(x, device=None):
-  from jax._src import api
-  return api.device_put(x, device)
 
 
 if TYPE_CHECKING:
