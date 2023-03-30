@@ -223,19 +223,10 @@ def _wraps(
 
 _dtype = partial(dtypes.dtype, canonicalize=True)
 
-def _asarray(arr: ArrayLike) -> Array:
-  """
-  Pared-down utility to convert object to a DeviceArray.
-  Note this will not correctly handle lists or tuples.
-  """
-  check_arraylike("_asarray", arr)
-  dtype, weak_type = dtypes._lattice_result_type(arr)
-  return lax._convert_element_type(arr, dtype, weak_type)
-
 def promote_shapes(fun_name: str, *args: ArrayLike) -> List[Array]:
   """Apply NumPy-style broadcasting, making args shape-compatible for lax.py."""
   if len(args) < 2:
-    return [_asarray(arg) for arg in args]
+    return [lax.asarray(arg) for arg in args]
   else:
     shapes = [np.shape(arg) for arg in args]
     if config.jax_dynamic_shapes:
@@ -246,10 +237,10 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> List[Array]:
       return [_broadcast_to(arg, res_shape) for arg, shp in zip(args, shapes)]
     else:
       if all(len(shapes[0]) == len(s) for s in shapes[1:]):
-        return [_asarray(arg) for arg in args]  # no need for rank promotion, so rely on lax promotion
+        return [lax.asarray(arg) for arg in args]  # no need for rank promotion, so rely on lax promotion
       nonscalar_ranks = {len(shp) for shp in shapes if shp}
       if len(nonscalar_ranks) < 2:
-        return [_asarray(arg) for arg in args]  # rely on lax scalar promotion
+        return [lax.asarray(arg) for arg in args]  # rely on lax scalar promotion
       else:
         if config.jax_numpy_rank_promotion != "allow":
           _rank_promotion_warning_or_error(fun_name, shapes)
@@ -277,7 +268,7 @@ def promote_dtypes(*args: ArrayLike) -> List[Array]:
   """Convenience function to apply Numpy argument dtype promotion."""
   # TODO(dougalm,mattjj): This is a performance bottleneck. Consider memoizing.
   if len(args) < 2:
-    return [_asarray(arg) for arg in args]
+    return [lax.asarray(arg) for arg in args]
   else:
     to_dtype, weak_type = dtypes._lattice_result_type(*args)
     to_dtype = dtypes.canonicalize_dtype(to_dtype)
@@ -392,7 +383,7 @@ def _broadcast_arrays(*args: ArrayLike) -> List[Array]:
   """Like Numpy's broadcast_arrays but doesn't return views."""
   shapes = [np.shape(arg) for arg in args]
   if not shapes or all(core.symbolic_equal_shape(shapes[0], s) for s in shapes):
-    return [_asarray(arg) for arg in args]
+    return [lax.asarray(arg) for arg in args]
   result_shape = lax.broadcast_shapes(*shapes)
   return [_broadcast_to(arg, result_shape) for arg in args]
 
@@ -401,7 +392,7 @@ def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
   if hasattr(arr, "broadcast_to"):
     return arr.broadcast_to(shape)  # type: ignore[union-attr]
   check_arraylike("broadcast_to", arr)
-  arr = arr if isinstance(arr, Array) else _asarray(arr)
+  arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
     shape = (shape,)
   shape = core.canonicalize_shape(shape)  # check that shape is concrete
