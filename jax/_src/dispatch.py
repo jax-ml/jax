@@ -21,7 +21,7 @@ from functools import partial
 import itertools
 import time
 from typing import (Any, Callable, Dict, Iterator, Optional,
-                    Sequence, Set, Tuple, List, Union, NamedTuple)
+                    Set, Tuple, List, Union, NamedTuple)
 import logging
 import os
 import re
@@ -57,7 +57,6 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding,
     PartitionSpec, XLACompatibleSharding)
-from jax._src.util import flatten
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -210,25 +209,6 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
     return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
     return compiled
-
-
-def _device_from_arg_devices(devices: Sequence[Optional[Device]]) -> Optional[Device]:
-  """Given devices of inputs, determine where to perform a computation.
-
-  Args:
-    devices: list where each element is a either a `Device` instance or `None`.
-  Returns:
-    A `Device` instance or None.
-  Raises:
-    ValueError if input devices are inconsistent.
-  """
-  try:
-    device, = {d for d in devices if d is not None} or (None,)
-    return device
-  except ValueError as err:
-    msg = "primitive arguments must be colocated on the same device, got {}"
-    raise ValueError(msg.format(", ".join(map(str, devices)))) from err
-
 
 
 def sharded_lowering(fun, name, donated_invars, keep_unused,
@@ -440,21 +420,6 @@ def _check_special(name, dtype, buf):
       raise FloatingPointError(f"invalid value (nan) encountered in {name}")
     if config.jax_debug_infs and np.any(np.isinf(np.asarray(buf))):
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
-
-def _add_tokens(has_unordered_effects: bool, ordered_effects: List[core.Effect],
-                has_host_callbacks: bool, device: Device, input_bufs):
-  tokens = [runtime_tokens.get_token(eff, device) for eff in ordered_effects]
-  tokens_flat = flatten(tokens)
-  input_bufs = [*tokens_flat, *input_bufs]
-  def _remove_tokens(output_bufs, runtime_token):
-    num_output_tokens = len(ordered_effects)
-    token_bufs, output_bufs = util.split_list(output_bufs, [num_output_tokens])
-    if has_unordered_effects or has_host_callbacks:
-      runtime_tokens.set_output_runtime_token(device, runtime_token)
-    for eff, token_buf in zip(ordered_effects, token_bufs):
-      runtime_tokens.update_token(eff, token_buf)
-    return output_bufs
-  return input_bufs, _remove_tokens
 
 
 @profiler.annotate_function

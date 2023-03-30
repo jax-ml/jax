@@ -28,8 +28,7 @@ from jax._src.pjit import (
 from jax._src.pjit import (_UNSPECIFIED, _prepare_axis_resources,
                            _get_op_sharding_from_executable,
                            _get_pspec_from_executable, _pjit_lower_cached,
-                           _pjit_lower, _get_op_sharding,
-                           _pjit_jaxpr,
+                           _pjit_lower, _pjit_jaxpr,
                            _create_mesh_pspec_sharding_from_parsed_pspec,
                            _process_in_axis_resources)
 

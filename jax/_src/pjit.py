@@ -2178,16 +2178,6 @@ def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
     raise AssertionError("Unhandled OpSharding type. Please open a bug report!")
 
 
-def _get_op_sharding(op_sharding) -> Sequence[xc.OpSharding]:
-  if op_sharding.type == xc.OpSharding.Type.TUPLE:
-    out: List[xc.OpSharding] = []
-    for s in op_sharding.tuple_shardings:
-      out.extend(_get_op_sharding(s))
-    return out
-  else:
-    return [op_sharding]
-
-
 _get_single_pspec = lambda p: pxla.array_mapping_to_axis_resources(
     cast(pxla.ArrayMapping, get_array_mapping(p)))
 
