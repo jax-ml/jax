@@ -17,7 +17,6 @@ from functools import partial
 import itertools as it
 import logging
 import operator
-import types
 from typing import (Any, Callable, Generic, Iterable, Iterator, List,
                     Optional, Sequence, Set, Tuple, TypeVar, overload,
                     TYPE_CHECKING, cast)
@@ -301,25 +300,6 @@ class WrapKwArgs:
 
   def __eq__(self, other):
     return self.val == other.val
-
-def get_module_functions(module):
-  """Finds functions in module.
-  Args:
-    module: A Python module.
-  Returns:
-    module_fns: A dict of names mapped to functions, builtins or ufuncs in `module`.
-  """
-  module_fns = {}
-  for key in dir(module):
-    # Omitting module level __getattr__, __dir__ which was added in Python 3.7
-    # https://www.python.org/dev/peps/pep-0562/
-    if key in ('__getattr__', '__dir__'):
-      continue
-    attr = getattr(module, key)
-    if isinstance(
-        attr, (types.BuiltinFunctionType, types.FunctionType, np.ufunc)):
-      module_fns[key] = attr
-  return module_fns
 
 def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'

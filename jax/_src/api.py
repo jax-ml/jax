@@ -115,16 +115,10 @@ zip, unsafe_zip = safe_zip, zip
 
 def _nan_check_posthook(fun, args, kwargs, output):
   """Hook function called by the C++ jit/pmap to perform NaN checking."""
-  leaves = tree_leaves(output)
-
   buffers = []
-  for da_or_sda in leaves:
-    if hasattr(da_or_sda, "device_buffers"):
-      buffers.extend(da_or_sda.device_buffers)
-    # TODO(yashkatariya): Remove the `elif` branch once `jax.Array` is enabled
-    # by default.
-    elif hasattr(da_or_sda, "device_buffer"):
-      buffers.append(da_or_sda.device_buffer)
+  for leaf in tree_leaves(output):
+    if hasattr(leaf, "device_buffers"):
+      buffers.extend(leaf.device_buffers)
 
   try:
     dispatch.check_special(pjit.pjit_p, buffers)
