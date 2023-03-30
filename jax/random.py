@@ -187,6 +187,7 @@ from jax._src.random import (
   threefry_2x32 as threefry_2x32,
   threefry2x32_key as threefry2x32_key,
   threefry2x32_p as threefry2x32_p,
+  triangular as triangular,
   truncated_normal as truncated_normal,
   uniform as uniform,
   unsafe_rbg_key as unsafe_rbg_key,

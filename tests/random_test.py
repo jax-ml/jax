@@ -1567,6 +1567,23 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertAllClose(samples.mean(), 1 / p, rtol=0.02, check_dtypes=False)
       self.assertAllClose(samples.var(), (1 - p) / (p * p) , rtol=0.05, check_dtypes=False)
 
+  @jtu.sample_product(
+      left= [0.1, 0.2, 0.3, 0.4],
+      mode= [1., 2., 3., 4.],
+      right= [10., 20., 30., 40.],
+      dtype=jtu.dtypes.floating)
+  def testTriangular(self, left, mode, right, dtype):
+    key = self.seed_prng(0)
+
+    rand = lambda key: random.triangular(key, left, mode, right, shape=(10000, ), dtype=dtype)
+    crand = jax.jit(rand)
+
+    uncompiled_samples = rand(key)
+    compiled_samples = crand(key)
+
+    for samples in [uncompiled_samples, compiled_samples]:
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang((mode - left) / (right - left), loc=left, scale=right - left).cdf)
+
 class KeyArrayTest(jtu.JaxTestCase):
   # Key arrays involve:
   # * a Python key array type, backed by an underlying uint32 "base" array,

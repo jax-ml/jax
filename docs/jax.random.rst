@@ -48,6 +48,7 @@ List of Available Functions
     shuffle
     split
     t
+    triangular
     truncated_normal
     uniform
     wald
