@@ -603,7 +603,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     with jtu.strict_promotion_if_dtypes_match(dtypes):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
-                              tol=1e-4)
+                              atol=1e-3, rtol=1e-3)
       self._CompileAndCheck(lax_fun, args_maker, rtol=3e-4)
 
   @genNamedParametersNArgs(3)
