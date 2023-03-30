@@ -270,7 +270,6 @@ namespace; they are listed below.
     mod
     modf
     moveaxis
-    msort
     multiply
     nan_to_num
     nanargmax
