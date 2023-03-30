@@ -20,6 +20,7 @@ import gc
 import math
 import os
 from random import shuffle
+import re
 from typing import Optional, cast
 import unittest
 from unittest import SkipTest
@@ -579,6 +580,25 @@ class PythonPmapTest(jtu.JaxTestCase):
         ValueError,
         "pmap got inconsistent sizes for array axes to be mapped",
         lambda: f(self.rng().randn(n), self.rng().randn(n - 1)))
+
+  def testInAxesPyTreePrefixMismatchError(self):
+    x = jnp.array([3.14])
+    f = self.pmap(lambda x, y: x, in_axes=((0, 0, 0), 0))
+    with self.assertRaisesRegex(ValueError, re.escape("pmap in_axes[0][0]")):
+      f((x, x), x)
+
+  def testInAxesPyTreePrefixMismatchErrorKwargs(self):
+    x = jnp.array([3.14])
+    f = self.pmap(lambda x, y: x, in_axes=((0, 0), 0))
+    with self.assertRaisesRegex(
+        ValueError, re.escape("each argument passed by keyword is mapped")):
+      f(x=(x, x), y=x)
+
+  def testOutAxesPyTreePrefixMismatchError(self):
+    x = jnp.array([3.14])
+    f = jax.pmap(lambda x, y: ((x, x), x), out_axes=((0, 0, 0), 0))
+    with self.assertRaisesRegex(ValueError, re.escape("pmap out_axes[0]")):
+      f(x, x)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_mesh={device_mesh_shape}".replace(" ", ""),

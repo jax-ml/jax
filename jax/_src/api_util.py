@@ -27,7 +27,8 @@ from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ShapedArray
 from jax._src.tree_util import (
     PyTreeDef, tree_flatten, tree_unflatten, tree_map, tree_structure,
-    treedef_children, generate_key_paths, keystr)
+    treedef_children, generate_key_paths, keystr, broadcast_prefix,
+    prefix_errors)
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
 from jax._src.linear_util import TracingDebugInfo
@@ -442,6 +443,28 @@ def flatten_axes(name, treedef, axis_tree, *, kws=False, tupled_args=False):
   assert len(axes) == treedef.num_leaves
   return axes
 
+def flat_out_axes(
+    f: lu.WrappedFun, out_spec: Any
+) -> Tuple[lu.WrappedFun, Callable]:
+  leaves, treedef = tree_flatten(out_spec)
+  f, out_axes = _flat_out_axes(f, tuple(leaves), treedef)
+  return f, HashableFunction(out_axes, closure=(tuple(leaves), treedef))
+
+@lu.transformation_with_aux
+def _flat_out_axes(leaves, treedef, *args, **kwargs):
+  ans = yield args, kwargs
+  spec = tree_unflatten(treedef, leaves)
+  try:
+    spec_flat = tuple(broadcast_prefix(spec, ans, is_leaf=lambda x: x is None))
+  except ValueError:
+    e, *_ = prefix_errors(spec, ans)
+    # TODO(mattjj): currently hardcoded for pmap; generalize to vmap in followup
+    msg, = e('pmap out_axes').args
+    msg += ("\n\nThe full pytree is the output of the pmapped function. Ensure "
+            "that the `out_axes` argument to `pmap` is a pytree prefix of the "
+            "pmapped function's output.")
+    raise ValueError(msg) from None
+  yield ans, spec_flat
 
 def _isgeneratorfunction(fun):
   # TODO 3.9+: remove

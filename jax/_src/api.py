@@ -38,9 +38,10 @@ from contextlib import contextmanager, ExitStack
 import jax
 from jax._src import linear_util as lu
 from jax import stages
-from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
-                           tree_structure, tree_transpose, tree_leaves,
-                           Partial, PyTreeDef, all_leaves, keystr)
+from jax._src.tree_util import (
+    tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
+    tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
+    prefix_errors, generate_key_paths, _replace_nones)
 from jax._src import callback as jcb
 from jax._src import core
 from jax._src import dispatch
@@ -58,14 +59,13 @@ from jax._src.api_util import (
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, argnames_partial_except,
     validate_argnames, validate_argnums, check_callable, resolve_argnums,
-    debug_info, result_paths, debug_info_final, FLAGS)
+    debug_info, result_paths, flat_out_axes, debug_info_final, FLAGS)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import broadcast_prefix, generate_key_paths
 from jax._src.util import (unzip2, curry, safe_map, safe_zip, split_list,
                            wrap_name, cache, wraps, HashableFunction,
                            weakref_lru_cache)
@@ -1589,7 +1589,7 @@ class PmapCallInfo(NamedTuple):
   donated_invars: Sequence[bool]
   in_axes_flat: Sequence[Optional[int]]
   local_axis_size: int
-  out_axes_thunk: HashableFunction
+  out_axes_thunk: Callable
   devices: Optional[Sequence[xc.Device]]
   global_axis_size: int
   is_explicit_global_axis_size: bool
@@ -1656,35 +1656,33 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
     donated_invars = donation_vector(donate_tuple, dyn_args, kwargs)
   else:
     donated_invars = (False,) * len(args)
-  in_axes_flat = tuple(flatten_axes("pmap in_axes", in_tree, (dyn_in_axes, 0)))
+  try:
+    in_axes_flat = tuple(broadcast_prefix((dyn_in_axes, 0), (dyn_args, kwargs),
+                                          is_leaf=lambda x: x is None))
+  except ValueError:
+    e, *_ = prefix_errors((dyn_in_axes, 0), (dyn_args, kwargs))
+    ex = e('pmap in_axes')
+    msg, = ex.args
+    msg += ("\n\nThe 'full pytree' here is the tuple of arguments passed "
+            "positionally to the pmapped function, and the value of `in_axes` "
+            "must be a tree prefix of that tuple. But it was not a prefix.")
+    if kwargs:
+      msg += ("\n\nWhen some arguments are passed by keyword to the pmapped "
+              "function, they are not included in the comparison to `in_axes`. "
+              "Instead, each argument passed by keyword is mapped over its "
+              "leading axis. See the description of `in_axes` in the `pmap` "
+              "docstring: "
+              "https://jax.readthedocs.io/en/latest/_autosummary/jax.pmap.html#jax.pmap")
+    msg += ("\n\nCheck that the value of the `in_axes` argument to `pmap` "
+            "is a tree prefix of the tuple of arguments passed positionally to "
+            "the pmapped function.")
+    raise ValueError(msg) from None
   local_axis_size = _mapped_axis_size(fun, in_tree, args, in_axes_flat, "pmap")
 
   f, res_paths = result_paths(f)
+  f, out_axes_thunk = flat_out_axes(f, out_axes)
   flat_fun, out_tree = flatten_fun(f, in_tree)
   flat_fun = debug_info_final(flat_fun, dbg, res_paths)
-
-  if any(out_axis is None for out_axis in tree_flatten(out_axes)):
-    raise NotImplementedError("None out_axes in pmap are not supported yet")
-  # NOTE: We don't put out_tree() in the closure, because it's (1) non-hashable,
-  #       (2) depends deterministically on flat_fun (at least that's the assumption
-  #       that we make).
-  if out_axes == 0:
-    # TODO(apaszke,mattjj): flatten_axes assumes that the output pytree is
-    #   functorial (i.e. it can hold leaves of any type), but some user code
-    #   breaks this assumption. This is a stop-gap solution to keep the old
-    #   out_axes == 0 path working as we look for a better solution.
-    out_axes_thunk = HashableFunction(
-        lambda: (0,) * out_tree().num_leaves,
-        closure=out_axes)
-  else:
-    # out_axes_thunk closes over the out_axes, they are flattened here to make
-    # them hashable.
-    out_axes_leaves, out_axes_treedef = tree_flatten(out_axes)
-    out_axes_thunk = HashableFunction(
-        lambda: tuple(flatten_axes("pmap out_axes", out_tree(),
-                                    tree_unflatten(out_axes_treedef,
-                                                  list(out_axes_leaves)))),
-        closure=(tuple(out_axes_leaves), out_axes_treedef))
 
   is_explicit_global_axis_size = axis_size is not None
   global_axis_size = _get_global_axis_size(local_axis_size, in_devices,
@@ -1700,7 +1698,6 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                       devices=None if in_devices is None else tuple(in_devices),
                       global_axis_size=global_axis_size,
                       is_explicit_global_axis_size=is_explicit_global_axis_size)
-
 
 def _get_f_mapped(
     *,
