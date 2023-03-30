@@ -80,7 +80,6 @@ xe = xc._xla
 
 Backend = xe.Client
 Device = xc.Device
-Buffer = xe.Buffer
 
 CompileOptions = xc.CompileOptions
 

@@ -122,6 +122,15 @@ def _try_broadcast_shapes(
         return None
   return tuple(result_shape)
 
+def asarray(x: ArrayLike) -> Array:
+  """Lightweight conversion of ArrayLike input to Array output."""
+  if isinstance(x, Array):
+    return x
+  elif isinstance(x, np.ndarray) or np.isscalar(x):
+    return api.device_put(x)
+  else:
+    raise TypeError(f"asarray: expected ArrayLike, got {x} of type {type(x)}.")
+
 @overload
 def broadcast_shapes(*shapes: Tuple[int, ...]) -> Tuple[int, ...]: ...
 

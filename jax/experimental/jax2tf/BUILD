@@ -55,7 +55,7 @@ py_library(
     # TODO: b/255503696: enable pytype
     tags = ["pytype_unchecked_annotations"],
     deps = [
-        "//jax",
         ":jax_export",
+        "//jax",
     ] + py_deps("numpy") + py_deps("tensorflow_core") + jax2tf_deps,
 )

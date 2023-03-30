@@ -34,6 +34,8 @@ py_library_providing_imports_info(
         "//jax:version",
     ] + select({
         "//jax:enable_jaxlib_build": [
+            "//jaxlib",
+            "//jaxlib:cpu_feature_guard",
             "//jaxlib/mlir:builtin_dialect",
             "//jaxlib/mlir:chlo_dialect",
             "//jaxlib/mlir:func_dialect",
@@ -42,8 +44,6 @@ py_library_providing_imports_info(
             "//jaxlib/mlir:ml_program_dialect",
             "//jaxlib/mlir:sparse_tensor_dialect",
             "//jaxlib/mlir:stablehlo_dialect",
-            "//jaxlib",
-            "//jaxlib:cpu_feature_guard",
             # xla_client
         ],
         "//conditions:default": [],

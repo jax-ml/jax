@@ -29,7 +29,7 @@ from jax._src.api import jit, custom_jvp
 from jax._src.lax import lax
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
-   _asarray, check_arraylike, promote_args, promote_args_inexact,
+   check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
    promote_shapes, _where, _wraps)
 
@@ -140,7 +140,7 @@ fabs = _one_to_one_unop(np.fabs, lax.abs, True)
 bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
 invert = _one_to_one_unop(np.invert, lax.bitwise_not)
 negative = _one_to_one_unop(np.negative, lax.neg)
-positive = _one_to_one_unop(np.positive, lambda x: _asarray(x))
+positive = _one_to_one_unop(np.positive, lambda x: lax.asarray(x))
 floor = _one_to_one_unop(np.floor, lax.floor, True)
 ceil = _one_to_one_unop(np.ceil, lax.ceil, True)
 exp = _one_to_one_unop(np.exp, lax.exp, True)
@@ -211,7 +211,7 @@ def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 def absolute(x: ArrayLike, /) -> Array:
   check_arraylike('absolute', x)
   dt = dtypes.dtype(x)
-  return _asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
+  return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
 abs = _wraps(np.abs, module='numpy')(absolute)
 
 
@@ -596,7 +596,7 @@ radians = deg2rad
 @partial(jit, inline=True)
 def conjugate(x: ArrayLike, /) -> Array:
   check_arraylike("conjugate", x)
-  return lax.conj(x) if np.iscomplexobj(x) else _asarray(x)
+  return lax.conj(x) if np.iscomplexobj(x) else lax.asarray(x)
 conj = conjugate
 
 
@@ -611,7 +611,7 @@ def imag(val: ArrayLike, /) -> Array:
 @partial(jit, inline=True)
 def real(val: ArrayLike, /) -> Array:
   check_arraylike("real", val)
-  return lax.real(val) if np.iscomplexobj(val) else _asarray(val)
+  return lax.real(val) if np.iscomplexobj(val) else lax.asarray(val)
 
 @_wraps(np.modf, module='numpy', skip_params=['out'])
 @jit

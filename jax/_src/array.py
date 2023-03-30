@@ -44,7 +44,6 @@ from jax._src.sharding_impls import (
 
 Shape = Tuple[int, ...]
 Device = xc.Device
-DeviceArray = xc.Buffer
 Index = Tuple[slice, ...]
 
 

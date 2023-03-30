@@ -41,11 +41,6 @@ _lax_const = lax_internal._const
 
 Axis = Union[None, int, Sequence[int]]
 
-
-def _asarray(a: ArrayLike) -> Array:
-  # simplified version of jnp.asarray() for local use.
-  return a if isinstance(a, Array) else api.device_put(a)
-
 def _isscalar(element: Any) -> bool:
   if hasattr(element, '__jax_array__'):
     element = element.__jax_array__()
@@ -54,7 +49,7 @@ def _isscalar(element: Any) -> bool:
 def _moveaxis(a: ArrayLike, source: int, destination: int) -> Array:
   # simplified version of jnp.moveaxis() for local use.
   check_arraylike("moveaxis", a)
-  a = _asarray(a)
+  a = lax_internal.asarray(a)
   source = _canonicalize_axis(source, np.ndim(a))
   destination = _canonicalize_axis(destination, np.ndim(a))
   perm = [i for i in range(np.ndim(a)) if i != source]
@@ -92,7 +87,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
     raise ValueError(f"reduction operation {name} does not have an identity, so to use a "
                      f"where mask one has to specify 'initial'")
 
-  a = a if isinstance(a, Array) else _asarray(a)
+  a = a if isinstance(a, Array) else lax_internal.asarray(a)
   a = preproc(a) if preproc else a
   pos_dims, dims = _reduction_dims(a, axis)
 
@@ -135,7 +130,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   else:
     result = lax.reduce(a, init_val, op, dims)
   if initial is not None:
-    initial_arr = lax.convert_element_type(initial, _asarray(a).dtype)
+    initial_arr = lax.convert_element_type(initial, lax_internal.asarray(a).dtype)
     if initial_arr.shape != ():
       raise ValueError("initial value must be a scalar. "
                        f"Got array of shape {initial_arr.shape}")
@@ -434,7 +429,7 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None,
     raise NotImplementedError("The 'out' argument to jnp.var is not supported.")
 
   computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
-  a = _asarray(a).astype(computation_dtype)
+  a = lax_internal.asarray(a).astype(computation_dtype)
   a_mean = mean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
   centered = lax.sub(a, a_mean)
   if dtypes.issubdtype(centered.dtype, np.complexfloating):
@@ -607,7 +602,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike = None, out: None =
     raise NotImplementedError("The 'out' argument to jnp.nanvar is not supported.")
 
   computation_dtype, dtype = _var_promote_types(dtypes.dtype(a), dtype)
-  a = _asarray(a).astype(computation_dtype)
+  a = lax_internal.asarray(a).astype(computation_dtype)
   a_mean = nanmean(a, axis, dtype=computation_dtype, keepdims=True, where=where)
 
   centered = _where(lax_internal._isnan(a), 0, lax.sub(a, a_mean))  # double-where trick for gradients.
@@ -701,7 +696,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, Tuple[int, ..
   if interpolation is not None:
     warnings.warn("The interpolation= argument to 'quantile' is deprecated. "
                   "Use 'method=' instead.", DeprecationWarning)
-  return _quantile(_asarray(a), _asarray(q), axis, interpolation or method, keepdims, False)
+  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, interpolation or method, keepdims, False)
 
 @_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
@@ -717,7 +712,7 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: Optional[Union[int, Tuple[int,
   if interpolation is not None:
     warnings.warn("The interpolation= argument to 'nanquantile' is deprecated. "
                   "Use 'method=' instead.", DeprecationWarning)
-  return _quantile(_asarray(a), _asarray(q), axis, interpolation or method, keepdims, True)
+  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, interpolation or method, keepdims, True)
 
 def _quantile(a: Array, q: Array, axis: Optional[Union[int, Tuple[int, ...]]],
               interpolation: str, keepdims: bool, squash_nans: bool) -> Array:

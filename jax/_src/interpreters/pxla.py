@@ -575,7 +575,7 @@ def local_aval_to_result_handler(
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
 
-PxlaResultHandler = Callable[..., Callable[[Sequence[xb.xla_client.Buffer]], Any]]
+PxlaResultHandler = Callable[..., Callable[[Any], Any]]
 local_result_handlers: Dict[Type[core.AbstractValue], PxlaResultHandler] = {}
 
 
