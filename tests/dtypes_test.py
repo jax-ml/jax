@@ -76,6 +76,13 @@ _EXPECTED_CANONICALIZE_X32[np.float64] = np.float32
 _EXPECTED_CANONICALIZE_X32[np.complex128] = np.complex64
 _EXPECTED_CANONICALIZE_X32[np.longlong] = np.int32
 
+UINT_DTYPES = {
+  8: np.uint8,
+  16: np.uint16,
+  32: np.uint32,
+  64: np.uint64,
+}
+
 def identity(x):
   """A named identity function for use in tests"""
   return x
@@ -323,6 +330,8 @@ class DtypesTest(jtu.JaxTestCase):
       self.skipTest("x64 not enabled")
     info = dtypes.finfo(dtype)
 
+    _ = str(info)  # doesn't crash
+
     def make_val(val):
       return jnp.array(val, dtype=dtype)
 
@@ -361,6 +370,12 @@ class DtypesTest(jtu.JaxTestCase):
     self.assertEqual(info.epsneg, make_val(2 ** info.negep))
     self.assertEqual(info.eps, make_val(2 ** info.machep))
     self.assertEqual(info.iexp, info.nexp)
+
+    # Check that minexp is consistent with nmant
+    self.assertEqual(
+        make_val(2 ** info.minexp).view(UINT_DTYPES[info.bits]),
+        2 ** info.nmant,
+    )
 
 
 class TestPromotionTables(jtu.JaxTestCase):
