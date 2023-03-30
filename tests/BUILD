@@ -410,7 +410,10 @@ jax_test(
         "tpu": 30,
         "iree": 40,
     },
-    deps = ["//jax:internal_test_util"] + py_deps("numpy"),
+    deps = [
+        "//jax:internal_test_util",
+        "//jax:lax_reference",
+    ] + py_deps("numpy"),
 )
 
 jax_test(
