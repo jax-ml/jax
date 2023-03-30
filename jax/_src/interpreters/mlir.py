@@ -573,32 +573,33 @@ def sharded_aval(aval: core.ShapedArray,
   return aval.update(tuple(sharded_shape))
 
 
-class DimExprEvaluator:
+class DimExprValueMlir:
+  # TODO(necula): remove this, use regular JAX lowering
   # A wrapper for an ir.Value that overloads + and * to be used for evaluating
-  # symbolic dimensions.
+  # symbolic dimensions resulting in ir.Value. See shape_poly.DimExprValue.
   __array_priority__ = 1000  # Same as tracer, for __radd__ and others on ndarray
   def __init__(self, value: ir.Value):
     self.value = value
 
-  def __add__(self, other: Union[np.int32, np.int64, DimExprEvaluator]):
-    if not isinstance(other, DimExprEvaluator):
-      other = DimExprEvaluator(ir_constant(other))
-    return DimExprEvaluator(hlo.AddOp(self.value, other.value).result)
+  def __add__(self, other: Union[np.int32, np.int64, DimExprValueMlir]):
+    if not isinstance(other, DimExprValueMlir):
+      other = DimExprValueMlir(ir_constant(other))
+    return DimExprValueMlir(hlo.AddOp(self.value, other.value).result)
 
   def __radd__(self, other: Union[np.int32, np.int64]):
-    return DimExprEvaluator(ir_constant(other)).__add__(self)
+    return DimExprValueMlir(ir_constant(other)).__add__(self)
 
-  def __mul__(self, other: Union[np.int32, np.int64, DimExprEvaluator]):
-    if not isinstance(other, DimExprEvaluator):
-      other = DimExprEvaluator(ir_constant(other))
-    return DimExprEvaluator(hlo.MulOp(self.value, other.value).result)
+  def __mul__(self, other: Union[np.int32, np.int64, DimExprValueMlir]):
+    if not isinstance(other, DimExprValueMlir):
+      other = DimExprValueMlir(ir_constant(other))
+    return DimExprValueMlir(hlo.MulOp(self.value, other.value).result)
 
   def __rmul__(self, other: Union[np.int32, np.int64]):
-    return DimExprEvaluator(ir_constant(other)).__mul__(self)
+    return DimExprValueMlir(ir_constant(other)).__mul__(self)
 
-  def __divmod__(self, divisor: Union[np.int32, np.int64, DimExprEvaluator]):
-    if not isinstance(divisor, DimExprEvaluator):
-      divisor = DimExprEvaluator(ir_constant(divisor))
+  def __divmod__(self, divisor: Union[np.int32, np.int64, DimExprValueMlir]):
+    if not isinstance(divisor, DimExprValueMlir):
+      divisor = DimExprValueMlir(ir_constant(divisor))
     # Quotient
     raw_quotient = hlo.DivOp(self.value, divisor.value)
     raw_remainder = hlo.RemOp(self.value, divisor.value)
@@ -613,11 +614,11 @@ class DimExprEvaluator:
                             raw_quotient)
     # Remainder
     remainder = hlo.SubtractOp(self.value, hlo.MulOp(divisor.value, quotient))
-    return (DimExprEvaluator(quotient.result),
-            DimExprEvaluator(remainder.result))
+    return (DimExprValueMlir(quotient.result),
+            DimExprValueMlir(remainder.result))
 
   def __rdivmod__(self, dividend: Union[np.int32, np.int64]):
-    return DimExprEvaluator(ir_constant(dividend)).__divmod__(self)
+    return DimExprValueMlir(ir_constant(dividend)).__divmod__(self)
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
                        shape: core.Shape) -> Tuple[Union[int, Value], ...]:
@@ -625,7 +626,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
   if config.jax_dynamic_shapes:
     return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
   else:
-    dim_var_env = {dv_name : DimExprEvaluator(dv_val[0])
+    dim_var_env = {dv_name: DimExprValueMlir(dv_val[0])
                    for dv_name, dv_val in zip(ctx.module_context.dim_vars, ctx.dim_var_values)}
     def eval_dim(d: core.DimSize) -> Union[int, ir.Value]:
       try:

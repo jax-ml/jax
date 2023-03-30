@@ -16,7 +16,6 @@ from jax._src.interpreters.mlir import (
   AxisContext as AxisContext,
   ConstantHandler as ConstantHandler,
   DEVICE_TO_DEVICE_TYPE as DEVICE_TO_DEVICE_TYPE,
-  DimExprEvaluator as DimExprEvaluator,
   LoweringResult as LoweringResult,
   LoweringRule as LoweringRule,
   LoweringRuleContext as LoweringRuleContext,
