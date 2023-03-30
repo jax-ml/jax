@@ -858,7 +858,6 @@ class ShardMapSystematicTest(jtu.JaxTestCase):
       sample(config.FLAGS.jax_num_generated_cases,
              partial(sample_shmap_batched, 5)))
   def test_vmap_closure(self, bdims, fun, mesh, jit, in_specs, out_specs, args, _):
-    raise unittest.SkipTest("need BatchTrace.post_process_shard_map")  # TODO
     mesh = self.make_mesh(mesh)
     args = map(jnp.array, args)
 
