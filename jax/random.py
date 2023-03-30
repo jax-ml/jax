@@ -163,6 +163,7 @@ from jax._src.random import (
   fold_in as fold_in,
   gamma as gamma,
   generalized_normal as generalized_normal,
+  geometric as geometric,
   gumbel as gumbel,
   key_data as key_data,
   laplace as laplace,
