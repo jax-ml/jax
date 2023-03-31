@@ -45,6 +45,8 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
 from jax._src import xla_bridge
+from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 from jax._src.interpreters import pxla
 from jax.interpreters import xla
@@ -331,6 +333,62 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f = f.lower(x).compile()
     self.assertIsNotNone(f.runtime_executable())
+
+  @unittest.skipIf(xla_extension_version < 145,
+                   'Test requires xla_extension_version >= 145')
+  def test_jit_lower_compile_with_compiler_options(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+
+    lowered.compile(            # doesn't crash
+        compiler_options={"xla_embed_ir_in_executable": True})
+
+  @unittest.skipIf(xla_extension_version < 145,
+                   'Test requires xla_extension_version >= 145')
+  def test_jit_lower_compile_with_compiler_options_invalid(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+
+    self.assertRaisesRegex(
+        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        lambda: lowered.compile(
+            compiler_options={"invalid_key": "invalid_value"}))
+
+    self.assertRaisesRegex(
+        xla_extension.XlaRuntimeError, "is not a valid bool value.",
+        lambda: lowered.compile(
+            compiler_options={"xla_embed_ir_in_executable": "invalid_value"}))
+
+  @unittest.skipIf(xla_extension_version < 145,
+                   'Test requires xla_extension_version >= 145')
+  def test_jit_lower_compile_with_compiler_options_multiple(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    shape = (jax.device_count(), 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+
+    l1 = lowered.compile()
+    l2 = lowered.compile(
+        compiler_options={"xla_embed_ir_in_executable": True})
+    l3 = lowered.compile(
+        compiler_options={"xla_embed_ir_in_executable": False})
+
+    # Ideally we could test that these objects are different only in
+    # that they respect the different options. Object identity is a
+    # heuristic proxy for that.
+    self.assertTrue(l1 is not l2)
+    self.assertTrue(l1 is not l3)
+    self.assertTrue(l2 is not l3)
+
+    # We should still error on invalid options after some valid compiles
+    self.assertRaisesRegex(
+        xla_extension.XlaRuntimeError, "No such compile option: 'invalid_key'",
+        lambda: lowered.compile(
+            compiler_options={"invalid_key": "invalid_value"}))
 
   def testLowerShapedArray(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')

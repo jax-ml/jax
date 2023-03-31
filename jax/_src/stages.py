@@ -145,7 +145,7 @@ class Executable(Protocol):
 class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
-  def compile(self) -> Executable:
+  def compile(self, compiler_options=None) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
@@ -295,7 +295,7 @@ class XlaLowering(Lowering):
     """Return a StableHLO representation of this computation."""
     raise NotImplementedError("must override")
 
-  def compile(self) -> Executable:
+  def compile(self, compiler_options=None) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
@@ -583,24 +583,26 @@ class Lowered(Stage):
         out_tree,
         no_kwargs=no_kwargs)
 
-  def compile(self) -> Compiled:
+  def compile(self, compiler_options=None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
     from jax._src.interpreters import pxla
 
+    kw = {"compiler_options": compiler_options}
+
     if isinstance(self._lowering, pxla.MeshComputation):
-      kw = dict(
+      kw.update(
           _allow_propagation_to_outputs=[
               pxla._is_unspecified(o)
-              for o in self._lowering.compile_args["out_shardings"]]
+              for o in self._lowering.compile_args["out_shardings"]
+          ]
       )
-    else:
-      kw = {}
 
     return Compiled(
-        self._lowering.compile(**kw),
+        self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
         self.args_info,
         self.out_tree,
-        no_kwargs=self._no_kwargs)
+        no_kwargs=self._no_kwargs,
+    )
 
   def as_text(self, dialect: Optional[str] = None) -> str:
     """A human-readable text representation of this lowering.

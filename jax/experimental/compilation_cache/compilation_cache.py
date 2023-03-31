@@ -23,6 +23,7 @@ from jax.experimental.compilation_cache.gfile_cache import GFileCache
 from jax._src import path as pathlib
 from jax._src.lib import xla_client
 from jax._src.lib import version_str as jaxlib_version_str
+from jax._src.lib import xla_extension_version
 
 _cache = None
 
@@ -128,7 +129,10 @@ def _hash_computation(hash_obj, xla_computation):
   hash_obj.update(scrubbed_hlo)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
-  expected_num_compile_options = 11
+  if xla_extension_version >= 145:
+    expected_num_compile_options = 12
+  else:
+    expected_num_compile_options = 11
   # Ignore private and built-in methods. These can unexpectedly change and lead
   # to false positives, e.g. when different Python versions include different
   # built-ins.
@@ -152,6 +156,16 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   if compile_options_obj.device_assignment is not None:
     hash_obj.update(compile_options_obj.device_assignment.serialize())
   _hash_bool(hash_obj, compile_options_obj.compile_portable_executable)
+  if xla_extension_version >= 145:
+    _hash_int(hash_obj, len(compile_options_obj.env_option_overrides))
+    for kv in compile_options_obj.env_option_overrides:
+      _hash_string(hash_obj, kv[0])
+      if isinstance(kv[1], str):
+        _hash_string(hash_obj, kv[1])
+      elif isinstance(kv[1], bool):
+        _hash_bool(hash_obj, kv[1])
+      else:
+        raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
 
 def _hash_executable_build_options(hash_obj, executable_obj):
   expected_options = 10

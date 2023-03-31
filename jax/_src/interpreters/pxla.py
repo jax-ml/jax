@@ -1287,10 +1287,14 @@ class PmapComputation(stages.XlaLowering):
     return self._hlo
 
   @profiler.annotate_function
-  def compile(self) -> PmapExecutable:
-    if self._executable is None:
-      self._executable = UnloadedPmapExecutable.from_hlo(
-          self._hlo, **self.compile_args)
+  def compile(self, compiler_options=None) -> PmapExecutable:
+    if self._executable is None or compiler_options is not None:
+      executable = UnloadedPmapExecutable.from_hlo(
+          self._hlo, **self.compile_args,
+          compiler_options=compiler_options)
+      if compiler_options is None:
+        self._executable = executable
+      return executable
     return self._executable
 
 
@@ -1317,7 +1321,8 @@ class UnloadedPmapExecutable:
                unordered_effects: List[core.Effect],
                ordered_effects: List[core.Effect],
                host_callbacks: List[Any],
-               keepalive: Any):
+               keepalive: Any,
+               compiler_options=None):
     devices = pci.devices
     if devices is None:
       if shards.num_global_shards > xb.device_count(pci.backend):
@@ -1374,6 +1379,7 @@ class UnloadedPmapExecutable:
         num_partitions=parts.num_partitions,
         device_assignment=device_assignment,
         use_spmd_partitioning=use_spmd_partitioning,
+        env_options_overrides=compiler_options,
     )
     compile_options.parameter_is_tupled_arguments = tuple_args
 
@@ -2801,20 +2807,27 @@ class MeshComputation(stages.XlaLowering):
       raise ValueError("A trivial computation has no StableHLO")
     return self._hlo
 
-  def compile(self,
-              _allow_propagation_to_outputs: Optional[Sequence[bool]] = None,
-              _allow_compile_replicated: bool = True) -> MeshExecutable:
-    if self._executable is None:
+  def compile(
+      self,
+      compiler_options=None,
+      _allow_propagation_to_outputs: Optional[Sequence[bool]] = None,
+      _allow_compile_replicated: bool = True,
+  ) -> MeshExecutable:
+    if self._executable is None or compiler_options is not None:
       if self.is_trivial:
-        self._executable = MeshExecutable.from_trivial_jaxpr(
+        executable = MeshExecutable.from_trivial_jaxpr(
             **self.compile_args)
       else:
-        self._executable = UnloadedMeshExecutable.from_hlo(
+        executable = UnloadedMeshExecutable.from_hlo(
             self._name,
             self._hlo,
             **self.compile_args,
             _allow_propagation_to_outputs=_allow_propagation_to_outputs,
-            _allow_compile_replicated=_allow_compile_replicated)
+            _allow_compile_replicated=_allow_compile_replicated,
+            compiler_options=compiler_options)
+      if compiler_options is None:
+        self._executable = executable
+      return executable
     return self._executable
 
   def cost_analysis(self) -> Dict[str, float]:
@@ -2967,7 +2980,8 @@ class UnloadedMeshExecutable:
                backend: xb.XlaBackend,
                device_assignment: Sequence[xc.Device],
                committed: bool,
-               pmap_nreps: int = 1
+               pmap_nreps: int = 1,
+               compiler_options=None
   ) -> MeshExecutable:
 
     dev: np.ndarray
@@ -2997,6 +3011,7 @@ class UnloadedMeshExecutable:
         device_assignment=xla_device_assignment,
         use_spmd_partitioning=spmd_lowering,
         use_auto_spmd_partitioning=auto_spmd_lowering,
+        env_options_overrides=compiler_options,
     )
     if auto_spmd_lowering:
       assert mesh is not None
