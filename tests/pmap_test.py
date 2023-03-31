@@ -2138,6 +2138,18 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 
+  def test_axis_name_shadowing_with_vmap(self):
+    # TODO(mattjj): we don't want assertion errors here, but it's a start! the
+    # main point of including this test for now is to document the bug
+
+    with self.assertRaises(AssertionError):
+      jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
+               axis_name='i')(jax.numpy.ones((2, 4)))
+
+    with self.assertRaises(AssertionError):
+      jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
+               axis_name='i')(jax.numpy.ones((4, 4)))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
