@@ -3550,13 +3550,6 @@ def argsort(a: ArrayLike, axis: Optional[int] = -1, kind: str = 'stable', order=
     return perm
 
 
-@util._wraps(np.msort)
-def msort(a):
-  # TODO(jakevdp): remove msort after Feb 2023
-  warnings.warn("jnp.msort is deprecated; use jnp.sort(a, axis=0) instead", DeprecationWarning)
-  return sort(a, axis=0)
-
-
 @util._wraps(np.partition, lax_description="""
 The JAX version requires the ``kth`` argument to be a static integer rather than
 a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If

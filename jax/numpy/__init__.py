@@ -170,7 +170,6 @@ from jax._src.numpy.lax_numpy import (
     matmul as matmul,
     meshgrid as meshgrid,
     moveaxis as moveaxis,
-    msort as msort,
     nan as nan,
     nan_to_num as nan_to_num,
     nanargmax as nanargmax,
