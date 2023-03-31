@@ -126,6 +126,8 @@ from jax._src.api import vmap as vmap
 from jax._src.api import xla_computation as xla_computation
 
 from jax.interpreters import ad as _deprecated_ad
+import jax.interpreters.batching
+import jax.interpreters.mlir
 from jax.interpreters import partial_eval as _deprecated_partial_eval
 from jax.interpreters import pxla as _deprecated_pxla
 from jax.interpreters import xla as _deprecated_xla

@@ -24,11 +24,10 @@ from jax._src import dtypes
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lax import lax
 from jax._src.lib.mlir.dialects import hlo
 
-from jax.interpreters import mlir
-from jax._src.interpreters import mlir as internal_mlir
 
 _max = builtins.max
 
@@ -729,7 +728,7 @@ def _conv_general_dilated_lower(
     # spatial dimension.
     int2d = mlir.aval_to_ir_type(core.ShapedArray((1, 2), np.int32))
     def prep_one_pad(pad_lo_hi: Tuple[core.DimSize, core.DimSize]):
-      pad1 = mlir.shape_tensor(internal_mlir.eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
+      pad1 = mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, pad_lo_hi))  # i32[2]
       return hlo.ReshapeOp(int2d, pad1)
     d_padding = hlo.ConcatenateOp(list(map(prep_one_pad, padding)),
                                   mlir.i64_attr(0))

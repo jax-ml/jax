@@ -26,7 +26,6 @@ from jax import lax
 from jax import numpy as jnp
 from jax.config import config
 from jax.dtypes import float0
-from jax.interpreters import xla
 
 from jax._src import basearray
 from jax._src import core
@@ -38,6 +37,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.interpreters import xla
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
@@ -947,7 +947,7 @@ def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
 
 threefry2x32_p = core.Primitive("threefry2x32")
 threefry2x32_p.multiple_results = True
-threefry2x32_p.def_impl(partial(xla.apply_primitive, threefry2x32_p))
+threefry2x32_p.def_impl(partial(dispatch.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
 mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
@@ -1019,7 +1019,7 @@ def iota_2x32_shape(shape):
 
 iota_2x32_shape_p = core.Primitive('iota_2x32_shape')
 iota_2x32_shape_p.multiple_results = True
-iota_2x32_shape_p.def_impl(partial(xla.apply_primitive, iota_2x32_shape_p))
+iota_2x32_shape_p.def_impl(partial(dispatch.apply_primitive, iota_2x32_shape_p))
 
 @iota_2x32_shape_p.def_abstract_eval
 def iota_2x32_shape_abstract_eval(*, shape):

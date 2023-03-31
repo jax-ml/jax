@@ -26,7 +26,7 @@ from jax._src import mesh as mesh_lib
 from jax._src import sharding
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 
 import numpy as np

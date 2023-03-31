@@ -23,11 +23,11 @@ import jax.numpy as jnp
 from jax import jit
 from jax import vmap
 from jax import lax
-from jax.interpreters import ad
 
 from jax._src import api
 from jax._src import core
 from jax._src import dtypes
+from jax._src.interpreters import ad
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
 from jax._src.numpy.util import _wraps

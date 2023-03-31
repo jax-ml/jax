@@ -24,11 +24,6 @@ from jax._src import core
 from jax._src import linear_util as lu
 from jax.config import config
 from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map, tree_flatten_with_path, keystr)
 from jax._src.tree_util import equality_errors
@@ -40,6 +35,11 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import source_info_util
 from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import xla
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions

@@ -36,13 +36,13 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple
 
 import jax
-from jax import tree_util
-from jax.interpreters import mlir
 
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
 

@@ -38,12 +38,12 @@ from jax._src.config import config
 from jax.errors import JAXTypeError
 from jax._src.array import ArrayImpl
 from jax._src.sharding_impls import NamedSharding
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
-from jax.interpreters import batching
-from jax.interpreters import ad
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
                            as_hashable_function, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name,

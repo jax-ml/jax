@@ -20,13 +20,13 @@ from typing import Union, Sequence
 import numpy as np
 
 from jax import lax
-from jax.interpreters import mlir
-from jax.interpreters import xla
 
+from jax._src import dispatch
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax._src.core import Primitive, is_constant_shape
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib import xla_client
 from jax._src.lib import ducc_fft
@@ -71,7 +71,7 @@ def fft(x, fft_type: Union[xla_client.FftType, str], fft_lengths: Sequence[int])
   return fft_p.bind(x, fft_type=typ, fft_lengths=fft_lengths)
 
 def _fft_impl(x, fft_type, fft_lengths):
-  return xla.apply_primitive(fft_p, x, fft_type=fft_type, fft_lengths=fft_lengths)
+  return dispatch.apply_primitive(fft_p, x, fft_type=fft_type, fft_lengths=fft_lengths)
 
 _complex_dtype = lambda dtype: (np.zeros((), dtype) + np.zeros((), np.complex64)).dtype
 _real_dtype = lambda dtype: np.finfo(dtype).dtype

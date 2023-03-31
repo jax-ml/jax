@@ -19,10 +19,10 @@ import warnings
 import numpy as np
 
 from jax import tree_util
-from jax.interpreters import xla
 
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import util
 from jax._src.core import ShapedArray, ConcreteArray
@@ -305,7 +305,7 @@ def _generic_reduce_window_batch_rule(
 
 reduce_window_p = core.Primitive('reduce_window')
 reduce_window_p.multiple_results = True
-reduce_window_p.def_impl(partial(xla.apply_primitive, reduce_window_p))
+reduce_window_p.def_impl(partial(dispatch.apply_primitive, reduce_window_p))
 reduce_window_p.def_abstract_eval(_reduce_window_abstract_eval_rule)
 batching.primitive_batchers[reduce_window_p] = _generic_reduce_window_batch_rule
 
