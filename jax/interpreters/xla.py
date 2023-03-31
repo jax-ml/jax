@@ -55,8 +55,7 @@ _deprecated_Device = xc.Device
 XlaOp = xc.XlaOp
 xe = xc._xla
 Backend = xe.Client
-Buffer = xc.Buffer
-_CppDeviceArray = xe.Buffer
+Buffer = _deprecated_DeviceArray
 
 _deprecations = {
     # Added Feb 9, 2023:
@@ -67,6 +66,13 @@ _deprecations = {
     "DeviceArray": (
         (
             "jax.interpreters.xla.DeviceArray is deprecated. Use jax.Array"
+            " instead."
+        ),
+        _deprecated_DeviceArray,
+    ),
+    "Buffer": (
+        (
+            "jax.interpreters.xla.Buffer is deprecated. Use jax.Array"
             " instead."
         ),
         _deprecated_DeviceArray,
