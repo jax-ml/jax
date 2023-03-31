@@ -602,7 +602,7 @@ def _match(mesh, dst_tup, x):
   return shard_map(_rem_singleton, mesh, (src,), dst, check_rep=False)(x)
 
 def _rem_singleton(x): return x.reshape(x.shape[1:])
-def _add_singleton(x): return x.reshape(1, *x.shape)
+def _add_singleton(x): return lax.reshape(x, (1, *np.shape(x)))
 
 class ShardMapTrace(core.Trace):
   mesh: Mesh
@@ -1045,6 +1045,7 @@ def _pe_custom_res(params_known, aval):
 def _pe_custom_ctx(params):
   return core.extend_axis_env_nd(params['mesh'].shape.items())
 
+# TODO we don't actually handle scalar res reshaping correctly here!
 pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr', _pe_custom_params,
             res_aval=_pe_custom_res, ctx=_pe_custom_ctx)
@@ -1077,23 +1078,25 @@ from jax.api_util import flatten_fun
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums=(), devices=None, backend=None,
          axis_size=None, donate_argnums=(), global_arg_shapes=None):
-  if (devices is not None or    # TODO this should inform the Mesh we create
-      backend is not None or    # TODO does anyone use it?
+  if (backend is not None or    # TODO does anyone use it?
       axis_size is not None):  # TODO what even is this?
     raise NotImplementedError
-  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
+  devices = tuple(devices) if devices is not None else devices
+  axis_name, _, _ = _shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
-  return partial(jax.jit(
-      _pmapped, static_argnums=(0, *(1+i for i in static_broadcasted_argnums)),
-      donate_argnums=donate_argnums), (f, axis_name, in_axes, out_axes))
+  return jax.jit(
+      HashablePartial(_pmapped, (f, axis_name, in_axes, out_axes, devices)),
+      static_argnums=static_broadcasted_argnums,
+      donate_argnums=donate_argnums)
 
 def _pmapped(stuff, *args, **kwargs):
-  f, axis_name, in_axes, out_axes = stuff
-  p = _prepare_pmap(f, in_axes, out_axes, (), (), None, None, None, args, kwargs)
+  f, axis_name, in_axes, out_axes, devices = stuff
+  p = _prepare_pmap(f, in_axes, out_axes, (), (), devices, None, None, args, kwargs)
   in_specs = tuple(map(partial(_axis_to_spec, axis_name), p.in_axes_flat))
   out_specs = lambda: map(partial(_axis_to_spec, axis_name), p.out_axes_thunk())
   fun = _handle_singletons(p.flat_fun)
-  mesh = Mesh(jax.devices()[:p.local_axis_size], (axis_name,))
+  devices = jax.devices() if p.devices is None else p.devices
+  mesh = Mesh(devices[:p.local_axis_size], (axis_name,))
   out = _shard_map(fun.call_wrapped, mesh, in_specs, out_specs)(*p.flat_args)
   return tree_unflatten(p.out_tree(), out)
 
