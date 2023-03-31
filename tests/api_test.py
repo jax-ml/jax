@@ -9716,8 +9716,6 @@ class DeprecationsTest(jtu.JaxTestCase):
     with self.assertWarns(DeprecationWarning):
       self.assertIs(jax.xla, jax.interpreters.xla)
     with self.assertWarns(DeprecationWarning):
-      self.assertIs(jax.curry, jax._src.util.curry)
-    with self.assertWarns(DeprecationWarning):
       self.assertIs(jax.flatten_fun_nokwargs, jax.api_util.flatten_fun_nokwargs)
 
 if __name__ == '__main__':
