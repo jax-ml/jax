@@ -191,7 +191,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # the default order of pmap for single-host jobs.
     device_order = jax.devices()
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
-    self.assertListEqual(device_order, pmap_sharding.devices.tolist())
+    self.assertListEqual(device_order, pmap_sharding._device_assignment)
 
   def testLowerCompile(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -2038,12 +2038,12 @@ class PythonPmapTest(jtu.JaxTestCase):
     f(x)  # warm-up any dispatching compilations
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
-      _, f_bwd  = jax.vjp(f, x)
+      _, f_bwd = jax.vjp(f, x)
       _ = f_bwd(x)
     self.assertEqual(count[0], 2)  # one for fwd, one for bwd
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
-      _, f_bwd2  = jax.vjp(f, x)
+      _, f_bwd2 = jax.vjp(f, x)
       _ = f_bwd(x)
       _ = f_bwd2(x)
     self.assertEqual(count[0], 0)  # cache hits on fwd and bwd

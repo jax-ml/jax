@@ -67,6 +67,11 @@ Specs = Any  # PyTree[PartitionSpec]
 @traceback_util.api_boundary
 def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
               check_rep: bool = True):
+  return _shard_map(f, mesh, in_specs, out_specs, check_rep)
+
+def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
+               out_specs: Union[Specs, Callable[[], Specs]],
+               check_rep: bool = True):
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -74,7 +79,8 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
     raise TypeError("shard_map requires a `jax.sharding.Mesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
   _check_specs(SpecErrorType.input, in_specs)
-  _check_specs(SpecErrorType.out, out_specs)
+  if not callable(out_specs):
+    _check_specs(SpecErrorType.out, out_specs)
 
   @util.wraps(f)
   @traceback_util.api_boundary
@@ -91,10 +97,15 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
 
     @memoize
     def out_names_thunk():
+      if callable(out_specs):
+        out_specs_ = out_specs()
+        _check_specs(SpecErrorType.out, out_specs_)
+      else:
+        out_specs_ = out_specs
       dummy = tree_unflatten(out_tree(), [object()] * out_tree().num_leaves)
-      try: out_specs_flat = broadcast_prefix(out_specs, dummy)
+      try: out_specs_flat = broadcast_prefix(out_specs_, dummy)
       except ValueError:
-        e, *_ = prefix_errors(out_specs, dummy)
+        e, *_ = prefix_errors(out_specs_, dummy)
         raise e('shard_map out_specs') from None
       return tuple(map(_canonicalize_spec, out_specs_flat))
     try:
@@ -103,7 +114,7 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
           out_names_thunk=out_names_thunk, check_rep=check_rep)
     except _SpecError as e:
       fails, = e.args
-      msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
+      msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs_, fails)
       if any(fail is not no_fail and not fail.shape for fail in fails):
         msg += (" In particular, for rank 0 outputs which are not constant "
                 "over the mesh, add at least one (singleton) axis to them so "
@@ -111,7 +122,7 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
       raise ValueError(msg) from None
     except _RepError as e:
       fails, = e.args
-      msg = _rep_error(f, mesh, out_tree(), out_specs, fails)
+      msg = _rep_error(f, mesh, out_tree(), out_specs_, fails)
       raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
@@ -1060,7 +1071,7 @@ class HashablePartial:
 
 # Implementing pmap in terms of shard_map
 
-from jax._src.api import _mapped_axis_size
+from jax._src.api import _mapped_axis_size, _shared_code_pmap, _prepare_pmap
 from jax.api_util import flatten_fun
 
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
@@ -1068,26 +1079,35 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          axis_size=None, donate_argnums=(), global_arg_shapes=None):
   if (devices is not None or    # TODO this should inform the Mesh we create
       backend is not None or    # TODO does anyone use it?
-      axis_size is not None or  # TODO what even is this?
-      in_axes != 0 or out_axes != 0):  # TODO this is easy
+      axis_size is not None):  # TODO what even is this?
     raise NotImplementedError
-  axis_name = core._TempAxisName(f) if axis_name is None else axis_name
+  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
+      f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
+  return partial(jax.jit(
+      _pmapped, static_argnums=(0, *(1+i for i in static_broadcasted_argnums)),
+      donate_argnums=donate_argnums), (f, axis_name, in_axes, out_axes))
 
-  @partial(jax.jit, donate_argnums=donate_argnums,
-           static_argnums=static_broadcasted_argnums)
-  def f_pmapped(*args, **kwargs):
-    args, in_tree = tree_flatten((args, kwargs))
-    axis_size = _mapped_axis_size(f, in_tree, args, [0] * len(args), "pmap")
-    fun, out_tree = flatten_fun(lu.wrap_init(f), in_tree)
-    fun = _handle_singletons(fun)
-    mesh = Mesh(jax.devices()[:axis_size], (axis_name,))
-    out = shard_map(fun.call_wrapped, mesh, P(axis_name), P(axis_name))(*args)
-    return tree_unflatten(out_tree(), out)
-  return f_pmapped
+def _pmapped(stuff, *args, **kwargs):
+  f, axis_name, in_axes, out_axes = stuff
+  p = _prepare_pmap(f, in_axes, out_axes, (), (), None, None, None, args, kwargs)
+  in_specs = tuple(map(partial(_axis_to_spec, axis_name), p.in_axes_flat))
+  out_specs = lambda: map(partial(_axis_to_spec, axis_name), p.out_axes_thunk())
+  fun = _handle_singletons(p.flat_fun)
+  mesh = Mesh(jax.devices()[:p.local_axis_size], (axis_name,))
+  out = _shard_map(fun.call_wrapped, mesh, in_specs, out_specs)(*p.flat_args)
+  return tree_unflatten(p.out_tree(), out)
 
 @lu.transformation
 def _handle_singletons(*args, **kwargs):
   args, kwargs = tree_map(_rem_singleton, (args, kwargs))
   out = yield args, kwargs
   yield tree_map(_add_singleton, out)
->>>>>>> c964d98cd (pmap wip)
+
+def _axis_to_spec(axis_name, ax):
+  if type(ax) is int:
+    stuff = [None] * ax + [axis_name]
+    return P(*stuff)
+  elif ax is None:
+    return P()
+  else:
+    raise TypeError(ax)

@@ -1320,6 +1320,7 @@ def _pjit_lower(
   out_shardings = SameDeviceAssignmentTuple(tuple(out_shardings), da)
   return _pjit_lower_cached(jaxpr, in_shardings, out_shardings, *args, **kwargs)
 
+COOL = False
 
 @weakref_lru_cache
 def _pjit_lower_cached(
@@ -1333,6 +1334,9 @@ def _pjit_lower_cached(
     always_lower: bool,
     *,
     lowering_platform: Optional[str]):
+  global COOL
+  if COOL:
+    breakpoint()
   in_shardings: Tuple[PjitShardingMinusUnspecified, ...] = cast(
       Tuple[PjitShardingMinusUnspecified, ...], sdat_in_shardings.shardings)
   out_shardings: Tuple[PjitSharding, ...] = sdat_out_shardings.shardings

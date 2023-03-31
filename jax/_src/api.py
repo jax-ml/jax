@@ -1563,7 +1563,7 @@ def pmap(
               devices=devices, backend=backend,
               axis_size=axis_size,
               donate_argnums=donate_argnums)
-
+  assert False
   if FLAGS.experimental_cpp_pmap:
     func = _cpp_pmap
   else:
