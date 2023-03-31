@@ -319,7 +319,6 @@ class ShardMapTest(jtu.JaxTestCase):
     f = shard_map(lambda x: x.reshape(1, *x.shape), mesh, P(), P('x'))
     _ = jax.jit(f)(jnp.array(2.0))  # doesnt crash
 
-  @unittest.skip('Does not work with pjit with pjit batcher error')
   def test_vmap_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
     x = jnp.arange(8 * 8.).reshape(8, 8)
@@ -327,7 +326,27 @@ class ShardMapTest(jtu.JaxTestCase):
     def g(x):
       return shard_map(lambda x: 2. * x, mesh,
                        in_specs=P('y'), out_specs=P('y'))(x)
-    y = jax.vmap(g, axis_name='x')(x)
+    y = jax.vmap(g)(x)
+    self.assertAllClose(y, 2 * x, check_dtypes=False)
+
+  def test_vmap_basic_axis_name(self):
+    mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
+    x = jnp.arange(8 * 8.).reshape(8, 8)
+
+    def g(x):
+      return shard_map(lambda x: 2. * x, mesh,
+                       in_specs=P('y'), out_specs=P('y'))(x)
+    y = jax.vmap(g, axis_name='i')(x)
+    self.assertAllClose(y, 2 * x, check_dtypes=False)
+
+  def test_vmap_basic_axis_name_reuse_mesh_name(self):
+    mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
+    x = jnp.arange(8 * 8.).reshape(8, 8)
+
+    def g(x):
+      return shard_map(lambda x: 2. * x, mesh,
+                       in_specs=P('y'), out_specs=P('y'))(x)
+    y = jax.vmap(g, axis_name='x')(x)  # NOTE reuse same 'x' as on mesh
     self.assertAllClose(y, 2 * x, check_dtypes=False)
 
   def test_tree_prefix_error(self):

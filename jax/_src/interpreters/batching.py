@@ -341,7 +341,7 @@ class BatchTrace(Trace):
     if self.axis_name is core.no_axis_name:
       assert axis_size is not None  # must be inferrable from data
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
-    frame = core.axis_frame(self.axis_name)
+    frame = core.axis_frame(self.axis_name, self.main)
     assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
     assert frame.main_trace is self.main
     return frame

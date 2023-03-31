@@ -2139,16 +2139,21 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
 
   def test_axis_name_shadowing_with_vmap(self):
-    # TODO(mattjj): we don't want assertion errors here, but it's a start! the
-    # main point of including this test for now is to document the bug
+    # vmap-of-pmap with mismatched axis sizes
+    jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((2, 1)))  # don't crash
 
-    with self.assertRaises(AssertionError):
-      jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
-               axis_name='i')(jax.numpy.ones((2, 4)))
+    # vmap-of-pmap with matched axis sizes
+    jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
 
-    with self.assertRaises(AssertionError):
-      jax.vmap(jax.pmap(lambda x: 2 * x, axis_name='i'),
-               axis_name='i')(jax.numpy.ones((4, 4)))
+    # vmap-of-vmap with mismatched axis sizes
+    jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((2, 1)))  # don't crash
+
+    # vmap-of-vmap with matched axis sizes
+    jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
+             axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
