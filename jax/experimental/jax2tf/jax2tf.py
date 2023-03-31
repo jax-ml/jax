@@ -440,9 +440,9 @@ def convert(fun_jax: Callable,
                   _make_custom_gradient_fn_tf(
                       fun_flat_jax=fun_flat_jax,
                       args_flat_tf=args_flat_tf,
-                      args_avals_flat=args_avals_flat,
                       polymorphic_shapes_flat=polymorphic_shapes_flat,
                       out_avals=out_avals,
+                      outs_tf=outs_tf,
                       native_serialization=native_serialization,
                       native_serialization_platforms=native_serialization_platforms,
                       native_serialization_strict_checks=native_serialization_strict_checks,
@@ -564,8 +564,8 @@ def _make_custom_gradient_fn_tf(*,
                                 fun_flat_jax: Callable,
                                 args_flat_tf: Sequence[TfVal],
                                 polymorphic_shapes_flat: Sequence[str],
-                                args_avals_flat: Sequence[core.ShapedArray],
                                 out_avals: Sequence[core.ShapedArray],
+                                outs_tf: Sequence[TfVal],
                                 native_serialization: Union[str, bool],
                                 native_serialization_platforms: Sequence[str],
                                 native_serialization_strict_checks: bool,
@@ -595,32 +595,7 @@ def _make_custom_gradient_fn_tf(*,
       # main function. Those tracers will confuse the conversion of the
       # pullback. So, we construct the vjp anew and we convert it separately.
       _, pullback_jax = jax.vjp(fun_flat_jax, *args_flat_jax)
-
-      def fix_out_ct(out_ct_jax, out_ct_aval: core.ShapedArray):
-        # If the primal function has outputs of integer or bool types, and if we are
-        # under a tf.function context, then TF will pass None in _out_cts_flat
-        # in place of these values. We should change these to float0 or
-        # else JAX gets unhappy. See issue #6975.
-        if out_ct_jax is not None:
-          return out_ct_jax
-        assert core.primal_dtype_to_tangent_dtype(out_ct_aval.dtype) == dtypes.float0, f"{out_ct_jax=}"
-        # Note that out_ct_aval.shape contains dimension variable from the
-        # primal function scope. It is Ok to use them here because we
-        # use the same shape variables for the VJP function.
-        return jnp.zeros(out_ct_aval.shape, dtype=_tf_np_dtype_for_float0)
-
-      out_cts_fixed_flat = list(map(fix_out_ct, out_cts_flat_jax, out_avals))
-      in_cts_flat_jax = pullback_jax(out_cts_fixed_flat)
-
-      def fix_in_ct(in_ct_jax, arg_aval: core.ShapedArray):
-        if jnp.issubdtype(arg_aval.dtype, jnp.inexact):
-          return in_ct_jax
-        else:
-          assert in_ct_jax.dtype == dtypes.float0
-          return jnp.zeros(arg_aval.shape, _tf_np_dtype_for_float0)
-
-      in_cts_fixed_flat_jax = tuple(map(fix_in_ct, in_cts_flat_jax, args_avals_flat))
-      return in_cts_fixed_flat_jax
+      return pullback_jax(list(out_cts_flat_jax))
 
     if exported_primal is not None:
       # Native lowering
@@ -666,6 +641,19 @@ def _make_custom_gradient_fn_tf(*,
                               out_shardings=vjp_in_args_shardings)
     # TODO: enable higher-order gradients
     with tf.name_scope("jax2tf_vjp"):
+      def fix_out_ct(out_ct_tf, out_ct_aval: core.ShapedArray, out_tf: TfVal):
+        # If the primal function has outputs of integer or bool types, and if we are
+        # under a tf.function context, then TF will pass None in _out_cts_flat
+        # in place of these values. We should change these to float0 or
+        # else JAX gets unhappy. See issue #6975.
+        if out_ct_tf is not None:
+          return out_ct_tf
+        assert core.primal_dtype_to_tangent_dtype(out_ct_aval.dtype) == dtypes.float0, f"{out_ct_tf=}"
+        # Note that out_ct_aval.shape contains dimension variable from the
+        # primal function scope. We use tf.zeros_like to make a 0 of the right shape.
+        return tf.zeros_like(out_tf, dtype=_tf_np_dtype_for_float0)
+
+      out_cts_fixed_flat_tf = tuple(map(fix_out_ct, out_cts_flat_tf, out_avals, outs_tf))
       in_cts_flat = convert(
           fun_vjp_jax,
           with_gradient=False,
@@ -673,7 +661,7 @@ def _make_custom_gradient_fn_tf(*,
           native_serialization=native_serialization,
           native_serialization_platforms=native_serialization_platforms,
           native_serialization_strict_checks=native_serialization_strict_checks
-      )(args_flat_tf, out_cts_flat_tf)
+      )(args_flat_tf, out_cts_fixed_flat_tf)
     return in_cts_flat
 
   return grad_fn_tf
