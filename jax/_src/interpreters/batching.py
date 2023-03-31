@@ -332,14 +332,19 @@ class BatchTrace(Trace):
         frame.size, frame.name, frame.main_trace.trace_type)
 
   def get_frame(self, vals, dims) -> core.AxisEnvFrame:
-    if self.axis_name is core.no_axis_name:
-      # If axis name is `no_axis_name` we can't find it via `core.axis_name` so
-      # we reconstruct it from the information we have available
+    if any(d is not not_mapped for d in dims):
       sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
                for x, d in zip(vals, dims) if d is not not_mapped)
       axis_size, = core.dedup_referents(sizes)
+    else:
+      axis_size = None  # can't be inferred from data
+    if self.axis_name is core.no_axis_name:
+      assert axis_size is not None  # must be inferrable from data
       return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
-    return core.axis_frame(self.axis_name)
+    frame = core.axis_frame(self.axis_name)
+    assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
+    assert frame.main_trace is self.main
+    return frame
 
   def process_primitive(self, primitive, tracers, params):
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
