@@ -56,10 +56,6 @@ from jax._src.tree_util import (
   treedef_children as treedef_children,
   treedef_is_leaf as treedef_is_leaf,
   treedef_tuple as treedef_tuple,
-  # TODO(ivyzheng): Remove old APIs when all users migrated.
-  register_keypaths as register_keypaths,
-  AttributeKeyPathEntry as AttributeKeyPathEntry,
-  GetitemKeyPathEntry as GetitemKeyPathEntry,
   register_pytree_with_keys as register_pytree_with_keys,
   register_pytree_with_keys_class as register_pytree_with_keys_class,
   tree_map_with_path as tree_map_with_path,
@@ -69,4 +65,8 @@ from jax._src.tree_util import (
   DictKey as DictKey,
   GetAttrKey as GetAttrKey,
   FlattenedIndexKey as FlattenedIndexKey,
+  # TODO(ivyzheng): Remove these old APIs after June 10 2023.
+  register_keypaths,
+  AttributeKeyPathEntry,
+  GetitemKeyPathEntry,
 )
