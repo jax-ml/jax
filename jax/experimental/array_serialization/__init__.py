@@ -11,11 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GlobalDeviceArray serialization and deserialization."""
-
-from jax.experimental.array_serialization.serialization import *  # noqa: F403
-
-from jax.experimental.array_serialization.serialization import (
-    _LimitInFlightBytes as _LimitInFlightBytes,
-    _get_metadata as _get_metadata,
-)

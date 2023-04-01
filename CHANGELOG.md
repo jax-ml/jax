@@ -9,6 +9,9 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.9
 
 * Deprecations
+  * `jax.experimental.gda_serialization` is deprecated and has been renamed to
+    `jax.experimental.array_serialization`.
+    Please change your imports to use `jax.experimental.array_serialization`.
   * The `in_axis_resources` and `out_axis_resources` arguments of pjit have been
     deprecated. Please use `in_shardings` and `out_shardings` respectively.
   * The function `jax.numpy.msort` has been removed. It has been deprecated since

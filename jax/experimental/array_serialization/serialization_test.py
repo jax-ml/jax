@@ -23,7 +23,7 @@ from jax.config import config
 from jax._src import array
 from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
-from jax.experimental.gda_serialization import serialization
+from jax.experimental.array_serialization import serialization
 import numpy as np
 import tensorstore as ts
 
