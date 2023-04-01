@@ -1360,12 +1360,6 @@ JAX XLA computation.
 The TF custom gradients are respected, since it is TF that generates the
 gradient computation.
 
-In op-by-op mode, when we call TensorFlow in eager mode, we use
-DLPack to try to avoid copying the data. This works for CPU (for
-DeviceArray data or for np.ndarray that are aligned on 16-byte
-boundaries) and on GPU (for DeviceArray).
-The zero-copy does not yet work on TPU.
-
 `call_tf` works even with shape polymorphism, but in that case
 the user must pass the `output_shape_dtype` parameter to `call_tf` to declare
 the expected output shapes. This allows JAX tracing to know the shape and
