@@ -172,6 +172,7 @@ py_extension(
         "@pybind11",
         "@stablehlo//:stablehlo_capi_headers",
         "@stablehlo//:stablehlo_serialization",
+        "@stablehlo//:version",
     ],
 )
 
