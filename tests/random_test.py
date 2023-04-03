@@ -393,41 +393,58 @@ class PrngTest(jtu.JaxTestCase):
       self.assertArraysEqual(f2, s2)
       self.assertArraysEqual(f3, s3)
 
-  @jtu.sample_product([
-      {"seed": 0, "type": int, "jit": True, "key": [0, 0]},
-      {"seed": 0, "type": int, "jit": False, "key": [0, 0]},
-      {"seed": 1, "type": np.int32, "jit": True, "key": [0, 1]},
-      {"seed": 1, "type": np.int32, "jit": False, "key": [0, 1]},
-      {"seed": 2, "type": np.uint32, "jit": True, "key": [0, 2]},
-      {"seed": 2, "type": np.uint32, "jit": False, "key": [0, 2]},
-      {"seed": 3, "type": np.int64, "jit": True, "key": [0, 3]},
-      {"seed": 3, "type": np.int64, "jit": False, "key": [0, 3]},
-      {"seed": -1, "type": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-      {"seed": -1, "type": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
-      {"seed": -2, "type": np.int32, "jit": True, "key": [0, 4294967294]},
-      {"seed": -2, "type": np.int32, "jit": False, "key": [0, 4294967294]},
-      {"seed": -3, "type": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": -3, "type": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": True, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 100, "type": int, "jit": False, "key": [0, 2147483747]},
-      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": True, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).max + 101, "type": np.uint32, "jit": False, "key": [0, 2147483748]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 100, "type": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
-      {"seed": np.iinfo(np.int32).min - 101, "type": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+  @parameterized.parameters([
+      {"seed": 0, "typ": int, "jit": True, "key": [0, 0]},
+      {"seed": 0, "typ": int, "jit": False, "key": [0, 0]},
+      {"seed": 1, "typ": np.int32, "jit": True, "key": [0, 1]},
+      {"seed": 1, "typ": np.int32, "jit": False, "key": [0, 1]},
+      {"seed": 2, "typ": np.uint32, "jit": True, "key": [0, 2]},
+      {"seed": 2, "typ": np.uint32, "jit": False, "key": [0, 2]},
+      {"seed": 3, "typ": np.int64, "jit": True, "key": [0, 3]},
+      {"seed": 3, "typ": np.int64, "jit": False, "key": [0, 3]},
+      {"seed": -1, "typ": int, "jit": True, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -1, "typ": int, "jit": False, "key": [4294967295, 4294967295] if config.x64_enabled else [0, 4294967295]},
+      {"seed": -2, "typ": np.int32, "jit": True, "key": [0, 4294967294]},
+      {"seed": -2, "typ": np.int32, "jit": False, "key": [0, 4294967294]},
+      {"seed": -3, "typ": np.int64, "jit": True, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": -3, "typ": np.int64, "jit": False, "key": [4294967295, 4294967293] if config.x64_enabled else [0, 4294967293]},
+      {"seed": np.iinfo(np.int32).max + 100, "typ": int, "jit": True, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 100, "typ": int, "jit": False, "key": [0, 2147483747]},
+      {"seed": np.iinfo(np.int32).max + 101, "typ": np.uint32, "jit": True, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).max + 101, "typ": np.uint32, "jit": False, "key": [0, 2147483748]},
+      {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": True, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 100, "typ": int, "jit": False, "key": [4294967295, 2147483548] if config.x64_enabled else [0, 2147483548]},
+      {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": True, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
+      {"seed": np.iinfo(np.int32).min - 101, "typ": np.int64, "jit": False, "key": [4294967295, 2147483547] if config.x64_enabled else [0, 2147483547]},
   ])
-  def test_prng_seeds_and_keys(self, seed, type, jit, key):
-    if (jit and type is int and not config.x64_enabled and
-        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
-      self.skipTest("Expected failure: integer out of range for jit.")
-    seed = type(seed)
+  def test_prng_seeds_and_keys(self, seed, typ, jit, key):
+    seed = typ(seed)
     if jit:
-      actual = _prng_key_as_array(jax.jit(random.PRNGKey)(seed))
+      maker = lambda k: _prng_key_as_array(jax.jit(random.PRNGKey)(k))
     else:
-      actual = _prng_key_as_array(random.PRNGKey(seed))
-    expected = jnp.array(key, dtype=jnp.uint32)
-    self.assertArraysEqual(actual, expected)
+      maker = lambda k: _prng_key_as_array(random.PRNGKey(k))
+    if (jit and typ is int and not config.x64_enabled and
+        (seed < np.iinfo('int32').min or seed > np.iinfo('int32').max)):
+      # We expect an error to be raised.
+      # NOTE: we check 'if jit' because some people rely on builtin int seeds
+      # (e.g. from PRNGKey(hash("altair is best plotting library"))) outside jit
+
+      # First check with no cache entry (note lambda above).
+      with self.assertRaises(OverflowError):
+        maker(seed)
+
+      # Then populate a cache entry.
+      maker(typ(0)).block_until_ready()
+
+      # Then check now that we have a cache entry.
+      with self.assertRaises(OverflowError):
+        maker(seed)
+
+    else:
+      # Otherwise we expect no error.
+      actual = maker(seed)
+      expected = jnp.array(key, dtype=jnp.uint32)
+      self.assertArraysEqual(actual, expected)
 
   def test_default_prng_selection(self):
     if not config.jax_enable_custom_prng:
