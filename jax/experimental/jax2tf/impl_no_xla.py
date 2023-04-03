@@ -133,6 +133,16 @@ def _pad_spatial_dims(x, x_shape, padding):
   jax2tf._assert_matching_abstract_shape(x, x_shape)
   return x, x_shape
 
+def _check_pad_spatial_dims(x, x_shape, padding):
+  """Pads `x` using `padding`, which specifies padding for the spatial dimensions."""
+  padding = tuple(padding)
+  if len(padding) == len(x_shape) - 2:
+    # If necessary, add empty padding for batch and feature dimensions.
+    no_pad = ((0, 0),)
+    padding = no_pad + padding + no_pad
+  assert len(x.shape) == len(padding)
+  x_shape = tuple(p0 + xs + p1 for xs, (p0, p1) in zip(x_shape, padding))
+  return x, x_shape, padding
 
 def _conv_transpose_pads_to_padtype(kernel_sdims, lhs_dilation, padding):
   """Finds the padding type for a transpose convolution."""
@@ -279,8 +289,8 @@ def _conv_general_dilated(
       lhs_shape[1:3], rhs_dilated_shape, window_strides, padding)
     # We only manually pad if we aren't using a tranposed convolutions.
     if padding_type == "EXPLICIT":
-      lhs, lhs_shape = _pad_spatial_dims(lhs, lhs_shape, padding)
-      padding_type = "VALID"
+      lhs, lhs_shape, padding = _check_pad_spatial_dims(lhs, lhs_shape, padding)
+      padding_type = padding
 
   if padding_type != "SAME" and any(l < r for l, r in zip(lhs_shape[1:3], rhs_dilated_shape)):
     # If the input shape is smaller than the filter shape in a spatial dimension,
