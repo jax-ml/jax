@@ -216,7 +216,7 @@ def count_primitive_compiles():
 
 
 @contextmanager
-def count_pjit_cache_miss():
+def count_pjit_cpp_cache_miss():
   original_pjit_lower = pjit_lib._pjit_lower
   count = [0]
 

@@ -2099,7 +2099,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     inp_data = np.arange(math.prod(shape)).reshape(shape)
 
     f = pjit(lambda x: x @ x.T, in_shardings=None, out_shardings=None)
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         arr1 = jax.device_put(
             inp_data, jax.sharding.NamedSharding(mesh, P('x')))
@@ -2114,7 +2114,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     b = jax.device_put(jnp.array([4, 5, 6], dtype=jnp.float32),
                        jax.devices()[0])
 
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(2):
         f1(a, b)
     self.assertEqual(count[0], 1)
@@ -2246,7 +2246,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertEqual(kwargs, {'x': 'foo'})
       return y * y
 
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       y = jnp.arange(8.)
       f_names = pjit(f, static_argnames='x')
       f_names(y, x='foo')
@@ -2278,7 +2278,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jax.default_device(test_device):
       f(1)
 
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       f(1)
 
       with jax.default_device(system_default_device):
@@ -2291,7 +2291,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
         with jax.default_device(system_default_device):
           f(1)
 
-    # The count here is 0 because before `count_pjit_cache_miss`, `f` was
+    # The count here is 0 because before `count_pjit_cpp_cache_miss`, `f` was
     # called with `system_default_device` and `test_device` so it was added
     # to the cache. Subsequent calls hit the C++ cache.
     self.assertEqual(count[0], 0)
@@ -2705,7 +2705,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     inp = jnp.arange(3.)
 
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pjit(f)(inp)
     self.assertEqual(count[0], 1)
@@ -2714,24 +2714,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((1,), ('x',))
     s = NamedSharding(mesh, P('x'))
 
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)(jnp.arange(8.0))
     self.assertEqual(count[0], 10)
 
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pjit(lambda x: x * 2, device=jax.devices()[0])(jnp.arange(8.))
     self.assertEqual(count[0], 10)
 
     pf = pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pf(jnp.arange(8.))
     self.assertEqual(count[0], 1)
 
     pf1 = pjit(lambda x: x * 2, device=jax.devices()[0])
-    with jtu.count_pjit_cache_miss() as count:
+    with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pf1(jnp.arange(8.))
     self.assertEqual(count[0], 1)
