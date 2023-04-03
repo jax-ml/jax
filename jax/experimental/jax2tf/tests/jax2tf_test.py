@@ -69,6 +69,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     # TODO: The following, with jit_compile=False, fails with
     # native serialization because the tf.function() somehow executes the
     # XlaCallModule op on CPU. This is despite the `with tf.device()`
+    # On TPU the default `jit_compile` is `True`, so the problem arises only
+    # if one sets `jit_compile=False` explicitly.
     # tf_preferred_device = (
     #     tf.config.list_logical_devices("TPU") +
     #     tf.config.list_logical_devices("GPU") +
@@ -857,18 +859,33 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     res_tf = jax2tf.convert(jax.jit(f_jax, keep_unused=False))(x, y_unused)
     self.assertAllClose(f_jax(x, None), res_tf)
 
-  def test_jit_unused_grad(self):
+  @parameterized.named_parameters(
+      dict(testcase_name=mode, mode=mode)
+      for mode in ("eager", "graph", "compiled"))
+  def test_jit_unused_grad(self, mode="eager"):
     def f_jax(x, y_unused):
       return x * np.float32(2.)
 
     x, y_unused = np.float32(5.), np.arange(7, dtype=np.int32)
+    res_jax = f_jax(x, y_unused)
     f_tf = jax2tf.convert(jax.jit(f_jax, keep_unused=False))
-    xv, y_unused_v = tf.Variable(x), tf.Variable(y_unused)
-    with tf.GradientTape() as tape:
-      res_tf = f_tf(xv, y_unused_v)
-      grad_tf_x, grad_tf_y = tape.gradient(res_tf, (xv, y_unused_v))
 
-    self.assertAllClose(f_jax(x, None), res_tf)
+    x_tf, y_unused_tf = tf.constant(x), tf.constant(y_unused)
+    def grad_tf(x, y_unused):
+      with tf.GradientTape() as tape:
+        tape.watch(x)
+        tape.watch(y_unused)
+        res_tf = f_tf(x, y_unused)
+        grad_tf_x, grad_tf_y = tape.gradient(res_tf, (x, y_unused))
+      return res_tf, grad_tf_x, grad_tf_y
+
+    if mode == "graph":
+      grad_tf = tf.function(grad_tf, autograph=False)
+    elif mode == "compiled":
+      grad_tf = tf.function(grad_tf, autograph=False, jit_compile=True)
+
+    res_tf, grad_tf_x, grad_tf_y = grad_tf(x_tf, y_unused_tf)
+    self.assertAllClose(res_jax, res_tf)
     self.assertAllClose(np.float32(2.), grad_tf_x)
     self.assertIsNone(grad_tf_y)
 
