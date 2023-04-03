@@ -52,7 +52,7 @@ from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
-from jax._src.typing import DimSize, OpaqueDType, Shape
+from jax._src.typing import Array, DimSize, OpaqueDType, Shape
 from jax._src import typing
 traceback_util.register_exclusion(__file__)
 
@@ -2064,6 +2064,37 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
+                   *dim_values: Array) -> Sequence[Array]:
+  """Evaluates a shape possibly containing non-constants.
+
+  Args:
+    shape: the shape to evaluate.
+    dim_vars: the dimension variables names that may appear in `shape`.
+    dim_values: the dimension values corresponding to `dim_vars`.
+
+  Returns:
+     a tuple of JAX values corresponding to `shape`, of type
+     `dim_value_dtype`.
+  """
+  env = dict(zip(dim_vars, dim_values))
+  def eval_one_dim(d: DimSize):
+    try:
+      return operator.index(d)
+    except:
+      # Is a _DimExpr
+      return d.evaluate(env)  # type: ignore
+  return tuple(eval_one_dim(d) for d in shape)
+
+def dim_value_dtype():
+  """The dtype to be used for dimension values."""
+  return dtypes.canonicalize_dtype(np.int64)
+
+def dim_constant(ct: int):
+  return np.array(ct, dtype=dim_value_dtype())
+
+def dim_value_aval() -> AbstractValue:
+  return ShapedArray((), dim_value_dtype(), weak_type=True)
 
 # ------------------- Named shapes -------------------
 

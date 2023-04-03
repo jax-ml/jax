@@ -32,12 +32,12 @@ jax2tf.convert docstring, and the
 """
 import collections
 import dataclasses
-import itertools
 import functools
+import itertools
 import math
 import operator as op
 import re
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 import opt_einsum
@@ -50,17 +50,11 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src.interpreters import mlir
 from jax._src.numpy import lax_numpy
-from jax._src.lax import lax
 from jax._src.typing import DimSize, Shape
 
 
 TfVal = Any
-# A dimension environment maps dimension variables to expressions that
-# denote the values of the dimension (DimExprValue). A DimExprValue must support addition
-# and multiplication with other expressions or with int32/int64, e.g.,
-# by overloading __add__, __radd__, __mul__, __rmul__, __divmod__, __rdivmod__.
-DimExprValue = Any
-ShapeEnv = Dict[str, DimExprValue]
+DimVarEnv = Dict[str, jax.Array]
 DType = Any
 
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
@@ -208,7 +202,7 @@ class _DimAtom:
     else:
       assert False
 
-  def evaluate(self, env: ShapeEnv):
+  def evaluate(self, env: DimVarEnv):
     if self.var is not None:
       try:
         return env[self.var]
@@ -314,8 +308,8 @@ class _DimMon(dict):
     return (min(*candidates), max(*candidates))  # type: ignore
 
 
-  def evaluate(self, env: ShapeEnv):
-    prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else dim_constant(1)
+  def evaluate(self, env: DimVarEnv):
+    prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else core.dim_constant(1)
     def pow_opt(v, p: int):
       return v if p == 1 else prod([v] * p)
     return prod([pow_opt(a.evaluate(env), deg) for a, deg in self.items()])
@@ -641,14 +635,14 @@ class _DimExpr():
     """Returns the highest degree term that comes first lexicographically."""
     return max(self.monomials())
 
-  def evaluate(self, env: ShapeEnv):
-    # Evaluates as a value of dtype=dim_as_value_dtype()
-    terms = [_evaluate_multiply(mon.evaluate(env), dim_constant(coeff)) for mon, coeff in self.monomials()]
+  def evaluate(self, env: DimVarEnv):
+    # Evaluates as a value of dtype=core.dim_value_dtype()
+    terms = [_evaluate_multiply(mon.evaluate(env), core.dim_constant(coeff)) for mon, coeff in self.monomials()]
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   @staticmethod
   def get_aval(dim: "_DimExpr"):
-    return dim_as_value_abstract()
+    return core.dim_value_aval()
 
   def dimension_as_value(self):
     """Turns a dimension size into a Jax value that we can compute with."""
@@ -779,18 +773,9 @@ lax_numpy._poly_einsum_handlers[_DimExpr] = _einsum_contract_path
 
 # A JAX primitive with no array arguments but with a dimension parameter
 # that is a DimExpr. The value of the primitive is the value of the dimension,
-# using int64 in x64 mode or int32 otherwise (dim_as_value_dtype())
+# using int64 in x64 mode or int32 otherwise (core.dim_value_dtype())
 dim_as_value_p = core.Primitive("dim_as_value")
-def dim_as_value_dtype():
-  return dtypes.canonicalize_dtype(np.int64)
-
-def dim_constant(ct: int):
-  return np.array(ct, dtype=dim_as_value_dtype())
-
-def dim_as_value_abstract() -> core.AbstractValue:
-  return core.ShapedArray((), dim_as_value_dtype(), weak_type=True)
-
-dim_as_value_p.def_abstract_eval(lambda dim: dim_as_value_abstract())
+dim_as_value_p.def_abstract_eval(lambda dim: core.dim_value_aval())
 
 def dim_as_value_impl(dim: DimSize):
   raise NotImplementedError(
@@ -992,44 +977,24 @@ def _is_known_constant(v) -> Optional[int]:
 # dimension_size(operand, dimension=i) get the operand.shape[i] as a
 # value of type shape_poly.dim_as_value_dtype().
 dimension_size_p = core.Primitive("dimension_size")
-def _dimension_size_abstract(aval: core.AbstractValue, **_) -> core.AbstractValue:
-  return dim_as_value_abstract()
+def _dimension_size_abstract_eval(aval: core.AbstractValue, **_) -> core.AbstractValue:
+  return core.dim_value_aval()
 
-dimension_size_p.def_abstract_eval(_dimension_size_abstract)
+dimension_size_p.def_abstract_eval(_dimension_size_abstract_eval)
 
 def _dimension_size_impl(arg, *, dimension):
-  return dim_constant(arg.shape[dimension])
+  return core.dim_constant(arg.shape[dimension])
 dimension_size_p.def_impl(_dimension_size_impl)
 
-_JaxValue = Any
+def _dimension_size_lowering_rule(ctx, arg, *, dimension):
+  dim_size = mlir.hlo.GetDimensionSizeOp(arg, dimension)
+  dim_type = mlir.aval_to_ir_type(core.dim_value_aval())
+  if dim_size.result.type != dim_type:
+    dim_size = mlir.hlo.ConvertOp(dim_type, dim_size)
+  return dim_size.results
 
-@dataclasses.dataclass
-class DimEquation:
-  # Represents args[arg_idx].shape[dim_idx] == dim_expr
-  arg_idx: int
-  dim_idx: int
-  dim_expr: _DimExpr
+mlir.register_lowering(dimension_size_p, _dimension_size_lowering_rule)
 
-  def __str__(self):
-    return f"{self.dim_expr} == args[{self.arg_idx}].shape[{self.dim_idx}]"
-
-
-def get_shape_evaluator(dim_vars: Sequence[str], shape: Sequence[DimSize]) ->\
-  Callable[..., TfVal]:
-  """Prepares a shape evaluator.
-
-  Returns a JAX function that given the values for the dimension variables
-  returns the values for the dimensions of `shape`.
-  """
-  def eval_shape(*dim_values: Any) -> Sequence[Any]:
-    shape_env_jax = dict(zip(dim_vars, dim_values))
-
-    def eval_dim(d: DimSize):
-      return d.evaluate(shape_env_jax)  # type: ignore[union-attr]
-
-    return tuple(eval_dim(d) if type(d) is _DimExpr else np.array(d, dtype=dim_as_value_dtype())  # type: ignore
-                 for d in shape)
-  return eval_shape
 
 def arg_aval(
     arg_shape: Sequence[Optional[int]],
@@ -1046,53 +1011,55 @@ def arg_aval(
   aval_shape = _parse_spec(polymorphic_shape, arg_shape)
   return core.ShapedArray(aval_shape, arg_jax_dtype)
 
-
-def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Set[str]:
+def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
   dim_vars: Set[str] = set()
   for a in args_avals:
     for d in a.shape:
       if is_poly_dim(d):
         dim_vars = dim_vars.union(d.get_vars())
-  return dim_vars
+  return sorted(tuple(dim_vars))
 
-def prepare_dim_var_env(
+@dataclasses.dataclass
+class DimEquation:
+  # Represents arg.shape[dim_idx] == dim_expr
+  arg_idx: int
+  arg: jax.Array
+  dim_idx: int
+  dim_expr: _DimExpr
+
+  def __str__(self):
+    return f"{self.dim_expr} == args[{self.arg_idx}].shape[{self.dim_idx}]"
+
+def compute_dim_values(
     args_avals: Sequence[core.AbstractValue],
-    get_dimension_size: Callable[[Sequence[Any], int, int], DimExprValue]) -> \
-    Tuple[Sequence[str],
-          Callable[..., Sequence[DimExprValue]]]:
-  """Get the dimension variables and the function to compute them.
+    dim_vars: Sequence[str],
+    *args: jax.Array) -> Sequence[jax.Array]:
+  """Compute values of dimension variables from the actual arguments.
 
   Args:
-    args_aval: the abstract values of the array arguments
-    get_dimension_size: a function that given the array arguments, the argument
-      index, and the dimension index, computes the value of args[arg_idx].shape[dim_idx].
+    args_avals: the abstract values of the `args`, with shapes that may
+      include dimension variables.
+    dim_vars: the dimension variables
+    args: the actual arguments
 
-  Returns: a tuple of dimension variables that appear in `args_avals` along
-  with a function that given the actual arguments of the top-level function
-  returns a tuple of dimension variable values, in the same order as the
-  dimension variables returned in the first component.
+  Returns: the values of `dim_vars`.
   """
-  # TODO(necula): clean up the notion of shape environments, and solving for dimension
-  #   variables.
-  dim_vars: Set[str] = all_dim_vars(args_avals)
-  dim_vars_sorted = sorted(tuple(dim_vars))
-  def get_dim_var_values(*args: Any) -> Sequence[Any]:
-    dim_equations: List[DimEquation] = []
-    for arg_idx, a in enumerate(args_avals):
-      for dim_idx, d in enumerate(a.shape):
-        if is_poly_dim(d):
-          dim_equations.append(
-              DimEquation(arg_idx=arg_idx, dim_idx=dim_idx, dim_expr=d))
-    dim_env = _solve_dim_equations(dim_equations,
-                                   functools.partial(get_dimension_size, args))
-    return tuple(dim_env[dv] for dv in dim_vars_sorted)
-  return dim_vars_sorted, get_dim_var_values
+  dim_equations: List[DimEquation] = []
+  for arg_idx, a in enumerate(args_avals):
+    for dim_idx, d in enumerate(a.shape):
+      if is_poly_dim(d):
+        dim_equations.append(
+            DimEquation(arg_idx=arg_idx, arg=args[arg_idx],
+                        dim_idx=dim_idx, dim_expr=d))
+  dim_env = _solve_dim_equations(dim_equations)
+  dim_values = tuple(dim_env[dv] for dv in dim_vars)
+  return dim_values
 
-def _solve_dim_equations(eqns: List[DimEquation],
-                         get_dimension_size: Callable[[int, int], DimExprValue]) -> ShapeEnv:
+
+def _solve_dim_equations(eqns: List[DimEquation]) -> DimVarEnv:
   # Returns a shape environment if it can solve all dimension variables.
   # Raises an exception if it cannot.
-  shapeenv: ShapeEnv = {}
+  shapeenv: DimVarEnv = {}
 
   def _shapeenv_to_str() -> str:
     if shapeenv:
@@ -1107,14 +1074,14 @@ def _solve_dim_equations(eqns: List[DimEquation],
     # Otherwise, add the variable to shapeenv and return True.
 
     var, factor_var = None, None
-    dim_value = get_dimension_size(eqn.arg_idx, eqn.dim_idx)
+    dim_value = dimension_size_p.bind(eqn.arg, dimension=eqn.dim_idx)
     # The invariant is: var * factor_var + rest_eqn_dim_expr = dim_value
 
     for mon, factor in eqn.dim_expr.monomials():
       # Perhaps we can already evaluate this monomial (all vars solved)
       try:
         mon_value = mon.evaluate(shapeenv)
-        dim_value = dim_value + -1 * _evaluate_multiply(mon_value, dim_constant(factor))
+        dim_value = dim_value + -1 * _evaluate_multiply(mon_value, core.dim_constant(factor))
         continue
       except KeyError:
         # There are some indeterminate variables. We handle only the case of
@@ -1128,9 +1095,9 @@ def _solve_dim_equations(eqns: List[DimEquation],
 
     if var is not None:
       if factor_var == 1:
-        var_value, var_remainder = dim_value, dim_constant(0)
+        var_value, var_remainder = dim_value, core.dim_constant(0)
       else:
-        var_value, var_remainder = divmod(dim_value, dim_constant(factor_var))  # type: ignore
+        var_value, var_remainder = divmod(dim_value, core.dim_constant(factor_var))  # type: ignore
 
       # Check that the division is even. Works only in eager mode.
       var_remainder_int = _is_known_constant(var_remainder)
@@ -1148,7 +1115,7 @@ def _solve_dim_equations(eqns: List[DimEquation],
                f"{eqn}.{_shapeenv_to_str()}")
         raise ValueError(msg)
 
-      shapeenv[var] = var_value
+      shapeenv[var] = var_value.astype(core.dim_value_dtype())
       return True
     else:
       # All variables are resolved for this equation

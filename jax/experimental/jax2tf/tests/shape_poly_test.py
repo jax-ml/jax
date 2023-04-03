@@ -797,11 +797,10 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       arg_dtypes = (_f32,) * len(arg_shapes)
       def f_tf(*args_tf):
         avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
-        def get_dimension_size(args, arg_idx: int, dim_idx: int) -> shape_poly.DimExprValue:
-          return shape_poly.dimension_size_p.bind(args[arg_idx], dimension=dim_idx)
-        dim_vars, get_dim_values_jax = shape_poly.prepare_dim_var_env(avals, get_dimension_size)
-        dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(get_dim_values_jax,
-                                                         args_tf, avals, "")
+        dim_vars = shape_poly.all_dim_vars(avals)
+        dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(
+            partial(shape_poly.compute_dim_values, avals, dim_vars),
+            args_tf, avals, "")
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
         return dict(zip(dim_vars, dim_values))
