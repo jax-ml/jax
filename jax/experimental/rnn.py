@@ -289,6 +289,13 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
     h = o * tanh(c)
     return (h, c), h
 
+  # here we also output the carry so that we can later slice
+  # the correct carry according to seq_lengths, while this takes more memory
+  # it is faster than using 'jnp.where' inside the scan loop
+  def scan_fn(cell, carry, x):
+    carry, y = cell(carry, x)
+    return carry, (carry, y)
+
   seq_first_y = x.transpose(1, 0, 2)
   if not bidirectional:
     final_h = []
@@ -296,8 +303,10 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
     for l in range(num_layers):
       cell = partial(
           lstm_cell, W_ih=W_ih[l], W_hh=W_hh[l], b_ih=b_ih[l], b_hh=b_hh[l])
-      (h_t, c_t), seq_first_y = jax.lax.scan(cell, (h_0[l], c_0[l]),
+      cell_fn = partial(scan_fn, cell)
+      out = jax.lax.scan(cell_fn, (h_0[l], c_0[l]),
                                              seq_first_y)
+      (h_t, c_t), seq_first_y = _extract_output(seq_lengths, out)
       final_h.append(h_t)
       final_c.append(c_t)
     h_n = jnp.stack(final_h)
@@ -310,12 +319,19 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
   for l in range(num_layers * 2):
     cell = partial(
         lstm_cell, W_ih=W_ih[l], W_hh=W_hh[l], b_ih=b_ih[l], b_hh=b_hh[l])
+    cell_fn = partial(scan_fn, cell)
     if l % 2 == 0:
-      (h_t, c_t), seq_first_y_fwd = jax.lax.scan(cell, (h_0[l], c_0[l]),
+      out = jax.lax.scan(cell_fn, (h_0[l], c_0[l]),
                                                  seq_first_y)
+      (h_t, c_t), seq_first_y_fwd = _extract_output(seq_lengths, out)
     else:
-      (h_t, c_t), seq_first_y_bwd = jax.lax.scan(
-          cell, (h_0[l], c_0[l]), seq_first_y, reverse=True)
+      # reverse sequence while keeping padding at the end
+      seq_first_y_reversed = _flip_sequence(seq_first_y, seq_lengths)
+      out = jax.lax.scan(
+          cell_fn, (h_0[l], c_0[l]), seq_first_y_reversed)
+      (h_t, c_t), seq_first_y_bwd = _extract_output(seq_lengths, out)
+      # align reversed sequence with original sequence
+      seq_first_y_bwd = _flip_sequence(seq_first_y_bwd, seq_lengths)
       # Inputs to next layer are concat'ed from fwd and bwd.
       seq_first_y = jnp.concatenate([seq_first_y_fwd, seq_first_y_bwd], axis=-1)  # pytype: disable=name-error
     final_h.append(h_t)
@@ -324,6 +340,30 @@ def lstm_ref(x: Array, h_0: Array, c_0: Array, W_ih: Dict[int, Array],
   c_n = jnp.stack(final_c)
   return seq_first_y.transpose(1, 0, 2), h_n, c_n
 
+def _extract_output(seq_lengths: Array, out) -> Tuple[Tuple[Array, Array], Array]:
+  _, ((hs, cs), seq_first_y) = out
+  h_t = _select_last_carry(hs, seq_lengths)
+  c_t = _select_last_carry(cs, seq_lengths)
+
+  # [seq_len, batch]   [1, batch]             [seq_len, 1]
+  mask = seq_lengths[None] > jnp.arange(seq_first_y.shape[0], dtype=jnp.int32)[:, None]
+  # [batch, seq_len, hidden_size]
+  seq_first_y = jnp.where(
+      mask[..., None], # [seq_len, batch, 1]
+      seq_first_y,     # [seq_len, batch, hidden_size]
+      0)
+  return (h_t, c_t), seq_first_y
+
+def _select_last_carry(carry_seq: Array, seq_lengths: Array):
+  return carry_seq[seq_lengths - 1, jnp.arange(carry_seq.shape[1])]
+
+def _flip_sequence(sequences: Array, seq_lengths: Array) -> Array:
+  max_steps = sequences.shape[0]
+  roll_amounts = max_steps - seq_lengths
+  # roll initially puts padding at the front so when the sequence is reversed
+  # (via [::-1]) the padding stays at the end
+  return jax.vmap(partial(jnp.roll, axis=0), in_axes=(1, 0),
+      out_axes=1)(sequences, roll_amounts)[::-1]
 
 def lstm_fwd(x: Array, h_0: Array, c_0: Array, w: Array, seq_lengths: Array,
              input_size: int, hidden_size: int, num_layers: int, dropout: float,
