@@ -16,7 +16,6 @@
 import contextlib
 import math
 import os
-import unittest
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -31,8 +30,6 @@ from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
-from jax.experimental.serialize_executable import (
-    serialize, deserialize_and_load)
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
 from jax._src import array
@@ -104,7 +101,7 @@ class JaxArrayTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y"),
-       # There are more slices but for convienient purposes, checking for only
+       # There are more slices but for convenient purposes, checking for only
        # 2. The indices + shard_shape + replica_id should be unique enough.
        ((slice(0, 2), slice(0, 1)), (slice(0, 2), slice(1, 2))),
        (2, 1),
@@ -1018,38 +1015,6 @@ class RngShardingTest(jtu.JaxTestCase):
     y_ref1 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref1)
 
-  def test_pickle_pjit_lower(self):
-    example_exe = jax.jit(lambda x: x * x).lower(
-        core.ShapedArray(
-            (2, 2), dtype=np.float32)).compile()._executable.xla_executable
-
-    # Skip if CompileOptions is not available. This is true on
-    # CPU/GPU/Cloud TPU for now.
-    try:
-      example_exe.compile_options()
-    except Exception as e:
-      if str(e) == 'UNIMPLEMENTED: CompileOptions not available.':
-        raise unittest.SkipTest('Serialization not supported')
-      raise e
-
-    def fun(x):
-      return x * x
-
-    with jax.sharding.Mesh(np.array(jax.devices()), ('data',)):
-      lowered = pjit(
-          fun, in_shardings=P('data'), out_shardings=P(None, 'data')
-      ).lower(core.ShapedArray(shape=(8, 8), dtype=np.float32))
-
-    def verify_serialization(lowered):
-      serialized, in_tree, out_tree = serialize(lowered.compile())
-      compiled = deserialize_and_load(serialized, in_tree, out_tree)
-      self.assertEqual(compiled.as_text(), lowered.compile().as_text())
-
-    verify_serialization(lowered)
-    verify_serialization(jax.jit(lambda x: x * x).lower(np.arange(100)))
-    verify_serialization(
-        jax.pmap(lambda x: x * x).lower(
-            np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

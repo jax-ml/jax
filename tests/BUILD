@@ -202,6 +202,15 @@ jax_test(
 )
 
 jax_test(
+    name = "aot_test",
+    srcs = ["aot_test.py"],
+    tags = ["multiaccelerator"],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_test(
     name = "image_test",
     srcs = ["image_test.py"],
     shard_count = {
