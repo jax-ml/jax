@@ -77,6 +77,7 @@ class Exported:
   # The in_shardings reflect only the module_kept_var_idx
   in_shardings: Sequence[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]]
   out_shardings: Sequence[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]]
+
   lowering_platform: str  # One of "tpu", "cpu", "cuda", "rocm"
 
   mlir_module: mlir.ir.Module
@@ -136,7 +137,8 @@ def serialize_native(fun_jax: Callable,
   for compile_arg, check_value, err_msg in (
       ("spmd_lowering", lambda v: v, "True"),
       ("auto_spmd_lowering", lambda v: not v, "False"),
-      ("tuple_args", lambda v: not v, "False"),
+      # tuple_args is a compilation flag, does not affect lowering.
+      ("tuple_args", lambda v: True, "N/A"),
       # Used for debug(ordered=True), changes the calling convention, but will
       # also set keepalive to non-empty.
       ("ordered_effects", lambda v: not v, "empty"),

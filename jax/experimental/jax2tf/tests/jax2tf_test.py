@@ -1621,6 +1621,24 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                                 "keepalive must be empty"):
       jax2tf.convert(f_ordered_jax, native_serialization=True)(np.float32(42.))
 
+  def test_tuple_args(self):
+    # On TPU if we have more than 2000 arguments, we pass them as a tuple.
+    # This is a compiler option, and should have no effect on lowering.
+    if jtu.device_under_test() != "tpu":
+      raise unittest.SkipTest("Test enabled on TPU only")
+    def f_jax(*many_args):
+      acc = 0.
+      for a in many_args:
+        acc += a
+      return acc
+
+    many_args = [np.float32(i) for i in range(2001)]
+    # Test that we do set lowered.compile_args[tuple_args]
+    lowered = jax.jit(f_jax).lower(*many_args)
+    self.assertTrue(lowered._lowering.compile_args["tuple_args"])
+    res = jax2tf.convert(f_jax, native_serialization=True)(*many_args)
+    self.assertAllClose(f_jax(*many_args), res)
+
 
 def get_serialized_computation(
     f_jax: Callable,
