@@ -937,6 +937,16 @@ class ShardingTest(jtu.JaxTestCase):
 
     self.assertTrue(s9.is_equivalent_to(s10, 2))
 
+  def test_devices_indices_map_good_error_message(self):
+    shape = (1, 2)
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    with self.assertRaisesRegex(
+        ValueError,
+        "Sharding.*implies that array axis 0 is partitioned 2 times, but the "
+        "dimension size is 1"):
+      s.devices_indices_map(shape)
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected

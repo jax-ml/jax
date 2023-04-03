@@ -438,6 +438,7 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
+    self.shard_shape(global_shape)  # raises a good error message
     indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
     return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
@@ -633,6 +634,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
+    self.shard_shape(global_shape)  # raises a good error message
     indices = pxla.op_sharding_to_indices(self._op_sharding, global_shape,
                                           len(self._devices))
     return dict(safe_zip(self._devices, indices))
