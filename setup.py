@@ -25,7 +25,7 @@ _latest_jaxlib_version_on_pypi = '0.4.7'
 _available_cuda11_cudnn_versions = ['82', '86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '88'
-_libtpu_version = '0.1.dev20230327'
+_libtpu_version = '0.1.dev20230328'
 
 _dct = {}
 with open('jax/version.py', encoding='utf-8') as f:
