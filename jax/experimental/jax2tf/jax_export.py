@@ -16,9 +16,8 @@
 This module is used with jax2tf, but should have no TensorFlow dependencies.
 """
 import dataclasses
-from functools import partial
 import re
-from typing import  Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import Callable, List, Optional, Sequence, Union
 
 from absl import logging
 
@@ -116,6 +115,50 @@ def serialize_native(fun_jax: Callable,
   lowered = fun_jax_lower(
       *arg_specs_jax,
       _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
+
+  if not isinstance(lowered, pxla.MeshComputation):
+    raise NotImplementedError(f"serialization is supported only for pjit. {lowered}")
+
+  # Check that we do not see new compile_args. When we add a compile_args it is
+  # safe to add it to the allowed_compile_args if it does not change the semantics
+  # or the calling convention of the lowered module.
+  allowed_compile_args = ["backend", "mesh", "global_in_avals",
+      "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
+      "spmd_lowering", "auto_spmd_lowering",
+      "tuple_args", "ordered_effects", "unordered_effects",
+      "host_callbacks", "keepalive", "pmap_nreps", "committed", "device_assignment"]
+  for compile_arg in lowered.compile_args.keys():
+    if compile_arg not in allowed_compile_args:
+      raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
+
+  # We have not implemented support for some of the compile_args.
+  not_implemented_msgs = []
+  for compile_arg, check_value, err_msg in (
+      ("spmd_lowering", lambda v: v, "True"),
+      ("auto_spmd_lowering", lambda v: not v, "False"),
+      ("tuple_args", lambda v: not v, "False"),
+      # Used for debug(ordered=True), changes the calling convention, but will
+      # also set keepalive to non-empty.
+      ("ordered_effects", lambda v: not v, "empty"),
+      # unordered_effects do not change the calling convention. Those from
+      # jax.debug will also result in keepalive being non-empty and unsupported
+      # custom calls. The CallTfEffect is an exception, but we want to allow
+      # that one.
+      ("unordered_effects", lambda v: True, "N/A"),
+      # used for TPU jax.debug, send/recv. Not supported yet.
+      ("host_callbacks", lambda v: not v, "empty"),
+      # used on all platforms for callbacks. Not supported yet.
+      ("keepalive", lambda v: not v, "empty"),
+      ("pmap_nreps", lambda v: v == 1, "1"),
+  ):
+    if compile_arg in lowered.compile_args:
+      if not check_value(lowered.compile_args[compile_arg]):
+        not_implemented_msgs.append(
+            f"{compile_arg} must be {err_msg} and it is {lowered.compile_args[compile_arg]}")
+  if not_implemented_msgs:
+    raise NotImplementedError(
+        "serialization error, unimplemented lowered.compile_args:\n" +
+        "\n".join(not_implemented_msgs))
 
   mlir_module = lowered.stablehlo()
   if "kept_var_idx" in lowered.compile_args:

@@ -1604,6 +1604,23 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           r"The current platform .* is not among the platforms required by the module: \[TPU\]"):
         f_grad_tf(x_v)
 
+  def test_effects_error(self):
+    def f_jax(x):
+      jax.debug.print("{}", x)
+      return jnp.sin(x)
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "keepalive must be empty"):
+      jax2tf.convert(f_jax, native_serialization=True)(np.float32(42.))
+
+    def f_ordered_jax(x):
+      jax.debug.print("{}", x, ordered=True)
+      return jnp.sin(x)
+
+    with self.assertRaisesRegex(NotImplementedError,
+                                "keepalive must be empty"):
+      jax2tf.convert(f_ordered_jax, native_serialization=True)(np.float32(42.))
+
 
 def get_serialized_computation(
     f_jax: Callable,
