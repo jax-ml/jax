@@ -29,7 +29,7 @@ from jax.experimental import pjit
 from jax.sharding import NamedSharding
 from jax._src import array
 from jax._src import core
-from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError
+from jax._src.checkify import JaxRuntimeError, FailedCheckError, ErrorEffect, OOBError, instrument, catch
 import jax.numpy as jnp
 
 config.parse_flags_with_absl()
@@ -1217,6 +1217,43 @@ class LowerableChecksTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(xla_extension.XlaRuntimeError,
                                 "x needs to be positive"):
       f(-1.)
+
+class InstrumentTest(jtu.JaxTestCase):
+  def test_gather(self):
+    def f(x, i):
+      with instrument():
+        return x[i]
+
+    err, out = catch(f)(jnp.ones((2,)), 3)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "out-of-bounds indexing")
+
+    def f(x, i):
+      return x[i]
+
+    err, out = catch(f)(jnp.ones((2,)), 3)
+    self.assertIsNone(err.get())
+
+  def test_no_discharge_error(self):
+    self.skipTest("this fails")
+
+    @jax.jit
+    def f(x, i):
+      with instrument():
+        return x[i]
+
+    with self.assertRaisesRegex(ValueError, "Uncaught error!"):
+      _ = f(jnp.ones((2,)), 3)
+
+  def test_grad(self):
+    @jax.grad
+    def f(x, i):
+      with instrument():
+        return x[i]
+
+    err, out = catch(f)(jnp.ones((2,)), 3)
+    self.assertIsNotNone(err.get())
+    self.assertStartsWith(err.get(), "out-of-bounds indexing")
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

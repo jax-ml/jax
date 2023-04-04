@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
 import dataclasses
 import functools
 import itertools as it
@@ -589,13 +590,14 @@ for _prim in nan_primitives:
 
 def gather_error_check(error, enabled_errors, operand, start_indices, *,
                        dimension_numbers, slice_sizes, unique_indices,
-                       indices_are_sorted, mode, fill_value):
+                       indices_are_sorted, mode, fill_value, check):
   out = lax.gather_p.bind(
       operand, start_indices, dimension_numbers=dimension_numbers,
       slice_sizes=slice_sizes, unique_indices=unique_indices,
-      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value)
+      indices_are_sorted=indices_are_sorted, mode=mode, fill_value=fill_value,
+      check=check)
 
-  if OOBError not in enabled_errors:
+  if OOBError not in enabled_errors and not check:
     return error, out
 
   # compare to OOB masking logic in lax._gather_translation_rule
@@ -1220,3 +1222,20 @@ def check_error(error: Error) -> None:
     raise ValueError('check_error takes an Error as argument, '
                      f'got type {type(error)} instead.')
   _check_error(error, debug=False)
+
+@contextmanager
+def instrument():
+  """Instruments indexing OOBs."""
+  prev_val = config.check_gathers
+  config.update("check_gathers", True)
+  try:
+    yield
+  finally:
+    config.update("check_gathers", prev_val)
+
+def catch(f: Callable[..., Out]) -> Callable[..., Tuple[Error, Out]]:
+  def error_catching_fun(*a, **kw):
+    # Calling a checkify which only discharges, and never adds its own
+    # instrumentation.
+    return checkify(f)(*a, **kw)
+  return error_catching_fun
