@@ -133,7 +133,7 @@ SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 def _check_specs(error_type: SpecErrorType, specs: Any) -> None:
   if error_type == SpecErrorType.input and specs is None:
     raise TypeError(
-        f"shard_map in_specs argument must be a pytree of "
+        "shard_map in_specs argument must be a pytree of "
         "`jax.sharding.PartitionSpec` instances, but it was None.\n"
         "Instead of `in_specs=None`, did you mean `in_specs=P()`, "
         "where `P = jax.sharding.PartitionSpec`?")
