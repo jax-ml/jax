@@ -123,6 +123,10 @@ class LaxTest(jtu.JaxTestCase):
     self.assertEqual(out.dtype, dtypes.canonicalize_dtype(to_dtype or x.dtype))
     self.assertEqual(out.aval.weak_type, weak_type)
 
+  def testConvertElementTypeOOB(self):
+    out = lax.convert_element_type(2 ** 32, 'int32')
+    self.assertEqual(out, 0)
+
   @jtu.sample_product(
     [dict(from_dtype=from_dtype, to_dtype=to_dtype)
      for from_dtype, to_dtype in itertools.product(

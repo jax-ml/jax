@@ -536,7 +536,7 @@ def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = N
   # first canonicalize the input to a value of dtype int32 or int64, leading to
   # an overflow error.
   if type(operand) is int:
-    operand = np.asarray(operand, new_dtype)
+    operand = np.asarray(operand).astype(new_dtype)
     old_weak_type = False
 
   if (old_dtype, old_weak_type) == (new_dtype, weak_type) and isinstance(operand, Array):
