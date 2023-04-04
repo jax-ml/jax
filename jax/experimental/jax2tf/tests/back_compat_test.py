@@ -203,7 +203,7 @@ class CompatTest(jtu.JaxTestCase):
     res_from_jax = tuple(np.array(a) for a in res_from_jax)
 
     # Use the native exporter, to make sure we get the proper serialized module.
-    exported = jax2tf.jax_export.serialize_native(
+    exported = jax2tf.jax_export.export_native(
         jax.jit(func),
         [core.ShapedArray(a.shape, a.dtype) for a in data.inputs],
         lowering_platform=default_jax_backend(),

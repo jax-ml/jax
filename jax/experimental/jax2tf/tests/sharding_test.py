@@ -372,7 +372,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for out_shardings in ("missing", None, "P")
   )
   @jtu.with_mesh([("x", 2)])
-  def test_grad_pjit(self, in_shardings="missing", out_shardings="None"):
+  def test_grad_pjit(self, in_shardings="P", out_shardings=None):
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
