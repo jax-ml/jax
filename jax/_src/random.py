@@ -21,17 +21,17 @@ import warnings
 
 import numpy as np
 
-import jax
 import jax.numpy as jnp
 from jax import lax
-from jax.config import config
 from jax.numpy.linalg import cholesky, svd, eigh
 
+from jax._src import config as config_lib
 from jax._src import core
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
 from jax._src.api import jit, vmap
+from jax._src.config import config
 from jax._src.core import NamedShape
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -677,7 +677,7 @@ def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
   else: # 'cholesky'
     factor = cholesky(cov)
   normal_samples = normal(key, shape + mean.shape[-1:], dtype)
-  with jax.numpy_rank_promotion('allow'):
+  with config_lib.numpy_rank_promotion('allow'):
     result = mean + jnp.einsum('...ij,...j->...i', factor, normal_samples)
   return result
 

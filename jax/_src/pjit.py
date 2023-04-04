@@ -24,23 +24,10 @@ from functools import partial, lru_cache
 import threading
 import warnings
 
-import jax
 from jax._src import core
-from jax import stages
-from jax.errors import JAXTypeError
-from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.pxla import PartitionSpec
-from jax._src.interpreters import xla
-from jax._src.tree_util import (
-    tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
-    treedef_tuple, broadcast_prefix, all_leaves)
-
-from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (
-    NamedSharding, XLACompatibleSharding, GSPMDSharding,
-    XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
+from jax._src import stages
 from jax._src import dispatch
-from jax._src import mesh
+from jax._src import mesh as mesh_lib
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -50,6 +37,11 @@ from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
     argnames_partial_except, debug_info, result_paths, jaxpr_debug_info, FLAGS)
+from jax._src.errors import JAXTypeError
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters.pxla import PartitionSpec
+from jax._src.interpreters import xla
+
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -58,8 +50,15 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
+from jax._src.sharding import Sharding
+from jax._src.sharding_impls import (
+    NamedSharding, XLACompatibleSharding, GSPMDSharding,
+    XLADeviceAssignment, SingleDeviceSharding, PmapSharding)
 from jax._src.traceback_util import api_boundary
-from jax._src.tree_util import prefix_errors, generate_key_paths
+from jax._src.tree_util import (
+    tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
+    treedef_tuple, broadcast_prefix, all_leaves,
+    prefix_errors, generate_key_paths)
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, tuple_insert, weakref_lru_cache,
@@ -311,7 +310,7 @@ def _resolve_axis_resources_and_shardings_arg(
 def pre_infer_params(fun, in_shardings, out_shardings,
                      donate_argnums, static_argnums, static_argnames, device,
                      backend, abstracted_axes):
-  if abstracted_axes and not jax.config.jax_dynamic_shapes:
+  if abstracted_axes and not config.jax_dynamic_shapes:
     raise ValueError("abstracted_axes must be used with --jax_dynamic_shapes")
 
   check_callable(fun)
@@ -455,7 +454,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     dyn_kwargs = ()
   del kwargs
 
-  if donate_argnums and not jax.config.jax_debug_nans:
+  if donate_argnums and not config.jax_debug_nans:
     donated_invars = donation_vector(donate_argnums, dyn_args, dyn_kwargs)
   else:
     donated_invars = (False,) * len(explicit_args)
@@ -724,7 +723,7 @@ def pjit(
 
   def infer_params(*args, **kwargs):
     # Putting this outside of wrapped would make resources lexically scoped
-    resource_env = mesh.thread_resources.env
+    resource_env = mesh_lib.thread_resources.env
     pjit_info_args = PjitInfo(
           fun=fun, in_shardings=in_shardings,
           out_shardings=out_shardings, static_argnums=static_argnums,
@@ -1125,7 +1124,7 @@ def _check_unique_resources(axis_resources, arg_name):
       if multiple_uses:
         raise ValueError(f"A single {arg_name} specification can map every mesh axis "
                          f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
-                         f"has duplicate entries for {mesh.show_axes(multiple_uses)}")
+                         f"has duplicate entries for {mesh_lib.show_axes(multiple_uses)}")
 
 # -------------------- pjit rules --------------------
 
@@ -1812,7 +1811,7 @@ def _check_resources_against_named_axes(what, aval, pos_axis_resources, named_ax
         f"{pos_axis_resources.unsynced_user_spec(SpecSync.DIM_PERMUTE)} "
         f"that uses one or more mesh axes already used by xmap to partition "
         f"a named axis appearing in its named_shape (both use mesh axes "
-        f"{mesh.show_axes(overlap)})")
+        f"{mesh_lib.show_axes(overlap)})")
 
 def _resource_typing_pjit(avals, params, source_info, resource_env, named_axis_resources):
   jaxpr = params["jaxpr"]
@@ -1918,7 +1917,7 @@ def with_sharding_constraint(x, shardings=_UNSPECIFIED,
       flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
   del user_shardings
 
-  resource_env = jax._src.mesh.thread_resources.env
+  resource_env = mesh_lib.thread_resources.env
   mesh = resource_env.physical_mesh
 
   shardings_flat = [_create_sharding_for_array(mesh, a)

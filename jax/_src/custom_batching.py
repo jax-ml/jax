@@ -16,15 +16,14 @@ import functools
 import operator
 from typing import Callable, Optional
 
-import jax
-from jax import tree_util
-from jax.tree_util import (tree_flatten, tree_map, tree_structure,
-                           tree_unflatten, treedef_tuple)
+from jax import lax
+from jax._src import api
 from jax._src import core
 from jax._src import custom_api_util
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import tree_util
 from jax._src import util
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
@@ -33,6 +32,8 @@ from jax._src.interpreters.batching import not_mapped
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
+from jax._src.tree_util import (tree_flatten, tree_map, tree_structure,
+                                tree_unflatten, treedef_tuple)
 
 
 source_info_util.register_exclusion(__file__)
@@ -194,7 +195,7 @@ def custom_vmap_jvp(primals, tangents, *, call, rule, in_tree, out_tree):
       return out
 
     def to_vmap_over_extra_batched_dims(primals, tangents):
-      return jax.jvp(to_jvp, primals, tangents)
+      return api.jvp(to_jvp, primals, tangents)
 
     to_vmap_over_extra_batched_dims_flat, out_tree2 = flatten_fun_nokwargs(
         lu.wrap_init(to_vmap_over_extra_batched_dims),
@@ -274,7 +275,7 @@ def sequential_vmap(f):
       return f(*args)
 
     mapped_args, bcast_args = tree_split(in_batched, list(args))
-    out = jax.lax.map(to_map, mapped_args)
+    out = lax.map(to_map, mapped_args)
     out_batched = tree_map(lambda _: True, out)
     return out, out_batched
 

@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 import dataclasses
 import functools
@@ -20,28 +21,28 @@ from typing import (Union, Optional, Callable, Dict, Tuple, TypeVar,
 
 import numpy as np
 
-import jax
 import jax.numpy as jnp
-import jax.tree_util as jtu
 from jax import lax
-from jax.api_util import flatten_fun
-from jax.experimental import pjit
-from jax.tree_util import tree_flatten
-from jax.tree_util import tree_map
-from jax.tree_util import tree_unflatten
 
+from jax._src import api
 from jax._src import linear_util as lu
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import effects
+from jax._src import pjit
 from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
+from jax._src import tree_util as jtu
+from jax._src.api_util import flatten_fun
 from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.tree_util import tree_flatten
+from jax._src.tree_util import tree_map
+from jax._src.tree_util import tree_unflatten
 from jax._src.typing import Array
 from jax._src.util import (as_hashable_function, split_list, safe_map, safe_zip,
                            unzip3, weakref_lru_cache)
@@ -92,7 +93,7 @@ class JaxException(Exception):
     del payload
     return cls(metadata)
 
-  def get_effect_type(self) -> core.Effect:
+  def get_effect_type(self) -> ErrorEffect:
     raise NotImplementedError
 
 
@@ -100,7 +101,7 @@ class JaxException(Exception):
 @dataclasses.dataclass(eq=True, frozen=True)
 class ErrorEffect(effects.Effect):
   error_type: Type[JaxException]
-  shape_dtypes: Tuple[jax.ShapeDtypeStruct, ...]
+  shape_dtypes: Tuple[api.ShapeDtypeStruct, ...]
 
   def __lt__(self, other: 'ErrorEffect'):
     shape_dtypes = lambda x: tuple((sd.shape, str(sd.dtype))  # dtype is not comparable
@@ -161,7 +162,7 @@ class OOBError(JaxException):
             f'Failed at {self.traceback_info}')
 
   def get_effect_type(self):
-    return ErrorEffect(OOBError, (jax.ShapeDtypeStruct((3,), jnp.int32),))
+    return ErrorEffect(OOBError, (api.ShapeDtypeStruct((3,), jnp.int32),))
 
 class FailedCheckError(JaxException):
 
@@ -188,7 +189,7 @@ class FailedCheckError(JaxException):
     vals = jtu.tree_leaves((self.args, self.kwargs))
     return ErrorEffect(
         FailedCheckError,
-        tuple(jax.ShapeDtypeStruct(x.shape, x.dtype) for x in vals))
+        tuple(api.ShapeDtypeStruct(x.shape, x.dtype) for x in vals))
 
 @dataclasses.dataclass
 class BatchedError(JaxException):
@@ -1112,7 +1113,7 @@ def _check(pred, msg, debug, *fmt_args, **fmt_kwargs):
     prim_name = 'debug_check' if debug else 'check'
     raise TypeError(f'{prim_name} takes a scalar pred as argument, got {pred}')
   for arg in jtu.tree_leaves((fmt_args, fmt_kwargs)):
-    if not isinstance(arg, (jax.Array, np.ndarray)):
+    if not isinstance(arg, (Array, np.ndarray)):
       raise TypeError('Formatting arguments to checkify.check need to be '
                       'PyTrees of arrays, but got '
                       f'{repr(arg)} of type {type(arg)}.')
@@ -1130,7 +1131,7 @@ def _check_error(error, *, debug=False):
 
 def is_scalar_pred(pred) -> bool:
   return (isinstance(pred, bool) or
-          isinstance(pred, jax.Array) and pred.shape == () and
+          isinstance(pred, Array) and pred.shape == () and
           pred.dtype == jnp.dtype('bool'))
 
 

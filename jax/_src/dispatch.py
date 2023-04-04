@@ -30,10 +30,6 @@ import warnings
 
 import numpy as np
 
-import jax
-from jax.monitoring import record_event_duration_secs
-
-from jax._src import array
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -53,6 +49,7 @@ from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
+from jax._src.monitoring import record_event_duration_secs
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding,
@@ -145,7 +142,7 @@ class RuntimeTokenSet(threading.local):
     self.output_runtime_tokens = {}
 
   def get_token(self, eff: core.Effect, device: Device) -> RuntimeToken:
-    s = jax.sharding.SingleDeviceSharding(device)
+    s = SingleDeviceSharding(device)
     if eff not in self.tokens:
       inp = np.zeros(0, np.bool_)
       indices = tuple(
@@ -302,7 +299,7 @@ class SourceInfo(NamedTuple):
 
 
 def jaxpr_shardings(
-    jaxpr) -> Iterator[Tuple[jax.sharding.XLACompatibleSharding, SourceInfo]]:
+    jaxpr) -> Iterator[Tuple[XLACompatibleSharding, SourceInfo]]:
   from jax._src import pjit
   from jax.experimental import shard_map
 
@@ -570,8 +567,9 @@ def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
 
 def _device_put_impl(
     x,
-    device: Optional[Union[Device, jax.sharding.Sharding]] = None,
-    src: Optional[Union[Device, jax.sharding.Sharding]] = None):
+    device: Optional[Union[Device, Sharding]] = None,
+    src: Optional[Union[Device, Sharding]] = None):
+  from jax._src import array
   try:
     aval = xla.abstractify(x)
   except TypeError as err:

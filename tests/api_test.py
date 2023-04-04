@@ -44,11 +44,13 @@ import numpy as np
 import concurrent.futures
 
 import jax
+import jax.custom_batching
+import jax.custom_derivatives
+import jax.custom_transpose
 import jax.numpy as jnp
 from jax import float0, jit, grad, device_put, jacfwd, jacrev, hessian
 from jax._src import core
 from jax import lax
-from jax import custom_batching
 from jax._src import api, dtypes, lib, api_util
 from jax.errors import UnexpectedTracerError
 from jax.interpreters import ad
@@ -3687,7 +3689,7 @@ class APITest(jtu.JaxTestCase):
   def test_leak_checker_avoids_false_positive_custom_jvp(self):
     # see https://github.com/google/jax/issues/5636
     with jax.checking_leaks():
-      @api.custom_jvp
+      @jax.custom_jvp
       def t(y):
         return y
 
@@ -3926,7 +3928,7 @@ class APITest(jtu.JaxTestCase):
   def test_backward_pass_ref_dropping(self):
     refs = []
 
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return x
     def f_fwd(x):
@@ -4218,8 +4220,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_basic(self, remat):
@@ -4260,8 +4262,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_freevars(self, remat):
@@ -4284,7 +4286,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_concrete_error(self):
-    @api.remat  # no static_argnums or concrete
+    @jax.remat  # no static_argnums or concrete
     def g(x):
       if x > 0:
         return lax.sin(x)
@@ -4294,7 +4296,7 @@ class RematTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, "static_argnums"):
       g(3.)
 
-    @partial(api.remat, static_argnums=(0,))  # using static_argnums but...
+    @partial(jax.remat, static_argnums=(0,))  # using static_argnums but...
     def g(x):
       if x > 0:  # jnp operations still get staged!
         return lax.sin(x)
@@ -4305,7 +4307,7 @@ class RematTest(jtu.JaxTestCase):
       g(jnp.array(3.))
 
     # But don't raise an error mentioning static_argnums here:
-    @api.remat
+    @jax.remat
     def g(x):
       jax.jit(lambda: 0 if jnp.add(1, 1) else 0)()
       return lax.sin(x)
@@ -4317,7 +4319,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertNotIn('static_argnums', msg)
 
   def test_remat_grad_python_control_flow_static_argnums(self):
-    @partial(api.remat, static_argnums=(0,))
+    @partial(jax.remat, static_argnums=(0,))
     def g(x):
       with jax.ensure_compile_time_eval():
         x_pos = x > 0
@@ -4339,7 +4341,7 @@ class RematTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_grad_python_control_flow_unhashable_static_argnums(self):
-    @partial(api.remat, static_argnums=(0,))
+    @partial(jax.remat, static_argnums=(0,))
     def g(x):
       x = x.val
       with jax.ensure_compile_time_eval():
@@ -4375,7 +4377,7 @@ class RematTest(jtu.JaxTestCase):
     # the remat-decorated function.
     count = 0
 
-    @api.remat
+    @jax.remat
     def g(x):
       nonlocal count
       count += 1
@@ -4399,7 +4401,7 @@ class RematTest(jtu.JaxTestCase):
     # above test, which doesn't check for static_argnums.
     count = 0
 
-    @partial(api.remat, static_argnums=(0,))
+    @partial(jax.remat, static_argnums=(0,))
     def g(x):
       nonlocal count
       count += 1
@@ -4422,8 +4424,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_jit(self, remat):
@@ -4450,8 +4452,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_vmap(self, remat):
@@ -4486,8 +4488,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_vmap_not_leading_dim(self, remat):
@@ -4504,8 +4506,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_higher_order_autodiff(self, remat):
@@ -4520,7 +4522,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_scan(self, remat):
@@ -4553,8 +4555,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_no_redundant_flops(self, remat):
@@ -4582,8 +4584,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_binomial_checkpointing(self, remat):
@@ -4604,7 +4606,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_symbolic_zeros(self, remat):
@@ -4637,8 +4639,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_jit2(self, remat):
@@ -4657,7 +4659,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_nontrivial_env(self, remat):
@@ -4690,8 +4692,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_jit3(self, remat):
@@ -4724,7 +4726,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_scan2(self, remat):
@@ -4760,8 +4762,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_remat_eval_counter(self, remat):
@@ -4821,8 +4823,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_escaped_tracer_remat(self, remat):
@@ -4842,8 +4844,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_no_cse_widget_on_primals(self, remat):
@@ -4868,7 +4870,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_no_cse_widget_with_prevent_cse_false(self, remat):
@@ -4892,7 +4894,7 @@ class RematTest(jtu.JaxTestCase):
       {"testcase_name": f"_{policy_name}_{remat_name}", "remat": remat,
        "policy": policy, "in_jaxpr2": in_jaxpr2, "not_in_jaxpr2": not_in_jaxpr2}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ]
       for policy_name, policy, in_jaxpr2, not_in_jaxpr2 in [
@@ -4919,7 +4921,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ])
   def test_remat_custom_policy_save_cos(self, remat):
@@ -4935,7 +4937,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ])
   def test_remat_checkpoint_dots(self, remat):
@@ -4958,7 +4960,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ])
   def test_remat_checkpoint_dots_with_no_batch_dims(self, remat):
@@ -4981,7 +4983,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ])
   def test_remat_checkpoint_dots_with_no_batch_dims2(self, remat):
@@ -5004,7 +5006,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ])
   def test_remat_checkpoint_dots_jit(self, remat):
@@ -5029,7 +5031,7 @@ class RematTest(jtu.JaxTestCase):
     x = jnp.ones((5,))
 
     def f(W):
-      @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+      @partial(jax.remat, policy=jax.checkpoint_policies.checkpoint_dots)
       def f(x):
         x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
         x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
@@ -5055,7 +5057,7 @@ class RematTest(jtu.JaxTestCase):
                     modes=['fwd', 'rev'])
 
   def test_remat_custom_jvp_policy(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def sin(x):
       return jnp.sin(x)
     def sin_jvp(primals, tangents):
@@ -5064,7 +5066,7 @@ class RematTest(jtu.JaxTestCase):
       return sin(x), jnp.cos(x) * g
     sin.defjvp(sin_jvp)
 
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    @partial(jax.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
       x = jnp.dot(x, x, precision=lax.Precision.HIGHEST)
       x = sin(x * 1e-3)
@@ -5081,7 +5083,7 @@ class RematTest(jtu.JaxTestCase):
     jtu.check_grads(g, (3.,), order=2, modes=['fwd', 'rev'])
 
   def test_remat_custom_vjp_policy(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def sin(x):
       return jnp.sin(x)
     def sin_fwd(x):
@@ -5090,7 +5092,7 @@ class RematTest(jtu.JaxTestCase):
       return (jnp.cos(x) * y_bar,)
     sin.defvjp(sin_fwd, sin_bwd)
 
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    @partial(jax.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
       @partial(api.named_call, name="dot")
       def dot2(y, z):
@@ -5114,7 +5116,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"_{remat_name}", "remat": remat}
       for remat_name, remat in [
-          ('old_remat', api.remat),
+          ('old_remat', jax.remat),
           ('new_remat', new_checkpoint),
       ])
   def test_remat_dropvar_policy(self, remat):
@@ -5129,7 +5131,7 @@ class RematTest(jtu.JaxTestCase):
     api.grad(g)(3.)
 
   def test_remat_custom_jvp_linear_policy(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def sum(x):
       return jnp.sum(x, axis=0)
     @sum.defjvp
@@ -5137,7 +5139,7 @@ class RematTest(jtu.JaxTestCase):
       (x,), (xdot,) = primals, tangents
       return sum(x), sum(xdot)
 
-    @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+    @partial(jax.remat, policy=jax.checkpoint_policies.checkpoint_dots)
     def f(x):
       return sum(x)
     jtu.check_grads(f, (jnp.ones(3),), order=2, modes=['fwd', 'rev'])
@@ -5244,8 +5246,8 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
-          ('_policy', partial(api.remat, policy=lambda *_, **__: False)),
+          ('', jax.remat),
+          ('_policy', partial(jax.remat, policy=lambda *_, **__: False)),
           ('_new', partial(new_checkpoint, policy=lambda *_, **__: False)),
       ])
   def test_checkpoint_dropvars(self, remat):
@@ -5312,7 +5314,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_of_scan(self, remat):
@@ -5327,11 +5329,11 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_const_in_jvp_scan(self, remat):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return x * jnp.arange(3.)
     @f.defjvp
@@ -5393,7 +5395,7 @@ class RematTest(jtu.JaxTestCase):
       y, _ = lax.scan(lambda x, _: (f(x), None), x, None, length=1)
       return y
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def sin(x):
       return jnp.sin(x)
     def sin_jvp(primals, tangents):
@@ -5451,7 +5453,7 @@ class RematTest(jtu.JaxTestCase):
       y, _ = lax.scan(lambda x, _: (f(x), None), x, None, length=1)
       return y
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def sin(x):
       return jnp.sin(x)
     def sin_jvp(primals, tangents):
@@ -5505,7 +5507,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_of_cond(self, remat):
@@ -5530,11 +5532,11 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_const_in_jvp_cond(self, remat):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return x * jnp.arange(3.)
     @f.defjvp
@@ -5553,7 +5555,7 @@ class RematTest(jtu.JaxTestCase):
     x = jnp.ones((5,))
 
     def f(W):
-      @partial(api.remat, policy=jax.checkpoint_policies.checkpoint_dots)
+      @partial(jax.remat, policy=jax.checkpoint_policies.checkpoint_dots)
       def f(x):
         x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
         x = jnp.sin(jnp.dot(x, W, precision=lax.Precision.HIGHEST))
@@ -5618,7 +5620,7 @@ class RematTest(jtu.JaxTestCase):
     def cond_apply(f, x):
       return lax.cond(x.sum() > -jnp.inf, f, lambda x: x, x)
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def sin(x):
       return jnp.sin(x)
     def sin_jvp(primals, tangents):
@@ -5675,7 +5677,7 @@ class RematTest(jtu.JaxTestCase):
     def cond_apply(f, x):
       return lax.cond(True, f, lambda x: x, x)
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def sin(x):
       return jnp.sin(x)
     def sin_jvp(primals, tangents):
@@ -5729,7 +5731,7 @@ class RematTest(jtu.JaxTestCase):
   @parameterized.named_parameters(
       {"testcase_name": f"{suffix}", "remat": remat}
       for suffix, remat in [
-          ('', api.remat),
+          ('', jax.remat),
           ('_new', new_checkpoint),
       ])
   def test_remat_of_while_loop(self, remat):
@@ -6142,7 +6144,7 @@ class DCETest(jtu.JaxTestCase):
 
   def test_dce_jaxpr_scan_overpruning(self):
     # This is a regression test for a specific issue.
-    @api.remat
+    @jax.remat
     def scanned_f(c, x):
       out = jnp.tanh(c * x)
       return out, out
@@ -6159,7 +6161,7 @@ class DCETest(jtu.JaxTestCase):
 
   def test_dce_jaxpr_scan_const_in_jvp(self):
     # The main point of this test is to check for a crash.
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return x * np.arange(3.)
     @f.defjvp
@@ -6260,7 +6262,7 @@ class DCETest(jtu.JaxTestCase):
 class CustomJVPTest(jtu.JaxTestCase):
 
   def test_basic(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return jnp.sin(x)
     def f_jvp(primals, tangents):
@@ -6276,7 +6278,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(f)(x), 2 * jnp.cos(x))
 
   def test_invariance(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return jnp.cos(2 * x) / 2.
     def f_jvp(primals, tangents):
@@ -6299,7 +6301,7 @@ class CustomJVPTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def test_python_control_flow(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       if x > 0:
         return jnp.sin(x)
@@ -6326,7 +6328,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(f)(-x), 3., check_dtypes=False)
 
   def test_vmap(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       assert jnp.ndim(x) == 0
       return jnp.sin(x)
@@ -6361,7 +6363,7 @@ class CustomJVPTest(jtu.JaxTestCase):
                         (jnp.sin(xx), 2 * jnp.cos(xx) * xx))
 
   def test_jit(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return jnp.sin(x)
     def f_jvp(primals, tangents):
@@ -6387,7 +6389,7 @@ class CustomJVPTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def test_pytrees(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return {'b': jnp.sin(x['a'])}
     def f_jvp(primals, tangents):
@@ -6404,7 +6406,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_kwargs(self):
     # from https://github.com/google/jax/issues/1938
-    @api.custom_jvp
+    @jax.custom_jvp
     def my_fun(x, y, c=1.):
       return c * (x + y)
     def my_jvp(primals, tangents):
@@ -6417,7 +6419,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     api.jvp(f, (10., 5.), (1., 1.))  # doesn't crash
 
   def test_initial_style(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return 3 * x
     def f_jvp(primals, tangents):
@@ -6459,7 +6461,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_initial_style_vmap(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       assert jnp.ndim(x) == 0
       return 3 * x
@@ -6507,7 +6509,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_initial_style_vmap_with_collective(self):
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return lax.psum(x, 'foo')
 
@@ -6527,7 +6529,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_closed_over_tracers_error_message(self):
     def f(x):
-      @api.custom_jvp
+      @jax.custom_jvp
       def g(y):
         return x + y
       def g_jvp(primals, tangents):
@@ -6539,7 +6541,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertRaises(ad.CustomJVPException, lambda: api.grad(f)(3.))
 
   def test_nondiff_arg(self):
-    @partial(api.custom_jvp, nondiff_argnums=(0,))
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def app(f, x):
       return f(x)
     def app_jvp(f, primals, tangents):
@@ -6566,7 +6568,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     # rule) or (2) static data (e.g. integers which parameterize shapes).
     raise unittest.SkipTest("behavior no longer supported")
 
-    @partial(api.custom_jvp, nondiff_argnums=(0,))
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def f(x, y):
       return x * y
     def f_jvp(x, primals, tangents):
@@ -6583,7 +6585,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg_vmap_tracer(self):
-    @partial(api.custom_jvp, nondiff_argnums=(0,))
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def f(x, y):
       return x * y
     def f_jvp(x, primals, tangents):
@@ -6600,7 +6602,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_nondiff_arg_hiding_jvp_tracer(self):
     def f(x):
-      @partial(api.custom_jvp, nondiff_argnums=(0,))
+      @partial(jax.custom_jvp, nondiff_argnums=(0,))
       def g(h, x):
         return h(x)
       @g.defjvp
@@ -6621,7 +6623,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     raise unittest.SkipTest("TODO")  # TODO(mattjj): write test
 
   def test_missing_jvp_rule_error_message(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def foo(x):
       return x ** 2
 
@@ -6639,7 +6641,7 @@ class CustomJVPTest(jtu.JaxTestCase):
         lambda: api.grad(foo)(2.))
 
   def test_jvp_rule_inconsistent_pytree_structures_error_message(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return (x**2,)
 
@@ -6663,7 +6665,7 @@ class CustomJVPTest(jtu.JaxTestCase):
         lambda: api.jvp(f, (2.,), (1.,)))
 
   def test_primal_tangent_aval_disagreement_error_message(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return x ** 2
 
@@ -6685,7 +6687,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   def test_jvp_rule_doesnt_return_pair_error_message(self):
     # https://github.com/google/jax/issues/2516
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return x ** 2
 
@@ -6849,7 +6851,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_jaxpr_zeros(self):
     # from https://github.com/google/jax/issues/2657
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(A, b):
       return A @ b
 
@@ -6875,7 +6877,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     grad(experiment)(1.)  # doesn't crash
 
   def test_linear_in_scan(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return -x
 
@@ -6895,7 +6897,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_custom_jvps_first_rule_is_none(self):
     # https://github.com/google/jax/issues/3389
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x, y):
       return x ** 2 * y
 
@@ -6948,7 +6950,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_fun_with_nested_calls_2(self):
     def call(f, *args):
-      f = api.custom_jvp(f)
+      f = jax.custom_jvp(f)
       f.defjvp(lambda primals, tangents: (f(*primals), sum(tangents)))
       return f(*args)
 
@@ -6973,7 +6975,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     alpha = np.float32(2.)
 
     def sample(seed):
-      @api.custom_jvp
+      @jax.custom_jvp
       def f(alpha):
         return jax.random.gamma(seed, alpha, shape=[])
 
@@ -7013,7 +7015,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   @unittest.skipIf(numpy_version == (1, 21, 0),
                    "https://github.com/numpy/numpy/issues/19305")
   def test_float0(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
@@ -7030,7 +7032,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   @unittest.skipIf(numpy_version == (1, 21, 0),
                    "https://github.com/numpy/numpy/issues/19305")
   def test_float0_initial_style(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x, y):
       return x, y
     def f_jvp(primals, _):
@@ -7049,7 +7051,7 @@ class CustomJVPTest(jtu.JaxTestCase):
                            (primals, expected_tangents))
 
   def test_remat(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return jnp.sin(x)
     def f_jvp(primals, tangents):
@@ -7058,7 +7060,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       return f(x), 2 * jnp.cos(x) * g
     f.defjvp(f_jvp)
 
-    @api.remat
+    @jax.remat
     def g(x):
       return f(f(x))
 
@@ -7071,7 +7073,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_higher_order(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       return jnp.sin(x)
     def f_jvp(primals, tangents):
@@ -7100,7 +7102,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     # over an array constant.
     y = jnp.arange(1., 4.)
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x):
       assert jnp.ndim(x) == 0
       return 3 * x * jnp.sum(y)
@@ -7154,7 +7156,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 
   def test_custom_jvp_vmap_broadcasting_interaction_2(self):
     # https://github.com/google/jax/issues/5849
-    @api.custom_jvp
+    @jax.custom_jvp
     def transform(box, R):
       if jnp.isscalar(box) or box.size == 1:
         return R * box
@@ -7383,7 +7385,7 @@ class CustomJVPTest(jtu.JaxTestCase):
         return out
       return _fun
 
-    f = api.custom_jvp(f)
+    f = jax.custom_jvp(f)
 
     @partial(f.defjvp, symbolic_zeros=True)
     def f_jvp(primals, tangents):
@@ -7424,7 +7426,7 @@ class CustomJVPTest(jtu.JaxTestCase):
     self.assertArraysAllClose(tangent_out2, jnp.array([99., 100.]))
 
   def test_symbolic_zero_custom_jvp_vmap_output(self):
-    @api.custom_jvp
+    @jax.custom_jvp
     def f(x, y):
       return x * y
 
@@ -7441,7 +7443,7 @@ class CustomJVPTest(jtu.JaxTestCase):
 class CustomVJPTest(jtu.JaxTestCase):
 
   def test_basic(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
     def f_fwd(x):
@@ -7457,7 +7459,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         (jnp.sin(x), 2 * jnp.cos(x)))
 
   def test_invariance(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.cos(2 * x) / 2.
     def f_fwd(x):
@@ -7480,7 +7482,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def test_python_control_flow(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       if x > 0:
         return jnp.sin(x)
@@ -7506,7 +7508,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def test_vmap(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       assert jnp.ndim(x) == 0
       return jnp.sin(x)
@@ -7543,7 +7545,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         2 * jnp.cos(xx))
 
   def test_jit(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
     def f_fwd(x):
@@ -7567,7 +7569,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def test_pytrees(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return {'b': jnp.sin(x['a'])}
     def f_fwd(x):
@@ -7582,7 +7584,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         {'a': 2 * jnp.cos(x['a'])})
 
   def test_jvp_error(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
     def f_fwd(x):
@@ -7606,7 +7608,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_kwargs(self):
     # from https://github.com/google/jax/issues/1938
-    @api.custom_vjp
+    @jax.custom_vjp
     def my_fun(x, y, c=1.):
       return c * (x + y)
     my_fun.defvjp(lambda x, y, c=1.: (my_fun(c, y, c), None),
@@ -7616,7 +7618,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     api.grad(f)(10., 5.)  # doesn't crash
 
   def test_initial_style(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
     def f_fwd(x):
@@ -7638,7 +7640,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def test_initial_style_vmap(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       assert jnp.ndim(x) == 0
       return 3 * x
@@ -7661,7 +7663,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_nondiff_arg(self):
-    @partial(api.custom_vjp, nondiff_argnums=(0,))
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def app(f, x):
       return f(x)
     def app_fwd(f, x):
@@ -7687,7 +7689,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     # tracers in nondiff_argnums to greatly simplify bookkeeping while still
     # supporting the cases for which it is necessary.
     def outer(x):
-      @api.custom_vjp
+      @jax.custom_vjp
       def f(y):
         return x * y
       def f_fwd(y):
@@ -7711,7 +7713,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_closed_over_vmap_tracer(self):
     def outer(x):
-      @api.custom_vjp
+      @jax.custom_vjp
       def f(y):
         return x * y
       def f_fwd(y):
@@ -7731,7 +7733,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_closed_over_tracer3(self):
     def outer(x):
-      @api.custom_vjp
+      @jax.custom_vjp
       def f(y):
         return x * y
       def f_fwd(y):
@@ -7754,7 +7756,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     # This is similar to the old (now skipped) test_nondiff_arg_tracer, except
     # we're testing for the error message that that usage pattern now raises.
 
-    @partial(api.custom_vjp, nondiff_argnums=(0,))
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def f(x, y):
       return x * y
     def f_fwd(x, y):
@@ -7779,7 +7781,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     raise unittest.SkipTest("TODO")  # TODO(mattjj): write test
 
   def test_missing_vjp_rule_error(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def foo(x):
       return x ** 2
 
@@ -7793,7 +7795,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         lambda: api.grad(foo)(2.))
 
   def test_vjp_rule_inconsistent_pytree_structures_error(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return x
 
@@ -7820,7 +7822,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         lambda: api.grad(f)(2.))
 
   def test_vjp_bwd_returns_non_tuple_error(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return x
 
@@ -7915,7 +7917,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_clip_gradient(self):
     # https://github.com/google/jax/issues/2784
-    @api.custom_vjp
+    @jax.custom_vjp
     def _clip_gradient(lo, hi, x):
       return x  # identity function when not differentiating
 
@@ -7941,7 +7943,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     def f(x):
       return x ** 2
 
-    @api.custom_vjp
+    @jax.custom_vjp
     def g(x):
       return f(x)
 
@@ -7974,7 +7976,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     x = jnp.ones((10, 3))
 
     # Create the custom function
-    @api.custom_vjp
+    @jax.custom_vjp
     def custom_fun(x):
       return x.sum()
 
@@ -8005,7 +8007,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     # over an array constant.
     y = jnp.arange(1., 4.)
 
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       assert jnp.ndim(x) == 0
       return 3 * x * jnp.sum(y)
@@ -8029,7 +8031,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_initial_style_vmap_with_collective(self):
 
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return lax.psum(x, 'foo')
 
@@ -8113,7 +8115,7 @@ class CustomVJPTest(jtu.JaxTestCase):
   @unittest.skipIf(numpy_version == (1, 21, 0),
                    "https://github.com/numpy/numpy/issues/19305")
   def test_float0(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x, _):
       return x
     def f_fwd(x, _):
@@ -8131,7 +8133,7 @@ class CustomVJPTest(jtu.JaxTestCase):
   @unittest.skipIf(numpy_version == (1, 21, 0),
                    "https://github.com/numpy/numpy/issues/19305")
   def test_float0_initial_style(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return x
     def f_fwd(x):
@@ -8150,7 +8152,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                      (2., np.zeros(shape=(), dtype=float0)))
 
   def test_remat(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
     def f_fwd(x):
@@ -8159,7 +8161,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return (2 * cos_x * g,)
     f.defvjp(f_fwd, f_rev)
 
-    @api.remat
+    @jax.remat
     def g(x):
       return f(f(x))
 
@@ -8172,7 +8174,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_remat_higher_order(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
     def f_fwd(x):
@@ -8184,20 +8186,20 @@ class CustomVJPTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    ans = api.grad(api.grad(api.remat(g)))(2.)
+    ans = api.grad(api.grad(jax.remat(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.remat(api.grad(g)))(2.)
+    ans = api.grad(jax.remat(api.grad(g)))(2.)
     expected = api.grad(api.grad(g))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-    ans = api.grad(api.grad(api.grad(api.remat(g))))(2.)
+    ans = api.grad(api.grad(api.grad(jax.remat(g))))(2.)
     expected = api.grad(api.grad(api.grad(g)))(2.)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_bwd_nones(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x, y):
       return x * jnp.sin(y)
     def f_fwd(x, y):
@@ -8211,7 +8213,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_bwd_nones_vmap(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(x, y):
       return x * jnp.sin(y)
     def f_fwd(x, y):
@@ -8225,7 +8227,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_bwd_nones_pytree(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(xs, y):
       x1, x2 = xs
       return x1 * x2 * jnp.sin(y)
@@ -8241,7 +8243,7 @@ class CustomVJPTest(jtu.JaxTestCase):
 
   def test_custom_vjp_closure_4521(self):
     # https://github.com/google/jax/issues/4521
-    @api.custom_vjp
+    @jax.custom_vjp
     def g(x, y):
       return None
     def g_fwd(x, y):
@@ -8264,7 +8266,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     lax.scan(scan_body, jnp.ones(5), None, 100)  # doesn't crash
 
   def test_float0_bwd_none(self):
-    @api.custom_vjp
+    @jax.custom_vjp
     def f(i, x):
       return jnp.sin(x)
     def f_fwd(i, x):
@@ -8278,7 +8280,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   def test_custom_gradient(self):
-    @api.custom_gradient
+    @jax.custom_gradient
     def f(x):
       return x ** 2, lambda g: (g * x,)
 
@@ -8287,7 +8289,7 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertAllClose(api.grad(api.grad(f))(3.), 1., check_dtypes=False)
 
   def test_custom_gradient_2(self):
-    @api.custom_gradient
+    @jax.custom_gradient
     def f(x, y):
       return x * y, lambda g: (y, x)
 
@@ -8296,7 +8298,7 @@ class CustomVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
 
   def test_custom_gradient_3(self):
-    @api.custom_gradient
+    @jax.custom_gradient
     def f(x):
       vjp = lambda g: (jnp.cos(x) * jnp.arange(3., 6.),)
       return jnp.sum(jnp.sin(x)), vjp
@@ -8309,7 +8311,7 @@ class CustomVJPTest(jtu.JaxTestCase):
         check_dtypes=False)
 
   def test_custom_gradient_can_return_singleton_value_in_vjp(self):
-    @api.custom_gradient
+    @jax.custom_gradient
     def f(x):
       return x ** 2, lambda g: g * x
 
@@ -8323,7 +8325,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       self.assertLessEqual(len(aux_args), 1)
       return _cos_after(converted_fn, x, *aux_args)
 
-    @partial(api.custom_vjp, nondiff_argnums=(0,))
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def _cos_after(fn, x, *args):
       return jnp.cos(fn(x, *args))
 
@@ -8364,7 +8366,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       self.assertLessEqual(len(aux_args), 1)
       return _cos_after(converted_fn, x, *aux_args)
 
-    @partial(api.custom_vjp, nondiff_argnums=(0,))
+    @partial(jax.custom_vjp, nondiff_argnums=(0,))
     def _cos_after(fn, x, *args):
       return jnp.cos(fn(x, *args))
 
@@ -8502,13 +8504,13 @@ def transpose_unary(f, x_example):
   return transposed
 
 
-# This class wraps api.custom_transpose in order to pass in a
+# This class wraps jax.custom_transpose.custom_transpose in order to pass in a
 # particular tree of output type on each call. Otherwise it forwards
 # all attribute access.
 class _custom_transpose:
   def __init__(self, out_types, fun):
     self.out_types = out_types
-    self.fun = api.custom_transpose(fun)
+    self.fun = jax.custom_transpose.custom_transpose(fun)
 
   def __getattr__(self, name):
     return getattr(self.fun, name)
@@ -8540,7 +8542,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     def f(x, y):
       def fn(r, x): return x / r
       def tp(r, t): return t / r
-      return x + api.linear_call(fn, tp, y, x)
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
 
     def f_ref(x, y):
       return x + x / y
@@ -8558,7 +8560,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     def f(x, y):
       def fn(r, x): return x / r
       def tp(r, t): return t / (2. * r)  # nb: not the true transpose
-      return x + api.linear_call(fn, tp, y, x)
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
 
     def f_ref(x, y):
       return x + x / y
@@ -8576,7 +8578,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     def fn(r, x): return x / r
     def tp(r, t): return t / (2. * r)  # nb: untrue transpose
     def f_(x, y):
-      return x + api.linear_call(fn, tp, y, x)
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
 
     x = jnp.ones(2) * 6.
     y = jnp.ones(2) * 3.
@@ -8597,7 +8599,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
         t1, t2 = t
         return t1 + t2
 
-      return api.linear_call(fn, tp, (), c * x)
+      return jax.custom_derivatives.linear_call(fn, tp, (), c * x)
 
     def f_ref(c, x):
       return [c * x, c * x]
@@ -8613,7 +8615,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     def id_(x):
       def f(_, x): return x
       def t(_, t): return 0.
-      return api.linear_call(f, t, (), x)
+      return jax.custom_derivatives.linear_call(f, t, (), x)
 
     # identity function with an untrue transpose of 7, and where both
     # forward and transpose have custom transpositions that should
@@ -8621,7 +8623,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     def f(x):
       def f_(_, x): return id_(x)
       def t_(_, t): return id_(7.)
-      return api.linear_call(f_, t_, (), x)
+      return jax.custom_derivatives.linear_call(f_, t_, (), x)
 
     x = 5.
     id_t  = transpose_unary(id_,  x)
@@ -8643,7 +8645,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
     def f(x, y):
       def fn(r, x): return x / r
       def tp(r, t): return t / r
-      return x + api.linear_call(fn, tp, y, x)
+      return x + jax.custom_derivatives.linear_call(fn, tp, y, x)
 
     x = jnp.ones(2) * 6.
     y = jnp.ones(2) * 3.
@@ -9009,7 +9011,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
 class CustomVmapTest(jtu.JaxTestCase):
 
   def test_basic(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9029,7 +9031,7 @@ class CustomVmapTest(jtu.JaxTestCase):
   def test_closure(self):
     z = jnp.array([2., 1., 3.])
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return z + jnp.sin(x)
 
     @f.def_vmap
@@ -9049,7 +9051,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(ys, z + jnp.cos(xs))
 
   def test_rule_multi_output(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x), jnp.cos(x)
 
     @f.def_vmap
@@ -9065,7 +9067,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(ys2, jnp.sin(xs))
 
   def test_nary(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x, y): return jnp.sin(x) + y ** 2.
 
     @f.def_vmap
@@ -9081,7 +9083,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(zs, jnp.cos(xs) + ys ** 2.)
 
   def test_nary_mixed_batching(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def vector_dot(u, v):
       self.assertEqual(u.ndim, 1)
       self.assertEqual(v.ndim, 1)
@@ -9131,7 +9133,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(in_batched_log[3], [True, True])
 
   def test_rule_input_signature(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     rule_args = []
@@ -9149,7 +9151,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(len(in_batched), 1)
 
   def test_rule_output_vs_batching_output_mismatch(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9164,7 +9166,7 @@ class CustomVmapTest(jtu.JaxTestCase):
         lambda: api.vmap(f)(xs))
 
   def test_rule_vs_call_output_mismatch(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9179,7 +9181,7 @@ class CustomVmapTest(jtu.JaxTestCase):
         lambda: api.vmap(f)(xs))
 
   def test_jvp_basic(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9210,7 +9212,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     z = jnp.array([2., 1., 3.])
     def bcast(x): return z + x - z
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return z + jnp.sin(x)
 
     @f.def_vmap
@@ -9237,7 +9239,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(tys, bcast(-jnp.sin(xs)) * txs)
 
   def test_jvp_nary(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x, y): return jnp.sin(x) + y
 
     @f.def_vmap
@@ -9260,7 +9262,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(tzs, -jnp.sin(xs) * txs + tys)
 
   def test_jvp_extra_batched_tangents(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9280,7 +9282,7 @@ class CustomVmapTest(jtu.JaxTestCase):
   def test_jacfwd(self):
     # jacfwd is another way to exercise extra-batched tangents
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9294,7 +9296,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(j, -jnp.diag(jnp.sin(x)))
 
   def test_jvp_extra_batched_primals(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9320,14 +9322,14 @@ class CustomVmapTest(jtu.JaxTestCase):
     # this test checks that vmapped JVPs continue to behave this way
     # when custom_vmap is involved and the custom vmap rule is linear.
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f_linear(x): return 7. * x
 
     @f_linear.def_vmap
     def linear_rule(axis_size, in_batched, xs):
       return 11. * xs, in_batched[0]
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f_nonlinear(x): return jnp.sin(x)
 
     @f_nonlinear.def_vmap
@@ -9357,7 +9359,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     # depend on input tangents, extra-batched input tangents can
     # create batched output primals, as this test checks.
 
-    @api.custom_jvp
+    @jax.custom_jvp
     def cos_with_invalid_dataflow_jvp(x): return jnp.cos(x)
 
     @cos_with_invalid_dataflow_jvp.defjvp
@@ -9365,7 +9367,7 @@ class CustomVmapTest(jtu.JaxTestCase):
       [x], [tx] = x, tx
       return jnp.cos(x * tx), tx
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9396,7 +9398,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     xs = (xs, [xs + 1, xs + 2], [xs + 3], xs + 4)
     in_batched_ref = tree_util.tree_map(lambda _: True, x)
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(xs): return tree_sin(xs)
 
     @f.def_vmap
@@ -9420,7 +9422,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     xs = (xs, [xs + 1, None], [xs + 3], None)
     in_batched_ref = tree_util.tree_map(lambda _: True, x)
 
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(xs): return tree_sin(xs)
 
     @f.def_vmap
@@ -9436,7 +9438,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(ys, tree_cos(xs))
 
   def test_jit(self):
-    @api.custom_vmap
+    @jax.custom_batching.custom_vmap
     def f(x): return jnp.sin(x)
 
     @f.def_vmap
@@ -9451,7 +9453,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(api.vmap(jit(f))(xs), api.vmap(f)(xs))
 
   def test_sequential_vmap_basic(self):
-    @custom_batching.sequential_vmap
+    @jax.custom_batching.sequential_vmap
     def f(x):
       return x + 1.
 
@@ -9465,7 +9467,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
   def test_sequential_vmap_nary_same_batching(self):
-    @custom_batching.sequential_vmap
+    @jax.custom_batching.sequential_vmap
     def f(x, y):
       return x + y
 
@@ -9479,7 +9481,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
   def test_sequential_vmap_nary_mixed_batching(self):
-    @custom_batching.sequential_vmap
+    @jax.custom_batching.sequential_vmap
     def f(x, y):
       return x + y
 
@@ -9497,9 +9499,9 @@ class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
 
   def test_method_forwarding(self):
-    @api.custom_vmap
-    @api.custom_jvp
-    @api.custom_transpose
+    @jax.custom_batching.custom_vmap
+    @jax.custom_jvp
+    @jax.custom_transpose.custom_transpose
     def f(x): return 2. * x
 
     # none of these err:
@@ -9512,7 +9514,7 @@ class CustomApiTest(jtu.JaxTestCase):
 
   def test_def_method_forwarding_all_permutations(self):
     for wraps in it.permutations([
-        api.custom_jvp, api.custom_transpose, api.custom_vmap]):
+        jax.custom_jvp, jax.custom_transpose.custom_transpose, jax.custom_batching.custom_vmap]):
       f = lambda x: x + 1.
       for wrap in wraps:
         f = wrap(f)
@@ -9521,7 +9523,7 @@ class CustomApiTest(jtu.JaxTestCase):
           self.assertIsInstance(getattr(f, method), Callable)
 
     for decorators in it.permutations([
-        api.custom_vjp, api.custom_transpose, api.custom_vmap]):
+        jax.custom_vjp, jax.custom_transpose.custom_transpose, jax.custom_batching.custom_vmap]):
       f = lambda x: x + 1.
       for decorator in decorators:
         f = decorator(f)

@@ -21,7 +21,6 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tupl
 
 import numpy as np
 
-from jax import lax
 
 from jax._src import api_util
 from jax._src import ad_util
@@ -32,6 +31,8 @@ from jax._src import source_info_util
 from jax._src import tree_util
 from jax._src.config import config
 from jax._src.interpreters import ad
+from jax._src.lax import lax
+from jax._src.lax import slicing as lax_slicing
 from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.state.primitives import get_p, swap_p, addupdate_p
 from jax._src.state.utils import hoist_consts_to_refs
@@ -222,7 +223,7 @@ def _dynamic_index(x, idx, indexed_dims):
   starts = [next(idx_) if b else np.int32(0) for b in indexed_dims]
   assert next(idx_, None) is None
   sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
-  out = lax.dynamic_slice(x, starts, sizes)
+  out = lax_slicing.dynamic_slice(x, starts, sizes)
   return lax.squeeze(out, [i for i, b in enumerate(indexed_dims) if b])
 
 def _dynamic_update_index(x, idx, val, indexed_dims):
@@ -231,7 +232,7 @@ def _dynamic_update_index(x, idx, val, indexed_dims):
   starts = [next(idx_) if b else np.int32(0) for b in indexed_dims]
   assert next(idx_, None) is None
   sizes = [1 if b else size for b, size in zip(indexed_dims, x.shape)]
-  return lax.dynamic_update_slice(x, val.reshape(sizes), starts)
+  return lax_slicing.dynamic_update_slice(x, val.reshape(sizes), starts)
 
 @register_discharge_rule(core.closed_call_p)
 def _closed_call_discharge_rule(

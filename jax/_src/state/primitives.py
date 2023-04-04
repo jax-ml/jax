@@ -18,13 +18,14 @@ from typing import Any, List, Tuple, Union
 
 import numpy as np
 
-import jax
+
 from jax._src import ad_util
 from jax._src import core
 from jax._src import pretty_printer as pp
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lax import lax
 from jax._src.typing import Array
 from jax._src.state.types import (AbstractRef, ReadEffect, WriteEffect,
                                   AccumEffect)
@@ -420,7 +421,7 @@ def _get_vmap(batched_args, batched_dims, *, indexed_dims):
       # `idxs` doesn't include the non indexed dims.
       idx_place = [i for i, i_dim in enumerate(indexed_dims)
                    if i_dim].index(ref_dim)
-      iota = jax.lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
+      iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
       idxs = tuple_insert(idxs, idx_place, iota)
     else:
       bdim_out = _output_bdim(indexed_dims, ref_dim, idxs_shape)
@@ -453,7 +454,7 @@ def _swap_vmap(batched_args, batched_dims, *, indexed_dims):
     indexed_dims = tuple_insert(indexed_dims, ref_dim, True)
     idx_place = [i for i, i_dim in enumerate(indexed_dims)
                  if i_dim].index(ref_dim)
-    iota = jax.lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
+    iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
     val = batching.moveaxis(val, val_dim, 0)
     bdim_out = 0
@@ -486,7 +487,7 @@ def _addupdate_vmap(batched_args, batched_dims, *, indexed_dims):
     idx_place = [i for i, i_dim in enumerate(indexed_dims)
                  if i_dim].index(ref_dim)
     idxs_shape, = {i.shape for i in idxs} or [()]
-    iota = jax.lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
+    iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
     val = batching.moveaxis(val, val_dim, 0)
   return addupdate_p.bind(ref, val, *idxs, indexed_dims=indexed_dims), []

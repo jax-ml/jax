@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 from functools import partial
 import logging
 from typing import (Any, Callable, FrozenSet, List, Optional, Sequence, Tuple,
@@ -20,9 +21,8 @@ import types
 
 import numpy as np
 
-import jax
-from jax.tree_util import tree_flatten, tree_unflatten, tree_structure, keystr
 from jax._src import ad_util
+from jax._src import api
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
@@ -31,6 +31,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.api_util import flatten_fun, shaped_abstractify
+from jax._src.config import config
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -39,6 +40,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import convolution as lax_convolution
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.traceback_util import api_boundary
+from jax._src.tree_util import tree_flatten, tree_unflatten, tree_structure, keystr
 from jax._src.util import (unzip2, wraps, split_list, partition_list, safe_map,
                            safe_zip, merge_lists, weakref_lru_cache)
 
@@ -389,7 +391,7 @@ def saved_residuals(f, *args, **kwargs) -> List[Tuple[core.AbstractValue, str]]:
     args, kwargs = tree_unflatten(in_tree, args)
     return f(*args, **kwargs)
 
-  out = jax.make_jaxpr(lambda *args: jax.linearize(f_, *args)[1],
+  out = api.make_jaxpr(lambda *args: api.linearize(f_, *args)[1],
                        return_shape=True)(*in_leaves)
   assert isinstance(out, tuple)
   jaxpr_, out_shape = out
@@ -522,7 +524,7 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
     res_invars, _ = partition_list(staged_unk, jaxpr_unknown.invars[num_res:])
     res_outvars = jaxpr_known.outvars[len(jaxpr_known.outvars) - num_res:]
     body_res = _saved_residuals(jaxpr_known.replace(outvars=res_outvars), None)
-    logger.log(logging.WARNING if jax.config.jax_log_checkpoint_residuals
+    logger.log(logging.WARNING if config.jax_log_checkpoint_residuals
                else logging.DEBUG,
                'remat-decorated function ' +
                'saving inputs with shapes:\n' * bool(res_invars) +
@@ -652,7 +654,7 @@ def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   assert not jaxpr.constvars
 
   if differentiated and prevent_cse:
-    if jax.config.jax_remat_opt_barrier:
+    if config.jax_remat_opt_barrier:
       translation_rule = _remat_translation_using_opt_barrier
     elif is_gpu_platform:
       translation_rule = _remat_translation_using_while
@@ -661,7 +663,7 @@ def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   else:
     translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
 
-  return jax.named_call(translation_rule, name="remat")(*args, jaxpr=jaxpr)
+  return api.named_call(translation_rule, name="remat")(*args, jaxpr=jaxpr)
 
 def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
   args = _optimization_barrier(args)
@@ -670,9 +672,9 @@ def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
 # TODO(mattjj): add core utility for 'create dummy value for this type'?
 def _dummy_like(aval: core.AbstractValue) -> Any:
   if aval is core.abstract_token:
-    return jax.lax.create_token()
+    return lax_internal.create_token()
   elif isinstance(aval, (core.ShapedArray, core.DShapedArray)):
-    return jax.lax.broadcast(lax_internal.empty(aval.dtype), aval.shape)  # type: ignore
+    return lax_internal.broadcast(lax_internal.empty(aval.dtype), aval.shape)  # type: ignore
   else:
     raise ValueError(aval)
 
@@ -682,11 +684,13 @@ def _remat_translation_using_while(*args, jaxpr: core.Jaxpr):
   #     result = eval_jaxpr(*args)
   #  }
   # The loop carry is a tuple: (counter, result, args)
+  from jax._src.lax import control_flow as lax_control_flow
+
   avals_out = tuple(v.aval for v in jaxpr.outvars)
   carry_init = (np.int32(0), tuple(map(_dummy_like, avals_out)), args)
   def cond(carry):
     counter, _, _ = carry
-    unif = jax.lax.rng_uniform(np.int32(1), np.int32(2), shape=())
+    unif = lax_internal.rng_uniform(np.int32(1), np.int32(2), shape=())
     return counter < unif
 
   def body(carry):
@@ -694,7 +698,7 @@ def _remat_translation_using_while(*args, jaxpr: core.Jaxpr):
     results = core.eval_jaxpr(jaxpr, (), *args)
     return (counter + 1, tuple(results), args)
 
-  carry_res = jax.lax.while_loop(cond, body, carry_init)
+  carry_res = lax_control_flow.while_loop(cond, body, carry_init)
   return carry_res[1]
 
 def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
@@ -703,6 +707,8 @@ def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
   #    return eval_jaxpr(*args)
   #  else:
   #    return 0
+  from jax._src.lax import control_flow as lax_control_flow
+
   avals_out = tuple(v.aval for v in jaxpr.outvars)
 
   def remat_comp(*args):
@@ -710,8 +716,8 @@ def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
   def dummy_comp(*args):
     return tuple(map(_dummy_like, avals_out))
 
-  unif = jax.lax.rng_uniform(np.float32(0), np.float32(1), shape=())
-  return jax.lax.cond(unif < np.float32(2), remat_comp, dummy_comp, *args)
+  unif = lax_internal.rng_uniform(np.float32(0), np.float32(1), shape=())
+  return lax_control_flow.cond(unif < np.float32(2), remat_comp, dummy_comp, *args)
 
 mlir.register_lowering(
     remat_p, mlir.lower_fun(remat_lowering, multiple_results=True))
@@ -760,3 +766,63 @@ def name_batcher(args, dims, *, name):
   (x,), (d,) = args, dims
   return name_p.bind(x, name=name), d
 batching.primitive_batchers[name_p] = name_batcher
+
+
+@functools.wraps(checkpoint)
+def checkpoint_wrapper(
+    fun: Callable,
+    *,
+    concrete: bool = False,
+    prevent_cse: bool = True,
+    static_argnums: Union[int, Tuple[int, ...]] = (),
+    policy: Optional[Callable[..., bool]] = None,
+) -> Callable:
+  if concrete:
+    msg = ("The 'concrete' option to jax.checkpoint / jax.remat is deprecated; "
+           "in its place, you can use its `static_argnums` option, and if "
+           "necessary the `jax.ensure_compile_time_eval()` context manager.\n"
+           "\n"
+           "For example, if using `concrete=True` for an `is_training` flag:\n"
+           "\n"
+           "  from functools import partial\n"
+           "\n"
+           "  @partial(jax.checkpoint, concrete=True)\n"
+           "  def foo(x, is_training):\n"
+           "    if is_training:\n"
+           "      return f(x)\n"
+           "    else:\n"
+           "      return g(x)\n"
+           "\n"
+           "replace it with a use of `static_argnums`:\n"
+           "\n"
+           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
+           "  def foo(x, is_training):\n"
+           "    ...\n"
+           "\n"
+           "If jax.numpy operations need to be performed on static arguments, "
+           "we can use the `jax.ensure_compile_time_eval()` context manager. "
+           "For example, we can replace this use of `concrete=True`\n:"
+           "\n"
+           "  @partial(jax.checkpoint, concrete=True)\n"
+           "  def foo(x, y):\n"
+           "    if y > 0:\n"
+           "      return f(x)\n"
+           "    else:\n"
+           "      return g(x)\n"
+           "\n"
+           "with this combination of `static_argnums` and "
+           "`jax.ensure_compile_time_eval()`:\n"
+           "\n"
+           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
+           "  def foo(x, y):\n"
+           "    with jax.ensure_compile_time_eval():\n"
+           "      y_pos = y > 0\n"
+           "    if y_pos:\n"
+           "      return f(x)\n"
+           "    else:\n"
+           "      return g(x)\n"
+           "\n"
+           "See https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html\n")
+    raise NotImplementedError(msg)
+  return checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
+                    static_argnums=static_argnums)

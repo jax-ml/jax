@@ -16,12 +16,12 @@ import warnings
 
 import numpy as np
 
+from jax import lax
+import jax.numpy as jnp
+
+from jax._src import dtypes
 from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import safe_zip, unzip2, HashablePartial
-
-import jax.numpy as jnp
-from jax._src import dtypes
-from jax import lax
 
 zip = safe_zip
 

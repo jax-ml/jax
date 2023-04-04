@@ -15,13 +15,13 @@
 from functools import partial
 import operator
 
-from jax import config
-from jax.tree_util import tree_map, tree_reduce
 from jax._src import api
 from jax._src import dtypes as _dtypes
 from jax._src import xla_bridge
-from jax._src.config import flags
+from jax._src.config import config, flags
 from jax._src.lib import xla_client
+from jax._src.tree_util import tree_map, tree_reduce
+
 import numpy as np
 
 

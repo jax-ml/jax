@@ -21,19 +21,17 @@ import functools
 from typing import (Sequence, Tuple, Callable, Optional, List, cast, Set,
                     TYPE_CHECKING)
 
-import jax
 from jax._src import abstract_arrays
+from jax._src import api
 from jax._src import api_util
 from jax._src import basearray
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import profiler
+from jax._src import xla_bridge
 from jax._src.config import config
-from jax._src.util import use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src import api
-from jax._src.typing import ArrayLike
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -41,6 +39,8 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map, hashed_index)
+from jax._src.typing import ArrayLike
+from jax._src.util import use_cpp_class, use_cpp_method
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -133,7 +133,7 @@ def _create_copy_plan(arrays, s: Sharding, shape: Shape):
 @functools.lru_cache(maxsize=4096)
 def _process_has_full_value_in_mcjax(s, shape):
   # Return False for single host as a fast path.
-  if jax.process_count() == 1:
+  if xla_bridge.process_count() == 1:
     return False
 
   num_unique_indices = len(
@@ -359,7 +359,7 @@ class ArrayImpl(basearray.Array):
     return np.asarray(self._value, dtype=dtype)
 
   def __dlpack__(self):
-    from jax.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
+    from jax._src.dlpack import to_dlpack  # pylint: disable=g-import-not-at-top
     return to_dlpack(self)
 
   def __reduce__(self):

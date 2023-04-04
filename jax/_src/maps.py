@@ -20,35 +20,42 @@ from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
                     NamedTuple, Union, Sequence)
 from functools import wraps, partial, partialmethod, lru_cache
 
+from jax import lax
 from jax import numpy as jnp
+
 from jax._src import core
-from jax._src import mesh
-from jax._src import linear_util as lu
-from jax import stages
 from jax._src import dispatch
 from jax._src import effects
-from jax.tree_util import (tree_flatten, tree_unflatten, all_leaves, tree_map,
-                           treedef_tuple)
+from jax._src import mesh
+from jax._src import linear_util as lu
+from jax._src import source_info_util
+from jax._src import stages
+from jax._src import traceback_util
 from jax._src.api_util import (flatten_fun_nokwargs, flatten_axes,
                                _ensure_index_tuple, donation_vector,
                                shaped_abstractify, check_callable)
-from jax._src import source_info_util
-from jax._src import traceback_util
-from jax._src.config import config
-from jax.errors import JAXTypeError
 from jax._src.array import ArrayImpl
-from jax._src.sharding_impls import NamedSharding
+from jax._src.config import config
+from jax._src.errors import JAXTypeError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters.partial_eval import (
+  trace_to_subjaxpr_dynamic, DynamicJaxprTracer,
+  convert_constvars_jaxpr, new_jaxpr_eqn)
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
+from jax._src.pjit import (
+    sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
+    GSPMDSharding)
+from jax._src.sharding_impls import NamedSharding
+from jax._src.tree_util import (tree_flatten, tree_unflatten, all_leaves,
+                                tree_map, treedef_tuple)
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
                            as_hashable_function, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name,
                            merge_lists, partition_list)
-from jax import lax
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -965,9 +972,6 @@ pxla.custom_resource_typing_rules[xmap_p] = _resource_typing_xmap
 
 # This is DynamicJaxprTrace.process_map with some very minor modifications
 def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
-  from jax._src.interpreters.partial_eval import (
-    trace_to_subjaxpr_dynamic, DynamicJaxprTracer,
-    convert_constvars_jaxpr, new_jaxpr_eqn)
   assert primitive is xmap_p
   in_avals = [t.aval for t in tracers]
   global_axis_sizes = params['global_axis_sizes']
@@ -1775,10 +1779,6 @@ def _check_no_loop_collectives(jaxpr, loop_axis_resources):
 
 
 def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
-  from jax._src.pjit import (
-      sharding_constraint_p, ParsedPartitionSpec, get_unconstrained_dims,
-      GSPMDSharding)
-
   rec = lambda jaxpr: _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name)
   if isinstance(jaxpr, core.ClosedJaxpr):
     return jaxpr.map_jaxpr(rec)

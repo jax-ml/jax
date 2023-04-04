@@ -24,8 +24,8 @@ from jax import jit
 from jax import vmap
 from jax import lax
 
-from jax._src import api
 from jax._src import core
+from jax._src import custom_derivatives
 from jax._src import dtypes
 from jax._src.interpreters import ad
 from jax._src.lax.lax import _const as _lax_const
@@ -96,7 +96,7 @@ def erfinv(x: ArrayLike) -> Array:
   return lax.erf_inv(x)
 
 
-@api.custom_jvp
+@custom_derivatives.custom_jvp
 @_wraps(osp_special.logit, module='scipy.special', update_doc=False)
 def logit(x: ArrayLike) -> Array:
   x, = promote_args_inexact("logit", x)
@@ -214,7 +214,7 @@ def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
   return _polygamma(jnp.broadcast_to(n_arr, shape), jnp.broadcast_to(x_arr, shape))
 
 
-@api.custom_jvp
+@custom_derivatives.custom_jvp
 def _polygamma(n: ArrayLike, x: ArrayLike) -> Array:
   dtype = lax.dtype(n).type
   n_plus = n + dtype(1)
@@ -481,7 +481,7 @@ def _ndtri(p: ArrayLike) -> Array:
   return x_nan_replaced
 
 
-@partial(api.custom_jvp, nondiff_argnums=(1,))
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
 def log_ndtr(x: ArrayLike, series_order: int = 3) -> Array:
   r"""Log Normal distribution function.
 
@@ -1361,7 +1361,7 @@ def _expi_neg(x: Array) -> Array:
   # x < 0
   return -exp1(-x)
 
-@api.custom_jvp
+@custom_derivatives.custom_jvp
 @jit
 @_wraps(osp_special.expi, module='scipy.special')
 def expi(x: ArrayLike) -> Array:
@@ -1479,7 +1479,7 @@ def _expn3(n: int, x: Array) -> Array:
   return (ans + one) * jnp.exp(-x) / xk
 
 
-@partial(api.custom_jvp, nondiff_argnums=(0,))
+@partial(custom_derivatives.custom_jvp, nondiff_argnums=(0,))
 @jnp.vectorize
 @_wraps(osp_special.expn, module='scipy.special')
 @jit

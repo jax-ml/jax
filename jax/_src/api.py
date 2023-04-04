@@ -23,7 +23,6 @@ arrays.
 from __future__ import annotations
 
 import collections
-import functools
 from functools import partial
 import inspect
 import math
@@ -35,14 +34,12 @@ from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
 import numpy as np
 from contextlib import contextmanager, ExitStack
 
-import jax
 from jax._src import linear_util as lu
-from jax import stages
+from jax._src import stages
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
-    prefix_errors, generate_key_paths, _replace_nones)
-from jax._src import callback as jcb
+    prefix_errors, generate_key_paths)
 from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
@@ -57,26 +54,18 @@ from jax._src.api_util import (
     flatten_fun, apply_flat_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2,
     argnums_partial, argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    shaped_abstractify, _ensure_str_tuple, argnames_partial_except,
-    validate_argnames, validate_argnums, check_callable, resolve_argnums,
-    debug_info, result_paths, flat_out_axes, debug_info_final, FLAGS)
+    shaped_abstractify, _ensure_str_tuple,
+    check_callable, debug_info, result_paths, flat_out_axes, debug_info_final, FLAGS)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
+from jax._src.sharding import Sharding
 from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (unzip2, curry, safe_map, safe_zip, split_list,
-                           wrap_name, cache, wraps, HashableFunction,
-                           weakref_lru_cache)
+from jax._src.util import (unzip2, safe_map, safe_zip, wrap_name, wraps)
 
 
-# Unused imports to be exported
-from jax.ad_checkpoint import checkpoint as new_checkpoint
-from jax.custom_batching import custom_vmap
-from jax.custom_derivatives import (custom_gradient, custom_jvp,
-                                    custom_vjp, linear_call)
-from jax.custom_transpose import custom_transpose
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
@@ -89,7 +78,7 @@ from jax._src.config import (
     _thread_local_state as config_thread_local_state,
     explicit_device_put_scope as config_explicit_device_put_scope,
     explicit_device_get_scope as config_explicit_device_get_scope)
-from jax._src.core import ShapedArray, raise_to_shaped
+from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import pxla
@@ -1022,10 +1011,11 @@ def hessian(fun: Callable, argnums: Union[int, Sequence[int]] = 0,
                 argnums, has_aux=has_aux, holomorphic=holomorphic)
 
 def _std_basis(pytree):
+  import jax.numpy as jnp
   leaves, _ = tree_flatten(pytree)
   ndim = sum(map(np.size, leaves))
   dtype = dtypes.result_type(*leaves)
-  flat_basis = jax.numpy.eye(ndim, dtype=dtype)
+  flat_basis = jnp.eye(ndim, dtype=dtype)
   return _unravel_array_into_pytree(pytree, 1, None, flat_basis)
 
 def _jacfwd_unravel(input_pytree, output_pytree_leaf, arr):
@@ -2487,8 +2477,8 @@ def _infer_src_sharding(src, x):
 
 def device_put(
     x,
-    device: Union[None, xc.Device, jax.sharding.Sharding, Any] = None,
-    *, src: Union[None, xc.Device, jax.sharding.Sharding, Any] = None):
+    device: Union[None, xc.Device, Sharding, Any] = None,
+    *, src: Union[None, xc.Device, Sharding, Any] = None):
   """Transfers ``x`` to ``device``.
 
   Args:
@@ -2512,8 +2502,8 @@ def device_put(
   blocking the calling Python thread until any transfers are completed.
   """
   with config_explicit_device_put_scope():
-    if ((device is None or isinstance(device, (xc.Device, jax.sharding.Sharding))) and
-        (src is None or isinstance(src, (xc.Device, jax.sharding.Sharding)))):
+    if ((device is None or isinstance(device, (xc.Device, Sharding))) and
+        (src is None or isinstance(src, (xc.Device, Sharding)))):
       return tree_map(
           lambda y: dispatch.device_put_p.bind(
               y, device=device, src=_infer_src_sharding(src, y)), x)
@@ -2641,7 +2631,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
     assert (isinstance(aval, ShapedArray) and
             len(xla.aval_to_xla_shapes(aval)) == 1)
     sharding_spec = pxla._create_pmap_sharding_spec(aval)
-    buf = jax.device_put(x, devices[0])
+    buf = device_put(x, devices[0])
     return pxla.batched_device_put(
         aval, PmapSharding(np.array(devices), sharding_spec),
         [buf] * len(devices), devices)
@@ -2719,7 +2709,7 @@ class ShapeDtypeStruct:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if core.is_opaque_dtype(dtype) else np.dtype(dtype)
     if sharding is not None:
-      if not isinstance(sharding, jax.sharding.Sharding):
+      if not isinstance(sharding, Sharding):
         raise ValueError(
             "sharding should be an instance of `jax.sharding.Sharding`. "
             f"Got {sharding} of type {type(sharding)}.")
@@ -2819,65 +2809,6 @@ def eval_shape(fun: Callable, *args, **kwargs):
                              debug_info=debug_info)
   out = [ShapeDtypeStruct(x.shape, x.dtype, x.named_shape) for x in out]
   return tree_unflatten(out_tree(), out)
-
-
-@functools.wraps(new_checkpoint)  # config.jax_new_checkpoint is True by default
-def checkpoint(fun: Callable, *,
-               concrete: bool = False,
-               prevent_cse: bool = True,
-               static_argnums: Union[int, Tuple[int, ...]] = (),
-               policy: Optional[Callable[..., bool]] = None,
-               ) -> Callable:
-  if concrete:
-    msg = ("The 'concrete' option to jax.checkpoint / jax.remat is deprecated; "
-           "in its place, you can use its `static_argnums` option, and if "
-           "necessary the `jax.ensure_compile_time_eval()` context manager.\n"
-           "\n"
-           "For example, if using `concrete=True` for an `is_training` flag:\n"
-           "\n"
-           "  from functools import partial\n"
-           "\n"
-           "  @partial(jax.checkpoint, concrete=True)\n"
-           "  def foo(x, is_training):\n"
-           "    if is_training:\n"
-           "      return f(x)\n"
-           "    else:\n"
-           "      return g(x)\n"
-           "\n"
-           "replace it with a use of `static_argnums`:\n"
-           "\n"
-           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
-           "  def foo(x, is_training):\n"
-           "    ...\n"
-           "\n"
-           "If jax.numpy operations need to be performed on static arguments, "
-           "we can use the `jax.ensure_compile_time_eval()` context manager. "
-           "For example, we can replace this use of `concrete=True`\n:"
-           "\n"
-           "  @partial(jax.checkpoint, concrete=True)\n"
-           "  def foo(x, y):\n"
-           "    if y > 0:\n"
-           "      return f(x)\n"
-           "    else:\n"
-           "      return g(x)\n"
-           "\n"
-           "with this combination of `static_argnums` and "
-           "`jax.ensure_compile_time_eval()`:\n"
-           "\n"
-           "  @partial(jax.checkpoint, static_argnums=(1,))\n"
-           "  def foo(x, y):\n"
-           "    with jax.ensure_compile_time_eval():\n"
-           "      y_pos = y > 0\n"
-           "    if y_pos:\n"
-           "      return f(x)\n"
-           "    else:\n"
-           "      return g(x)\n"
-           "\n"
-           "See https://jax.readthedocs.io/en/latest/jep/11830-new-remat-checkpoint.html\n")
-    raise NotImplementedError(msg)
-  return new_checkpoint(fun, prevent_cse=prevent_cse, policy=policy,
-                        static_argnums=static_argnums)
-remat = checkpoint  # type: ignore
 
 
 def named_call(
@@ -2986,68 +2917,15 @@ def block_until_ready(x):
       return x.block_until_ready()
     except AttributeError:
       return x
-  return jax.tree_util.tree_map(try_to_block, x)
+  return tree_map(try_to_block, x)
 
-def pure_callback(callback: Callable[..., Any], result_shape_dtypes: Any,
-                  *args: Any, vectorized: bool = False, **kwargs: Any):
-  """Applies a functionally pure Python callable. Works under :func:`jit`/:func:`~pmap`/etc.
-
-  ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
-  The input ``callback`` will be passed NumPy arrays in place of JAX arrays and
-  should also return NumPy arrays. Execution takes place on CPU, like any
-  Python+NumPy function.
-
-  The callback is treated as functionally pure, meaning it has no side-effects
-  and its output value depends only on its argument values. As a consequence, it
-  is safe to be called multiple times (e.g. when transformed by :func:`~vmap` or
-  :func:`~pmap`), or not to be called at all when e.g. the output of a
-  `jit`-decorated function has no data dependence on its value. Pure callbacks
-  may also be reordered if data-dependence allows.
-
-  When :func:`~pmap`-ed, the pure callback will be called several times (one on each
-  axis of the map). When `vmap`-ed the behavior will depend on the value of the
-  ``vectorized`` keyword argument. When ``vectorized`` is ``True``, the callback
-  is assumed to obey
-  ``jax.vmap(callback)(xs) == callback(xs) == jnp.stack([callback(x) for x in xs])``.
-  Therefore, the callback will be called directly on batched inputs (where the
-  batch axes are the leading dimensions). Additionally, the callbacks should
-  return outputs that have corresponding leading batch axes. If not vectorized
-  ``callback`` will be mapped sequentially across the batched axis.
-  For example, if ``callback = lambda x, y: np.matmul(x, y)``, then we are free
-  to set ``vectorized=True`` because the ``np.matmul`` function handles
-  arbitrary leading batch dimensions.
-
-  Args:
-    callback: A Python callable. The callable will be passed PyTrees of NumPy
-      arrays as arguments, and should return a PyTree of NumPy arrays that
-      matches ``result_shape_dtypes``.
-    result_shape_dtypes: A PyTree with leaves that are objects with ``shape``
-      and ``dtype`` attributes which represent to the shapes and dtypes of the
-      value of ``callback`` applied to ``args`` and ``kwargs``.
-    *args: The positional arguments to the callback. Must be PyTrees of JAX
-      types.
-    vectorized: A boolean that indicates whether or not ``callback`` is
-      vectorized, meaning it can handle arrays with additional leading
-      dimensions. If ``vectorized`` is `True`, when the callback is mapped
-      via `jax.vmap`, it will be called directly on inputs with leading batch
-      dimensions instead of executing ``callback`` on each mapped input
-      individually. The callback should also return outputs batched across the
-      leading axis. By default, ``vectorized`` is ``False``.
-    **kwargs: The keyword arguments to the callback. Must be PyTrees of JAX
-      types.
-
-  Returns:
-    The value of ``callback(*args, **kwargs)``.
-  """
-  return jcb.pure_callback(callback, result_shape_dtypes, *args,
-                           vectorized=vectorized, **kwargs)
 
 def clear_backends():
   """
   Clear all backend clients so that new backend clients can be created later.
   """
   xb._clear_backends()
-  jax.lib.xla_bridge._backends = {}
+  xb._backends = {}
   dispatch.xla_primitive_callable.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error

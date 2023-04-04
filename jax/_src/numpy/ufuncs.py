@@ -25,7 +25,8 @@ import numpy as np
 
 from jax._src import core
 from jax._src import dtypes
-from jax._src.api import jit, custom_jvp
+from jax._src.api import jit
+from jax._src.custom_derivatives import custom_jvp
 from jax._src.lax import lax
 from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (

@@ -20,10 +20,10 @@ import operator as op
 from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
                     FrozenSet, Union, cast)
 
-import jax
 from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import sharding
+from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.interpreters import mlir
@@ -238,7 +238,7 @@ class NamedSharding(XLACompatibleSharding):
     # TODO(yaskatariya): Remove this and replace this with a normalized
     # representation of Parsed Pspec
     if self._parsed_pspec is None:
-      from jax.experimental import pjit
+      from jax._src import pjit
       self._parsed_pspec, _, _ = pjit._prepare_axis_resources(
           self.spec, "NamedSharding spec")
 
@@ -287,7 +287,7 @@ class NamedSharding(XLACompatibleSharding):
       num_dimensions: int,
       axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
   ) -> xc.OpSharding:
-    from jax.experimental.pjit import get_array_mapping
+    from jax._src.pjit import get_array_mapping
     assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -429,7 +429,8 @@ class PmapSharding(XLACompatibleSharding):
           '`None` to sharded_dim is not supported. Please file a jax '
           'issue if you need this feature.')
 
-    pmap_devices: np.ndarray = np.array(jax.local_devices()[:num_ways_sharded])
+    pmap_devices: np.ndarray = np.array(
+        xla_bridge.local_devices()[:num_ways_sharded])
     return cls(pmap_devices, sharding_spec)
 
   @functools.cached_property

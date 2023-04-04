@@ -22,23 +22,24 @@ import weakref
 import numpy as np
 
 import jax.numpy as jnp
-from jax import tree_util
 from jax import lax
+
 from jax._src import core
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
+from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import GSPMDSharding, NamedSharding
-from jax._src.interpreters import partial_eval as pe
 
 # pytype: disable=import-error
 try:
