@@ -1005,7 +1005,7 @@ def arg_aval(
   Args:
     arg_shape: the shape for the argument, possibly having None dimensions.
     arg_dtype: the inferred JAX dtype for the arg.
-    polymorphic_shape: the polymorphic specifications for the argument.
+    polymorphic_shape: the polymorphic specification for the argument.
   Returns: the JAX abstract value for the argument.
   """
   aval_shape = _parse_spec(polymorphic_shape, arg_shape)

@@ -319,7 +319,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(4., tape.gradient(v, y))
 
   @jtu.sample_product(with_function=[False, True])
-  def test_gradients_pytree(self, with_function=True):
+  def test_gradients_pytree(self, with_function=False):
     def f(xy: Tuple[float, float]) -> Dict[str, float]:
       x, y = xy
       return dict(one=x * x, two=x * y)
@@ -702,7 +702,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
 
   def test_convert_argument_non_tensor_error(self):
     with self.assertRaisesRegex(TypeError,
-                                "Argument.*should be NumPy array"):
+                                "Argument.*is not a valid JAX type"):
       jax2tf.convert(lambda x: x)(lambda y: y)
 
   def test_argument_eager_tensor(self):
@@ -894,7 +894,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jax2tf.convert(jnp.sin)(y)  # Inner convert takes tracer args
     with self.assertRaisesRegex(
         ValueError, "convert must be used outside all JAX transformations"):
-      jax2tf.convert(outer)(np.ones((4, )))
+      jax2tf.convert(outer)(np.ones((4,), dtype=np.float32))
 
   def test_nested_convert_error_non_tracer(self):
     """The inner convert takes non-tracer arguments"""
@@ -1066,7 +1066,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
                         jnp.bfloat16(2.750))
 
   @jtu.sample_product(with_function=[False, True])
-  def test_kwargs(self, with_function=True):
+  def test_kwargs(self, with_function=False):
     # Re: https://github.com/google/jax/issues/6791
     def f_jax(*, x):
       return jnp.sum(x)
@@ -1532,11 +1532,11 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         stack.enter_context(mesh)
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
-      exported = jax_export.export_native(
+      exported = jax_export.export(
           func_to_convert,
-          [core.ShapedArray(a.shape, a.dtype) for a in args],
           lowering_platform='tpu',
-          strict_checks=True)
+          strict_checks=True
+      )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
     if transform1 == "shard_map":
       self.assertIn("stablehlo.all_gather", str(exported.mlir_module))
