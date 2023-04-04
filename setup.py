@@ -97,6 +97,7 @@ setup(
         'cuda11_pip': [
           f"jaxlib=={_current_jaxlib_version}+cuda11.cudnn{_default_cuda11_cudnn_version}",
           "nvidia-cublas-cu11>=11.11",
+          "nvidia-cuda-cupti-cu11>=11.8",
           "nvidia-cuda-nvcc-cu11>=11.8",
           "nvidia-cuda-runtime-cu11>=11.8",
           "nvidia-cudnn-cu11>=8.6",
@@ -108,6 +109,7 @@ setup(
         'cuda12_pip': [
           f"jaxlib=={_current_jaxlib_version}+cuda12.cudnn{_default_cuda12_cudnn_version}",
           "nvidia-cublas-cu12",
+          "nvidia-cuda-cupti-cu12",
           "nvidia-cuda-nvcc-cu12",
           "nvidia-cuda-runtime-cu12",
           "nvidia-cudnn-cu12",
