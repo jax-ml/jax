@@ -1771,6 +1771,13 @@ for fft_type in list(map(xla_client.FftType, [0, 1, 2, 3])):
           dtype=dtype,
           fft_type=fft_type,
           fft_lengths=fft_lengths)
+      # And with a 0 shape
+      _make_fft_harness(
+          "dtypes_zero",
+          shape=(14, 15, 0, 17),
+          dtype=dtype,
+          fft_type=fft_type,
+          fft_lengths=fft_lengths)
 
   # Validate dimensions per FFT type
   for dtype in [

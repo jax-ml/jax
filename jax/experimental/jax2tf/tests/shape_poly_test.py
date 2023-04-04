@@ -2023,6 +2023,27 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.eye(x.shape[0], M=x.shape[0] + 2) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 poly_axes=[0]),
+    [
+        PolyHarness("fft", f"{fft_type=}_{nr_fft_lengths=}",
+            lambda x, fft_type, nr_fft_lengths: lax.fft_p.bind(
+                x, fft_type=fft_type,
+                fft_lengths=tuple(
+                    x.shape[-nr_fft_lengths:] if fft_type != xla_client.FftType.IRFFT else
+                    [(x.shape[-1] - 1) * 2])),
+            arg_descriptors=[
+                RandArg((3, 4, 5, 6),
+                        np.float32 if fft_type == xla_client.FftType.RFFT else np.complex64),
+                StaticArg(fft_type),
+                StaticArg(nr_fft_lengths)],
+            # All axes but the last one are dynamic. This means that the test
+            # with nr_fft_lengths==1 will not have dynamic fft_lengths.
+            poly_axes=[(0, 1, 2)],
+            tol=1e-4)
+
+         for fft_type in (xla_client.FftType.FFT, xla_client.FftType.IFFT,
+                         xla_client.FftType.RFFT, xla_client.FftType.IRFFT)
+         for nr_fft_lengths in (1, 2)
+    ],
     PolyHarness("full", "",
                 lambda x: lax.full((x.shape[0], 2), 3.) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
@@ -2631,6 +2652,12 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           "vmap_random_split:gpu"}
       if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
         raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
+
+      if "fft_fft_type" in harness.fullname:
+        if jtu.device_under_test() == "cpu":
+          raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
+        elif "nr_fft_lengths=2" in harness.fullname:
+          raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
 
       # Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
       fallback_lowering_harnesses = {
