@@ -154,6 +154,9 @@ from jax._src.tree_util import (
 # These submodules are separate because they are in an import cycle with
 # jax and rely on the names imported above.
 from jax import abstract_arrays as abstract_arrays
+from jax import custom_derivatives as custom_derivatives
+from jax import custom_batching as custom_batching
+from jax import custom_transpose as custom_transpose
 from jax import api_util as api_util
 from jax import distributed as distributed
 from jax import debug as debug
