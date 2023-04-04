@@ -77,7 +77,7 @@ class IreeDevice:
     raise NotImplementedError("live_buffers")
 
 
-class IreeBuffer(xla_client.DeviceArrayBase):
+class IreeBuffer:
 
   def __init__(self, client, device, buffer):
     self.client = client
