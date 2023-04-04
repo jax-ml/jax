@@ -31,7 +31,8 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
-from jax._src import state
+from jax._src.state.discharge import register_discharge_rule, discharge_state
+from jax._src.state.types import AbstractRef, RefEffect
 from jax._src.core import ConcreteArray, raise_to_shaped, replace_jaxpr_effects
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -237,7 +238,7 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
 
   jaxprs, consts, out_trees = _initial_style_jaxprs_with_common_consts(
       (true_fun, false_fun), ops_tree, ops_avals, 'cond')
-  if any(isinstance(op_aval, state.AbstractRef) for op_aval in ops_avals):
+  if any(isinstance(op_aval, AbstractRef) for op_aval in ops_avals):
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
   out_tree, false_out_tree = out_trees
@@ -338,7 +339,7 @@ def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
   index, *ops = args
   index_dim, *op_dims = dims
   # TODO(sharadmv): clean this up by adding a specific blocklist
-  if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
+  if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError(
         "State effect not supported in vmap-of-cond.")
@@ -426,7 +427,7 @@ def _cond_jvp(primals, tangents, branches, linear):
 def _cond_partial_eval(trace, *tracers, branches, linear):
   in_unknowns = [t.pval[0] is not None for t in tracers]
   index_uk, *ops_uk = in_unknowns
-  if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
+  if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError(
         "State effect not supported in cond partial-eval.")
@@ -703,7 +704,7 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
   linear = [type(x) is ad.UndefinedPrimal for x in ops]
   in_avals = map(raise_to_shaped, branches[0].in_avals)
   num_res = len(ops) - sum(linear)
-  if any(isinstance(eff, state.RefEffect) for branch in branches for eff in
+  if any(isinstance(eff, RefEffect) for branch in branches for eff in
       branch.jaxpr.effects):
     raise NotImplementedError("State effect not supported in cond transpose.")
 
@@ -856,10 +857,10 @@ def _cond_lowering(ctx, index, *args, branches, linear):
 
 mlir.register_lowering(cond_p, _cond_lowering)
 
-@state.register_discharge_rule(cond_p)
+@register_discharge_rule(cond_p)
 def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
   discharged_branches = tuple(
-      core.ClosedJaxpr(state.discharge_state(branch.jaxpr, ())[0], ())
+      core.ClosedJaxpr(discharge_state(branch.jaxpr, ())[0], ())
       for branch in branches)
   out_vals = cond_p.bind(*args, branches=discharged_branches, linear=linear)
   out_ref_vals, out_vals = util.split_list(
@@ -868,5 +869,5 @@ def _cond_state_discharge_rule(in_avals, out_avals, *args, branches, linear):
   new_invals = []
   for aval in in_avals:
     new_invals.append(
-        next(ref_val_iter) if isinstance(aval, state.AbstractRef) else None)
+        next(ref_val_iter) if isinstance(aval, AbstractRef) else None)
   return new_invals, out_vals

@@ -364,6 +364,7 @@ pytype_strict_library(
         ":effects",
         ":profiler",
         ":source_info_util",
+        ":state_types",
         ":tree_util",
         ":util",
     ] + py_deps("numpy"),
@@ -408,6 +409,20 @@ pytype_strict_library(
         ":traceback_util",
         ":version",
         "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "state_types",
+    srcs = [
+        "_src/state/__init__.py",
+        "_src/state/types.py",
+    ],
+    deps = [
+        ":core",
+        ":effects",
+        ":pretty_printer",
+        ":util",
     ],
 )
 

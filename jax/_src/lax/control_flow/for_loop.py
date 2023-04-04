@@ -33,7 +33,11 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import source_info_util
-from jax._src import state
+from jax._src.state.types import (ReadEffect, AbstractRef, StateEffect)
+from jax._src.state import discharge as state_discharge
+from jax._src.state import primitives as state_primitives
+from jax._src.state import utils as state_utils
+from jax._src.state import types as state_types
 from jax._src.util import (partition_list, merge_lists, safe_map, safe_zip,
                            split_list, split_dict)
 from jax._src.lax.control_flow import loops
@@ -50,15 +54,10 @@ T = TypeVar('T')
 class Ref(Generic[T]): pass
 Array = Any
 
-ReadEffect = state.ReadEffect
-WriteEffect = state.WriteEffect
-AccumEffect = state.AccumEffect
-StateEffect = state.StateEffect
-AbstractRef = state.AbstractRef
-ref_set = state.ref_set
-ref_get = state.ref_get
-ref_addupdate = state.ref_addupdate
-discharge_state = state.discharge_state
+ref_set = state_primitives.ref_set
+ref_get = state_primitives.ref_get
+ref_addupdate = state_primitives.ref_addupdate
+discharge_state = state_discharge.discharge_state
 
 
 ## `for_loop` implementation
@@ -99,12 +98,6 @@ def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
       f, state_avals)
   return jaxpr, consts, out_tree_thunk()
-
-def val_to_ref_aval(x) -> AbstractRef:
-  aval = core.raise_to_shaped(core.get_aval(x))
-  if type(aval) is not core.ShapedArray:
-    raise Exception(f"can't make ref from {x}")
-  return AbstractRef(aval)
 
 def for_loop(nsteps: Union[int, Sequence[int]],
              body: Callable[[Array, Ref[S]], None], init_state: S,
@@ -151,14 +144,14 @@ def for_loop(nsteps: Union[int, Sequence[int]],
   if len(nsteps) > 1:
     outer_step, *rest_steps = nsteps
     def wrapped_body(i, refs):
-      vals = tree_map(lambda ref: state.ref_get(ref, ()), refs)
+      vals = tree_map(lambda ref: ref_get(ref, ()), refs)
       vals = for_loop(
           rest_steps, functools.partial(body, i), vals, unroll=unroll)
-      tree_map(lambda ref, val: state.ref_set(ref, (), val), refs, vals)
+      tree_map(lambda ref, val: ref_set(ref, (), val), refs, vals)
     return for_loop(outer_step, wrapped_body, init_state, unroll=unroll)
   nsteps, = nsteps
   flat_state, state_tree = tree_flatten(init_state)
-  state_avals = map(val_to_ref_aval, flat_state)
+  state_avals = map(state_utils.val_to_ref_aval, flat_state)
   idx_aval = core.ShapedArray((), jnp.dtype("int32"))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])
@@ -247,7 +240,7 @@ def scan(f: Callable[[Carry, X], Tuple[Carry, Y]],
 @for_p.def_effectful_abstract_eval
 def _for_abstract_eval(*avals, jaxpr, **__):
   # Find out for each of the `Ref`s in our jaxpr what effects they have.
-  jaxpr_aval_effects = state.get_ref_state_effects(
+  jaxpr_aval_effects = state_types.get_ref_state_effects(
       [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
   aval_effects = [set(eff.replace(input_index=eff.input_index - 1)
                       for eff in effs) for aval, effs
@@ -256,7 +249,7 @@ def _for_abstract_eval(*avals, jaxpr, **__):
   nonlocal_state_effects = core.join_effects(*aval_effects)
   return list(avals), nonlocal_state_effects
 
-@state.register_discharge_rule(for_p)
+@state_discharge.register_discharge_rule(for_p)
 def _for_discharge_rule(in_avals, _, *args: Any, jaxpr: core.Jaxpr,
                         reverse: bool, which_linear: Sequence[bool],
                         nsteps: int, unroll: int
@@ -388,7 +381,7 @@ def _is_read_only(ref_effects: Set[StateEffect]) -> bool:
 
 def _loop_invariant_outputs(jaxpr: core.Jaxpr) -> List[bool]:
   # Get effects for each of the jaxpr inputs and remove the loop index.
-  ref_effects = state.get_ref_state_effects(
+  ref_effects = state_types.get_ref_state_effects(
       [v.aval for v in jaxpr.invars], jaxpr.effects)[1:]
   # We first assume that *read-only `Ref`s* are loop-invariant. We can safely do
   # this because the only way something can be loop-varying is if we write to it
@@ -771,7 +764,7 @@ def discharged_for_loop(nsteps, body, init_state, *, reverse: bool = False):
   Potentially useful for testing and benchmarking.
   """
   flat_state, state_tree = tree_flatten(init_state)
-  state_avals = map(val_to_ref_aval, flat_state)
+  state_avals = map(state_utils.val_to_ref_aval, flat_state)
   idx_aval = core.ShapedArray((), jnp.dtype("int32"))
   jaxpr, consts, out_tree = _trace_to_jaxpr_with_refs(
       body, state_tree, [idx_aval, *state_avals])

@@ -15,7 +15,3 @@
 from jax._src.state.types import (AbstractRef, ReadEffect, WriteEffect,
                                   AccumEffect, StateEffect, RefEffect,
                                   get_ref_state_effects, shaped_array_ref)
-from jax._src.state.primitives import (ref_get, ref_set, ref_swap,
-                                       ref_addupdate, get_p, swap_p,
-                                       addupdate_p)
-from jax._src.state.discharge import discharge_state, register_discharge_rule

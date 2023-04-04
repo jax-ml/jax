@@ -998,10 +998,23 @@ jax_test(
 jax_test(
     name = "state_test",
     srcs = ["state_test.py"],
+    # Use fewer cases to prevent timeouts.
+    args = [
+        "--jax_num_generated_cases=5",
+    ],
+    backend_variant_args = {
+        "tpu_pjrt_c_api": ["--jax_num_generated_cases=1"],
+    },
     enable_configs = [
         "gpu",
         "cpu",
     ],
+    shard_count = {
+        "cpu": 2,
+        "gpu": 2,
+        "tpu": 2,
+    },
+    deps = py_deps("hypothesis"),
 )
 
 jax_test(
