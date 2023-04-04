@@ -11,15 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""JAX APIs for exporting code for interoperation.
+"""JAX APIs for exporting JAX functions for interoperation.
 
 This module is used with jax2tf, but has no TensorFlow dependencies.
 """
 import dataclasses
 import functools
 import itertools
-import re
-from typing import Any, Callable, List, Optional, Sequence, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
 from absl import logging
 
@@ -30,8 +29,6 @@ from jax._src import core
 from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
-from jax._src import util
-from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client
@@ -39,26 +36,36 @@ from jax._src.lib.mlir.dialects import stablehlo
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src import tree_util
+from jax._src import util
+from jax._src import xla_bridge as xb
 
 from jax.experimental.jax2tf import shape_poly
 
 map = util.safe_map
 zip = util.safe_zip
 
-@dataclasses.dataclass
-class Exported:
-  """A lowered and serialized JAX function.
+DType = Any
 
-  Currently this works only for functions that take a flat argument list
-  and return a tuple of results. (No pytree support yet.)
+@dataclasses.dataclass(frozen=True)
+class Exported:
+  """A JAX function lowered to StableHLO.
 
   Attributes:
-    in_avals: the input abstract values. May contain dimension expressions in
-        the shapes.
-    out_avals: the output abstract values. May contain dimension expressions in
-        the shapes, with dimension variables among those in `in_avals`.
-    in_shardings: the input shardings. Only for the `module_kept_var_idx`.
-    out_shardings: the output shardings.
+    fun_name: the name of the exported function, for error messages.
+    in_tree: a PyTreeDef describing the tuple (args, kwargs) of the lowered JAX
+        function. The actual lowering does not depend on the `in_tree`, but this
+        can be used to invoke the exported function using the same argument
+        structure.
+    in_avals: the flat tuple of input abstract values. May contain dimension
+        expressions in the shapes.
+    out_tree: a PyTreeDef describing the result of the lowered JAX function.
+    out_avals: the flat tuple of output abstract values. May contain dimension
+        expressions in the shapes, with dimension variables among those in
+        `in_avals.
+    in_shardings: the flattened input shardings. Only for the inputs that are
+        specified in `module_kept_var_idx`.
+    out_shardings: the flattened output shardings, as long as `in_avals`.
     lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
 
     mlir_module_serialized: the serialized lowered VHLO module.
@@ -77,18 +84,22 @@ class Exported:
         The VJP function takes a flat list of arguments,
         starting with the primal arguments and followed by a cotangent argument
         for each primal output. It returns a tuple with the cotangents
-        corresponding to the primal inputs.
+        corresponding to the flattened primal inputs.
   """
-  in_avals: Sequence[core.ShapedArray]
-  out_avals: Sequence[core.ShapedArray]
-  in_shardings: Sequence[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]]
-  out_shardings: Sequence[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]]
+  fun_name: str
+  in_tree: tree_util.PyTreeDef
+  in_avals: Tuple[core.AbstractValue, ...]
+  out_tree: tree_util.PyTreeDef
+  out_avals: Tuple[core.AbstractValue, ...]
+
+  in_shardings: Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]
+  out_shardings: Tuple[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue], ...]
   lowering_platform: str
   strict_checks: bool
 
   mlir_module_serialized: bytes
   xla_call_module_version: int
-  module_kept_var_idx: Sequence[int]
+  module_kept_var_idx: Tuple[int, ...]
 
   _get_vjp: Optional[Callable[["Exported"], "Exported"]]
 
@@ -105,103 +116,198 @@ class Exported:
       raise ValueError("No VJP is available")
     return self._get_vjp(self)
 
-
-def _default_jax_backend() -> str:
-  # Canonicalize to turn into CUDA or ROCM
+def default_lowering_platform() -> str:
+  # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
 
-
-def export_native(fun_jax: Callable,
-                  args_avals: Sequence[core.ShapedArray], *,
-                  lowering_platform: Optional[str],
-                  strict_checks: bool) -> Exported:
-  """Exports native serialization for a JAX function.
-
-  At the moment works only for JAX functions that take a flat list of arguments
-  and return a flat list of results.
+def poly_spec(
+    arg_shape: Sequence[Optional[int]],
+    arg_dtype: DType,
+    polymorphic_shape: Optional[str]) -> jax.ShapeDtypeStruct:
+  """Constructs a jax.ShapeDtypeStruct with polymorphic shapes.
 
   Args:
-    fun_jax: the function to lower and serialize
-    args_avals: the abstract values at which to lower.
-    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
+    arg_shape: the shape, with possibly some unspecified dimensions.
+    arg_dtype: the jax dtype.
+    polymorphic_shape: a string specifying the polymorphic shape.
+
+      .. warning:: The shape-polymorphic lowering is an experimental feature.
+        It is meant to be sound, but it is known to reject some JAX programs
+        that are shape polymorphic. The details of this feature can change.
+
+      It should be either `None` (all dimensions are constant), or a string of
+      specification for one axis, and can be either a constant, `_` denoting
+      a constant dimension given by the `arg_shape`, or the name of a
+      dimension variable assumed to range over dimension greater than 0. For
+      convenience, zero or more trailing `_` can be abbreviated with `...`, and
+      the surrounding parentheses may be missing.
+
+      See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+      for more details.
+
+  Returns: a jax.ShapeDTypeStruct with shapes that may contain symbolic
+      expressions involving dimension variables.
+  """
+  aval_shape = shape_poly._parse_spec(polymorphic_shape, arg_shape)
+  return jax.ShapeDtypeStruct(aval_shape, arg_dtype)
+
+def shape_and_dtype_jax_array(a) -> Tuple[Sequence[Optional[int]], DType]:
+  """Returns the shape and dtype of a jax.Array."""
+  aval = core.raise_to_shaped(core.get_aval(a))
+  return aval.shape, aval.dtype
+
+def poly_specs(
+    args,  # pytree of arguments
+    polymorphic_shapes,  # prefix pytree of strings
+    get_shape_and_dtype=shape_and_dtype_jax_array,
+):
+  """Constructs a pytree of jax.ShapeDtypeSpec.
+
+  Args:
+    args: a pytree of arguments
+    polymorphic_shapes: should be `None` (all arguments are monomorphic),
+      a single string (applies to all arguments), or a pytree matching a prefix
+      of the `args`.
+      See [how optional parameters are matched to
+      arguments](https://jax.readthedocs.io/en/latest/pytrees.html#applying-optional-parameters-to-pytrees).
+
+      See docstring of `poly_spec` and
+      [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
+      for more details.
+
+  Returns: a pytree of jax.ShapeDTypeStruct mathcing `args`.
+  """
+  args_flat, args_tree = tree_util.tree_flatten(args)
+
+  shapes_and_dtypes = tuple(map(get_shape_and_dtype, args_flat))
+  shapes, dtypes = util.unzip2(shapes_and_dtypes)
+
+  if isinstance(args, tuple) and isinstance(polymorphic_shapes, list):
+    # TODO: Remove backward-compatibility workaround
+    polymorphic_shapes_ = tuple(polymorphic_shapes)
+  else:
+    polymorphic_shapes_ = polymorphic_shapes
+
+  try:
+    polymorphic_shapes_flat = tree_util.broadcast_prefix(
+        polymorphic_shapes_, args,
+        is_leaf=lambda x: x is None)
+  except ValueError:
+    e, *_ = tree_util.prefix_errors(
+        polymorphic_shapes_, args,
+        is_leaf=lambda x: x is None)
+    raise e("jax_export polymorphic_shapes") from None
+
+  # Now add in the polymorphic shapes
+  args_specs_flat = tuple(
+      map(poly_spec, shapes, dtypes, polymorphic_shapes_flat))
+
+  return args_tree.unflatten(args_specs_flat)
+
+
+def export(fun_jax: Callable,
+           *,
+           lowering_platform: Optional[str] = None,
+           strict_checks: bool = True) -> Callable[..., Exported]:
+  """Exports native serialization for a JAX function.
+
+  Args:
+    fun_jax: the function to lower and serialize.
+    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'. If None, then use
+        the default JAX backend.
     strict_checks: whether to do strict safety checks. See Exported.strict_checks
         for more details.
+
+  Returns: a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
+      or values with `.shape` and `.dtype` attributes, and returns an
+      `Exported`.
+
+  Usage:
+
+      def f_jax(*args, **kwargs): ...
+      exported = jax_export.export(f_jax)(*args, **kwargs)
   """
-  arg_specs_jax = [
-    jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
-    for aval in args_avals
-  ]
+  fun_name = getattr(fun_jax, "__name__", "unknown")
+  def do_export(*args_specs, **kwargs_specs) -> Exported:
+    if not hasattr(fun_jax, "lower"):
+      # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
+      # convert(f_jax), in which case a "jit" is implied. In that case we raise
+      # an error if the lowered function contains non-replicated sharding annotations.
+      wrapped_fun_jax = jax.jit(fun_jax)
+      allow_non_replicated_sharding = False
+    else:
+      # If we have a pjit or pmap already we do not wrap with another, and we
+      # allow shardings.
+      wrapped_fun_jax = fun_jax  # type: ignore
+      allow_non_replicated_sharding = True
 
-  if not hasattr(fun_jax, "lower"):
-    # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
-    # convert(f_jax), in which case a "jit" is implied. In that case we raise
-    # an error if the lowered function contains non-replicated sharding annotations.
-    wrapped_fun_jax = jax.jit(fun_jax)
-    allow_non_replicated_sharding = False
-  else:
-    # If we have a pjit or pmap already we do not wrap with another, and we
-    # allow shardings.
-    wrapped_fun_jax = fun_jax  # type: ignore
-    allow_non_replicated_sharding = True
+    lowering_platform_str = lowering_platform or default_lowering_platform()
+    lowered = wrapped_fun_jax.lower(
+        *args_specs, **kwargs_specs,
+        _experimental_lowering_platform=lowering_platform_str)
+    lowering = lowered._lowering  # type: ignore
 
-  lowered = wrapped_fun_jax.lower(
-      *arg_specs_jax,
-      _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
+    _check_lowering(lowering)
 
-  _check_lowered(lowered)
+    mlir_module = lowering.stablehlo()
 
-  mlir_module = lowered.stablehlo()
-  if "kept_var_idx" in lowered.compile_args:
-    module_kept_var_idx = tuple(sorted(lowered.compile_args["kept_var_idx"]))
-  else:
-    # For pmap
-    module_kept_var_idx = tuple(range(len(args_avals)))
+    args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
+    if "kept_var_idx" in lowering.compile_args:
+      module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
+    else:
+      # For pmap
+      module_kept_var_idx = tuple(range(len(args_avals_flat)))
 
-  if not all(core.is_constant_shape(a.shape) for a in args_avals):
-    # All arguments are kept if we have dimension variables.
-    assert len(module_kept_var_idx) == len(args_avals)
-    mlir_module = _add_dim_arg_computation(mlir_module, args_avals)
+    if not all(core.is_constant_shape(a.shape) for a in args_avals_flat):
+      # All arguments are kept if we have dimension variables.
+      assert len(module_kept_var_idx) == len(args_avals_flat)
+      mlir_module = _add_dim_arg_computation(mlir_module, args_avals_flat)
 
-  xla_call_module_version = 4
-  mlir_str = mlir.module_to_bytecode(mlir_module)
-  target_version = stablehlo.get_earliest_forward_compatible_version()
-  mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
-      mlir_str, target_version)
+    xla_call_module_version = 4
+    mlir_str = mlir.module_to_bytecode(mlir_module)
+    target_version = stablehlo.get_earliest_forward_compatible_version()
+    mlir_module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+        mlir_str, target_version)
 
-  # Figure out the result types and shapes
-  if "global_out_avals" in lowered.compile_args:
-    # This is currently the case for pjit
-    out_avals = lowered.compile_args["global_out_avals"]
-  elif "shards" in lowered.compile_args:  # for PmapComputation
-    out_avals = lowered.compile_args["shards"].out_sharded_avals
-  else:
-    out_avals = lowered.compile_args["out_avals"]
+    # Figure out the result types and shapes
+    if "global_out_avals" in lowering.compile_args:
+      # This is currently the case for pjit
+      out_avals_flat = lowering.compile_args["global_out_avals"]
+    elif "shards" in lowering.compile_args:  # for PmapComputation
+      out_avals_flat = lowering.compile_args["shards"].out_sharded_avals
+    else:
+      out_avals_flat = lowered.compile_args["out_avals"]
 
-  # Log and then check the module.
-  if logging.vlog_is_on(3):
-    mlir_module_text = mlir.module_to_string(mlir_module)
-    logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}"
-    logging.vlog(3, "Lowered JAX module: %s\n%s", logmsg, mlir_module_text)
+    # Log and then check the module.
+    if logging.vlog_is_on(3):
+      mlir_module_text = mlir.module_to_string(mlir_module)
+      logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}"
+      logging.vlog(3, "Lowered JAX module: %s\n%s", logmsg, mlir_module_text)
 
-  _check_module(mlir_module,
-                allow_non_replicated_sharding=allow_non_replicated_sharding,
-                allow_all_custom_calls=not strict_checks)
+    _check_module(mlir_module,
+                  allow_non_replicated_sharding=allow_non_replicated_sharding,
+                  allow_all_custom_calls=not strict_checks)
 
-  return Exported(
-      in_avals=args_avals,
-      out_avals=out_avals,
-      in_shardings=lowered.compile_args["in_shardings"],
-      out_shardings=lowered.compile_args["out_shardings"],
-      lowering_platform=lowering_platform or _default_jax_backend(),
-      strict_checks=strict_checks,
-      mlir_module_serialized=mlir_module_serialized,
-      module_kept_var_idx=module_kept_var_idx,
-      xla_call_module_version=xla_call_module_version,
-      _get_vjp=lambda exported: _export_native_vjp(wrapped_fun_jax, exported))
+    return Exported(
+        fun_name=fun_name,
+        in_tree=lowered.in_tree,
+        out_tree=lowered.out_tree,
+        in_avals=tuple(args_avals_flat),
+        out_avals=tuple(out_avals_flat),
+        in_shardings=lowering.compile_args["in_shardings"],
+        out_shardings=lowering.compile_args["out_shardings"],
+        lowering_platform=lowering_platform_str,
+        strict_checks=strict_checks,
+        mlir_module_serialized=mlir_module_serialized,
+        module_kept_var_idx=module_kept_var_idx,
+        xla_call_module_version=xla_call_module_version,
+        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
+
+  return do_export
 
 
 def _add_dim_arg_computation(module: mlir.ir.Module,
-                             args_avals: Sequence[core.ShapedArray]) -> mlir.ir.Module:
+                             args_avals_flat: Sequence[core.ShapedArray]) -> mlir.ir.Module:
   """Wraps the lowered module with a new "main" that computes the dim args.
 
   JAX lowering in presence of shape polymorphism produces a `module` that
@@ -230,12 +336,12 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
   Args:
     module: the HLO module as obtained from lowering. May have a number of
       dimension arguments, followed by the kept array arguments.
-    args_avals: the avals for all the arguments of the lowered function, which
+    args_avals_flat: the avals for all the arguments of the lowered function, which
       correspond to the array arguments of the `module`.
 
   Returns the wrapped module.
   """
-  dim_vars = shape_poly.all_dim_vars(args_avals)
+  dim_vars = shape_poly.all_dim_vars(args_avals_flat)
 
   # Make a new module, do not mutate the "module" because it may be cached
   context = mlir.make_ir_context()
@@ -275,9 +381,9 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
           source_info_util.new_name_stack(),
           [], itertools.count(1), [], module=new_module, context=context)
       ctx = mlir.LoweringRuleContext(module_context=module_context,
-          primitive=None, avals_in=args_avals, avals_out=None,
-          tokens_in=mlir.TokenSet(), tokens_out=None)
-      dim_args = _compute_dim_args(ctx, args_avals, tuple(new_main_op.arguments),
+                                     primitive=None, avals_in=args_avals_flat, avals_out=None,
+                                     tokens_in=mlir.TokenSet(), tokens_out=None)
+      dim_args = _compute_dim_args(ctx, args_avals_flat, tuple(new_main_op.arguments),
                                   orig_input_types[:len(dim_vars)])
       # The first arguments are the dimension variable
       orig_main_args.extend(dim_args)
@@ -293,13 +399,13 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
 
 def _compute_dim_args(
     ctx: mlir.LoweringRuleContext,
-    args_avals: Sequence[core.ShapedArray],
+    args_avals_flat: Sequence[core.ShapedArray],
     array_args: Sequence[mlir.ir.Value],
     dim_arg_types: Sequence[mlir.ir.Type]) -> Sequence[mlir.ir.Value]:
   """Compute the values of the dimension arguments.
 
   Args:
-    args_avals: the abstract values of the array arguments.
+    args_avals_flat: the abstract values of the array arguments.
     array_args: the values of the array arguments.
     dim_arg_types: the desired types for the dimension arguments.
 
@@ -307,9 +413,9 @@ def _compute_dim_args(
     the values of the dimension variables, in the sorted order of the
     dimension variables.
   """
-  dim_vars = shape_poly.all_dim_vars(args_avals)
+  dim_vars = shape_poly.all_dim_vars(args_avals_flat)
   dim_values = mlir.lower_fun(
-      functools.partial(shape_poly.compute_dim_values, args_avals, dim_vars),
+      functools.partial(shape_poly.compute_dim_values, args_avals_flat, dim_vars),
       multiple_results=True)(ctx, *array_args)
   res = []
   for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_arg_types):
@@ -320,11 +426,11 @@ def _compute_dim_args(
   return tuple(res)
 
 
-def _check_lowered(lowered) -> None:
-  if not isinstance(lowered, pxla.MeshComputation):
-    raise NotImplementedError(f"serialization is supported only for pjit. {lowered}")
+def _check_lowering(lowering) -> None:
+  if not isinstance(lowering, pxla.MeshComputation):
+    raise NotImplementedError(f"serialization is supported only for pjit. {lowering}")
 
-  if lowered.compile_args["host_callbacks"] or lowered.compile_args["keepalive"]:
+  if lowering.compile_args["host_callbacks"] or lowering.compile_args["keepalive"]:
     raise NotImplementedError("serialization of host_callbacks is not yet implemented")
   # Check that we do not see new compile_args. When we add a compile_args it is
   # safe to add it to the allowed_compile_args if it does not change the semantics
@@ -336,7 +442,7 @@ def _check_lowered(lowered) -> None:
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info"]
-  for compile_arg in lowered.compile_args.keys():
+  for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
 
@@ -361,10 +467,10 @@ def _check_lowered(lowered) -> None:
       ("keepalive", lambda v: not v, "empty"),
       ("pmap_nreps", lambda v: v == 1, "1"),
   ):
-    if compile_arg in lowered.compile_args:
-      if not check_value(lowered.compile_args[compile_arg]):
+    if compile_arg in lowering.compile_args:
+      if not check_value(lowering.compile_args[compile_arg]):
         not_implemented_msgs.append(
-            f"{compile_arg} must be {err_msg} and it is {lowered.compile_args[compile_arg]}")
+            f"{compile_arg} must be {err_msg} and it is {lowering.compile_args[compile_arg]}")
   if not_implemented_msgs:
     raise NotImplementedError(
         "serialization error, unimplemented lowered.compile_args:\n" +
@@ -460,12 +566,22 @@ def _check_module(mod: mlir.ir.Module, *,
     raise ValueError(msg)
 
 def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
-  # Export the VJP of `fun_flat_jax`
+  # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
 
+  # Since jax.vjp does not handle kwargs, it is easier to do all the work
+  # here with flattened functions.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
-    args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax, [len(primal.in_avals)])
-    _, pullback_jax = jax.vjp(primal_fun_jax, *args_flat_jax)
+    def flattened_primal_fun_jax(*args_flat):
+      args, kwargs = primal.in_tree.unflatten(args_flat)
+      res = primal_fun_jax(*args, **kwargs)
+      res_flat, res_tree = tree_util.tree_flatten(res)
+      assert res_tree == primal.out_tree
+      return res_flat
+
+    args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax,
+                                                      [len(primal.in_avals)])
+    _, pullback_jax = jax.vjp(flattened_primal_fun_jax, *args_flat_jax)
     return pullback_jax(out_cts_flat_jax)
 
   vjp_in_avals = list(
@@ -507,6 +623,6 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
                           in_shardings=vjp_in_shardings,
                           out_shardings=vjp_out_shardings)
 
-  return export_native(fun_vjp_jax, vjp_in_avals,
-                       lowering_platform=primal.lowering_platform,
-                       strict_checks=primal.strict_checks)
+  return export(fun_vjp_jax,
+                lowering_platform=primal.lowering_platform,
+                strict_checks=primal.strict_checks)(*vjp_in_avals)
