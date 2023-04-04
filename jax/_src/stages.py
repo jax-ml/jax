@@ -391,9 +391,7 @@ class Compiled(Stage):
     self.out_tree = out_tree
     self._params = CompiledCallParams(self._executable, self._no_kwargs,
                                       self.in_tree, self.out_tree)
-    self._cpp_call = self._executable.create_cpp_call(self._no_kwargs,
-                                                      self.in_tree,
-                                                      self.out_tree)
+    self._call = None
 
   def compiler_ir(self):
     """Post-compilation IR.
@@ -526,11 +524,17 @@ class Compiled(Stage):
     return outs, out_flat, args_flat
 
   def __call__(self, *args, **kwargs):
-    if self._cpp_call is not None:
-      return self._cpp_call(*args, **kwargs)
-
-    outs, _, _ = Compiled.call(self._params, *args, **kwargs)
-    return outs
+    if self._call is None:
+      self._call = self._executable.create_cpp_call(self._no_kwargs,
+                                                        self.in_tree,
+                                                        self.out_tree)
+      if self._call is None:
+        params = self._params
+        def cpp_call_fallback(*args, **kwargs):
+          outs, _, _ = Compiled.call(params, *args, **kwargs)
+          return outs
+        self._call = cpp_call_fallback
+    return self._call(*args, **kwargs)
 
 
 class Lowered(Stage):
