@@ -2923,12 +2923,16 @@ def _sort(*operands: TfVal, dimension: int, is_stable: bool,
 tf_impl[lax.sort_p] = _sort
 
 
-def _fft(x, fft_type, fft_lengths):
+def _fft(x, *, fft_type, fft_lengths,
+         _in_avals: Sequence[core.ShapedArray],
+         _out_aval: core.ShapedArray):
   FFT, IFFT, RFFT, IRFFT = list(map(xla_client.FftType, [0, 1, 2, 3]))
+  x_aval, = _in_avals
+  x_shape = x_aval.shape
   if fft_type == IRFFT:
-    expected_lengths = x.shape[-len(fft_lengths):-1] + ((x.shape[-1] - 1) * 2,)
+    expected_lengths = x_shape[-len(fft_lengths):-1] + ((x_shape[-1] - 1) * 2,)
   else:
-    expected_lengths = x.shape[-len(fft_lengths):]
+    expected_lengths = x_shape[-len(fft_lengths):]
   if expected_lengths != fft_lengths:
     raise NotImplementedError(
         f"Unsupported {fft_lengths=} for {fft_type=} of "
@@ -2939,10 +2943,11 @@ def _fft(x, fft_type, fft_lengths):
       RFFT: [tf.signal.rfft, tf.signal.rfft2d, tf.signal.rfft3d],
       IRFFT: [tf.signal.irfft, tf.signal.irfft2d, tf.signal.irfft3d]
   }
-  return tf_funcs[fft_type][len(fft_lengths) - 1](x)
+  res = tf_funcs[fft_type][len(fft_lengths) - 1](x)
+  return _ensure_tf_shape_if_dynamic(res, _aval_to_tf_shape(_out_aval))
 
 
-tf_impl[lax.fft_p] = _fft
+tf_impl_with_avals[lax.fft_p] = _fft
 
 
 def _qr(operand, full_matrices):
