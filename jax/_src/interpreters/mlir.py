@@ -776,7 +776,8 @@ def lower_jaxpr_to_fun(
     return aval_to_ir_types(aval)
 
   num_dim_vars = len(ctx.dim_vars)
-  dim_var_types = map(aval_to_types, [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars)
+  dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
+  dim_var_types = map(aval_to_types, dim_var_avals)
 
   # Function inputs: *dim_var_values, *tokens, *actual_inputs
   input_types = map(aval_to_types, jaxpr.in_avals)
@@ -793,7 +794,10 @@ def lower_jaxpr_to_fun(
     output_token_types = []
     num_tokens = len(effects)
     token_types = [token_type() for _ in effects]
+  token_avals = [core.AbstractToken] * len(effects)
+  input_avals = dim_var_avals + token_avals + jaxpr.in_avals
   input_types = [*dim_var_types, *token_types, *input_types]
+  output_avals = [core.AbstractToken] * (len(output_token_types) + len(token_types)) + jaxpr.out_avals
   output_types = [*output_token_types, *token_types, *output_types]
   if input_output_aliases is not None:
     token_input_output_aliases = [None] * (num_dim_vars + num_tokens)
@@ -893,15 +897,20 @@ def lower_jaxpr_to_fun(
   entry_block = func_op.add_entry_block()
   with ir.InsertionPoint(entry_block):
     flat_args = entry_block.arguments
-    if not use_sharding_annotations and ir_arg_shardings is not None:
-      flat_args = [a if s is None else wrap_with_sharding_op(a, s)
-                   for a, s in zip(flat_args, ir_arg_shardings)]
-
-    unflattened_args = util.unflatten(flat_args, map(len, input_types))
     # We separate out the dimension variable inputs, the token inputs and
-    # the usual inputs. The dimension variables and token inputs
+    # the regular inputs. The dimension variables and token inputs
     # will be passed to `jaxpr_subcomp` separately from the `args`.
-    dim_var_values, token_args, unflattened_args = util.split_list(unflattened_args, [num_dim_vars, num_tokens])
+    dim_var_values, _, _ = util.split_list(flat_args, [num_dim_vars, num_tokens])
+    # A lowering context just for function body entry/exit code.
+    entry_lowering_ctx = LoweringRuleContext(
+        ctx, None, [], None, TokenSet.create([]), None, None, dim_var_values)
+    if not use_sharding_annotations and ir_arg_shardings is not None:
+      flat_args = [
+          a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
+          for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
+
+    _, token_args, unflattened_args = util.split_list(util.unflatten(flat_args, map(len, input_types)),
+        [num_dim_vars, num_tokens])
     if create_tokens:
       tokens_in = TokenSet.create(effects)
     else:
@@ -932,8 +941,9 @@ def lower_jaxpr_to_fun(
         outs.append(out)
     flat_outputs = util.flatten(outs)
     if not use_sharding_annotations and ir_result_shardings is not None:
-      flat_outputs = [o if s is None else wrap_with_sharding_op(o, s)
-                      for o, s in zip(flat_outputs, ir_result_shardings)]
+      flat_outputs = [
+          o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
+          for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
 
     func_dialect.ReturnOp(flat_outputs)
 
@@ -1365,8 +1375,9 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
   return hlo.ConvertOp(aval_to_ir_type(aval_out), x).result
 
 def _wrap_with_spmd_op(name: str,
-                       result_type: ir.Type,
+                       ctx: LoweringRuleContext,
                        x: ir.Value,
+                       aval_out: core.AbstractValue,
                        sharding_proto: xc.OpSharding,
                        unspecified_dims: Optional[Set[int]] = None):
   # unspecified_dims indicate dimensions whose shardings are not specified and
@@ -1376,23 +1387,23 @@ def _wrap_with_spmd_op(name: str,
         [str(i) for i in sorted(unspecified_dims)]) + "]"
   else:
     backend_config = ""
-  op = hlo.CustomCallOp([result_type], [x],
-                        call_target_name=ir.StringAttr.get(name),
-                        has_side_effect=ir.BoolAttr.get(False),
-                        backend_config=ir.StringAttr.get(backend_config),
-                        api_version=i32_attr(1),
-                        called_computations=ir.ArrayAttr.get([]),
-                        operand_layouts=None,
-                        result_layouts=None)
+  result_type = aval_to_ir_type(aval_out)
+  out_shape = aval_out.shape  # type: ignore
+  if core.is_constant_shape(out_shape):
+    result_shapes = None
+  else:
+    result_shapes = [shape_tensor(eval_dynamic_shape(ctx, out_shape))]
+
+  op = custom_call(name, [result_type], [x],
+                   backend_config=backend_config,
+                   has_side_effect=False,
+                   api_version=1,
+                   result_shapes=result_shapes)
   set_sharding(op, sharding_proto)
   return op.result
 
-def wrap_with_sharding_op(x: ir.Value,
-                          sharding_proto: xc.OpSharding,
-                          unspecified_dims: Optional[Set[int]] = None):
-  return _wrap_with_spmd_op("Sharding", x.type, x, sharding_proto,
-                            unspecified_dims)
 
+wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding")
 wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
@@ -1787,3 +1798,39 @@ def build_xla_computation_helper(
   return xc._xla.mlir.mlir_module_to_xla_computation(
       module_to_string(lowering_result.module), use_tuple_args=False,
       return_tuple=False)
+
+def custom_call(
+    call_target_name: str,
+    out_types: Sequence[ir.Type],
+    operands: Sequence[ir.Value],
+    backend_config: Optional[str] = None,
+    has_side_effect: bool = False,
+    result_shapes: Optional[Sequence[ir.Value]] = None,
+    api_version: int = 2,
+) -> ir.Operation:
+  """Wraps a hlo.CustomCall
+
+  Args:
+    result_shapes: tensors that represent the result shapes, to be used when
+      the results have dynamic shapes. If not-None, its length must match the
+      number of the results.
+  """
+  attributes = dict(
+      call_target_name=ir.StringAttr.get(call_target_name),
+      has_side_effect=ir.BoolAttr.get(has_side_effect),
+      backend_config=ir.StringAttr.get(
+          "" if backend_config is None else backend_config),
+      api_version=i32_attr(api_version),
+      called_computations=ir.ArrayAttr.get([]),
+  )
+
+  if result_shapes is not None:
+    # We add the result_shapes at the end of the operands, and must pass
+    # the indices_of_output_operands attribute. This attribute is not yet
+    # accepted by the CustomCall constructor, so we use build_generic
+    attributes["indices_of_shape_operands"] = ir.DenseIntElementsAttr.get(
+        np.asarray(list(range(len(operands), len(operands) + len(result_shapes))),
+                   dtype=np.int64))
+    operands = list(operands) + list(result_shapes)
+
+  return hlo.CustomCallOp.build_generic(results=out_types, operands=operands, attributes=attributes)

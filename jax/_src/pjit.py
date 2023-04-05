@@ -1795,6 +1795,7 @@ ad.deflinear2(sharding_constraint_p,
 def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
                                       resource_env, unconstrained_dims):
   aval, = ctx.avals_in
+  out_aval, = ctx.avals_out
   axis_ctx = ctx.module_context.axis_context
   # axis_ctx and manual_axes is *only used with xmap* and xmap only works with
   # NamedSharding. So convert the GSPMDSharding to NamedSharding
@@ -1806,8 +1807,8 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
     sharding = GSPMDSharding(
         mps._device_assignment, mps._to_xla_op_sharding(aval.ndim, axis_ctx=axis_ctx))
   return [
-      mlir.wrap_with_sharding_op(
-          x_node,
+      mlir.wrap_with_sharding_op(ctx,
+          x_node, out_aval,
           sharding._to_xla_op_sharding(aval.ndim),
           unspecified_dims=unconstrained_dims)
   ]
