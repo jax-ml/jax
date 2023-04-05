@@ -564,6 +564,7 @@ def sharded_aval(aval: core.ShapedArray,
   if tile_rank == 0:
     return aval
 
+  print('mlir tile rank', tile_rank, aval.shape, sharding)
   for i in range(tile_rank):
     partitions = sharding.tile_assignment_dimensions[i]
     assert partitions > 0
@@ -622,10 +623,14 @@ def lower_jaxpr_to_module(
   input_output_aliases = None
   in_avals = jaxpr.in_avals
   if arg_shardings is not None:
-    in_avals = [
-        sharded_aval(in_aval, in_sharding)
-        for in_aval, in_sharding in zip(in_avals, arg_shardings)
-    ]
+    in_avals = []
+    for in_aval, in_sharding in zip(jaxpr.in_avals, arg_shardings):
+      if (in_aval is not core.abstract_token and
+          core.is_opaque_dtype(in_aval.dtype)):
+        # TODO(frostig,mattjj,necula): asserts a single physical aval
+        in_aval, = in_aval.dtype._rules.physical_avals(in_aval)
+      in_avals.append(sharded_aval(in_aval, in_sharding))
+
   out_avals = jaxpr.out_avals
   if result_shardings is not None:
     out_avals = []

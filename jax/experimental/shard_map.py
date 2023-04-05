@@ -33,6 +33,7 @@ from jax._src import debugging
 from jax._src import linear_util as lu
 from jax._src import ops
 from jax._src import pjit
+from jax._src import prng
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
@@ -473,8 +474,11 @@ def _xla_shard(mesh, names, aval_in, aval_out, x):
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
   axes = {name: i for i, ns in names.items() for name in ns}
-  sharding_proto = pxla.new_mesh_sharding_specs(mesh.shape, mesh.axis_names)(
-      aval_in.ndim, axes).sharding_proto()
+  shrd = NamedSharding(mesh, pxla.array_mapping_to_axis_resources(axes))
+  if core.is_opaque_dtype(aval_in.dtype):
+    sharding_proto = aval_in.dtype._rules.physical_op_sharding(aval_in, shrd)
+  else:
+    sharding_proto = shrd._to_xla_op_sharding(aval_in.ndim)
   sx = mlir.wrap_with_sharding_op(x, sharding_proto, unspecified_dims=set())
   return [mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, set())]
 
@@ -484,8 +488,11 @@ def _xla_unshard(mesh, names, aval_in, aval_out, xs):
   result_type, = mlir.aval_to_ir_types(aval_out)
   sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
-  sharding_proto = pxla.new_mesh_sharding_specs(mesh.shape, mesh.axis_names)(
-      aval_out.ndim, axes).sharding_proto()
+  shrd = NamedSharding(mesh, pxla.array_mapping_to_axis_resources(axes))
+  if core.is_opaque_dtype(aval_out.dtype):
+    sharding_proto = aval_out.dtype._rules.physical_op_sharding(aval_out, shrd)
+  else:
+    sharding_proto = shrd._to_xla_op_sharding(aval_out.ndim)
   return mlir.wrap_with_shard_to_full_op(result_type, sx, sharding_proto, set())
 
 # Eager evaluation
@@ -652,7 +659,7 @@ def _standard_rep_rule(_, *in_rep, **__):
 for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
                   windowed_reductions.__dict__.values(), fft.__dict__.values(),
                   linalg.__dict__.values(), ops.__dict__.values(),
-                  ad_util.__dict__.values(),
+                  ad_util.__dict__.values(), prng.__dict__.values(),
                   custom_derivatives.__dict__.values()):
   if isinstance(o, core.Primitive): register_standard(o)
 

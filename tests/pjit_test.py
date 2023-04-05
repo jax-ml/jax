@@ -36,11 +36,13 @@ from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
 from jax.lax import with_sharding_constraint
-from jax import prng
+from jax._src import prng
 from jax.sharding import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
+from jax.experimental.shard_map import shard_map
+from jax._src import random
 from jax._src import array
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, GSPMDSharding
@@ -2929,6 +2931,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     _test(g, arr, np_inp, in_s)
     # Test second order autodiff with src argument specified in device_put.
     jtu.check_grads(g, (arr,), order=2)
+
+  def test_matt(self):
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+
+    rng = jax.random.PRNGKey(0)
+    sharded_rng = jax.random.split(rng, num=4)
+    sharded_rng = jax.device_put(sharded_rng, sharding)
+
+    def f(key):
+      return jax.random.randint(key[0], shape=(1, 16), minval=0, maxval=16, dtype=jnp.int32)
+      # return prng.random_wrap(key, impl=random.default_prng_impl())
+
+    outputs = shard_map(f, mesh, in_specs=(P('x', None),),
+                        out_specs=P('x', None))(sharded_rng)
+    print(outputs)
 
 
 class TempSharding(Sharding):

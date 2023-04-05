@@ -143,11 +143,12 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   impl: PRNGImpl
   _base_array: typing.Array
 
-  def __init__(self, impl, key_data: Any):
+  def __init__(self, impl, key_data: Any, sharding=None):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self.impl = impl
     self._base_array = key_data
+    self._sharding = sharding
 
   # TODO(frostig): rename to unsafe_base_array, or just offer base_array attr?
   def unsafe_raw_array(self):
@@ -176,7 +177,12 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
-  sharding = property(op.attrgetter('_base_array.sharding'))
+  
+  @property
+  def sharding(self):
+    if self._sharding is None:
+      return op.attrgetter('_base_array.sharding')
+    return self._sharding
 
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
@@ -327,6 +333,19 @@ class KeyTyRules:
     return new_op_sharding
 
   @staticmethod
+  def logical_op_sharding(aval, phys_sharding):
+    key_shape = aval.dtype.impl.key_shape
+
+    phys_op_sharding = phys_sharding._to_xla_op_sharding(
+        aval.ndim + len(key_shape))
+
+    logical_op_sharding = phys_op_sharding.clone()
+    tad = list(logical_op_sharding.tile_assignment_dimensions)
+    tad = tad[:-len(key_shape)]
+    logical_op_sharding.tile_assignment_dimensions = tad
+    return GSPMDSharding(phys_sharding._device_assignment, logical_op_sharding)
+
+  @staticmethod
   def result_handler(sticky_device, aval):
     def handler(_, buf):
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
@@ -371,7 +390,9 @@ class KeyTyRules:
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
                                       is_out_sharding_from_xla)
     def handler(bufs):
-      return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs))
+      if is_out_sharding_from_xla:
+        out_sharding = KeyTyRules.logical_op_sharding(aval, phys_sharding)
+      return PRNGKeyArray(aval.dtype.impl, phys_handler(bufs), out_sharding)
     return handler
 
   # element-type-polymorphic primitive lowering rules
