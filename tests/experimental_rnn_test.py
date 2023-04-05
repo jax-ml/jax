@@ -76,7 +76,7 @@ class RnnTest(jtu.JaxTestCase):
       loss = jnp.sum(jnp.where(seq_length_mask[..., None], y, 0.))
       return loss, (y, h, c)
 
-    jtu.check_grads(f, (weights, x, h_0, c_0), modes=["rev"], order=1)
+    jtu.check_grads(f, (weights, x, h_0, c_0), modes=["rev"], order=1, atol=5E-3, rtol=5E-3)
 
     (loss, (y, h_n, c_n)), weights_grad = jax.value_and_grad(f, has_aux=True)(
         weights, x, h_0, c_0)

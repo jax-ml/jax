@@ -1055,6 +1055,7 @@ jax_test(
     disable_configs = [
         "gpu_a100",  # Numerical precision problems.
     ],
+    shard_count = 8,
     deps = [
         "//jax:rnn",
     ],
