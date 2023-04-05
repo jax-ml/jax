@@ -9609,14 +9609,15 @@ class NamedCallTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
     [dict(func=func, jit=jit)
-      for func in ['identity', 'asarray', 'device_put']
+      for func in ['trivial', 'identity', 'asarray', 'device_put']
       for jit in jtu.JIT_IMPLEMENTATION
-      if not (jit._name == "noop" and func == 'identity')
+      if not (jit._name == "noop" and func in ('trivial', 'identity'))
     ],
   )
   def test_integer_overflow(self, jit, func):
     funcdict = {
-      'identity': lambda x: x,
+      'trivial': lambda x: x,
+      'identity': lambda x: x * 1,  # non-trivial
       'asarray': jnp.asarray,
       'device_put': api.device_put,
     }
@@ -9631,6 +9632,10 @@ class NamedCallTest(jtu.JaxTestCase):
     self.assertEqual(f(int_min).dtype, int_dtype)
     self.assertRaises(OverflowError, f, int_max + 1)
     self.assertRaises(OverflowError, f, int_min - 1)
+    if func in ('trivial', 'identity'):
+      self.assertRaisesRegex(
+          OverflowError, 'An overflow.*whose argument path is x.', f,
+          int_max + 1)
 
 
 class BackendsTest(jtu.JaxTestCase):

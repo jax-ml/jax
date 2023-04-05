@@ -477,7 +477,18 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
   else:
-    in_type = in_avals = tuple(shaped_abstractify(a) for a in explicit_args)
+    avals = []
+    for i, a in enumerate(explicit_args):
+      try:
+        avals.append(shaped_abstractify(a))
+      except OverflowError as e:
+        arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg
+                    else f"flattened argument number is {i}")
+        raise OverflowError(
+          "An overflow was encountered while parsing an argument to a jitted "
+          f"computation, whose {arg_path}."
+        ) from e
+    in_type = in_avals = tuple(avals)
 
   canonicalized_in_shardings_flat = _process_in_axis_resources(
       hashable_pytree(in_shardings), in_avals, in_tree, resource_env)
