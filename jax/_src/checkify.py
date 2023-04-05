@@ -907,17 +907,7 @@ def custom_jvp_call_rule(in_err, enabled_errors, *in_vals, num_consts,
                         call_jaxpr.consts, enabled_errors, err_tree))
   partial_checkify, f_metadata = _flatten_and_get_error_metadata_thunk(
       partial_checkify)
-
-  # Construct the default jvp function, without checkify-ing.
-  @lu.wrap_init
-  def jvp(*xs):
-    # TODO(lenamartens, sharadmv): why not checkify here?
-    jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
-    n, ragged = divmod(len(xs), 2)
-    assert not ragged
-    primals, tangents = xs[num_consts:n], xs[n+num_consts:]
-    return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
-
+  jvp = custom_derivatives.lift_jvp(num_consts, jvp_jaxpr_thunk)
   jvp, jvp_out_tree = flatten_fun_output(jvp)
   all_outs = custom_derivatives.custom_jvp_call_p.bind(
       partial_checkify, jvp, *err_vals, *in_vals, **params)

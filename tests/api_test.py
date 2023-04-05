@@ -7486,6 +7486,44 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     jax.grad(lambda x, y: jax.vmap(f)(x, y).sum())(jnp.ones(3), jnp.ones(3))
 
+  def test_symbolic_zeros_memoization_caching(self):
+    # Tests multiple zero patterns for partial_eval._memoize, and also tests
+    # that we're okay with stores being occupied with equal values.
+
+    @jax.custom_jvp
+    def f(x, y):
+      return x * y
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def f_jvp(primals, tangents):
+      x, y = primals
+      x_dot, y_dot = tangents
+      return f(x, y), y_dot
+
+    f_ = core.jaxpr_as_fun(jax.make_jaxpr(f)(2., 3.))
+    _ = jax.linearize(f_, 2., 3.)
+    _ = jax.linearize(lambda x: f_(x, 3.), 2.)  # don't crash!
+
+  def test_symbolic_zeros_under_jit(self):
+    # https://github.com/google/jax/issues/14833
+    Zero = jax.custom_derivatives.SymbolicZero
+
+    @jax.custom_jvp
+    def f(x, y):
+        return x * y
+
+    @partial(f.defjvp, symbolic_zeros=True)
+    def fjvp(primals, tangents):
+        x, y = primals
+        tx, ty = tangents
+        assert type(tx) is not Zero or type(ty) is not Zero
+        return f(x, y), (
+            ty if type(tx) is Zero else
+            tx if type(ty) is Zero else
+            tx + ty)
+
+    jax.jacfwd(jax.jit(f))(0.1, 0.2)  # don't crash
+
 
 class CustomVJPTest(jtu.JaxTestCase):
 
