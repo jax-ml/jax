@@ -4214,6 +4214,12 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(inner_count, 1)
     self.assertEqual(outer_count, 1)
 
+  def test_grad_conj_symbolic_zeros(self):
+    # https://github.com/google/jax/issues/15400
+    f = lambda x: jax.jit(lambda x, y: (x, y))(x, jax.lax.conj(x))[0]
+    out = jax.grad(f)(3.0)  # doesn't crash
+    self.assertAllClose(out, 1., check_dtypes=False)
+
 
 class RematTest(jtu.JaxTestCase):
 
