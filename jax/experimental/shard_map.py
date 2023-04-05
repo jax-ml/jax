@@ -479,7 +479,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
                         check_rep):
   del check_rep
   sharded_avals = [v.aval for v in jaxpr.invars]
-  in_nodes_ = map(partial(_xla_shard, mesh), in_names, ctx.avals_in,
+  in_nodes_ = map(partial(_xla_shard, ctx, mesh), in_names, ctx.avals_in,
                   sharded_avals, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
       mesh, frozenset(mesh.axis_names)
@@ -490,34 +490,34 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
                                        (), *in_nodes_,
                                        dim_var_values=ctx.dim_var_values)
   sharded_avals = [v.aval for v in jaxpr.outvars]
-  return map(partial(_xla_unshard, mesh), out_names, sharded_avals,
+  return map(partial(_xla_unshard, ctx, mesh), out_names, sharded_avals,
              ctx.avals_out, out_nodes_)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
-def _xla_shard(mesh, names, aval_in, aval_out, x):
+def _xla_shard(ctx: mlir.LoweringRuleContext,
+               mesh, names, aval_in, aval_out, x):
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
-  result_type, = mlir.aval_to_ir_types(aval_out)
   axes = {name: i for i, ns in names.items() for name in ns}
   shard_proto = NamedSharding(
       mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
   )._to_xla_op_sharding(aval_in.ndim)
   if core.is_opaque_dtype(aval_in.dtype):
     shard_proto = aval_in.dtype._rules.physical_op_sharding(aval_in, shard_proto)
-  sx = mlir.wrap_with_sharding_op(x, shard_proto, unspecified_dims=set())
-  return [mlir.wrap_with_full_to_shard_op(result_type, sx, manual_proto, set())]
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto, unspecified_dims=set())
+  return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, set())]
 
-def _xla_unshard(mesh, names, aval_in, aval_out, xs):
+def _xla_unshard(ctx: mlir.LoweringRuleContext,
+                 mesh, names, aval_in, aval_out, xs):
   x, = xs
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
-  result_type, = mlir.aval_to_ir_types(aval_out)
-  sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set())
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
   shard_proto = NamedSharding(
       mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
   )._to_xla_op_sharding(aval_out.ndim)
   if core.is_opaque_dtype(aval_out.dtype):
     shard_proto = aval_out.dtype._rules.physical_op_sharding(aval_out, shard_proto)
-  return mlir.wrap_with_shard_to_full_op(result_type, sx, shard_proto, set())
+  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto, set())
 
 # Eager evaluation
 

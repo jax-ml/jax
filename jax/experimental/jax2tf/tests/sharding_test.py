@@ -187,7 +187,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       for out_shardings in ("missing", None, "P")
   )
   @jtu.with_mesh([("x", 2)])
-  def test_pjit_basic(self, in_shardings=None, out_shardings="missing"):
+  def test_pjit_basic(self, in_shardings="P", out_shardings="P"):
     # Ensure that we can distinguish the inputs and outputs by shape
     def f_jax(x):  # f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
@@ -317,17 +317,15 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(res_tf, res_jax)
 
   @parameterized.named_parameters(
-      dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint=}_poly={poly}",
+      dict(testcase_name=f"_nested_pjit={nested_pjit}_constraint={constraint}_poly={poly}",
            nested_pjit=nested_pjit, constraint=constraint, poly=poly)
       # We add a constraint either with a nested pjit or with a sharding_constraint
       for nested_pjit in (True, False)
       for constraint in (None, "P")
-      for poly in (None, "b1,_", "_,b2", "b1,b2")
+      for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
   )
   @jtu.with_mesh([("x", 2)])
-  def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly=None):
-    if poly is not None:
-      raise unittest.SkipTest("TODO: Sharding custom calls lack shape refinement")
+  def test_pjit_sharding_constraint(self, nested_pjit=True, constraint="P", poly="2*b1,b2"):
     constraint_sharding = P("x", None) if constraint == "P" else None
     @partial(pjit.pjit, in_shardings=None,
              out_shardings=None)
@@ -697,13 +695,11 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_poly={poly}", poly=poly)
-      for poly in (None, "b1,_", "_,b2", "b1,b2")
+      for poly in (None, "2*b1,_", "_,b2", "2*b1,b2")
   )
   def test_shmap_collective_permute(self, poly=None):
     if jtu.device_under_test() == "cpu":
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
-    if poly is not None:
-      raise unittest.SkipTest("TODO: Sharding custom calls lack shape refinement")
     mesh = Mesh(self.devices, axis_names=('x'))
     a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
