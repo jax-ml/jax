@@ -100,9 +100,18 @@ def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
   ckpt_path = os.path.normpath(ckpt_path).replace('gs:/', 'gs://')
   spec = {'driver': 'zarr', 'kvstore': {}}
   if ocdbt:
+    spec.update(
+        {'recheck_cached_data': False, 'recheck_cached_metadata': False}
+    )
     prefix = 'gs' if is_gcs_path else 'file'
     spec['kvstore'] = {
         'driver': 'ocdbt',
+        'config': {
+            'max_inline_value_bytes': 1024,
+            'max_decoded_node_bytes': 100000000,
+        },
+        'experimental_read_coalescing_threshold_bytes': 1000000,
+        'cache_pool': 'cache_pool#ocdbt',
         'base': f'{prefix}://{os.path.dirname(ckpt_path)}',
         'path': os.path.basename(ckpt_path),
     }
