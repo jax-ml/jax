@@ -206,6 +206,22 @@ class SparsifyTest(jtu.JaxTestCase):
 
     self.assertAllClose(out.todense(), x.todense() + y.todense())
 
+    # Sparse + dense: supported
+    x = BCOO.fromdense(jnp.arange(6.)).reshape(2, 3)
+    y = jnp.ones((2, 3))
+
+    out = self.sparsify(operator.add)(x, y)
+    self.assertAllClose(out, x.todense() + y)
+
+    out = self.sparsify(operator.add)(y, x)
+    self.assertAllClose(out, x.todense() + y)
+
+    # Sparse + dense: unsupported
+    msg = "Addition between a sparse array X and a dense array Y is not implemented"
+    with self.assertRaisesRegex(NotImplementedError, msg):
+      self.sparsify(operator.add)(x, 1.)
+
+
   @jtu.sample_product(
     [dict(shape=shape, n_batch=n_batch, n_dense=n_dense)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
