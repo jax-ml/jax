@@ -9719,8 +9719,6 @@ class GarbageCollectionTest(jtu.JaxTestCase):
 class DeprecationsTest(jtu.JaxTestCase):
   def test_jax_deprecations(self):
     with self.assertWarns(DeprecationWarning):
-      self.assertIs(jax.ShapedArray, jax.core.ShapedArray)
-    with self.assertWarns(DeprecationWarning):
       self.assertIs(jax.ad, jax.interpreters.ad)
     with self.assertWarns(DeprecationWarning):
       self.assertIs(jax.partial_eval, jax.interpreters.partial_eval)
