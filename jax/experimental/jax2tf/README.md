@@ -1065,12 +1065,45 @@ You can check what devices TensorFlow uses:
 
 ```python
 logging.info("All TF devices: %s", tf.config.list_logical_devices())
-tf_device = (tf.config.list_logical_devices("TPU") + 
-             tf.config.list_logical_devices("GPU") + 
+tf_device = (tf.config.list_logical_devices("TPU") +
+             tf.config.list_logical_devices("GPU") +
              tf.config.list_logical_devices())[0]
-assert jax.default_backend().upper() == tf_device.device_type 
+assert jax.default_backend().upper() == tf_device.device_type
 with tf.device(tf_device):
    ...
+```
+
+Users should pay attention to another case, which is that they must use
+`jit_compile=True` in order to execute on TPU.
+
+Because if `jit_compile=False`, TF "executes the function without XLA
+compilation. Set this value to False when directly running a multi-device
+function on TPUs (e.g. two TPU cores, one TPU core and its host CPU)" (see
+[TF doc](https://www.tensorflow.org/api_docs/python/tf/function))
+
+With `jit_compile=False` the converted TF program will be executed on CPU
+instead of TPU and this will result in an error message
+
+```
+Node: 'XlaCallModule'
+The current platform CPU is not among the platforms required by the module: [TPU]
+	 [[{{node XlaCallModule}}]]
+```
+
+To work around this on `jit_compile=False`, you can wrap your function with a
+new tf.function that explicitly assigns the TPU device, like this:
+
+```python
+f_tf = jax2tf.convert(jnp.sin)
+x = np.float32(.5)
+
+@tf.function(autograph=False, jit_compile=False)
+def f_tf_wrapped(x):
+  with tf.device('/device:TPU:0'):
+    return f_tf(x)
+
+with tf.device('/device:TPU:0'):
+  self.assertAllClose(np.sin(x), f_tf_wrapped(x))
 ```
 
 ### Unsupported JAX features
