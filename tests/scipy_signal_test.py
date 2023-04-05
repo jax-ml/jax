@@ -68,7 +68,7 @@ def _complex_dtype(dtype):
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
-  """Tests for LAX-backed scipy.stats implementations"""
+  """Tests for LAX-backed scipy.signal implementations"""
 
   @jtu.sample_product(
     [dict(xshape=xshape, yshape=yshape)
@@ -89,9 +89,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     osp_fun = partial(osp_op, mode=mode, method=method)
     jsp_fun = partial(jsp_op, mode=mode, method=method, precision=lax.Precision.HIGHEST)
     if method == 'fft':
-      # TODO(jakevdp): can we improve these tolerances?
-      tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-5,
-             np.complex64: 1e-2, np.complex128: 1e-5}
+      tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-6,
+             np.complex64: 1e-2, np.complex128: 1e-6}
     else:
       tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12,
              np.complex64: 1e-2, np.complex128: 1e-12}
@@ -99,35 +98,11 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
   @jtu.sample_product(
-    [dict(xshape=xshape, yshape=yshape)
-     for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
-     for xshape in shapeset
-     for yshape in shapeset
-    ],
-    mode=['full', 'same', 'valid'],
-    dtype=default_dtypes,
-  )
-  def testFFTConvolution(self, xshape, yshape, dtype, mode):
-    jsp_op = jsp_signal.fftconvolve
-    osp_op = osp_signal.fftconvolve
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    osp_fun = partial(osp_op, mode=mode)
-    jsp_fun = partial(jsp_op, mode=mode)
-    # TODO(jakevdp): improve these tolerances
-    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-5,
-           np.complex64: 1e-2, np.complex128: 1e-5}
-    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
-                            tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
-
-
-  @jtu.sample_product(
-    mode=['full', 'same', 'valid'],
-    op=['convolve2d', 'correlate2d'],
-    dtype=default_dtypes,
-    xshape=twodim_shapes,
-    yshape=twodim_shapes,
+    mode = ['full', 'same', 'valid'],
+    op = ['convolve2d', 'correlate2d'],
+    dtype = default_dtypes,
+    xshape = twodim_shapes,
+    yshape = twodim_shapes,
   )
   def testConvolutions2D(self, xshape, yshape, dtype, mode, op):
     jsp_op = getattr(jsp_signal, op)

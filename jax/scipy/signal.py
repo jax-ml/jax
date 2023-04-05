@@ -22,6 +22,7 @@ from jax._src.scipy.signal import (
   correlate as correlate,
   correlate2d as correlate2d,
   detrend as detrend,
+  fftconvolve as fftconvolve,
   csd as csd,
   istft as istft,
   stft as stft,
