@@ -553,6 +553,22 @@ class ShardMapTest(jtu.JaxTestCase):
     jax.eval_shape(jax.grad(lambda x: jax.remat(f)(x).sum().astype('float32')),
                    xs)
 
+  def test_prngkeyarray_eager(self):
+    # https://github.com/google/jax/issues/15398
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+
+    rng = jax.random.PRNGKey(0)
+    sharded_rng = jax.random.split(rng, num=4)
+    sharded_rng = jax.device_put(sharded_rng, sharding)
+
+    def f(key):
+      return jax.random.randint(key[0], shape=(1, 16), minval=0, maxval=16,
+                                dtype=jnp.int32)
+
+    g = shard_map(f, mesh, in_specs=(P('x', None),), out_specs=P('x', None))
+    _ = g(sharded_rng)  # don't crash!
+
 
 class FunSpec(NamedTuple):
   name: str

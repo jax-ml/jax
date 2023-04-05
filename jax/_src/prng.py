@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+from __future__ import annotations
 
 import abc
 from functools import partial, reduce
@@ -176,7 +176,12 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
-  sharding = property(op.attrgetter('_base_array.sharding'))
+
+  @property
+  def sharding(self):
+    aval = keys_shaped_array(self.impl, self.shape)
+    phys_sharding = self._base_array.sharding
+    return KeyTyRules.logical_op_sharding(aval, phys_sharding)
 
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
@@ -250,14 +255,14 @@ class PRNGKeyArray(metaclass=PRNGKeyArrayMeta):
   # `typing.type_check_only`.
 
   @property
-  def T(self)                   -> 'PRNGKeyArray': assert False
-  def __getitem__(self, _)      -> 'PRNGKeyArray': assert False
-  def ravel(self, *_, **__)     -> 'PRNGKeyArray': assert False
-  def squeeze(self, *_, **__)   -> 'PRNGKeyArray': assert False
-  def swapaxes(self, *_, **__)  -> 'PRNGKeyArray': assert False
-  def take(self, *_, **__)      -> 'PRNGKeyArray': assert False
-  def transpose(self, *_, **__) -> 'PRNGKeyArray': assert False
-  def flatten(self, *_, **__)   -> 'PRNGKeyArray': assert False
+  def T(self)                   -> PRNGKeyArray: assert False
+  def __getitem__(self, _)      -> PRNGKeyArray: assert False
+  def ravel(self, *_, **__)     -> PRNGKeyArray: assert False
+  def squeeze(self, *_, **__)   -> PRNGKeyArray: assert False
+  def swapaxes(self, *_, **__)  -> PRNGKeyArray: assert False
+  def take(self, *_, **__)      -> PRNGKeyArray: assert False
+  def transpose(self, *_, **__) -> PRNGKeyArray: assert False
+  def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
 
 
 _set_device_array_base_attributes(PRNGKeyArray, include=[
@@ -303,9 +308,10 @@ def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
   elif is_sharding_from_xla:
     return sharding
   else:
+    sharding_proto = sharding._to_xla_op_sharding(aval.ndim)
     return GSPMDSharding(
         sharding._device_assignment,
-        KeyTyRules.physical_op_sharding(aval, sharding))
+        KeyTyRules.physical_op_sharding(aval, sharding_proto))
 
 class KeyTyRules:
 
@@ -316,15 +322,24 @@ class KeyTyRules:
                              jnp.dtype('uint32'))]
 
   @staticmethod
-  def physical_op_sharding(aval, sharding):
-    op_sharding = sharding._to_xla_op_sharding(aval.ndim)
+  def physical_op_sharding(aval, op_sharding_proto):
     key_shape = aval.dtype.impl.key_shape
-
-    new_op_sharding = op_sharding.clone()
+    new_op_sharding = op_sharding_proto.clone()
     tad = list(new_op_sharding.tile_assignment_dimensions)
     tad.extend([1] * len(key_shape))
     new_op_sharding.tile_assignment_dimensions = tad
     return new_op_sharding
+
+  @staticmethod
+  def logical_op_sharding(aval, phys_sharding) -> GSPMDSharding:
+    key_shape = aval.dtype.impl.key_shape
+    phys_op_sharding = phys_sharding._to_xla_op_sharding(
+        aval.ndim + len(key_shape))
+    logical_op_sharding = phys_op_sharding.clone()
+    tad = list(logical_op_sharding.tile_assignment_dimensions)
+    tad = tad[:-len(key_shape)]
+    logical_op_sharding.tile_assignment_dimensions = tad
+    return GSPMDSharding(phys_sharding._device_assignment, logical_op_sharding)
 
   @staticmethod
   def result_handler(sticky_device, aval):
@@ -367,7 +382,6 @@ class KeyTyRules:
 
     phys_sharding = make_key_array_phys_sharding(
         aval, out_sharding, is_out_sharding_from_xla)
-
     phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
                                       is_out_sharding_from_xla)
     def handler(bufs):
