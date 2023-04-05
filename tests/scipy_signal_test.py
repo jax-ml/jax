@@ -68,35 +68,49 @@ def _complex_dtype(dtype):
 
 
 class LaxBackedScipySignalTests(jtu.JaxTestCase):
-  """Tests for LAX-backed scipy.stats implementations"""
+  """Tests for LAX-backed scipy.signal implementations"""
 
-  @jtu.sample_product(
-    [dict(xshape=xshape, yshape=yshape)
-     for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
-     for xshape in shapeset
-     for yshape in shapeset
-    ],
-    mode=['full', 'same', 'valid'],
-    op=['convolve', 'correlate'],
-    dtype=default_dtypes,
+  @ jtu.sample_product(
+    mode = ['full', 'same', 'valid'],
+    op = ['convolve', 'correlate'],
+    dtype = default_dtypes,
+    xshape = onedim_shapes + twodim_shapes + threedim_shapes,
+    yshape = onedim_shapes + twodim_shapes + threedim_shapes
   )
-  def testConvolutions(self, xshape, yshape, dtype, mode, op):
+  def testConvolutionsDirect(self, xshape, yshape, dtype, mode, op):
     jsp_op = getattr(jsp_signal, op)
     osp_op = getattr(osp_signal, op)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    osp_fun = partial(osp_op, mode=mode)
-    jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
+    osp_fun = partial(osp_op, mode=mode, method='direct')
+    jsp_fun = partial(jsp_op, mode=mode, method='direct', precision=lax.Precision.HIGHEST)
     tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+  
+  @ jtu.sample_product(
+    mode = ['full', 'same', 'valid'],
+    op = ['convolve', 'correlate'],
+    dtype = jtu.dtypes.floating + jtu.dtypes.integer,
+    shape = onedim_shapes + twodim_shapes + threedim_shapes,
+  )
+  def testConvolutionsFft(self, shape, dtype, mode, op):
+    jsp_op = getattr(jsp_signal, op)
+    osp_op = getattr(osp_signal, op)
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype), rng(shape, dtype)]
+    osp_fun = partial(osp_op, mode=mode, method='fft')
+    jsp_fun = partial(jsp_op, mode=mode, method='fft', precision=lax.Precision.HIGHEST)
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @jtu.sample_product(
-    mode=['full', 'same', 'valid'],
-    op=['convolve2d', 'correlate2d'],
-    dtype=default_dtypes,
-    xshape=twodim_shapes,
-    yshape=twodim_shapes,
+  @ jtu.sample_product(
+    mode = ['full', 'same', 'valid'],
+    op = ['convolve2d', 'correlate2d'],
+    dtype = default_dtypes,
+    xshape = twodim_shapes,
+    yshape = twodim_shapes,
   )
   def testConvolutions2D(self, xshape, yshape, dtype, mode, op):
     jsp_op = getattr(jsp_signal, op)
@@ -107,10 +121,10 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     jsp_fun = partial(jsp_op, mode=mode, precision=lax.Precision.HIGHEST)
     tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
-                            tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+                            tol = tol)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol = tol, atol = tol)
 
-  @jtu.sample_product(
+  @ jtu.sample_product(
     shape=[(5,), (4, 5), (3, 4, 5)],
     dtype=jtu.dtypes.floating + jtu.dtypes.integer,
     axis=[0, -1],
@@ -131,7 +145,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @jtu.sample_product(
+  @ jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
           nfft=nfft)
       for shape, nperseg, noverlap, timeaxis in stft_test_shapes
@@ -175,7 +189,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
   # Tests with `average == 'median'`` is excluded from `testCsd*`
   # due to the issue:
   #   https://github.com/scipy/scipy/issues/15601
-  @jtu.sample_product(
+  @ jtu.sample_product(
     [dict(xshape=xshape, yshape=yshape, nperseg=nperseg, noverlap=noverlap,
           timeaxis=timeaxis, nfft=nfft)
       for xshape, yshape, nperseg, noverlap, timeaxis in csd_test_shapes
@@ -217,7 +231,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @jtu.sample_product(
+  @ jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
           nfft=nfft)
       for shape, _yshape, nperseg, noverlap, timeaxis in csd_test_shapes
@@ -261,7 +275,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @jtu.sample_product(
+  @ jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
           nfft=nfft)
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
@@ -305,7 +319,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @jtu.sample_product(
+  @ jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis)
       for shape, nperseg, noverlap, timeaxis in welch_test_shapes
     ],
@@ -329,7 +343,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     if use_noverlap:
       kwargs['noverlap'] = noverlap
 
-    @jtu.ignore_warning(message="nperseg = 256 is greater than")
+    @ jtu.ignore_warning(message="nperseg = 256 is greater than")
     def osp_fun(x):
       freqs, Pxx = osp_signal.welch(x, **kwargs)
       return freqs.astype(_real_dtype(dtype)), Pxx.astype(_real_dtype(dtype))
@@ -347,7 +361,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, rtol=tol, atol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
-  @jtu.sample_product(
+  @ jtu.sample_product(
     [dict(shape=shape, nperseg=nperseg, noverlap=noverlap, timeaxis=timeaxis,
           freqaxis=freqaxis, nfft=nfft)
       for shape, nperseg, noverlap, timeaxis, freqaxis in istft_test_shapes
