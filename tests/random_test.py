@@ -1605,6 +1605,16 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(g[0], k1.dtype)
     self.assertEqual(g[0], k2.dtype)
 
+  def test_isinstance(self):
+    @jax.jit
+    def f(k):
+      self.assertIsInstance(k, random.KeyArray)
+      return k
+
+    k1 = self.make_keys()
+    k2 = f(k1)
+    self.assertIsInstance(k1, random.KeyArray)
+    self.assertIsInstance(k2, random.KeyArray)
 
   # -- prng primitives
 
