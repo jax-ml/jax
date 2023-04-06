@@ -31,6 +31,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
+from jax._src import sharding_specs
 from jax._src import typing
 from jax._src.api import jit, vmap
 from jax._src.config import config
@@ -293,8 +294,8 @@ def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
     return sharding
   elif isinstance(sharding, PmapSharding):
     key_shape = aval.dtype.impl.key_shape
-    trailing_sharding = [pxla.NoSharding()] * len(key_shape)
-    phys_sharding_spec = pxla.ShardingSpec(
+    trailing_sharding = [sharding_specs.NoSharding()] * len(key_shape)
+    phys_sharding_spec = sharding_specs.ShardingSpec(
         sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
         mesh_mapping=sharding.sharding_spec.mesh_mapping)
     return PmapSharding(devices=sharding.devices,

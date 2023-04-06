@@ -20,15 +20,14 @@ import operator as op
 from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
                     FrozenSet, Union, cast)
 
-from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import sharding
+from jax._src import sharding_specs
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.interpreters import mlir
-from jax._src.interpreters import pxla
 
 import numpy as np
 
@@ -296,7 +295,7 @@ class NamedSharding(XLACompatibleSharding):
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
     # since we don't really need sharding spec.
-    sharding_spec = pxla.new_mesh_sharding_specs(
+    sharding_spec = sharding_specs.new_mesh_sharding_specs(
         self.mesh.shape, self.mesh.axis_names)(num_dimensions, array_mapping)
     # Used in `with_sharding_constraint`.
     special_axes = {}
@@ -369,11 +368,11 @@ class SingleDeviceSharding(XLACompatibleSharding):
 @use_cpp_class(xc.PmapSharding)
 class PmapSharding(XLACompatibleSharding):
   devices: np.ndarray
-  sharding_spec: pxla.ShardingSpec
+  sharding_spec: sharding_specs.ShardingSpec
 
   @use_cpp_method()
   def __init__(self, devices: Union[Sequence[Device], np.ndarray],
-               sharding_spec: pxla.ShardingSpec):
+               sharding_spec: sharding_specs.ShardingSpec):
     self.devices = np.asarray(devices)
     # The sharding spec should be pmap's sharding spec.
     self.sharding_spec = sharding_spec
@@ -421,12 +420,12 @@ class PmapSharding(XLACompatibleSharding):
     """
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
-    aval = core.ShapedArray(shape, np.int32)
-    sharding_spec = pxla._create_pmap_sharding_spec(aval, sharded_dim)
+    sharding_spec = sharding_specs.create_pmap_sharding_spec(
+        tuple(shape), sharded_dim)
 
     num_ways_sharded = None
     for s in sharding_spec.sharding:
-      if isinstance(s, pxla.Unstacked):
+      if isinstance(s, sharding_specs.Unstacked):
         num_ways_sharded = s.size
     if num_ways_sharded is None:
       raise NotImplementedError(
@@ -444,7 +443,7 @@ class PmapSharding(XLACompatibleSharding):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     self.shard_shape(global_shape)  # raises a good error message
-    indices = pxla.spec_to_indices(global_shape, self.sharding_spec)
+    indices = sharding_specs.spec_to_indices(global_shape, self.sharding_spec)
     return dict(safe_zip(self.devices.flat, indices))  # type: ignore[arg-type]
 
   @functools.cached_property
@@ -459,7 +458,7 @@ class PmapSharding(XLACompatibleSharding):
     sharded_dim = None
     sharded_dim_size = None
     for i, s in enumerate(self.sharding_spec.sharding):
-      if isinstance(s, pxla.Unstacked):
+      if isinstance(s, sharding_specs.Unstacked):
         sharded_dim = i
         sharded_dim_size = s.size
         break

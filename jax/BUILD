@@ -182,6 +182,7 @@ py_library_providing_imports_info(
         ":pretty_printer",
         ":profiler",
         ":sharding",
+        ":sharding_specs",
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
@@ -409,6 +410,16 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "sharding_specs",
+    srcs = ["_src/sharding_specs.py"],
+    deps = [
+        ":op_shardings",
+        ":util",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

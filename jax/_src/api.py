@@ -45,6 +45,7 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import array
 from jax._src import dtypes
+from jax._src import sharding_specs
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import pjit
@@ -1782,13 +1783,13 @@ class _PmapFastpathData(NamedTuple):
   out_handler: Any
   out_pytree_def: Any
   # Data needed to handle the inputs.
-  input_sharding_specs: Sequence[pxla.ShardingSpec]
+  input_sharding_specs: Sequence[sharding_specs.ShardingSpec]
   input_devices: Sequence[xc.Device]
-  input_indices: Sequence[pxla.Index]
+  input_indices: Sequence[sharding_specs.Index]
   input_array_shardings: Sequence[Any]
   # Data needed to build the Array from C++.
-  out_sharding_specs: Sequence[pxla.ShardingSpec]
-  out_indices: Sequence[pxla.Index]
+  out_sharding_specs: Sequence[sharding_specs.ShardingSpec]
+  out_indices: Sequence[sharding_specs.Index]
   out_avals: Sequence[Any]
   out_array_shardings: Sequence[Any]
   out_committed: Sequence[Any]
@@ -2582,7 +2583,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
       raise ValueError("the shards passed to device_put_sharded must have "
                        f"consistent shape and dtype, but got {a1} and {a2}.")
     stacked_aval = avals[0].update(shape=(len(devices),) + avals[0].shape)
-    sharding_spec = pxla._create_pmap_sharding_spec(stacked_aval)
+    sharding_spec = sharding_specs.create_pmap_sharding_spec(stacked_aval.shape)
     return pxla.batched_device_put(
         stacked_aval, PmapSharding(np.array(devices), sharding_spec),
         xs, list(devices))
@@ -2630,7 +2631,7 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
                               core.raise_to_shaped(core.get_aval(x)))
     assert (isinstance(aval, ShapedArray) and
             len(xla.aval_to_xla_shapes(aval)) == 1)
-    sharding_spec = pxla._create_pmap_sharding_spec(aval)
+    sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
     buf = device_put(x, devices[0])
     return pxla.batched_device_put(
         aval, PmapSharding(np.array(devices), sharding_spec),

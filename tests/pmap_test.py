@@ -40,10 +40,10 @@ from jax._src.lax import parallel
 from jax._src import api as src_api
 from jax import random
 from jax._src import core
-from jax._src.core import ShapedArray
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
+from jax._src import sharding_specs
 from jax._src import xla_bridge
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -118,13 +118,11 @@ ignore_xmap_warning = partial(
 
 def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
                                 devices=None, sharded_dim_size=None):
-  dtype = np.int32
-  aval = ShapedArray(input_shape, dtype)
-
   if input_data is None:
     input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
 
-  sharding_spec = pxla._create_pmap_sharding_spec(aval, in_axes, sharded_dim_size)
+  sharding_spec = sharding_specs.create_pmap_sharding_spec(
+      input_shape, in_axes, sharded_dim_size)
 
   if devices is None:
     devices = jax.devices()
@@ -2829,7 +2827,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
                              mesh_mapping=map(pxla.ShardedAxis, (0, 1)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(0,2), slice(4,8)),
                       (slice(2,4), slice(0,4)),
@@ -2839,7 +2837,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(sharding=map(pxla.Chunked, ([2], [2])),
                              mesh_mapping=map(pxla.ShardedAxis, (1, 0)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(2,4), slice(0,4)),
                       (slice(0,2), slice(4,8)),
@@ -2851,7 +2849,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
                              mesh_mapping=(pxla.Replicated(2),
                                            pxla.ShardedAxis(1),
                                            pxla.ShardedAxis(0)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(0,4)),
                       (slice(2,4), slice(0,4)),
                       (slice(0,2), slice(4,8)),
@@ -2861,7 +2859,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.Chunked([2]), pxla.NoSharding()),
                              mesh_mapping=(pxla.ShardedAxis(0),))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((slice(0,2), slice(None)),
                       (slice(2,4), slice(None))))
 
@@ -2869,14 +2867,14 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (4, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.NoSharding()),
                              mesh_mapping=())
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((slice(None), slice(None)),))
 
   def testUnmaterializedAxis(self):
     shape = (4, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(4), pxla.NoSharding()),
                              mesh_mapping=(pxla.ShardedAxis(0),))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((0, slice(None)),
                       (1, slice(None)),
                       (2, slice(None)),
@@ -2885,7 +2883,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (2, 2)
     spec = pxla.ShardingSpec(sharding=(pxla.NoSharding(), pxla.Unstacked(2)),
                              mesh_mapping=(pxla.ShardedAxis(0),))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((slice(None), 0),
                       (slice(None), 1)))
 
@@ -2893,14 +2891,14 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (2, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
                              mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      tuple([(0, slice(None))] * 3 + [(1, slice(None))] * 3))
 
   def testReplicationPosition2(self):
     shape = (2, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
                              mesh_mapping=(pxla.ShardedAxis(0), pxla.ShardedAxis(1), pxla.Replicated(3)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((0, slice(0, 4)), (0, slice(0, 4)), (0, slice(0, 4)),
                       (0, slice(4, 8)), (0, slice(4, 8)), (0, slice(4, 8)),
                       (1, slice(0, 4)), (1, slice(0, 4)), (1, slice(0, 4)),
@@ -2910,7 +2908,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (2, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.Chunked([2])),
                              mesh_mapping=(pxla.ShardedAxis(0), pxla.Replicated(3), pxla.ShardedAxis(1)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((0, slice(0, 4)), (0, slice(4, 8)),
                       (0, slice(0, 4)), (0, slice(4, 8)),
                       (0, slice(0, 4)), (0, slice(4, 8)),
@@ -2922,7 +2920,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = (2, 8)
     spec = pxla.ShardingSpec(sharding=(pxla.Unstacked(2), pxla.NoSharding()),
                              mesh_mapping=(pxla.Replicated(3), pxla.ShardedAxis(0)))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      tuple([(0, slice(None)), (1, slice(None))] * 3))
 
   def testMultipleReplications(self):
@@ -2933,7 +2931,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
                       pxla.ShardedAxis(0), pxla.Replicated(2),
                       pxla.ShardedAxis(1)))
     self.assertEqual(
-        pxla.spec_to_indices(shape, spec),
+        sharding_specs.spec_to_indices(shape, spec),
         ((0, slice(None), slice(0, 2)), (0, slice(None), slice(2, 4)),
          (0, slice(None), slice(0, 2)), (0, slice(None), slice(2, 4)),
          (1, slice(None), slice(0, 2)), (1, slice(None), slice(2, 4)),
@@ -2943,7 +2941,7 @@ class SpecToIndicesTest(jtu.JaxTestCase):
     shape = ()
     spec = pxla.ShardingSpec(sharding=(),
                              mesh_mapping=(pxla.Replicated(3),))
-    self.assertEqual(pxla.spec_to_indices(shape, spec),
+    self.assertEqual(sharding_specs.spec_to_indices(shape, spec),
                      ((), (), ()))
 
 
@@ -3003,7 +3001,7 @@ class ShardArgsTest(jtu.JaxTestCase):
                                  mesh_mapping=(pxla.Replicated(2), pxla.Replicated(3)))],
       ])
   def testShardArgs(self, shape, spec, make_arg):
-    indices = pxla.spec_to_indices(shape, spec)
+    indices = sharding_specs.spec_to_indices(shape, spec)
     nshards = len(indices)
     if jax.device_count() < nshards:
       raise SkipTest
@@ -3014,7 +3012,8 @@ class ShardArgsTest(jtu.JaxTestCase):
       sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
     else:
       sharding = jax.sharding.GSPMDSharding(
-          jax.devices()[:nshards], pxla.sharding_spec_sharding_proto(spec))
+          jax.devices()[:nshards],
+          sharding_specs.sharding_spec_sharding_proto(spec))
 
     results = pxla.shard_args(
         jax.devices()[:nshards], [indices], [sharding], [arg]
