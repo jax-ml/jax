@@ -19,7 +19,6 @@ from jax._src.sharding import Sharding as Sharding
 from jax._src.sharding_impls import (
     XLACompatibleSharding as XLACompatibleSharding,
     NamedSharding as NamedSharding,
-    PartitionSpec as PartitionSpec,
     SingleDeviceSharding as SingleDeviceSharding,
     PmapSharding as PmapSharding,
     GSPMDSharding as GSPMDSharding,
@@ -28,7 +27,9 @@ from jax._src.sharding_impls import (
     GSPMDSharding as _deprecated_OpShardingSharding,
     PositionalSharding as PositionalSharding,
 )
-
+from jax._src.partition_spec import (
+    PartitionSpec as PartitionSpec,
+)
 from jax._src.interpreters.pxla import Mesh as Mesh
 
 

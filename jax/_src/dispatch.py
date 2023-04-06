@@ -50,10 +50,10 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
 from jax._src.monitoring import record_event_duration_secs
+from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding,
-    PartitionSpec, XLACompatibleSharding)
+    PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding)
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"

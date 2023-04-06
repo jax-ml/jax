@@ -40,7 +40,7 @@ from jax._src.api_util import (
     argnames_partial_except, debug_info, result_paths, jaxpr_debug_info, FLAGS)
 from jax._src.errors import JAXTypeError
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters.pxla import PartitionSpec
+from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import xla
 
 from jax._src.config import config
@@ -72,11 +72,11 @@ traceback_util.register_exclusion(__file__)
 
 
 _AUTOAxisResource = pxla.AUTOAxisResource
-AUTO = pxla.AUTO
+AUTO = pxla.AUTO  # type: ignore
 is_auto = pxla.is_auto
 
 _UnspecifiedValue = pxla.UnspecifiedValue
-_UNSPECIFIED = pxla._UNSPECIFIED
+_UNSPECIFIED = pxla._UNSPECIFIED  # type: ignore
 _is_unspecified = pxla._is_unspecified
 
 def _is_unspecified_or_auto(x):

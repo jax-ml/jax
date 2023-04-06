@@ -28,6 +28,7 @@ from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
 from jax._src.interpreters import mlir
+from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
 
@@ -141,44 +142,6 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
     index_to_replica[h_index] += 1
     out[device] = replica_id
   return out
-
-
-class _UnconstrainedPartitionSingleton:
-
-  def __str__(self):
-    return "UNCONSTRAINED"
-
-
-# Unconstrained sentinel value for PartitionSpec, representing a dimension for
-# which the user wants XLA to assign the best partitioning.
-# TODO(yashkatariya): May rename to AUTO.
-_UNCONSTRAINED_PARTITION = _UnconstrainedPartitionSingleton()
-
-
-class PartitionSpec(tuple):
-  """Tuple describing how to partition tensor into mesh .
-
-  Each element is either None, string or a tuple of strings.
-  See``NamedSharding`` class for more details.
-
-  We create a separate class for this so JAX's pytree utilities can distinguish
-  it from a tuple that should be treated as a pytree.
-  """
-
-  # A sentinel value representing a dim is unconstrained.
-  UNCONSTRAINED = _UNCONSTRAINED_PARTITION
-
-  def __init__(self, *partitions):
-    pass
-
-  def __new__(cls, *partitions):
-    return tuple.__new__(PartitionSpec, partitions)
-
-  def __repr__(self):
-    return "PartitionSpec%s" % tuple.__repr__(self)
-
-  def __reduce__(self):
-    return (PartitionSpec, tuple(self))
 
 
 @use_cpp_class(xc.NamedSharding)

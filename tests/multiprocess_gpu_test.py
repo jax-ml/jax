@@ -26,7 +26,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import experimental
 from jax.config import config
 from jax._src import core
 from jax._src import distributed
@@ -336,13 +335,13 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     def cb(index):
       return global_input_data[index]
 
-    mesh_axes1 = experimental.PartitionSpec("x", "y")
+    mesh_axes1 = jax.sharding.PartitionSpec("x", "y")
     gda1 = jax.make_array_from_callback(
         global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes1), cb)
-    mesh_axes2 = experimental.PartitionSpec("x")
+    mesh_axes2 = jax.sharding.PartitionSpec("x")
     gda2 = jax.make_array_from_callback(
         global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes2), cb)
-    mesh_axes3 = experimental.PartitionSpec(("x", "y"))
+    mesh_axes3 = jax.sharding.PartitionSpec(("x", "y"))
     gda3 = jax.make_array_from_callback(
         global_input_shape, jax.sharding.NamedSharding(global_mesh, mesh_axes3), cb)
 
@@ -389,7 +388,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     #   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     global_mesh = jax.sharding.Mesh(mesh_devices, ("x",))
     global_input_shape = (16,)
-    mesh_axes = experimental.PartitionSpec("x")
+    mesh_axes = jax.sharding.PartitionSpec("x")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
 
@@ -438,7 +437,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     jax.distributed.initialize()
     global_mesh = self.create_2d_non_contiguous_mesh()
     global_input_shape = (16, 2)
-    mesh_axes = experimental.PartitionSpec("x", "y")
+    mesh_axes = jax.sharding.PartitionSpec("x", "y")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
 
@@ -485,7 +484,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     with global_mesh:
       f = pjit.pjit(
           lambda x: x,
-          in_shardings=experimental.PartitionSpec(None),
+          in_shardings=jax.sharding.PartitionSpec(None),
           out_shardings=mesh_axes,
       )
       # Fully replicated values allows a non-contiguous mesh.
@@ -497,7 +496,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
       out = f(global_input_data)
 
     gda2 = jax.make_array_from_callback(
-        global_input_shape, jax.sharding.NamedSharding(global_mesh, experimental.PartitionSpec(None)), cb)
+        global_input_shape, jax.sharding.NamedSharding(global_mesh, jax.sharding.PartitionSpec(None)), cb)
 
     with global_mesh:
       f = pjit.pjit(
@@ -514,7 +513,7 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     jax.distributed.initialize()
     global_mesh = self.create_2d_non_contiguous_mesh()
     global_input_shape = (8, 2)
-    mesh_axes = experimental.PartitionSpec("x", "y")
+    mesh_axes = jax.sharding.PartitionSpec("x", "y")
     global_input_data = np.arange(
         util.prod(global_input_shape)).reshape(global_input_shape)
     gda1 = jax.make_array_from_callback(
@@ -524,8 +523,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     with global_mesh:
       f = pjit.pjit(
           lambda x, y: (x, y),
-          in_shardings=experimental.PartitionSpec("x", "y"),
-          out_shardings=experimental.PartitionSpec("x", "y"),
+          in_shardings=jax.sharding.PartitionSpec("x", "y"),
+          out_shardings=jax.sharding.PartitionSpec("x", "y"),
       )
       inp_aval = core.ShapedArray((8, 2), jnp.int32)
       # `ShapedArray` is considered global when lowered and compiled.
@@ -543,8 +542,8 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     with jtu.create_global_mesh((16,), ("x")):
 
       @functools.partial(pjit.pjit,
-                         in_shardings=experimental.PartitionSpec(None),
-                         out_shardings=experimental.PartitionSpec("x"))
+                         in_shardings=jax.sharding.PartitionSpec(None),
+                         out_shardings=jax.sharding.PartitionSpec("x"))
       def f():
         return jnp.zeros([32, 10])
 

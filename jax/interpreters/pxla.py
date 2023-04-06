@@ -120,9 +120,11 @@ from jax._src.sharding_specs import (
 
 from jax._src.mesh import Mesh as _deprecated_Mesh
 from jax._src.interpreters.pxla import (
-  PartitionSpec as _deprecated_PartitionSpec,
   ShardedDeviceArray as _deprecated_ShardedDeviceArray,
   make_sharded_device_array as _deprecated_make_sharded_device_array,
+)
+from jax._src.partition_spec import (
+  PartitionSpec as _deprecated_PartitionSpec,
 )
 
 _deprecations = {
@@ -169,11 +171,11 @@ import typing
 if typing.TYPE_CHECKING:
   from jax._src.mesh import Mesh as Mesh
   from jax._src.interpreters.pxla import (
-    PartitionSpec as PartitionSpec,
     ShardedDeviceArray as ShardedDeviceArray,
     device_put as device_put,
     make_sharded_device_array as make_sharded_device_array,
   )
+  from jax._src.partition_spec import PartitionSpec as PartitionSpec
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

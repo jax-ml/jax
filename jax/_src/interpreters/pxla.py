@@ -61,6 +61,7 @@ from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.partition_spec import PartitionSpec
 from jax._src.util import (unzip3, safe_map, safe_zip, partition_list,
                            wrap_name, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction)
@@ -97,8 +98,6 @@ MeshAxisName = mesh.MeshAxisName
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = sharding_specs.ShardingSpec
 
-
-PartitionSpec = sharding_impls.PartitionSpec
 
 
 

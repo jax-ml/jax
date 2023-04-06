@@ -178,6 +178,7 @@ py_library_providing_imports_info(
         ":monitoring",
         ":op_shardings",
         ":partial_eval",
+        ":partition_spec",
         ":path",
         ":pretty_printer",
         ":profiler",
@@ -379,6 +380,11 @@ pytype_strict_library(
         ":tree_util",
         ":util",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "partition_spec",
+    srcs = ["_src/partition_spec.py"],
 )
 
 pytype_strict_library(

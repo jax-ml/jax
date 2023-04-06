@@ -27,13 +27,13 @@ from jax._src.callback import (
 
 # Deprecations
 
-from jax._src.interpreters.pxla import (
+from jax._src.partition_spec import (
   PartitionSpec as _deprecated_PartitionSpec,
 )
 
 import typing
 if typing.TYPE_CHECKING:
-  from jax._src.interpreters.pxla import (
+  from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
   )
 del typing

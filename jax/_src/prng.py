@@ -47,6 +47,7 @@ from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import _set_device_array_base_attributes
 from jax._src.numpy.util import _register_stackable
+from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, GSPMDSharding)
 from jax._src.typing import Array
@@ -305,7 +306,7 @@ def make_key_array_phys_sharding(aval, sharding, is_sharding_from_xla):
     trailing_spec = [None] * len(key_shape)
     return NamedSharding(
         sharding.mesh,
-        pxla.PartitionSpec(*sharding.spec, *trailing_spec))
+        PartitionSpec(*sharding.spec, *trailing_spec))
   elif is_sharding_from_xla:
     return sharding
   else:
