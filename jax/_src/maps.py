@@ -28,6 +28,7 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import mesh
 from jax._src import linear_util as lu
+from jax._src import op_shardings
 from jax._src import source_info_util
 from jax._src import stages
 from jax._src import traceback_util
@@ -1731,7 +1732,7 @@ def _check_gda_or_array_xmap_partitioning(axis_resources, resource_env,
                                           args_flat):
   @lru_cache()
   def _check_sharding(in_sharding, xmap_sharding, ndim, arr_flavor):
-    if not pxla.are_op_shardings_equal(
+    if not op_shardings.are_op_shardings_equal(
         in_sharding._to_xla_op_sharding(ndim),
         xmap_sharding._to_xla_op_sharding(ndim)):
       raise ValueError(

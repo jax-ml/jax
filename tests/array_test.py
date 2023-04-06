@@ -24,11 +24,11 @@ import jax
 import jax.numpy as jnp
 from jax._src import core
 from jax._src import dispatch
+from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
-from jax.interpreters import pxla
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -456,7 +456,7 @@ class JaxArrayTest(jtu.JaxTestCase):
       self.assertArraysEqual(i, j)
       self.assertLen(i.sharding.device_set, 8)
       self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             arr.sharding._to_xla_op_sharding(arr.ndim),
             i.sharding._to_xla_op_sharding(i.ndim)))
 
@@ -514,7 +514,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(s, np.array([[4], [6]]))
     self.assertLen(s.sharding.device_set, 8)
     self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             arr.sharding._to_xla_op_sharding(arr.ndim),
             s.sharding._to_xla_op_sharding(s.ndim)))
 
@@ -523,7 +523,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertArraysEqual(p, input_data[:2])
     self.assertLen(s.sharding.device_set, 8)
     self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             arr.sharding._to_xla_op_sharding(arr.ndim),
             s.sharding._to_xla_op_sharding(s.ndim)))
 
@@ -603,11 +603,11 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(input_shardings[1], {})
 
     self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             input_shardings[0][0]._to_xla_op_sharding(x_dummy.ndim),
             s._to_xla_op_sharding(x_dummy.ndim)))
     self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             output_shardings._to_xla_op_sharding(x_dummy.ndim),
             s._to_xla_op_sharding(x_dummy.ndim)))
 
@@ -626,11 +626,11 @@ class JaxArrayTest(jtu.JaxTestCase):
     c = pjit(f).lower(x_dummy).compile()
     input_shardings, output_shardings = c.input_shardings, c.output_shardings
     self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             input_shardings[0][0]._to_xla_op_sharding(x_dummy.ndim),
             s._to_xla_op_sharding(x_dummy.ndim)))
     self.assertTrue(
-        pxla.are_op_shardings_equal(
+        op_shardings.are_op_shardings_equal(
             output_shardings._to_xla_op_sharding(x_dummy.ndim),
             s._to_xla_op_sharding(x_dummy.ndim)))
 
@@ -837,7 +837,7 @@ class ShardingTest(jtu.JaxTestCase):
 
     self.assertEqual(mps.shard_shape(value_shape),
                      devices_sharding.shard_shape(value_shape))
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
 
   def test_devices_sharding_respects_init_mesh_shape(self):
     value_shape = (8, 4)
@@ -852,7 +852,7 @@ class ShardingTest(jtu.JaxTestCase):
 
     self.assertEqual(mps.shard_shape(value_shape),
                      devices_sharding.shard_shape(value_shape))
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
 
   def test_pmap_sharding_repr(self):
     if jax.device_count() < 2:

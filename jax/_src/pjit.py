@@ -29,8 +29,8 @@ from jax._src import stages
 from jax._src import dispatch
 from jax._src import mesh as mesh_lib
 from jax._src import linear_util as lu
+from jax._src import op_shardings
 from jax._src import source_info_util
-from jax._src import sharding_utils as sutils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -962,7 +962,7 @@ def pjit_check_aval_sharding(
     # XLACompatibleSharding.
     op_sharding = s._to_xla_op_sharding(len(shape))
     assert op_sharding is not None
-    num_ways_dim_sharded, _ = sutils.get_num_ways_dim_sharded(
+    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
         cast(xc.OpSharding, op_sharding))
     for i, size in enumerate(num_ways_dim_sharded):
       if not allow_uneven_sharding and shape[i] % size != 0:
@@ -1201,8 +1201,10 @@ def _resolve_in_shardings(
             raise NotImplementedError('Having uncommitted Array sharded on '
                                       'multiple devices is not supported.')
     else:
-      if isinstance(arg, np.ndarray) and not sutils.is_op_sharding_replicated(
-          pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:  # type: ignore
+      if (isinstance(arg, np.ndarray) and
+          not op_shardings.is_op_sharding_replicated(
+              pjit_in_s._to_xla_op_sharding(arg.ndim))  # type: ignore
+          and xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
             'inputs is not allowed. To fix this error, either specify a '
@@ -1219,7 +1221,7 @@ def _resolve_in_shardings(
       if not _is_unspecified(arg_s):
         if (committed and
             not isinstance(arg_s, PmapSharding) and
-            not pxla.are_op_shardings_equal(
+            not op_shardings.are_op_shardings_equal(
                 pjit_in_s._to_xla_op_sharding(arg.ndim),  # type: ignore
                 arg_s._to_xla_op_sharding(arg.ndim))):
           op =  getattr(pjit_in_s, '_original_sharding', pjit_in_s)
@@ -1314,11 +1316,15 @@ class SameDeviceAssignmentTuple:
   def __eq__(self, other):
     if not isinstance(other, SameDeviceAssignmentTuple):
       return False
-    return (all(pxla.are_op_shardings_equal(s._op_sharding, o._op_sharding)  # pytype: disable=attribute-error
-                if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding)
-                else s == o
-                for s, o in zip(self.shardings, other.shardings)) and
-            self.device_assignment == other.device_assignment)
+    return (
+        all(
+            op_shardings.are_op_shardings_equal(s._op_sharding, o._op_sharding)  # pytype: disable=attribute-error
+            if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding)
+            else s == o
+            for s, o in zip(self.shardings, other.shardings)
+        )
+        and self.device_assignment == other.device_assignment
+    )
 
 
 def _pjit_lower(

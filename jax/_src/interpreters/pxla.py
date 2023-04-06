@@ -56,12 +56,12 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh
+from jax._src import op_shardings
 from jax._src import profiler
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
 from jax._src import util
-from jax._src import sharding_utils as sutils
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
@@ -208,48 +208,6 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   return proto
 
 
-def _op_sharding_to_numpy_indices(
-    op_sharding: xc.OpSharding, shape: Sequence[int],
-    num_devices: int) -> np.ndarray:
-  indices = np.empty(num_devices, dtype=np.object_)
-
-  # num_devices is required as an argument when op_sharding is
-  # REPLICATED. `jax.device_count()` cannot be used because you can create
-  # an opsharding with less number of devices than `jax.device_count()`.
-  if sutils.is_op_sharding_replicated(op_sharding):
-    indices.fill((slice(None),) * len(shape))
-    return indices
-
-  assert num_devices == len(op_sharding.tile_assignment_devices)
-
-  partitions, num_replicas = sutils.get_num_ways_dim_sharded(op_sharding)
-  assert len(partitions) == len(shape), (len(partitions), len(shape))
-
-  axis_indices: List[Sequence[Index]] = []
-  for dim, n_shards in zip(shape, partitions):
-    if n_shards == 1:
-      axis_indices.append([slice(None)])
-    elif n_shards > 1:
-      shard_size, ragged = divmod(dim, n_shards)
-      assert not ragged, (dim, n_shards)
-      axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)
-                           for i in range(n_shards)])
-    else:
-      raise AssertionError('Unrecognized number of shards. Please file a bug!')
-
-  device_it = iter(op_sharding.tile_assignment_devices)
-  for i, idxs in enumerate(it.product(*axis_indices)):
-    for _ in range(num_replicas):
-      indices[next(device_it)] = idxs
-  return indices
-
-
-def op_sharding_to_indices(op_sharding: xc.OpSharding, shape: Sequence[int],
-                           num_devices: int) -> Tuple[Tuple[slice, ...], ...]:
-  indices = _op_sharding_to_numpy_indices(op_sharding, shape, num_devices)
-  return tuple(indices.flat)
-
-
 def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
   """Returns NumPy-style indices corresponding to a sharding spec.
 
@@ -268,7 +226,7 @@ def sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
   # Take the op sharding indices generation route for pjit/xmap cases.
   if not has_unstacked:
     op_sharding_proto = sharding_spec_sharding_proto(self)
-    return _op_sharding_to_numpy_indices(
+    return op_shardings.op_sharding_to_numpy_indices(
         op_sharding_proto, shape, math.prod(self.mesh_shape)
     ).reshape(self.mesh_shape)
 
@@ -2778,7 +2736,7 @@ def _get_input_indices(
       # represent index for each device in the global mesh. But here we want
       # indices for the local devices of the global mesh.
       proto = sharding._to_xla_op_sharding(aval.ndim)
-      if sutils.is_op_sharding_replicated(proto):
+      if op_shardings.is_op_sharding_replicated(proto):
         index = tuple(
             (slice(None),) * aval.ndim
             for _ in range(len(sharding.addressable_devices)))  # type: ignore
@@ -2986,7 +2944,7 @@ class UnloadedMeshExecutable:
             out_shardings.append(xla_s)
             are_out_shardings_from_xla.append(True)
           else:
-            if not are_op_shardings_equal(
+            if not op_shardings.are_op_shardings_equal(
                 xla_s._to_xla_op_sharding(aval.ndim),  # type: ignore
                 orig._to_xla_op_sharding(aval.ndim)):  # type: ignore
               raise AssertionError(
@@ -3274,8 +3232,9 @@ def check_gda_or_array_xla_sharding_match(
     # for AOT compiled call.
     if (not check_device_backend_on_shardings([xs]) and
         arg._committed and
-        not are_op_shardings_equal(arg.sharding._to_xla_op_sharding(arg.ndim),
-                                   xs._to_xla_op_sharding(arg.ndim))):
+        not op_shardings.are_op_shardings_equal(
+            arg.sharding._to_xla_op_sharding(arg.ndim),
+            xs._to_xla_op_sharding(arg.ndim))):
       raise ValueError(
           f"Array sharding does not match the input sharding. "
           f"Got Array sharding: {arg.sharding} and xla sharding: {xs} for "
@@ -3288,14 +3247,6 @@ def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
 
   parsed_pspec, _, _ = _prepare_axis_resources(pspec, "pspec to array_mapping")
   return _get_array_mapping(parsed_pspec)
-
-
-def are_op_shardings_equal(op1: xc.OpSharding, op2: xc.OpSharding) -> bool:
-  if id(op1) == id(op2):
-    return True
-  if sutils.is_op_sharding_replicated(op1) and sutils.is_op_sharding_replicated(op2):
-    return True
-  return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
 
 
 _forbidden_primitives = {

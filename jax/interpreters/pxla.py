@@ -55,7 +55,6 @@ from jax._src.interpreters.pxla import (
   _get_and_check_device_assignment as _get_and_check_device_assignment,
   _is_unspecified as _is_unspecified,
   _pmap_sharding_spec as _pmap_sharding_spec,
-  are_op_shardings_equal as are_op_shardings_equal,
   array_mapping_to_axis_resources as array_mapping_to_axis_resources,
   array_types as array_types,
   custom_resource_typing_rules as custom_resource_typing_rules,
@@ -78,7 +77,6 @@ from jax._src.interpreters.pxla import (
   mesh_sharding_specs as mesh_sharding_specs,
   multi_host_supported_collectives as multi_host_supported_collectives,
   new_mesh_sharding_specs as new_mesh_sharding_specs,
-  op_sharding_to_indices as op_sharding_to_indices,
   parallel_callable as parallel_callable,
   partitioned_sharding_spec as partitioned_sharding_spec,
   reconcile_num_partitions as reconcile_num_partitions,
@@ -110,8 +108,10 @@ from jax._src.mesh import (
   thread_resources as thread_resources,
 )
 
-from jax._src.sharding_utils import (
-  is_op_sharding_replicated as is_op_sharding_replicated
+from jax._src.op_shardings import (
+  are_op_shardings_equal as are_op_shardings_equal,
+  is_op_sharding_replicated as is_op_sharding_replicated,
+  op_sharding_to_indices as op_sharding_to_indices,
 )
 
 # Deprecations

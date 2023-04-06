@@ -43,7 +43,7 @@ from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import Sharding
-from jax._src import sharding_utils as sutils
+from jax._src import op_shardings
 from jax._src.sharding_impls import NamedSharding, GSPMDSharding
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, AUTO)
@@ -665,7 +665,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(op.type, xc.OpSharding.Type.OTHER)
     self.assertListEqual(op.tile_assignment_dimensions, [1, 2])
     self.assertListEqual(op.tile_assignment_devices, [0, 1])
-    self.assertFalse(sutils.is_op_sharding_replicated(op))
+    self.assertFalse(op_shardings.is_op_sharding_replicated(op))
 
   @jtu.with_mesh([('x', 2)])
   def testVMapShardingConstraintWithSpmdAxis(self):
@@ -685,7 +685,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertEqual(op.type, xc.OpSharding.Type.OTHER)
     self.assertListEqual(op.tile_assignment_dimensions, [2, 1])
     self.assertListEqual(op.tile_assignment_devices, [0, 1])
-    self.assertFalse(sutils.is_op_sharding_replicated(op))
+    self.assertFalse(op_shardings.is_op_sharding_replicated(op))
 
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testShardingInXMap(self):
@@ -702,7 +702,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       self.assertLen(in_shardings, 1)
       self.assertListEqual(in_shardings[0]._op_sharding.tile_assignment_dimensions,
                            [1, 1, 2])
-      self.assertFalse(sutils.is_op_sharding_replicated(in_shardings[0]._op_sharding))
+      self.assertFalse(op_shardings.is_op_sharding_replicated(in_shardings[0]._op_sharding))
 
       return rule(*args, **kwargs)
     try:
@@ -1956,7 +1956,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     out = sharded_zeros((4096, 3072), P('x', 'y'))
     out_s = NamedSharding(mesh, P('x', 'y'))
-    self.assertTrue(pxla.are_op_shardings_equal(
+    self.assertTrue(op_shardings.are_op_shardings_equal(
         out.sharding._to_xla_op_sharding(out.ndim),
         out_s._to_xla_op_sharding(out.ndim)))
 
@@ -1970,7 +1970,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     out = sharded_zeros((4096, 3072), P('x', 'y'))
     out_s = NamedSharding(mesh, P('x', 'y'))
-    self.assertTrue(pxla.are_op_shardings_equal(
+    self.assertTrue(op_shardings.are_op_shardings_equal(
         out.sharding._to_xla_op_sharding(out.ndim),
         out_s._to_xla_op_sharding(out.ndim)))
 
@@ -2563,9 +2563,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out2, inp2 * 2)
     self.assertLen(out1.devices(), 4)
     self.assertLen(out2.devices(), 4)
-    self.assertTrue(sutils.is_op_sharding_replicated(
+    self.assertTrue(op_shardings.is_op_sharding_replicated(
         out1.sharding._to_xla_op_sharding(pmap_out.ndim)))
-    self.assertTrue(sutils.is_op_sharding_replicated(
+    self.assertTrue(op_shardings.is_op_sharding_replicated(
         out2.sharding._to_xla_op_sharding(inp2.ndim)))
 
   def test_pmap_sharding_input_pjit_in_axis_resources(self):
@@ -2771,7 +2771,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with mesh:
       out = jax.vmap(jax.jit(f), spmd_axis_name='mdl')(x)
-      ns, _ = sutils.get_num_ways_dim_sharded(
+      ns, _ = op_shardings.get_num_ways_dim_sharded(
           out.sharding._to_xla_op_sharding(out.ndim))
       self.assertListEqual(ns, [2, 2, 1, 1])
 
@@ -2781,7 +2781,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with mesh:
       out2 = jax.vmap(apply_with_scan, spmd_axis_name='mdl')(x)
-      ns2, _ = sutils.get_num_ways_dim_sharded(
+      ns2, _ = op_shardings.get_num_ways_dim_sharded(
           out2.sharding._to_xla_op_sharding(out2.ndim))
       self.assertListEqual(ns2, [2, 2, 1, 1])
 
@@ -3355,9 +3355,9 @@ class UtilTest(jtu.JaxTestCase):
     op3.tile_assignment_dimensions = [4, 2]
     op3.tile_assignment_devices = [0, 1, 2, 3, 4, 5, 6, 7]
 
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
-    self.assertFalse(pxla.are_op_shardings_equal(op1, op3))
-    self.assertFalse(pxla.are_op_shardings_equal(op2, op3))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
+    self.assertFalse(op_shardings.are_op_shardings_equal(op1, op3))
+    self.assertFalse(op_shardings.are_op_shardings_equal(op2, op3))
 
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
@@ -3380,7 +3380,7 @@ class UtilTest(jtu.JaxTestCase):
     op2.tile_assignment_devices = [0, 1, 2, 3]
     op2.last_tile_dims = [xc.OpSharding.Type.REPLICATED]
 
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
 
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
@@ -3407,7 +3407,7 @@ class UtilTest(jtu.JaxTestCase):
     op2.type = xc.OpSharding.Type.TUPLE
     op2.tuple_shardings = [top2, top1]
 
-    self.assertFalse(pxla.are_op_shardings_equal(op1, op2))
+    self.assertFalse(op_shardings.are_op_shardings_equal(op1, op2))
 
     hs1 = xc.HloSharding.from_proto(op1)
     hs2 = xc.HloSharding.from_proto(op2)
@@ -3465,13 +3465,13 @@ class UtilTest(jtu.JaxTestCase):
     op4.tile_assignment_dimensions = [1]
     op4.tile_assignment_devices = [0]
 
-    self.assertTrue(sutils.is_op_sharding_replicated(op1))
-    self.assertTrue(sutils.is_op_sharding_replicated(op2))
-    self.assertTrue(sutils.is_op_sharding_replicated(op3))
-    self.assertTrue(sutils.is_op_sharding_replicated(op4))
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
-    self.assertTrue(pxla.are_op_shardings_equal(op2, op3))
-    self.assertTrue(pxla.are_op_shardings_equal(op3, op4))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(op1))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(op2))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(op3))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(op4))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op2, op3))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op3, op4))
 
   def test_op_sharding_manual_replicated(self):
     op1 = xc.OpSharding()
@@ -3489,10 +3489,10 @@ class UtilTest(jtu.JaxTestCase):
     op3 = xc.OpSharding()
     op3.type = xc.OpSharding.Type.REPLICATED
 
-    self.assertTrue(sutils.is_op_sharding_replicated(op1))
-    self.assertTrue(sutils.is_op_sharding_replicated(op2))
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op2))
-    self.assertTrue(pxla.are_op_shardings_equal(op1, op3))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(op1))
+    self.assertTrue(op_shardings.is_op_sharding_replicated(op2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
+    self.assertTrue(op_shardings.are_op_shardings_equal(op1, op3))
 
   def test_op_sharding_cache_on_mesh_pspec_sharding(self):
     ndim = 2

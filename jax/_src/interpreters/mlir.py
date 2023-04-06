@@ -34,10 +34,10 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
+from jax._src import op_shardings
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
-from jax._src import sharding_utils as sutils
 from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
@@ -556,11 +556,11 @@ def sharded_aval(aval: core.AbstractValue,
   if not isinstance(aval, core.ShapedArray):
     raise NotImplementedError
 
-  if (sutils.is_op_sharding_replicated(sharding) or
+  if (op_shardings.is_op_sharding_replicated(sharding) or
       sharding.type == xc.OpSharding.Type.MANUAL):
     return aval
 
-  partitions, _ = sutils.get_num_ways_dim_sharded(sharding)
+  partitions, _ = op_shardings.get_num_ways_dim_sharded(sharding)
   out = []
   for s, p in zip(aval.shape, partitions):
     quotient, remainder = divmod(s, p)

@@ -48,9 +48,9 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
+from jax._src import op_shardings
 from jax._src import pjit
 from jax._src import prng
-from jax._src import sharding_utils as sutils
 from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
@@ -3143,7 +3143,8 @@ def _shard_value(val: TfVal,
   sharding_proto: xla_client.OpSharding = cast(
       xla_client.OpSharding, sd._to_xla_op_sharding(aval.ndim))
 
-  if skip_replicated_sharding and sutils.is_op_sharding_replicated(sharding_proto):
+  if (skip_replicated_sharding and
+      op_shardings.is_op_sharding_replicated(sharding_proto)):
     return val
 
   # To use xla_sharding.py, we must have a xla_data_pb2.OpSharding.

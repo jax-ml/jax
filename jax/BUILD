@@ -176,12 +176,12 @@ py_library_providing_imports_info(
         ":mesh",
         ":mlir",
         ":monitoring",
+        ":op_shardings",
         ":partial_eval",
         ":path",
         ":pretty_printer",
         ":profiler",
         ":sharding",
-        ":sharding_utils",
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
@@ -341,8 +341,8 @@ pytype_strict_library(
         ":config",
         ":core",
         ":effects",
+        ":op_shardings",
         ":partial_eval",
-        ":sharding_utils",
         ":source_info_util",
         ":util",
         ":xla",
@@ -354,6 +354,14 @@ pytype_strict_library(
 pytype_strict_library(
     name = "monitoring",
     srcs = ["_src/monitoring.py"],
+)
+
+pytype_strict_library(
+    name = "op_shardings",
+    srcs = ["_src/op_shardings.py"],
+    deps = [
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -399,14 +407,6 @@ pytype_strict_library(
     srcs = ["_src/sharding.py"],
     deps = [
         ":util",
-        "//jax/_src/lib",
-    ],
-)
-
-pytype_strict_library(
-    name = "sharding_utils",
-    srcs = ["_src/sharding_utils.py"],
-    deps = [
         "//jax/_src/lib",
     ],
 )
