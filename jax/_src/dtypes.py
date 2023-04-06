@@ -434,8 +434,8 @@ _int_types: List[JAXType] = [
     np.dtype('int32'),
     np.dtype('int64'),
 ]
-_float_types: List[JAXType]
-_float_types = [
+float_types: List[JAXType]
+float_types = [
   np.dtype(float8_e4m3fn),
   np.dtype(float8_e5m2),
   np.dtype(bfloat16),
@@ -447,8 +447,8 @@ _complex_types: List[JAXType] = [
     np.dtype('complex64'),
     np.dtype('complex128'),
 ]
-_jax_types = _bool_types + _int_types + _float_types + _complex_types
-_jax_dtype_set = {float0, *_bool_types, *_int_types, *_float_types, *_complex_types}
+_jax_types = _bool_types + _int_types + float_types + _complex_types
+_jax_dtype_set = {float0, *_bool_types, *_int_types, *float_types, *_complex_types}
 
 def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
   """Return the jax type for a dtype and weak type."""
@@ -471,7 +471,7 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> Dict[JAXType, Lis
   """
   b1, = _bool_types
   u1, u2, u4, u8, i1, i2, i4, i8 = _int_types
-  f1_e4m3fn, f1_e5m2, bf, f2, f4, f8 = _float_types
+  f1_e4m3fn, f1_e5m2, bf, f2, f4, f8 = float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
   if jax_numpy_dtype_promotion == 'standard':
@@ -485,7 +485,7 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> Dict[JAXType, Lis
   elif jax_numpy_dtype_promotion == 'strict':
     return {
       i_: [f_] + _int_types,
-      f_: [c_] + _float_types,
+      f_: [c_] + float_types,
       c_: _complex_types,
       **{t: [] for t in _jax_types}
     }

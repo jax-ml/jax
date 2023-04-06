@@ -28,6 +28,7 @@ from jax._src import ad_util
 from jax._src import api
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import util
 from jax._src.core import (
     Primitive, ShapedArray, raise_to_shaped, is_constant_shape)
 from jax._src.interpreters import ad
@@ -409,7 +410,7 @@ def _cholesky_jvp_rule(primals, tangents):
 def _cholesky_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return cholesky(x), 0
 
 cholesky_p = standard_unop(_float | _complex, 'cholesky')
@@ -537,7 +538,7 @@ def eig_batching_rule(batched_args, batch_dims, *, compute_left_eigenvectors,
                       compute_right_eigenvectors):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
 
   return (eig_p.bind(x, compute_left_eigenvectors=compute_left_eigenvectors,
                      compute_right_eigenvectors=compute_right_eigenvectors),
@@ -754,7 +755,7 @@ def _eigh_jvp_rule(primals, tangents, *, lower, sort_eigenvalues):
 def _eigh_batching_rule(batched_args, batch_dims, *, lower, sort_eigenvalues):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return eigh_p.bind(x, lower=lower, sort_eigenvalues=sort_eigenvalues), (0, 0)
 
 eigh_p = Primitive('eigh')
@@ -862,11 +863,11 @@ def _triangular_solve_batching_rule(batched_args, batch_dims, *, left_side,
   bx, by = batch_dims
   if bx is batching.not_mapped:
     if left_side:
-      y = batching.moveaxis(y, by, -1)
+      y = util.moveaxis(y, by, -1)
       y_flat = y.reshape(y.shape[:-2] + (y.shape[-2] * y.shape[-1],))
       bdim_out = y.ndim - 1
     else:
-      y = batching.moveaxis(y, by, -2)
+      y = util.moveaxis(y, by, -2)
       y_flat = y.reshape(y.shape[:-3]  + (y.shape[-3] * y.shape[-2], y.shape[-1]))
       bdim_out = y.ndim - 2
     out_flat = triangular_solve(
@@ -1006,7 +1007,7 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
                                             permutation_size):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return lu_pivots_to_permutation_p.bind(
       x, permutation_size=permutation_size), 0
 
@@ -1184,7 +1185,7 @@ def _lu_jvp_rule(primals, tangents):
 def _lu_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
 def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand):
@@ -1341,7 +1342,7 @@ def _geqrf_abstract_eval(operand):
 def _geqrf_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  return geqrf(batching.moveaxis(x, bd, 0)), (0, 0)
+  return geqrf(util.moveaxis(x, bd, 0)), (0, 0)
 
 def _geqrf_lowering_rule(ctx, operand):
   ts_type = mlir.aval_to_ir_type(ctx.avals_out[0])
@@ -1443,8 +1444,8 @@ def _householder_product_abstract_eval(a, taus):
 def _householder_product_batching_rule(batched_args, batch_dims):
   a, taus = batched_args
   b_a, b_taus, = batch_dims
-  return householder_product(batching.moveaxis(a, b_a, 0),
-               batching.moveaxis(taus, b_taus, 0)), (0,)
+  return householder_product(util.moveaxis(a, b_a, 0),
+               util.moveaxis(taus, b_taus, 0)), (0,)
 
 def _householder_product_lowering_rule(ctx, a, taus):
   op = hlo.CustomCallOp(
@@ -1535,7 +1536,7 @@ def qr_jvp_rule(primals, tangents, *, full_matrices):
 def _qr_batching_rule(batched_args, batch_dims, *, full_matrices):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return qr_p.bind(x, full_matrices=full_matrices), (0, 0)
 
 def _qr_lowering(a, *, full_matrices):
@@ -1730,7 +1731,7 @@ def _svd_tpu_lowering_rule(ctx, operand, *, full_matrices, compute_uv):
 def _svd_batching_rule(batched_args, batch_dims, *, full_matrices, compute_uv):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   outs = svd_p.bind(x, full_matrices=full_matrices, compute_uv=compute_uv)
 
   if compute_uv:
@@ -1945,7 +1946,7 @@ def _schur_batching_rule(batched_args, batch_dims, *, compute_schur_vectors,
                          sort_eig_vals, select_callable):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
 
   return schur_p.bind(
       x,
@@ -2009,7 +2010,7 @@ hessenberg_p.multiple_results = True
 def _hessenberg_batching_rule(batched_args, batch_dims):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return hessenberg(x), 0
 
 batching.primitive_batchers[hessenberg_p] = _hessenberg_batching_rule
@@ -2107,7 +2108,7 @@ tridiagonal_p.multiple_results = True
 def _tridiagonal_batching_rule(batched_args, batch_dims, *, lower):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return tridiagonal(x), 0
 
 batching.primitive_batchers[tridiagonal_p] = _tridiagonal_batching_rule

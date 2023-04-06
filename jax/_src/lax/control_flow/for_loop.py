@@ -20,10 +20,6 @@ from typing import Any, Callable, Generic, List, Optional, Sequence, Set, Tuple,
 import jax.numpy as jnp
 from jax import lax
 from jax.api_util import flatten_fun_nokwargs
-from jax._src.interpreters import ad
-from jax._src.interpreters import batching
-from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import (tree_flatten, tree_structure, tree_unflatten,
                            treedef_tuple, tree_map, tree_leaves, PyTreeDef)
 
@@ -33,6 +29,11 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import source_info_util
+from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.state.types import (ReadEffect, AbstractRef, StateEffect)
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
@@ -310,7 +311,7 @@ def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
   else:
     raise Exception("Invalid fixpoint")
   args = [batching.broadcast(x, axis_size, 0) if now_bat and not was_bat
-          else batching.moveaxis(x, d, 0) if now_bat else x
+          else util.moveaxis(x, d, 0) if now_bat else x
           for x, d, was_bat, now_bat in zip(args, dims, init_batched, batched)]
   batched_jaxpr_, _ = batching.batch_jaxpr(
       core.ClosedJaxpr(jaxpr, []), axis_size, [False] + batched, [],

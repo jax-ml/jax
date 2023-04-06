@@ -22,6 +22,7 @@ import numpy as np
 from jax._src import ad_util
 from jax._src import core
 from jax._src import pretty_printer as pp
+from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
@@ -448,7 +449,7 @@ def _swap_vmap(batched_args, batched_dims, *, indexed_dims):
     if not val_is_batched:
       val = batching.broadcast(val, axis_size, 0)
       val_dim = 0
-    val = batching.moveaxis(val, val_dim, bdim_out)
+    val = util.moveaxis(val, val_dim, bdim_out)
   elif idx_is_batched:
     assert ref_is_batched and val_is_batched
     indexed_dims = tuple_insert(indexed_dims, ref_dim, True)
@@ -456,7 +457,7 @@ def _swap_vmap(batched_args, batched_dims, *, indexed_dims):
                  if i_dim].index(ref_dim)
     iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
-    val = batching.moveaxis(val, val_dim, 0)
+    val = util.moveaxis(val, val_dim, 0)
     bdim_out = 0
   return swap_p.bind(ref, val, *idxs, indexed_dims=indexed_dims), bdim_out
 batching.primitive_batchers[swap_p] = _swap_vmap
@@ -480,7 +481,7 @@ def _addupdate_vmap(batched_args, batched_dims, *, indexed_dims):
     if not val_is_batched:
       val = batching.broadcast(val, axis_size, 0)
       val_dim = 0
-    val = batching.moveaxis(val, val_dim, bdim_out)
+    val = util.moveaxis(val, val_dim, bdim_out)
   elif idx_is_batched:
     assert ref_is_batched and val_is_batched
     indexed_dims = tuple_insert(indexed_dims, ref_dim, True)
@@ -489,6 +490,6 @@ def _addupdate_vmap(batched_args, batched_dims, *, indexed_dims):
     idxs_shape, = {i.shape for i in idxs} or [()]
     iota = lax.broadcasted_iota(np.dtype('int32'), idxs_shape, 0)
     idxs = tuple_insert(idxs, idx_place, iota)
-    val = batching.moveaxis(val, val_dim, 0)
+    val = util.moveaxis(val, val_dim, 0)
   return addupdate_p.bind(ref, val, *idxs, indexed_dims=indexed_dims), []
 batching.primitive_batchers[addupdate_p] = _addupdate_vmap

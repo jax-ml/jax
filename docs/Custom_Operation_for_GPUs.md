@@ -345,7 +345,7 @@ See [How JAX primitives work](https://jax.readthedocs.io/en/latest/notebooks/How
 from functools import reduce
 from operator import mul
 
-from jax.abstract_arrays import ShapedArray
+from jax.core import ShapedArray
 
 
 def _rms_norm_fwd_abstract(x, weight, eps):
@@ -804,7 +804,7 @@ import jax
 import jax.numpy as jnp
 from build import gpu_ops
 from jax import core, dtypes
-from jax.abstract_arrays import ShapedArray
+from jax.core import ShapedArray
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.interpreters import mlir, xla

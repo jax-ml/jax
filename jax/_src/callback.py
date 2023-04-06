@@ -77,7 +77,7 @@ def pure_callback_batching_rule(args, dims, *, callback, vectorized: bool,
   axis_size = next(a.shape[0] for a, d in zip(args, dims)
                    if d is not batching.not_mapped)
   new_args = [arg if dim is batching.not_mapped else
-              batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
+              util.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
   if vectorized:
     result_avals = tuple(
         core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)  # type: ignore

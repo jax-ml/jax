@@ -22,6 +22,7 @@ import numpy as np
 from jax import lax
 
 from jax._src import dispatch
+from jax._src import util
 from jax._src.api import jit, linear_transpose, ShapeDtypeStruct
 from jax._src.core import Primitive, is_constant_shape
 from jax._src.interpreters import ad
@@ -169,7 +170,7 @@ def _fft_transpose_rule(t, operand, fft_type, fft_lengths):
 def _fft_batching_rule(batched_args, batch_dims, fft_type, fft_lengths):
   x, = batched_args
   bd, = batch_dims
-  x = batching.moveaxis(x, bd, 0)
+  x = util.moveaxis(x, bd, 0)
   return fft(x, fft_type, fft_lengths), 0
 
 fft_p = Primitive('fft')

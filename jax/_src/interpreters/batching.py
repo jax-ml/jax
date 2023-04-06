@@ -22,20 +22,20 @@ from typing import (Any, Callable, Dict, Iterable, Optional, Sequence, Set,
 import numpy as np
 
 import jax
-from jax.config import config
+from jax._src.config import config
 from jax._src import core
+from jax._src import linear_util as lu
 from jax._src import source_info_util
-from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
-from jax._src.tree_util import (tree_unflatten, tree_flatten,
-                                register_pytree_node)
 from jax._src.ad_util import (add_jaxvals, add_jaxvals_p, zeros_like_jaxval,
                               zeros_like_p, Zero, SymbolicZero,
                               replace_rule_output_symbolic_zeros, instantiate)
-from jax._src import linear_util as lu
+from jax._src.core import raise_to_shaped, Trace, Tracer, AxisName
+from jax._src.interpreters import partial_eval as pe
+from jax._src.tree_util import (tree_unflatten, tree_flatten,
+                                register_pytree_node)
 from jax._src.util import (unzip2, unzip3, safe_map, safe_zip, split_list,
                            canonicalize_axis, moveaxis, as_hashable_function,
                            curry, memoize, weakref_lru_cache)
-from jax._src.interpreters import partial_eval as pe
 
 Array = Any
 map, unsafe_map = safe_map, map

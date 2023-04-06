@@ -231,7 +231,7 @@ def tree_transpose(outer_treedef: PyTreeDef,
   return tree_unflatten(inner_treedef, subtrees)
 
 # TODO(mattjj): remove the Python-side registry when the C++-side registry is
-# sufficiently queryable that we can express _replace_nones. That may mean once
+# sufficiently queryable that we can express replace_nones. That may mean once
 # we have a flatten_one function.
 _RegistryEntry = collections.namedtuple("_RegistryEntry", ["to_iter", "from_iter"])
 _registry = {
@@ -241,7 +241,7 @@ _registry = {
                          lambda keys, xs: dict(zip(keys, xs))),
     type(None): _RegistryEntry(lambda z: ((), None), lambda _, xs: None),
 }
-def _replace_nones(sentinel, tree):
+def replace_nones(sentinel, tree):
   """Replaces ``None`` in ``tree`` with ``sentinel``."""
   if tree is None:
     return sentinel
@@ -249,12 +249,12 @@ def _replace_nones(sentinel, tree):
     handler = _registry.get(type(tree))
     if handler:
       children, metadata = handler.to_iter(tree)
-      proc_children = [_replace_nones(sentinel, child) for child in children]
+      proc_children = [replace_nones(sentinel, child) for child in children]
       return handler.from_iter(metadata, proc_children)
     elif isinstance(tree, tuple) and hasattr(tree, '_fields'):
       # handle namedtuple as a special case, based on heuristic
       children = iter(tree)
-      proc_children = [_replace_nones(sentinel, child) for child in children]
+      proc_children = [replace_nones(sentinel, child) for child in children]
       return type(tree)(*proc_children)
     else:
       return tree

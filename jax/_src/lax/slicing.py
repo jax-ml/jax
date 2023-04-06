@@ -1276,7 +1276,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
   operand_bdim, indices_bdim = batch_dims
 
   if operand_bdim is not None and indices_bdim is None:
-    operand = batching.moveaxis(operand, operand_bdim, 0)
+    operand = util.moveaxis(operand, operand_bdim, 0)
     slice_sizes = (operand.shape[0],) + slice_sizes
     offset_dims = (0,) + tuple(np.add(1, dimension_numbers.offset_dims))
     collapsed_slice_dims = tuple(np.add(1, dimension_numbers.collapsed_slice_dims))
@@ -1291,7 +1291,7 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
                   fill_value=fill_value), 0
 
   elif operand_bdim is None and indices_bdim is not None:
-    indices = batching.moveaxis(indices, indices_bdim, 0)
+    indices = util.moveaxis(indices, indices_bdim, 0)
     offset_dims = tuple(1 + d for d in dimension_numbers.offset_dims)
     dnums = GatherDimensionNumbers(
         offset_dims=offset_dims,
@@ -1305,8 +1305,8 @@ def _gather_batching_rule(batched_args, batch_dims, *, dimension_numbers,
 
   else:
     # move batch dimensions to the front to simplify logic
-    operand = batching.moveaxis(operand, operand_bdim, 0)
-    indices = batching.moveaxis(indices, indices_bdim, 0)
+    operand = util.moveaxis(operand, operand_bdim, 0)
+    indices = util.moveaxis(indices, indices_bdim, 0)
 
     # This slightly awkward special case is needed because the shape rule for
     # gather does not allow size-1 slices out of a size-0 dimension, even if

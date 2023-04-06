@@ -379,7 +379,7 @@ def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
     return out, [0 if b else None for b in out_batched]
   else:
     ops_bat = [d is not batching.not_mapped for d in op_dims]
-    ops = [batching.moveaxis(x, d, 0) if b else x
+    ops = [util.moveaxis(x, d, 0) if b else x
            for b, x, d in zip(ops_bat, ops, op_dims)]
 
     branches_out_bat = [

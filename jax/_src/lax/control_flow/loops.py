@@ -796,13 +796,13 @@ def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
 
   consts, init, xs = split_list(args, [num_consts, num_carry])
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
-  new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
+  new_consts = [util.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
                 else x for x, d in zip(consts, consts_bdims)]
   new_init = [batching.broadcast(x, axis_size, 0) if now_batched and not was_batched
-              else batching.moveaxis(x, d, 0) if now_batched else x
+              else util.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]
-  new_xs = [batching.moveaxis(x, d, 1) if d is not batching.not_mapped and d != 1
+  new_xs = [util.moveaxis(x, d, 1) if d is not batching.not_mapped and d != 1
             else x for x, d in zip(xs, xs_bdims)]
   new_args = new_consts + new_init + new_xs
 
@@ -1269,7 +1269,7 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
       new_init.append(x)
     else:
       assert new_axis is not batching.not_mapped
-      new_init.append(batching.moveaxis(x, old_axis, new_axis))
+      new_init.append(util.moveaxis(x, old_axis, new_axis))
 
   outs = while_p.bind(*(cconsts + bconsts + new_init),
                       cond_nconsts=cond_nconsts, cond_jaxpr=cond_jaxpr_batched,
@@ -1799,7 +1799,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
   if bd is batching.not_mapped:
     return lax.rng_bit_generator_p.bind(key, shape=shape, dtype=dtype,
                                         algorithm=algorithm), (None, None)
-  key = batching.moveaxis(key, bd, 0)
+  key = util.moveaxis(key, bd, 0)
   map_body = lambda k: lax.rng_bit_generator_p.bind(k, shape=shape, dtype=dtype, algorithm=algorithm)
   stacked_keys, stacked_bits = map(map_body, key)
   return (stacked_keys, stacked_bits), (0, 0)

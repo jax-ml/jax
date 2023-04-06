@@ -18,16 +18,17 @@ from typing import (Callable, Generic, List, Optional, Sequence, Tuple, TypeVar,
 
 from jax._src import core
 from jax._src import custom_api_util
-from jax._src.custom_transpose import custom_transpose
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
+from jax._src import util
 from jax._src.ad_util import (Zero, SymbolicZero, zeros_like_aval,
                               stop_gradient_p)
 from jax._src.api_util import argnums_partial, flatten_fun_nokwargs
 from jax._src.config import config
 from jax._src.core import raise_to_shaped
+from jax._src.custom_transpose import custom_transpose
 from jax._src.errors import UnexpectedTracerError
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -772,7 +773,7 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
     axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
     bwd: Callable, out_trees: Callable, num_consts: int):
-  args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
+  args = [util.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
   in_batched = [d is not not_mapped for d in in_dims]

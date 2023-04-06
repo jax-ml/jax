@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Set
+from typing import Any, Set
 
 import numpy as np
 
@@ -26,32 +26,25 @@ from jax._src import dtypes
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
-UnshapedArray = core.UnshapedArray
-ShapedArray = core.ShapedArray
-ConcreteArray = core.ConcreteArray
-AbstractToken = core.AbstractToken
-abstract_token = core.abstract_token
-canonicalize_shape = core.canonicalize_shape
-raise_to_shaped = core.raise_to_shaped
 
 def zeros_like_array(x):
   dtype, weak_type = dtypes._lattice_result_type(x)
   dtype = dtypes.canonicalize_dtype(dtype)
-  aval = ShapedArray(np.shape(x), dtype, weak_type=weak_type)
+  aval = core.ShapedArray(np.shape(x), dtype, weak_type=weak_type)
   return ad_util.zeros_like_aval(aval)
 
-numpy_scalar_types: Set[type] = {  # pylint: disable=g-bare-generic
+numpy_scalar_types: Set[type] = {
     np.int8, np.int16, np.int32, np.int64,
     np.uint8, np.uint16, np.uint32, np.uint64,
     np.complex64, np.complex128,
     np.bool_, np.longlong, np.intc,
-} | set(np.dtype(dt).type for dt in dtypes._float_types)
+} | set(np.dtype(dt).type for dt in dtypes.float_types)
 
-array_types: Set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
+array_types: Set[Any] = {np.ndarray} | numpy_scalar_types
 
 def canonical_concrete_aval(val, weak_type=None):
-  return ConcreteArray(dtypes.canonicalize_dtype(np.result_type(val)), val,
-                       weak_type=weak_type)
+  return core.ConcreteArray(dtypes.canonicalize_dtype(np.result_type(val)), val,
+                            weak_type=weak_type)
 
 def masked_array_error(*args, **kwargs):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "

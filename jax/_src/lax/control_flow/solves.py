@@ -22,6 +22,7 @@ from jax.tree_util import (tree_flatten, treedef_children, tree_leaves,
 from jax._src import ad_util
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src import util
 from jax._src.core import raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -439,14 +440,14 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
 
   # Move batched axes to the front
   new_params = [
-      batching.moveaxis(x, d, 0)
+      util.moveaxis(x, d, 0)
       if d is not batching.not_mapped and d != 0 else x
       for x, d in zip(_flatten(params), _flatten(params_dims))
   ]
   # Broadcast out b if necessary
   new_b = [
       batching.broadcast(x, axis_size, 0) if now_bat and not was_bat else
-      batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
+      util.moveaxis(x, d, 0) if now_bat and d != 0 else x
       for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
   ]
 

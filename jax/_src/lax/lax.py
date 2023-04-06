@@ -2711,7 +2711,7 @@ def _broadcast_in_dim_batch_rule(batched_args, batch_dims, shape,
   if len(dyn_shape) > 1: raise NotImplementedError
   if (operand_bdim is not None and
       (not dyn_shape_bdims or dyn_shape_bdims[0] is None)):
-    new_operand = batching.moveaxis(operand, operand_bdim, 0)
+    new_operand = util.moveaxis(operand, operand_bdim, 0)
     new_shape = (operand.shape[operand_bdim],) + _merge_dyn_shape(shape, dyn_shape)
     new_broadcast_dimensions = (0,) + tuple(np.add(1, broadcast_dimensions))
     return broadcast_in_dim(new_operand, new_shape, new_broadcast_dimensions), 0
@@ -2958,7 +2958,7 @@ def _concatenate_transpose_rule(t, *operands, dimension):
 def _concatenate_batch_rule(batched_args, batch_dims, *, dimension):
   size = next(op.shape[bdim] for op, bdim in zip(batched_args, batch_dims)
               if bdim is not None)
-  operands = [batching.moveaxis(op, bdim, 0) if bdim is not None
+  operands = [util.moveaxis(op, bdim, 0) if bdim is not None
               else broadcast(op, (size,))
               for op, bdim in zip(batched_args, batch_dims)]
   return concatenate(operands, dimension + 1), 0
@@ -3095,7 +3095,7 @@ def _squeeze_transpose_rule(t, operand, *, dimensions):
 def _squeeze_batch_rule(batched_args, batch_dims, *, dimensions):
   operand, = batched_args
   bdim, = batch_dims
-  operand = batching.moveaxis(operand, bdim, 0)
+  operand = util.moveaxis(operand, bdim, 0)
   dimensions = tuple(np.add(1, dimensions))
   return squeeze(operand, dimensions=dimensions), 0
 
@@ -3167,7 +3167,7 @@ def _reshape_transpose_rule(t, operand, *, new_sizes, dimensions):
 def _reshape_batch_rule(batched_args, batch_dims, *, new_sizes, dimensions):
   operand, = batched_args
   bdim, = batch_dims
-  operand = batching.moveaxis(operand, bdim, 0)
+  operand = util.moveaxis(operand, bdim, 0)
   if dimensions is not None:
     dimensions = (0,) + tuple(np.add(1, dimensions))
   return reshape(operand, operand.shape[:1] + new_sizes, dimensions), 0
@@ -3313,7 +3313,7 @@ def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
       return select_n(which, *cases), case_bdims[0]
     elif all(np.shape(cases[0]) == np.shape(c) for c in cases):
       bdim = case_bdims[0]
-      other_cases = [batching.moveaxis(c, c_bdim, bdim)
+      other_cases = [util.moveaxis(c, c_bdim, bdim)
                      for c, c_bdim in zip(cases[1:], case_bdims[1:])]
       return select_n(which, cases[0], *other_cases), bdim
 
@@ -3869,7 +3869,7 @@ def _sort_batch_rule(batched_args, batch_dims, *, dimension, is_stable, num_keys
       dims = np.delete(np.arange(prototype_arg.ndim), new_bdim)
       new_args.append(broadcast_in_dim(arg, prototype_arg.shape, dims))
     else:
-      new_args.append(batching.moveaxis(arg, bdim, new_bdim))
+      new_args.append(util.moveaxis(arg, bdim, new_bdim))
   new_dimension = dimension + (new_bdim <= dimension)
   bdims = (new_bdim,) * len(new_args)
   return (sort_p.bind(*new_args, dimension=new_dimension, is_stable=is_stable, num_keys=num_keys),
