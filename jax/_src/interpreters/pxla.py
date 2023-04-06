@@ -118,9 +118,6 @@ OpShardingType = Any
 
 PartitionSpec = sharding_impls.PartitionSpec
 
-get_num_ways_dim_sharded = sutils.get_num_ways_dim_sharded
-is_op_sharding_replicated = sutils.is_op_sharding_replicated
-
 
 def sharding_spec_mesh_shape(self):
   sharded_axis_sizes = []
@@ -219,13 +216,13 @@ def _op_sharding_to_numpy_indices(
   # num_devices is required as an argument when op_sharding is
   # REPLICATED. `jax.device_count()` cannot be used because you can create
   # an opsharding with less number of devices than `jax.device_count()`.
-  if is_op_sharding_replicated(op_sharding):
+  if sutils.is_op_sharding_replicated(op_sharding):
     indices.fill((slice(None),) * len(shape))
     return indices
 
   assert num_devices == len(op_sharding.tile_assignment_devices)
 
-  partitions, num_replicas = get_num_ways_dim_sharded(op_sharding)
+  partitions, num_replicas = sutils.get_num_ways_dim_sharded(op_sharding)
   assert len(partitions) == len(shape), (len(partitions), len(shape))
 
   axis_indices: List[Sequence[Index]] = []
@@ -2781,7 +2778,7 @@ def _get_input_indices(
       # represent index for each device in the global mesh. But here we want
       # indices for the local devices of the global mesh.
       proto = sharding._to_xla_op_sharding(aval.ndim)
-      if is_op_sharding_replicated(proto):
+      if sutils.is_op_sharding_replicated(proto):
         index = tuple(
             (slice(None),) * aval.ndim
             for _ in range(len(sharding.addressable_devices)))  # type: ignore
@@ -3296,7 +3293,7 @@ def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
 def are_op_shardings_equal(op1: xc.OpSharding, op2: xc.OpSharding) -> bool:
   if id(op1) == id(op2):
     return True
-  if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
+  if sutils.is_op_sharding_replicated(op1) and sutils.is_op_sharding_replicated(op2):
     return True
   return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
 

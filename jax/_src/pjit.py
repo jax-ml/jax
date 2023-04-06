@@ -30,6 +30,7 @@ from jax._src import dispatch
 from jax._src import mesh as mesh_lib
 from jax._src import linear_util as lu
 from jax._src import source_info_util
+from jax._src import sharding_utils as sutils
 from jax._src import traceback_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -961,7 +962,7 @@ def pjit_check_aval_sharding(
     # XLACompatibleSharding.
     op_sharding = s._to_xla_op_sharding(len(shape))
     assert op_sharding is not None
-    num_ways_dim_sharded, _ = pxla.get_num_ways_dim_sharded(
+    num_ways_dim_sharded, _ = sutils.get_num_ways_dim_sharded(
         cast(xc.OpSharding, op_sharding))
     for i, size in enumerate(num_ways_dim_sharded):
       if not allow_uneven_sharding and shape[i] % size != 0:
@@ -1200,7 +1201,7 @@ def _resolve_in_shardings(
             raise NotImplementedError('Having uncommitted Array sharded on '
                                       'multiple devices is not supported.')
     else:
-      if isinstance(arg, np.ndarray) and not pxla.is_op_sharding_replicated(
+      if isinstance(arg, np.ndarray) and not sutils.is_op_sharding_replicated(
           pjit_in_s._to_xla_op_sharding(arg.ndim)) and xb.process_count() > 1:  # type: ignore
         raise ValueError(
             'Passing non-trivial shardings for numpy '

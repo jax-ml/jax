@@ -23,6 +23,7 @@ from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
 from jax._src import core
 from jax._src import mesh as mesh_lib
 from jax._src import sharding
+from jax._src import sharding_utils as sutils
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
@@ -73,9 +74,9 @@ class XLACompatibleSharding(sharding.Sharding):
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
     op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
-    if pxla.is_op_sharding_replicated(op_sharding):
+    if sutils.is_op_sharding_replicated(op_sharding):
       return global_shape
-    partitions, _ = pxla.get_num_ways_dim_sharded(op_sharding)
+    partitions, _ = sutils.get_num_ways_dim_sharded(op_sharding)
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
@@ -622,7 +623,7 @@ class GSPMDSharding(XLACompatibleSharding):
     return f'GSPMDSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    num_ways_dim_sharded, _ = pxla.get_num_ways_dim_sharded(self._op_sharding)
+    num_ways_dim_sharded, _ = sutils.get_num_ways_dim_sharded(self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
           f"Sharding {self} is only valid for values of rank at least "
