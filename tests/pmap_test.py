@@ -43,6 +43,7 @@ from jax._src import core
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax._src import config as jax_config
+from jax._src import mesh
 from jax._src import sharding_specs
 from jax._src import xla_bridge
 from jax._src.lib import xla_extension
@@ -1091,7 +1092,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected)
 
   def testAxisGroups(self):
-    axis_env = xla.AxisEnv(8, ('i', 'j'), (4, 2))
+    axis_env = mesh.AxisEnv(8, ('i', 'j'), (4, 2))
     groups = xla.axis_groups(axis_env, 'i')
     self.assertEqual(groups, ((0, 2, 4, 6), (1, 3, 5, 7)))
 

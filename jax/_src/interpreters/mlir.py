@@ -24,7 +24,7 @@ import itertools
 import re
 import typing
 from typing import (Any, Callable, Dict, Iterator, List, NamedTuple, Optional,
-                    Protocol, Sequence, Set, Tuple, Type, Union, FrozenSet)
+                    Protocol, Sequence, Set, Tuple, Type, Union)
 import warnings
 
 import numpy as np
@@ -34,6 +34,7 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import source_info_util
 from jax._src import util
@@ -339,69 +340,6 @@ def make_ir_context() -> ir.Context:
   return context
 
 
-Mesh = Any
-MeshAxisName = Any
-
-@dataclasses.dataclass(frozen=True)
-class SPMDAxisContext:
-  """A hardware axis context for parallel computations that use the GSPMD partitioner.
-
-  This includes the mesh that will later by used to execute this computation,
-  as well as a set of mesh axes that are currently (e.g. because the current lowering
-  is invoked inside an xmap) lowered in the MANUAL sharding mode.
-  """
-  mesh: Mesh
-  manual_axes: FrozenSet[MeshAxisName] = frozenset()
-
-  @property
-  def axis_env(self):
-    # All collectives that touch axis_env should remember to set use_global_device_ids
-    # when this context is enabled!
-    if self.manual_axes != frozenset(self.mesh.axis_names):
-      raise NotImplementedError(
-          "Collectives in manually partitioned computations are only supported "
-          "when all mesh axes are partitioned manually (no partial automatic sharding). "
-          "Make sure that you mention all mesh axes in axis_resources!")
-    return self.unsafe_axis_env
-
-  @property
-  def unsafe_axis_env(self):
-    return xla.AxisEnv(
-        nreps=self.mesh.size,
-        names=self.mesh.axis_names,
-        sizes=tuple(self.mesh.shape.values()))
-
-  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
-    return SPMDAxisContext(self.mesh, self.manual_axes | axes)
-
-
-@dataclasses.dataclass(frozen=True)
-class ReplicaAxisContext:
-  """A hardware axis context for parallel computations that are partitioned by JAX.
-
-  Unlike in the SPMDAxisContext, this means that JAX might need to emit calls to
-  explicit collectives.
-  """
-  axis_env: xla.AxisEnv
-
-
-@dataclasses.dataclass(frozen=True)
-class ShardingContext:
-  """A hardware axis context for parallel computations that use the sharding
-  interface.
-
-  This context also uses the GSPMD partitioner.
-  """
-  device_assignment: Sequence[xc.Device]
-
-  # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
-  @property
-  def axis_env(self):
-    return xla.AxisEnv(nreps=1, names=(), sizes=())
-
-
-AxisContext = Union[SPMDAxisContext, ReplicaAxisContext, ShardingContext]
-
 @dataclasses.dataclass
 class ModuleContext:
   """Module-wide context information for MLIR lowering."""
@@ -411,7 +349,7 @@ class ModuleContext:
   symbol_table: ir.SymbolTable
   backend_or_name: Optional[Union[str, xb.XlaBackend]]
   platform: str
-  axis_context: AxisContext
+  axis_context: mesh_lib.AxisContext
   name_stack: source_info_util.NameStack
   keepalives: List[Any]
   channel_iterator: Iterator[int]
@@ -428,14 +366,14 @@ class ModuleContext:
 
 
   @property
-  def axis_env(self) -> xla.AxisEnv:
+  def axis_env(self) -> mesh_lib.AxisEnv:
     return self.axis_context.axis_env
 
   def __init__(
       self,
       backend_or_name: Optional[Union[str, xb.XlaBackend]],
       platform: str,
-      axis_context: AxisContext,
+      axis_context: mesh_lib.AxisContext,
       name_stack: source_info_util.NameStack,
       keepalives: List[Any],
       channel_iterator: Iterator[int],
@@ -600,7 +538,7 @@ def lower_jaxpr_to_module(
     ordered_effects: List[core.Effect],
     backend_or_name: Optional[Union[str, xb.XlaBackend]],
     platform: str,
-    axis_context: AxisContext,
+    axis_context: mesh_lib.AxisContext,
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
@@ -1533,7 +1471,7 @@ def xla_fallback_lowering(prim: core.Primitive):
   def fallback(ctx: LoweringRuleContext, *args, **params):
     module_ctx = ctx.module_context
     axis_ctx = module_ctx.axis_context
-    if isinstance(axis_ctx, SPMDAxisContext):
+    if isinstance(axis_ctx, mesh_lib.SPMDAxisContext):
       axis_env = axis_ctx.unsafe_axis_env
     else:
       axis_env = module_ctx.axis_env
@@ -1639,7 +1577,7 @@ def _emit_tpu_python_callback(
     ctx: LoweringRuleContext,
     callback,
     token: Optional[Any],
-    operands: List[ir.Value],
+    operands: Sequence[ir.Value],
     operand_avals: List[core.ShapedArray],
     operand_shapes: List[xc.Shape],
     result_avals: List[core.ShapedArray],
@@ -1710,7 +1648,7 @@ def _aval_to_default_layout(aval):
 
 def emit_python_callback(
     ctx: LoweringRuleContext, callback, token: Optional[Any],
-    operands: List[ir.Value], operand_avals: List[core.ShapedArray],
+    operands: Sequence[ir.Value], operand_avals: List[core.ShapedArray],
     result_avals: List[core.ShapedArray],
     has_side_effect: bool, *, sharding: Optional[xc.OpSharding] = None,
     operand_layouts: Optional[Sequence[Optional[Sequence[int]]]] = None,
@@ -1818,7 +1756,7 @@ def emit_python_callback(
 
 def build_xla_computation_helper(
     closed_jaxpr: core.ClosedJaxpr, *, name: str, platform: str,
-    backend_or_name: str, axis_context: AxisContext) -> xc.XlaComputation:
+    backend_or_name: str, axis_context: mesh_lib.AxisContext) -> xc.XlaComputation:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
   if closed_jaxpr.effects:
     raise NotImplementedError

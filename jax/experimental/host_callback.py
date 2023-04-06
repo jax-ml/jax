@@ -517,10 +517,11 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src import ad_checkpoint
 from jax._src import dispatch
+from jax._src import mesh
+from jax._src import partition_spec
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
 from jax._src import util
-from jax._src import lib as jaxlib
 from jax._src.lib import pytree
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client
@@ -1246,7 +1247,7 @@ def _outside_call_lowering(ctx: mlir.LoweringRuleContext,
     return result_arrays
 
   if isinstance(ctx.module_context.axis_context,
-                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+                (mesh.SPMDAxisContext, mesh.ShardingContext)):
     # Apply maximal sharding so pjit only executes the callback on device device_index.
     sharding = xla_client.OpSharding()
     sharding.type = xla_client.OpSharding.Type.MAXIMAL
@@ -1716,9 +1717,9 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: List[core.JaxprEqn],
                 jaxpr=_rewrite_closed_jaxpr(jaxpr, True, True),
                 donated_invars=eqn.params["donated_invars"] + (False, False),
                 in_shardings=(eqn.params["in_shardings"] +
-                              (pjit._UNSPECIFIED, pjit._UNSPECIFIED)),
+                              (partition_spec.UNSPECIFIED, partition_spec.UNSPECIFIED)),
                 out_shardings=(eqn.params["out_shardings"] +
-                               (pjit._UNSPECIFIED, pjit._UNSPECIFIED)),
+                               (partition_spec.UNSPECIFIED, partition_spec.UNSPECIFIED)),
             )))
   elif eqn.primitive is ad_checkpoint.remat_p:
     jaxpr_ = cast(core.Jaxpr, eqn.params["jaxpr"])

@@ -31,7 +31,9 @@ from jax._src import ad_util
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import ops
+from jax._src import partition_spec
 from jax._src import pjit
 from jax._src import prng
 from jax._src import source_info_util
@@ -47,7 +49,6 @@ from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
@@ -459,7 +460,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   sharded_avals = [v.aval for v in jaxpr.invars]
   in_nodes_ = map(partial(_xla_shard, mesh), in_names, ctx.avals_in,
                   sharded_avals, in_nodes)
-  new_axis_context = mlir.SPMDAxisContext(mesh, frozenset(mesh.axis_names))
+  new_axis_context = mesh_lib.SPMDAxisContext(mesh, frozenset(mesh.axis_names))
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with core.extend_axis_env_nd(tuple(mesh.shape.items())):
     out_nodes_, _ = mlir.jaxpr_subcomp(sub_ctx, jaxpr, mlir.TokenSet(),
@@ -474,7 +475,7 @@ def _xla_shard(mesh, names, aval_in, aval_out, x):
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names), mesh)
   result_type, = mlir.aval_to_ir_types(aval_out)
   axes = {name: i for i, ns in names.items() for name in ns}
-  shard_proto = NamedSharding(mesh, pxla.array_mapping_to_axis_resources(axes)  # type: ignore
+  shard_proto = NamedSharding(mesh, partition_spec.array_mapping_to_axis_resources(axes)  # type: ignore
                               )._to_xla_op_sharding(aval_in.ndim)
   if core.is_opaque_dtype(aval_in.dtype):
     shard_proto = aval_in.dtype._rules.physical_op_sharding(aval_in, shard_proto)
@@ -487,7 +488,7 @@ def _xla_unshard(mesh, names, aval_in, aval_out, xs):
   result_type, = mlir.aval_to_ir_types(aval_out)
   sx = mlir.wrap_with_sharding_op(x, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
-  shard_proto = NamedSharding(mesh, pxla.array_mapping_to_axis_resources(axes)  # type: ignore
+  shard_proto = NamedSharding(mesh, partition_spec.array_mapping_to_axis_resources(axes)  # type: ignore
                               )._to_xla_op_sharding(aval_out.ndim)
   if core.is_opaque_dtype(aval_out.dtype):
     shard_proto = aval_out.dtype._rules.physical_op_sharding(aval_out, shard_proto)

@@ -57,14 +57,13 @@ import jax
 from jax import lax
 from jax._src import core
 from jax._src import linear_util as lu
+from jax._src import partition_spec
 from jax._src import pjit
 from jax.experimental.sparse.bcoo import bcoo_multiply_dense, bcoo_multiply_sparse
 import jax.numpy as jnp
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.lib import pytree
 from jax._src.interpreters import partial_eval as pe
-from jax._src.interpreters import xla
-from jax._src.interpreters import pxla
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax.util import safe_map, safe_zip, split_list
 from jax._src.config import config
@@ -777,9 +776,9 @@ def _pjit_sparse(spenv, *spvalues, jaxpr, in_shardings, out_shardings,
   # TODO(yashkatariya, vanderplas): Flatten twice and set the correct sharding
   # for data and indices.
   in_shardings = in_shardings + tuple(
-      pxla._UNSPECIFIED for _ in range(len(args_flat) - len(in_shardings)))
+      partition_spec.UNSPECIFIED for _ in range(len(args_flat) - len(in_shardings)))
   out_shardings = out_shardings + tuple(
-      pxla._UNSPECIFIED for _ in range(len(sp_call_jaxpr.out_avals) - len(out_shardings)))
+      partition_spec.UNSPECIFIED for _ in range(len(sp_call_jaxpr.out_avals) - len(out_shardings)))
 
   out_flat = pjit.pjit_p.bind(
       *args_flat,

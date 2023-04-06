@@ -23,6 +23,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import mesh
 from jax._src import tree_util
 from jax._src import util
 from jax._src.interpreters import ad
@@ -107,13 +108,13 @@ def pure_callback_lowering(ctx, *args, callback, **params):
 
   sharding = None
   axis_context = ctx.module_context.axis_context
-  if isinstance(axis_context, mlir.ShardingContext):
+  if isinstance(axis_context, mesh.ShardingContext):
     if len(axis_context.device_assignment) > 1:
       raise NotImplementedError(
           "pure_callback is only supported in spmd computations when all mesh"
           " axes are partitioned manually (no partial automatic sharding)."
       )
-  if isinstance(axis_context, mlir.SPMDAxisContext):
+  if isinstance(axis_context, mesh.SPMDAxisContext):
     if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
       raise NotImplementedError(
           "pure_callback is only supported in spmd computations when all mesh"
@@ -272,7 +273,7 @@ def io_callback_lowering(ctx, *args, callback, ordered, **params):
   # can only safely maximally shard. Should we allow device_index to be passed
   # in like host_callback?
   if isinstance(ctx.module_context.axis_context,
-                (mlir.SPMDAxisContext, mlir.ShardingContext)):
+                (mesh.SPMDAxisContext, mesh.ShardingContext)):
     # Apply maximal sharding so pjit only executes the callback on device 0.
     sharding = xc.OpSharding()
     sharding.type = xc.OpSharding.Type.MAXIMAL

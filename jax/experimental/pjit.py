@@ -15,24 +15,26 @@
 # flake8: noqa
 
 from jax._src.pjit import (
-  AUTO as AUTO,
-  ParsedPartitionSpec as ParsedPartitionSpec,
-  get_array_mapping as get_array_mapping,
   hashable_pytree as hashable_pytree,
   parse_flatten_op_sharding as parse_flatten_op_sharding,
   pjit as pjit,
   pjit_p as pjit_p,
   with_sharding_constraint as with_sharding_constraint,
 )
+from jax._src.partition_spec import (
+  AUTO as AUTO,
+  UNSPECIFIED as _UNSPECIFIED,
+  ParsedPartitionSpec as ParsedPartitionSpec,
+  get_array_mapping as get_array_mapping,
+)
 
-from jax._src.pjit import (_UNSPECIFIED, _prepare_axis_resources,
-                           _get_op_sharding_from_executable,
+from jax._src.pjit import (_get_op_sharding_from_executable,
                            _get_pspec_from_executable, _pjit_lower_cached,
                            _pjit_lower, _pjit_jaxpr,
                            _create_mesh_pspec_sharding_from_parsed_pspec,
                            _process_in_axis_resources)
 
-
+from jax._src.sharding_impls import prepare_axis_resources as _prepare_axis_resources
 from jax._src.pjit import (
   NamedSharding as _deprecated_NamedSharding,
   PartitionSpec as _deprecated_PartitionSpec,

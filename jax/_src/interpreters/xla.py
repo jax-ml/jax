@@ -34,6 +34,7 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src.abstract_arrays import numpy_scalar_types
 from jax._src.core import ConcreteArray, ShapedArray
+from jax._src.mesh import AxisEnv
 from jax._src.util import safe_zip, safe_map
 
 from jax._src.typing import Shape
@@ -254,13 +255,6 @@ def primitive_subcomputation(platform: str, axis_env: 'AxisEnv',
 
 ### compiling jaxprs
 
-
-class AxisEnv(NamedTuple):
-  """Represents a pmap mesh (only along the replica axes)."""
-  nreps: int
-  names: Tuple[Any, ...]
-  sizes: Tuple[int, ...]
-
 @dataclasses.dataclass
 class TranslationContext:
   builder: xc.XlaBuilder
@@ -271,8 +265,6 @@ class TranslationContext:
   name_stack: Union[str, source_info_util.NameStack]
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)
-
-
 
 def xla_destructure(c, ans):
   num_elements = len(c.get_shape(ans).tuple_shapes())

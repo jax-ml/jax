@@ -29,6 +29,7 @@ from jax._src import linear_util as lu
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import effects
+from jax._src import partition_spec
 from jax._src import pjit
 from jax._src import prng
 from jax._src import source_info_util
@@ -869,7 +870,7 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
   # Update pjit params to account for extra error values.
   num_error_vals = len(err_vals)
   num_out_error_vals = out_tree.num_leaves - len(out_shardings)
-  sharding = pjit._UNSPECIFIED
+  sharding = partition_spec.UNSPECIFIED
 
   new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)
   new_out_shardings = (*[sharding] * num_out_error_vals, *out_shardings)

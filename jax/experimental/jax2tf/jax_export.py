@@ -27,6 +27,7 @@ import jax
 from jax import sharding
 
 from jax._src import core
+from jax._src import mesh
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -288,7 +289,7 @@ def add_dim_arg_computation(module: mlir.ir.Module,
     with ir.InsertionPoint(entry_block):
       orig_main_args: List[mlir.ir.Value] = []
       module_context = mlir.ModuleContext(
-          "cpu", "cpu", mlir.ShardingContext([]),
+          "cpu", "cpu", mesh.ShardingContext([]),
           source_info_util.new_name_stack(),
           [], itertools.count(1), [], module=new_module, context=context)
       ctx = mlir.LoweringRuleContext(module_context=module_context,

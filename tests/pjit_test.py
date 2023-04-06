@@ -44,9 +44,12 @@ from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import Sharding
 from jax._src import op_shardings
+from jax._src import sharding_impls
+from jax._src import partition_spec
+from jax._src.partition_spec import AUTO, UNSPECIFIED
 from jax._src.sharding_impls import NamedSharding, GSPMDSharding
 import jax._src.pjit as pjit_lib
-from jax._src.pjit import (pjit, pjit_p, AUTO)
+from jax._src.pjit import pjit, pjit_p
 from jax._src import mesh
 from jax._src.interpreters import pxla
 from jax.interpreters import mlir
@@ -3290,7 +3293,7 @@ class UtilTest(jtu.JaxTestCase):
       ("multi_skip", {'x': 0, 'y': 1, 'z': 3}, P(('x',), ('y',), None, ('z',))),
   )
   def test_array_mapping_to_axis_resources(self, inp, expected_out):
-    self.assertEqual(pxla.array_mapping_to_axis_resources(inp), expected_out)
+    self.assertEqual(partition_spec.array_mapping_to_axis_resources(inp), expected_out)
 
   def test_get_input_indices_fully_replicated(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
@@ -3323,22 +3326,22 @@ class UtilTest(jtu.JaxTestCase):
       pxla.mesh_sharding_specs(mesh.shape, mesh.axis_names)(aval, array_mapping)
 
   @parameterized.named_parameters(
-      ("all_unspecified", (pjit_lib._UNSPECIFIED, pjit_lib._UNSPECIFIED), AssertionError),
-      ("only_unspecified", pjit_lib._UNSPECIFIED),
+      ("all_unspecified", (UNSPECIFIED, UNSPECIFIED), AssertionError),
+      ("only_unspecified", UNSPECIFIED),
       ("all_specified", (P('x'), P('y'))),
       ("only_specified", P('x')),
-      ("mix_1", (P('x'), pjit_lib._UNSPECIFIED), ValueError),
-      ("mix_2", (P('x'), pjit_lib._UNSPECIFIED, P('y')), ValueError),
-      ("mix_3", (pjit_lib._UNSPECIFIED, P('x'), P('y')), ValueError),
-      ("mix_4", (pjit_lib._UNSPECIFIED, P('x'), pjit_lib._UNSPECIFIED), ValueError),
+      ("mix_1", (P('x'), UNSPECIFIED), ValueError),
+      ("mix_2", (P('x'), UNSPECIFIED, P('y')), ValueError),
+      ("mix_3", (UNSPECIFIED, P('x'), P('y')), ValueError),
+      ("mix_4", (UNSPECIFIED, P('x'), UNSPECIFIED), ValueError),
   )
   def test_all_or_non_unspecified(self, axis_resources, error=None):
     entries, _ = jax.tree_util.tree_flatten(axis_resources, is_leaf=lambda x: x is None)
     if error is not None:
       with self.assertRaises(error):
-        pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')
+        sharding_impls.check_all_or_none_unspecified(entries, 'test axis resources')
     else:
-      pjit_lib._check_all_or_none_unspecified(entries, 'test axis resources')
+      sharding_impls.check_all_or_none_unspecified(entries, 'test axis resources')
 
   def test_op_sharding_equality_and_hash_equality(self):
     op1 = xc.OpSharding()
@@ -3540,8 +3543,8 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
                      P(('x',), ('y',)))
 
-    out_of_sync_parsed_pspec = pjit_lib.ParsedPartitionSpec(
-        P('x', 'y'), ('x', 'y'), pjit_lib.SpecSync.OUT_OF_SYNC)
+    out_of_sync_parsed_pspec = partition_spec.ParsedPartitionSpec(
+        P('x', 'y'), ('x', 'y'), partition_spec.SpecSync.OUT_OF_SYNC)
     self.assertEqual(out_of_sync_parsed_pspec.get_partition_spec(),
                      P(('x',), ('y',)))
 

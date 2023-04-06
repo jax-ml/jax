@@ -14,8 +14,9 @@
 
 from __future__ import annotations
 
-import functools
 from collections import Counter
+import functools
+import itertools
 import operator as op
 from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
                     FrozenSet, Union, cast)
@@ -24,11 +25,13 @@ from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import sharding
 from jax._src import sharding_specs
+from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.interpreters import mlir
-from jax._src.partition_spec import PartitionSpec
+from jax._src.partition_spec import (
+    ParsedPartitionSpec, PartitionSpec, get_array_mapping,
+    is_unspecified, is_unspecified_or_auto)
 
 import numpy as np
 
@@ -204,8 +207,7 @@ class NamedSharding(XLACompatibleSharding):
     # TODO(yaskatariya): Remove this and replace this with a normalized
     # representation of Parsed Pspec
     if self._parsed_pspec is None:
-      from jax._src import pjit
-      self._parsed_pspec, _, _ = pjit._prepare_axis_resources(
+      self._parsed_pspec, _, _ = prepare_axis_resources(
           self.spec, "NamedSharding spec")
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
@@ -251,9 +253,8 @@ class NamedSharding(XLACompatibleSharding):
   def _to_xla_op_sharding(
       self,
       num_dimensions: int,
-      axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
+      axis_ctx: Optional[Union[mesh_lib.SPMDAxisContext, mesh_lib.ShardingContext]] = None
   ) -> xc.OpSharding:
-    from jax._src.pjit import get_array_mapping
     assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -263,7 +264,7 @@ class NamedSharding(XLACompatibleSharding):
     # Used in `with_sharding_constraint`.
     special_axes = {}
     # Manual axes is only used with xmap.
-    if axis_ctx is not None and isinstance(axis_ctx, mlir.SPMDAxisContext):
+    if axis_ctx is not None and isinstance(axis_ctx, mesh_lib.SPMDAxisContext):
       axis_names = self.mesh.axis_names
       # Ignore type because mypy doesn't recognize the `hasattr` check above.
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
@@ -622,3 +623,68 @@ class GSPMDSharding(XLACompatibleSharding):
   def get_replicated(cls, device_assignment):
     proto = get_replicated_op_sharding()
     return cls(device_assignment, proto)
+
+
+def check_all_or_none_unspecified(axis_resources, name):
+  if not axis_resources:
+    return False
+  unspecified_count = 0
+  unspecified = is_unspecified(axis_resources[0])
+  for resource in axis_resources:
+    current_is_unspecified = is_unspecified(resource)
+    if current_is_unspecified:
+      unspecified_count += 1
+      assert unspecified_count == 1
+    if current_is_unspecified != unspecified:
+      raise ValueError(f'`pjit.UNSPECIFIED` exists in {name}. '
+                       f'Make sure that every entry in {name} is '
+                       '`pjit.UNSPECIFIED`.')
+  return unspecified
+
+
+def prepare_axis_resources(axis_resources,
+                           arg_name,
+                           allow_unconstrained_dims=False):
+  # PyTrees don't treat None values as leaves, so we use an is_leaf function.
+  entries, treedef = tree_util.tree_flatten(
+      axis_resources, is_leaf=lambda x: x is None)
+  what = f"{arg_name} leaf specifications"
+  # All entries should be specified or if unspecified then there should only
+  # be 1 entry for that since UNSPECIFIED is a private API.
+  check_all_or_none_unspecified(entries, arg_name)
+
+  new_entries = []
+  for entry in entries:
+    if is_unspecified_or_auto(entry):
+      new_entries.append(entry)
+    elif isinstance(entry, sharding.Sharding):
+      if isinstance(entry, PmapSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not '
+                         'allowed.')
+      if not isinstance(entry, XLACompatibleSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not a '
+                         'subclass of XLACompatibleSharding.')
+      new_entries.append(entry)
+    else:
+      new_entries.append(ParsedPartitionSpec.from_user_input(
+          entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
+
+  _check_unique_resources(new_entries, arg_name)
+  return tree_util.tree_unflatten(treedef, new_entries), new_entries, treedef
+
+
+def _check_unique_resources(axis_resources, arg_name):
+  for arg_axis_resources in axis_resources:
+    if not arg_axis_resources: continue
+    if (is_unspecified_or_auto(arg_axis_resources) or
+        isinstance(arg_axis_resources, XLACompatibleSharding)):
+      continue
+    constrained_dims = [d for d in arg_axis_resources if d is not None]
+    resource_counts = Counter(itertools.chain.from_iterable(constrained_dims))
+    if not resource_counts: continue
+    if resource_counts.most_common(1)[0][1] > 1:
+      multiple_uses = [r for r, c in resource_counts.items() if c > 1]
+      if multiple_uses:
+        raise ValueError(f"A single {arg_name} specification can map every mesh axis "
+                         f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
+                         f"has duplicate entries for {mesh_lib.show_axes(multiple_uses)}")

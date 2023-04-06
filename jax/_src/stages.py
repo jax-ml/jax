@@ -38,6 +38,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tu
 import jax
 
 from jax._src import core
+from jax._src import partition_spec
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -596,7 +597,7 @@ class Lowered(Stage):
     if isinstance(self._lowering, pxla.MeshComputation):
       kw.update(
           _allow_propagation_to_outputs=[
-              pxla._is_unspecified(o)
+              partition_spec.is_unspecified(o)
               for o in self._lowering.compile_args["out_shardings"]
           ]
       )

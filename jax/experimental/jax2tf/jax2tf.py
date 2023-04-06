@@ -49,6 +49,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
+from jax._src import partition_spec
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
@@ -595,7 +596,7 @@ def _make_custom_gradient_fn_tf(*,
 
     if exported_primal is not None:
       # Native lowering
-      all_in_shardings = [pxla._UNSPECIFIED] * len(exported_primal.in_avals)
+      all_in_shardings = [partition_spec.UNSPECIFIED] * len(exported_primal.in_avals)
       for idx, in_s in zip(sorted(exported_primal.module_kept_var_idx),
                            exported_primal.in_shardings):
         all_in_shardings[idx] = in_s  # type: ignore
@@ -603,14 +604,14 @@ def _make_custom_gradient_fn_tf(*,
       # We cannot mix unspecified and specified shardings. Make the unspecified
       # ones replicated
       specified_shardings = [
-          s for s in all_shardings if not pxla._is_unspecified(s)]
+          s for s in all_shardings if not partition_spec.is_unspecified(s)]
       if 0 < len(specified_shardings) < len(all_shardings):
         # There are some specified, but not all
         in_s = specified_shardings[0]  # pjit will enforce that all have same devices
         assert isinstance(in_s, sharding.XLACompatibleSharding)
         replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
         all_shardings = [
-            s if not pxla._is_unspecified(s) else replicated_s
+            s if not partition_spec.is_unspecified(s) else replicated_s
             for s in all_shardings]
       # Since fun_vjp_jax takes two tuples of arguments we must split the in_shardings
       vjp_in_args_shardings: Any
@@ -619,17 +620,18 @@ def _make_custom_gradient_fn_tf(*,
       vjp_in_args_shardings, vjp_in_out_ct_shardings = util.split_list(all_shardings,
                                                                        [len(exported_primal.in_avals)])
       # pjit front-end does not like all-unspecified
-      if all(pxla._is_unspecified(s) for s in vjp_in_args_shardings):
-        vjp_in_args_shardings = pxla._UNSPECIFIED
+      if all(partition_spec.is_unspecified(s) for s in vjp_in_args_shardings):
+        vjp_in_args_shardings = partition_spec.UNSPECIFIED
       else:
         vjp_in_args_shardings = tuple(vjp_in_args_shardings)
-      if all(pxla._is_unspecified(s) for s in vjp_in_out_ct_shardings):
-        vjp_in_out_ct_shardings = pxla._UNSPECIFIED
+      if all(partition_spec.is_unspecified(s) for s in vjp_in_out_ct_shardings):
+        vjp_in_out_ct_shardings = partition_spec.UNSPECIFIED
       else:
         vjp_in_out_ct_shardings = tuple(vjp_in_out_ct_shardings)
 
-      if pxla._is_unspecified(vjp_in_args_shardings) and pxla._is_unspecified(vjp_in_args_shardings):
-        vjp_in_shardings = pxla._UNSPECIFIED
+      if (partition_spec.is_unspecified(vjp_in_args_shardings) and
+          partition_spec.is_unspecified(vjp_in_args_shardings)):
+        vjp_in_shardings = partition_spec.UNSPECIFIED
       else:
         vjp_in_shardings = (vjp_in_args_shardings, vjp_in_out_ct_shardings)
       fun_vjp_jax = pjit.pjit(fun_vjp_jax,
@@ -3137,7 +3139,7 @@ def _shard_value(val: TfVal,
                  sd: sharding.XLACompatibleSharding, *,
                  skip_replicated_sharding: bool) -> TfVal:
   """Apply sharding to a TfVal."""
-  if pxla._is_unspecified(sd):
+  if partition_spec.is_unspecified(sd):
     return val
 
   sharding_proto: xla_client.OpSharding = cast(

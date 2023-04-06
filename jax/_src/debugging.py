@@ -123,13 +123,13 @@ ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
   axis_context = ctx.module_context.axis_context
-  if (isinstance(axis_context, mlir.SPMDAxisContext) and
+  if (isinstance(axis_context, mesh_lib.SPMDAxisContext) and
         set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
     # If we have fully manual sharding during lowering, that means the JAX
     # program has per-device semantics, so we run the callback on each device.
     sharding = xc.OpSharding()
     sharding.type = xc.OpSharding.Type.MANUAL
-  elif isinstance(axis_context, (mlir.ShardingContext, mlir.SPMDAxisContext)):
+  elif isinstance(axis_context, (mesh_lib.ShardingContext, mesh_lib.SPMDAxisContext)):
     # If we have fully automatic sharding during lowering, that means the JAX
     # program has bulk array semantics, so we run the callback with a MAXIMAL
     # sharding and hence execute it only once on the full logical value).
@@ -312,9 +312,9 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
-  if isinstance(axis_context, mlir.ShardingContext):
+  if isinstance(axis_context, mesh_lib.ShardingContext):
     devices = axis_context.device_assignment
-  elif isinstance(axis_context, mlir.SPMDAxisContext):
+  elif isinstance(axis_context, mesh_lib.SPMDAxisContext):
     devices = list(axis_context.mesh.devices.flat)
   else:
     raise NotImplementedError(type(axis_context))

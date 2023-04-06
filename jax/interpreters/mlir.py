@@ -13,20 +13,14 @@
 # limitations under the License.
 
 from jax._src.interpreters.mlir import (
-  AxisContext as AxisContext,
   ConstantHandler as ConstantHandler,
   DEVICE_TO_DEVICE_TYPE as DEVICE_TO_DEVICE_TYPE,
   LoweringResult as LoweringResult,
   LoweringRule as LoweringRule,
   LoweringRuleContext as LoweringRuleContext,
-  Mesh as Mesh,
-  MeshAxisName as MeshAxisName,
   ModuleContext as ModuleContext,
   RECV_FROM_HOST_TYPE as RECV_FROM_HOST_TYPE,
-  ReplicaAxisContext as ReplicaAxisContext,
   SEND_TO_HOST_TYPE as SEND_TO_HOST_TYPE,
-  SPMDAxisContext as SPMDAxisContext,
-  ShardingContext as ShardingContext,
   Token as Token,
   TokenSet as TokenSet,
   Value as Value,
@@ -63,4 +57,13 @@ from jax._src.interpreters.mlir import (
   shape_tensor as shape_tensor,
   token_type as token_type,
   xla_computation_to_mlir_module as xla_computation_to_mlir_module,
+)
+
+from jax._src.mesh import (
+  AxisContext as AxisContext,
+  Mesh as Mesh,
+  MeshAxisName as MeshAxisName,
+  ReplicaAxisContext as ReplicaAxisContext,
+  SPMDAxisContext as SPMDAxisContext,
+  ShardingContext as ShardingContext,
 )

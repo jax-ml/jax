@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import dataclasses
 import functools
 import threading
-from typing import Any, Hashable, NamedTuple, Set, Sequence, Tuple, Union
+from typing import Any, FrozenSet, Hashable, NamedTuple, Set, Sequence, Tuple, Union
 
 import numpy as np
 
@@ -265,3 +266,75 @@ class _ThreadResourcesLocalState(threading.local):
     self.env = self.stack[-1]
 
 thread_resources = _ThreadResourcesLocalState()
+
+# Axis environments
+
+class AxisEnv(NamedTuple):
+  """Represents a pmap mesh (only along the replica axes)."""
+  nreps: int
+  names: Tuple[Any, ...]
+  sizes: Tuple[int, ...]
+
+
+
+@dataclasses.dataclass(frozen=True)
+class SPMDAxisContext:
+  """A hardware axis context for parallel computations that use the GSPMD partitioner.
+
+  This includes the mesh that will later by used to execute this computation,
+  as well as a set of mesh axes that are currently (e.g. because the current lowering
+  is invoked inside an xmap) lowered in the MANUAL sharding mode.
+  """
+  mesh: Mesh
+  manual_axes: FrozenSet[MeshAxisName] = frozenset()
+
+  @property
+  def axis_env(self):
+    # All collectives that touch axis_env should remember to set use_global_device_ids
+    # when this context is enabled!
+    if self.manual_axes != frozenset(self.mesh.axis_names):
+      raise NotImplementedError(
+          "Collectives in manually partitioned computations are only supported "
+          "when all mesh axes are partitioned manually (no partial automatic sharding). "
+          "Make sure that you mention all mesh axes in axis_resources!")
+    return self.unsafe_axis_env
+
+  @property
+  def unsafe_axis_env(self):
+    return AxisEnv(
+        nreps=self.mesh.size,
+        names=self.mesh.axis_names,
+        sizes=tuple(self.mesh.shape.values()))
+
+  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
+    return SPMDAxisContext(self.mesh, self.manual_axes | axes)
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplicaAxisContext:
+  """A hardware axis context for parallel computations that are partitioned by JAX.
+
+  Unlike in the SPMDAxisContext, this means that JAX might need to emit calls to
+  explicit collectives.
+  """
+  axis_env: AxisEnv
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardingContext:
+  """A hardware axis context for parallel computations that use the sharding
+  interface.
+
+  This context also uses the GSPMD partitioner.
+  """
+  device_assignment: Sequence[xc.Device]
+
+  # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
+  @property
+  def axis_env(self):
+    return AxisEnv(nreps=1, names=(), sizes=())
+
+
+AxisContext = Union[SPMDAxisContext, ReplicaAxisContext, ShardingContext]
+
+

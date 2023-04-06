@@ -13,9 +13,6 @@
 # limitations under the License.
 
 from jax._src.interpreters.pxla import (
-  AUTO as AUTO,
-  ArrayMapping as ArrayMapping,
-  ArrayMappingOrAutoOrUnspecified as ArrayMappingOrAutoOrUnspecified,
   AvalDimSharding as AvalDimSharding,
   EmapInfo as EmapInfo,
   ExecuteReplicated as ExecuteReplicated,
@@ -26,7 +23,6 @@ from jax._src.interpreters.pxla import (
   MeshComputation as MeshComputation,
   MeshDimAssignment as MeshDimAssignment,
   MeshExecutable as MeshExecutable,
-  OrderedDictType as OrderedDictType,
   ParallelCallableInfo as ParallelCallableInfo,
   PartitionInfo as PartitionInfo,
   PartitionsOrReplicated as PartitionsOrReplicated,
@@ -43,12 +39,9 @@ from jax._src.interpreters.pxla import (
   UnloadedMeshExecutable as UnloadedMeshExecutable,
   UnloadedPmapExecutable as UnloadedPmapExecutable,
   WeakRefList as WeakRefList,
-  _UNSPECIFIED as _UNSPECIFIED,
   _create_pmap_sharding_spec as _create_pmap_sharding_spec,
   _get_and_check_device_assignment as _get_and_check_device_assignment,
-  _is_unspecified as _is_unspecified,
   _pmap_sharding_spec as _pmap_sharding_spec,
-  array_mapping_to_axis_resources as array_mapping_to_axis_resources,
   array_types as array_types,
   custom_resource_typing_rules as custom_resource_typing_rules,
   device_put as _deprecated_device_put,
@@ -101,6 +94,15 @@ from jax._src.op_shardings import (
   are_op_shardings_equal as are_op_shardings_equal,
   is_op_sharding_replicated as is_op_sharding_replicated,
   op_sharding_to_indices as op_sharding_to_indices,
+)
+
+from jax._src.partition_spec import (
+  ArrayMapping as ArrayMapping,
+  ArrayMappingOrAutoOrUnspecified as ArrayMappingOrAutoOrUnspecified,
+  AUTO as AUTO,
+  UNSPECIFIED as _UNSPECIFIED,
+  array_mapping_to_axis_resources as array_mapping_to_axis_resources,
+  is_unspecified as _is_unspecified,
 )
 
 from jax._src.sharding_specs import (
