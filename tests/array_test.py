@@ -498,6 +498,13 @@ class JaxArrayTest(jtu.JaxTestCase):
     _check(arr[:], np_inp[:], (2, 2, 1))
     _check(arr[np.array(0), :, :], np_inp[np.array(0), :, :], (2, 1))
     _check(arr[jnp.array(0), :, :], np_inp[jnp.array(0), :, :], (2, 1))
+    _check(arr[0, :2, 1], np_inp[0, :2, 1], (2,))
+    _check(arr[:, 1::2], np_inp[:, 1::2], (2, 2, 1))
+    _check(arr[:, -1:, :], np_inp[:, -1:, :], (2, 1, 1))
+    _check(arr[0:6:1], np_inp[0:6:1], (2, 2, 1))
+    _check(arr[:4], np_inp[:4], (2, 2, 1))
+    _check(arr[::-1], np_inp[::-1], (2, 2, 1))
+
     # TODO(yashkatariya): This returns a replicated output because the int
     # indexing in `_rewriting_take` goes via `dynamic_index_in_dim` rather than
     # `_gather`.
