@@ -965,7 +965,6 @@ def pjit_check_aval_sharding(
   for aval, s in zip(flat_avals, shardings):
     if _is_unspecified_or_auto(s):
       continue
-    global_str = "" if s.is_fully_addressable else " global"
     shape = aval.shape
     try:
       # Sharding interfaces can implement `is_compatible_aval` as an optional
@@ -988,7 +987,7 @@ def pjit_check_aval_sharding(
       if not allow_uneven_sharding and shape[i] % size != 0:
         raise ValueError(f"One of {what_aval} was given the sharding "
                          f"of {s}, which implies that "
-                         f"the{global_str} size of its dimension {i} should be "
+                         f"the global size of its dimension {i} should be "
                          f"divisible by {size}, but it is equal to {shape[i]} "
                          f"(full shape: {shape}) ")
 

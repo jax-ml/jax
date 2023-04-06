@@ -2792,13 +2792,13 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     x = jnp.ones((1,))
     with self.assertRaisesRegex(
-        ValueError, 'implies that the size of its dimension 0 should be '
+        ValueError, 'implies that the global size of its dimension 0 should be '
                     'divisible by 2, but it is equal to 1 '):
       jax.device_put(x, s)
 
     y = jnp.ones((2,))
     with self.assertRaisesRegex(
-        ValueError, 'implies that the size of its dimension 0 should be '
+        ValueError, 'implies that the global size of its dimension 0 should be '
                     'divisible by 2, but it is equal to 1 '):
       jax.device_put((y, x), s)
 
@@ -2963,7 +2963,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
     error = re.compile(
         r"One of pjit arguments.*" + spec_regex(spec) + r".*"
-        r"implies that the size of its dimension 0 should be "
+        r"implies that the global size of its dimension 0 should be "
         r"divisible by " + mesh_size + r", but it is equal to 3 "
         r"\(full shape: \(3, 2\)\)", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
@@ -2976,7 +2976,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
     error = re.compile(
         r"One of pjit outputs.*" + spec_regex(spec) + r".*"
-        r"implies that the size of its dimension 0 should be "
+        r"implies that the global size of its dimension 0 should be "
         r"divisible by " + mesh_size + r", but it is equal to 3", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(lambda x: x, in_shardings=None, out_shardings=P(resources, None))(x)
