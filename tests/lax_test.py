@@ -2839,8 +2839,11 @@ class FooTyRules:
     return [core.ShapedArray((*aval.shape, 2), jnp.dtype('uint32'))]
 
   @staticmethod
-  def physical_op_sharding(aval, sharding):
-    return sharding._to_xla_op_sharding(aval.ndim)
+  def physical_op_sharding(aval, op_sharding_proto):
+    new_op_sharding = op_sharding_proto.clone()
+    tad = list(new_op_sharding.tile_assignment_dimensions)
+    new_op_sharding.tile_assignment_dimensions = [*tad, 1]
+    return new_op_sharding
 
   @staticmethod
   def result_handler(sticky_device, aval):

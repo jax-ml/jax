@@ -2317,13 +2317,15 @@ def _get_and_check_device_assignment(
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
 
+MaybeSharding = Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]
+
 @profiler.annotate_function
 def lower_sharding_computation(
     fun_or_jaxpr: Union[lu.WrappedFun, core.ClosedJaxpr],
     api_name: str,
     fun_name: str,
-    in_shardings: Sequence[Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]],
-    out_shardings: Union[Sequence[Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]], UnspecifiedValue],
+    in_shardings: Sequence[MaybeSharding],
+    out_shardings: Union[Sequence[MaybeSharding], UnspecifiedValue],
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     *,
@@ -2374,17 +2376,17 @@ def lower_sharding_computation(
 
   if _is_unspecified(out_shardings):
     out_shardings = (_UNSPECIFIED,) * len(global_out_avals)
-  # mypy doesn't understand that out_sharding here is always a sequence.
-  assert len(out_shardings) == len(global_out_avals), (  # type: ignore
-      len(out_shardings), len(global_out_avals))  # type: ignore
+  assert isinstance(out_shardings, tuple)
+  assert len(out_shardings) == len(global_out_avals), (
+      len(out_shardings), len(global_out_avals))
 
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   jaxpr_sharding = list(dispatch.jaxpr_shardings(jaxpr))
   backend, device_assignment = _get_and_check_device_assignment(
       it.chain([(i, MismatchType.ARG_SHARDING, None) for i in in_shardings],
-               [(o, MismatchType.OUT_SHARDING, None) for o in out_shardings],  # type: ignore
-               [(js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)  # type: ignore
+               [(o, MismatchType.OUT_SHARDING, None) for o in out_shardings],
+               [(js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
                 for js, source_info in jaxpr_sharding]),
       devices_from_context)
 
@@ -2392,8 +2394,8 @@ def lower_sharding_computation(
       devices_from_context or
       len(device_assignment) > 1 or
       any(not _is_unspecified(i) for i in in_shardings) or
-      any(not _is_unspecified(js) for js, _ in jaxpr_sharding) or  # type: ignore
-      any(not _is_unspecified(o) for o in out_shardings))  # type: ignore
+      any(not _is_unspecified(js) for js, _ in jaxpr_sharding) or
+      any(not _is_unspecified(o) for o in out_shardings))
 
   in_shardings = tuple(sharding_impls.GSPMDSharding.get_replicated(device_assignment)
                        if _is_unspecified(i) else i for i in in_shardings)
@@ -2435,7 +2437,7 @@ def lower_sharding_computation(
   # and don't need to evaluate their arguments.
   if (not always_lower and not (jaxpr.effects or has_outfeed) and
       (not jaxpr.eqns and all(kept_outputs) or not jaxpr.outvars) and
-      all(_is_unspecified(o) for o in out_shardings)):  # type: ignore
+      all(_is_unspecified(o) for o in out_shardings)):
     return MeshComputation(
         str(name_stack), None, True, donated_invars, jaxpr=jaxpr, consts=consts,
         global_in_avals=global_in_avals, global_out_avals=global_out_avals,
@@ -2459,25 +2461,8 @@ def lower_sharding_computation(
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
-    in_op_shardings = []
-    for aval, i in safe_zip(global_in_avals, in_shardings):
-      if aval is core.abstract_token:
-        in_op_shardings.append(None)
-      elif core.is_opaque_dtype(aval.dtype):
-        in_op_shardings.append(aval.dtype._rules.physical_op_sharding(aval, i))
-      else:
-        in_op_shardings.append(i._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
-
-    # TODO(yashkatariya): Fix the HLO produced if out_partitions is
-    # [None, OpShardingProto] has the sharding annotations.
-    out_op_shardings = []
-    for aval, o in safe_zip(global_out_avals, out_shardings):  # type: ignore[arg-type]
-      if _is_unspecified(o) or aval is core.abstract_token:
-        out_op_shardings.append(None)
-      elif core.is_opaque_dtype(aval.dtype):
-        out_op_shardings.append(aval.dtype._rules.physical_op_sharding(aval, o))
-      else:
-        out_op_shardings.append(o._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
+    in_op_shardings = map(_to_logical_op_sharding, global_in_avals, in_shardings)
+    out_op_shardings = map(_to_logical_op_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
     axis_ctx = mlir.ShardingContext(device_assignment)
   else:
@@ -2546,6 +2531,19 @@ def lower_sharding_computation(
       committed=committed,
       pmap_nreps=nreps)
 
+def _to_logical_op_sharding(
+    aval: core.AbstractValue, sharding: Union[MaybeSharding, AUTOAxisResource]
+) -> Optional[xc.OpSharding]:
+  if _is_unspecified(sharding) or is_auto(sharding):
+    return None
+  elif isinstance(aval, ShapedArray):
+    assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+    return sharding._to_xla_op_sharding(aval.ndim)
+  elif isinstance(aval, core.AbstractToken):
+    return None
+  else:
+    raise TypeError(aval)
+
 
 @profiler.annotate_function
 def lower_mesh_computation(
@@ -2565,7 +2563,7 @@ def lower_mesh_computation(
   backend = xb.get_device_backend(mesh.devices.flat[0])
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
-  auto_spmd_lowering = check_if_any_auto(in_shardings + out_shardings)  # type: ignore
+  auto_spmd_lowering = check_if_any_auto((*in_shardings, *out_shardings))
 
   if auto_spmd_lowering and not spmd_lowering:
     raise ValueError('Enable spmd_lowering to use auto spmd lowering.')
@@ -2643,25 +2641,8 @@ def lower_mesh_computation(
   out_partitions: Optional[List[Optional[xc.OpSharding]]]
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
-    in_partitions = []
-    for aval, i in safe_zip(global_in_avals, in_shardings):
-      if is_auto(i):
-        in_partitions.append(None)
-      elif core.is_opaque_dtype(aval.dtype):
-        in_partitions.append(aval.dtype._rules.physical_op_sharding(aval, i))
-      else:
-        in_partitions.append(i._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
-
-    # TODO(yashkatariya): Fix the HLO produced if out_partitions is
-    # [None, OpShardingProto] has the sharding annotations.
-    out_partitions = []
-    for aval, o in safe_zip(global_out_avals, out_shardings):
-      if is_auto(o) or _is_unspecified(o):
-        out_partitions.append(None)
-      elif core.is_opaque_dtype(aval.dtype):
-        out_partitions.append(aval.dtype._rules.physical_op_sharding(aval, o))
-      else:
-        out_partitions.append(o._to_xla_op_sharding(aval.ndim))  # type: ignore[union-attr]
+    in_partitions = map(_to_logical_op_sharding, global_in_avals, in_shardings)
+    out_partitions = map(_to_logical_op_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = mlir.SPMDAxisContext(mesh, manual_axes)
   else:

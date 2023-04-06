@@ -546,11 +546,15 @@ def flatten_lowering_ir_args(
 
 _module_name_regex = re.compile(r"[^\w.-]")
 
-def sharded_aval(aval: core.ShapedArray,
-                 sharding: Optional[xc.OpSharding]) -> core.ShapedArray:
+def sharded_aval(aval: core.AbstractValue,
+                 sharding: Optional[xc.OpSharding]) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
     return aval
+  if isinstance(aval, core.AbstractToken):
+    return aval
+  if not isinstance(aval, core.ShapedArray):
+    raise NotImplementedError
 
   if (sutils.is_op_sharding_replicated(sharding) or
       sharding.type == xc.OpSharding.Type.MANUAL):
@@ -614,22 +618,10 @@ def lower_jaxpr_to_module(
   if not xb.is_known_platform(platform):
     raise ValueError(f"Unknown platform {platform}")
   input_output_aliases = None
-  in_avals = jaxpr.in_avals
-  if arg_shardings is not None:
-    in_avals = [
-        sharded_aval(in_aval, in_sharding)
-        for in_aval, in_sharding in zip(in_avals, arg_shardings)
-    ]
-  out_avals = jaxpr.out_avals
-  if result_shardings is not None:
-    out_avals = []
-    for out_aval, out_sharding in zip(jaxpr.out_avals, result_shardings):
-      if (out_aval is not core.abstract_token and
-          core.is_opaque_dtype(out_aval.dtype)):
-        # TODO(frostig,mattjj,necula): asserts a single physical aval
-        out_aval, = out_aval.dtype._rules.physical_avals(out_aval)
-      out_avals.append(sharded_aval(out_aval, out_sharding))
-
+  in_avals = (jaxpr.in_avals if arg_shardings is None else
+              map(sharded_aval, jaxpr.in_avals, arg_shardings))
+  out_avals = (jaxpr.out_avals if result_shardings is None else
+               map(sharded_aval, jaxpr.out_avals, result_shardings))
   if platform in _platforms_with_donation:
     input_output_aliases, donated_args = _set_up_aliases(
         in_avals, out_avals, donated_args)
@@ -637,9 +629,7 @@ def lower_jaxpr_to_module(
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
   if any(donated_args):
-    # TODO(tomhennigan): At call time we should mark these buffers as deleted.
-    unused_donations = [str(a) for a, d in zip(in_avals, donated_args)
-                        if d]
+    unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
     if platform not in _platforms_with_donation:
       msg = f"Donation is not implemented for {platform}.\n{msg}"
@@ -654,8 +644,7 @@ def lower_jaxpr_to_module(
   dim_vars: Sequence[str]
   if not config.jax_dynamic_shapes:
     # Find the dimension variables
-    all_dim_poly = [d
-                    for aval in jaxpr.in_avals if hasattr(aval, "shape")
+    all_dim_poly = [d for aval in jaxpr.in_avals if hasattr(aval, "shape")
                     for d in aval.shape if not core.is_constant_dim(d)]
     dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new.get_vars()),
                                              all_dim_poly, set())))
@@ -880,14 +869,18 @@ def lower_jaxpr_to_fun(
   ctx.symbol_table.insert(func_op)
   ir_arg_shardings = None
   if arg_shardings is not None:
+    in_avals = [None] * (num_dim_vars + num_tokens) + list(jaxpr.in_avals)
     ir_arg_shardings = util.flatten(
-        [[sharding] * len(types) for sharding, types
-         in zip(arg_shardings, input_types)])
+        [[_to_physical_op_sharding(a, s)] * len(types)
+         for a, s, types in zip(in_avals, arg_shardings, input_types)])
+    del in_avals
   ir_result_shardings = None
   if result_shardings is not None:
+    out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
     ir_result_shardings = util.flatten(
-        [[sharding] * len(types)
-         for sharding, types in zip(result_shardings, output_types)])
+        [[_to_physical_op_sharding(a, s)] * len(types)
+         for a, s, types in zip(out_avals, result_shardings, output_types)])
+    del out_avals
 
   if (replicated_args is not None or ir_arg_shardings is not None
       or input_output_aliases is not None):
@@ -994,6 +987,15 @@ def lower_jaxpr_to_fun(
     func_dialect.ReturnOp(flat_outputs)
 
   return func_op
+
+def _to_physical_op_sharding(
+    aval: Optional[core.AbstractValue], sharding: Optional[xc.OpSharding]
+) -> Optional[xc.OpSharding]:
+  if (isinstance(aval, core.ShapedArray) and core.is_opaque_dtype(aval.dtype)
+      and sharding is not None):
+    return aval.dtype._rules.physical_op_sharding(aval, sharding)
+  return sharding
+
 
 def _emit_lowering_rule_as_fun(lowering_rule,
                                ctx: LoweringRuleContext) -> func_dialect.FuncOp:

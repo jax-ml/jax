@@ -36,7 +36,7 @@ from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
 from jax.lax import with_sharding_constraint
-from jax import prng
+from jax._src import prng
 from jax.sharding import PartitionSpec as P
 from jax.experimental.maps import xmap
 from jax.experimental import multihost_utils
