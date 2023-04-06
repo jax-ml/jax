@@ -37,6 +37,7 @@ from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src import sharding_utils as sutils
 from jax._src.config import config
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
@@ -551,24 +552,17 @@ def sharded_aval(aval: core.ShapedArray,
   if sharding is None:
     return aval
 
-  if (sharding.type == xc.OpSharding.Type.REPLICATED or
+  if (sutils.is_op_sharding_replicated(sharding) or
       sharding.type == xc.OpSharding.Type.MANUAL):
     return aval
 
-  sharded_shape = []
-  tile_rank = len(sharding.tile_assignment_dimensions)
-  if sharding.replicate_on_last_tile_dim:
-    tile_rank -= 1
-  if sharding.last_tile_dims:
-    tile_rank -= len(sharding.last_tile_dims)
-  if tile_rank == 0:
-    return aval
-
-  for i in range(tile_rank):
-    partitions = sharding.tile_assignment_dimensions[i]
-    assert partitions > 0
-    sharded_shape.append((aval.shape[i] + partitions - 1) // partitions)
-  return aval.update(tuple(sharded_shape))
+  partitions, _ = sutils.get_num_ways_dim_sharded(sharding)
+  out = []
+  for s, p in zip(aval.shape, partitions):
+    quotient, remainder = divmod(s, p)
+    assert remainder == 0
+    out.append(quotient)
+  return aval.update(tuple(out))
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,

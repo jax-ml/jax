@@ -61,6 +61,7 @@ from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
 from jax._src import util
+from jax._src import sharding_utils as sutils
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
@@ -116,6 +117,10 @@ ShardingSpec = pmap_lib.ShardingSpec
 OpShardingType = Any
 
 PartitionSpec = sharding_impls.PartitionSpec
+
+get_num_ways_dim_sharded = sutils.get_num_ways_dim_sharded
+is_op_sharding_replicated = sutils.is_op_sharding_replicated
+
 
 def sharding_spec_mesh_shape(self):
   sharded_axis_sizes = []
@@ -204,21 +209,6 @@ def sharding_spec_sharding_proto(self, special_axes: Mapping[int, OpShardingType
   proto.tile_assignment_dimensions = list(proto_mesh.shape)
   proto.tile_assignment_devices = list(proto_mesh.flat)
   return proto
-
-
-def get_num_ways_dim_sharded(op_sharding: xc.OpSharding) -> Tuple[Sequence[int], int]:
-  partitions = op_sharding.tile_assignment_dimensions
-  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
-    replicate_on_last_tile_dim = True
-  else:
-    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
-    if op_sharding.last_tile_dims:
-      raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
-  num_replicas = 1
-  if replicate_on_last_tile_dim:
-    num_replicas = partitions[-1]
-    partitions = partitions[:-1]
-  return partitions, num_replicas
 
 
 def _op_sharding_to_numpy_indices(
@@ -3328,12 +3318,6 @@ def are_op_shardings_equal(op1: xc.OpSharding, op2: xc.OpSharding) -> bool:
   if is_op_sharding_replicated(op1) and is_op_sharding_replicated(op2):
     return True
   return xc.HloSharding.from_proto(op1) == xc.HloSharding.from_proto(op2)
-
-
-def is_op_sharding_replicated(op: xc.OpSharding) -> bool:
-  if len(op.tile_assignment_devices) == 1:
-    return True
-  return xc.HloSharding.from_proto(op).is_replicated()  # type: ignore
 
 
 _forbidden_primitives = {

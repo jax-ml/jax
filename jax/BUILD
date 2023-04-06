@@ -181,6 +181,7 @@ py_library_providing_imports_info(
         ":pretty_printer",
         ":profiler",
         ":sharding",
+        ":sharding_utils",
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
@@ -341,6 +342,7 @@ pytype_strict_library(
         ":core",
         ":effects",
         ":partial_eval",
+        ":sharding_utils",
         ":source_info_util",
         ":util",
         ":xla",
@@ -397,6 +399,14 @@ pytype_strict_library(
     srcs = ["_src/sharding.py"],
     deps = [
         ":util",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "sharding_utils",
+    srcs = ["_src/sharding_utils.py"],
+    deps = [
         "//jax/_src/lib",
     ],
 )

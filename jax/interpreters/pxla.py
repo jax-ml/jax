@@ -68,7 +68,6 @@ from jax._src.interpreters.pxla import (
   global_aval_to_result_handler as global_aval_to_result_handler,
   global_avals_to_results_handler as global_avals_to_results_handler,
   global_result_handlers as global_result_handlers,
-  is_op_sharding_replicated as is_op_sharding_replicated,
   local_aval_to_result_handler as local_aval_to_result_handler,
   local_avals_to_results_handler as local_avals_to_results_handler,
   local_result_handlers as local_result_handlers,
@@ -109,6 +108,10 @@ from jax._src.interpreters.pxla import (
 from jax._src.mesh import (
   MeshAxisName as MeshAxisName,
   thread_resources as thread_resources,
+)
+
+from jax._src.sharding_utils import (
+  is_op_sharding_replicated as is_op_sharding_replicated
 )
 
 # Deprecations
