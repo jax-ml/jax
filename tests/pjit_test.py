@@ -2655,7 +2655,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((1,), ('x',))
     with self.assertRaisesRegex(
         RuntimeError,
-        "jit does not support using the mesh context manager"):
+        "jax.jit only supports `XLACompatibleSharding`s being passed to "
+        "in_shardings"):
       with mesh:
         jax.jit(lambda x: x, in_shardings=P('x'),
                 out_shardings=P('x'))(jnp.arange(8))

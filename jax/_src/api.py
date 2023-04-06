@@ -176,21 +176,24 @@ def jit(
       whole subtree), in which case the leaves get broadcast to all values in
       that subtree.
 
+      The ``in_shardings`` argument is optional. JAX will infer the shardings
+      from the input :py:class:`jax.Array`'s and defaults to replicating the input
+      if the sharding cannot be inferred.
+
       The valid resource assignment specifications are:
-        - :py:obj:`None`, in which case the value will be replicated on all devices
         - :py:class:`XLACompatibleSharding`, which will decide how the value
-          will be partitioned. With this, using a mesh context manager is not
-          required.
-        - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
-          of the partitioned value. Each element can be a :py:obj:`None`, a mesh
-          axis or a tuple of mesh axes, and specifies the set of resources assigned
-          to partition the value's dimension matching its position in the spec.
+            will be partitioned. With this, using a mesh context manager is not
+            required.
 
       The size of every dimension has to be a multiple of the total number of
       resources assigned to it. This is similar to pjit's in_shardings.
     out_shardings: Like ``in_shardings``, but specifies resource
       assignment for function outputs. This is similar to pjit's
       out_shardings.
+
+      The ``out_shardings`` argument is optional. If not specified, :py:fun:`jax.jit` will use
+      GSPMD's sharding propagation to figure out what the sharding of the
+      output(s) should be.
     static_argnums: An optional int or collection of ints that specify which
       positional arguments to treat as static (compile-time constant).
       Operations that only depend on static arguments will be constant-folded in

@@ -468,9 +468,11 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
         device, backend)
   else:
     in_shardings = tree_map(
-        lambda x: _create_sharding_for_array(pjit_mesh, x), user_in_shardings)
+        lambda x: _create_sharding_for_array(pjit_mesh, x, 'in_shardings'),
+        user_in_shardings)
     out_shardings = tree_map(
-        lambda x: _create_sharding_for_array(pjit_mesh, x), user_out_shardings)
+        lambda x: _create_sharding_for_array(pjit_mesh, x, 'out_shardings'),
+        user_out_shardings)
 
   del user_in_shardings, user_out_shardings
 
@@ -649,20 +651,30 @@ def pjit(
       whole subtree), in which case the leaves get broadcast to all values in
       that subtree.
 
+      The ``in_shardings`` argument is optional. JAX will infer the shardings
+      from the input :py:class:`jax.Array`'s, and defaults to replicating the input
+      if the sharding cannot be inferred.
+
       The valid resource assignment specifications are:
-        - :py:obj:`None`, in which case the value will be replicated on all devices
         - :py:class:`XLACompatibleSharding`, which will decide how the value
-          will be partitioned. With this, using a mesh context manager is not
-          required.
-        - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
-          of the partitioned value. Each element can be a :py:obj:`None`, a mesh
-          axis or a tuple of mesh axes, and specifies the set of resources assigned
-          to partition the value's dimension matching its position in the spec.
+            will be partitioned. With this, using a mesh context manager is not
+            required.
+        - For backwards compatibility, in_shardings still supports ingesting
+          :py:class:`PartitionSpec` and :py:obj:`None`. These 2 options can
+          *only* be used with the mesh context manager.
+          - :py:obj:`None`, in which case the value will be replicated on all devices
+          - :py:class:`PartitionSpec`, a tuple of length at most equal to the rank
+            of the partitioned value. Each element can be a :py:obj:`None`, a mesh
+            axis or a tuple of mesh axes, and specifies the set of resources assigned
+            to partition the value's dimension matching its position in the spec.
 
       The size of every dimension has to be a multiple of the total number of
       resources assigned to it.
     out_shardings: Like ``in_shardings``, but specifies resource
       assignment for function outputs.
+
+      The ``out_shardings`` argument is optional. If not specified, :py:fun:`jax.jit` will use
+      GSPMD's sharding propagation to determine how to shard the outputs.
     in_axis_resources: (Deprecated) Please use in_shardings.
     out_axis_resources: (Deprecated) Please use out_shardings.
     static_argnums: An optional int or collection of ints that specify which
@@ -766,14 +778,22 @@ def _create_mesh_pspec_sharding_from_parsed_pspec(mesh, x):
   return pxla.create_mesh_pspec_sharding(mesh, x.user_spec, x)
 
 
-def _create_sharding_for_array(mesh, x):
+def _create_sharding_for_array(mesh, x, name):
   if isinstance(x, XLACompatibleSharding) or _is_unspecified_or_auto(x):
     return x
   if mesh is None:
-    raise RuntimeError(
-        "jit does not support using the mesh context manager and passing "
-        "PartitionSpecs to in_shardings or out_shardings. Please pass in "
-        "the `Sharding` explicitly via in_shardings or out_shardings.")
+    msg = ('jax.jit only supports `XLACompatibleSharding`s being passed to'
+           f' {name}. Looks like you are passing either `PartitionSpec` or `None`'
+           f' which is not allowed in jax.jit.\n')
+    if name == 'in_shardings':
+      msg += (f'Note that {name} argument is optional. JAX will infer the shardings'
+              " from the input jax.Array's and will default to replicating the"
+              ' input if the sharding cannot be inferred.')
+    elif name == 'out_shardings':
+      msg += (f'Note that {name} is optional. If not specified, jax.jit will'
+              " use GSPMD's sharding propagation to figure out what the sharding"
+              ' of the output(s) should be.')
+    raise RuntimeError(msg)
   if mesh.empty:
     raise RuntimeError(
         'pjit requires a non-empty mesh if you are passing `PartitionSpec`s or'
@@ -1938,7 +1958,7 @@ def with_sharding_constraint(x, shardings=_UNSPECIFIED,
   resource_env = mesh_lib.thread_resources.env
   mesh = resource_env.physical_mesh
 
-  shardings_flat = [_create_sharding_for_array(mesh, a)
+  shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings')
                     for a in user_shardings_flat]
   unconstrained_dims = [get_unconstrained_dims(s)
                         if isinstance(s, NamedSharding) else {}
