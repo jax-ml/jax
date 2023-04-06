@@ -3801,6 +3801,33 @@ class APITest(jtu.JaxTestCase):
     a2 = jnp.array(((x, x), [x, x]))
     self.assertAllClose(np.array(((1, 1), (1, 1))), a2)
 
+  def test_dunder_jax_array_bug(self):
+    @jax.tree_util.register_pytree_node_class
+    class A:
+      x: jax.Array
+
+      def __init__(self, x: jax.Array):
+        self.x = x
+
+      def tree_flatten(self):
+        return ((self.x,), None)
+
+      @classmethod
+      def tree_unflatten(cls, _, children):
+        x, = children
+        return cls(x)
+
+      def __jax_array__(self) -> jax.Array:
+        return self.x
+
+      ndim = property(operator.attrgetter('x.ndim'))
+      dtype = property(operator.attrgetter('x.dtype'))
+      shape = property(operator.attrgetter('x.shape'))
+
+    a = A(jnp.ones((3, 3)))
+    f = jax.jit(jnp.matmul)
+    f(a, a)  # don't crash
+
   def test_constant_handler_mro(self):
     # https://github.com/google/jax/issues/6129
 

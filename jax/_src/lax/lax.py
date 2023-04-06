@@ -505,12 +505,13 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   Returns:
     An array with the same shape as `operand`, cast elementwise to `new_dtype`.
   """
-  if hasattr(operand, '__jax_array__'):
-    operand = operand.__jax_array__()  # type: ignore
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
 def _convert_element_type(operand: ArrayLike, new_dtype: Optional[DTypeLike] = None,
                           weak_type: bool = False):
+  if hasattr(operand, '__jax_array__'):
+    operand = operand.__jax_array__()  # type: ignore
+
   if (core.is_opaque_dtype(new_dtype) or
       core.is_opaque_dtype(getattr(operand, 'dtype', None))):
     return convert_element_type_p.bind(operand, new_dtype=new_dtype,
