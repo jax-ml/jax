@@ -2875,6 +2875,7 @@ def live_arrays(platform=None):
   return xb.get_backend(platform).live_arrays()
 
 def clear_caches():
+  """Clear all compilation and staging caches."""
   # Clear all lu.cache and util.weakref_lru_cache instances (used for staging
   # and Python-dispatch compiled executable caches).
   lu.clear_all_caches()
