@@ -581,6 +581,20 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaises(ValueError):
       g(x)
 
+  def test_in_specs_none_error(self):
+    mesh = jtu.create_global_mesh((4,), ('x',))
+
+    def f(x): return x
+
+    with self.assertRaisesRegex(TypeError, "but it was None"):
+      shard_map(f, mesh, in_specs=None, out_specs=P())(3.)
+
+    # TODO(mattjj): enable this test once we fix the tree_map(f, None, 3.0) bug
+    # with self.assertRaises(TypeError):
+    #   shard_map(f, mesh, in_specs=(None,), out_specs=P())(3.)
+
+    shard_map(f, mesh, in_specs=P(), out_specs=P())(3.)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str

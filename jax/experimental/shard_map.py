@@ -131,6 +131,12 @@ def _canonicalize_spec(spec: PartitionSpec) -> AxisNames:
 SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 
 def _check_specs(error_type: SpecErrorType, specs: Any) -> None:
+  if error_type == SpecErrorType.input and specs is None:
+    raise TypeError(
+        f"shard_map in_specs argument must be a pytree of "
+        "`jax.sharding.PartitionSpec` instances, but it was None.\n"
+        "Instead of `in_specs=None`, did you mean `in_specs=P()`, "
+        "where `P = jax.sharding.PartitionSpec`?")
   if all(isinstance(p, PartitionSpec) for p in tree_leaves(specs)): return
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
   msgs = [f"  {prefix}_specs{keystr(key)} is {x} of type {type(x).__name__}, "
