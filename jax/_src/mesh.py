@@ -18,7 +18,6 @@ from __future__ import annotations
 import collections
 import contextlib
 import functools
-import sys
 import threading
 from typing import Any, Hashable, NamedTuple, Set, Sequence, Tuple, Union
 
@@ -28,11 +27,6 @@ from jax._src import config as jax_config
 from jax._src import xla_bridge as xb
 from jax._src import util
 from jax._src.lib import xla_client as xc
-
-if sys.version_info >= (3, 9):
-  cache = functools.cache
-else:
-  cache = functools.lru_cache
 
 MeshAxisName = Any
 ResourceAxisName = Hashable
@@ -251,11 +245,26 @@ class Mesh(contextlib.ContextDecorator):
     assert not self.empty
     return np.vectorize(lambda d: d.id, otypes=[int])(self.devices)
 
-  @cache
-  def __repr__(self):
+  @functools.cached_property
+  def _local_devices_set(self):
+    return set(self.local_devices)
+
+  @functools.cached_property
+  def _flat_devices_list(self):
+    return list(self.devices.flat)
+
+  @functools.cached_property
+  def _flat_devices_set(self):
+    return set(self.devices.flat)
+
+  @functools.cached_property
+  def _repr(self):
     if self.empty:
       return "Mesh(device_ids=[], axis_names=())"
     return f"Mesh(device_ids={self.device_ids!r}, axis_names={self.axis_names!r})"
+
+  def __repr__(self):
+    return self._repr
 
   @functools.cached_property
   def local_devices(self):

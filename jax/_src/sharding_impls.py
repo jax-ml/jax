@@ -239,19 +239,25 @@ class NamedSharding(XLACompatibleSharding):
   def _from_parsed_pspec(cls, mesh, parsed_pspec):
     return cls(mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 
-  @functools.cached_property
+  @property
   def device_set(self) -> Set[Device]:
-    return set(self.mesh.devices.flat)
+    return self.mesh._flat_devices_set
 
-  @functools.cached_property
+  @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self.mesh.devices.flat)
+    return self.mesh._flat_devices_list
 
   @property
   def is_fully_addressable(self) -> bool:
     # Speed up `is_fully_addressable` since there is a high chance that the
     # mesh across multiple NamedSharding objects will be the same.
     return not self.mesh.is_multi_process
+
+  @property
+  def addressable_devices(self) -> Set[Device]:
+    # Override addressable devices because there is a high chance that the mesh
+    # across multiple NamedSharding objects will be the same.
+    return self.mesh._local_devices_set
 
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(
