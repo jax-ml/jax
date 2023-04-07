@@ -91,6 +91,29 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False, tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  # Test  fftconvolve: present JAX code implement only mode="same" or "full"
+  @jtu.sample_product(
+    [dict(xshape=xshape, yshape=yshape)
+     for shapeset in [onedim_shapes, twodim_shapes, threedim_shapes]
+     for xshape in shapeset
+     for yshape in shapeset
+    ],
+    mode=['full', 'same', 'valid'],
+    dtype=default_dtypes,
+  )
+  def testFFTConvolution(self, xshape, yshape, dtype, mode):
+    jsp_op = jsp_signal.fftconvolve
+    osp_op = osp_signal.fftconvolve
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
+    osp_fun = partial(osp_op, mode=mode)
+    jsp_fun = partial(jsp_op, mode=mode)
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12, np.complex64: 1e-2, np.complex128: 1e-12}
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
+                            tol=tol)
+    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
+
+
   @jtu.sample_product(
     mode=['full', 'same', 'valid'],
     op=['convolve2d', 'correlate2d'],
