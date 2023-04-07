@@ -138,7 +138,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
   @property
   def pmap(self):
-    return src_api._python_pmap
+    return src_api.pmap
 
   def testDeviceBufferToArray(self):
     sda = self.pmap(lambda x: x)(jnp.ones((jax.device_count(), 2)))

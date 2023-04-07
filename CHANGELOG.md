@@ -9,7 +9,8 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.9
 
 * Changes
-  * The flags experimental_cpp_jit, and experimental_cpp_pjit have been removed.
+  * The flags experimental_cpp_jit, experimental_cpp_pjit and 
+    experimental_cpp_pmap have been removed.
     They are now always on.
 
 * Deprecations

@@ -34,17 +34,8 @@ from jax._src import linear_util as lu
 from jax._src.linear_util import TracingDebugInfo
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
                            Unhashable)
-from jax._src.config import flags, bool_env
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_bool(
-    "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
-    "A flag enabling the C++ jax.pmap fast path. Until the default "
-    "is switched to True, the feature is not supported and possibly broken "
-    "(e.g. it may use unreleased code from jaxlib.")
 
 map = safe_map
 
