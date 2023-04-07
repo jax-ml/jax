@@ -569,6 +569,18 @@ class ShardMapTest(jtu.JaxTestCase):
     g = shard_map(f, mesh, in_specs=(P('x', None),), out_specs=P('x', None))
     _ = g(sharded_rng)  # don't crash!
 
+  def test_functools_partial_rank_error(self):
+    mesh = jtu.create_global_mesh((4,), ('x',))
+
+    @partial
+    def f(x):
+      return x
+
+    g = shard_map(f, mesh, in_specs=(P('x', None),), out_specs=P('x',))
+    x = jnp.arange(4)
+    with self.assertRaises(ValueError):
+      g(x)
+
 
 class FunSpec(NamedTuple):
   name: str
