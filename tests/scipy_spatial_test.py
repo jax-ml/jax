@@ -127,11 +127,12 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(4,)],
+    shape=[(4,), (2, 4)],
+    other_shape=[(4,), (2, 4)],
   )
-  def testRotationMultiply(self, shape, dtype):
+  def testRotationMultiply(self, shape, other_shape, dtype):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: (rng(shape, dtype), rng(shape, dtype))
+    args_maker = lambda: (rng(shape, dtype), rng(other_shape, dtype))
     jnp_fn = lambda q, o: (jsp_Rotation.from_quat(q) * jsp_Rotation.from_quat(o)).as_quat()
     np_fn = lambda q, o: (osp_Rotation.from_quat(q) * osp_Rotation.from_quat(o)).as_quat()
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
