@@ -29,15 +29,41 @@ real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.boolean
 class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.spatial implementations"""
 
+  # @jtu.sample_product(
+  #   dtype=float_dtypes,
+  #   shape=[(3, 3)],
+  # )
+  # def testRotationFromMatrix(self, shape, dtype):
+  #   rng = jtu.rand_default(self.rng())
+  #   args_maker = lambda: (rng(shape, dtype),)
+  #   jnp_fn = lambda a: jsp_Rotation.from_matrix(a).as_rotvec()
+  #   np_fn = lambda a: osp_Rotation.from_matrix(a).as_rotvec()
+  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+  #                           tol=1e-4)
+  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  # @jtu.sample_product(
+  #   dtype=float_dtypes,
+  #   shape=[(3,)],
+  # )
+  # def testRotationFromRotvec(self, shape, dtype):
+  #   rng = jtu.rand_default(self.rng())
+  #   args_maker = lambda: (rng(shape, dtype),)
+  #   jnp_fn = lambda a: jsp_Rotation.from_rotvec(a).as_rotvec()
+  #   np_fn = lambda a: osp_Rotation.from_rotvec(a).as_rotvec()
+  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+  #                           tol=1e-4)
+  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(3, 3)],
+    shape=[(4,)],
   )
-  def testRotationFromMatrix(self, shape, dtype):
+  def testRotationFromQuat(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda a: jsp_Rotation.from_matrix(a).as_rotvec()
-    np_fn = lambda a: osp_Rotation.from_matrix(a).as_rotvec()
+    jnp_fn = lambda a: jsp_Rotation.from_quat(a).as_rotvec()
+    np_fn = lambda a: osp_Rotation.from_quat(a).as_rotvec()
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
