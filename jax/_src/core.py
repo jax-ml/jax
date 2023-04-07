@@ -252,6 +252,8 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
 
 @total_ordering
 class Var:
+  __slots__ = ["count", "suffix", "aval"]
+
   count: int
   suffix: str
   aval: AbstractValue
