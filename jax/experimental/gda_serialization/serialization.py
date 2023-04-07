@@ -31,82 +31,82 @@ from jax.experimental.array_serialization.serialization import (
 _deprecations = {
     "get_tensorstore_spec": (
         (
-            "jax.experimetal.gda_serialization.get_tensorstore_spec is"
+            "jax.experimental.gda_serialization.get_tensorstore_spec is"
             " deprecated. Use"
-            " jax.experimetal.array_serialization.get_tensorstore_spec"
+            " jax.experimental.array_serialization.get_tensorstore_spec"
         ),
         _deprecated_get_tensorstore_spec,
     ),
     "async_serialize": (
         (
-            "jax.experimetal.gda_serialization.async_serialize is deprecated. "
-            "Use jax.experimetal.array_serialization.async_serialize"
+            "jax.experimental.gda_serialization.async_serialize is deprecated. "
+            "Use jax.experimental.array_serialization.async_serialize"
         ),
         _deprecated_async_serialize,
     ),
     "run_serialization": (
         (
-            "jax.experimetal.gda_serialization.run_serialization is deprecated."
-            " Use jax.experimetal.array_serialization.run_serialization"
+            "jax.experimental.gda_serialization.run_serialization is deprecated."
+            " Use jax.experimental.array_serialization.run_serialization"
         ),
         _deprecated_run_serialization,
     ),
     "async_deserialize": (
         (
-            "jax.experimetal.gda_serialization.async_deserialize is deprecated."
-            " Use jax.experimetal.array_serialization.async_deserialize"
+            "jax.experimental.gda_serialization.async_deserialize is deprecated."
+            " Use jax.experimental.array_serialization.async_deserialize"
         ),
         _deprecated_async_deserialize,
     ),
     "run_deserialization": (
         (
-            "jax.experimetal.gda_serialization.run_deserialization is"
+            "jax.experimental.gda_serialization.run_deserialization is"
             " deprecated. Use"
-            " jax.experimetal.array_serialization.run_deserialization"
+            " jax.experimental.array_serialization.run_deserialization"
         ),
         _deprecated_run_deserialization,
     ),
     "GlobalAsyncCheckpointManagerBase": (
         (
-            "jax.experimetal.gda_serialization.GlobalAsyncCheckpointManagerBase"
+            "jax.experimental.gda_serialization.GlobalAsyncCheckpointManagerBase"
             " is deprecated. "
-            "Use jax.experimetal.array_serialization.GlobalAsyncCheckpointManagerBase"
+            "Use jax.experimental.array_serialization.GlobalAsyncCheckpointManagerBase"
         ),
         _deprecated_GlobalAsyncCheckpointManagerBase,
     ),
     "GlobalAsyncCheckpointManager": (
         (
-            "jax.experimetal.gda_serialization.GlobalAsyncCheckpointManager is"
+            "jax.experimental.gda_serialization.GlobalAsyncCheckpointManager is"
             " deprecated. Use"
-            " jax.experimetal.array_serialization.GlobalAsyncCheckpointManager"
+            " jax.experimental.array_serialization.GlobalAsyncCheckpointManager"
         ),
         _deprecated_GlobalAsyncCheckpointManager,
     ),
     "AsyncManager": (
         (
-            "jax.experimetal.gda_serialization.AsyncManager is deprecated. "
-            "Use jax.experimetal.array_serialization.AsyncManager"
+            "jax.experimental.gda_serialization.AsyncManager is deprecated. "
+            "Use jax.experimental.array_serialization.AsyncManager"
         ),
         _deprecated_AsyncManager,
     ),
     "_LimitInFlightBytes": (
         (
-            "jax.experimetal.gda_serialization._LimitInFlightBytes is deprecated. "
-            "Use jax.experimetal.array_serialization._LimitInFlightBytes"
+            "jax.experimental.gda_serialization._LimitInFlightBytes is deprecated. "
+            "Use jax.experimental.array_serialization._LimitInFlightBytes"
         ),
         _deprecated_LimitInFlightBytes,
     ),
     "_get_metadata": (
         (
-            "jax.experimetal.gda_serialization._get_metadata is deprecated. "
-            "Use jax.experimetal.array_serialization._get_metadata"
+            "jax.experimental.gda_serialization._get_metadata is deprecated. "
+            "Use jax.experimental.array_serialization._get_metadata"
         ),
         _deprecated_get_metadata,
     ),
     "TS_CONTEXT": (
         (
-            "jax.experimetal.gda_serialization.TS_CONTEXT is deprecated. "
-            "Use jax.experimetal.array_serialization.TS_CONTEXT"
+            "jax.experimental.gda_serialization.TS_CONTEXT is deprecated. "
+            "Use jax.experimental.array_serialization.TS_CONTEXT"
         ),
         _deprecated_TS_CONTEXT,
     ),
