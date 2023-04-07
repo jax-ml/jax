@@ -151,3 +151,5 @@ Miscellaneous
 
     Device
     print_environment_info
+    live_arrays
+    clear_caches
