@@ -64,7 +64,10 @@ class Rotation(typing.NamedTuple):
   @jax.jit
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
-    return _quaternion_matrix(jnp.roll(self.quat, 1))[:3, :3]
+    if self.quat.ndim == 1:
+      return _as_matrix(self.quat)
+    else:
+      return jax.vmap(_as_matrix)(self.quat)
 
   @functools.partial(jax.jit, static_argnames=['degrees'])
   def as_rotvec(self, degrees: bool = False) -> jax.Array:
@@ -122,6 +125,9 @@ def _as_euler(quat, seq, degrees):
   ai, aj, ak = _euler_from_quaternion(jnp.roll(quat, 1), axes='sxyz')
   angles = jnp.array([ai, aj, ak])
   return jnp.where(degrees, jnp.degrees(angles), angles)
+
+def _as_matrix(quat):
+  return _quaternion_matrix(jnp.roll(quat, 1))[:3, :3]
 
 def _from_rotvec(rotvec, degrees):
   norm = _vector_norm(rotvec)
