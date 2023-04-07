@@ -84,19 +84,23 @@ class Rotation(typing.NamedTuple):
     return jnp.where(degrees, jnp.degrees(angles), angles)
 
   @functools.partial(jax.jit, static_argnames=['inverse'])
-  def apply(self, vector: jax.Array, inverse: bool = False) -> jax.Array:
-    """Apply this rotation to a single vector."""
-    matrix = self.as_matrix()
-    if inverse:
-      result = jnp.einsum('kj,k->j', matrix, vector)
+  def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
+    """Apply this rotation to one or more vectors."""
+    if self.quat.ndim == 1 and vectors.ndim == 1:
+      return _apply(self, vectors, inverse)
     else:
-      result = jnp.einsum('jk,k->j', matrix, vector)
-    return result
+      self_axis = None if self.quat.ndim == 1 else 0
+      vector_axis = None if vectors.ndim == 1 else 0
+      return jax.vmap(_apply, in_axes=[self_axis, vector_axis, None])(self, vectors, inverse)
 
   def __mul__(self, other):
     """Compose this rotation with the other."""
-    quat = _quaternion_multiply(jnp.roll(self.quat, 1), jnp.roll(other.quat, 1))
-    return Rotation(jnp.roll(quat, -1))
+    if self.quat.ndim == 1 and other.quat.ndim == 1:
+      return Rotation.from_quat(_mul(self.quat, other.quat))
+    else:
+      self_axis = None if self.quat.ndim == 1 else 0
+      other_axis = None if other.quat.ndim == 1 else 0
+      return Rotation.from_quat(jax.vmap(_mul, in_axes=[self_axis, other_axis])(self.quat, other.quat))
 
   def inv(self):
     """Invert this rotation."""
@@ -104,6 +108,14 @@ class Rotation(typing.NamedTuple):
       return Rotation(_inv(self.quat))
     else:
       return Rotation(jax.vmap(_inv)(self.quat))
+
+def _apply(rotation, vector, inverse):
+  matrix = rotation.as_matrix()
+  if inverse:
+    result = jnp.einsum('kj,k->j', matrix, vector)
+  else:
+    result = jnp.einsum('jk,k->j', matrix, vector)
+  return result
 
 def _from_rotvec(rotvec, degrees):
   norm = _vector_norm(rotvec)
@@ -113,6 +125,9 @@ def _from_rotvec(rotvec, degrees):
 
 def _from_matrix(matrix):
   return jnp.roll(_quaternion_from_matrix(matrix), -1)
+
+def _mul(quat, other):
+  return jnp.roll(_quaternion_multiply(jnp.roll(quat, 1), jnp.roll(other, 1)), -1)
 
 def _inv(quat):
   return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
@@ -269,31 +284,6 @@ def _quaternion_from_matrix(matrix, isprecise=False):
   q = V[[3, 0, 1, 2], jnp.argmax(w)]
   q = lax.cond(q[0] < 0.0, -1.0 * q, lambda x: x, q, lambda x: x)
   return q
-
-# def _quaternion_from_matrix(matrix):
-#   decision = jnp.array([matrix[0, 0],
-#                         matrix[1, 1],
-#                         matrix[2, 2],
-#                         matrix[0, 0] + matrix[1, 1] + matrix[2, 2]])
-#   choice = jnp.argmax(decision)
-
-#   quat1 = jnp.empty(4)
-#   i = choice
-#   j = (i + 1) % 3
-#   k = (j + 1) % 3
-#   quat1.at[i].set(1 - decision[3] + 2 * matrix[i, i])
-#   quat1.at[j].set(matrix[j, i] + matrix[i, j])
-#   quat1.at[k].set(matrix[k, i] + matrix[i, k])
-#   quat1.at[3].set(matrix[k, j] - matrix[j, k])
-
-#   quat2 = jnp.empty(4)
-#   quat2.at[0].set(matrix[2, 1] - matrix[1, 2])
-#   quat2.at[1].set(matrix[0, 2] - matrix[2, 0])
-#   quat2.at[2].set(matrix[1, 0] - matrix[0, 1])
-#   quat2.at[3].set(1 + decision[3])
-
-#   quat = jnp.where(choice != 3, quat1, quat2)
-#   return quat
 
 
 def _quaternion_matrix(quaternion):

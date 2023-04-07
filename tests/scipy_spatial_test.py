@@ -31,8 +31,8 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(4,)],
-    vector_shape=[(3,)],
+    shape=[(4,), (2, 4)],
+    vector_shape=[(3,), (2, 3)],
     inverse=[True, False],
   )
   def testRotationApply(self, shape, vector_shape, dtype, inverse):
@@ -113,7 +113,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(3,), (3, 3)],
+    shape=[(3,), (2, 3)],
   )
   def testRotationFromRotvec(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
@@ -139,7 +139,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(4,), (3, 4)],
+    shape=[(4,), (2, 4)],
   )
   def testRotationInv(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
