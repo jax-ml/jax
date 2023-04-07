@@ -205,7 +205,7 @@ class Mesh(contextlib.ContextDecorator):
   def empty(self):
     return self.devices.ndim == 0
 
-  @property
+  @functools.cached_property
   def is_multi_process(self):
     return self.devices.size != len(self.local_devices)
 

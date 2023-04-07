@@ -247,6 +247,9 @@ class NamedSharding(XLACompatibleSharding):
   def _device_assignment(self) -> XLADeviceAssignment:
     return list(self.mesh.devices.flat)
 
+  def is_fully_addressable(self) -> bool:
+    return not self.mesh.is_multi_process()
+
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(
       self,
