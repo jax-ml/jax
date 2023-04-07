@@ -30,14 +30,14 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
   """Tests for LAX-backed scipy.spatial implementations"""
 
   @jtu.sample_product(
-    dtype=real_dtypes,
+    dtype=float_dtypes,
     shape=[(3, 3)],
   )
   def testRotationFromMatrix(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = jsp_Rotation.from_matrix
-    np_fn = osp_Rotation.from_matrix
+    jnp_fn = lambda a: jsp_Rotation.from_matrix(a).as_rotvec()
+    np_fn = lambda a: osp_Rotation.from_matrix(a).as_rotvec()
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
