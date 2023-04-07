@@ -101,7 +101,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(3, 3)],
+    shape=[(3, 3), (2, 3, 3)],
   )
   def testRotationFromMatrix(self, shape, dtype):
     rng = jtu.rand_default(self.rng())

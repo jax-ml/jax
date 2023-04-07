@@ -143,24 +143,29 @@ def _from_rotvec(rotvec, degrees):
   return jnp.roll(_quaternion_about_axis(angle, axis), -1)
 
 def _from_matrix(matrix):
-  decision = jnp.array([matrix[0, 0],
-                        matrix[1, 1],
-                        matrix[2, 2],
-                        matrix[0, 0] + matrix[1, 1] + matrix[2, 2]])
-  choice = jnp.argmax(decision)
-  i = choice
-  j = (i + 1) % 3
-  k = (j + 1) % 3
-  quat1 = jnp.empty(4)
-  quat1 = quat1.at[i].set(1 - decision[3] + 2 * matrix[i, i])
-  quat1 = quat1.at[j].set(matrix[j, i] + matrix[i, j])
-  quat1 = quat1.at[k].set(matrix[k, i] + matrix[i, k])
-  quat1 = quat1.at[3].set(matrix[k, j] - matrix[j, k])
-  quat2 = jnp.array([matrix[2, 1] - matrix[1, 2],
-                     matrix[0, 2] - matrix[2, 0],
-                     matrix[1, 0] - matrix[0, 1],
-                     1 + decision[3]])
-  return _normalize_quaternion(jnp.where(choice != 3, quat1, quat2))
+  M = jnp.array(matrix, copy=False)[:3, :3]
+  m00 = M[0, 0]
+  m01 = M[0, 1]
+  m02 = M[0, 2]
+  m10 = M[1, 0]
+  m11 = M[1, 1]
+  m12 = M[1, 2]
+  m20 = M[2, 0]
+  m21 = M[2, 1]
+  m22 = M[2, 2]
+  tr = m00 + m11 + m22
+  s1 = jnp.sqrt(tr + 1.) * 2.
+  q1 = jnp.array([(m21 - m12) / s1, (m02 - m20) / s1, (m10 - m01) / s1, s1 / 4.])
+  s2 = jnp.sqrt(1. + m00 - m11 - m22) * 2.
+  q2 = jnp.array([s2 / 4., (m01 + m10) / s2, (m02 + m20) / s2, (m21 - m12) / s2])
+  s3 = jnp.sqrt(1. + m11 - m00 - m22) * 2.
+  q3 = jnp.array([(m01 + m10) / s3, s3 / 4., (m12 + m21) / s3, (m02 - m20) / s3])
+  s4 = jnp.sqrt(1. + m22 - m00 - m11) * 2.
+  q4 = jnp.array([(m02 + m20) / s4, (m12 + m21) / s4, s4 / 4., (m10 - m01) / s4])
+  quat = jnp.where(m11 > m22, q3, q4)
+  quat = jnp.where((m00 > m11) & (m00 > m22), q2, quat)
+  quat = jnp.where(tr > 0, q1, quat)
+  return _normalize_quaternion(quat)
 
 def _mul(quat, other):
   return jnp.roll(_quaternion_multiply(jnp.roll(quat, 1), jnp.roll(other, 1)), -1)
@@ -298,7 +303,7 @@ def _quaternion_from_euler(ai, aj, ak, axes='sxyz'):
   return q
 
 
-def _quaternion_from_matrix(matrix, isprecise=False):
+def _quaternion_from_matrix(matrix):
   M = jnp.array(matrix, copy=False)[:3, :3]
   m00 = M[0, 0]
   m01 = M[0, 1]
