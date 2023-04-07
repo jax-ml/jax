@@ -170,3 +170,9 @@ differently-ordered computations despite running the same program:
     loop, and one or more processes exit the loop earlier than the rest. This
     will cause the rest to hang waiting for the already-finished processes to
     start the computation.
+
+*   Conditions based on non-deterministic ordering of collections can cause code
+    processes to hang. For example, iterating over
+    `set` on current Python versions or `dict` [before Python 3.7](https://mail.python.org/pipermail/python-dev/2017-December/151283.html)
+    may result in a different ordering on different processes, even with the
+    same insertion order.
