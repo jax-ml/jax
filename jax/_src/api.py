@@ -30,6 +30,7 @@ import typing
 from typing import (Any, Callable, Generator, Hashable, Iterable, List, Literal,
                     NamedTuple, Optional, Sequence, Tuple, TypeVar, Union,
                     overload, cast)
+import weakref
 
 import numpy as np
 from contextlib import contextmanager, ExitStack
@@ -60,11 +61,13 @@ from jax._src.api_util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import PmapSharding
 from jax._src.traceback_util import api_boundary
-from jax._src.util import (unzip2, safe_map, safe_zip, wrap_name, wraps)
+from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
+from jax._src import util
 
 
 from jax._src.interpreters import partial_eval as pe
@@ -1822,6 +1825,7 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple, pxla.shard_arg)
+  _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
 
@@ -1830,6 +1834,8 @@ def _cpp_pmap(
       backend, axis_size, donate_tuple)
 
   return pmap_f
+
+_pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
 
 def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
@@ -2867,3 +2873,21 @@ def live_arrays(platform=None):
   If platform is None, it is the default backend.
   """
   return xb.get_backend(platform).live_arrays()
+
+def clear_caches():
+  # Clear all lu.cache and util.weakref_lru_cache instances (used for staging
+  # and Python-dispatch compiled executable caches).
+  lu.clear_all_caches()
+  util.clear_all_weakref_lru_caches()
+
+  # Clear all C++ compiled executable caches for pjit
+  pjit._cpp_pjit_cache.clear()
+  xc._xla.PjitFunctionCache.clear_all()
+
+  # Clear all C++ compiled executable caches for pmap
+  if xla_extension_version >= 146:  # TODO(frostig): remove when ready
+    for fun in _pmap_cache_clears:
+      fun._cache_clear()
+
+  # Clear particular util.cache instances.
+  dispatch.xla_primitive_callable.cache_clear()
