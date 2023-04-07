@@ -98,18 +98,18 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
-  # @jtu.sample_product(
-  #   dtype=float_dtypes,
-  #   shape=[(3, 3)],
-  # )
-  # def testRotationFromMatrix(self, shape, dtype):
-  #   rng = jtu.rand_default(self.rng())
-  #   args_maker = lambda: (rng(shape, dtype),)
-  #   jnp_fn = lambda q: jsp_Rotation.from_matrix(a).as_rotvec()
-  #   np_fn = lambda q: osp_Rotation.from_matrix(a).as_rotvec()
-  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-  #                           tol=1e-4)
-  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(3, 3)],
+  )
+  def testRotationFromMatrix(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda m: jsp_Rotation.from_matrix(m).as_quat()
+    np_fn = lambda m: osp_Rotation.from_matrix(m).as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   @jtu.sample_product(
     dtype=float_dtypes,

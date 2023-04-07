@@ -1,3 +1,17 @@
+# Copyright 2023 The JAX Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import functools
 import typing
 
@@ -214,7 +228,7 @@ def _quaternion_from_euler(ai, aj, ak, axes='sxyz'):
   return q
 
 
-def _quaternion_from_matrix(matrix):
+def _quaternion_from_matrix(matrix, isprecise=False):
   M = jnp.array(matrix, copy=False)[:3, :3]
   m00 = M[0, 0]
   m01 = M[0, 1]
@@ -225,15 +239,42 @@ def _quaternion_from_matrix(matrix):
   m20 = M[2, 0]
   m21 = M[2, 1]
   m22 = M[2, 2]
+  # symmetric matrix K
   K = jnp.array([[m00 - m11 - m22, 0.0, 0.0, 0.0],
-           [m01 + m10, m11 - m00 - m22, 0.0, 0.0],
-           [m02 + m20, m12 + m21, m22 - m00 - m11, 0.0],
-           [m21 - m12, m02 - m20, m10 - m01, m00 + m11 + m22]])
+                 [m01 + m10, m11 - m00 - m22, 0.0, 0.0],
+                 [m02 + m20, m12 + m21, m22 - m00 - m11, 0.0],
+                 [m21 - m12, m02 - m20, m10 - m01, m00 + m11 + m22]])
   K /= 3.0
+  # quaternion is eigenvector of K that corresponds to largest eigenvalue
   w, V = jnp.linalg.eigh(K, UPLO='L', symmetrize_input=False)
   q = V[[3, 0, 1, 2], jnp.argmax(w)]
   q = lax.cond(q[0] < 0.0, -1.0 * q, lambda x: x, q, lambda x: x)
   return q
+
+# def _quaternion_from_matrix(matrix):
+#   decision = jnp.array([matrix[0, 0],
+#                         matrix[1, 1],
+#                         matrix[2, 2],
+#                         matrix[0, 0] + matrix[1, 1] + matrix[2, 2]])
+#   choice = jnp.argmax(decision)
+
+#   quat1 = jnp.empty(4)
+#   i = choice
+#   j = (i + 1) % 3
+#   k = (j + 1) % 3
+#   quat1.at[i].set(1 - decision[3] + 2 * matrix[i, i])
+#   quat1.at[j].set(matrix[j, i] + matrix[i, j])
+#   quat1.at[k].set(matrix[k, i] + matrix[i, k])
+#   quat1.at[3].set(matrix[k, j] - matrix[j, k])
+
+#   quat2 = jnp.empty(4)
+#   quat2.at[0].set(matrix[2, 1] - matrix[1, 2])
+#   quat2.at[1].set(matrix[0, 2] - matrix[2, 0])
+#   quat2.at[2].set(matrix[1, 0] - matrix[0, 1])
+#   quat2.at[3].set(1 + decision[3])
+
+#   quat = jnp.where(choice != 3, quat1, quat2)
+#   return quat
 
 
 def _quaternion_matrix(quaternion):
