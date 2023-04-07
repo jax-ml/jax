@@ -165,6 +165,7 @@ from jax import errors as errors
 from jax import image as image
 from jax import lax as lax
 from jax import linear_util as linear_util
+from jax import monitoring as monitoring
 from jax import nn as nn
 from jax import numpy as numpy
 from jax import ops as ops
