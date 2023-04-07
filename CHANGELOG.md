@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.11
 
+* Changes
+  * Added {class}`scipy.spatial.transform.Rotation` and {class}`scipy.spatial.transform.Slerp`
+
 ## jaxlib 0.4.11
 
 ## jax 0.4.10 (May 11, 2023)
