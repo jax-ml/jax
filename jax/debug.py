@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+__all__ = ["callback", "print", "DebugEffect", "visualize_array_sharding",
+           "inspect_array_sharding", "visualize_sharding", "breakpoint"]
 from jax._src.debugging import debug_callback as callback
 from jax._src.debugging import debug_print as print
 from jax._src.debugging import DebugEffect
