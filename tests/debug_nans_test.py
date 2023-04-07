@@ -96,7 +96,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       f(1)
 
   def testPmap(self):
-    pmap_funcs = [api._python_pmap, api._cpp_pmap]
+    pmap_funcs = [api._cpp_pmap]
 
     for pmap in pmap_funcs:
       f = pmap(lambda x: 0. / x)
