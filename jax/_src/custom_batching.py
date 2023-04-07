@@ -70,6 +70,7 @@ class custom_vmap:
     jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     closed_call = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
     in_tree = treedef_tuple((tree_structure(consts), in_tree))
+    assert self.vmap_rule is not None
     out_flat = custom_vmap_p.bind(*consts, *args_flat,
                                   call=closed_call,
                                   rule=ClosedRule(self.vmap_rule),

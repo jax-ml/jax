@@ -1942,7 +1942,7 @@ class DeviceAssignmentMismatch:
     return f"device ids {self.device_ids} on platform {self.platform}"
 
   def m_type_str(self, api_name):
-    return (f'{self.source_info.eqn_name} inside {api_name}'
+    return (f'{self.source_info and self.source_info.eqn_name} inside {api_name}'
             if self.m_type == MismatchType.SHARDING_INSIDE_COMPUTATION else self.m_type)
 
   def _str(self, api_name):
