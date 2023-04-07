@@ -16,6 +16,7 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.scipy.signal import (
+  fftconvolve as fftconvolve,
   convolve as convolve,
   convolve2d as convolve2d,
   correlate as correlate,
