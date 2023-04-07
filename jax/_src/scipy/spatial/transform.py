@@ -28,30 +28,33 @@ class Rotation(typing.NamedTuple):
   @classmethod
   def from_quat(cls, quat: jax.Array):
     """Initialize from quaternions."""
-    return cls(quat / _vector_norm(quat))
+    if quat.ndim == 1:
+      return cls(_normalize_quaternion(quat))
+    elif quat.ndim == 2:
+      return cls(jax.vmap(_normalize_quaternion)(quat))
 
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
     """Initialize from rotation matrix."""
-    return cls(jnp.roll(_quaternion_from_matrix(matrix), -1))
+    if matrix.ndim == 2:
+      return cls(_from_matrix(matrix))
+    elif matrix.ndim == 3:
+      return cls(jax.vmap(_from_matrix)(matrix))
 
   @classmethod
   def from_rotvec(cls, rotvec: jax.Array, degrees: bool = False):
     """Initialize from rotation vectors."""
-    norm = _vector_norm(rotvec)
-    axis = jnp.where(norm > 0, rotvec / norm, jnp.array([1., 0., 0.]))
-    angle = jnp.where(degrees, jnp.radians(norm), norm)
-    return cls(jnp.roll(_quaternion_about_axis(angle, axis), -1))
+    if rotvec.ndim == 1:
+      return cls(_from_rotvec(rotvec, degrees))
+    else:
+      return cls(jax.vmap(_from_rotvec, in_axes=[0, None])(rotvec, degrees))
 
   @classmethod
   def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
     """Initialize from Euler angles."""
     assert seq == 'xyz'
     assert angles.size == 3
-    ai = angles[0]
-    aj = angles[1]
-    ak = angles[2]
-    return cls(jnp.roll(_quaternion_from_euler(ai, aj, ak, axes='sxyz'), -1))
+    return cls(jnp.roll(_quaternion_from_euler(angles[0], angles[1], angles[2], axes='sxyz'), -1))
 
   @jax.jit
   def as_quat(self) -> jax.Array:
@@ -90,16 +93,32 @@ class Rotation(typing.NamedTuple):
       result = jnp.einsum('jk,k->j', matrix, vector)
     return result
 
-  @jax.jit
   def __mul__(self, other):
     """Compose this rotation with the other."""
     quat = _quaternion_multiply(jnp.roll(self.quat, 1), jnp.roll(other.quat, 1))
     return Rotation(jnp.roll(quat, -1))
 
-  @jax.jit
   def inv(self):
     """Invert this rotation."""
-    return Rotation(jnp.array([self.quat[0], self.quat[1], self.quat[2], -self.quat[3]]))
+    if self.quat.ndim == 1:
+      return Rotation(_inv(self.quat))
+    else:
+      return Rotation(jax.vmap(_inv)(self.quat))
+
+def _from_rotvec(rotvec, degrees):
+  norm = _vector_norm(rotvec)
+  axis = jnp.where(norm > 0, rotvec / norm, jnp.array([1., 0., 0.]))
+  angle = jnp.where(degrees, jnp.radians(norm), norm)
+  return jnp.roll(_quaternion_about_axis(angle, axis), -1)
+
+def _from_matrix(matrix):
+  return jnp.roll(_quaternion_from_matrix(matrix), -1)
+
+def _inv(quat):
+  return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
+
+def _normalize_quaternion(quat):
+  return quat / _vector_norm(quat)
 
 
 _EPS = jnp.finfo(float).eps * 4.0
@@ -177,7 +196,7 @@ def _euler_from_quaternion(quaternion, axes='sxyz'):
 def _quaternion_about_axis(angle, axis):
   q = jnp.array([0.0, axis[0], axis[1], axis[2]])
   qlen = _vector_norm(q)
-  q = lax.cond(qlen > _EPS, q * jnp.sin(angle / 2.0) / qlen, lambda x: x, q, lambda x: x)
+  q = jnp.where(qlen > _EPS, q * jnp.sin(angle / 2.0) / qlen, q)
   q = q.at[0].set(jnp.cos(angle / 2.0))
   return q
 
