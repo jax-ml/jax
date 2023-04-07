@@ -70,7 +70,7 @@ def _get_metadata(arr):
   local_shape = arr.addressable_data(0).shape
   return {
       'compressor': {
-          'id': 'gzip'
+          'id': 'zstd'
       },
       'shape': arr.shape,
       'chunks': np.array(np.maximum(1, local_shape)),
