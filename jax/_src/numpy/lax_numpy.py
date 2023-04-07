@@ -3144,6 +3144,7 @@ def einsum(
     out=None,
     optimize="optimal",
     precision=None,
+    preferred_element_type=None,
     _use_xeinsum=False,
     _dot_general=lax.dot_general,
 ):
@@ -3176,7 +3177,8 @@ def einsum(
 
   _einsum_computation = jax.named_call(
       _einsum, name=spec) if spec is not None else _einsum
-  return _einsum_computation(operands, contractions, precision, _dot_general)
+  return _einsum_computation(operands, contractions, precision,
+                             preferred_element_type, _dot_general)
 
 
 # Enable other modules to override einsum_contact_path.
@@ -3201,11 +3203,12 @@ def _removechars(s, chars):
   return s.translate(str.maketrans(dict.fromkeys(chars)))
 
 
-@partial(jit, static_argnums=(1, 2, 3))
+@partial(jit, static_argnums=(1, 2, 3, 4), inline=True)
 def _einsum(
     operands: Sequence,
     contractions: Sequence[Tuple[Tuple[int, ...], FrozenSet[str], str]],
     precision,
+    preferred_element_type,
     _dot_general=lax.dot_general,
 ):
   operands = list(util.promote_dtypes(*operands))
@@ -3320,11 +3323,13 @@ def _einsum(
       names = batch_names_str + remaining_rhs_names + remaining_lhs_names
       if names == result_names:
         dimension_numbers = ((rhs_cont, lhs_cont), (rhs_batch, lhs_batch))
-        operand = _dot_general(rhs, lhs, dimension_numbers, precision)
+        operand = _dot_general(rhs, lhs, dimension_numbers, precision,
+                               preferred_element_type=preferred_element_type)
       else:
         names = batch_names_str + remaining_lhs_names + remaining_rhs_names
         dimension_numbers = ((lhs_cont, rhs_cont), (lhs_batch, rhs_batch))
-        operand = _dot_general(lhs, rhs, dimension_numbers, precision)
+        operand = _dot_general(lhs, rhs, dimension_numbers, precision,
+                               preferred_element_type=preferred_element_type)
     else:
       raise NotImplementedError  # if this is actually reachable, open an issue!
 
