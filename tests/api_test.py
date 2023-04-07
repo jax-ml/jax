@@ -4247,6 +4247,17 @@ class APITest(jtu.JaxTestCase):
     out = jax.grad(f)(3.0)  # doesn't crash
     self.assertAllClose(out, 1., check_dtypes=False)
 
+  @unittest.skipIf(xla_extension_version < 146,
+                   'Test requires xla_extension_version >= 146')
+  def test_cache_clear_pmap(self):
+    @jax.pmap
+    def f(i):
+      return i * 2
+
+    f(np.arange(1, dtype='float32')).block_until_ready()
+    self.assertEqual(f._cache_size, 1)
+    jax.clear_caches()
+    self.assertEqual(f._cache_size, 0)
 
 class RematTest(jtu.JaxTestCase):
 

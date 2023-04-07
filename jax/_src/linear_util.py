@@ -330,7 +330,16 @@ def cache(call: Callable):
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
 
+  cache_clearing_funs.add(fun_caches.clear)
+
   return memoized_fun
+
+cache_clearing_funs = weakref.WeakSet()  # type: ignore
+
+def clear_all_caches():
+  global cache_clearing_funs
+  for clear in cache_clearing_funs:
+    clear()
 
 @partial(partial, tree_map)
 def _copy_main_traces(x):

@@ -79,6 +79,7 @@ from jax._src.api import block_until_ready as block_until_ready
 from jax._src.ad_checkpoint import checkpoint_wrapper as checkpoint
 from jax._src.ad_checkpoint import checkpoint_policies as checkpoint_policies
 from jax._src.api import clear_backends as clear_backends
+from jax._src.api import clear_caches as clear_caches
 from jax._src.custom_derivatives import closure_convert as closure_convert
 from jax._src.util import curry as _deprecated_curry
 from jax._src.custom_derivatives import custom_gradient as custom_gradient
