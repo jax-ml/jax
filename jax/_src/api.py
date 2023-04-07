@@ -191,8 +191,8 @@ def jit(
       assignment for function outputs. This is similar to pjit's
       out_shardings.
 
-      The ``out_shardings`` argument is optional. If not specified, :py:fun:`jax.jit` will use
-      GSPMD's sharding propagation to figure out what the sharding of the
+      The ``out_shardings`` argument is optional. If not specified, :py:func:`jax.jit`
+      will use GSPMD's sharding propagation to figure out what the sharding of the
       output(s) should be.
     static_argnums: An optional int or collection of ints that specify which
       positional arguments to treat as static (compile-time constant).
