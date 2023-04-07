@@ -14,6 +14,7 @@
 # ==============================================================================
 """Utils for building a device mesh."""
 
+import collections
 import itertools
 import logging
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -299,14 +300,10 @@ def create_hybrid_device_mesh(mesh_shape: Sequence[int],
     devices = jax.devices()
   attr = 'process_index' if process_is_granule else 'slice_index'
   assert hasattr(devices[0], attr)
-  granule_id, granules = 0, []
-  while True:
-    granule = [dev for dev in devices if getattr(dev, attr) == granule_id]
-    if granule:
-      granules.append(granule)
-      granule_id += 1
-    else:
-      break
+  granule_dict = collections.defaultdict(list)
+  for dev in devices:
+    granule_dict[getattr(dev, attr)].append(dev)
+  granules = list(granule_dict[key] for key in sorted(granule_dict.keys()))
   if np.prod(dcn_mesh_shape) != len(granules):
     raise ValueError(
         'Number of slices must equal the product of dcn_mesh_shape')
