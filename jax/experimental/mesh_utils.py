@@ -175,20 +175,21 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
       v2 and v3, global_z is instead cores_per_chip (i.e., 2).
   """
   device_kind = jax_devices[0].device_kind
-  def sort_key(device):
-    x, y, z = device.coords
-    core = device.core_on_chip
-    if device_kind in (_TPU_V2, _TPU_V3):
-      assert z == 0
-      return (x, y, core)
-    else:
-      if core != 0:
-        raise ValueError(
-            'Creating meshes for TPU >v3 requires one device per chip')
-      return (x, y, z)
-  sorted_devices = sorted(jax_devices, key=sort_key)
-  x, y, *_ = _bounds_from_last_device(sorted_devices[-1])
-  return np.array(sorted_devices).reshape((x, y, -1))
+  device_coords = [d.coords for d in jax_devices]
+  dims = tuple(d + 1 for d in max(device_coords))
+  assert len(dims) == 3, dims
+  if device_kind in (_TPU_V2, _TPU_V3):
+    cores_per_chip = max(d.core_on_chip for d in jax_devices) + 1
+    out = np.empty(dims[:2] + (cores_per_chip,), dtype=object)
+    for coords, d in zip(device_coords, jax_devices):
+      assert coords[2] == 0, d
+      out[coords[0], coords[1], d.core_on_chip] = d
+  else:
+    out = np.empty(dims, dtype=object)
+    for coords, d in zip(device_coords, jax_devices):
+      assert d.core_on_chip == 0, d
+      out[coords[0], coords[1], coords[2]] = d
+  return out
 
 
 # jekbradbury's famous trick for creating contiguous submeshes (where available)
