@@ -2596,7 +2596,14 @@ class UnloadedMeshExecutable:
       dev = mesh.devices
       num_replicas, num_partitions = 1, mesh.size
     else:
-      dev = np.array(device_assignment)
+      # TODO(phawkins): One would normally just write:
+      # dev = np.array(device_assignment)
+      # The formulation below is substantially faster if there are many devices.
+      # If we were to optimize __getattr__ on xc.Device we might not need this
+      # workaround.
+      dev = np.vectorize(lambda i: device_assignment[i], otypes=[object])(
+        np.arange(len(device_assignment))
+      )
       if pmap_nreps > 1:
         num_replicas, num_partitions = pmap_nreps, 1
       elif spmd_lowering:
