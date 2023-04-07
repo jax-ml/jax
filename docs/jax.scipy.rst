@@ -77,6 +77,7 @@ jax.scipy.signal
 .. autosummary::
   :toctree: _autosummary
 
+   fftconvolve
    convolve
    convolve2d
    correlate
