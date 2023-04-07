@@ -41,18 +41,8 @@ traceback_util.register_exclusion(__file__)
 FLAGS = flags.FLAGS
 
 flags.DEFINE_bool(
-    "experimental_cpp_jit", bool_env("JAX_CPP_JIT", True),
-    "A flag enabling the C++ jax.jit fast path."
-    "Set this to `False` only if it crashes otherwise and report "
-    "the error to the jax-team.")
-flags.DEFINE_bool(
     "experimental_cpp_pmap", bool_env("JAX_CPP_PMAP", True),
     "A flag enabling the C++ jax.pmap fast path. Until the default "
-    "is switched to True, the feature is not supported and possibly broken "
-    "(e.g. it may use unreleased code from jaxlib.")
-flags.DEFINE_bool(
-    "experimental_cpp_pjit", bool_env("JAX_CPP_PJIT", True),
-    "A flag enabling the C++ pjit fast path. Until the default "
     "is switched to True, the feature is not supported and possibly broken "
     "(e.g. it may use unreleased code from jaxlib.")
 

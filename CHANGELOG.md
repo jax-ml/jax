@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.9
 
+* Changes
+  * The flags experimental_cpp_jit, and experimental_cpp_pjit have been removed.
+    They are now always on.
+
 * Deprecations
   * `jax.experimental.gda_serialization` is deprecated and has been renamed to
     `jax.experimental.array_serialization`.

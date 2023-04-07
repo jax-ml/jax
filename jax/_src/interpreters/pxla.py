@@ -51,7 +51,6 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.abstract_arrays import array_types
 from jax._src.config import config
-from jax._src.config import flags
 from jax._src.core import ShapedArray
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -97,8 +96,6 @@ Mesh = jax._src.mesh.Mesh
 MeshAxisName = mesh.MeshAxisName
 MeshDimAssignment = Union[ShardedAxis, Replicated]
 ShardingSpec = sharding_specs.ShardingSpec
-
-
 
 
 ### util
@@ -2809,9 +2806,6 @@ class MeshExecutable(stages.XlaExecutable):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
             not self.unsafe_call.has_unordered_effects and
             not self.unsafe_call.has_host_callbacks):
-      return None
-
-    if not flags.FLAGS.experimental_cpp_pjit:
       return None
 
     def aot_cache_miss(*args, **kwargs):

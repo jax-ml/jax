@@ -20,7 +20,6 @@ import operator
 import google_benchmark
 import jax
 from jax import lax
-from jax._src import config as jax_config
 from jax.experimental import sparse
 from jax._src.api_util import shaped_abstractify  # technically not an api fn
 from jax._src.ad_checkpoint import checkpoint  # new jax.remat implementation
@@ -693,9 +692,6 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
 
   x = [x for _ in range(num_args)]
 
-  prev_state = jax_config.FLAGS.experimental_cpp_pjit
-  jax_config.FLAGS.experimental_cpp_pjit = cpp_jit
-
   in_axis_resources = jax.sharding.NamedSharding(mesh, spec)
   out_axis_resources = jax.sharding.NamedSharding(mesh, spec)
 
@@ -713,54 +709,40 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   while state:
     x = f(x)
 
-  jax_config.FLAGS.experimental_cpp_pjit = prev_state
-
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_simple_1_device(state):
   pjit_simple_benchmark(
       state, num_devices=1, num_args=state.range(0), cpp_jit=state.range(1))
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_simple_4_device(state):
   pjit_simple_benchmark(
       state, num_devices=4, num_args=state.range(0), cpp_jit=state.range(1))
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_simple_4000_device(state):
   pjit_simple_benchmark(
       state, num_devices=4000, num_args=state.range(0), cpp_jit=state.range(1))
 
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_aot_1_device(state):
   pjit_simple_benchmark(
       state,
@@ -771,13 +753,10 @@ def pjit_aot_1_device(state):
 
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_aot_4_device(state):
   pjit_simple_benchmark(
       state,
@@ -788,13 +767,10 @@ def pjit_aot_4_device(state):
 
 
 @google_benchmark.register
-@google_benchmark.option.arg_names(['num_args', 'cpp_pjit'])
-@google_benchmark.option.args([1, False])
-@google_benchmark.option.args([1, True])
-@google_benchmark.option.args([10, False])
-@google_benchmark.option.args([10, True])
-@google_benchmark.option.args([100, False])
-@google_benchmark.option.args([100, True])
+@google_benchmark.option.arg_names(['num_args'])
+@google_benchmark.option.args([1])
+@google_benchmark.option.args([10])
+@google_benchmark.option.args([100])
 def pjit_aot_4000_device(state):
   pjit_simple_benchmark(
       state,

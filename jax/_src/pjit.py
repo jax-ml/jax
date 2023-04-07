@@ -37,7 +37,7 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
-    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info, FLAGS)
+    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info)
 from jax._src.errors import JAXTypeError
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -354,7 +354,7 @@ def pre_infer_params(fun, in_shardings, out_shardings,
 def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
                       donate_argnums, abstracted_axes,
                       pjit_has_explicit_sharding):
-  if FLAGS.experimental_cpp_pjit and abstracted_axes is None:
+  if abstracted_axes is None:
     wrapped = _cpp_pjit(fun, infer_params_fn, static_argnums, static_argnames,
                         donate_argnums, pjit_has_explicit_sharding)
   else:
