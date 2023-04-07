@@ -133,7 +133,7 @@ def _euler_from_matrix(matrix, axes='sxyz'):
   j = _NEXT_AXIS[i + parity]
   k = _NEXT_AXIS[i - parity + 1]
 
-  M = jnp.array(matrix, dtype=jnp.float64, copy=False)[:3, :3]
+  M = jnp.array(matrix, copy=False)[:3, :3]
   if repetition:
     sy = jnp.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
     ax, ay, az = lax.cond(
@@ -215,15 +215,16 @@ def _quaternion_from_euler(ai, aj, ak, axes='sxyz'):
 
 
 def _quaternion_from_matrix(matrix):
-  m00 = matrix[0, 0]
-  m01 = matrix[0, 1]
-  m02 = matrix[0, 2]
-  m10 = matrix[1, 0]
-  m11 = matrix[1, 1]
-  m12 = matrix[1, 2]
-  m20 = matrix[2, 0]
-  m21 = matrix[2, 1]
-  m22 = matrix[2, 2]
+  M = jnp.array(matrix, copy=False)[:3, :3]
+  m00 = M[0, 0]
+  m01 = M[0, 1]
+  m02 = M[0, 2]
+  m10 = M[1, 0]
+  m11 = M[1, 1]
+  m12 = M[1, 2]
+  m20 = M[2, 0]
+  m21 = M[2, 1]
+  m22 = M[2, 2]
   K = jnp.array([[m00 - m11 - m22, 0.0, 0.0, 0.0],
            [m01 + m10, m11 - m00 - m22, 0.0, 0.0],
            [m02 + m20, m12 + m21, m22 - m00 - m11, 0.0],
@@ -236,7 +237,7 @@ def _quaternion_from_matrix(matrix):
 
 
 def _quaternion_matrix(quaternion):
-  q = jnp.array(quaternion, dtype=jnp.float64, copy=True)
+  q = jnp.array(quaternion, copy=True)
   n = jnp.dot(q, q)
   def calc_mat_posn(qn):
     q, n = qn
