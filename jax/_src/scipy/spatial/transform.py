@@ -78,10 +78,10 @@ class Rotation(typing.NamedTuple):
   @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
   def as_euler(self, seq: str, degrees: bool = False):
     """Represent as Euler angles."""
-    assert seq == 'xyz'
-    ai, aj, ak = _euler_from_quaternion(jnp.roll(self.quat, 1), axes='sxyz')
-    angles = jnp.array([ai, aj, ak])
-    return jnp.where(degrees, jnp.degrees(angles), angles)
+    if self.quat.ndim == 1:
+      return _as_euler(self.quat, seq, degrees)
+    else:
+      return jax.vmap(_as_euler, in_axes=[0, None, None])(self.quat, seq, degrees)
 
   @functools.partial(jax.jit, static_argnames=['inverse'])
   def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
@@ -116,6 +116,12 @@ def _apply(rotation, vector, inverse):
   else:
     result = jnp.einsum('jk,k->j', matrix, vector)
   return result
+
+def _as_euler(quat, seq, degrees):
+  assert seq == 'xyz'
+  ai, aj, ak = _euler_from_quaternion(jnp.roll(quat, 1), axes='sxyz')
+  angles = jnp.array([ai, aj, ak])
+  return jnp.where(degrees, jnp.degrees(angles), angles)
 
 def _from_rotvec(rotvec, degrees):
   norm = _vector_norm(rotvec)
