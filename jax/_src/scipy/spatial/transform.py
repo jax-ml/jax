@@ -72,11 +72,10 @@ class Rotation(typing.NamedTuple):
   @functools.partial(jax.jit, static_argnames=['degrees'])
   def as_rotvec(self, degrees: bool = False) -> jax.Array:
     """Represent as rotation vectors."""
-    angle = 2 * jnp.arccos(self.quat[-1])
-    wrapped_angle = jnp.where(angle >= jnp.pi, angle - 2*jnp.pi, angle)
-    norm = _vector_norm(self.quat[0:3])
-    axis = self.quat[0:3]
-    return jnp.where(norm > 0, wrapped_angle * axis / norm, jnp.zeros(3))
+    if self.quat.ndim == 1:
+      return _as_rotvec(self.quat, degrees)
+    else:
+      return jax.vmap(_as_rotvec, in_axes=[0, None])(self.quat, degrees)
 
   @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
   def as_euler(self, seq: str, degrees: bool = False):
@@ -128,6 +127,14 @@ def _as_euler(quat, seq, degrees):
 
 def _as_matrix(quat):
   return _quaternion_matrix(jnp.roll(quat, 1))[:3, :3]
+
+def _as_rotvec(quat, degrees):
+  angle = 2 * jnp.arccos(quat[-1])
+  wrapped_angle = jnp.where(angle >= jnp.pi, angle - 2*jnp.pi, angle)
+  norm = _vector_norm(quat[0:3])
+  axis = quat[0:3]
+  magnitude = jnp.where(degrees, jnp.degrees(wrapped_angle), wrapped_angle) / norm
+  return jnp.where(norm > 0, magnitude * axis, jnp.zeros(3))
 
 def _from_rotvec(rotvec, degrees):
   norm = _vector_norm(rotvec)

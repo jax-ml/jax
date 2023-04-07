@@ -74,13 +74,14 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
-    shape=[(4,)],
+    shape=[(4,), (2, 4)],
+    degrees=[True, False],
   )
-  def testRotationAsRotvec(self, shape, dtype):
+  def testRotationAsRotvec(self, shape, dtype, degrees):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
-    jnp_fn = lambda q: jsp_Rotation.from_quat(q).as_rotvec()
-    np_fn = lambda q: osp_Rotation.from_quat(q).as_rotvec()
+    jnp_fn = lambda q: jsp_Rotation.from_quat(q).as_rotvec(degrees=degrees)
+    np_fn = lambda q: osp_Rotation.from_quat(q).as_rotvec(degrees=degrees)
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
