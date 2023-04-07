@@ -143,7 +143,24 @@ def _from_rotvec(rotvec, degrees):
   return jnp.roll(_quaternion_about_axis(angle, axis), -1)
 
 def _from_matrix(matrix):
-  return jnp.roll(_quaternion_from_matrix(matrix), -1)
+  decision = jnp.array([matrix[0, 0],
+                        matrix[1, 1],
+                        matrix[2, 2],
+                        matrix[0, 0] + matrix[1, 1] + matrix[2, 2]])
+  choice = jnp.argmax(decision)
+  i = choice
+  j = (i + 1) % 3
+  k = (j + 1) % 3
+  quat1 = jnp.empty(4)
+  quat1 = quat1.at[i].set(1 - decision[3] + 2 * matrix[i, i])
+  quat1 = quat1.at[j].set(matrix[j, i] + matrix[i, j])
+  quat1 = quat1.at[k].set(matrix[k, i] + matrix[i, k])
+  quat1 = quat1.at[3].set(matrix[k, j] - matrix[j, k])
+  quat2 = jnp.array([matrix[2, 1] - matrix[1, 2],
+                     matrix[0, 2] - matrix[2, 0],
+                     matrix[1, 0] - matrix[0, 1],
+                     1 + decision[3]])
+  return _normalize_quaternion(jnp.where(choice != 3, quat1, quat2))
 
 def _mul(quat, other):
   return jnp.roll(_quaternion_multiply(jnp.roll(quat, 1), jnp.roll(other, 1)), -1)
