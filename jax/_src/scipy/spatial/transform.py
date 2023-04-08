@@ -65,6 +65,10 @@ class Rotation(typing.NamedTuple):
     else:
       return cls(jax.vmap(_from_rotvec, in_axes=[0, None])(rotvec, degrees))
 
+  def __bool__(self):
+    """Comply with Python convention for objects to be True."""
+    return True
+
   def __getitem__(self, indexer):
     """Extract rotation(s) at given index(es) from object."""
     if self.quat.ndim == 1:
@@ -72,6 +76,7 @@ class Rotation(typing.NamedTuple):
     return self.__class__(self.quat[indexer])
 
   def __len__(self):
+    """Number of rotations contained in this object."""
     if self.quat.ndim == 1:
       raise TypeError('Single rotation has no len().')
     else:
@@ -137,8 +142,16 @@ class Rotation(typing.NamedTuple):
     else:
       return jax.vmap(_magnitude)(self.quat)
 
+  # def mean(self) -> jax.Array:
+  #   """Get the mean of the rotations."""
+  #   if self.quat.ndim == 1:
+  #     return self.__class__(_mean(self.quat))
+  #   else:
+  #     return self.__class__(jax.vmap(_mean)(self.quat))
+
   @property
   def single(self) -> bool:
+    """Whether this instance represents a single rotation."""
     return self.quat.ndim == 1
 
 
@@ -283,6 +296,11 @@ def _inv(quat: jax.Array) -> jax.Array:
 
 def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
+
+def _mean(quat: jax.Array) -> jax.Array:
+  K = jnp.dot(quat.T, quat)
+  _, v = jnp.linalg.eigh(K)
+  return v[:, -1]
 
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)
