@@ -65,6 +65,12 @@ class Rotation(typing.NamedTuple):
     else:
       return cls(jax.vmap(_from_rotvec, in_axes=[0, None])(rotvec, degrees))
 
+  def __getitem__(self, indexer):
+    """Extract rotation(s) at given index(es) from object."""
+    if self.quat.ndim == 1:
+      raise TypeError("Single rotation is not subscriptable.")
+    return self.__class__(self.quat[indexer])
+
   def __len__(self):
     if self.quat.ndim == 1:
       raise TypeError('Single rotation has no len().')
@@ -133,6 +139,7 @@ class Rotation(typing.NamedTuple):
   @property
   def single(self) -> bool:
     return self.quat.ndim == 1
+
 
 def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
   matrix = rotation.as_matrix()
