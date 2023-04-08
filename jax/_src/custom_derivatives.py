@@ -640,7 +640,7 @@ def _check_for_tracers(x):
             "arguments should typically not be indicated as nondiff_argnums.")
       raise UnexpectedTracerError(msg)
 
-@lu.transformation_with_aux
+@partial(lu.transformation_with_aux, use_eq_store=True)
 def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
                  *args):
   if symbolic_zeros:
@@ -768,7 +768,7 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     return trace.post_process_custom_vjp_call(out_tracers, params)
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 
-@lu.transformation_with_aux
+@partial(lu.transformation_with_aux, use_eq_store=True)
 def process_env_traces_fwd(level: int, out_trees, *args):
   outs = yield args, {}
   todo = []
