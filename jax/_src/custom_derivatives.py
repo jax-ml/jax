@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 from functools import update_wrapper, reduce, partial
 import inspect
-from typing import (Callable, Generic, List, Optional, Sequence, Tuple, TypeVar, Any)
+from typing import (
+  Any, Callable, Generic, List, Optional, Sequence, Tuple, TypeVar)
 
 from jax._src import core
 from jax._src import custom_api_util
@@ -23,8 +25,8 @@ from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import traceback_util
-from jax._src.ad_util import (Zero, SymbolicZero, zeros_like_aval,
-                              stop_gradient_p)
+from jax._src.ad_util import (
+    stop_gradient_p, SymbolicZero, Zero, zeros_like_aval)
 from jax._src.api_util import argnums_partial, flatten_fun_nokwargs
 from jax._src.config import config
 from jax._src.core import raise_to_shaped
@@ -162,12 +164,13 @@ class custom_jvp(Generic[ReturnValue]):
         and the second element is the tangent output. Elements of the input and
         output tuples may be arrays or any nested tuples/lists/dicts thereof.
       symbolic_zeros: boolean, indicating whether the rule should be passed
-        objects representing static symbolic zeros in its tangent tuple
-        argument; otherwise, only standard JAX types (e.g. array-likes) are
-        passed. Setting this option to True allows a JVP rule to detect whether
-        certain inputs are not involved in differentiation, but at the cost of
-        needing special handling for these objects (which e.g. can't be passed
-        into jax.numpy functions). Default False.
+        objects representing static symbolic zeros in its tangent argument in
+        correspondence with unperturbed values; otherwise, only standard JAX
+        types (e.g. array-likes) are passed. Setting this option to ``True``
+        allows a JVP rule to detect whether certain inputs are not involved in
+        differentiation, but at the cost of needing special handling for these
+        objects (which e.g. can't be passed into jax.numpy functions). Default
+        ``False``.
 
     Returns:
       None.
@@ -479,12 +482,15 @@ class custom_vjp(Generic[ReturnValue]):
     self.nondiff_argnums = nondiff_argnums
     self.fwd: Optional[Callable[..., Tuple[ReturnValue, Any]]] = None
     self.bwd: Optional[Callable[..., Tuple[Any, ...]]] = None
+    self.symbolic_zeros = False
 
   __getattr__ = custom_api_util.forward_attr
 
   def defvjp(self,
              fwd: Callable[..., Tuple[ReturnValue, Any]],
-             bwd: Callable[..., Tuple[Any, ...]]) -> None:
+             bwd: Callable[..., Tuple[Any, ...]],
+             symbolic_zeros: bool = False,
+             ) -> None:
     """Define a custom VJP rule for the function represented by this instance.
 
     Args:
@@ -505,6 +511,38 @@ class custom_vjp(Generic[ReturnValue]):
         function, and the tuple elements may be arrays or nested
         tuples/lists/dicts thereof so as to match the structure of the primal
         input arguments.
+      symbolic_zeros: boolean, determining whether to indicate symbolic zeros
+        to the ``fwd`` and ``bwd`` rules. Enabling this option allows custom
+        derivative rules to detect when certain inputs, and when certain
+        output cotangents, are not involved in differentiation. If ``True``:
+
+        * ``fwd`` must accept, in place of each leaf value ``x`` in the pytree
+          comprising an argument to the original function, an object with two
+          attributes instead: ``value`` and ``perturbed``. The ``value`` field
+          is the original primal argument, and ``perturbed`` is a boolean.
+          The ``perturbed`` bit indicates whether the argument is involved in
+          differentiation (i.e., if it is ``False``, then the corresponding
+          Jacobian "column" is zero).
+
+        * ``bwd`` will be passed objects representing static symbolic zeros in
+          its cotangent argument in correspondence with unperturbed values;
+          otherwise, only standard JAX types (e.g. array-likes) are passed.
+
+        Setting this option to ``True`` allows these rules to detect whether
+        certain inputs and outputs are not involved in differentiation, but at
+        the cost of special handling. For instance:
+
+        * The signature of ``fwd`` changes, and the objects it is passed cannot
+          be output from the rule directly.
+
+        * The ``bwd`` rule is passed objects that are not entirely array-like,
+          and that cannot be passed to most ``jax.numpy`` functions.
+
+        * Any custom pytree nodes involved in the primal function's arguments
+          must accept, in their unflattening functions, the two-field record
+          objects that are given as input leaves to the ``fwd`` rule.
+
+        Default ``False``.
 
     Returns:
       None.
@@ -526,6 +564,7 @@ class custom_vjp(Generic[ReturnValue]):
     """
     self.fwd = fwd
     self.bwd = bwd
+    self.symbolic_zeros = symbolic_zeros
 
   @traceback_util.api_boundary
   def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
@@ -533,7 +572,7 @@ class custom_vjp(Generic[ReturnValue]):
     if not self.fwd or not self.bwd:
       msg = f"No VJP defined for custom_vjp function {primal_name} using defvjp."
       raise AttributeError(msg)
-    fwd_name    = getattr(self.fwd, '__name__', str(self.fwd))
+    fwd_name = getattr(self.fwd, '__name__', str(self.fwd))
     args = _resolve_kwargs(self.fun, args, kwargs)
     if config.jax_enable_custom_vjp_by_custom_transpose:
       if self.nondiff_argnums:
@@ -557,13 +596,37 @@ class custom_vjp(Generic[ReturnValue]):
       args_flat, in_tree = tree_flatten(dyn_args)
       in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
       flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
-      flat_fwd, out_trees = _flatten_fwd(fwd, primal_name, fwd_name, in_tree,
-                                         out_type)
+      flat_fwd, out_trees = _flatten_fwd(fwd, self.symbolic_zeros, primal_name,
+                                         fwd_name, in_tree, out_type)
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
-                                        *args_flat, out_trees=out_trees)
+                                        *args_flat, out_trees=out_trees,
+                                        symbolic_zeros=self.symbolic_zeros)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
+
+@dataclasses.dataclass
+class CustomVJPPrimal:
+  value: Any
+  perturbed: bool
+
+def custom_vjp_primal_tree_values(tree):
+  """Strips away perturbation information from forward rule arguments.
+
+  This is a helper function for user with the ``symbolic_zeros`` option to
+  the ``defvjp`` method of a ``custom_vjp``-decorated function.
+
+  In ``symbolic_zeros`` mode, the custom forward rule receives arguments
+  whose pytree leaves are records with a ``value`` attribute that carries
+  the primal argument. This is a way to convert such argument trees back to
+  their original form, replacing each such record with its carried value at
+  each leaf.
+  """
+  def value(leaf):
+    if type(leaf) is not CustomVJPPrimal:
+      raise TypeError(f"unexpected leaf type {type(leaf)}")
+    return leaf.value
+  return tree_map(value, tree)
 
 def _check_for_tracers(x):
   for leaf in tree_leaves(x):
@@ -577,8 +640,13 @@ def _check_for_tracers(x):
             "arguments should typically not be indicated as nondiff_argnums.")
       raise UnexpectedTracerError(msg)
 
-@lu.transformation_with_aux
-def _flatten_fwd(primal_name, fwd_name, in_tree, maybe_out_type, *args):
+@partial(lu.transformation_with_aux, use_eq_store=True)
+def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree, maybe_out_type,
+                 *args):
+  if symbolic_zeros:
+    args = [CustomVJPPrimal(x, z) for x, z in zip(args[::2], args[1::2])]
+  else:
+    args = args[::2]
   py_args = tree_unflatten(in_tree, args)
   pair_out = yield py_args, {}
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
@@ -671,7 +739,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive
 
-  def bind(self, fun, fwd, bwd, *args, out_trees):
+  def bind(self, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = process_env_traces(
@@ -681,7 +749,8 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     tracers = map(top_trace.full_raise, args)  # type: ignore
     bwd_ = lambda *args: bwd(*args)
     outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd_, tracers,
-                                             out_trees=out_trees)
+                                             out_trees=out_trees,
+                                             symbolic_zeros=symbolic_zeros)
     fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     if fst:
       return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
@@ -699,7 +768,7 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
     return trace.post_process_custom_vjp_call(out_tracers, params)
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
 
-@lu.transformation_with_aux
+@partial(lu.transformation_with_aux, use_eq_store=True)
 def process_env_traces_fwd(level: int, out_trees, *args):
   outs = yield args, {}
   todo = []
@@ -747,31 +816,34 @@ mlir.register_lowering(custom_vjp_call_jaxpr_p, mlir.lower_fun(
 
 def _custom_vjp_call_jaxpr_jvp(
     primals, tangents, *, fun_jaxpr: core.ClosedJaxpr,
-    fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
-    bwd: Callable, out_trees: Callable, num_consts: int):
+    fwd_jaxpr_thunk: Callable[..., Tuple[core.Jaxpr, Sequence[Any]]],
+    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
   _, args = split_list(primals, [num_consts])
   consts_dot, args_dot = split_list(tangents, [num_consts])
   if any(type(t) is not Zero for t in consts_dot):
     raise ad.CustomVJPException()
-  fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk()  # consts can be tracers!
-  out_tree, res_tree = out_trees()
+  zeros = [type(t) is not Zero for t in args_dot]
+  fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk(*zeros)  # consts can be tracers!
+  _, res_tree = out_trees()
+  res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
+  res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
+  avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
   args_dot = map(ad.instantiate_zeros, args_dot)
   # Cast float0 to zeros with the primal dtype because custom vjp rules don't
   # currently handle float0s
   args_dot = map(ad.replace_float0s, args, args_dot)
-  res_and_primals_out = core.eval_jaxpr(fwd_jaxpr, fwd_consts, *args)
-  res, primals_out = split_list(res_and_primals_out, [res_tree.num_leaves])
-  avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
   tangents_out = ad.custom_lin_p.bind(
-      *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd, out_avals=avals_out)
+      *res, *args_dot, num_res=res_tree.num_leaves, bwd=bwd,
+      out_avals=avals_out, symbolic_zeros=symbolic_zeros)
   tangents_out = map(ad.recast_to_float0, primals_out, tangents_out)
   return primals_out, tangents_out
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
-def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
-    axis_size, axis_name, main_type, args, in_dims, *, fun_jaxpr: core.ClosedJaxpr,
-    fwd_jaxpr_thunk: Callable[[], Tuple[core.Jaxpr, Sequence[Any]]],
-    bwd: Callable, out_trees: Callable, num_consts: int):
+def _custom_vjp_call_jaxpr_vmap(
+    spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
+    fun_jaxpr: core.ClosedJaxpr,
+    fwd_jaxpr_thunk: Callable[..., Tuple[core.Jaxpr, Sequence[Any]]],
+    num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
 
@@ -784,8 +856,8 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
   out_dims2 = []
 
   @pe._memoize
-  def batched_fwd_jaxpr_thunk():
-    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk())  # consts can be tracers
+  def batched_fwd_jaxpr_thunk(*zeros):
+    fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
         fwd_jaxpr, axis_size, args_batched, False, axis_name, spmd_axis_name,
         main_type)
@@ -794,17 +866,20 @@ def _custom_vjp_call_jaxpr_vmap(spmd_axis_name,
 
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
-  batched_bwd = batching.batch_custom_vjp_bwd(bwd, axis_name, axis_size, fwd_out_dims,
-                                              fwd_args_batched, main_type, spmd_axis_name)
+  batched_bwd = batching.batch_custom_vjp_bwd(
+      bwd, axis_name, axis_size, fwd_out_dims, fwd_args_batched, main_type,
+      spmd_axis_name)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
       fwd_jaxpr_thunk=batched_fwd_jaxpr_thunk, bwd=batched_bwd,
-      out_trees=out_trees, num_consts=num_consts)
+      num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.spmd_axis_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
-batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(_custom_vjp_call_jaxpr_vmap, None)
+batching.spmd_axis_primitive_batchers[custom_vjp_call_jaxpr_p] = \
+    _custom_vjp_call_jaxpr_vmap
+batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(
+    _custom_vjp_call_jaxpr_vmap, None)
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 
