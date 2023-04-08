@@ -26,13 +26,17 @@ class Rotation(typing.NamedTuple):
   quat: jax.Array
 
   @classmethod
-  def from_quat(cls, quat: jax.Array):
-    """Initialize from quaternions."""
-    assert quat.ndim in [1, 2]
-    if quat.ndim == 1:
-      return cls(_normalize_quaternion(quat))
+  def concatenate(cls, rotations: typing.Sequence):
+    return cls(jnp.vstack([rotation.quat for rotation in rotations]))
+
+  @classmethod
+  def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
+    """Initialize from Euler angles."""
+    assert angles.ndim in [1, 2]
+    if angles.ndim == 1:
+      return cls(_from_euler(seq, angles, degrees))
     else:
-      return cls(jax.vmap(_normalize_quaternion)(quat))
+      return cls(jax.vmap(_from_euler, in_axes=[None, 0, None])(seq, angles, degrees))
 
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
@@ -44,6 +48,15 @@ class Rotation(typing.NamedTuple):
       return cls(jax.vmap(_from_matrix)(matrix))
 
   @classmethod
+  def from_quat(cls, quat: jax.Array):
+    """Initialize from quaternions."""
+    assert quat.ndim in [1, 2]
+    if quat.ndim == 1:
+      return cls(_normalize_quaternion(quat))
+    else:
+      return cls(jax.vmap(_normalize_quaternion)(quat))
+
+  @classmethod
   def from_rotvec(cls, rotvec: jax.Array, degrees: bool = False):
     """Initialize from rotation vectors."""
     assert rotvec.ndim in [1, 2]
@@ -52,18 +65,38 @@ class Rotation(typing.NamedTuple):
     else:
       return cls(jax.vmap(_from_rotvec, in_axes=[0, None])(rotvec, degrees))
 
-  @classmethod
-  def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
-    """Initialize from Euler angles."""
-    assert angles.ndim in [1, 2]
-    if angles.ndim == 1:
-      return cls(_from_euler(seq, angles, degrees))
+  def __len__(self):
+    if self.quat.ndim == 1:
+      raise TypeError('Single rotation has no len().')
     else:
-      return cls(jax.vmap(_from_euler, in_axes=[None, 0, None])(seq, angles, degrees))
+      return self.quat.shape[0]
 
-  def as_quat(self) -> jax.Array:
-    """Represent as quaternions."""
-    return self.quat
+  def __mul__(self, other):
+    """Compose this rotation with the other."""
+    if self.quat.ndim == 1 and other.quat.ndim == 1:
+      return Rotation.from_quat(_compose_quat(self.quat, other.quat))
+    else:
+      self_axis = None if self.quat.ndim == 1 else 0
+      other_axis = None if other.quat.ndim == 1 else 0
+      return Rotation.from_quat(jax.vmap(_compose_quat, in_axes=[self_axis, other_axis])(self.quat, other.quat))
+
+  @functools.partial(jax.jit, static_argnames=['inverse'])
+  def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
+    """Apply this rotation to one or more vectors."""
+    if self.quat.ndim == 1 and vectors.ndim == 1:
+      return _apply(self, vectors, inverse)
+    else:
+      self_axis = None if self.quat.ndim == 1 else 0
+      vector_axis = None if vectors.ndim == 1 else 0
+      return jax.vmap(_apply, in_axes=[self_axis, vector_axis, None])(self, vectors, inverse)
+
+  @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
+  def as_euler(self, seq: str, degrees: bool = False):
+    """Represent as Euler angles."""
+    if self.quat.ndim == 1:
+      return _as_euler(self.quat, seq, degrees)
+    else:
+      return jax.vmap(_as_euler, in_axes=[0, None, None])(self.quat, seq, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -80,32 +113,9 @@ class Rotation(typing.NamedTuple):
     else:
       return jax.vmap(_as_rotvec, in_axes=[0, None])(self.quat, degrees)
 
-  @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
-  def as_euler(self, seq: str, degrees: bool = False):
-    """Represent as Euler angles."""
-    if self.quat.ndim == 1:
-      return _as_euler(self.quat, seq, degrees)
-    else:
-      return jax.vmap(_as_euler, in_axes=[0, None, None])(self.quat, seq, degrees)
-
-  @functools.partial(jax.jit, static_argnames=['inverse'])
-  def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
-    """Apply this rotation to one or more vectors."""
-    if self.quat.ndim == 1 and vectors.ndim == 1:
-      return _apply(self, vectors, inverse)
-    else:
-      self_axis = None if self.quat.ndim == 1 else 0
-      vector_axis = None if vectors.ndim == 1 else 0
-      return jax.vmap(_apply, in_axes=[self_axis, vector_axis, None])(self, vectors, inverse)
-
-  def __mul__(self, other):
-    """Compose this rotation with the other."""
-    if self.quat.ndim == 1 and other.quat.ndim == 1:
-      return Rotation.from_quat(_compose_quat(self.quat, other.quat))
-    else:
-      self_axis = None if self.quat.ndim == 1 else 0
-      other_axis = None if other.quat.ndim == 1 else 0
-      return Rotation.from_quat(jax.vmap(_compose_quat, in_axes=[self_axis, other_axis])(self.quat, other.quat))
+  def as_quat(self) -> jax.Array:
+    """Represent as quaternions."""
+    return self.quat
 
   def inv(self):
     """Invert this rotation."""
@@ -113,6 +123,16 @@ class Rotation(typing.NamedTuple):
       return Rotation(_inv(self.quat))
     else:
       return Rotation(jax.vmap(_inv)(self.quat))
+
+  def magnitude(self) -> jax.Array:
+    if self.quat.ndim == 1:
+      return _vector_norm(self.quat)
+    else:
+      return jax.vmap(_vector_norm)(self.quat)
+
+  @property
+  def single(self) -> bool:
+    return self.quat.ndim == 1
 
 def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
   matrix = rotation.as_matrix()

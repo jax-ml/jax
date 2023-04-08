@@ -101,6 +101,20 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     dtype=float_dtypes,
+    shape=[(2, 4)],
+    other_shape=[(2, 4)],
+  )
+  def testRotationConcatenate(self, shape, other_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype), rng(other_shape, dtype),)
+    jnp_fn = lambda q, o: jsp_Rotation.concatenate([jsp_Rotation.from_quat(q), jsp_Rotation.from_quat(o)]).as_quat()
+    np_fn = lambda q, o: osp_Rotation.concatenate([osp_Rotation.from_quat(q), osp_Rotation.from_quat(o)]).as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
     shape=[(3,), (2, 3)],
     seq=['xyz'],
     degrees=[True, False],
@@ -140,6 +154,19 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
+  # @jtu.sample_product(
+  #   dtype=float_dtypes,
+  #   shape=[(4,), (2, 4)],
+  # )
+  # def testRotationMagnitude(self, shape, dtype):
+  #   rng = jtu.rand_default(self.rng())
+  #   args_maker = lambda: (rng(shape, dtype),)
+  #   jnp_fn = lambda q: jsp_Rotation.from_quat(q).magnitude()
+  #   np_fn = lambda q: osp_Rotation.from_quat(q).magnitude()
+  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+  #                           tol=1e-4)
+  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
   @jtu.sample_product(
     dtype=float_dtypes,
     shape=[(4,), (2, 4)],
@@ -163,6 +190,32 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda q: jsp_Rotation.from_quat(q).inv().as_quat()
     np_fn = lambda q: osp_Rotation.from_quat(q).inv().as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(2, 4)],
+  )
+  def testRotationLen(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda q: len(jsp_Rotation.from_quat(q))
+    np_fn = lambda q: len(osp_Rotation.from_quat(q))
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(4,), (2, 4)],
+  )
+  def testRotationSingle(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda q: jsp_Rotation.from_quat(q).single
+    np_fn = lambda q: osp_Rotation.from_quat(q).single
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
