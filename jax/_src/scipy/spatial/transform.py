@@ -98,11 +98,11 @@ class Rotation(typing.NamedTuple):
   def __mul__(self, other):
     """Compose this rotation with the other."""
     if self.quat.ndim == 1 and other.quat.ndim == 1:
-      return Rotation.from_quat(_mul(self.quat, other.quat))
+      return Rotation.from_quat(_compose_quat(self.quat, other.quat))
     else:
       self_axis = None if self.quat.ndim == 1 else 0
       other_axis = None if other.quat.ndim == 1 else 0
-      return Rotation.from_quat(jax.vmap(_mul, in_axes=[self_axis, other_axis])(self.quat, other.quat))
+      return Rotation.from_quat(jax.vmap(_compose_quat, in_axes=[self_axis, other_axis])(self.quat, other.quat))
 
   def inv(self):
     """Invert this rotation."""
@@ -152,6 +152,15 @@ def _as_rotvec(quat, degrees):
   magnitude = jnp.where(degrees, jnp.degrees(wrapped_angle), wrapped_angle) / norm
   return jnp.where(norm > 0, magnitude * axis, jnp.zeros(3))
 
+def _compose_quat(quat, other):
+  p = quat
+  q = other
+  cross = jnp.cross(p[:3], q[:3])
+  return jnp.array([p[3]*q[0] + q[3]*p[0] + cross[0],
+                    p[3]*q[1] + q[3]*p[1] + cross[1],
+                    p[3]*q[2] + q[3]*p[2] + cross[2],
+                    p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
+
 def _from_rotvec(rotvec, degrees):
   norm = _vector_norm(rotvec)
   axis = jnp.where(norm > 0, rotvec / norm, jnp.array([1., 0., 0.]))
@@ -182,9 +191,6 @@ def _from_matrix(matrix):
   quat = jnp.where((m00 > m11) & (m00 > m22), q2, quat)
   quat = jnp.where(tr > 0, q1, quat)
   return _normalize_quaternion(quat)
-
-def _mul(quat, other):
-  return jnp.roll(_quaternion_multiply(jnp.roll(quat, 1), jnp.roll(other, 1)), -1)
 
 def _inv(quat):
   return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
