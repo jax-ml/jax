@@ -595,6 +595,50 @@ class ShardMapTest(jtu.JaxTestCase):
 
     shard_map(f, mesh, in_specs=P(), out_specs=P())(3.)  # doesn't crash
 
+  def test_scan_rep_rule(self):
+    mesh = jtu.create_global_mesh((2, 2,), ('x', 'y'))
+
+    def f(x, y, z):
+      x, y, z = x.sum(), y.sum(), z.sum()
+      def body(c, _):
+        c, *cs = c
+        return (*cs, c), None
+      out, _  = jax.lax.scan(body, (x, y, z), None, length=3)
+      return [jnp.expand_dims(a, 0) for a in out]
+
+    x = jnp.arange(4)
+
+    # doesn't crash, because out_spec assumes no replication (and there is none)
+    shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+              out_specs=P(('x', 'y')))(x, x, x)
+
+    # does crash, because output incorrectly promises replication
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P('x'))(x, x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P('y'))(x, x, x)
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(f, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=P(None))(x, x, x)
+
+    def g(x, y, z):
+      x, y, z = x.sum(), y.sum(), z.sum()
+      def body(c, _):
+        return c, None
+      out, _  = jax.lax.scan(body, (x, y, z), None, length=1)
+      return [jnp.expand_dims(a, 0) for a in out]
+
+    # doesn't crash, because everything matches
+    shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+              out_specs=[P(None), P('x'), P(('x', 'y'))])(x, x, x)
+
+    # does crash, because the second guy is wrong
+    with self.assertRaisesRegex(ValueError, "require replication"):
+      shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
+                out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
+
 
 class FunSpec(NamedTuple):
   name: str
