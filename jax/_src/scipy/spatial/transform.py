@@ -27,6 +27,7 @@ class Rotation(typing.NamedTuple):
 
   @classmethod
   def concatenate(cls, rotations: typing.Sequence):
+    """Concatenate a sequence of `Rotation` objects."""
     return cls(jnp.vstack([rotation.quat for rotation in rotations]))
 
   @classmethod
@@ -80,6 +81,11 @@ class Rotation(typing.NamedTuple):
     assert num is None
     quat = jnp.array([0, 0, 0, 1])
     return cls(quat)
+
+  # @classmethod
+  # def random(cls, random_key: jax.random.PRNGKey, num: typing.Optional[int] = None):
+  #   """Generate uniformly distributed rotations."""
+  #   # Need to implement scipy.stats.special_ortho_group for this to work...
 
   def __bool__(self):
     """Comply with Python convention for objects to be True."""
