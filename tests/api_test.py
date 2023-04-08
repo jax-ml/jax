@@ -8736,6 +8736,26 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(fwd_strict, bwd_strict)
     jax.grad(f)(x, y)
 
+  def test_symbolic_zeros_memoization_caching(self):
+    # Tests multiple zero patterns for partial_eval._memoize, and also tests
+    # that we're okay with stores being occupied with equal values.
+    @jax.custom_vjp
+    def f(x, y):
+      return x * y
+
+    def f_fwd(x, y):
+      return x.value, None
+
+    def f_bwd(_, z_bar):
+      return z_bar, None
+
+    f.defvjp(f_fwd, f_bwd, symbolic_zeros=True)
+
+    f_ = core.jaxpr_as_fun(jax.make_jaxpr(f)(2., 3.))
+    _ = jax.linearize(f_, 2., 3.)
+    _ = jax.linearize(lambda x: f_(x, 3.), 2.)  # don't crash!
+
+
 def transpose_unary(f, x_example):
   def transposed(y):
     x, = api.linear_transpose(f, x_example)(y)
