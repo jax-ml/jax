@@ -126,7 +126,23 @@ def _as_euler(quat, seq, degrees):
   return jnp.where(degrees, jnp.degrees(angles), angles)
 
 def _as_matrix(quat):
-  return _quaternion_matrix(jnp.roll(quat, 1))[:3, :3]
+  x = quat[0]
+  y = quat[1]
+  z = quat[2]
+  w = quat[3]
+  x2 = x * x
+  y2 = y * y
+  z2 = z * z
+  w2 = w * w
+  xy = x * y
+  zw = z * w
+  xz = x * z
+  yw = y * w
+  yz = y * z
+  xw = x * w
+  return jnp.array([[+ x2 - y2 - z2 + w2, 2 * (xy - zw), 2 * (xz + yw)],
+                    [2 * (xy + zw), - x2 + y2 - z2 + w2, 2 * (yz - xw)],
+                    [2 * (xz - yw), 2 * (yz + xw), - x2 - y2 + z2 + w2]])
 
 def _as_rotvec(quat, degrees):
   angle = 2 * jnp.arccos(quat[-1])
