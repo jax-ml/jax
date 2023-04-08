@@ -133,7 +133,7 @@ SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 def _check_specs(error_type: SpecErrorType, specs: Any) -> None:
   if error_type == SpecErrorType.input and specs is None:
     raise TypeError(
-        f"shard_map in_specs argument must be a pytree of "
+        "shard_map in_specs argument must be a pytree of "
         "`jax.sharding.PartitionSpec` instances, but it was None.\n"
         "Instead of `in_specs=None`, did you mean `in_specs=P()`, "
         "where `P = jax.sharding.PartitionSpec`?")
@@ -654,7 +654,10 @@ eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
 def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: Set[AxisName],
               **params: Any) -> Union[Set[AxisName], List[Set[AxisName]]]:
-  raise NotImplementedError(f"no replication rule for {prim}")
+  raise NotImplementedError(
+      f"No replication rule for {prim}. As a workaround, pass the "
+      "`check_rep=False` argument to `shard_map`. To get this fixed, open an "
+      "issue at https://github.com/google/jax/issues")
 
 _rep_rules: Dict[core.Primitive, Callable] = {}
 register_rule = lambda prim: lambda rule: _rep_rules.setdefault(prim, rule)
