@@ -325,30 +325,6 @@ def _quaternion_from_euler(ai, aj, ak, axes='sxyz'):
   return q
 
 
-def _quaternion_from_matrix(matrix):
-  M = jnp.array(matrix, copy=False)[:3, :3]
-  m00 = M[0, 0]
-  m01 = M[0, 1]
-  m02 = M[0, 2]
-  m10 = M[1, 0]
-  m11 = M[1, 1]
-  m12 = M[1, 2]
-  m20 = M[2, 0]
-  m21 = M[2, 1]
-  m22 = M[2, 2]
-  # symmetric matrix K
-  K = jnp.array([[m00 - m11 - m22, 0.0, 0.0, 0.0],
-                 [m01 + m10, m11 - m00 - m22, 0.0, 0.0],
-                 [m02 + m20, m12 + m21, m22 - m00 - m11, 0.0],
-                 [m21 - m12, m02 - m20, m10 - m01, m00 + m11 + m22]])
-  K /= 3.0
-  # quaternion is eigenvector of K that corresponds to largest eigenvalue
-  w, V = jnp.linalg.eigh(K, UPLO='L', symmetrize_input=False)
-  q = V[[3, 0, 1, 2], jnp.argmax(w)]
-  q = lax.cond(q[0] < 0.0, -1.0 * q, lambda x: x, q, lambda x: x)
-  return q
-
-
 def _quaternion_matrix(quaternion):
   q = jnp.array(quaternion, copy=True)
   n = jnp.dot(q, q)
@@ -362,25 +338,6 @@ def _quaternion_matrix(quaternion):
        [q[1, 3] - q[2, 0], q[2, 3] + q[1, 0], 1.0 - q[1, 1] - q[2, 2], 0.0],
        [0.0, 0.0, 0.0, 1.0]])
   return lax.cond(n < _EPS, jnp.identity(4), lambda x: x, (q, n), calc_mat_posn)
-
-
-def _quaternion_multiply(quaternion1, quaternion0):
-  w0, x0, y0, z0 = quaternion0
-  w1, x1, y1, z1 = quaternion1
-  return jnp.array([
-    -x1 * x0 - y1 * y0 - z1 * z0 + w1 * w0, x1 * w0 + y1 * z0 - z1 * y0 +
-    w1 * x0, -x1 * z0 + y1 * w0 + z1 * x0 + w1 * y0,
-    x1 * y0 - y1 * x0 + z1 * w0 + w1 * z0])
-
-
-def _quaternion_conjugate(quaternion):
-  q = quaternion.at[1:].set(-quaternion[1:])
-  return q
-
-
-def _quaternion_inverse(quaternion):
-  q = _quaternion_conjugate(quaternion)
-  return q / jnp.dot(q, q)
 
 
 def _vector_norm(data):
