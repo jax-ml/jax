@@ -440,6 +440,18 @@ class ShardMapTest(jtu.JaxTestCase):
     g2 = jax.grad(lambda x: f2(x).sum())(x)  # doesn't crash
     self.assertAllClose(g2, jnp.cos(x), check_dtypes=False)
 
+  def test_remat_scalar_residuals(self):
+    mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
+
+    @partial(jax.remat, policy=jax.checkpoint_policies.everything_saveable)
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return jnp.sin(jnp.sin(jnp.sin(x.sum()))[None])
+
+    x = jnp.arange(8.)
+    _ = jax.grad(lambda x: f(x).sum())(x)  # doesn't crash
+    jtu.check_grads(f, (x,), modes=['rev'], order=2, atol=1e-2, rtol=1e-2)
+
   def test_check_rep_false_doesnt_hit_rep_rules(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
 

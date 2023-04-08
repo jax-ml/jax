@@ -1029,11 +1029,64 @@ core.axis_substitution_rules[shard_map_p] = _shard_map_axis_subst
 
 # Remat
 
-def _pe_custom_params(
-    unks_in: List[bool], inst_in: List[bool], kept_outs_known: List[bool],
-    kept_outs_staged: List[bool], num_res: int, params_known: Dict[str, Any],
-    params_staged: Dict[str, Any]
-  ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def _partial_eval_jaxpr_custom_rule(
+    saveable: Callable[..., bool], unks_in: Sequence[bool],
+    inst_in: Sequence[bool], eqn: core.JaxprEqn
+) -> Tuple[core.JaxprEqn, core.JaxprEqn, Sequence[bool], Sequence[bool],
+           List[core.Var]]:
+  jaxpr, mesh = eqn.params['jaxpr'], eqn.params['mesh']
+  with core.extend_axis_env_nd(mesh.shape.items()):
+    jaxpr_known, jaxpr_staged, unks_out, inst_out, num_res = \
+        pe.partial_eval_jaxpr_custom(jaxpr, unks_in, inst_in, False, False, saveable)
+  jaxpr_known, jaxpr_staged = _add_reshapes(num_res, jaxpr_known, jaxpr_staged)
+  ins_known, _ = partition_list(unks_in, eqn.invars)
+  out_binders_known, _ = partition_list(unks_out, eqn.outvars)
+  _, ins_staged = partition_list(inst_in, eqn.invars)
+  _, out_binders_staged = partition_list(inst_out, eqn.outvars)
+  newvar = core.gensym([jaxpr_known, jaxpr_staged])
+  params_known, params_staged = _pe_custom_params(
+      unks_in, inst_in, map(op.not_, unks_out), inst_out, num_res,
+      dict(eqn.params, jaxpr=jaxpr_known), dict(eqn.params, jaxpr=jaxpr_staged))
+  residuals = [newvar(_unshard_aval(mesh, {0: (*mesh.axis_names,)}, var.aval))
+               for var in jaxpr_staged.invars[:num_res]]
+  eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
+                               eqn.primitive, params_known, jaxpr_known.effects,
+                               eqn.source_info)
+  eqn_staged = pe.new_jaxpr_eqn([*residuals, *ins_staged], out_binders_staged,
+                                eqn.primitive, params_staged,
+                                jaxpr_staged.effects, eqn.source_info)
+  assert len(eqn_staged.invars) == len(jaxpr_staged.invars)
+  new_inst = [x for x, inst in zip(eqn.invars, inst_in)
+              if type(x) is core.Var and not inst]
+  return eqn_known, eqn_staged, unks_out, inst_out, new_inst + residuals
+pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
+    _partial_eval_jaxpr_custom_rule
+
+def _add_reshapes(num_res, jaxpr_known, jaxpr_staged):
+  if not num_res: return jaxpr_known, jaxpr_staged
+  assert not jaxpr_known.constvars and not jaxpr_staged.constvars
+
+  @lu.wrap_init
+  def known(*args):
+    out = core.eval_jaxpr(jaxpr_known, (), *args)
+    out_known, res = split_list(out, [len(out) - num_res])
+    return [*out_known, *map(_add_singleton, res)]
+  avals_in = [v.aval for v in jaxpr_known.invars]
+  jaxpr_known, _, () = pe.trace_to_jaxpr_dynamic(known, avals_in)
+
+  @lu.wrap_init
+  def staged(*args):
+    res_, ins = split_list(args, [num_res])
+    res = map(_rem_singleton, res_)
+    return core.eval_jaxpr(jaxpr_staged, (), *res, *ins)
+  res_avals = [v.aval for v in jaxpr_known.outvars[-num_res:]]
+  avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[num_res:]]]
+  jaxpr_staged, _, () = pe.trace_to_jaxpr_dynamic(staged, avals_in)
+
+  return jaxpr_known, jaxpr_staged
+
+def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
+                      num_res, params_known, params_staged):
   # prune inputs to jaxpr_known according to unks_in
   mesh = params_known['mesh']
   in_names_known, _ = partition_list(unks_in, params_known['in_names'])
@@ -1049,14 +1102,3 @@ def _pe_custom_params(
   new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
                            out_names=tuple(out_names_staged), check_rep=False)
   return new_params_known, new_params_staged
-
-def _pe_custom_res(params_known, aval):
-  mesh = params_known['mesh']
-  return _unshard_aval(mesh, {0: (*mesh.axis_names,)}, aval)
-
-def _pe_custom_ctx(params):
-  return core.extend_axis_env_nd(params['mesh'].shape.items())
-
-pe.partial_eval_jaxpr_custom_rules[shard_map_p] = \
-    partial(pe.call_partial_eval_custom_rule, 'jaxpr', _pe_custom_params,
-            res_aval=_pe_custom_res, ctx=_pe_custom_ctx)
