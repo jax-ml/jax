@@ -77,6 +77,19 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype=float_dtypes,
     shape=[(4,), (2, 4)],
+  )
+  def testRotationAsMrp(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda q: jsp_Rotation.from_quat(q).as_mrp()
+    np_fn = lambda q: osp_Rotation.from_quat(q).as_mrp()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(4,), (2, 4)],
     degrees=[True, False],
   )
   def testRotationAsRotvec(self, shape, dtype, degrees):
@@ -161,11 +174,35 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     dtype=float_dtypes,
     shape=[(3,), (2, 3)],
   )
+  def testRotationFromMrp(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda m: jsp_Rotation.from_mrp(m).as_quat()
+    np_fn = lambda m: osp_Rotation.from_mrp(m).as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(3,), (2, 3)],
+  )
   def testRotationFromRotvec(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype),)
     jnp_fn = lambda r: jsp_Rotation.from_rotvec(r).as_quat()
     np_fn = lambda r: osp_Rotation.from_rotvec(r).as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
+  @jtu.sample_product(
+    num=[None],
+  )
+  def testRotationIdentity(self, num):
+    args_maker = lambda: (num,)
+    jnp_fn = lambda n: jsp_Rotation.identity(n).as_quat()
+    np_fn = lambda n: osp_Rotation.identity(n).as_quat()
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)

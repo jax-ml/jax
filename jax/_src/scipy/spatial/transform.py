@@ -48,6 +48,15 @@ class Rotation(typing.NamedTuple):
       return cls(jax.vmap(_from_matrix)(matrix))
 
   @classmethod
+  def from_mrp(cls, mrp: jax.Array):
+    """Initialize from Modified Rodrigues Parameters (MRPs)."""
+    assert mrp.ndim in [1, 2]
+    if mrp.ndim == 1:
+      return cls(_from_mrp(mrp))
+    else:
+      return cls(jax.vmap(_from_mrp)(mrp))
+
+  @classmethod
   def from_quat(cls, quat: jax.Array):
     """Initialize from quaternions."""
     assert quat.ndim in [1, 2]
@@ -64,6 +73,13 @@ class Rotation(typing.NamedTuple):
       return cls(_from_rotvec(rotvec, degrees))
     else:
       return cls(jax.vmap(_from_rotvec, in_axes=[0, None])(rotvec, degrees))
+
+  @classmethod
+  def identity(cls, num: typing.Optional[int] = None):
+    """Get identity rotation(s)."""
+    assert num is None
+    quat = jnp.array([0, 0, 0, 1])
+    return cls(quat)
 
   def __bool__(self):
     """Comply with Python convention for objects to be True."""
@@ -115,6 +131,13 @@ class Rotation(typing.NamedTuple):
       return _as_matrix(self.quat)
     else:
       return jax.vmap(_as_matrix)(self.quat)
+
+  def as_mrp(self) -> jax.Array:
+    """Represent as Modified Rodrigues Parameters (MRPs)."""
+    if self.quat.ndim == 1:
+      return _as_mrp(self.quat)
+    else:
+      return jax.vmap(_as_mrp)(self.quat)
 
   @functools.partial(jax.jit, static_argnames=['degrees'])
   def as_rotvec(self, degrees: bool = False) -> jax.Array:
@@ -239,6 +262,11 @@ def _as_matrix(quat: jax.Array) -> jax.Array:
                     [2 * (xy + zw), - x2 + y2 - z2 + w2, 2 * (yz - xw)],
                     [2 * (xz - yw), 2 * (yz + xw), - x2 - y2 + z2 + w2]])
 
+def _as_mrp(quat: jax.Array) -> jax.Array:
+  sign = jnp.where(quat[3] < 0, -1., 1.)
+  denominator = 1. + sign * quat[3]
+  return sign * quat[:3] / denominator
+
 def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
   angle = 2 * jnp.arccos(quat[-1])
   wrapped_angle = jnp.where(angle >= jnp.pi, angle - 2*jnp.pi, angle)
@@ -247,9 +275,7 @@ def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
   scale = jnp.where(degrees, jnp.degrees(wrapped_angle), wrapped_angle) / norm
   return jnp.where(norm > 0, scale * axis, jnp.zeros(3))
 
-def _compose_quat(quat: jax.Array, other: jax.Array) -> jax.Array:
-  p = quat
-  q = other
+def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
   cross = jnp.cross(p[:3], q[:3])
   return jnp.array([p[3]*q[0] + q[3]*p[0] + cross[0],
                     p[3]*q[1] + q[3]*p[1] + cross[1],
@@ -290,6 +316,10 @@ def _from_matrix(matrix: jax.Array) -> jax.Array:
   quat = jnp.where((m00 > m11) & (m00 > m22), q2, quat)
   quat = jnp.where(tr > 0, q1, quat)
   return _normalize_quaternion(quat)
+
+def _from_mrp(mrp: jax.Array) -> jax.Array:
+  mrp_squared_plus_1 = jnp.dot(mrp, mrp) + 1
+  return jnp.hstack([2 * mrp[:3], (2 - mrp_squared_plus_1)]) / mrp_squared_plus_1
 
 def _inv(quat: jax.Array) -> jax.Array:
   return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
