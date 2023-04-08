@@ -286,5 +286,19 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
+  # @jtu.sample_product(
+  #   dtype=float_dtypes,
+  #   shape=[(2, 4)],
+  #   times=[[0.]],
+  # )
+  # def testSlerp(self, shape, dtype, times):
+  #   rng = jtu.rand_default(self.rng())
+  #   args_maker = lambda: (list(range(shape[0])), rng(shape, dtype),)
+  #   jnp_fn = lambda t, q: jsp_Slerp.init(t, jsp_Rotation.from_quat(q))(times).as_quat()
+  #   np_fn = lambda t, q: osp_Slerp(t, osp_Rotation.from_quat(q))(times).as_quat()
+  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+  #                           tol=1e-4)
+  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

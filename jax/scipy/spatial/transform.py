@@ -17,4 +17,5 @@
 
 from jax._src.scipy.spatial.transform import (
   Rotation as Rotation,
+  Slerp as Slerp,
 )
