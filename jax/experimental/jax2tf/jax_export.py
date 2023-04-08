@@ -13,13 +13,13 @@
 # limitations under the License.
 """JAX APIs for exporting code for interoperation.
 
-This module is used with jax2tf, but should have no TensorFlow dependencies.
+This module is used with jax2tf, but has no TensorFlow dependencies.
 """
 import dataclasses
 import functools
 import itertools
 import re
-from typing import  Callable, List, Optional, Sequence, Union
+from typing import Any, Callable, List, Optional, Sequence, Union
 
 from absl import logging
 
@@ -27,6 +27,7 @@ import jax
 from jax import sharding
 
 from jax._src import core
+from jax._src import pjit
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -43,63 +44,88 @@ from jax.experimental.jax2tf import shape_poly
 map = util.safe_map
 zip = util.safe_zip
 
-# These are the JAX custom call target names that are guaranteed to be stable.
-# Their backwards compatibility is tested by back_compat_test.py.
-_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
-    "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "ducc_fft", "cu_threefry2x32",
-    # eigh on CPU
-    "lapack_ssyevd", "lapack_dsyevd", "lapack_cheevd", "lapack_zheevd",
-    # eigh on GPU
-    "cusolver_syevj", "cusolver_syevd",
-    # eigh on TPU
-    "Eigh",
-    # qr on CPU
-    "lapack_sgeqrf", "lapack_dgeqrf", "lapack_cgeqrf", "lapack_zgeqrf",
-    "lapack_sorgqr", "lapack_dorgqr", "lapack_cungqr", "lapack_zungqr",
-    # qr on GPU
-    "cusolver_geqrf", "cublas_geqrf_batched",
-    "cusolver_geqrf", "cusolver_orgqr",
-    # qr and svd on TPU
-    "Qr", "ProductOfElementaryHouseholderReflectors",
-    # TODO(atondwal, necula): add back_compat tests for lu on CPU/GPU
-    # # lu on CPU
-    # "lapack_sgetrf" , "lapack_dgetrf" , "lapack_cgetrf" , "lapack_zgetrf",
-    # # lu on GPU
-    # "cublas_getrf_batched", "cusolver_getrf",
-    # "hipblas_getrf_batched", "hipsolver_getrf",
-    # lu on TPU
-    "LuDecomposition",
-]
-
-
 @dataclasses.dataclass
 class Exported:
-  """Represents a lowered and serialized JAX module."""
+  """A lowered and serialized JAX function.
+
+  Currently this works only for functions that take a flat argument list
+  and return a tuple of results. (No pytree support yet.)
+
+  Attributes:
+    in_avals: the input abstract values. May contain dimension expressions in
+        the shapes.
+    out_avals: the output abstract values. May contain dimension expressions in
+        the shapes, with dimension variables among those in `in_avals`.
+    in_shardings: the input shardings. Only for the `module_kept_var_idx`.
+    out_shardings: the output shardings.
+    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
+
+    mlir_module_serialized: the serialized lowered VHLO module.
+    mlir_module_version: a version number for the serialized module.
+        The following version numbers are valid:
+           4 - mlir_module_serialized is a portable artifact.
+    module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
+        must be passed to the module. The other arguments have been dropped
+        because they are not used. Same length as `in_shardings`.
+    strict_checks: whether the module was serialized with the following safety
+        checking: (A) the lowered computation can only be executed on a platform
+        for which it was lowered; (B) the serialized computation contains only
+        custom calls with targets that are guaranteed to be stable, (more to come).
+    _get_vjp: an optional function that takes the current exported function and
+        returns the exported VJP function.
+        The VJP function takes a flat list of arguments,
+        starting with the primal arguments and followed by a cotangent argument
+        for each primal output. It returns a tuple with the cotangents
+        corresponding to the primal inputs.
+  """
   in_avals: Sequence[core.ShapedArray]
   out_avals: Sequence[core.ShapedArray]
-  # The in_shardings reflect only the module_kept_var_idx
   in_shardings: Sequence[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]]
   out_shardings: Sequence[Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]]
+  lowering_platform: str
+  strict_checks: bool
 
-  lowering_platform: str  # One of "tpu", "cpu", "cuda", "rocm"
+  mlir_module_serialized: bytes
+  xla_call_module_version: int
+  module_kept_var_idx: Sequence[int]
 
-  mlir_module: mlir.ir.Module
-  mlir_module_serialized: bytes  # VHLO bytecode format
-  xla_call_module_version: int  # Follows the versions of XlaCallModule
-  module_kept_var_idx: Sequence[int]  # Specifies if an argument is kept in the
-                                      # lowering. Same length as `in_shardings`.
+  _get_vjp: Optional[Callable[["Exported"], "Exported"]]
+
+  @property
+  def mlir_module(self) -> mlir.ir.Module:
+    return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+
+  def vjp(self) -> "Exported":
+    """Gets the exported VJP.
+
+    Returns None if not available, which can happen if the Exported has been
+    loaded from an external format, without a VJP."""
+    if self._get_vjp is None:
+      raise ValueError("No VJP is available")
+    return self._get_vjp(self)
 
 
-def default_jax_backend() -> str:
+def _default_jax_backend() -> str:
   # Canonicalize to turn into CUDA or ROCM
   return xb.canonicalize_platform(jax.default_backend())
 
 
-def serialize_native(fun_jax: Callable,
-                     args_avals: Sequence[core.ShapedArray], *,
-                     lowering_platform: Optional[str],
-                     strict_checks: bool) -> Exported:
+def export_native(fun_jax: Callable,
+                  args_avals: Sequence[core.ShapedArray], *,
+                  lowering_platform: Optional[str],
+                  strict_checks: bool) -> Exported:
+  """Exports native serialization for a JAX function.
+
+  At the moment works only for JAX functions that take a flat list of arguments
+  and return a flat list of results.
+
+  Args:
+    fun_jax: the function to lower and serialize
+    args_avals: the abstract values at which to lower.
+    lowering_platform: one of 'tpu', 'cpu', 'cuda', 'rocm'
+    strict_checks: whether to do strict safety checks. See Exported.strict_checks
+        for more details.
+  """
   arg_specs_jax = [
     jax.ShapeDtypeStruct(aval.shape, aval.dtype, named_shape=aval.named_shape)
     for aval in args_avals
@@ -109,62 +135,19 @@ def serialize_native(fun_jax: Callable,
     # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
     # convert(f_jax), in which case a "jit" is implied. In that case we raise
     # an error if the lowered function contains non-replicated sharding annotations.
-    fun_jax_lower = jax.jit(fun_jax).lower
+    wrapped_fun_jax = jax.jit(fun_jax)
     allow_non_replicated_sharding = False
   else:
     # If we have a pjit or pmap already we do not wrap with another, and we
     # allow shardings.
-    fun_jax_lower = fun_jax.lower
+    wrapped_fun_jax = fun_jax  # type: ignore
     allow_non_replicated_sharding = True
 
-  lowered = fun_jax_lower(
+  lowered = wrapped_fun_jax.lower(
       *arg_specs_jax,
       _experimental_lowering_platform=lowering_platform)._lowering  # type: ignore
 
-  if not isinstance(lowered, pxla.MeshComputation):
-    raise NotImplementedError(f"serialization is supported only for pjit. {lowered}")
-
-  # Check that we do not see new compile_args. When we add a compile_args it is
-  # safe to add it to the allowed_compile_args if it does not change the semantics
-  # or the calling convention of the lowered module.
-  allowed_compile_args = ["backend", "mesh", "global_in_avals",
-      "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
-      "spmd_lowering", "auto_spmd_lowering",
-      "tuple_args", "ordered_effects", "unordered_effects",
-      "host_callbacks", "keepalive", "pmap_nreps", "committed", "device_assignment"]
-  for compile_arg in lowered.compile_args.keys():
-    if compile_arg not in allowed_compile_args:
-      raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
-
-  # We have not implemented support for some of the compile_args.
-  not_implemented_msgs = []
-  for compile_arg, check_value, err_msg in (
-      ("spmd_lowering", lambda v: v, "True"),
-      ("auto_spmd_lowering", lambda v: not v, "False"),
-      # tuple_args is a compilation flag, does not affect lowering.
-      ("tuple_args", lambda v: True, "N/A"),
-      # Used for debug(ordered=True), changes the calling convention, but will
-      # also set keepalive to non-empty.
-      ("ordered_effects", lambda v: not v, "empty"),
-      # unordered_effects do not change the calling convention. Those from
-      # jax.debug will also result in keepalive being non-empty and unsupported
-      # custom calls. The CallTfEffect is an exception, but we want to allow
-      # that one.
-      ("unordered_effects", lambda v: True, "N/A"),
-      # used for TPU jax.debug, send/recv. Not supported yet.
-      ("host_callbacks", lambda v: not v, "empty"),
-      # used on all platforms for callbacks. Not supported yet.
-      ("keepalive", lambda v: not v, "empty"),
-      ("pmap_nreps", lambda v: v == 1, "1"),
-  ):
-    if compile_arg in lowered.compile_args:
-      if not check_value(lowered.compile_args[compile_arg]):
-        not_implemented_msgs.append(
-            f"{compile_arg} must be {err_msg} and it is {lowered.compile_args[compile_arg]}")
-  if not_implemented_msgs:
-    raise NotImplementedError(
-        "serialization error, unimplemented lowered.compile_args:\n" +
-        "\n".join(not_implemented_msgs))
+  _check_lowered(lowered)
 
   mlir_module = lowered.stablehlo()
   if "kept_var_idx" in lowered.compile_args:
@@ -176,7 +159,7 @@ def serialize_native(fun_jax: Callable,
   if not all(core.is_constant_shape(a.shape) for a in args_avals):
     # All arguments are kept if we have dimension variables.
     assert len(module_kept_var_idx) == len(args_avals)
-    mlir_module = add_dim_arg_computation(mlir_module, args_avals)
+    mlir_module = _add_dim_arg_computation(mlir_module, args_avals)
 
   xla_call_module_version = 4
   mlir_str = mlir.module_to_bytecode(mlir_module)
@@ -192,8 +175,6 @@ def serialize_native(fun_jax: Callable,
     out_avals = lowered.compile_args["shards"].out_sharded_avals
   else:
     out_avals = lowered.compile_args["out_avals"]
-  if lowered.compile_args["host_callbacks"]:
-    raise NotImplementedError("host_callbacks are not yet implemented for the jax2tf native lowering")
 
   # Log and then check the module.
   if logging.vlog_is_on(3):
@@ -201,24 +182,25 @@ def serialize_native(fun_jax: Callable,
     logmsg = f"version={xla_call_module_version} lowering_platform={lowering_platform}"
     logging.vlog(3, "Lowered JAX module: %s\n%s", logmsg, mlir_module_text)
 
-  check_module(mlir_module,
-               allow_non_replicated_sharding=allow_non_replicated_sharding,
-               allow_all_custom_calls=not strict_checks)
+  _check_module(mlir_module,
+                allow_non_replicated_sharding=allow_non_replicated_sharding,
+                allow_all_custom_calls=not strict_checks)
 
   return Exported(
       in_avals=args_avals,
       out_avals=out_avals,
       in_shardings=lowered.compile_args["in_shardings"],
       out_shardings=lowered.compile_args["out_shardings"],
-      lowering_platform=lowering_platform or default_jax_backend(),
-      mlir_module=mlir_module,
+      lowering_platform=lowering_platform or _default_jax_backend(),
+      strict_checks=strict_checks,
       mlir_module_serialized=mlir_module_serialized,
       module_kept_var_idx=module_kept_var_idx,
-      xla_call_module_version=xla_call_module_version)
+      xla_call_module_version=xla_call_module_version,
+      _get_vjp=lambda exported: _export_native_vjp(wrapped_fun_jax, exported))
 
 
-def add_dim_arg_computation(module: mlir.ir.Module,
-                            args_avals: Sequence[core.ShapedArray]) -> mlir.ir.Module:
+def _add_dim_arg_computation(module: mlir.ir.Module,
+                             args_avals: Sequence[core.ShapedArray]) -> mlir.ir.Module:
   """Wraps the lowered module with a new "main" that computes the dim args.
 
   JAX lowering in presence of shape polymorphism produces a `module` that
@@ -294,7 +276,7 @@ def add_dim_arg_computation(module: mlir.ir.Module,
       ctx = mlir.LoweringRuleContext(module_context=module_context,
           primitive=None, avals_in=args_avals, avals_out=None,
           tokens_in=mlir.TokenSet(), tokens_out=None)
-      dim_args = compute_dim_args(ctx, args_avals, tuple(new_main_op.arguments),
+      dim_args = _compute_dim_args(ctx, args_avals, tuple(new_main_op.arguments),
                                   orig_input_types[:len(dim_vars)])
       # The first arguments are the dimension variable
       orig_main_args.extend(dim_args)
@@ -308,7 +290,7 @@ def add_dim_arg_computation(module: mlir.ir.Module,
     return new_module
 
 
-def compute_dim_args(
+def _compute_dim_args(
     ctx: mlir.LoweringRuleContext,
     args_avals: Sequence[core.ShapedArray],
     array_args: Sequence[mlir.ir.Value],
@@ -337,9 +319,86 @@ def compute_dim_args(
   return tuple(res)
 
 
-def check_module(mod: mlir.ir.Module, *,
-                 allow_non_replicated_sharding: bool,
-                 allow_all_custom_calls: bool):
+def _check_lowered(lowered) -> None:
+  if not isinstance(lowered, pxla.MeshComputation):
+    raise NotImplementedError(f"serialization is supported only for pjit. {lowered}")
+
+  if lowered.compile_args["host_callbacks"] or lowered.compile_args["keepalive"]:
+    raise NotImplementedError("serialization of host_callbacks is not yet implemented")
+  # Check that we do not see new compile_args. When we add a compile_args it is
+  # safe to add it to the allowed_compile_args if it does not change the semantics
+  # or the calling convention of the lowered module.
+  allowed_compile_args = ["backend", "mesh", "global_in_avals",
+      "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
+      "spmd_lowering", "auto_spmd_lowering",
+      "tuple_args", "ordered_effects", "unordered_effects",
+      "keepalive", "host_callbacks", "pmap_nreps", "committed", "device_assignment"]
+  for compile_arg in lowered.compile_args.keys():
+    if compile_arg not in allowed_compile_args:
+      raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
+
+  # We have not implemented support for some of the compile_args.
+  not_implemented_msgs = []
+  for compile_arg, check_value, err_msg in (
+      ("spmd_lowering", lambda v: v, "True"),
+      ("auto_spmd_lowering", lambda v: not v, "False"),
+      # tuple_args is a compilation flag, does not affect lowering.
+      ("tuple_args", lambda v: True, "N/A"),
+      # Used for debug(ordered=True), changes the calling convention, but will
+      # also set keepalive to non-empty.
+      ("ordered_effects", lambda v: not v, "empty"),
+      # unordered_effects do not change the calling convention. Those from
+      # jax.debug will also result in keepalive being non-empty and unsupported
+      # custom calls. The CallTfEffect is an exception, but we want to allow
+      # that one.
+      ("unordered_effects", lambda v: True, "N/A"),
+      # used for TPU jax.debug, send/recv. Not supported yet.
+      ("host_callbacks", lambda v: not v, "empty"),
+      # used on all platforms for callbacks. Not supported yet.
+      ("keepalive", lambda v: not v, "empty"),
+      ("pmap_nreps", lambda v: v == 1, "1"),
+  ):
+    if compile_arg in lowered.compile_args:
+      if not check_value(lowered.compile_args[compile_arg]):
+        not_implemented_msgs.append(
+            f"{compile_arg} must be {err_msg} and it is {lowered.compile_args[compile_arg]}")
+  if not_implemented_msgs:
+    raise NotImplementedError(
+        "serialization error, unimplemented lowered.compile_args:\n" +
+        "\n".join(not_implemented_msgs))
+
+# These are the JAX custom call target names that are guaranteed to be stable.
+# Their backwards compatibility is tested by back_compat_test.py.
+_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = [
+    "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
+    "ducc_fft", "cu_threefry2x32",
+    # eigh on CPU
+    "lapack_ssyevd", "lapack_dsyevd", "lapack_cheevd", "lapack_zheevd",
+    # eigh on GPU
+    "cusolver_syevj", "cusolver_syevd",
+    # eigh on TPU
+    "Eigh",
+    # qr on CPU
+    "lapack_sgeqrf", "lapack_dgeqrf", "lapack_cgeqrf", "lapack_zgeqrf",
+    "lapack_sorgqr", "lapack_dorgqr", "lapack_cungqr", "lapack_zungqr",
+    # qr on GPU
+    "cusolver_geqrf", "cublas_geqrf_batched",
+    "cusolver_geqrf", "cusolver_orgqr",
+    # qr and svd on TPU
+    "Qr", "ProductOfElementaryHouseholderReflectors",
+    # TODO(atondwal, necula): add back_compat tests for lu on CPU/GPU
+    # # lu on CPU
+    # "lapack_sgetrf" , "lapack_dgetrf" , "lapack_cgetrf" , "lapack_zgetrf",
+    # # lu on GPU
+    # "cublas_getrf_batched", "cusolver_getrf",
+    # "hipblas_getrf_batched", "hipsolver_getrf",
+    # lu on TPU
+    "LuDecomposition",
+]
+
+def _check_module(mod: mlir.ir.Module, *,
+                  allow_non_replicated_sharding: bool,
+                  allow_all_custom_calls: bool):
   """Run a number of checks on the module.
 
   Args:
@@ -393,3 +452,55 @@ def check_module(mod: mlir.ir.Module, *,
            f"{disallowed_custom_call_ops_str}.\n"
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
+
+def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
+  # Export the VJP of `fun_flat_jax`
+
+  def fun_vjp_jax(*args_and_out_cts_flat_jax):
+    # Takes a flat list of primals and output cotangents
+    args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax, [len(primal.in_avals)])
+    _, pullback_jax = jax.vjp(primal_fun_jax, *args_flat_jax)
+    return pullback_jax(out_cts_flat_jax)
+
+  vjp_in_avals = list(
+      itertools.chain(primal.in_avals,
+                      map(lambda a: a.at_least_vspace(), primal.out_avals)))
+
+  # Expand in_shardings to all in_avals even not kept ones.
+  all_in_shardings = [pxla._UNSPECIFIED] * len(primal.in_avals)
+  for idx, in_s in zip(sorted(primal.module_kept_var_idx),
+                       primal.in_shardings):
+    all_in_shardings[idx] = in_s  # type: ignore
+  all_shardings = all_in_shardings + list(primal.out_shardings)
+  # Cannot mix unspecified and specified shardings. Make the unspecified
+  # ones replicated.
+  specified_shardings = [
+      s for s in all_shardings if not pxla._is_unspecified(s)]
+
+  vjp_in_shardings: Any  # The primal inputs followed by output cotangents
+  vjp_out_shardings: Any  # The primal output cotangents
+  if 0 == len(specified_shardings):
+    vjp_in_shardings = pxla._UNSPECIFIED
+    vjp_out_shardings = pxla._UNSPECIFIED
+  else:
+    if len(specified_shardings) < len(all_shardings):
+      # There are some specified, but not all; pjit front-end does not liwk
+      in_s = specified_shardings[0]  # pjit will enforce that all have same devices
+      assert isinstance(in_s, sharding.XLACompatibleSharding)
+      replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
+      all_shardings = [
+          s if not pxla._is_unspecified(s) else replicated_s
+          for s in all_shardings]
+
+    vjp_in_shardings = tuple(all_shardings)
+    vjp_out_shardings = tuple(all_shardings[:len(primal.in_avals)])
+    if all(pxla._is_unspecified(s) for s in vjp_out_shardings):
+      vjp_out_shardings = pxla._UNSPECIFIED
+
+  fun_vjp_jax = pjit.pjit(fun_vjp_jax,
+                          in_shardings=vjp_in_shardings,
+                          out_shardings=vjp_out_shardings)
+
+  return export_native(fun_vjp_jax, vjp_in_avals,
+                       lowering_platform=primal.lowering_platform,
+                       strict_checks=primal.strict_checks)

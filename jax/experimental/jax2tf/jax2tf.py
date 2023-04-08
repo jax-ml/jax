@@ -386,7 +386,7 @@ def convert(fun_jax: Callable,
           lowering_platform = native_serialization_platforms[0]
         else:
           lowering_platform = None
-        exported: Optional[jax_export.Exported] = jax_export.serialize_native(
+        exported: Optional[jax_export.Exported] = jax_export.export_native(
             fun_flat_jax, args_avals_flat,
             lowering_platform=lowering_platform,
             strict_checks=native_serialization_strict_checks)
@@ -394,8 +394,7 @@ def convert(fun_jax: Callable,
             args_flat_tf: Sequence[TfVal]
         ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
           outs_tf, out_avals = run_exported_as_tf(
-              args_avals_flat, args_flat_tf, exported,  # type: ignore
-              native_serialization_strict_checks)
+              args_flat_tf, exported)  # type: ignore
           return outs_tf, out_avals
       else:
         dim_vars = shape_poly.all_dim_vars(args_avals_flat)
@@ -428,7 +427,6 @@ def convert(fun_jax: Callable,
         _has_registered_tf_source_path = True
 
       if with_gradient:
-
         @tf.custom_gradient
         def converted_fun_flat_with_custom_gradient_tf(*args_flat_tf: TfVal) -> TfVal:
           outs_tf, out_avals = run_fun_flat_as_tf(args_flat_tf)
@@ -439,9 +437,6 @@ def convert(fun_jax: Callable,
                       polymorphic_shapes_flat=polymorphic_shapes_flat,
                       out_avals=out_avals,
                       outs_tf=outs_tf,
-                      native_serialization=native_serialization,
-                      native_serialization_platforms=native_serialization_platforms,
-                      native_serialization_strict_checks=native_serialization_strict_checks,
                       exported_primal=exported))
 
         out_flat_tf = converted_fun_flat_with_custom_gradient_tf(*args_flat_tf)
@@ -562,14 +557,17 @@ def _make_custom_gradient_fn_tf(*,
                                 polymorphic_shapes_flat: Sequence[str],
                                 out_avals: Sequence[core.ShapedArray],
                                 outs_tf: Sequence[TfVal],
-                                native_serialization: Union[str, bool],
-                                native_serialization_platforms: Sequence[str],
-                                native_serialization_strict_checks: bool,
                                 exported_primal: Optional[jax_export.Exported]):
   """Prepares the TF function to be used with tf.custom_gradient.
 
+  Args:
+    fun_flat_jax: the flattened JAX primal function
+    args_flat_tf: the TF arguments of the primal function
+    out_avals: the output JAX abstract values of the primal function
+    outs_tf: the TF outputs of the primal function
+    exported_primal: is None for graph serialization, and is the exported
+      primal function for native serialization.
   """
-
   def grad_fn_tf(*out_cts_flat_tf: TfVal,
                  variables=None):
     if variables:
@@ -578,63 +576,12 @@ def _make_custom_gradient_fn_tf(*,
           "This should not happen for first-order differentiation. "
           f"{variables=}")
 
-    out_cts_flat_polymorphic_shapes = tuple(str(out_aval.shape)  # Note: may be _DimExpr, not just DimVar
-                                            for out_aval in out_avals)  # type: ignore
-    vjp_polymorphic_shapes = [
-        polymorphic_shapes_flat, out_cts_flat_polymorphic_shapes
-    ]
-
-    def fun_vjp_jax(args_flat_jax, out_cts_flat_jax):
-      # One may think that we can get the pullback while we are converting
-      # the main function in the first place. That is problematic, because the
-      # pullback may contain captured tracers from the conversion of the
-      # main function. Those tracers will confuse the conversion of the
-      # pullback. So, we construct the vjp anew and we convert it separately.
+    def fun_vjp_jax(*args_and_out_cts_flat_jax):
+      # Takes a flat list of primals and output cotangents
+      args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax, [len(args_flat_tf)])
       _, pullback_jax = jax.vjp(fun_flat_jax, *args_flat_jax)
-      return pullback_jax(list(out_cts_flat_jax))
+      return pullback_jax(out_cts_flat_jax)
 
-    if exported_primal is not None:
-      # Native lowering
-      all_in_shardings = [pxla._UNSPECIFIED] * len(exported_primal.in_avals)
-      for idx, in_s in zip(sorted(exported_primal.module_kept_var_idx),
-                           exported_primal.in_shardings):
-        all_in_shardings[idx] = in_s  # type: ignore
-      all_shardings = all_in_shardings + list(exported_primal.out_shardings)
-      # We cannot mix unspecified and specified shardings. Make the unspecified
-      # ones replicated
-      specified_shardings = [
-          s for s in all_shardings if not pxla._is_unspecified(s)]
-      if 0 < len(specified_shardings) < len(all_shardings):
-        # There are some specified, but not all
-        in_s = specified_shardings[0]  # pjit will enforce that all have same devices
-        assert isinstance(in_s, sharding.XLACompatibleSharding)
-        replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
-        all_shardings = [
-            s if not pxla._is_unspecified(s) else replicated_s
-            for s in all_shardings]
-      # Since fun_vjp_jax takes two tuples of arguments we must split the in_shardings
-      vjp_in_args_shardings: Any
-      vjp_in_out_ct_shardings: Any
-      vjp_in_shardings: Any
-      vjp_in_args_shardings, vjp_in_out_ct_shardings = util.split_list(all_shardings,
-                                                                       [len(exported_primal.in_avals)])
-      # pjit front-end does not like all-unspecified
-      if all(pxla._is_unspecified(s) for s in vjp_in_args_shardings):
-        vjp_in_args_shardings = pxla._UNSPECIFIED
-      else:
-        vjp_in_args_shardings = tuple(vjp_in_args_shardings)
-      if all(pxla._is_unspecified(s) for s in vjp_in_out_ct_shardings):
-        vjp_in_out_ct_shardings = pxla._UNSPECIFIED
-      else:
-        vjp_in_out_ct_shardings = tuple(vjp_in_out_ct_shardings)
-
-      if pxla._is_unspecified(vjp_in_args_shardings) and pxla._is_unspecified(vjp_in_args_shardings):
-        vjp_in_shardings = pxla._UNSPECIFIED
-      else:
-        vjp_in_shardings = (vjp_in_args_shardings, vjp_in_out_ct_shardings)
-      fun_vjp_jax = pjit.pjit(fun_vjp_jax,
-                              in_shardings=vjp_in_shardings,
-                              out_shardings=vjp_in_args_shardings)
     # TODO: enable higher-order gradients
     with tf.name_scope("jax2tf_vjp"):
       def fix_out_ct(out_ct_tf, out_ct_aval: core.ShapedArray, out_tf: TfVal):
@@ -650,14 +597,22 @@ def _make_custom_gradient_fn_tf(*,
         return tf.zeros_like(out_tf, dtype=_tf_np_dtype_for_float0)
 
       out_cts_fixed_flat_tf = tuple(map(fix_out_ct, out_cts_flat_tf, out_avals, outs_tf))
-      in_cts_flat = convert(
-          fun_vjp_jax,
-          with_gradient=False,
-          polymorphic_shapes=vjp_polymorphic_shapes,
-          native_serialization=native_serialization,
-          native_serialization_platforms=native_serialization_platforms,
-          native_serialization_strict_checks=native_serialization_strict_checks
-      )(args_flat_tf, out_cts_fixed_flat_tf)
+      vjp_args_flat_tf = tuple(args_flat_tf) + out_cts_fixed_flat_tf
+      if exported_primal is not None:
+        exported_vjp = exported_primal.vjp()
+        vjp_args_flat_tf = tuple(tf.identity(arg, f"jax2tf_arg_{arg_idx}")
+                                 for arg_idx, arg in enumerate(vjp_args_flat_tf))
+        in_cts_flat, _ = run_exported_as_tf(vjp_args_flat_tf, exported_vjp)
+        in_cts_flat = tuple(tf.identity(arg, "jax2tf_out") for arg in in_cts_flat)
+      else:
+        out_cts_flat_polymorphic_shapes = tuple(str(out_aval.shape)  # Note: may be _DimExpr, not just DimVar
+                                                for out_aval in out_avals)  # type: ignore
+        vjp_polymorphic_shapes = tuple(polymorphic_shapes_flat) + out_cts_flat_polymorphic_shapes
+        in_cts_flat = convert(
+            fun_vjp_jax,
+            with_gradient=False,
+            polymorphic_shapes=vjp_polymorphic_shapes,
+            native_serialization=False)(*vjp_args_flat_tf)
     return in_cts_flat
 
   return grad_fn_tf
@@ -692,13 +647,16 @@ def _interpret_fun_jax(
   return util.unzip2(out_vals)
 
 
-def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
-                       args_tf: Sequence[TfVal],
+def run_exported_as_tf(args_tf: Sequence[TfVal],
                        exported: jax_export.Exported,
-                       native_serialization_strict_checks: bool,
                        ) -> Tuple[Tuple[TfVal, ...], Tuple[core.ShapedArray, ...]]:
-  """Runs the `exported` as an XlaCallModule TF op."""
-  out_shapes = tuple(
+  """Runs the `exported` as an XlaCallModule TF op.
+
+  Returns:
+    a tuple with the results and the abstract values.
+  """
+  args_avals = exported.in_avals
+  out_shapes_tf = tuple(
       tuple(d if type(d) is int else None
             for d in out_aval.shape)
       for out_aval in exported.out_avals)
@@ -715,10 +673,10 @@ def run_exported_as_tf(args_avals: Sequence[core.ShapedArray],
   call_module_attrs = dict(
       version=exported.xla_call_module_version,
       Tout=out_types,
-      Sout=out_shapes)
+      Sout=out_shapes_tf)
 
   if exported.xla_call_module_version >= 3:
-    if native_serialization_strict_checks:
+    if exported.strict_checks:
       call_module_attrs["platforms"] = (exported.lowering_platform.upper(),)
     else:
       call_module_attrs["platforms"] = ()  # No platform checking

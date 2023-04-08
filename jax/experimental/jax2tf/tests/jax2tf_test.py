@@ -1531,7 +1531,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         stack.enter_context(mesh)
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
-      exported = jax_export.serialize_native(
+      exported = jax_export.export_native(
           func_to_convert,
           [core.ShapedArray(a.shape, a.dtype) for a in args],
           lowering_platform='tpu',
@@ -1608,7 +1608,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sin(x)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "keepalive must be empty"):
+                                "serialization of host_callbacks is not yet implemented"):
       jax2tf.convert(f_jax, native_serialization=True)(np.float32(42.))
 
     def f_ordered_jax(x):
@@ -1616,7 +1616,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return jnp.sin(x)
 
     with self.assertRaisesRegex(NotImplementedError,
-                                "keepalive must be empty"):
+                                "serialization of host_callbacks is not yet implemented"):
       jax2tf.convert(f_ordered_jax, native_serialization=True)(np.float32(42.))
 
   def test_tuple_args(self):
