@@ -29,7 +29,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.11.0
         with:
           access_token: ${{ github.token }}
-        if: ${{github.ref != 'refs/head/main'}}
+        if: ${{github.ref != 'refs/heads/main'}}
       - uses: actions/checkout@v3
       - name: Set up Python 3.8
         uses: actions/setup-python@v4
@@ -74,7 +74,7 @@ jobs:
       uses: styfle/cancel-workflow-action@0.11.0
       with:
         access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/head/main'}}
+      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
@@ -133,7 +133,7 @@ jobs:
       uses: styfle/cancel-workflow-action@0.11.0
       with:
         access_token: ${{ github.token }}
-      if: ${{github.ref != 'refs/head/main'}}
+      if: ${{github.ref != 'refs/heads/main'}}
     - uses: actions/checkout@v3
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
