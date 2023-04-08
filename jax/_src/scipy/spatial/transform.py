@@ -131,14 +131,66 @@ class Rotation(typing.NamedTuple):
       return Rotation(jax.vmap(_inv)(self.quat))
 
   def magnitude(self) -> jax.Array:
+    """Get the magnitude(s) of the rotation(s)."""
     if self.quat.ndim == 1:
-      return _vector_norm(self.quat)
+      return _magnitude(self.quat)
     else:
-      return jax.vmap(_vector_norm)(self.quat)
+      return jax.vmap(_magnitude)(self.quat)
 
   @property
   def single(self) -> bool:
     return self.quat.ndim == 1
+
+
+# class Slerp(typing.NamedTuple):
+#   """Spherical Linear Interpolation of Rotations."""
+
+#   times: jnp.ndarray
+#   timedelta: jnp.ndarray
+#   rotations: Rotation
+#   rotvecs: jnp.ndarray
+
+#   def __new__(cls, times: jax.Array, rotations: Rotation):
+#     if not isinstance(rotations, Rotation):
+#       raise TypeError("`rotations` must be a `Rotation` instance.")
+#     if rotations.single or len(rotations) == 1:
+#       raise ValueError("`rotations` must be a sequence of at least 2 rotations.")
+#     if times.ndim != 1:
+#       raise ValueError("Expected times to be specified in a 1 "
+#                        "dimensional array, got {} "
+#                        "dimensions.".format(times.ndim))
+#     if times.shape[0] != len(rotations):
+#       raise ValueError("Expected number of rotations to be equal to "
+#                        "number of timestamps given, got {} rotations "
+#                        "and {} timestamps.".format(len(rotations), times.shape[0]))
+#     timedelta = jnp.diff(times)
+#     if jnp.any(timedelta <= 0):
+#       raise ValueError("Times must be in strictly increasing order.")
+#     new_rotations = rotations[:-1]
+#     return cls(
+#       times=times,
+#       timedelta=jnp.diff(times),
+#       rotations=new_rotations,
+#       rotvecs=(new_rotations.inv() * rotations[1:]).as_rotvec())
+
+#   def __call__(self, times: jax.Array):
+#     """Interpolate rotations."""
+#     compute_times = jnp.asarray(times)
+#     if compute_times.ndim > 1:
+#       raise ValueError("`times` must be at most 1-dimensional.")
+#     single_time = compute_times.ndim == 0
+#     compute_times = jnp.atleast_1d(compute_times)
+#     ind = jnp.searchsorted(self.times, compute_times) - 1
+#     ind[compute_times == self.times[0]] = 0
+#     if jnp.any(jnp.logical_or(ind < 0, ind > len(self.rotations) - 1)):
+#       raise ValueError("Interpolation times must be within the range "
+#                        "[{}, {}], both inclusive.".format(self.times[0], self.times[-1]))
+#     alpha = (compute_times - self.times[ind]) / self.timedelta[ind]
+#     result = (self.rotations[ind] *
+#               Rotation.from_rotvec(self.rotvecs[ind] * alpha[:, None]))
+#     if single_time:
+#       result = result[0]
+#     return result
 
 
 def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
@@ -228,6 +280,9 @@ def _from_matrix(matrix: jax.Array) -> jax.Array:
 
 def _inv(quat: jax.Array) -> jax.Array:
   return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
+
+def _magnitude(quat: jax.Array) -> jax.Array:
+  return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)

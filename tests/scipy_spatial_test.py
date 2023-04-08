@@ -17,6 +17,8 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax.scipy.spatial.transform import Rotation as jsp_Rotation
 from scipy.spatial.transform import Rotation as osp_Rotation
+# from jax.scipy.spatial.transform import Slerp as jsp_Slerp
+# from scipy.spatial.transform import Slerp as osp_Slerp
 
 from jax.config import config
 
@@ -168,18 +170,18 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
-  # @jtu.sample_product(
-  #   dtype=float_dtypes,
-  #   shape=[(4,), (2, 4)],
-  # )
-  # def testRotationMagnitude(self, shape, dtype):
-  #   rng = jtu.rand_default(self.rng())
-  #   args_maker = lambda: (rng(shape, dtype),)
-  #   jnp_fn = lambda q: jsp_Rotation.from_quat(q).magnitude()
-  #   np_fn = lambda q: osp_Rotation.from_quat(q).magnitude()
-  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-  #                           tol=1e-4)
-  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(4,), (2, 4)],
+  )
+  def testRotationMagnitude(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    jnp_fn = lambda q: jsp_Rotation.from_quat(q).magnitude()
+    np_fn = lambda q: osp_Rotation.from_quat(q).magnitude()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   @jtu.sample_product(
     dtype=float_dtypes,
