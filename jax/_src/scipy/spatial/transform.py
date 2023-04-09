@@ -214,7 +214,7 @@ class Slerp(typing.NamedTuple):
                        "number of timestamps given, got {} rotations "
                        "and {} timestamps.".format(len(rotations), times.shape[0]))
     timedelta = jnp.diff(times)
-    # if jnp.any(timedelta <= 0):
+    # if jnp.any(timedelta <= 0):  # this causes a concretization error...
     #   raise ValueError("Times must be in strictly increasing order.")
     new_rotations = rotations[:-1]
     return cls(
@@ -246,11 +246,13 @@ def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
     result = jnp.einsum('jk,k->j', matrix, vector)
   return result
 
+
 def _as_euler(quat: jax.Array, seq: str, degrees: bool) -> jax.Array:
   assert seq == 'xyz'
   ai, aj, ak = _euler_from_quaternion(jnp.roll(quat, 1), axes='sxyz')
   angles = jnp.array([ai, aj, ak])
   return jnp.where(degrees, jnp.degrees(angles), angles)
+
 
 def _as_matrix(quat: jax.Array) -> jax.Array:
   x = quat[0]
@@ -271,18 +273,23 @@ def _as_matrix(quat: jax.Array) -> jax.Array:
                     [2 * (xy + zw), - x2 + y2 - z2 + w2, 2 * (yz - xw)],
                     [2 * (xz - yw), 2 * (yz + xw), - x2 - y2 + z2 + w2]])
 
+
 def _as_mrp(quat: jax.Array) -> jax.Array:
   sign = jnp.where(quat[3] < 0, -1., 1.)
   denominator = 1. + sign * quat[3]
   return sign * quat[:3] / denominator
 
+
 def _as_rotvec(quat: jax.Array, degrees: bool) -> jax.Array:
-  angle = 2 * jnp.arccos(quat[-1])
-  wrapped_angle = jnp.where(angle >= jnp.pi, angle - 2*jnp.pi, angle)
-  norm = _vector_norm(quat[0:3])
-  axis = quat[0:3]
-  scale = jnp.where(degrees, jnp.degrees(wrapped_angle), wrapped_angle) / norm
-  return jnp.where(norm > 0, scale * axis, jnp.zeros(3))
+  quat = jnp.where(quat[3] < 0, -quat, quat)  # w > 0 to ensure 0 <= angle <= pi
+  angle = 2. * jnp.arctan2(_vector_norm(quat[:3]), quat[3])
+  angle2 = angle * angle
+  small_scale = 2 + angle2 / 12 + 7 * angle2 * angle2 / 2880
+  large_scale = angle / jnp.sin(angle / 2)
+  scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
+  scale = jnp.where(degrees, jnp.rad2deg(scale), scale)
+  return scale * jnp.array(quat[:3])
+
 
 def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
   cross = jnp.cross(p[:3], q[:3])
@@ -291,15 +298,21 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[2] + q[3]*p[2] + cross[2],
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
+
 def _from_euler(seq: str, angles: jax.Array, degrees: bool) -> jax.Array:
   a = jnp.where(degrees, jnp.radians(angles), angles)
   return jnp.roll(_quaternion_from_euler(a[0], a[1], a[2], axes='sxyz'), -1)
 
+
 def _from_rotvec(rotvec: jax.Array, degrees: bool) -> jax.Array:
-  norm = _vector_norm(rotvec)
-  axis = jnp.where(norm > 0, rotvec / norm, jnp.array([1., 0., 0.]))
-  angle = jnp.where(degrees, jnp.radians(norm), norm)
-  return jnp.roll(_quaternion_about_axis(angle, axis), -1)
+  rotvec = jnp.where(degrees, jnp.deg2rad(rotvec), rotvec)
+  angle = _vector_norm(rotvec)
+  angle2 = angle * angle
+  small_scale = scale = 0.5 - angle2 / 48 + angle2 * angle2 / 3840
+  large_scale = jnp.sin(angle / 2) / angle
+  scale = jnp.where(angle <= 1e-3, small_scale, large_scale)
+  return jnp.hstack([scale * rotvec, jnp.cos(angle / 2)])
+
 
 def _from_matrix(matrix: jax.Array) -> jax.Array:
   M = jnp.array(matrix, copy=False)[:3, :3]
@@ -326,15 +339,19 @@ def _from_matrix(matrix: jax.Array) -> jax.Array:
   quat = jnp.where(tr > 0, q1, quat)
   return _normalize_quaternion(quat)
 
+
 def _from_mrp(mrp: jax.Array) -> jax.Array:
   mrp_squared_plus_1 = jnp.dot(mrp, mrp) + 1
   return jnp.hstack([2 * mrp[:3], (2 - mrp_squared_plus_1)]) / mrp_squared_plus_1
 
+
 def _inv(quat: jax.Array) -> jax.Array:
   return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
 
+
 def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
+
 
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)
@@ -412,14 +429,6 @@ def _euler_from_quaternion(quaternion, axes='sxyz'):
   return _euler_from_matrix(_quaternion_matrix(quaternion), axes)
 
 
-def _quaternion_about_axis(angle, axis):
-  q = jnp.array([0.0, axis[0], axis[1], axis[2]])
-  qlen = _vector_norm(q)
-  q = jnp.where(qlen > _EPS, q * jnp.sin(angle / 2.0) / qlen, q)
-  q = q.at[0].set(jnp.cos(angle / 2.0))
-  return q
-
-
 def _quaternion_from_euler(ai, aj, ak, axes='sxyz'):
   firstaxis, parity, repetition, frame = _AXES2TUPLE[axes.lower()]
 
@@ -481,6 +490,7 @@ def _vector_norm(data):
   return jnp.sqrt(jnp.dot(data, data))
 
 
+# TODO: delete this
 if __name__ == '__main__':
   import numpy as onp
   times = 0.
