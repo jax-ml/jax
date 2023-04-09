@@ -14,7 +14,7 @@ List of Available Functions
 
 .. autosummary::
   :toctree: _autosummary
-      
+
     PRNGKey
     ball
     bernoulli
