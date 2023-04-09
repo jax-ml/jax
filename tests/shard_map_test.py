@@ -639,6 +639,51 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(g, mesh, in_specs=(P(None), P('x'), P(('x', 'y'))),
                 out_specs=[P(None), P(None), P(('x', 'y'))])(x, x, x)
 
+  def test_eager_notimplemented_error_message_custom_jvp(self):
+    @jax.custom_jvp
+    def foo(x):
+      return 2. * x
+
+    @foo.defjvp
+    def foo_jvp(primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      return foo(x), 2. * x_dot
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(NotImplementedError, 'custom_jvp'):
+      g(x)
+
+  def test_eager_notimplemented_error_message_custom_vjp(self):
+    @jax.custom_vjp
+    def foo(x):
+      return 2. * x
+
+    def foo_fwd(x):
+      return x, None
+
+    def foo_bwd(_, y_bar):
+      return 2. * y_bar,
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(NotImplementedError, 'custom_vjp'):
+      g(x)
+
+  def test_eager_notimplemented_error_message_axis_index(self):
+    def foo(x):
+      return x + jax.lax.axis_index('x')
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    g = shard_map(foo, mesh, in_specs=(P('x'),), out_specs=P('x'))
+    x = jnp.arange(4.)
+    with self.assertRaisesRegex(NotImplementedError, 'axis_index'):
+      g(x)
+
 
 class FunSpec(NamedTuple):
   name: str

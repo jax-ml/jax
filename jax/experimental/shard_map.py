@@ -358,7 +358,7 @@ def process_env_traces(level: int, mesh, in_names, out_names_thunk, check_rep,
 # Staging
 
 def _shard_map_staging(
-    trace: pe.DynamicJaxprTrace, prim: core.Primitive, fun: lu.WrappedFun,
+    trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
     in_tracers: Sequence[pe.DynamicJaxprTracer], *, mesh: Mesh,
     in_names: Tuple[AxisNames, ...],
     out_names_thunk: Callable[[], Tuple[AxisNames, ...]],
@@ -366,9 +366,9 @@ def _shard_map_staging(
   ) -> Sequence[pe.DynamicJaxprTracer]:
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
+  main = trace.main
   with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr, out_avals_, consts = pe.trace_to_subjaxpr_dynamic(
-        fun, trace.main, in_avals_)
+    jaxpr, out_avals_, consts = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
     in_rep = map(partial(_in_names_to_rep, mesh), in_names)
@@ -510,7 +510,7 @@ def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
   args = map(partial(_unmatch_spec, mesh), in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
   with core.new_base_main(ShardMapTrace, mesh=mesh, check=check_rep) as main:
-    with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
+    with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items(), main):
       t = main.with_cur_sublevel()
       in_tracers = map(partial(ShardMapTracer, t), in_rep, args)
       ans = fun.call_wrapped(*in_tracers)
@@ -595,7 +595,53 @@ class ShardMapTrace(core.Trace):
     return ShardMapTracer(self, out_rep, out_vals)
 
   def process_call(self, call_primitive, fun, tracers, params):
-    raise NotImplementedError
+    raise NotImplementedError(
+        f"Eager evaluation of `{call_primitive}` inside a `shard_map` isn't "
+        "yet supported. Put a `jax.jit` around the `shard_map`-decorated "
+        "function, and open a feature request at "
+        "https://github.com/google/jax/issues !")
+
+  def process_map(self, map_primitive, fun, tracers, params):
+    raise NotImplementedError(
+        "Eager evaluation of `pmap` inside a `shard_map` isn't yet supported."
+        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
+        "a feature request at https://github.com/google/jax/issues !")
+
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
+    raise NotImplementedError(
+        "Eager evaluation of a `custom_jvp` inside a `shard_map` isn't yet "
+        "supported. "
+        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
+        "a feature request at https://github.com/google/jax/issues !")
+
+  def post_process_custom_jvp_call(self, out_tracers, _):
+    raise NotImplementedError(
+        "Eager evaluation of a `custom_jvp` inside a `shard_map` isn't yet "
+        "supported. "
+        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
+        "a feature request at https://github.com/google/jax/issues !")
+
+  def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
+                              symbolic_zeros):
+    raise NotImplementedError(
+        "Eager evaluation of a `custom_vjp` inside a `shard_map` isn't yet "
+        "supported. "
+        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
+        "a feature request at https://github.com/google/jax/issues !")
+
+  def post_process_custom_vjp_call(self, out_tracers, _):
+    raise NotImplementedError(
+        "Eager evaluation of a `custom_vjp` inside a `shard_map` isn't yet "
+        "supported. "
+        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
+        "a feature request at https://github.com/google/jax/issues !")
+
+  def process_axis_index(self, frame):
+    raise NotImplementedError(
+        "Eager evaluation of an `axis_index` inside a `shard_map` isn't yet "
+        "supported. "
+        "Put a `jax.jit` around the `shard_map`-decorated function, and open "
+        "a feature request at https://github.com/google/jax/issues !")
 
 
 class ShardMapTracer(core.Tracer):
