@@ -3534,7 +3534,8 @@ class UtilTest(jtu.JaxTestCase):
 
     mp = NamedSharding(global_mesh, P(None))
 
-    out_indices = pxla._get_input_indices(in_avals, [mp, mp, mp])
+    out_indices = pxla._get_input_indices(in_avals, [mp, mp, mp],
+                                          list(global_mesh.devices.flat))
 
     self.assertLen(out_indices, len(in_avals))
     self.assertTrue(all(len(out) == len(global_mesh.local_devices)
