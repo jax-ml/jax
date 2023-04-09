@@ -220,18 +220,19 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
-  # @jtu.sample_product(
-  #   dtype=float_dtypes,
-  #   shape=[(2, 4)],
-  # )
-  # def testRotationMean(self, shape, dtype):
-  #   rng = jtu.rand_default(self.rng())
-  #   args_maker = lambda: (rng(shape, dtype),)
-  #   jnp_fn = lambda q: jsp_Rotation.from_quat(q).mean().as_quat()
-  #   np_fn = lambda q: osp_Rotation.from_quat(q).mean().as_quat()
-  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-  #                           tol=1e-4)
-  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(2, 4)],
+    is_weights=[True, False],
+  )
+  def testRotationMean(self, shape, dtype, is_weights):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype), rng(shape[0], dtype) if is_weights else None)
+    jnp_fn = lambda q, w: jsp_Rotation.from_quat(q).mean(w).as_quat()
+    np_fn = lambda q, w: osp_Rotation.from_quat(q).mean(w).as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
   @jtu.sample_product(
     dtype=float_dtypes,

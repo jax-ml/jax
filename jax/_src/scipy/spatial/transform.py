@@ -93,54 +93,54 @@ class Rotation(typing.NamedTuple):
 
   def __getitem__(self, indexer):
     """Extract rotation(s) at given index(es) from object."""
-    if self.quat.ndim == 1:
+    if self.single:
       raise TypeError("Single rotation is not subscriptable.")
-    return self.__class__(self.quat[indexer])
+    return Rotation(self.quat[indexer])
 
   def __len__(self):
     """Number of rotations contained in this object."""
-    if self.quat.ndim == 1:
+    if self.single:
       raise TypeError('Single rotation has no len().')
     else:
       return self.quat.shape[0]
 
   def __mul__(self, other):
     """Compose this rotation with the other."""
-    if self.quat.ndim == 1 and other.quat.ndim == 1:
+    if self.single and other.single:
       return Rotation.from_quat(_compose_quat(self.quat, other.quat))
     else:
-      self_axis = None if self.quat.ndim == 1 else 0
+      self_axis = None if self.single else 0
       other_axis = None if other.quat.ndim == 1 else 0
       return Rotation.from_quat(jax.vmap(_compose_quat, in_axes=[self_axis, other_axis])(self.quat, other.quat))
 
   @functools.partial(jax.jit, static_argnames=['inverse'])
   def apply(self, vectors: jax.Array, inverse: bool = False) -> jax.Array:
     """Apply this rotation to one or more vectors."""
-    if self.quat.ndim == 1 and vectors.ndim == 1:
+    if self.single and vectors.ndim == 1:
       return _apply(self, vectors, inverse)
     else:
-      self_axis = None if self.quat.ndim == 1 else 0
+      self_axis = None if self.single else 0
       vector_axis = None if vectors.ndim == 1 else 0
       return jax.vmap(_apply, in_axes=[self_axis, vector_axis, None])(self, vectors, inverse)
 
   @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
   def as_euler(self, seq: str, degrees: bool = False):
     """Represent as Euler angles."""
-    if self.quat.ndim == 1:
+    if self.single:
       return _as_euler(self.quat, seq, degrees)
     else:
       return jax.vmap(_as_euler, in_axes=[0, None, None])(self.quat, seq, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
-    if self.quat.ndim == 1:
+    if self.single:
       return _as_matrix(self.quat)
     else:
       return jax.vmap(_as_matrix)(self.quat)
 
   def as_mrp(self) -> jax.Array:
     """Represent as Modified Rodrigues Parameters (MRPs)."""
-    if self.quat.ndim == 1:
+    if self.single:
       return _as_mrp(self.quat)
     else:
       return jax.vmap(_as_mrp)(self.quat)
@@ -148,7 +148,7 @@ class Rotation(typing.NamedTuple):
   @functools.partial(jax.jit, static_argnames=['degrees'])
   def as_rotvec(self, degrees: bool = False) -> jax.Array:
     """Represent as rotation vectors."""
-    if self.quat.ndim == 1:
+    if self.single:
       return _as_rotvec(self.quat, degrees)
     else:
       return jax.vmap(_as_rotvec, in_axes=[0, None])(self.quat, degrees)
@@ -159,24 +159,31 @@ class Rotation(typing.NamedTuple):
 
   def inv(self):
     """Invert this rotation."""
-    if self.quat.ndim == 1:
+    if self.single:
       return Rotation(_inv(self.quat))
     else:
       return Rotation(jax.vmap(_inv)(self.quat))
 
   def magnitude(self) -> jax.Array:
     """Get the magnitude(s) of the rotation(s)."""
-    if self.quat.ndim == 1:
+    if self.single:
       return _magnitude(self.quat)
     else:
       return jax.vmap(_magnitude)(self.quat)
 
-  # def mean(self) -> jax.Array:
-  #   """Get the mean of the rotations."""
-  #   if self.quat.ndim == 1:
-  #     return self.__class__(_mean(self.quat))
-  #   else:
-  #     return self.__class__(jax.vmap(_mean)(self.quat))
+  def mean(self, weights: typing.Optional[jax.Array] = None) -> jax.Array:
+    """Get the mean of the rotations."""
+    weights = jnp.where(weights is None, jnp.ones(self.quat.shape[0]), jnp.asarray(weights))
+    if weights.ndim != 1:
+      raise ValueError("Expected `weights` to be 1 dimensional, got "
+                       "shape {}.".format(weights.shape))
+    if weights.shape[0] != len(self):
+      raise ValueError("Expected `weights` to have number of values "
+                       "equal to number of rotations, got "
+                       "{} values and {} rotations.".format(weights.shape[0], len(self)))
+    K = jnp.dot(weights[jnp.newaxis, :] * self.quat.T, self.quat)
+    _, v = jnp.linalg.eigh(K)
+    return Rotation(v[:, -1])
 
   @property
   def single(self) -> bool:
@@ -330,11 +337,6 @@ def _inv(quat: jax.Array) -> jax.Array:
 def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
-def _mean(quat: jax.Array) -> jax.Array:
-  K = jnp.dot(quat.T, quat)
-  _, v = jnp.linalg.eigh(K)
-  return v[:, -1]
-
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)
 
@@ -485,6 +487,5 @@ def _vector_norm(data):
 #   times = 0.
 #   num = 5
 #   rotations = Rotation.from_quat(onp.random.randn(num, 4))
-#   slerp = Slerp.init(list(range(num)), rotations)
-#   result = slerp(times)
+#   mean = rotations.mean(weights=onp.ones((num,)))
 #   import pdb; pdb.set_trace()
