@@ -17,7 +17,6 @@ import re
 import typing
 
 import jax
-import jax.lax as lax
 import jax.numpy as jnp
 
 
@@ -220,6 +219,7 @@ class Rotation(typing.NamedTuple):
 
 
 class Slerp(typing.NamedTuple):
+  """Spherical Linear Interpolation of Rotations."""
 
   times: jnp.ndarray
   timedelta: jnp.ndarray
@@ -273,13 +273,6 @@ def _apply(rotation: Rotation, vector: jax.Array, inverse: bool) -> jax.Array:
   else:
     result = jnp.einsum('jk,k->j', matrix, vector)
   return result
-
-
-def _as_euler(quat: jax.Array, seq: str, degrees: bool) -> jax.Array:
-  assert seq == 'xyz'
-  ai, aj, ak = _euler_from_quaternion(jnp.roll(quat, 1), axes='sxyz')
-  angles = jnp.array([ai, aj, ak])
-  return jnp.where(degrees, jnp.degrees(angles), angles)
 
 
 def _as_matrix(quat: jax.Array) -> jax.Array:
