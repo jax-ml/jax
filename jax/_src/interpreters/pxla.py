@@ -601,13 +601,13 @@ class MapTrace(core.Trace):
   def process_call(self, call_primitive, fun, tracers, params):
     raise NotImplementedError
 
-  def process_map(self, call_primitive, fun, tracers, params):
+  def process_map(self, map_primitive, fun, tracers, params):
     if params['devices'] is not None:
       raise ValueError("Nested pmap with explicit devices argument.")
     if not config.jax_disable_jit:
       bind = HashableFunction(
-          lambda *args, **kwargs: call_primitive.bind(fun, *args, **kwargs),
-          (call_primitive, fun))
+          lambda *args, **kwargs: map_primitive.bind(fun, *args, **kwargs),
+          (map_primitive, fun))
       fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
       return self.process_primitive(fake_primitive, tracers, params)
     axis_name, in_axes, out_axes_thunk, axis_size = (params["axis_name"],
@@ -627,12 +627,11 @@ class MapTrace(core.Trace):
                            for v, s, dst in zip(out, outaxes, out_axes_thunk()))
     return map(partial(MapTracer, self), out, outaxes)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
-                              symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
     bind = HashableFunction(
-        lambda *args, **kwargs: primitive.bind(
+        lambda *args, **kwargs: prim.bind(
             fun, jvp, *args, symbolic_zeros=symbolic_zeros, **kwargs),
-        (primitive, fun, jvp))
+        (prim, fun, jvp, symbolic_zeros))
     fake_primitive = FakePrimitive(multiple_results=True, bind=bind)
     return self.process_primitive(fake_primitive, tracers, {})
 
