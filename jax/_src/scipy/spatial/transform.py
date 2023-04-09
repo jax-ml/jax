@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import functools
+import re
 import typing
 
 import jax
@@ -34,10 +35,24 @@ class Rotation(typing.NamedTuple):
   def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
     """Initialize from Euler angles."""
     assert angles.ndim in [1, 2]
+    num_axes = len(seq)
+    if num_axes < 1 or num_axes > 3:
+      raise ValueError("Expected axis specification to be a non-empty "
+                       "string of upto 3 characters, got {}".format(seq))
+    intrinsic = (re.match(r'^[XYZ]{1,3}$', seq) is not None)
+    extrinsic = (re.match(r'^[xyz]{1,3}$', seq) is not None)
+    if not (intrinsic or extrinsic):
+      raise ValueError("Expected axes from `seq` to be from ['x', 'y', "
+                       "'z'] or ['X', 'Y', 'Z'], got {}".format(seq))
+    if any(seq[i] == seq[i+1] for i in range(num_axes - 1)):
+      raise ValueError("Expected consecutive axes to be different, "
+                       "got {}".format(seq))
+    seq = seq.lower()
+    _from_euler = lambda a: _elementary_quat_compose(a, seq, intrinsic, degrees)
     if angles.ndim == 1:
-      return cls(_from_euler(seq, angles, degrees))
+      return cls(_from_euler(angles))
     else:
-      return cls(jax.vmap(_from_euler, in_axes=[None, 0, None])(seq, angles, degrees))
+      return cls(jax.vmap(_from_euler)(angles))
 
   @classmethod
   def from_matrix(cls, matrix: jax.Array):
@@ -126,10 +141,23 @@ class Rotation(typing.NamedTuple):
   @functools.partial(jax.jit, static_argnames=['seq', 'degrees'])
   def as_euler(self, seq: str, degrees: bool = False):
     """Represent as Euler angles."""
+    if len(seq) != 3:
+      raise ValueError("Expected 3 axes, got {}.".format(seq))
+    intrinsic = (re.match(r'^[XYZ]{1,3}$', seq) is not None)
+    extrinsic = (re.match(r'^[xyz]{1,3}$', seq) is not None)
+    if not (intrinsic or extrinsic):
+      raise ValueError("Expected axes from `seq` to be from "
+                       "['x', 'y', 'z'] or ['X', 'Y', 'Z'], "
+                       "got {}".format(seq))
+    if any(seq[i] == seq[i+1] for i in range(2)):
+      raise ValueError("Expected consecutive axes to be different, "
+                       "got {}".format(seq))
+    seq = seq.lower()
+    _as_euler = lambda q: _compute_euler_from_quat(q, seq, extrinsic, degrees)
     if self.single:
-      return _as_euler(self.quat, seq, degrees)
+      return _as_euler(self.quat)
     else:
-      return jax.vmap(_as_euler, in_axes=[0, None, None])(self.quat, seq, degrees)
+      return jax.vmap(_as_euler)(self.quat)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -299,9 +327,72 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
 
-def _from_euler(seq: str, angles: jax.Array, degrees: bool) -> jax.Array:
-  a = jnp.where(degrees, jnp.radians(angles), angles)
-  return jnp.roll(_quaternion_from_euler(a[0], a[1], a[2], axes='sxyz'), -1)
+def _compute_euler_from_quat(quat: jax.Array, seq: str, extrinsic: bool, degrees: bool) -> jax.Array:
+  if extrinsic:
+    angle_first = 0
+    angle_third = 2
+  else:
+    seq = seq[::-1]
+    angle_first = 2
+    angle_third = 0
+  i = _elementary_basis_index(seq[0])
+  j = _elementary_basis_index(seq[1])
+  k = _elementary_basis_index(seq[2])
+  symmetric = i == k
+  k = jnp.where(symmetric, 3 - i - j, k)
+
+  # Step 0: Check if permutation is even (+1) or odd (-1)
+  sign = (i - j) * (j - k) * (k - i) // 2
+  eps = 1e-7
+
+  # Step 1: Permutate quaternion elements
+  a = jnp.where(symmetric, quat[3], quat[3] - quat[j])
+  b = jnp.where(symmetric, quat[i], quat[i] + quat[k] * sign)
+  c = jnp.where(symmetric, quat[j], quat[j] + quat[3])
+  d = jnp.where(symmetric, quat[k] * sign, quat[k] * sign - quat[i])
+
+  # Step 2: Compute second angle...
+  angles = jnp.empty(3)
+  angles = angles.at[1].set(2 * jnp.arctan2(jnp.hypot(c, d), jnp.hypot(a, b)))
+  case = jnp.where(jnp.abs(angles[1] - jnp.pi) <= eps, 2, 0)
+  case = jnp.where(jnp.abs(angles[1]) <= eps, 1, case)
+
+  # Step 3: Compute first and third angles, according to case
+  half_sum = jnp.arctan2(b, a)
+  half_diff = jnp.arctan2(d, c)
+  angles = angles.at[0].set(jnp.where(case == 1, 2 * half_sum, 2 * half_diff * jnp.where(extrinsic, -1, 1)))  # any degenerate case
+  angles = angles.at[angle_first].set(jnp.where(case == 0, half_sum - half_diff, angles[angle_first]))
+  angles = angles.at[angle_third].set(jnp.where(case == 0, half_sum + half_diff, angles[angle_third]))
+
+  # for Tait-Bryan angles
+  angles = angles.at[angle_third].set(jnp.where(not symmetric, angles[angle_third] * sign, angles[angle_third]))
+  angles = angles.at[1].set(jnp.where(not symmetric, angles[1] - jnp.pi / 2, angles[1]))
+
+  # Return result
+  angles = (angles + jnp.pi) % (2 * jnp.pi) - jnp.pi
+  return jnp.where(degrees, jnp.rad2deg(angles), angles)
+  return angles
+
+
+def _elementary_basis_index(axis: str):
+  if axis == 'x':
+    return 0
+  elif axis == 'y':
+    return 1
+  elif axis == 'z':
+    return 2
+
+
+def _elementary_quat_compose(angles: jax.Array, seq: str, intrinsic: bool, degrees: bool):
+  if degrees:
+    angles = jnp.deg2rad(angles)
+  result = _make_elementary_quat(seq[0], angles[0])
+  for idx in range(1, len(seq)):
+    if intrinsic:
+      result = _compose_quat(result, _make_elementary_quat(seq[idx], angles[idx]))
+    else:
+      result = _compose_quat(_make_elementary_quat(seq[idx], angles[idx]), result)
+  return result
 
 
 def _from_rotvec(rotvec: jax.Array, degrees: bool) -> jax.Array:
@@ -353,149 +444,16 @@ def _magnitude(quat: jax.Array) -> jax.Array:
   return 2. * jnp.arctan2(_vector_norm(quat[:3]), jnp.abs(quat[3]))
 
 
+def _make_elementary_quat(axis: jax.Array, angle: jax.Array):
+  axis_ind = _elementary_basis_index(axis)
+  quat = jnp.zeros(4)
+  quat = quat.at[3].set(jnp.cos(angle / 2.))
+  quat = quat.at[axis_ind].set(jnp.sin(angle / 2.))
+  return quat
+
 def _normalize_quaternion(quat: jax.Array) -> jax.Array:
   return quat / _vector_norm(quat)
 
 
-_EPS = jnp.finfo(float).eps * 4.0
-
-_NEXT_AXIS = [1, 2, 0, 1]
-
-_AXES2TUPLE = {
-  'sxyz': (0, 0, 0, 0),
-  'sxyx': (0, 0, 1, 0),
-  'sxzy': (0, 1, 0, 0),
-  'sxzx': (0, 1, 1, 0),
-  'syzx': (1, 0, 0, 0),
-  'syzy': (1, 0, 1, 0),
-  'syxz': (1, 1, 0, 0),
-  'syxy': (1, 1, 1, 0),
-  'szxy': (2, 0, 0, 0),
-  'szxz': (2, 0, 1, 0),
-  'szyx': (2, 1, 0, 0),
-  'szyz': (2, 1, 1, 0),
-  'rzyx': (0, 0, 0, 1),
-  'rxyx': (0, 0, 1, 1),
-  'ryzx': (0, 1, 0, 1),
-  'rxzx': (0, 1, 1, 1),
-  'rxzy': (1, 0, 0, 1),
-  'ryzy': (1, 0, 1, 1),
-  'rzxy': (1, 1, 0, 1),
-  'ryxy': (1, 1, 1, 1),
-  'ryxz': (2, 0, 0, 1),
-  'rzxz': (2, 0, 1, 1),
-  'rxyz': (2, 1, 0, 1),
-  'rzyz': (2, 1, 1, 1)
-}
-
-_TUPLE2AXES = dict((v, k) for k, v in _AXES2TUPLE.items())
-
-
-def _euler_from_matrix(matrix, axes='sxyz'):
-  try:
-    firstaxis, parity, repetition, frame = _AXES2TUPLE[axes.lower()]
-  except (AttributeError, KeyError):
-    _TUPLE2AXES[axes]  # noqa: validation
-    firstaxis, parity, repetition, frame = axes
-
-  i = firstaxis
-  j = _NEXT_AXIS[i + parity]
-  k = _NEXT_AXIS[i - parity + 1]
-
-  M = jnp.array(matrix, copy=False)[:3, :3]
-  if repetition:
-    sy = jnp.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
-    ax, ay, az = lax.cond(
-        sy > _EPS, (jnp.arctan2(M[i, j], M[i, k]), jnp.arctan2(
-            sy, M[i, i]), jnp.arctan2(M[j, i], -M[k, i])), lambda x: x,
-        (jnp.arctan2(-M[j, k], M[j, j]), jnp.arctan2(sy, M[i, i]), 0.0),
-        lambda x: x)
-  else:
-    cy = jnp.sqrt(M[i, i] * M[i, i] + M[j, i] * M[j, i])
-    ax, ay, az = lax.cond(
-        cy > _EPS, (jnp.arctan2(M[k, j], M[k, k]), jnp.arctan2(
-            -M[k, i], cy), jnp.arctan2(M[j, i], M[i, i])), lambda x: x,
-        (jnp.arctan2(-M[j, k], M[j, j]), jnp.arctan2(-M[k, i], cy), 0.0),
-        lambda x: x)
-
-  if parity:
-    ax, ay, az = -ax, -ay, -az
-  if frame:
-    ax, az = az, ax
-  return ax, ay, az
-
-
-def _euler_from_quaternion(quaternion, axes='sxyz'):
-  return _euler_from_matrix(_quaternion_matrix(quaternion), axes)
-
-
-def _quaternion_from_euler(ai, aj, ak, axes='sxyz'):
-  firstaxis, parity, repetition, frame = _AXES2TUPLE[axes.lower()]
-
-  i = firstaxis + 1
-  j = _NEXT_AXIS[i + parity - 1] + 1
-  k = _NEXT_AXIS[i - parity] + 1
-
-  if frame:
-    ai, ak = ak, ai
-  if parity:
-    aj = -aj
-
-  ai /= 2.0
-  aj /= 2.0
-  ak /= 2.0
-  ci = jnp.cos(ai)
-  si = jnp.sin(ai)
-  cj = jnp.cos(aj)
-  sj = jnp.sin(aj)
-  ck = jnp.cos(ak)
-  sk = jnp.sin(ak)
-  cc = ci * ck
-  cs = ci * sk
-  sc = si * ck
-  ss = si * sk
-
-  q = jnp.empty((4,))
-  if repetition:
-    q = q.at[0].set(cj * (cc - ss))
-    q = q.at[i].set(cj * (cs + sc))
-    q = q.at[j].set(sj * (cc + ss))
-    q = q.at[k].set(sj * (cs - sc))
-  else:
-    q = q.at[0].set(cj * cc + sj * ss)
-    q = q.at[i].set(cj * sc - sj * cs)
-    q = q.at[j].set(cj * ss + sj * cc)
-    q = q.at[k].set(cj * cs - sj * sc)
-  if parity:
-    q = q.at[j].multiply(-1.0)
-  return q
-
-
-def _quaternion_matrix(quaternion):
-  q = jnp.array(quaternion, copy=True)
-  n = jnp.dot(q, q)
-  def calc_mat_posn(qn):
-    q, n = qn
-    q *= jnp.sqrt(2.0 / n)
-    q = jnp.outer(q, q)
-    return jnp.array(
-      [[1.0 - q[2, 2] - q[3, 3], q[1, 2] - q[3, 0], q[1, 3] + q[2, 0], 0.0],
-       [q[1, 2] + q[3, 0], 1.0 - q[1, 1] - q[3, 3], q[2, 3] - q[1, 0], 0.0],
-       [q[1, 3] - q[2, 0], q[2, 3] + q[1, 0], 1.0 - q[1, 1] - q[2, 2], 0.0],
-       [0.0, 0.0, 0.0, 1.0]])
-  return lax.cond(n < _EPS, jnp.identity(4), lambda x: x, (q, n), calc_mat_posn)
-
-
-def _vector_norm(data):
-  return jnp.sqrt(jnp.dot(data, data))
-
-
-# TODO: delete this
-if __name__ == '__main__':
-  import numpy as onp
-  times = 0.
-  num = 5
-  rotations = Rotation.from_quat(onp.random.randn(num, 4))
-  slerp = Slerp.init(list(range(num)), rotations)
-  result = slerp(times)
-  import pdb; pdb.set_trace()
+def _vector_norm(vector):
+  return jnp.sqrt(jnp.dot(vector, vector))
