@@ -2441,8 +2441,8 @@ def extend_axis_env(axis_name: AxisName, size: int, tag: Any):
                              if f.name is not no_axis_name))
 
 @contextmanager
-def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]]):
-  frames = [AxisEnvFrame(axis_name, size, None) for axis_name, size in axes]
+def extend_axis_env_nd(axes: Iterable[Tuple[AxisName, int]], tag: Any = None):
+  frames = [AxisEnvFrame(axis_name, size, tag) for axis_name, size in axes]
   ts = thread_local_state.trace_state
   ts.axis_env.extend(frames)
   jax_config.update_thread_local_jit_state(
