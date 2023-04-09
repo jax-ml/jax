@@ -1327,8 +1327,9 @@ class SameDeviceAssignmentTuple:
   device_assignment: Optional[XLADeviceAssignment]
 
   def __hash__(self):
-    shardings_hash = tuple(s._op_sharding_hash if isinstance(s, GSPMDSharding) else s # type: ignore
-                           for s in self.shardings)
+    shardings_hash = tuple(
+        s._op_sharding_hash if isinstance(s, GSPMDSharding) else s  # type: ignore
+        for s in self.shardings)
     if self.device_assignment is None:
       return hash(shardings_hash)
     else:
@@ -1337,15 +1338,16 @@ class SameDeviceAssignmentTuple:
   def __eq__(self, other):
     if not isinstance(other, SameDeviceAssignmentTuple):
       return False
-    return (
-        all(
-            op_shardings.are_op_shardings_equal(s._op_sharding, o._op_sharding)  # pytype: disable=attribute-error
-            if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding)
-            else s == o
-            for s, o in zip(self.shardings, other.shardings)
-        )
-        and self.device_assignment == other.device_assignment
-    )
+    eq = []
+    for s, o in zip(self.shardings, other.shardings):
+      s = getattr(s, "_original_sharding", s)
+      o = getattr(o, "_original_sharding", o)
+      if isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding):
+        eq.append(op_shardings.are_op_shardings_equal(
+            s._op_sharding, o._op_sharding))
+      else:
+        eq.append(s == o)
+    return all(eq) and self.device_assignment == other.device_assignment
 
 
 def _pjit_lower(
@@ -1416,8 +1418,8 @@ def _pjit_lower_cached(
       lowering_platform=lowering_platform)
   else:
     return pxla.lower_sharding_computation(
-        jaxpr, api_name, name, in_shardings, out_shardings, donated_invars,
-        jaxpr.in_avals, keep_unused=keep_unused,
+        jaxpr, api_name, name, in_shardings, out_shardings,
+        tuple(donated_invars), tuple(jaxpr.in_avals), keep_unused=keep_unused,
         always_lower=always_lower,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),

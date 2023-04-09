@@ -44,7 +44,8 @@ from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
 from jax._src.sharding import Sharding
 from jax._src import op_shardings
-from jax._src.sharding_impls import NamedSharding, GSPMDSharding
+from jax._src.sharding_impls import (NamedSharding, GSPMDSharding,
+                                     PositionalSharding, SingleDeviceSharding)
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import (pjit, pjit_p, AUTO)
 from jax._src import mesh
@@ -647,8 +648,11 @@ class PJitTest(jtu.BufferDonationTestCase):
     z, w = jax.vmap(f, in_axes=(None, 0), out_axes=(0, None))(x, y)
     self.assertAllClose(z, x[jnp.newaxis] + y)
     self.assertAllClose(w, x)
-    self.assertEqual(z.sharding._op_sharding.tile_assignment_dimensions, [1, 2])
-    self.assertEqual(w.sharding._op_sharding.tile_assignment_dimensions, [2])
+    self.assertEqual(
+        z.sharding._to_xla_op_sharding(z.ndim).tile_assignment_dimensions,
+        [1, 2])
+    self.assertEqual(
+        w.sharding._to_xla_op_sharding(w.ndim).tile_assignment_dimensions, [2])
 
   @jtu.with_mesh([('x', 2)])
   def testVMapShardingConstraint(self):
@@ -1379,7 +1383,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     def _checks(out, input_data):
       self.assertIsInstance(out, array.ArrayImpl)
-      self.assertIsInstance(out.sharding, GSPMDSharding)
+      self.assertIsInstance(out.sharding, NamedSharding)
       self.assertEqual(out.shape, (8, 2))
       self.assertEqual(out.addressable_shards[0].data.shape, (2, 1))
       for s in out.addressable_shards:
@@ -1907,20 +1911,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     f = pjit(lambda x: x)
     out1 = f(arr)
-    self.assertIsInstance(out1.sharding, GSPMDSharding)
+    self.assertIsInstance(out1.sharding, NamedSharding)
     out1.sharding.devices_indices_map(shape)
-    cache_info1 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info1 = NamedSharding.devices_indices_map.cache_info()
 
     out2 = f(out1)
-    self.assertIsInstance(out2.sharding, GSPMDSharding)
+    self.assertIsInstance(out2.sharding, NamedSharding)
     out2.sharding.devices_indices_map(shape)
-    cache_info2 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info2 = NamedSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     out3 = f(out2)
-    self.assertIsInstance(out3.sharding, GSPMDSharding)
+    self.assertIsInstance(out3.sharding, NamedSharding)
     out3.sharding.devices_indices_map(shape)
-    cache_info3 = GSPMDSharding.devices_indices_map.cache_info()
+    cache_info3 = NamedSharding.devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
   def test_device_put_sharding_prng(self):
@@ -2202,8 +2206,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(f_out1, g_out1)
     self.assertArraysEqual(f_out2, g_out2)
-    self.assertEqual(f_out1.sharding, g_out1.sharding)
-    self.assertEqual(f_out2.sharding, g_out2.sharding)
+    self.assertTrue(f_out1.sharding.is_equivalent_to(g_out1.sharding, f_out1.ndim))
+    self.assertTrue(f_out2.sharding.is_equivalent_to(g_out2.sharding, f_out2.ndim))
 
   def test_pjit_on_different_default_device_with_uncommitted_inputs(self):
     if jax.device_count() < 2:
@@ -2931,6 +2935,216 @@ class ArrayPjitTest(jtu.JaxTestCase):
     _test(g, arr, np_inp, in_s)
     # Test second order autodiff with src argument specified in device_put.
     jtu.check_grads(g, (arr,), order=2)
+
+  def test_pjit_out_sharding_preserved(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+
+    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+
+    def mul(x):
+      return x * 2
+
+    f = pjit(mul, out_shardings=ns)
+    f2 = pjit(mul, out_shardings=ps)
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out = f(arr)
+      cache_info1 = pxla._cached_compilation.cache_info()
+      self.assertIsInstance(out.sharding, NamedSharding)
+
+      out = f(arr)
+      self.assertIsInstance(out.sharding, NamedSharding)
+    self.assertEqual(count[0], 1)
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out2 = f2(arr)
+      cache_info2 = pxla._cached_compilation.cache_info()
+      self.assertIsInstance(out2.sharding, PositionalSharding)
+
+      out2 = f2(arr)
+      self.assertIsInstance(out2.sharding, PositionalSharding)
+    self.assertEqual(count[0], 1)
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+
+    out3 = jnp.squeeze(arr, axis=-1)
+    cache_info3 = pxla._cached_compilation.cache_info()
+    self.assertIsInstance(out3.sharding, NamedSharding)
+
+    out4 = jnp.squeeze(arr2, axis=-1)
+    cache_info4 = pxla._cached_compilation.cache_info()
+    # TODO(yashkatariya): Handle PositionalSharding inside pxla so that
+    # GSPMDShardings can be converted to PositionalSharding.
+    self.assertIsInstance(out4.sharding, GSPMDSharding)
+
+    self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
+    self.assertEqual(cache_info4.misses, cache_info3.misses)
+
+  def test_cache_hit_pjit_lower_with_cpp_cache_miss(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    np_arr = np.arange(8, dtype=np.float32).reshape(8, 1)
+    arr = jax.device_put(np_arr, ns)
+
+    def mul(x):
+      return x * 2
+
+    f = pjit(mul, in_shardings=ns, out_shardings=ns)
+
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out = f(arr)
+      cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
+      self.assertIsInstance(out.sharding, NamedSharding)
+
+      out2 = f(np_arr)
+      cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
+      self.assertIsInstance(out2.sharding, NamedSharding)
+
+    # Drops out of C++ cache i.e. cache miss
+    self.assertEqual(count[0], 2)
+    # Still gets a hit on pjit_lower cache.
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+
+  def test_sharding_preserved_trivial(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+
+    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+
+    def identity(x):
+      return x
+
+    out = pjit(identity)(arr)
+    self.assertIsInstance(out.sharding, NamedSharding)
+
+    out2 = pjit(identity)(arr2)
+    self.assertIsInstance(out2.sharding, PositionalSharding)
+
+  def test_sharding_preserved_aot(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+
+    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+
+    compiled = pjit(lambda x: x * 2).lower(arr).compile()
+    out = compiled(arr)
+    self.assertIsInstance(out.sharding, NamedSharding)
+
+    out2 = compiled(arr2)
+    # The sharding won't be PositionalSharding since the pjit was already
+    # Compiled which bakes in the output sharding.
+    self.assertIsInstance(out2.sharding, NamedSharding)
+
+  def test_sharding_on_output_with_vmap(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(
+        np.arange(16).reshape(8, 2), NamedSharding(mesh, P(None, 'x')))
+    vf = jax.vmap(pjit(lambda x: x * 2, in_shardings=ns))
+    out = vf(arr)
+    cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertIsInstance(out.sharding, GSPMDSharding)
+
+    out2 = vf(out)
+    cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertIsInstance(out2.sharding, GSPMDSharding)
+
+    out3 = vf(out2)
+    cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertIsInstance(out3.sharding, GSPMDSharding)
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+    self.assertEqual(cache_info3.misses, cache_info2.misses)
+
+  def test_jit_mul_sum_sharding_preserved(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+
+    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+
+    f = jax.jit(lambda x: x * 2)
+    out = f(arr)
+    cache_info1 = pxla._cached_compilation.cache_info()
+    pl_cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertIsInstance(out.sharding, NamedSharding)
+
+    out2 = f(arr2)
+    cache_info2 = pxla._cached_compilation.cache_info()
+    pl_cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
+    # TODO(yashkatariya): Handle PositionalSharding inside pxla so that
+    # GSPMDShardings can be converted to PositionalSharding.
+    self.assertIsInstance(out2.sharding, GSPMDSharding)
+
+    out3 = f(out2)
+    cache_info3 = pxla._cached_compilation.cache_info()
+    pl_cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
+    self.assertIsInstance(out3.sharding, GSPMDSharding)
+
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
+    self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+    self.assertEqual(cache_info2.misses, cache_info1.misses)
+    self.assertEqual(cache_info3.misses, cache_info2.misses)
+
+    # TODO(yashkatariya): We will get hits here after we can convert
+    # GSPMDSharding to PositionalSharding.
+    self.assertEqual(pl_cache_info2.misses, pl_cache_info1.misses + 1)
+    self.assertEqual(pl_cache_info3.misses, pl_cache_info2.misses + 1)
+
+    out4 = jnp.sum(arr)
+    self.assertIsInstance(out4.sharding, NamedSharding)
+
+  def test_single_device_sharding_preserved(self):
+    if jax.device_count() < 2:
+      self.skipTest('Test requires >=2 devices')
+
+    x = jnp.arange(8)
+
+    # trivial computation
+    out = jax.jit(lambda x: x)(x)
+    self.assertIsInstance(out.sharding, SingleDeviceSharding)
+
+    # trivial computation with committed inp
+    y = jax.device_put(x, jax.devices()[1])
+    out2 = jax.jit(lambda x: x)(y)
+    self.assertIsInstance(out2.sharding, SingleDeviceSharding)
+    self.assertEqual(out2.device(), jax.devices()[1])
+
+    out3 = jax.jit(lambda x: x * 2)(x)
+    self.assertIsInstance(out3.sharding, SingleDeviceSharding)
+
+    out4 = jax.jit(lambda x: x * 3,
+                   out_shardings=SingleDeviceSharding(jax.devices()[1]))(x)
+    self.assertIsInstance(out4.sharding, SingleDeviceSharding)
+    self.assertEqual(out4.device(), jax.devices()[1])
+
+  def test_sharding_preserved_apply_primitive(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+
+    arr = jax.device_put(np.arange(8).reshape(8, 1), ns)
+
+    out = jnp.copy(arr)
+    self.assertIsInstance(out.sharding, NamedSharding)
+
+    # TODO(yashkatariya): Fix apply_primitive's cache on xla_primitive_callable
+    # to be like pjit_lower cache.
+    # ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+    # arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+    # out2 = jnp.copy(arr2)
+    # self.assertIsInstance(out2.sharding, PositionalSharding)
 
 
 class TempSharding(Sharding):
