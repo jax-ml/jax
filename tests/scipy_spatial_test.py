@@ -17,8 +17,8 @@ from absl.testing import absltest
 from jax._src import test_util as jtu
 from jax.scipy.spatial.transform import Rotation as jsp_Rotation
 from scipy.spatial.transform import Rotation as osp_Rotation
-# from jax.scipy.spatial.transform import Slerp as jsp_Slerp
-# from scipy.spatial.transform import Slerp as osp_Slerp
+from jax.scipy.spatial.transform import Slerp as jsp_Slerp
+from scipy.spatial.transform import Slerp as osp_Slerp
 
 import jax.numpy as jnp
 from jax.config import config
@@ -289,19 +289,20 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
                             tol=1e-4)
     self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
-  # @jtu.sample_product(
-  #   dtype=float_dtypes,
-  #   shape=[(num_samples, 4)],
-  #   times=[[0.]],
-  # )
-  # def testSlerp(self, shape, dtype, times):
-  #   rng = jtu.rand_default(self.rng())
-  #   args_maker = lambda: (list(range(shape[0])), rng(shape, dtype),)
-  #   jnp_fn = lambda t, q: jsp_Slerp.init(t, jsp_Rotation.from_quat(q))(times).as_quat()
-  #   np_fn = lambda t, q: osp_Slerp(t, osp_Rotation.from_quat(q))(times).as_quat()
-  #   self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
-  #                           tol=1e-4)
-  #   self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
+  @jtu.sample_product(
+    dtype=float_dtypes,
+    shape=[(num_samples, 4)],
+    compute_times=[0., jnp.zeros(1), jnp.zeros(2)],
+  )
+  def testSlerp(self, shape, dtype, compute_times):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: (rng(shape, dtype),)
+    times = jnp.arange(shape[0], dtype=dtype)
+    jnp_fn = lambda q: jsp_Slerp.init(times, jsp_Rotation.from_quat(q))(compute_times).as_quat()
+    np_fn = lambda q: osp_Slerp(times, osp_Rotation.from_quat(q))(compute_times).as_quat()
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, check_dtypes=False,
+                            tol=1e-4)
+    self._CompileAndCheck(jnp_fn, args_maker, atol=1e-4)
 
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

@@ -192,7 +192,6 @@ class Rotation(typing.NamedTuple):
 
 
 class Slerp(typing.NamedTuple):
-  """Spherical Linear Interpolation of Rotations."""
 
   times: jnp.ndarray
   timedelta: jnp.ndarray
@@ -215,26 +214,26 @@ class Slerp(typing.NamedTuple):
                        "number of timestamps given, got {} rotations "
                        "and {} timestamps.".format(len(rotations), times.shape[0]))
     timedelta = jnp.diff(times)
-    if jnp.any(timedelta <= 0):
-      raise ValueError("Times must be in strictly increasing order.")
+    # if jnp.any(timedelta <= 0):
+    #   raise ValueError("Times must be in strictly increasing order.")
     new_rotations = rotations[:-1]
     return cls(
       times=times,
-      timedelta=jnp.diff(times),
+      timedelta=timedelta,
       rotations=new_rotations,
       rotvecs=(new_rotations.inv() * rotations[1:]).as_rotvec())
 
   def __call__(self, times: jax.Array):
     """Interpolate rotations."""
-    times = jnp.asarray(times)
-    if times.ndim > 1:
+    compute_times = jnp.asarray(times)
+    if compute_times.ndim > 1:
       raise ValueError("`times` must be at most 1-dimensional.")
-    compute_times = jnp.atleast_1d(times)
-    ind = jnp.searchsorted(self.times, compute_times) - 1
-    ind = ind.at[compute_times <= self.times[0]].set(0)
+    single_time = compute_times.ndim == 0
+    compute_times = jnp.atleast_1d(compute_times)
+    ind = jnp.maximum(jnp.searchsorted(self.times, compute_times) - 1, 0)
     alpha = (compute_times - self.times[ind]) / self.timedelta[ind]
     result = (self.rotations[ind] * Rotation.from_rotvec(self.rotvecs[ind] * alpha[:, None]))
-    if times.ndim == 0:
+    if single_time:
       return result[0]
     return result
 
@@ -482,10 +481,11 @@ def _vector_norm(data):
   return jnp.sqrt(jnp.dot(data, data))
 
 
-# if __name__ == '__main__':
-#   import numpy as onp
-#   times = 0.
-#   num = 5
-#   rotations = Rotation.from_quat(onp.random.randn(num, 4))
-#   mean = rotations.mean(weights=onp.ones((num,)))
-#   import pdb; pdb.set_trace()
+if __name__ == '__main__':
+  import numpy as onp
+  times = 0.
+  num = 5
+  rotations = Rotation.from_quat(onp.random.randn(num, 4))
+  slerp = Slerp.init(list(range(num)), rotations)
+  result = slerp(times)
+  import pdb; pdb.set_trace()
