@@ -684,6 +684,23 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(NotImplementedError, 'axis_index'):
       g(x)
 
+  def test_jaxpr_shardings_with_no_outputs(self):
+    # https://github.com/google/jax/issues/15385
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @jax.jit
+    @partial(shard_map, mesh=mesh, in_specs=(), out_specs=P('i'))
+    def f():
+      return jax.lax.iota(jnp.dtype('int32'), 4)
+    f()  # don't crash
+
+    @partial(shard_map, mesh=mesh, in_specs=(P('i'),), out_specs=P('i'))
+    def g(a_block):
+      i = jnp.arange(a_block.shape[0])
+      return i + a_block
+
+    g(np.arange(32))  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str

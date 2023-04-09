@@ -320,7 +320,7 @@ def jaxpr_shardings(
         ndmin = max(names) + 1 if names else 0
         return PartitionSpec(*(names.get(i) for i in range(ndmin)))
       yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
-                  for names in eqn.params['in_names'])
+                  for names in [*eqn.params['in_names'], *eqn.params['out_names']])
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)
 
