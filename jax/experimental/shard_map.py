@@ -654,7 +654,10 @@ eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
 def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: Set[AxisName],
               **params: Any) -> Union[Set[AxisName], List[Set[AxisName]]]:
-  raise NotImplementedError(f"no replication rule for {prim}")
+  raise NotImplementedError(
+      f"No replication rule for {prim}. As a workaround, pass the "
+      "`check_rep=False` argument to `shard_map`. To get this fixed, open an "
+      "issue at https://github.com/google/jax/issues")
 
 _rep_rules: Dict[core.Primitive, Callable] = {}
 register_rule = lambda prim: lambda rule: _rep_rules.setdefault(prim, rule)
