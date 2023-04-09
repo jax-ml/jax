@@ -333,35 +333,23 @@ def _compute_euler_from_quat(quat: jax.Array, seq: str, extrinsic: bool, degrees
   k = _elementary_basis_index(seq[2])
   symmetric = i == k
   k = jnp.where(symmetric, 3 - i - j, k)
-
-  # Step 0: Check if permutation is even (+1) or odd (-1)
   sign = (i - j) * (j - k) * (k - i) // 2
   eps = 1e-7
-
-  # Step 1: Permutate quaternion elements
   a = jnp.where(symmetric, quat[3], quat[3] - quat[j])
   b = jnp.where(symmetric, quat[i], quat[i] + quat[k] * sign)
   c = jnp.where(symmetric, quat[j], quat[j] + quat[3])
   d = jnp.where(symmetric, quat[k] * sign, quat[k] * sign - quat[i])
-
-  # Step 2: Compute second angle...
   angles = jnp.empty(3)
   angles = angles.at[1].set(2 * jnp.arctan2(jnp.hypot(c, d), jnp.hypot(a, b)))
   case = jnp.where(jnp.abs(angles[1] - jnp.pi) <= eps, 2, 0)
   case = jnp.where(jnp.abs(angles[1]) <= eps, 1, case)
-
-  # Step 3: Compute first and third angles, according to case
   half_sum = jnp.arctan2(b, a)
   half_diff = jnp.arctan2(d, c)
   angles = angles.at[0].set(jnp.where(case == 1, 2 * half_sum, 2 * half_diff * jnp.where(extrinsic, -1, 1)))  # any degenerate case
   angles = angles.at[angle_first].set(jnp.where(case == 0, half_sum - half_diff, angles[angle_first]))
   angles = angles.at[angle_third].set(jnp.where(case == 0, half_sum + half_diff, angles[angle_third]))
-
-  # for Tait-Bryan angles
   angles = angles.at[angle_third].set(jnp.where(not symmetric, angles[angle_third] * sign, angles[angle_third]))
   angles = angles.at[1].set(jnp.where(not symmetric, angles[1] - jnp.pi / 2, angles[1]))
-
-  # Return result
   angles = (angles + jnp.pi) % (2 * jnp.pi) - jnp.pi
   return jnp.where(degrees, jnp.rad2deg(angles), angles)
   return angles
