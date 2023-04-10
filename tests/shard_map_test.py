@@ -713,6 +713,28 @@ class ShardMapTest(jtu.JaxTestCase):
 
     g(np.arange(32))  # don't crash
 
+  def test_device_put(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return x + jax.device_put(1)
+
+    x = jnp.arange(32.)
+    f(x)  # doesn't crash
+    jax.jit(f)(x)  # doesn't crash
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def g(x):
+      return x + jax.device_put(1, jax.devices()[0])
+
+    with self.assertRaisesRegex(ValueError, "got device"):
+      g(x)
+
+    # jit means device_puts are ignored, even those within shmap bodies, so no
+    # error!
+    jax.jit(g)(x)  # doesn't crash
+
 
 class FunSpec(NamedTuple):
   name: str
