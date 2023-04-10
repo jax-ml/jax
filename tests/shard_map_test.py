@@ -35,6 +35,7 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
+from jax._src.interpreters import partial_eval as pe
 from jax._src import tree_util
 import jax.numpy as jnp
 
@@ -734,6 +735,83 @@ class ShardMapTest(jtu.JaxTestCase):
     # jit means device_puts are ignored, even those within shmap bodies, so no
     # error!
     jax.jit(g)(x)  # doesn't crash
+
+  # same method appears in api_test.py:DCETest
+  # TODO(mattjj): consider moving this method to be a helper in jtu
+  def assert_dce_result(self, jaxpr: core.Jaxpr, used_outputs: List[bool],
+                        expected_used_inputs: List[bool],
+                        expected_num_eqns: Optional[int] = None,
+                        check_diff: bool = True):
+    jaxpr_dce, used_inputs = pe.dce_jaxpr(jaxpr, used_outputs)
+    core.check_jaxpr(jaxpr_dce)
+    self.assertEqual(used_inputs, expected_used_inputs)
+    if expected_num_eqns is not None:
+      all_jaxprs = it.chain([jaxpr_dce], core.subjaxprs(jaxpr_dce))
+      num_eqns = sum(len(subjaxpr.eqns) for subjaxpr in all_jaxprs)
+      self.assertEqual(num_eqns, expected_num_eqns, msg=str(jaxpr_dce))
+
+    rand_ = jtu.rand_small(np.random.RandomState(0))
+    rand  = lambda v: rand_(v.aval.shape, v.aval.dtype)
+    consts = [rand(v) for v in jaxpr.constvars]
+    inputs = [rand(v) for v in jaxpr.invars   ]
+    inputs_dce = [x for x, used in zip(inputs, used_inputs) if used]
+    full_outs = core.eval_jaxpr(jaxpr    , consts, *inputs)
+    expected_outs_dce = [y for y, used in zip(full_outs, used_outputs) if used]
+    outs = core.eval_jaxpr(jaxpr_dce, consts, *inputs_dce)
+    self.assertAllClose(outs, expected_outs_dce)
+
+    if check_diff and expected_num_eqns != 0:
+      f = lambda *args: core.eval_jaxpr(jaxpr_dce, consts, *args)
+      jtu.check_grads(f, inputs_dce, order=2, modes=['rev'])
+
+  def test_dce(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    def f(x, y, z):
+      @partial(shard_map, mesh=mesh, in_specs=(P('i', 'j'), P(None, 'i')),
+               out_specs=(P(None, None), P(None, 'i'), P('i', 'j')))
+      def g(y, z): return jnp.sin(x), jnp.cos(z), jnp.tan(y)
+      return g(y, z)
+
+    x = jnp.zeros((4, 4))
+    y = jnp.zeros((8, 8))
+    z = jnp.zeros((16, 16))
+    jaxpr = jax.make_jaxpr(f)(x, y, z).jaxpr
+    self.assertLen(jaxpr.eqns, 1)
+    self.assertLen(jaxpr.eqns[0].params['jaxpr'].eqns, 3)
+
+    # If we use all outputs, nothing should be deleted.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, True, True],
+        expected_used_inputs=[True, True, True],
+        expected_num_eqns=1 + 3,  # one outer eqn, three remain in body
+        check_diff=False)
+
+    # If we drop the last output, the second input should be dropped.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, True, False],
+        expected_used_inputs=[True, False, True],
+        expected_num_eqns=1 + 2,  # one outer eqn, two remain in body
+        check_diff=False)
+    # If we drop the second output, the last input should be dropped.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, False, True],
+        expected_used_inputs=[True, True, False],
+        expected_num_eqns=1 + 2,  # one outer eqn, two remain in body
+        check_diff=False)
+    # If we drop the latter two outputs, the latter two inputs should be dropped
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[True, False, False],
+        expected_used_inputs=[True, False, False],
+        expected_num_eqns=1 + 1,  # one outer eqn, two remain in body
+        check_diff=False)
+
+    # Finally, try dropping the closed-over value.
+    self.assert_dce_result(
+        jaxpr,  used_outputs=[False, True, False],
+        expected_used_inputs=[False, False, True],
+        expected_num_eqns=1 + 1,  # one outer eqn, two remain in body
+        check_diff=False)
 
 
 class FunSpec(NamedTuple):
