@@ -49,6 +49,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
+from jax._src import sharding_impls
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
@@ -3096,7 +3097,7 @@ def _shard_value(val: TfVal,
                  sd: sharding.XLACompatibleSharding, *,
                  skip_replicated_sharding: bool) -> TfVal:
   """Apply sharding to a TfVal."""
-  if pxla._is_unspecified(sd):
+  if sharding_impls.is_unspecified(sd):
     return val
 
   sharding_proto: xla_client.OpSharding = cast(

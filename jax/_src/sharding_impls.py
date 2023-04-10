@@ -14,23 +14,34 @@
 
 from __future__ import annotations
 
+import collections
+import dataclasses
+import enum
 import functools
-from collections import Counter
+import itertools
 import operator as op
-from typing import (Any, Sequence, List, Tuple, Optional, Mapping, Dict, Set,
-                    FrozenSet, Union, cast)
+import sys
+from typing import (Any, Dict, FrozenSet, List, Mapping, Optional, OrderedDict,
+                    NamedTuple, Sequence, Set, Tuple, Union, cast)
 
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
 from jax._src import sharding
 from jax._src import sharding_specs
+from jax._src import tree_util
+from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.interpreters import mlir
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
+
+if sys.version_info >= (3, 9):
+  OrderedDictType = OrderedDict
+else:
+  OrderedDictType = Dict
+
 
 Shape = Tuple[int, ...]
 Device = xc.Device
@@ -134,7 +145,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
         'create a device to index mapping for your sharding from which replica '
         'ids will be calculated.') from None
 
-  index_to_replica: Dict[int, int] = Counter()
+  index_to_replica: Dict[int, int] = collections.Counter()
   out = {}
   for device, index in device_indices_map_fn(global_shape).items():
     h_index = hashed_index(index)
@@ -204,8 +215,7 @@ class NamedSharding(XLACompatibleSharding):
     # TODO(yaskatariya): Remove this and replace this with a normalized
     # representation of Parsed Pspec
     if self._parsed_pspec is None:
-      from jax._src import pjit
-      self._parsed_pspec, _, _ = pjit._prepare_axis_resources(
+      self._parsed_pspec, _, _ = prepare_axis_resources(
           self.spec, "NamedSharding spec")
 
     _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
@@ -263,9 +273,8 @@ class NamedSharding(XLACompatibleSharding):
   def _to_xla_op_sharding(
       self,
       num_dimensions: int,
-      axis_ctx: Optional[Union[mlir.SPMDAxisContext, mlir.ShardingContext]] = None
+      axis_ctx: Optional[Union[SPMDAxisContext, ShardingContext]] = None
   ) -> xc.OpSharding:
-    from jax._src.pjit import get_array_mapping
     assert self._parsed_pspec is not None
     array_mapping = get_array_mapping(self._parsed_pspec)
     # TODO(yashkatariya): Move away from sharding spec in NamedSharding
@@ -275,7 +284,7 @@ class NamedSharding(XLACompatibleSharding):
     # Used in `with_sharding_constraint`.
     special_axes = {}
     # Manual axes is only used with xmap.
-    if axis_ctx is not None and isinstance(axis_ctx, mlir.SPMDAxisContext):
+    if axis_ctx is not None and isinstance(axis_ctx, SPMDAxisContext):
       axis_names = self.mesh.axis_names
       # Ignore type because mypy doesn't recognize the `hasattr` check above.
       for manual_axis in axis_ctx.manual_axes:  # type: ignore
@@ -634,3 +643,324 @@ class GSPMDSharding(XLACompatibleSharding):
   def get_replicated(cls, device_assignment):
     proto = get_replicated_op_sharding()
     return cls(device_assignment, proto)
+
+
+class AUTOAxisResource:
+  pass
+AUTO = AUTOAxisResource()
+
+def is_auto(x):
+  return isinstance(x, AUTOAxisResource)
+
+
+class UnspecifiedValue:
+  def __repr__(self):
+    return "UnspecifiedValue"
+UNSPECIFIED = UnspecifiedValue()
+
+def is_unspecified(x):
+  return isinstance(x, UnspecifiedValue)
+
+def is_unspecified_or_auto(x):
+  return is_auto(x) or is_unspecified(x)
+
+
+MeshAxisName = Any
+
+"""
+ArrayMapping specifies how an ndarray should map to mesh axes.
+
+Note that the ordering is crucial for the cases when this mapping is non-injective
+(i.e. when multiple mesh axes map to the same positional axis). Then, the
+order of entries of the mapping determines a major-to-minor order on mesh axes,
+according to which chunks of the value along the repeated dimension will be assigned.
+
+For example, consider a mapping {'x': 1, 'y': 1} and a mesh with shape {'x': 2, 'y': 3}.
+The second dimension of the value would get chunked into 6 pieces, and assigned to the
+mesh in a way that treats 'y' as the fastest changing (minor) dimension. In this case,
+that would mean that a flat list of chunks would get assigned to a flattened list of
+mesh devices without any modifications. If the mapping was {'y': 1, 'x': 1}, then the
+mesh devices ndarray would have to be transposed before flattening and assignment.
+"""
+ArrayMapping = OrderedDictType[MeshAxisName, int]
+ArrayMappingOrAutoOrUnspecified = Union[ArrayMapping, AUTOAxisResource,
+                                        UnspecifiedValue]
+
+def array_mapping_to_axis_resources(array_mapping: ArrayMapping):
+  if not array_mapping:
+    return PartitionSpec()
+  max_index = -1
+  reverse_map = collections.defaultdict(list)
+  for axis, index in array_mapping.items():
+    reverse_map[index].append(axis)
+    if index > max_index:
+      max_index = index
+  partitions = tuple(tuple(reverse_map[i]) if reverse_map[i] else None
+                     for i in range(max_index + 1))
+  return PartitionSpec(*partitions)
+
+def get_array_mapping(
+    axis_resources: Union[ParsedPartitionSpec, AUTOAxisResource, UnspecifiedValue]
+) -> ArrayMappingOrAutoOrUnspecified:
+  # TODO(yashkatariya): Use `TypeGuard` on `is_auto` when it is supported.
+  # Don't use `is_auto` here to satisfy pytype and mypy.
+  if isinstance(axis_resources, (AUTOAxisResource, UnspecifiedValue)):
+    return axis_resources
+  return OrderedDict((axis, i)
+                     for i, axes in enumerate(axis_resources)
+                     if axes is not None for axis in axes)
+
+
+get_single_pspec = lambda p: array_mapping_to_axis_resources(
+    cast(ArrayMapping, get_array_mapping(p)))
+
+
+class SpecSync(enum.IntEnum):
+  """Encodes how much out of sync the real value of partitions is compared to the user specified one.
+
+  We use this to make sure we don't show garbage modified values while claiming
+  that the users have specified them like that.
+  """
+  OUT_OF_SYNC = 0  # Arbitrary changes, including new axes inserted
+  DIM_PERMUTE = 1  # Dimensions permuted, but no new sharding axes
+  IN_SYNC = 2  # Entirely in sync
+
+class ParsedPartitionSpec:
+  __slots__ = ('unsafe_user_spec', 'partitions', 'sync')
+
+  def __init__(self, user_spec, partitions, sync=SpecSync.IN_SYNC):
+    self.unsafe_user_spec = user_spec
+    # None in partitions represents unconstrained dim.
+    # TODO(yashkatariya): May use a sentinel value.
+    self.partitions = tuple(partitions)
+    self.sync = sync
+
+  @property
+  def user_spec(self):
+    return self.unsynced_user_spec(SpecSync.IN_SYNC)
+
+  def get_partition_spec(self) -> PartitionSpec:
+    if self.sync < SpecSync.IN_SYNC:
+      return get_single_pspec(self)
+    else:
+      if isinstance(self.unsafe_user_spec, PartitionSpec):
+        return self.unsafe_user_spec
+      else:
+        return get_single_pspec(self)
+
+  def unsynced_user_spec(self, min_sync):
+    if self.sync < min_sync:
+      raise AssertionError(f"Please open a bug report! ({self.sync} >= {min_sync})")
+    return self.unsafe_user_spec
+
+  def insert_axis_partitions(self, dim, val):
+    parts = self.partitions
+    too_short = dim - len(parts)
+    if too_short > 0:
+      parts += ((),) * too_short
+    new_partitions = util.tuple_insert(parts, dim, val)
+    new_sync = SpecSync.DIM_PERMUTE if (val == () or val is None) else SpecSync.OUT_OF_SYNC
+    return ParsedPartitionSpec(self.unsafe_user_spec, new_partitions, sync=new_sync)
+
+  @classmethod
+  def from_user_input(cls, entry, arg_name, allow_unconstrained_dims=False):
+    if entry is None:
+      return cls(entry, ())
+    if not isinstance(entry, PartitionSpec):
+      raise TypeError(f"{arg_name} are expected to be "
+                      f"PartitionSpec instances or None, but got {entry}")
+    axis_specs = []
+    for axis_spec in entry:
+      if axis_spec is None:
+        axis_spec = ()
+      elif isinstance(axis_spec, (list, tuple)):
+        axis_spec = tuple(axis_spec)
+      elif axis_spec == PartitionSpec.UNCONSTRAINED:
+        if not allow_unconstrained_dims:
+          raise ValueError(f"Unconstrained dims are not allowed: {entry}")
+        axis_spec = None
+      else:
+        axis_spec = (axis_spec,)
+      axis_specs.append(axis_spec)
+    return cls(entry, axis_specs)
+
+  def __hash__(self):
+    return hash((self.partitions, self.sync))
+
+  def __eq__(self, other):
+    return (self.partitions == other.partitions and
+            self.sync == other.sync)
+
+  def __len__(self):
+    return len(self.partitions)
+
+  def __getitem__(self, i):
+    return self.partitions[i]
+
+  def __iter__(self):
+    return iter(self.partitions)
+
+  def __repr__(self):
+    return (f"ParsedPartitionSpec(partitions={self.partitions}, "
+            f"unsafe_user_spec={self.unsafe_user_spec}, "
+            f"sync={self.sync})")
+
+class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
+  """ParsedPartitionSpecs that are canonicalized.
+
+  ParsedPartitionSpecs may contain trailing empty tuples, that make them
+  semantically different in general, and yet in some situations we prefer
+  to regard them as equivalent. For example, partitions of () and ((),)
+  cannot be always considered equivalent, since the first one is a valid
+  spec for a scalar value, while the second is not! However, when either of
+  those are applied to a 2D array, they both mean that the array is fully
+  replicated.
+
+  So CanonicalizedParsedPartitionSpecs removes the trailing empty tuples from
+  partitions.
+  """
+
+  def __init__(self, parsed_pspec: ParsedPartitionSpec):
+    partitions = list(parsed_pspec.partitions)
+    while partitions and partitions[-1] == ():
+      partitions.pop()
+
+    super().__init__(parsed_pspec.unsafe_user_spec, partitions,
+                     parsed_pspec.sync)
+
+  def __repr__(self):
+    return (f"CanonicalizedParsedPartitionSpec(partitions={self.partitions}, "
+            f"unsafe_user_spec={self.unsafe_user_spec}, "
+            f"sync={self.sync})")
+
+
+def check_all_or_none_unspecified(axis_resources, name):
+  if not axis_resources:
+    return False
+  unspecified_count = 0
+  unspecified = is_unspecified(axis_resources[0])
+  for resource in axis_resources:
+    current_is_unspecified = is_unspecified(resource)
+    if current_is_unspecified:
+      unspecified_count += 1
+      assert unspecified_count == 1
+    if current_is_unspecified != unspecified:
+      raise ValueError(f'`pjit.UNSPECIFIED` exists in {name}. '
+                       f'Make sure that every entry in {name} is '
+                       '`pjit.UNSPECIFIED`.')
+  return unspecified
+
+
+def prepare_axis_resources(axis_resources,
+                           arg_name,
+                           allow_unconstrained_dims=False):
+  # PyTrees don't treat None values as leaves, so we use an is_leaf function.
+  entries, treedef = tree_util.tree_flatten(
+      axis_resources, is_leaf=lambda x: x is None)
+  what = f"{arg_name} leaf specifications"
+  # All entries should be specified or if unspecified then there should only
+  # be 1 entry for that since UNSPECIFIED is a private API.
+  check_all_or_none_unspecified(entries, arg_name)
+
+  new_entries = []
+  for entry in entries:
+    if is_unspecified_or_auto(entry):
+      new_entries.append(entry)
+    elif isinstance(entry, sharding.Sharding):
+      if isinstance(entry, PmapSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not '
+                         'allowed.')
+      if not isinstance(entry, XLACompatibleSharding):
+        raise ValueError(f'One of {what} got sharding {entry} which is not a '
+                         'subclass of XLACompatibleSharding.')
+      new_entries.append(entry)
+    else:
+      new_entries.append(ParsedPartitionSpec.from_user_input(
+          entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
+
+  _check_unique_resources(new_entries, arg_name)
+  return tree_util.tree_unflatten(treedef, new_entries), new_entries, treedef
+
+
+def _check_unique_resources(axis_resources, arg_name):
+  for arg_axis_resources in axis_resources:
+    if not arg_axis_resources: continue
+    if (is_unspecified_or_auto(arg_axis_resources) or
+        isinstance(arg_axis_resources, XLACompatibleSharding)):
+      continue
+    constrained_dims = [d for d in arg_axis_resources if d is not None]
+    resource_counts = collections.Counter(
+        itertools.chain.from_iterable(constrained_dims))
+    if not resource_counts: continue
+    if resource_counts.most_common(1)[0][1] > 1:
+      multiple_uses = [r for r, c in resource_counts.items() if c > 1]
+      if multiple_uses:
+        raise ValueError(f"A single {arg_name} specification can map every mesh axis "
+                         f"to at most one positional dimension, but {arg_axis_resources.user_spec} "
+                         f"has duplicate entries for {mesh_lib.show_axes(multiple_uses)}")
+
+# Axis environments
+
+class AxisEnv(NamedTuple):
+  """Represents a pmap mesh (only along the replica axes)."""
+  nreps: int
+  names: Tuple[Any, ...]
+  sizes: Tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class SPMDAxisContext:
+  """A hardware axis context for parallel computations that use the GSPMD partitioner.
+
+  This includes the mesh that will later by used to execute this computation,
+  as well as a set of mesh axes that are currently (e.g. because the current lowering
+  is invoked inside an xmap) lowered in the MANUAL sharding mode.
+  """
+  mesh: mesh_lib.Mesh
+  manual_axes: FrozenSet[MeshAxisName] = frozenset()
+
+  @property
+  def axis_env(self):
+    # All collectives that touch axis_env should remember to set use_global_device_ids
+    # when this context is enabled!
+    if self.manual_axes != frozenset(self.mesh.axis_names):
+      raise NotImplementedError(
+          "Collectives in manually partitioned computations are only supported "
+          "when all mesh axes are partitioned manually (no partial automatic sharding). "
+          "Make sure that you mention all mesh axes in axis_resources!")
+    return self.unsafe_axis_env
+
+  @property
+  def unsafe_axis_env(self):
+    return AxisEnv(
+        nreps=self.mesh.size,
+        names=self.mesh.axis_names,
+        sizes=tuple(self.mesh.shape.values()))
+
+  def extend_manual(self, axes: FrozenSet[MeshAxisName]) -> SPMDAxisContext:
+    return SPMDAxisContext(self.mesh, self.manual_axes | axes)
+
+
+@dataclasses.dataclass(frozen=True)
+class ReplicaAxisContext:
+  """A hardware axis context for parallel computations that are partitioned by JAX.
+
+  Unlike in the SPMDAxisContext, this means that JAX might need to emit calls to
+  explicit collectives.
+  """
+  axis_env: AxisEnv
+
+
+@dataclasses.dataclass(frozen=True)
+class ShardingContext:
+  """A hardware axis context for parallel computations that use the sharding
+  interface.
+
+  This context also uses the GSPMD partitioner.
+  """
+  device_assignment: Sequence[xc.Device]
+
+  # Similar to SPMDContext as ShardingContext also uses the GSPMD partitioner.
+  @property
+  def axis_env(self):
+    return AxisEnv(nreps=1, names=(), sizes=())

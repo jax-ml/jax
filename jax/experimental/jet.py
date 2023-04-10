@@ -68,6 +68,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import dispatch
 from jax._src import linear_util as lu
+from jax._src import sharding_impls
 from jax._src.api_util import shaped_abstractify
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
@@ -734,8 +735,12 @@ def _pjit_jet_rule(primals_in, series_in, **params):
       **params,
       'jaxpr': jaxpr_jet,
       'in_shardings': (
-          params['in_shardings'] + (pjit._UNSPECIFIED,) * num_series_in),
-      'out_shardings': params['out_shardings'] + (pjit._UNSPECIFIED,) * num_series_out,
+          params['in_shardings'] + (sharding_impls.UNSPECIFIED,) * num_series_in
+      ),
+      'out_shardings': (
+          params['out_shardings']
+          + (sharding_impls.UNSPECIFIED,) * num_series_out
+      ),
       'donated_invars': params['donated_invars'] + (False,) * num_series_in,
   }
   result = pjit.pjit_p.bind(*primals_and_series, **new_params)

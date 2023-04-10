@@ -28,6 +28,7 @@ from jax import tree_util
 
 from jax._src import core
 from jax._src import dtypes
+from jax._src import sharding_impls
 from jax._src import util
 from jax._src.core import ShapedArray, AxisName, raise_to_shaped
 from jax._src.interpreters import ad
@@ -750,8 +751,10 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       _replica_groups(ctx.module_context.axis_env, named_axes,
                       axis_index_groups))
   axis_context = ctx.module_context.axis_context
-  is_spmd = isinstance(axis_context,
-                       (mlir.SPMDAxisContext, mlir.ShardingContext))
+  is_spmd = isinstance(
+      axis_context,
+      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+  )
 
   def all_reduce(aval, x):
     if is_spmd:
@@ -880,7 +883,10 @@ def _ppermute_lowering(ctx, x, *, axis_name, perm):
   full_perm = full_perm.reshape((-1, 2))
 
   axis_context = ctx.module_context.axis_context
-  is_manual = isinstance(axis_context, mlir.SPMDAxisContext) and axis_context.manual_axes
+  is_manual = (
+      isinstance(axis_context, sharding_impls.SPMDAxisContext)
+      and axis_context.manual_axes
+  )
   if is_manual:
     channel = ctx.module_context.new_channel()
     other_args = dict(
@@ -978,8 +984,10 @@ def _all_to_all_lowering(ctx, x, *,
     split_count = len(replica_groups[0])
     if not all(split_count == len(g) for g in replica_groups):
       raise ValueError('Replica groups must be equally sized')
-    is_spmd = isinstance(ctx.module_context.axis_context,
-                         (mlir.SPMDAxisContext, mlir.ShardingContext))
+    is_spmd = isinstance(
+        ctx.module_context.axis_context,
+        (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+    )
     if is_spmd:
       # We want to emit the all-gather with global device IDs and a unique
       # channel ID, as otherwise it interprets the devices as replicas instead
@@ -1209,8 +1217,10 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
   x_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
   axis_context = ctx.module_context.axis_context
-  is_spmd = isinstance(axis_context,
-                       (mlir.SPMDAxisContext, mlir.ShardingContext))
+  is_spmd = isinstance(
+      axis_context,
+      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+  )
   if (ctx.module_context.platform == 'tpu' or
       ctx.module_context.platform in ('cuda', 'rocm')
       and all_gather_dimension == 0):
@@ -1354,8 +1364,10 @@ def _reduce_scatter_lowering(prim, reducer, ctx, x,
     scatter_out_shape = list(x_aval.shape)
     scatter_out_shape[scatter_dimension] //= axis_size
     axis_context = ctx.module_context.axis_context
-    is_spmd = isinstance(axis_context,
-                        (mlir.SPMDAxisContext, mlir.ShardingContext))
+    is_spmd = isinstance(
+        axis_context,
+        (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+    )
     if is_spmd:
       # We want to emit the all-gather with global device IDs and a unique
       # channel ID, as otherwise it interprets the devices as replicas instead
@@ -1572,8 +1584,10 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
   )
   mod = mlir.ir_constant(np.array(axis_env.sizes[axis_pos], dtype=np.uint32))
   axis_context = ctx.module_context.axis_context
-  is_spmd = isinstance(axis_context,
-                       (mlir.SPMDAxisContext, mlir.ShardingContext))
+  is_spmd = isinstance(
+      axis_context,
+      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+  )
   if is_spmd:
     device_id = hlo.PartitionIdOp()
   else:

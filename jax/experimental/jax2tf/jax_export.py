@@ -28,6 +28,7 @@ from jax import sharding
 
 from jax._src import core
 from jax._src import pjit
+from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
@@ -270,7 +271,7 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
     with ir.InsertionPoint(entry_block):
       orig_main_args: List[mlir.ir.Value] = []
       module_context = mlir.ModuleContext(
-          "cpu", "cpu", mlir.ShardingContext([]),
+          "cpu", "cpu", sharding_impls.ShardingContext([]),
           source_info_util.new_name_stack(),
           [], itertools.count(1), [], module=new_module, context=context)
       ctx = mlir.LoweringRuleContext(module_context=module_context,
@@ -467,7 +468,7 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
                       map(lambda a: a.at_least_vspace(), primal.out_avals)))
 
   # Expand in_shardings to all in_avals even not kept ones.
-  all_in_shardings = [pxla._UNSPECIFIED] * len(primal.in_avals)
+  all_in_shardings = [sharding_impls.UNSPECIFIED] * len(primal.in_avals)
   for idx, in_s in zip(sorted(primal.module_kept_var_idx),
                        primal.in_shardings):
     all_in_shardings[idx] = in_s  # type: ignore
@@ -475,13 +476,13 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
   # Cannot mix unspecified and specified shardings. Make the unspecified
   # ones replicated.
   specified_shardings = [
-      s for s in all_shardings if not pxla._is_unspecified(s)]
+      s for s in all_shardings if not sharding_impls.is_unspecified(s)]
 
   vjp_in_shardings: Any  # The primal inputs followed by output cotangents
   vjp_out_shardings: Any  # The primal output cotangents
   if 0 == len(specified_shardings):
-    vjp_in_shardings = pxla._UNSPECIFIED
-    vjp_out_shardings = pxla._UNSPECIFIED
+    vjp_in_shardings = sharding_impls.UNSPECIFIED
+    vjp_out_shardings = sharding_impls.UNSPECIFIED
   else:
     if len(specified_shardings) < len(all_shardings):
       # There are some specified, but not all; pjit front-end does not liwk
@@ -489,13 +490,13 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
       assert isinstance(in_s, sharding.XLACompatibleSharding)
       replicated_s = sharding.GSPMDSharding.get_replicated(in_s._device_assignment)
       all_shardings = [
-          s if not pxla._is_unspecified(s) else replicated_s
+          s if not sharding_impls.is_unspecified(s) else replicated_s
           for s in all_shardings]
 
     vjp_in_shardings = tuple(all_shardings)
     vjp_out_shardings = tuple(all_shardings[:len(primal.in_avals)])
-    if all(pxla._is_unspecified(s) for s in vjp_out_shardings):
-      vjp_out_shardings = pxla._UNSPECIFIED
+    if all(sharding_impls.is_unspecified(s) for s in vjp_out_shardings):
+      vjp_out_shardings = sharding_impls.UNSPECIFIED
 
   fun_vjp_jax = pjit.pjit(fun_vjp_jax,
                           in_shardings=vjp_in_shardings,
