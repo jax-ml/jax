@@ -14,7 +14,6 @@
 
 from functools import partial
 import unittest
-import warnings
 
 import numpy as np
 
@@ -29,12 +28,7 @@ from jax.config import config
 
 # We use TensorFlow and PIL as reference implementations.
 try:
-  # TODO(jakevdp): remove this warning filter when keras requirement is updated.
-  # Warning comes form PIL>=9.1.0 with keras<2.10.0
-  with warnings.catch_warnings():
-    warnings.filterwarnings('ignore', category=DeprecationWarning,
-                            message=".*is deprecated and will be removed in Pillow 10.*")
-    import tensorflow as tf
+  import tensorflow as tf
 except ImportError:
   tf = None
 
