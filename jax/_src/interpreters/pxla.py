@@ -326,9 +326,8 @@ def make_sharded_device_array(
         np.asarray([d.device() for d in device_buffers]), sharding_spec)
   else:
     op_sharding = sharding_specs.sharding_spec_sharding_proto(sharding_spec)
-    pspec = pjit.parse_flatten_op_sharding(
-        op_sharding, mesh)[0].get_partition_spec()
-    sharding = sharding_impls.NamedSharding(mesh, pspec)
+    sharding = sharding_impls.NamedSharding._from_xla_op_sharding(
+        op_sharding, mesh)
 
   return jax.make_array_from_single_device_arrays(
       aval.shape, sharding, device_buffers)  # type: ignore
@@ -2577,13 +2576,12 @@ def _get_mesh_pspec_shardings_from_executable(
 
 def _get_out_sharding_from_named_sharding(
     out_shardings, ns, are_out_sharding_from_xla):
-  from jax._src import pjit
   out = []
   for o, from_xla in safe_zip(out_shardings, are_out_sharding_from_xla):
     if isinstance(o, sharding_impls.GSPMDSharding):
       try:
-        out.append((sharding_impls.NamedSharding._from_parsed_pspec(
-            ns.mesh, pjit.parse_flatten_op_sharding(o._op_sharding, ns.mesh)[0]), False))
+        out.append((sharding_impls.NamedSharding._from_xla_op_sharding(
+            o._op_sharding, ns.mesh), False))
       except:
         out.append((o, from_xla))
     else:

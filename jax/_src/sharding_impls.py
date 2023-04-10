@@ -291,6 +291,12 @@ class NamedSharding(XLACompatibleSharding):
         special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
     return sharding_spec.sharding_proto(special_axes=special_axes)
 
+  @classmethod
+  def _from_xla_op_sharding(cls, op_sharding: xc.OpSharding,
+                            mesh: mesh_lib.Mesh) -> NamedSharding:
+    return cls._from_parsed_pspec(
+        mesh, parse_flatten_op_sharding(op_sharding, mesh)[0])
+
 
 @functools.lru_cache()
 def get_replicated_op_sharding():
@@ -522,6 +528,10 @@ class PositionalSharding(XLACompatibleSharding):
 
   # XLACompatibleSharding interface
 
+  @property
+  def _device_assignment(self) -> list[xc.Device]:
+    return self._devices
+
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(self, num_dimensions: int, axis_ctx=None):
     assert axis_ctx is None
@@ -542,9 +552,6 @@ class PositionalSharding(XLACompatibleSharding):
     pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
     return pbuf
 
-  @property
-  def _device_assignment(self) -> list[xc.Device]:
-    return self._devices
 
 class DeviceIdSet:
   _name: str
@@ -964,3 +971,139 @@ class ShardingContext:
   @property
   def axis_env(self):
     return AxisEnv(nreps=1, names=(), sizes=())
+
+
+# -------------------- XLA OpSharding to PartitionSpec --------------------
+# Note that OpSharding is more expressive than PartitionSpecs, so it's not
+# always possible to convert them, but the code below should at least
+# support handle all cases when this is possible.
+
+def strides_for_sizes(sizes):
+  """Returns an array of strides for major-to-minor sizes."""
+  return np.cumprod(sizes[::-1])[::-1] // np.asarray(sizes)
+
+def unflatten_array(named_sizes, assignment):
+  """Recovers the ordering of axis names based on a device assignment.
+
+  The device assignments that this function can convert into axis orders
+  are of the form::
+
+    np.arange(np.prod(named_sizes.values())).transpose(...).flatten()
+
+  for some transposition ``...``. This is satisfied by all OpSharding assignments
+  generated from partition specs.
+
+  Arguments:
+    named_sizes: A dictionary mapping axis names to their sizes.
+    assignment: A permutation of integers between 0 and the product of all
+      named sizes.
+
+  Returns:
+    A major-to-minor list of axis names that corresponds to the given assignment.
+  """
+  named_sizes = {name: size for name, size in named_sizes.items() if size != 1}
+  sizes = np.fromiter(named_sizes.values(), dtype=np.int64)
+  strides = strides_for_sizes(sizes)
+  dims = explode_superdims(sizes, unflatten_superdims(assignment))
+  dim_to_name = {(size, stride): name for size, stride, name in zip(sizes, strides, named_sizes)}
+  return [dim_to_name[d] for d in dims]
+
+def unflatten_superdims(assignment):
+  """Unflatten a list of dimension sizes and their strides that generates assignment.
+
+  If this function succeeds for a given ``assignment``, then the following property
+  should be satisfied::
+
+    dims_with_strides = unflatten_superdims(assignment)
+    base_array = np.arange(map(fst, sorted(dims_with_strides, key=snd, reverse=True)))
+    assignment == base_array.transpose(argsort(dims_with_strides, key=snd, reverse=True)).flatten()
+
+  That is, the returned dimensions list all sizes of the base array (with strides
+  indicating their initial order). The order of dimensions in the list corresponds
+  to the permutation that applied to the base array generates the assignment.
+  """
+  def check(cond):
+    if cond: return
+    raise NotImplementedError("Failed to convert OpSharding into a ShardingSpec. "
+                              "Please open a bug report!")
+  flat_assignment = np.asarray(assignment, dtype=np.int64)
+  check(flat_assignment[0] == 0)
+  dims = []
+  while flat_assignment.size > 1:
+    stride = flat_assignment[1]
+    for i in range(len(flat_assignment)):
+      if flat_assignment[i] != i * stride: break
+    else:
+      # After this loop i should point to an "element after the sequence", so
+      # we have to increment it if the whole array is a strided sequence.
+      i += 1
+    size = i
+    dims.append((size, stride))
+    assert size > 1  # Ensure progress
+    flat_assignment = flat_assignment[::size]
+  return dims
+
+def explode_superdims(sizes, dims):
+  """Explode superdims to fit a known shape.
+
+  The unflattening process might mistakenly generate too few too large dimensions.
+  For example, ``unflatten_superdims(np.arange(n))`` always returns ``[(n, 1)]``.
+  This function takes a list of such contiguous super-dimensions and splits them
+  into smaller dimensions such that::
+
+    set(map(fst, explode_superdims(sizes, dims))) == set(sizes)
+  """
+  strides_to_sizes = {stride: size for size, stride in zip(sizes, strides_for_sizes(sizes))}
+  dims = list(reversed(dims))
+  final_dims = []
+  for size, stride in dims:
+    target_size = strides_to_sizes[stride]
+    new_dims = []
+    while size > target_size:
+      assert target_size > 1  # Ensure progress
+      assert size % target_size == 0
+      new_dims.append((target_size, stride))
+      size //= target_size
+      stride *= target_size
+      target_size = strides_to_sizes[stride]
+    assert size == target_size
+    new_dims.append((size, stride))
+    final_dims += reversed(new_dims)
+  return final_dims
+
+def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
+                              mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
+  if op_sharding.type == xc.OpSharding.Type.TUPLE:
+    out: List[ParsedPartitionSpec] = []
+    for s in op_sharding.tuple_shardings:
+      out.extend(parse_flatten_op_sharding(s, mesh))
+    return out
+  elif op_sharding.type == xc.OpSharding.Type.REPLICATED:
+    return [CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec(PartitionSpec(), ()))]
+  elif op_sharding.type == xc.OpSharding.Type.OTHER:
+    mesh_shape = mesh.shape
+    mesh_axis_order = unflatten_array(mesh.shape, op_sharding.tile_assignment_devices)
+    mesh_axis = iter(mesh_axis_order)
+    shape = op_sharding.tile_assignment_dimensions
+    partitions = []
+    for dim_size in shape:
+      dim_partitions = []
+      while dim_size > 1:
+        axis = next(mesh_axis)
+        axis_size = mesh_shape[axis]
+        assert dim_size % axis_size == 0
+        dim_size //= axis_size
+        dim_partitions.append(axis)
+      partitions.append(tuple(dim_partitions))
+    if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+      replicate_on_last_tile_dim = True
+    else:
+      replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+      if op_sharding.last_tile_dims:
+        raise NotImplementedError("Unhandled OpSharding type. Please open a bug report!")
+    if replicate_on_last_tile_dim:
+      partitions = partitions[:-1]
+    return [ParsedPartitionSpec('<internally generated spec>', partitions)]
+  else:
+    raise AssertionError("Unhandled OpSharding type. Please open a bug report!")

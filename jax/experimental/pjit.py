@@ -16,7 +16,6 @@
 
 from jax._src.pjit import (
   hashable_pytree as hashable_pytree,
-  parse_flatten_op_sharding as parse_flatten_op_sharding,
   pjit as pjit,
   pjit_p as pjit_p,
   with_sharding_constraint as with_sharding_constraint,
@@ -26,7 +25,8 @@ from jax._src.sharding_impls import (
   UNSPECIFIED as _UNSPECIFIED,
   ParsedPartitionSpec as ParsedPartitionSpec,
   get_array_mapping as get_array_mapping,
-  prepare_axis_resources as _prepare_axis_resources
+  prepare_axis_resources as _prepare_axis_resources,
+  parse_flatten_op_sharding as parse_flatten_op_sharding,
 )
 
 from jax._src.pjit import (_get_op_sharding_from_executable,

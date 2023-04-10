@@ -47,7 +47,7 @@ from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
-    SingleDeviceSharding)
+    SingleDeviceSharding, parse_flatten_op_sharding)
 import jax._src.pjit as pjit_lib
 from jax._src.pjit import pjit, pjit_p
 from jax._src import mesh
@@ -3508,7 +3508,7 @@ class UtilTest(jtu.JaxTestCase):
     aval = core.ShapedArray((len(devices),) * dims, jnp.float32)
     def roundtrip(spec):
       op_sharding = NamedSharding(mesh, spec)._to_xla_op_sharding(aval.ndim)
-      parsed_spec = pjit_lib.parse_flatten_op_sharding(op_sharding, mesh)[0].partitions
+      parsed_spec = parse_flatten_op_sharding(op_sharding, mesh)[0].partitions
       self.assertEqual(parsed_spec[:len(spec)], spec)
       self.assertEqual(parsed_spec[len(spec):], ((),) * (len(parsed_spec) - len(spec)))
 
@@ -3777,7 +3777,7 @@ class UtilTest(jtu.JaxTestCase):
 
     self.assertEqual(s._parsed_pspec.get_partition_spec(), P('x', 'y', None))
 
-    recovered_parsed_pspec = pjit_lib.parse_flatten_op_sharding(
+    recovered_parsed_pspec = parse_flatten_op_sharding(
         s._to_xla_op_sharding(3), mesh)
     self.assertEqual(recovered_parsed_pspec[0].get_partition_spec(),
                      P(('x',), ('y',)))
