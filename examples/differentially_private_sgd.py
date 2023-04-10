@@ -22,12 +22,9 @@ this setting by optimizing the minibatch-vectorized computation for
 convolutional architectures. Train time takes a few seconds per epoch on a
 commodity GPU.
 
-This code depends on tensorflow_privacy (https://github.com/tensorflow/privacy)
+This code depends on the `dp-accounting` package
   Install instructions:
-    $ pip install tensorflow
-    $ git clone https://github.com/tensorflow/privacy
-    $ cd privacy
-    $ pip install .
+    $ pip install dp-accounting
 
 The results match those in the reference TensorFlow baseline implementation:
   https://github.com/tensorflow/privacy/tree/master/tutorials
@@ -79,12 +76,12 @@ from jax.example_libraries import optimizers
 from jax.example_libraries import stax
 from jax.tree_util import tree_flatten, tree_unflatten
 import jax.numpy as jnp
-from jax.examples import datasets
+from examples import datasets
 import numpy.random as npr
 
 # https://github.com/google/differential-privacy
-from differential_privacy.python.accounting import dp_event
-from differential_privacy.python.accounting.rdp import rdp_privacy_accountant
+from dp_accounting import dp_event
+from dp_accounting import rdp
 
 FLAGS = flags.FLAGS
 
@@ -137,7 +134,7 @@ def clipped_grad(params, l2_norm_clip, single_example_batch):
   grads = grad(loss)(params, single_example_batch)
   nonempty_grads, tree_def = tree_flatten(grads)
   total_grad_norm = jnp.linalg.norm(
-      [jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads])
+      jnp.array([jnp.linalg.norm(neg.ravel()) for neg in nonempty_grads]))
   divisor = jnp.maximum(total_grad_norm / l2_norm_clip, 1.)
   normalized_nonempty_grads = [g / divisor for g in nonempty_grads]
   return tree_unflatten(tree_def, normalized_nonempty_grads)
@@ -168,7 +165,7 @@ def compute_epsilon(steps, num_examples=60000, target_delta=1e-5):
     warnings.warn('Your delta might be too high.')
   q = FLAGS.batch_size / float(num_examples)
   orders = list(jnp.linspace(1.1, 10.9, 99)) + list(range(11, 64))
-  accountant = rdp_privacy_accountant.RdpAccountant(orders)
+  accountant = rdp.rdp_privacy_accountant.RdpAccountant(orders)
   accountant.compose(
       dp_event.PoissonSampledDpEvent(
           q, dp_event.GaussianDpEvent(FLAGS.noise_multiplier)), steps)
