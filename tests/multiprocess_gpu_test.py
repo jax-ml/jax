@@ -260,13 +260,10 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     super().setUp()
     self.xmap_spmd_lowering_enabled = jax.config.experimental_xmap_spmd_lowering
     jax.config.update("experimental_xmap_spmd_lowering", True)
-    self.gda_enabled = jax.config.jax_parallel_functions_output_gda
-    jax.config.update('jax_parallel_functions_output_gda', True)
 
   def tearDown(self):
     jax.config.update("experimental_xmap_spmd_lowering",
                       self.xmap_spmd_lowering_enabled)
-    jax.config.update('jax_parallel_functions_output_gda', self.gda_enabled)
     super().tearDown()
 
   def test_gpu_multi_node_initialize_and_psum(self):
