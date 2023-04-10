@@ -854,6 +854,32 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertAllClose(expected, primals)
     self.assertAllClose(np.zeros_like(x), tangents)
 
+  def testSimpleIndexingUsesSlice(self):
+    jaxpr = jax.make_jaxpr(lambda x: x[:2, :2])(jnp.ones((3, 4)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 7)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_slice_p)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[0, :2, 1])(jnp.ones((3, 4, 5)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[0, 0])(jnp.ones((3, 4, 5)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    jaxpr = jax.make_jaxpr(lambda x: x[:, 1])(jnp.ones((3, 4, 5)))
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.dynamic_slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
+    # Simple reverses lower to lax.rev_p
+    jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
+    print(jaxpr)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+    self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
   def testTrivialGatherIsntGenerated(self):
     # https://github.com/google/jax/issues/1621
     jaxpr = jax.make_jaxpr(lambda x: x[:, None])(np.arange(4))
@@ -862,12 +888,23 @@ class IndexingTest(jtu.JaxTestCase):
 
     jaxpr = jax.make_jaxpr(lambda x: x[0:6:1])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
+
     jaxpr = jax.make_jaxpr(lambda x: x[:4])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 0)
 
     jaxpr = jax.make_jaxpr(lambda x: x[::-1])(np.arange(4))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
+
+  def testOOBEmptySlice(self):
+    x = jnp.arange(4, dtype='float32')
+    self.assertArraysEqual(x[1:0], jnp.empty(0, dtype='float32'))
+    self.assertArraysEqual(x[-2:-10], jnp.empty(0, dtype='float32'))
+    self.assertArraysEqual(x[5:10], jnp.empty(0, dtype='float32'))
+
+    x = jnp.arange(6, dtype='float32').reshape(2, 3)
+    self.assertArraysEqual(x[-1:-4], jnp.empty((0, 3), dtype='float32'))
+    self.assertArraysEqual(x[:, 3:2], jnp.empty((2, 0), dtype='float32'))
 
   def testIndexingEmptyDimension(self):
     # Issue 2671: XLA error when indexing into dimension of size 0
