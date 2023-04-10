@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import dataclasses
 from functools import partial
 import itertools
 import time
 from typing import (Any, Callable, Dict, Iterator, Optional,
-                    Set, Tuple, List, Union, NamedTuple)
+                    Set, Tuple, List, Union, NamedTuple, Sequence)
 import logging
 import os
 import re
@@ -54,7 +55,7 @@ from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
-    UNSPECIFIED)
+    UNSPECIFIED, GSPMDSharding)
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -105,13 +106,28 @@ def arg_spec(x: Any) -> ArgSpec:
     return aval, None
 
 
+@dataclasses.dataclass(frozen=True)
+class OrigShardings:
+  shardings: Sequence[Optional[GSPMDSharding]]
+
+  def __hash__(self):
+    return hash(tuple(s for s in self.shardings))
+
+  def __eq__(self, other):
+    if not isinstance(other, OrigShardings):
+      return False
+    return all(getattr(s, "_original_sharding", s) == getattr(o, "_original_sharding", o)
+               for s, o in zip(self.shardings, other.shardings))
+
+
 def apply_primitive(prim, *args, **params):
   """Impl rule that compiles and runs a single primitive 'prim' using XLA."""
   from jax._src import pjit
 
   try:
-    compiled_fun = xla_primitive_callable(prim, *unsafe_map(arg_spec, args),
-                                          **params)
+    in_avals, in_shardings = util.unzip2([arg_spec(a) for a in args])
+    compiled_fun = xla_primitive_callable(
+        prim, in_avals, OrigShardings(in_shardings), **params)
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     # TODO(yashkatariya): Thread through a signature_fun via every primitive
@@ -193,16 +209,17 @@ def wait_for_tokens():
   runtime_tokens.block_until_ready()
 
 @util.cache()
-def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
-  donated_invars = (False,) * len(arg_specs)
+def xla_primitive_callable(prim, in_avals, orig_in_shardings, **params):
   def prim_fun(*args):
     out = prim.bind(*args, **params)
     if prim.multiple_results:
       return out
     else:
       return out,
-  compiled = _xla_callable_uncached(lu.wrap_init(prim_fun), prim.name,
-                                    donated_invars, False, *arg_specs)
+  donated_invars = (False,) * len(in_avals)
+  compiled = _xla_callable_uncached(
+      lu.wrap_init(prim_fun), prim.name, donated_invars, False, in_avals,
+      orig_in_shardings)
   if not prim.multiple_results:
     return lambda *args, **kw: compiled(*args, **kw)[0]
   else:
@@ -210,8 +227,10 @@ def xla_primitive_callable(prim, *arg_specs: ArgSpec, **params):
 
 
 def sharded_lowering(fun, name, donated_invars, keep_unused,
-                     *arg_specs, lowering_platform: Optional[str]):
-  in_avals, in_shardings = util.unzip2(arg_specs)
+                     in_avals, in_shardings, lowering_platform: Optional[str]):
+  if isinstance(in_shardings, OrigShardings):
+    in_shardings = in_shardings.shardings
+
   in_shardings = [UNSPECIFIED if i is None else i for i in in_shardings]  # type: ignore
 
   # Pass in a singleton `UNSPECIFIED` for out_shardings because we don't know
@@ -224,9 +243,10 @@ def sharded_lowering(fun, name, donated_invars, keep_unused,
 
 
 def _xla_callable_uncached(fun: lu.WrappedFun, name, donated_invars,
-                           keep_unused, *arg_specs):
+                           keep_unused, in_avals, orig_in_shardings):
   computation = sharded_lowering(fun, name, donated_invars, keep_unused,
-                                 *arg_specs, lowering_platform=None)
+                                 in_avals, orig_in_shardings,
+                                 lowering_platform=None)
   allow_prop = [True] * len(computation.compile_args['global_out_avals'])
   return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
 
