@@ -505,11 +505,7 @@ class JaxArrayTest(jtu.JaxTestCase):
     _check(arr[0:6:1], np_inp[0:6:1], (2, 2, 1))
     _check(arr[:4], np_inp[:4], (2, 2, 1))
     _check(arr[::-1], np_inp[::-1], (2, 2, 1))
-
-    # TODO(yashkatariya): This returns a replicated output because the int
-    # indexing in `_rewriting_take` goes via `dynamic_index_in_dim` rather than
-    # `_gather`.
-    # _check(arr[1], np_inp[1], (2, 1))
+    _check(arr[1], np_inp[1], (2, 1))
 
   def test_array_getitem_replicated_multi_device(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
