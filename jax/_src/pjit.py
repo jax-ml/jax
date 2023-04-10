@@ -1993,7 +1993,8 @@ def parse_flatten_op_sharding(op_sharding: xc.OpSharding,
       out.extend(parse_flatten_op_sharding(s, mesh))
     return out
   elif op_sharding.type == xc.OpSharding.Type.REPLICATED:
-    return [CanonicalizedParsedPartitionSpec(ParsedPartitionSpec(None, ()))]
+    return [CanonicalizedParsedPartitionSpec(
+        ParsedPartitionSpec(PartitionSpec(), ()))]
   elif op_sharding.type == xc.OpSharding.Type.OTHER:
     mesh_shape = mesh.shape
     mesh_axis_order = unflatten_array(mesh.shape, op_sharding.tile_assignment_devices)
