@@ -110,7 +110,6 @@ py_library_providing_imports_info(
         "_src/prng.py",
         "_src/public_test_util.py",
         "_src/random.py",
-        "_src/sharding_impls.py",
         "_src/stages.py",
     ] + glob(
         [
@@ -183,6 +182,7 @@ py_library_providing_imports_info(
         ":pretty_printer",
         ":profiler",
         ":sharding",
+        ":sharding_impls",
         ":sharding_specs",
         ":source_info_util",
         ":traceback_util",
@@ -345,6 +345,7 @@ pytype_strict_library(
         ":effects",
         ":op_shardings",
         ":partial_eval",
+        ":sharding_impls",
         ":source_info_util",
         ":util",
         ":xla",
@@ -416,6 +417,22 @@ pytype_strict_library(
         ":util",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "sharding_impls",
+    srcs = ["_src/sharding_impls.py"],
+    deps = [
+        ":mesh",
+        ":op_shardings",
+        ":partition_spec",
+        ":sharding",
+        ":sharding_specs",
+        ":tree_util",
+        ":util",
+        ":xla_bridge",
+        "//jax/_src/lib",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -504,6 +521,7 @@ pytype_strict_library(
         ":abstract_arrays",
         ":config",
         ":core",
+        ":sharding_impls",
         ":source_info_util",
         ":typing",
         ":util",

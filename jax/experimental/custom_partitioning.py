@@ -17,6 +17,7 @@ import inspect
 from jax._src import core
 from jax import tree_util
 from jax._src import linear_util as lu
+from jax._src import sharding_impls
 from jax.experimental import pjit
 from jax.errors import UnexpectedTracerError
 from jax._src import mesh as mesh_lib
@@ -97,7 +98,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
   ]
   closed_jaxpr = jax.make_jaxpr(
       lower_fn, axis_env=list(info.mesh.shape.items()))(*tiled_args)
-  axis_context = mlir.SPMDAxisContext(info.mesh)
+  axis_context = sharding_impls.SPMDAxisContext(info.mesh)
   built = mlir.build_xla_computation_helper(
       closed_jaxpr,
       name="tmp_xla_computation",
@@ -373,9 +374,9 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
   mesh = mesh_lib.thread_resources.env.physical_mesh
   axis_context = ctx.module_context.axis_context
 
-  if isinstance(axis_context, mlir.ShardingContext):
+  if isinstance(axis_context, sharding_impls.ShardingContext):
     devices = axis_context.device_assignment
-  elif isinstance(axis_context, mlir.SPMDAxisContext):
+  elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     devices = list(axis_context.mesh.devices.flat)
   else:
     devices = None

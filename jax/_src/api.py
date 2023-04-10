@@ -46,6 +46,7 @@ from jax._src import dispatch
 from jax._src import effects
 from jax._src import array
 from jax._src import dtypes
+from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -146,8 +147,8 @@ float0 = dtypes.float0
 
 def jit(
   fun: Callable,
-  in_shardings=pxla._UNSPECIFIED,
-  out_shardings=pxla._UNSPECIFIED,
+  in_shardings=sharding_impls.UNSPECIFIED,
+  out_shardings=sharding_impls.UNSPECIFIED,
   static_argnums: Union[int, Sequence[int], None] = None,
   static_argnames: Union[str, Iterable[str], None] = None,
   donate_argnums: Union[int, Sequence[int]] = (),
@@ -503,11 +504,11 @@ def xla_computation(fun: Callable,
 
   def make_axis_env(nreps):
     if axis_env is None:
-      return xla.AxisEnv(nreps, (), ())
+      return sharding_impls.AxisEnv(nreps, (), ())
     else:
       nreps = nreps * math.prod(size for name, size in axis_env)
       names, sizes = unzip2(axis_env)
-      return xla.AxisEnv(nreps, names, sizes)
+      return sharding_impls.AxisEnv(nreps, names, sizes)
 
   @wraps(fun)
   @api_boundary
@@ -553,7 +554,7 @@ def xla_computation(fun: Callable,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
           platform=platform,
-          axis_context=mlir.ReplicaAxisContext(axis_env_),
+          axis_context=sharding_impls.ReplicaAxisContext(axis_env_),
           name_stack=source_info_util.new_name_stack(
               wrap_name(fun_name, "xla_computation")),
           donated_args=donated_invars,

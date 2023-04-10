@@ -662,6 +662,7 @@ def _select_and_gather_add_lowering(
     max_bits=64):
   _, operand_aval, = ctx.avals_in
   out_aval, = ctx.avals_out
+  assert isinstance(operand_aval, core.ShapedArray), operand_aval
   dtype = operand_aval.dtype
   etype = mlir.dtype_to_ir_type(dtype)
   nbits = dtypes.finfo(dtype).bits

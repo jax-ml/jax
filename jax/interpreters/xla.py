@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from jax._src.interpreters.xla import (
-  AxisEnv as AxisEnv,
   DeviceArray as _deprecated_DeviceArray,
   TranslationContext as TranslationContext,
   TranslationRule as TranslationRule,
@@ -44,6 +43,10 @@ from jax._src.core import (
 from jax._src.dispatch import (
   apply_primitive as apply_primitive,
   backend_compile as backend_compile,
+)
+
+from jax._src.sharding_impls import (
+  AxisEnv as AxisEnv,
 )
 
 from jax._src import xla_bridge as xb
