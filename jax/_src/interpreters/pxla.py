@@ -3124,8 +3124,10 @@ def _compile_replicated_mesh_executable_from_trivial_jaxpr(
 
 @lru_cache()
 def create_mesh_pspec_sharding(
-    mesh: Mesh, pspec: PartitionSpec, parsed_pspec=None
+    mesh: Mesh, pspec: Optional[PartitionSpec], parsed_pspec=None
 ) -> sharding_impls.NamedSharding:
+  if pspec is None:
+    pspec = PartitionSpec()
   return sharding_impls.NamedSharding(mesh, pspec, parsed_pspec)
 
 
