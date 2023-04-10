@@ -3156,12 +3156,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = jnp.copy(arr)
     self.assertIsInstance(out.sharding, NamedSharding)
 
-    # TODO(yashkatariya): Fix apply_primitive's cache on xla_primitive_callable
-    # to be like pjit_lower cache.
-    # ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
-    # arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
-    # out2 = jnp.copy(arr2)
-    # self.assertIsInstance(out2.sharding, PositionalSharding)
+    ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
+    arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
+    out2 = jnp.copy(arr2)
+    # TODO(yashkatariya): Handle PositionalSharding inside pxla so that
+    # GSPMDShardings can be converted to PositionalSharding.
+    self.assertIsInstance(out2.sharding, GSPMDSharding)
+
+    arr3 = jnp.arange(8)
+    out3 = jnp.copy(arr3)
+    self.assertIsInstance(out3.sharding, SingleDeviceSharding)
+
+    arr4 = jax.device_put(jnp.arange(8), jax.devices()[1])
+    out4 = jnp.copy(arr4)
+    self.assertIsInstance(out4.sharding, SingleDeviceSharding)
+    self.assertEqual(out4.device(), jax.devices()[1])
 
 
 class TempSharding(Sharding):
