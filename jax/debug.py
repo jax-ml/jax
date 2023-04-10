@@ -20,3 +20,6 @@ from jax._src.debugging import visualize_array_sharding
 from jax._src.debugging import inspect_array_sharding
 from jax._src.debugging import visualize_sharding
 from jax._src.debugger import breakpoint
+from jax._src.stack_traces import start_stack_traces_dumping
+from jax._src.stack_traces import stop_stack_traces_dumping
+from jax._src.stack_traces import stack_traces_dumping

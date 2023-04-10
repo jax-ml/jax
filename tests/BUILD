@@ -1061,6 +1061,26 @@ jax_test(
     ],
 )
 
+py_binary(
+    name = "stack_traces_test_util",
+    srcs = ["stack_traces_test_util.py"],
+    deps = [
+        "//jax",
+    ],
+)
+
+py_test(
+    name = "stack_traces_test",
+    srcs = ["stack_traces_test.py"],
+    data = [
+        ":stack_traces_test_util",
+    ],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
