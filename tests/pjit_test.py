@@ -3130,6 +3130,21 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertIsInstance(out4.sharding, SingleDeviceSharding)
     self.assertEqual(out4.device(), jax.devices()[1])
 
+  def test_none_out_sharding(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    x = jnp.arange(8)
+    with mesh:
+      out = pjit(lambda x: x * 2, out_shardings=None)(x)
+      self.assertEqual(out.sharding.mesh, mesh)
+      self.assertIsInstance(out.sharding, NamedSharding)
+      self.assertEqual(out.sharding.spec, P())
+
+    x2 = jax.device_put(x, NamedSharding(mesh, P()))
+    out2 = pjit(lambda x: x * 2)(x2)
+    self.assertIsInstance(out2.sharding, NamedSharding)
+    self.assertEqual(out2.sharding.mesh, mesh)
+    self.assertEqual(out2.sharding.spec, P())
+
   def test_sharding_preserved_apply_primitive(self):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
