@@ -374,6 +374,8 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   def test_tpu_Eigh(self):
     # For lax.linalg.eigh
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("b/277593283")
     func = lambda: CompatTest.eigh_harness((8, 8), np.float32)
     data = load_testdata(tpu_Eigh.data)
     self.run_one_test(func, data, rtol=1e-3)

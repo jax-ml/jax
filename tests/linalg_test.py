@@ -299,7 +299,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   def testEigh(self, n, dtype, lower):
     rng = jtu.rand_default(self.rng())
-    tol = 1e-3
+    tol = np.maximum(n, 80) * np.finfo(dtype).eps
     args_maker = lambda: [rng((n, n), dtype)]
 
     uplo = "L" if lower else "U"
@@ -310,13 +310,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                            UPLO=uplo, symmetrize_input=False)
     w = w.astype(v.dtype)
     self.assertLessEqual(
-        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 2e-4
+    )
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
                            tol * np.linalg.norm(a))
 
-    self._CompileAndCheck(partial(jnp.linalg.eigh, UPLO=uplo), args_maker,
-                          rtol=1e-3)
+    self._CompileAndCheck(
+        partial(jnp.linalg.eigh, UPLO=uplo), args_maker, rtol=tol
+    )
 
   def testEighZeroDiagonal(self):
     a = np.array([[0., -1., -1.,  1.],
@@ -326,8 +328,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w, v = jnp.linalg.eigh(a)
     w = w.astype(v.dtype)
     with jax.numpy_rank_promotion('allow'):
-      self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
-                          1e-3 * np.linalg.norm(a))
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v), 1e-5 * np.linalg.norm(a)
+      )
 
   @jtu.sample_product(
     n=[0, 4, 5, 50, 512],
@@ -336,18 +339,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("rocm")
   def testEighIdentity(self, n, dtype, lower):
-    tol = 1e-3
+    tol = np.finfo(dtype).eps
     uplo = "L" if lower else "U"
 
     a = jnp.eye(n, dtype=dtype)
     w, v = jnp.linalg.eigh(a, UPLO=uplo, symmetrize_input=False)
     w = w.astype(v.dtype)
     self.assertLessEqual(
-        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1e-3)
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), tol
+    )
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
                            tol * np.linalg.norm(a))
-
 
   @jtu.sample_product(
     shape=[(4, 4), (5, 5), (50, 50)],
@@ -361,7 +364,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       a = (a + np.conj(a.T)) / 2
       return [a]
     self._CheckAgainstNumpy(np.linalg.eigvalsh, jnp.linalg.eigvalsh, args_maker,
-                            tol=1e-3)
+                            tol=5e-5)
 
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (5, 5), (50, 50), (2, 10, 10)],
@@ -383,13 +386,13 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       f = partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)
     else:  # only check eigenvalue grads for complex matrices
       f = lambda a: partial(jnp.linalg.eigh, UPLO=uplo, symmetrize_input=True)(a)[0]
-    jtu.check_grads(f, (a,), 2, rtol=1e-1)
+    jtu.check_grads(f, (a,), 2, rtol=1e-5)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (5, 5), (50, 50)],
-    dtype=complex_types,
-    lower=[True, False],
-    eps=[1e-4],
+      shape=[(1, 1), (4, 4), (5, 5), (50, 50)],
+      dtype=complex_types,
+      lower=[True, False],
+      eps=[1e-5],
   )
   def testEighGradVectorComplex(self, shape, dtype, lower, eps):
     rng = jtu.rand_default(self.rng())
