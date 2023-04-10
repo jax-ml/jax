@@ -30,6 +30,7 @@ from jax._src import core
 from jax._src import ad_util
 from jax._src import custom_derivatives
 from jax._src import debugging
+from jax._src import dispatch
 from jax._src import linear_util as lu
 from jax._src import ops
 from jax._src import pjit
@@ -700,6 +701,15 @@ def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
   return []
 eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
+def _device_put_eager_rule(mesh, x, *, src, device):
+  del mesh, src
+  if device is None:
+    return x
+  else:
+    raise ValueError("device_put with explicit device not allowed within "
+                     f"shard_map-decorated functions, but got device {device}")
+eager_rules[dispatch.device_put_p] = _device_put_eager_rule
+
 # Static replication checking
 
 def _rep_rule(prim: core.Primitive, mesh: Mesh, *in_rep: Set[AxisName],
@@ -764,6 +774,10 @@ def _pjit_rule(mesh, *in_rep, jaxpr, **kwargs):
 @register_rule(debugging.debug_callback_p)
 def _debug_callback_rule(mesh, *in_rep, **_):
   return []
+
+@register_rule(dispatch.device_put_p)
+def _device_put_rep_rule(mesh, x, *, src, device):
+  return x
 
 @register_rule(control_flow.loops.scan_p)
 def _scan_rule(mesh, *in_rep, jaxpr, num_consts, num_carry, linear, length,
