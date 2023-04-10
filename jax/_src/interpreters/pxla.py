@@ -3080,7 +3080,7 @@ def create_mesh_pspec_sharding(
     mesh: Mesh, pspec: Optional[PartitionSpec], parsed_pspec=None
 ) -> sharding_impls.NamedSharding:
   if pspec is None:
-    pspec = PartitionSpec()
+    pspec, parsed_pspec = PartitionSpec(), None
   return sharding_impls.NamedSharding(mesh, pspec, parsed_pspec)
 
 
