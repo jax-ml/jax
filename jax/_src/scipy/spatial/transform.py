@@ -28,7 +28,7 @@ class Rotation(typing.NamedTuple):
   @classmethod
   def concatenate(cls, rotations: typing.Sequence):
     """Concatenate a sequence of `Rotation` objects."""
-    return cls(jnp.vstack([rotation.quat for rotation in rotations]))
+    return cls(jnp.concatenate([rotation.quat for rotation in rotations]))
 
   @classmethod
   def from_euler(cls, seq: str, angles: jax.Array, degrees: bool = False):
@@ -418,7 +418,7 @@ def _from_mrp(mrp: jax.Array) -> jax.Array:
 
 
 def _inv(quat: jax.Array) -> jax.Array:
-  return jnp.array([quat[0], quat[1], quat[2], -quat[3]])
+  return quat.at[3].set(-quat[3])
 
 
 def _magnitude(quat: jax.Array) -> jax.Array:
