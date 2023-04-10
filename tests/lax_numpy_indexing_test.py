@@ -1467,5 +1467,16 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     y = jnp.zeros(8)
     self.assertArraysEqual(fn(y), jax.jit(fn)(y))
 
+  def testScatterValuesCastToTargetDType(self):
+    # https://github.com/google/jax/issues/15505
+    a = jnp.zeros((1), dtype=jnp.uint32)
+    val = 2**32 - 1
+    # val and its uint32 representation are identical
+    # assignment works with an explicit cast to uint32
+    b = a.at[1].set(jnp.uint32(val))
+    # assignment with an implicit cast throws an exception
+    b = a.at[1].set(val)  # don't crash
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
