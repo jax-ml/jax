@@ -21,6 +21,11 @@ limitations under the License.
 
 namespace py = pybind11;
 
+namespace {
+
+// A variant of map(...) that:
+// a) returns a list instead of an iterator, and
+// b) checks that the input iterables are of equal length.
 PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
   if (nargs < 2) {
     PyErr_SetString(PyExc_TypeError, "safe_map requires at least 2 arguments");
@@ -66,8 +71,9 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
         values[i + 1] = PyIter_Next(iterators[i].ptr());
         if (PyErr_Occurred()) return nullptr;
         if (!values[i + 1]) {
-          PyErr_SetString(PyExc_ValueError,
-                          "Length mismatch for arguments to safe_map");
+          PyErr_Format(PyExc_ValueError,
+                       "safe_map() argument %u is shorter than argument 1",
+                       i + 1);
           return nullptr;
         }
       }
@@ -78,8 +84,9 @@ PyObject* SafeMap(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
         values[i + 1] = PyIter_Next(iterators[i].ptr());
         if (PyErr_Occurred()) return nullptr;
         if (values[i + 1]) {
-          PyErr_SetString(PyExc_ValueError,
-                          "Length mismatch for arguments to safe_map");
+          PyErr_Format(PyExc_ValueError,
+                       "safe_map() argument %u is longer than argument 1",
+                       i + 1);
           return nullptr;
         }
       }
@@ -118,7 +125,107 @@ PyMethodDef safe_map_def = {
     METH_FASTCALL,
 };
 
+// A variant of zip(...) that:
+// a) returns a list instead of an iterator, and
+// b) checks that the input iterables are of equal length.
+// TODO(phawkins): consider replacing this function with
+// list(zip(..., strict=True)) once TensorFlow 2.13 is released, which should
+// resolve an incompatibility with strict=True and jax2tf.
+PyObject* SafeZip(PyObject* self, PyObject* const* args, Py_ssize_t nargs) {
+  if (nargs < 1) {
+    PyErr_SetString(PyExc_TypeError, "safe_zip requires at least 1 argument");
+    return nullptr;
+  }
+  absl::InlinedVector<py::object, 4> iterators;
+  iterators.reserve(nargs);
+  for (Py_ssize_t i = 0; i < nargs; ++i) {
+    PyObject* it = PyObject_GetIter(args[i]);
+    if (!it) return nullptr;
+    iterators.push_back(py::reinterpret_steal<py::object>(it));
+  }
+
+  // Try to use a length hint to estimate how large a list to allocate.
+  Py_ssize_t length_hint = PyObject_LengthHint(args[0], 2);
+  if (PyErr_Occurred()) {
+    PyErr_Clear();
+  }
+  if (length_hint < 0) {
+    length_hint = 2;
+  }
+
+  py::list list(length_hint);
+  int n = 0;  // Current true size of the list
+
+  while (true) {
+    py::object tuple;
+    py::object v =
+        py::reinterpret_steal<py::object>(PyIter_Next(iterators[0].ptr()));
+    if (PyErr_Occurred()) return nullptr;
+
+    if (v.ptr()) {
+      tuple = py::reinterpret_steal<py::object>(PyTuple_New(nargs));
+      if (!tuple.ptr()) return nullptr;
+
+      PyTuple_SET_ITEM(tuple.ptr(), 0, v.release().ptr());
+      for (size_t i = 1; i < iterators.size(); ++i) {
+        v = py::reinterpret_steal<py::object>(PyIter_Next(iterators[i].ptr()));
+        if (PyErr_Occurred()) return nullptr;
+        if (!v.ptr()) {
+          PyErr_Format(PyExc_ValueError,
+                       "safe_zip() argument %u is shorter than argument 1",
+                       i + 1);
+          return nullptr;
+        }
+        PyTuple_SET_ITEM(tuple.ptr(), i, v.release().ptr());
+      }
+    } else {
+      // No more elements should be left. Checks the other iterators are
+      // exhausted.
+      for (size_t i = 1; i < iterators.size(); ++i) {
+        v = py::reinterpret_steal<py::object>(PyIter_Next(iterators[i].ptr()));
+        if (PyErr_Occurred()) return nullptr;
+        if (v.ptr()) {
+          PyErr_Format(PyExc_ValueError,
+                       "safe_zip() argument %u is longer than argument 1",
+                       i + 1);
+          return nullptr;
+        }
+      }
+
+      // If the length hint was too large, truncate the list to the true size.
+      if (n < length_hint) {
+        if (PyList_SetSlice(list.ptr(), n, length_hint, nullptr) < 0) {
+          return nullptr;
+        }
+      }
+      return list.release().ptr();
+    }
+
+    if (n < length_hint) {
+      PyList_SET_ITEM(list.ptr(), n, tuple.release().ptr());
+    } else {
+      if (PyList_Append(list.ptr(), tuple.ptr()) < 0) {
+        return nullptr;
+      }
+      tuple = py::object();
+    }
+    ++n;
+  }
+}
+
+PyMethodDef safe_zip_def = {
+    "safe_zip",
+    reinterpret_cast<PyCFunction>(SafeZip),
+    METH_FASTCALL,
+};
+
+}  // namespace
+
+
 PYBIND11_MODULE(utils, m) {
+  py::object module_name = m.attr("__name__");
   m.attr("safe_map") = py::reinterpret_steal<py::object>(
-      PyCFunction_NewEx(&safe_map_def, nullptr, nullptr));
+      PyCFunction_NewEx(&safe_map_def, /*self=*/nullptr, module_name.ptr()));
+  m.attr("safe_zip") = py::reinterpret_steal<py::object>(
+      PyCFunction_NewEx(&safe_zip_def, /*self=*/nullptr, module_name.ptr()));
 }

@@ -919,5 +919,14 @@ def safe_map(state):
   while state:
     jax.util.safe_map(f, *args)
 
+@google_benchmark.register
+@google_benchmark.option.arg_names(['arg_lengths', 'num_args'])
+@google_benchmark.option.args_product([[0, 1, 2, 5, 10, 100], [1, 2, 3]])
+def safe_zip(state):
+  args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
+  while state:
+    jax.util.safe_zip(*args)
+
+
 if __name__ == "__main__":
   google_benchmark.main()
