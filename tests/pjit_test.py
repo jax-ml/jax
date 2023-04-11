@@ -2979,9 +2979,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     out4 = jnp.squeeze(arr2, axis=-1)
     cache_info4 = pxla._cached_compilation.cache_info()
-    # TODO(yashkatariya): Handle PositionalSharding inside pxla so that
-    # GSPMDShardings can be converted to PositionalSharding.
-    self.assertIsInstance(out4.sharding, GSPMDSharding)
+    self.assertIsInstance(out4.sharding, PositionalSharding)
 
     self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
     self.assertEqual(cache_info4.misses, cache_info3.misses)
@@ -3083,27 +3081,22 @@ class ArrayPjitTest(jtu.JaxTestCase):
     pl_cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
     self.assertIsInstance(out.sharding, NamedSharding)
 
-    out2 = f(arr2)
-    cache_info2 = pxla._cached_compilation.cache_info()
-    pl_cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
-    # TODO(yashkatariya): Handle PositionalSharding inside pxla so that
-    # GSPMDShardings can be converted to PositionalSharding.
-    self.assertIsInstance(out2.sharding, GSPMDSharding)
+    with jtu.count_pjit_cpp_cache_miss() as count:
+      out2 = f(arr2)
+      cache_info2 = pxla._cached_compilation.cache_info()
+      pl_cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
+      self.assertIsInstance(out2.sharding, PositionalSharding)
 
-    out3 = f(out2)
-    cache_info3 = pxla._cached_compilation.cache_info()
-    pl_cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out3.sharding, GSPMDSharding)
+      # This will hit the cpp cache.
+      out3 = f(out2)
+      self.assertIsInstance(out3.sharding, PositionalSharding)
+    self.assertEqual(count[0], 1)
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
-    self.assertEqual(cache_info3.misses, cache_info2.misses)
 
-    # TODO(yashkatariya): We will get hits here after we can convert
-    # GSPMDSharding to PositionalSharding.
+    self.assertEqual(pl_cache_info2.hits, pl_cache_info1.hits)
     self.assertEqual(pl_cache_info2.misses, pl_cache_info1.misses + 1)
-    self.assertEqual(pl_cache_info3.misses, pl_cache_info2.misses + 1)
 
     out4 = jnp.sum(arr)
     self.assertIsInstance(out4.sharding, NamedSharding)
@@ -3159,9 +3152,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     ps = PositionalSharding(jax.devices()[:2]).reshape(2, 1)
     arr2 = jax.device_put(np.arange(8).reshape(8, 1), ps)
     out2 = jnp.copy(arr2)
-    # TODO(yashkatariya): Handle PositionalSharding inside pxla so that
-    # GSPMDShardings can be converted to PositionalSharding.
-    self.assertIsInstance(out2.sharding, GSPMDSharding)
+    self.assertIsInstance(out2.sharding, PositionalSharding)
 
     arr3 = jnp.arange(8)
     out3 = jnp.copy(arr3)

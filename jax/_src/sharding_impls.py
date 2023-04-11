@@ -524,11 +524,17 @@ class PositionalSharding(XLACompatibleSharding):
   # Hashable
 
   def __hash__(self) -> int:
-    return id(self._devices)
+    if not hasattr(self, '_hash'):
+      self._hash = hash(tuple(self._devices))
+    return self._hash
 
   def __eq__(self, other) -> bool:
-    return (isinstance(other, PositionalSharding) and
-            id(self._devices) == id(other._devices) and
+    if not isinstance(other, PositionalSharding):
+      return False
+    if (id(self._devices) == id(other._devices) and
+        bool(np.all(self._ids == other._ids))):
+      return True
+    return (self._devices == other._devices and
             bool(np.all(self._ids == other._ids)))
 
   # Sharding interface
