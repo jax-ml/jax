@@ -25,7 +25,7 @@ import logging
 import math
 from typing import (Any, Callable, Dict, List, NamedTuple, Optional, FrozenSet,
                     Sequence, Set, Tuple, Type, Union, Iterable,
-                    TYPE_CHECKING, cast)
+                    TYPE_CHECKING, cast, TypeVar)
 
 import numpy as np
 
@@ -2575,21 +2575,42 @@ def _get_mesh_pspec_shardings_from_executable(
           [sharding_impls.NamedSharding(mesh, o) for o in out_pspec])
 
 
-def _get_out_sharding_from_named_sharding(
-    out_shardings, ns, are_out_sharding_from_xla):
-  from jax._src import pjit
+SubClassT = TypeVar("SubClassT", bound=sharding_impls.XLACompatibleSharding)
+OrigHandlerType = Dict[Type[SubClassT],
+                       Callable[[xc.OpSharding, SubClassT], SubClassT]]
+
+orig_out_sharding_handlers: OrigHandlerType = {}
+
+def _gspmd_to_named_sharding(
+    op_sharding: xc.OpSharding,
+    self: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
+  from jax._src.pjit import parse_flatten_op_sharding
+  return sharding_impls.NamedSharding._from_parsed_pspec(
+      self.mesh, parse_flatten_op_sharding(op_sharding, self.mesh)[0])
+orig_out_sharding_handlers[sharding_impls.NamedSharding] = _gspmd_to_named_sharding
+
+
+def _gspmd_to_positional_sharding(
+    op_sharding: xc.OpSharding,
+    self: sharding_impls.PositionalSharding) -> sharding_impls.PositionalSharding:
+  return sharding_impls._from_op_sharding_to_pos_sharding(
+      op_sharding, self._device_assignment)
+orig_out_sharding_handlers[sharding_impls.PositionalSharding] = _gspmd_to_positional_sharding
+
+
+def _get_out_sharding_from_orig_sharding(
+    out_shardings, orig_s, are_out_sharding_from_xla):
   out = []
+  orig_handler = orig_out_sharding_handlers[type(orig_s)]
   for o, from_xla in safe_zip(out_shardings, are_out_sharding_from_xla):
     if isinstance(o, sharding_impls.GSPMDSharding):
       try:
-        out.append((sharding_impls.NamedSharding._from_parsed_pspec(
-            ns.mesh, pjit.parse_flatten_op_sharding(o._op_sharding, ns.mesh)[0]), False))
+        out.append((orig_handler(o._op_sharding, orig_s), False))
       except:
         out.append((o, from_xla))
     else:
       out.append((o, from_xla))
   return out
-
 
 def maybe_get_orig_out_sharding(
     in_shardings, out_shardings, are_out_shardings_from_xla):
@@ -2597,16 +2618,15 @@ def maybe_get_orig_out_sharding(
     return ([o._original_sharding for o in out_shardings],
             (False,) * len(out_shardings))
 
-  # TODO(yashkatariya): Handle other shardings too here.
-  ns = None
+  orig_s = None
   for i in in_shardings:
     oi = getattr(i, '_original_sharding', None)
-    if isinstance(oi, sharding_impls.NamedSharding):
-      ns = oi
+    if type(oi) in orig_out_sharding_handlers:
+      orig_s = oi
       break
-  if ns is not None:
-    return zip(*_get_out_sharding_from_named_sharding(
-        out_shardings, ns, are_out_shardings_from_xla))
+  if orig_s is not None:
+    return zip(*_get_out_sharding_from_orig_sharding(
+        out_shardings, orig_s, are_out_shardings_from_xla))
 
   return out_shardings, are_out_shardings_from_xla
 
