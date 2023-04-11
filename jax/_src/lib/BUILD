@@ -36,6 +36,7 @@ py_library_providing_imports_info(
         "//jax:enable_jaxlib_build": [
             "//jaxlib",
             "//jaxlib:cpu_feature_guard",
+            "//jaxlib:utils",
             "//jaxlib/mlir:builtin_dialect",
             "//jaxlib/mlir:chlo_dialect",
             "//jaxlib/mlir:func_dialect",

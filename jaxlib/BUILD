@@ -46,6 +46,7 @@ py_library_providing_imports_info(
     lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
+        ":utils",
         "//jaxlib/cpu:_ducc_fft",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
@@ -143,6 +144,18 @@ pybind_extension(
     module_name = "cpu_feature_guard",
     deps = [
         "@xla//third_party/python_runtime:headers",
+    ],
+)
+
+pybind_extension(
+    name = "utils",
+    srcs = ["utils.cc"],
+    module_name = "utils",
+    deps = [
+        "@xla//third_party/python_runtime:headers",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/container:inlined_vector",
+        "@pybind11",
     ],
 )
 

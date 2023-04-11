@@ -909,5 +909,15 @@ google_benchmark.register(
     partial(batch_inplace_while, 'dynamic_update_slice'),
     name='batch_inplace_while_dynamic_update_slice')
 
+
+@google_benchmark.register
+@google_benchmark.option.arg_names(['arg_lengths', 'num_args'])
+@google_benchmark.option.args_product([[0, 1, 2, 5, 10, 100], [1, 2, 3]])
+def safe_map(state):
+  args = tuple(list(range(state.range(0))) for _ in range(state.range(1)))
+  def f(*args): return tuple(args)
+  while state:
+    jax.util.safe_map(f, *args)
+
 if __name__ == "__main__":
   google_benchmark.main()
