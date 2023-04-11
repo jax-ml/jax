@@ -159,6 +159,7 @@ def prepare_wheel(sources_path):
   copy_file("__main__/jaxlib/setup.cfg", dst_dir=sources_path)
   copy_to_jaxlib("__main__/jaxlib/init.py", dst_filename="__init__.py")
   copy_to_jaxlib(f"__main__/jaxlib/cpu_feature_guard.{pyext}")
+  copy_to_jaxlib(f"__main__/jaxlib/utils.{pyext}")
   copy_to_jaxlib("__main__/jaxlib/lapack.py")
   copy_to_jaxlib("__main__/jaxlib/hlo_helpers.py")
   copy_to_jaxlib("__main__/jaxlib/ducc_fft.py")
