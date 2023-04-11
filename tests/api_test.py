@@ -2783,6 +2783,9 @@ class APITest(jtu.JaxTestCase):
       return x
 
     xs = [self.rng().randn(i) for i in range(10)]
+    # Make sure JAX backend is initialised on the main thread since some JAX
+    # backends install signal handlers.
+    jax.device_put(0)
     with concurrent.futures.ThreadPoolExecutor() as executor:
       futures = [executor.submit(partial(f, x)) for x in xs]
       ys = [f.result() for f in futures]
