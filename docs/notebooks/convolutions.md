@@ -196,7 +196,7 @@ The important argument is the 3-tuple of axis layout arguments:
 (Input Layout, Kernel Layout, Output Layout)
  - __N__ - batch dimension
  - __H__ - spatial height
- - __W__ - spatial height
+ - __W__ - spatial width
  - __C__ - channel dimension
  - __I__ - kernel _input_ channel dimension
  - __O__ - kernel _output_ channel dimension
