@@ -598,7 +598,7 @@ def default_backend() -> str:
   """Returns the platform name of the default XLA backend."""
   return get_backend(None).platform
 
-
+@lru_cache
 def local_devices(process_index: Optional[int] = None,
                   backend: Optional[Union[str, xla_client.Client]] = None,
                   host_id: Optional[int] = None) -> List[xla_client.Device]:
@@ -656,6 +656,7 @@ def host_id(backend: Optional[Union[str, xla_client.Client]] = None) -> int:
   return process_index(backend)
 
 
+@lru_cache
 def process_count(
     backend: Optional[Union[str, xla_client.Client]] = None
 ) -> int:
