@@ -1467,5 +1467,16 @@ class IndexedUpdateTest(jtu.JaxTestCase):
     y = jnp.zeros(8)
     self.assertArraysEqual(fn(y), jax.jit(fn)(y))
 
+  def testScatterValuesCastToTargetDType(self):
+    # https://github.com/google/jax/issues/15505
+    a = jnp.zeros(1, dtype=jnp.uint32)
+    val = 2**32 - 1  # too large for int32
+
+    b = a.at[0].set(jnp.uint32(val))
+    self.assertEqual(int(b[0]), val)
+
+    c = a.at[0].set(val)
+    self.assertEqual(int(c[0]), val)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
