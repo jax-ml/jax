@@ -239,8 +239,25 @@ class JaxprEqn(NamedTuple):
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
 
-  def replace(self, *args, **kwargs):
-    return self._replace(*args, **kwargs)
+  def replace(
+      self,
+      invars: Optional[List[Atom]] = None,
+      outvars: Optional[List[Var]] = None,
+      primitive: Optional[Primitive] = None,
+      params: Optional[Dict[str, Any]] = None,
+      effects: Optional[Effects] = None,
+      source_info: Optional[source_info_util.SourceInfo] = None,
+  ):
+    # It is slightly faster to rebuild the tuple directly than to call _replace.
+    return JaxprEqn(
+      self.invars if invars is None else invars,
+      self.outvars if outvars is None else outvars,
+      self.primitive if primitive is None else primitive,
+      self.params if params is None else params,
+      self.effects if effects is None else effects,
+      self.source_info if source_info is None else source_info,
+    )
+
 
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
@@ -1706,7 +1723,6 @@ class DConcreteArray(DShapedArray):
 
 
 pytype_aval_mappings: Dict[type, Callable[[Any], AbstractValue]] = {}
-
 
 
 class DArray:
