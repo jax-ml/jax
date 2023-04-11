@@ -200,7 +200,7 @@ pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
     _debug_callback_partial_eval_custom)
 
 def debug_callback(callback: Callable[..., Any], *args: Any,
-                   ordered: bool = False, **kwargs: Any):
+                   ordered: bool = False, **kwargs: Any) -> None:
   """Calls a stageable Python callback.
 
   `debug_callback` enables you to pass in a Python function that can be called
@@ -223,7 +223,7 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
       other ordered callbacks.
     **kwargs: The keyword arguments to the callback.
   Returns:
-    The value of `callback(*args, **kwargs)`.
+    None
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   effect = ordered_debug_effect if ordered else debug_effect
@@ -231,8 +231,7 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
     args, kwargs = tree_util.tree_unflatten(in_tree, flat_args)
     callback(*args, **kwargs)
     return []
-  return debug_callback_p.bind(*flat_args, callback=_flat_callback,
-                               effect=effect)
+  debug_callback_p.bind(*flat_args, callback=_flat_callback, effect=effect)
 
 class _DebugPrintFormatChecker(string.Formatter):
 
