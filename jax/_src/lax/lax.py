@@ -1520,10 +1520,12 @@ _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
 def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
-  aval_dtypes = [aval.dtype for aval in avals]
-  for i, (aval_dtype, types) in enumerate(zip(aval_dtypes, accepted_dtypes)):
-    if not any(dtypes.issubdtype(aval_dtype, t) for t in types):
-      if aval_dtype == dtypes.float0:
+  del kwargs
+  assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
+  for i, aval in enumerate(avals):
+    types = accepted_dtypes[i]
+    if not any(dtypes.issubdtype(aval.dtype, t) for t in types):
+      if aval.dtype == dtypes.float0:
         raise TypeError(
             f"Called {name} with a float0 at position {i}. "
             "float0s do not support any operations by design, because they "
@@ -1535,10 +1537,10 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
       else:
         msg = ('{} does not accept dtype {} at position {}. '
                'Accepted dtypes at position {} are subtypes of {}.')
-        typename = str(np.dtype(aval_dtype).name)
+        typename = str(np.dtype(aval.dtype).name)
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
-  _check_same_dtypes(name, False, *aval_dtypes)
+  check_same_dtypes(name, *avals)
   return result_dtype(*avals)
 
 
@@ -2933,7 +2935,7 @@ def _concatenate_shape_rule(*operands, **kwargs):
   return ex_shape[:dimension] + (concat_size,) + ex_shape[dimension+1:]
 
 def _concatenate_dtype_rule(*operands, **kwargs):
-  _check_same_dtypes('concatenate', False, *(o.dtype for o in operands))
+  check_same_dtypes('concatenate', *operands)
   return operands[0].dtype
 
 def _concatenate_transpose_rule(t, *operands, dimension):
@@ -3269,7 +3271,7 @@ def _select_shape_rule(which, *cases):
   return cases[0].shape
 
 def _select_dtype_rule(which, *cases):
-  _check_same_dtypes("select", False, *(c.dtype for c in cases))
+  check_same_dtypes("select", *cases)
   if (not dtypes.issubdtype(which.dtype, np.bool_) and
       not dtypes.issubdtype(which.dtype, np.integer)):
     raise TypeError("select `which` must be boolean or integer type, got "
@@ -4542,28 +4544,22 @@ _JNP_FUNCTION_EQUIVALENTS = {
   'tanh': 'tanh'
 }
 
-def _check_same_dtypes(name, ignore_fp_precision, *ttypes):
+def check_same_dtypes(name: str, *avals: core.UnshapedArray) -> None:
   """Check that dtypes agree, possibly ignoring float precision."""
   # the `ignore_fp_precision` flag exists because the XLA shape inference logic
   # allows mixed floating point precision, but the HLO verifier often rejects it
-  if any(core.is_opaque_dtype(t) for t in ttypes):
+  if any(core.is_opaque_dtype(aval.dtype) for aval in avals):
     return  # TODO(mattjj,frostig): do some checking, friend
-  types = map(np.dtype, ttypes)  # canonicalize
-  if ignore_fp_precision:
-    types = [
-        np.floating if dtypes.issubdtype(dtype, np.floating)
-        else np.complexfloating if dtypes.issubdtype(dtype, np.complexfloating)
-        else dtype for dtype in types]
-  if len({dtypes.canonicalize_dtype(t) for t in types}) != 1:
-    if ignore_fp_precision:
-      msg = ("lax.{} requires arguments to have same dtypes up to floating point "
-             "precision, got {}.")
-    else:
-      msg = "lax.{} requires arguments to have the same dtypes, got {}."
+  if len(avals) < 2:
+    return
+
+  dtype = dtypes.canonicalize_dtype(avals[0].dtype)
+  if any(dtypes.canonicalize_dtype(aval.dtype) != dtype for aval in avals[1:]):
+    msg = "lax.{} requires arguments to have the same dtypes, got {}."
     if name in _JNP_FUNCTION_EQUIVALENTS:
       equiv = _JNP_FUNCTION_EQUIVALENTS[name]
       msg += f" (Tip: jnp.{equiv} is a similar function that does automatic type promotion on inputs)."
-    raise TypeError(msg.format(name, ", ".join(map(str, types))))
+    raise TypeError(msg.format(name, ", ".join(str(a.dtype) for a in avals)))
 
 
 def _check_shapelike(fun_name, arg_name, obj, non_zero_shape=False):
