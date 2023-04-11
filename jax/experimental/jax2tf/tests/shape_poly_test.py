@@ -2494,6 +2494,14 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 jnp.where,
                 arg_descriptors=[RandArg((2,), np.bool_), RandArg((), _f32), RandArg((2,), _f32)],
                 poly_axes=[0, None, 0]),
+    PolyHarness("one_hot", "",
+                lambda x, y: jax.nn.one_hot(x, y.shape[0]),
+                arg_descriptors=[np.arange(8), RandArg((16,), _f32)],
+                poly_axes=[None, 0]),
+    PolyHarness("lax_top_k", "",
+                lambda x: jax.lax.top_k(x, x.shape[-1] - 1),
+                arg_descriptors=[RandArg((16,), _f32)],
+                poly_axes=[0],),
 ]
 
 def _get_jax2tf_limitations(
@@ -2658,6 +2666,9 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
         elif "nr_fft_lengths=2" in harness.fullname:
           raise unittest.SkipTest("native serialization with shape polymorphism not implemented for fft with non-constant fft_lengths on GPU and TPU")
+        
+      if "lax_top_k" in harness.fullname:
+        raise unittest.SkipTest("native serialization with shape polymorphism not implemented for lax.top_k")
 
       # Set of harness.group_name or harness.group_name:platform that are implemented with HLO fallback lowering rules
       fallback_lowering_harnesses = {

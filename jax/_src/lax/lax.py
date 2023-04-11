@@ -1173,7 +1173,8 @@ def top_k(operand: ArrayLike, k: int) -> Tuple[Array, Array]:
   - :func:`jax.lax.approx_max_k`
   - :func:`jax.lax.approx_min_k`
   """
-  k = int(k)
+  if core.is_constant_dim(k):
+    k = int(k)
   if k < 0:
     raise ValueError(f"k argument to top_k must be nonnegative, got {k}")
   return top_k_p.bind(operand, k=k)
