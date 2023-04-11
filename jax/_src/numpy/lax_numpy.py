@@ -3136,18 +3136,42 @@ rather, the specified ``precision`` is forwarded to each ``dot_general`` call us
 the implementation.
 """
 
+@overload
+def einsum(
+    subscript: str, /,
+    *operands: ArrayLike,
+    out: None = None,
+    optimize: str = "optimal",
+    precision: PrecisionLike = None,
+    preferred_element_type: Optional[DTypeLike] = None,
+    _use_xeinsum: bool = False,
+    _dot_general: Callable[..., Array] = lax.dot_general,
+) -> Array: ...
+
+@overload
+def einsum(
+    arr: ArrayLike,
+    axes: Sequence[Any], /,
+    *operands: Union[ArrayLike, Sequence[Any]],
+    out: None = None,
+    optimize: str = "optimal",
+    precision: PrecisionLike = None,
+    preferred_element_type: Optional[DTypeLike] = None,
+    _use_xeinsum: bool = False,
+    _dot_general: Callable[..., Array] = lax.dot_general,
+) -> Array: ...
 
 @util._wraps(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
 def einsum(
-    subscripts,
+    subscripts, /,
     *operands,
-    out=None,
-    optimize="optimal",
-    precision=None,
-    preferred_element_type=None,
-    _use_xeinsum=False,
-    _dot_general=lax.dot_general,
-):
+    out: None = None,
+    optimize: str = "optimal",
+    precision: PrecisionLike = None,
+    preferred_element_type: Optional[DTypeLike] = None,
+    _use_xeinsum: bool = False,
+    _dot_general: Callable[..., Array] = lax.dot_general,
+) -> Array:
   operands = (subscripts, *operands)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
@@ -3177,7 +3201,7 @@ def einsum(
 
   _einsum_computation = jax.named_call(
       _einsum, name=spec) if spec is not None else _einsum
-  return _einsum_computation(operands, contractions, precision,
+  return _einsum_computation(operands, contractions, precision,  # type: ignore[operator]
                              preferred_element_type, _dot_general)
 
 
