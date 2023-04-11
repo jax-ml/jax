@@ -988,8 +988,7 @@ def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
   return operand.shape
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
-  lax._check_same_dtypes("dynamic_update_slice", False, operand.dtype,
-                         update.dtype)
+  lax.check_same_dtypes("dynamic_update_slice", operand, update)
   if any(i.dtype != start_indices[0].dtype or
          not dtypes.issubdtype(i.dtype, np.integer) for i in start_indices):
     msg = ("index arguments to dynamic_update_slice must be integers of the "
@@ -1420,7 +1419,7 @@ mlir.register_lowering(gather_p, _gather_lower)
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
-  lax._check_same_dtypes("scatter", False, operand.dtype, updates.dtype)
+  lax.check_same_dtypes("scatter", operand, updates)
   return dtypes.canonicalize_dtype(operand.dtype)
 
 def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
