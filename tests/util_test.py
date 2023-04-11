@@ -20,7 +20,6 @@ from absl.testing import absltest
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import version as jaxlib_version
 
 from jax.config import config
 from jax._src.util import weakref_lru_cache
@@ -123,43 +122,85 @@ class SafeMapTest(jtu.JaxTestCase):
         util.safe_map(make_tuple, range(4), range(4, 8)),
     )
 
-  @unittest.skipIf(jaxlib_version < (0, 4, 9) or
-                   not hasattr(jaxlib_utils, 'safe_map'),
+  @unittest.skipIf(not hasattr(jaxlib_utils, 'safe_map'),
                    "requires jaxlib 0.4.9")
   def test_safe_map_errors(self):
-    with self.assertRaises(
-        TypeError, msg="safe_map requires at least 2 arguments"
+    with self.assertRaisesRegex(
+        TypeError, "safe_map requires at least 2 arguments"
     ):
       util.safe_map()
 
-    with self.assertRaises(
-        TypeError, msg="safe_map requires at least 2 arguments"
+    with self.assertRaisesRegex(
+        TypeError, "safe_map requires at least 2 arguments"
     ):
       util.safe_map(lambda x: x)
 
-    with self.assertRaises(TypeError, msg="'int' object is not callable'"):
+    with self.assertRaisesRegex(TypeError, "'int' object is not callable"):
       util.safe_map(7, range(6))
 
     def error(*args, **kwargs):
       raise RuntimeError("hello")
 
-    with self.assertRaises(RuntimeError, msg="hello"):
+    with self.assertRaisesRegex(RuntimeError, "hello"):
       util.safe_map(error, range(6))
 
-    with self.assertRaises(
-        ValueError, msg="Length mismatch for arguments to safe_map"
+    with self.assertRaisesRegex(
+        ValueError, r"safe_map\(\) argument 2 is longer than argument 1"
     ):
       util.safe_map(operator.add, range(3), range(4))
 
-    with self.assertRaises(
-        ValueError, msg="Length mismatch for arguments to safe_map"
+    with self.assertRaisesRegex(
+        ValueError, r"safe_map\(\) argument 2 is shorter than argument 1"
     ):
       util.safe_map(operator.add, range(7), range(2))
 
-    with self.assertRaises(
-        ValueError, msg="Length mismatch for arguments to safe_map"
+    with self.assertRaisesRegex(
+        ValueError, r"safe_map\(\) argument 2 is longer than argument 1"
     ):
       util.safe_map(operator.add, (), range(3))
+
+
+class SafeZipTest(jtu.JaxTestCase):
+
+  def test_safe_zip(self):
+    self.assertEqual([], util.safe_zip([]))
+    self.assertEqual([], util.safe_zip((), []))
+    self.assertEqual([], util.safe_zip([], [], []))
+    self.assertEqual([], util.safe_zip([], iter([]), [], []))
+    self.assertEqual([(7,)], util.safe_zip((7,)))
+    self.assertEqual([(0,), (1,), (2,), (3,)], util.safe_zip(range(4)))
+    self.assertEqual(
+        [(0, 4), (1, 5), (2, 6), (3, 7)],
+        util.safe_zip(range(4), range(4, 8)),
+    )
+
+  @unittest.skipIf(not hasattr(jaxlib_utils, 'safe_zip'),
+                   "requires jaxlib 0.4.9")
+  def test_safe_zip_errors(self):
+    with self.assertRaisesRegex(
+        TypeError, "safe_zip requires at least 1 argument"
+    ):
+      util.safe_zip()
+
+    with self.assertRaisesRegex(
+        TypeError, "'function' object is not iterable"
+    ):
+      util.safe_zip(lambda x: x)
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+    ):
+      util.safe_zip(range(3), range(4))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_zip\(\) argument 2 is shorter than argument 1"
+    ):
+      util.safe_zip(range(7), range(2))
+
+    with self.assertRaisesRegex(
+        ValueError, r"safe_zip\(\) argument 2 is longer than argument 1"
+    ):
+      util.safe_zip((), range(3))
 
 
 if __name__ == "__main__":

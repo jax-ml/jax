@@ -37,24 +37,40 @@ T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 
-# safe_zip cannot yet be fully annotated, so we use a strategy similar
-# to that used for builtins.zip in python/typeshed. This supports
-# return types matching input types for up to three arguments.
-@overload
-def safe_zip(__arg1: Iterable[T1]) -> List[Tuple[T1]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[Tuple[T1, T2]]: ...
-@overload
-def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[Tuple[T1, T2, T3]]: ...
-@overload
-def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[Tuple[Any, ...]]: ...
 
-def safe_zip(*args):
-  args = list(map(list, args))
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-  return list(zip(*args))
+if TYPE_CHECKING:
+  # safe_zip cannot yet be fully annotated, so we use a strategy similar
+  # to that used for builtins.zip in python/typeshed. This supports
+  # return types matching input types for up to three arguments.
+  @overload
+  def safe_zip(__arg1: Iterable[T1]) -> List[Tuple[T1]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[Tuple[T1, T2]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[Tuple[T1, T2, T3]]: ...
+  @overload
+  def safe_zip(__arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[Tuple[Any, ...]]: ...
+
+  def safe_zip(*args):
+    args = list(map(list, args))
+    n = len(args[0])
+    for arg in args[1:]:
+      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+    return list(zip(*args))
+
+else:
+  # TODO(phawkins): remove the hasattr condition after jaxlib 0.4.9 is the
+  # minimum
+  if hasattr(jaxlib_utils, 'safe_zip'):
+    safe_zip = jaxlib_utils.safe_zip
+  else:
+    def safe_zip(*args):
+      args = list(map(list, args))
+      n = len(args[0])
+      for arg in args[1:]:
+        assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+      return list(zip(*args))
+
 
 if TYPE_CHECKING:
   # safe_map cannot yet be fully annotated, so we use a strategy similar
