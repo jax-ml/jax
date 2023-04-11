@@ -29,6 +29,7 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
+from jax._src.sharding_impls import _from_op_sharding_to_pos_sharding
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -827,7 +828,7 @@ class ShardingTest(jtu.JaxTestCase):
       ("mesh_xy",               P(("x", "y")), (8, 1), (),   False),
       ("mesh_fully_replicated", P(),           (4, 2), None, False),
   )
-  def test_devices_sharding_op_sharding_lowering(
+  def test_positional_sharding_op_sharding_lowering(
       self, pspec, shape, axes, transpose):
     value_shape = (8, 4)
 
@@ -845,6 +846,34 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(mps.shard_shape(value_shape),
                      devices_sharding.shard_shape(value_shape))
     self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
+
+  @parameterized.named_parameters(
+      ("2d_mesh_x_y",              (4, 2), P("x", "y")),
+      ("2d_mesh_x",                (4, 2), P("x")),
+      ("2d_mesh_y",                (4, 2), P("y")),
+      ("2d_mesh_none_y",           (4, 2), P(None, "y")),
+      ("2d_mesh_none_x",           (4, 2), P(None, "x")),
+      ("2d_mesh_xy",               (4, 2), P(("x", "y"))),
+      ("2d_mesh_none_xy",          (4, 2), P(None, ("x", "y"))),
+      ("2d_mesh_fully_replicated", (4, 2), P()),
+      ("3d_mesh_none_none_z",      (2, 2, 2), P(None, None, 'z')),
+      ("3d_mesh_none_y_none",      (2, 2, 2), P(None, 'y', None)),
+      ("3d_mesh_x_y_none",         (2, 2, 2), P('x', 'y', None)),
+      ("3d_mesh_none_yz",          (2, 2, 2), P(None, ('y', 'z'))),
+      ("3d_mesh2_none_y_none",     (1, 2, 4), P(None, None, 'z')),
+      ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
+  )
+  def test_positional_sharding_from_op_sharding(self, mesh_shape, pspec):
+    ndim = len(mesh_shape)
+    mesh = jtu.create_global_mesh(
+        mesh_shape, ('x', 'y') if ndim == 2 else ('x', 'y', 'z'))
+    mps = jax.sharding.NamedSharding(mesh, pspec)
+    original_op_sharding = mps._to_xla_op_sharding(ndim)
+    ps = _from_op_sharding_to_pos_sharding(original_op_sharding,
+                                           mps._device_assignment)
+    out_op_sharding = ps._to_xla_op_sharding(ndim)
+    self.assertTrue(op_shardings.are_op_shardings_equal(
+        original_op_sharding, out_op_sharding))
 
   def test_devices_sharding_respects_init_mesh_shape(self):
     value_shape = (8, 4)
