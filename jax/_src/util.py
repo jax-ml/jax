@@ -25,6 +25,7 @@ import weakref
 import numpy as np
 
 from jax._src.lib import xla_client as xc
+from jax._src.lib import utils as jaxlib_utils
 from jax._src.config import config
 
 logger = logging.getLogger(__name__)
@@ -55,27 +56,41 @@ def safe_zip(*args):
     assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
   return list(zip(*args))
 
-# safe_map cannot yet be fully annotated, so we use a strategy similar
-# to that used for builtins.map in python/typeshed. This supports
-# checking input types for the callable with up to three arguments.
-@overload
-def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> List[T]: ...
+if TYPE_CHECKING:
+  # safe_map cannot yet be fully annotated, so we use a strategy similar
+  # to that used for builtins.map in python/typeshed. This supports
+  # checking input types for the callable with up to three arguments.
+  @overload
+  def safe_map(f: Callable[[T1], T], __arg1: Iterable[T1]) -> List[T]: ...
 
-@overload
-def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[T]: ...
+  @overload
+  def safe_map(f: Callable[[T1, T2], T], __arg1: Iterable[T1], __arg2: Iterable[T2]) -> List[T]: ...
 
-@overload
-def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[T]: ...
+  @overload
+  def safe_map(f: Callable[[T1, T2, T3], T], __arg1: Iterable[T1], __arg2: Iterable[T2], __arg3: Iterable[T3]) -> List[T]: ...
 
-@overload
-def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[T]: ...
+  @overload
+  def safe_map(f: Callable[..., T], __arg1: Iterable[Any], __arg2: Iterable[Any], __arg3: Iterable[Any], __arg4: Iterable[Any], *args) -> List[T]: ...
 
-def safe_map(f, *args):
-  args = list(map(list, args))
-  n = len(args[0])
-  for arg in args[1:]:
-    assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
-  return list(map(f, *args))
+  def safe_map(f, *args):
+    args = list(map(list, args))
+    n = len(args[0])
+    for arg in args[1:]:
+      assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+    return list(map(f, *args))
+
+else:
+  # TODO(phawkins): remove the hasattr condition after jaxlib 0.4.9 is the
+  # minimum
+  if hasattr(jaxlib_utils, 'safe_map'):
+    safe_map = jaxlib_utils.safe_map
+  else:
+    def safe_map(f, *args):
+      args = list(map(list, args))
+      n = len(args[0])
+      for arg in args[1:]:
+        assert len(arg) == n, f'length mismatch: {list(map(len, args))}'
+      return list(map(f, *args))
 
 def unzip2(xys: Iterable[Tuple[T1, T2]]
     ) -> Tuple[Tuple[T1, ...], Tuple[T2, ...]]:
