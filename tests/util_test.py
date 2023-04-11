@@ -27,6 +27,11 @@ from jax._src.util import weakref_lru_cache
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 
+try:
+  from jax._src.lib import utils as jaxlib_utils
+except:
+  jaxlib_utils = None
+
 class UtilTest(jtu.JaxTestCase):
 
   def test_wrapped_fun_transforms(self):
@@ -118,7 +123,9 @@ class SafeMapTest(jtu.JaxTestCase):
         util.safe_map(make_tuple, range(4), range(4, 8)),
     )
 
-  @unittest.skipIf(jaxlib_version < (0, 4, 9), "requires jaxlib 0.4.9")
+  @unittest.skipIf(jaxlib_version < (0, 4, 9) or
+                   not hasattr(jaxlib_utils, 'safe_map'),
+                   "requires jaxlib 0.4.9")
   def test_safe_map_errors(self):
     with self.assertRaises(
         TypeError, msg="safe_map requires at least 2 arguments"
