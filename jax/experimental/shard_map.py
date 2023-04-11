@@ -1117,3 +1117,24 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
   new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
                            out_names=tuple(out_names_staged), check_rep=False)
   return new_params_known, new_params_staged
+
+# DCE
+
+# TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
+def _shard_map_dce(used_outputs: List[bool], eqn: core.JaxprEqn
+                   ) -> Tuple[List[bool], Optional[core.JaxprEqn]]:
+  with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
+    jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
+  if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:
+    return used_inputs, None
+  else:
+    _, in_names = partition_list(used_inputs, eqn.params['in_names'])
+    _, out_names = partition_list(used_outputs, eqn.params['out_names'])
+    new_params = dict(eqn.params, jaxpr=jaxpr, in_names=tuple(in_names),
+                      out_names=tuple(out_names))
+    new_eqn = pe.new_jaxpr_eqn(
+        [v for v, used in zip(eqn.invars, used_inputs) if used],
+        [x for x, used in zip(eqn.outvars, used_outputs) if used],
+        eqn.primitive, new_params, jaxpr.effects, eqn.source_info)
+    return used_inputs, new_eqn
+pe.dce_rules[shard_map_p] = _shard_map_dce
