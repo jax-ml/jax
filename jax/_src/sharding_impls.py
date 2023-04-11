@@ -457,6 +457,23 @@ class PmapSharding(XLACompatibleSharding):
     return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
 
 
+def _from_op_sharding_to_pos_sharding(
+    op_sharding: xc.OpSharding,
+    device_assignment: Sequence[xc.Device]) -> PositionalSharding:
+  if op_sharding.type == xc.OpSharding.Type.REPLICATED:
+    return PositionalSharding(device_assignment).replicate()
+
+  _, num_replicas = op_shardings.get_num_ways_dim_sharded(op_sharding)
+  name = device_assignment[0].platform.upper()
+  ids = np.array([DeviceIdSet(name, i)
+                  for i in op_sharding.tile_assignment_devices])
+  p = PositionalSharding.remake(list(device_assignment), ids)
+  p = p.reshape(op_sharding.tile_assignment_dimensions)
+  if num_replicas > 1:
+    p = p.replicate(-1, keepdims=False)
+  return p
+
+
 class PositionalSharding(XLACompatibleSharding):
   _devices: List[xc.Device]
   _ids: np.ndarray  # dtype DeviceIdSet
@@ -522,6 +539,10 @@ class PositionalSharding(XLACompatibleSharding):
 
   # XLACompatibleSharding interface
 
+  @property
+  def _device_assignment(self) -> list[xc.Device]:
+    return self._devices
+
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(self, num_dimensions: int, axis_ctx=None):
     assert axis_ctx is None
@@ -542,9 +563,6 @@ class PositionalSharding(XLACompatibleSharding):
     pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
     return pbuf
 
-  @property
-  def _device_assignment(self) -> list[xc.Device]:
-    return self._devices
 
 class DeviceIdSet:
   _name: str
