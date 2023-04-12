@@ -314,8 +314,6 @@ def make_sharded_device_array(
       be returned, for JAX extensions not implementing the C++ API.
     indices: For caching purposes, will be computed if `None`.
   """
-  from jax._src import pjit
-
   if sharding_spec is None:
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
 
@@ -326,7 +324,7 @@ def make_sharded_device_array(
         np.asarray([d.device() for d in device_buffers]), sharding_spec)
   else:
     op_sharding = sharding_specs.sharding_spec_sharding_proto(sharding_spec)
-    pspec = pjit.parse_flatten_op_sharding(
+    pspec = sharding_impls.parse_flatten_op_sharding(
         op_sharding, mesh)[0].get_partition_spec()
     sharding = sharding_impls.NamedSharding(mesh, pspec)
 
@@ -2584,9 +2582,9 @@ orig_out_sharding_handlers: OrigHandlerType = {}
 def _gspmd_to_named_sharding(
     op_sharding: xc.OpSharding,
     self: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
-  from jax._src.pjit import parse_flatten_op_sharding
   return sharding_impls.NamedSharding._from_parsed_pspec(
-      self.mesh, parse_flatten_op_sharding(op_sharding, self.mesh)[0])
+      self.mesh,
+      sharding_impls.parse_flatten_op_sharding(op_sharding, self.mesh)[0])
 orig_out_sharding_handlers[sharding_impls.NamedSharding] = _gspmd_to_named_sharding
 
 

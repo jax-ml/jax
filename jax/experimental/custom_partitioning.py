@@ -18,7 +18,6 @@ from jax._src import core
 from jax import tree_util
 from jax._src import linear_util as lu
 from jax._src import sharding_impls
-from jax.experimental import pjit
 from jax.errors import UnexpectedTracerError
 from jax._src import mesh as mesh_lib
 from jax._src.lib.mlir.dialects import hlo
@@ -390,8 +389,8 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       from jax._src.sharding_impls import GSPMDSharding
       assert devices is not None
       return GSPMDSharding(devices, op_sharding)
-    pspec = pjit.parse_flatten_op_sharding(op_sharding,
-                                           mesh)[0].get_partition_spec()
+    pspec = sharding_impls.parse_flatten_op_sharding(
+        op_sharding, mesh)[0].get_partition_spec()
     return jax.sharding.NamedSharding(mesh, pspec)
 
   sharding_callback_info = _ShardingCallbackInfo(propagate_user_sharding, partition,
