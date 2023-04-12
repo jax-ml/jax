@@ -535,7 +535,7 @@ class PositionalSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    all_ids_equal = bool(np.all(self._ids == other._ids))
+    all_ids_equal = np.array_equal(self._ids,other._ids)
     if id(self._devices) == id(other._devices) and all_ids_equal:
       return True
     return self._devices == other._devices and all_ids_equal
