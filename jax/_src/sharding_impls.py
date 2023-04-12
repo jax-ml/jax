@@ -25,7 +25,9 @@ from typing import (Any, Dict, FrozenSet, List, Mapping, Optional, OrderedDict,
                     NamedTuple, Sequence, Set, Tuple, Union, cast)
 
 from jax._src import mesh as mesh_lib
-from jax._src import op_shardings
+from jax._src.op_shardings import (
+    is_op_sharding_replicated, are_op_shardings_equal, get_num_ways_dim_sharded,
+    op_sharding_to_indices)
 from jax._src import sharding
 from jax._src import sharding_specs
 from jax._src import tree_util
@@ -85,9 +87,9 @@ class XLACompatibleSharding(sharding.Sharding):
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
     op_sharding = cast(xc.OpSharding, self._to_xla_op_sharding(len(global_shape)))
-    if op_shardings.is_op_sharding_replicated(op_sharding):
+    if is_op_sharding_replicated(op_sharding):
       return global_shape
-    partitions, _ = op_shardings.get_num_ways_dim_sharded(op_sharding)
+    partitions, _ = get_num_ways_dim_sharded(op_sharding)
     assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
     out = []
     for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
@@ -105,12 +107,9 @@ class XLACompatibleSharding(sharding.Sharding):
   def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
                        other: XLACompatibleSharding, ndim: int) -> bool:
     try:
-      return (
-          op_shardings.are_op_shardings_equal(
-              self._to_xla_op_sharding(ndim), other._to_xla_op_sharding(ndim)
-          )
-          and self._device_assignment == other._device_assignment
-      )
+      return (are_op_shardings_equal(self._to_xla_op_sharding(ndim),
+                                     other._to_xla_op_sharding(ndim))
+              and self._device_assignment == other._device_assignment)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
     # equality check.
@@ -233,9 +232,10 @@ class NamedSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    if id(self.mesh) == id(other.mesh) and self._parsed_pspec == other._parsed_pspec:
+    parsed_pspec_equal = self._parsed_pspec == other._parsed_pspec
+    if id(self.mesh) == id(other.mesh) and parsed_pspec_equal:
       return True
-    return self.mesh == other.mesh and self._parsed_pspec == other._parsed_pspec
+    return self.mesh == other.mesh and parsed_pspec_equal
 
   def is_compatible_aval(self, aval_shape: Shape):
     assert self._parsed_pspec is not None
@@ -325,7 +325,9 @@ class SingleDeviceSharding(XLACompatibleSharding):
     return f"SingleDeviceSharding(device={repr(self._device)})"
 
   def __hash__(self):
-    return hash(self._device)
+    if not hasattr(self, '_hash'):
+      self._hash = hash(self._device)
+    return self._hash
 
   def __eq__(self, other):
     if not isinstance(other, SingleDeviceSharding):
@@ -463,7 +465,7 @@ def _from_op_sharding_to_pos_sharding(
   if op_sharding.type == xc.OpSharding.Type.REPLICATED:
     return PositionalSharding(device_assignment).replicate()
 
-  _, num_replicas = op_shardings.get_num_ways_dim_sharded(op_sharding)
+  _, num_replicas = get_num_ways_dim_sharded(op_sharding)
   name = device_assignment[0].platform.upper()
   ids = np.array([DeviceIdSet(name, i)
                   for i in op_sharding.tile_assignment_devices])
@@ -531,11 +533,12 @@ class PositionalSharding(XLACompatibleSharding):
   def __eq__(self, other) -> bool:
     if not isinstance(other, PositionalSharding):
       return False
-    if (id(self._devices) == id(other._devices) and
-        bool(np.all(self._ids == other._ids))):
+    if id(self) == id(other):
       return True
-    return (self._devices == other._devices and
-            bool(np.all(self._ids == other._ids)))
+    all_ids_equal = bool(np.all(self._ids == other._ids))
+    if id(self._devices) == id(other._devices) and all_ids_equal:
+      return True
+    return self._devices == other._devices and all_ids_equal
 
   # Sharding interface
 
@@ -621,12 +624,8 @@ class GSPMDSharding(XLACompatibleSharding):
       return False
     if id(self) == id(other):
       return True
-    return (
-        op_shardings.are_op_shardings_equal(
-            self._op_sharding, other._op_sharding
-        )
-        and self._devices == other._devices
-    )
+    return (are_op_shardings_equal(self._op_sharding, other._op_sharding)
+            and self._devices == other._devices)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
@@ -637,7 +636,7 @@ class GSPMDSharding(XLACompatibleSharding):
     return f'GSPMDSharding({repr(xc.HloSharding.from_proto(self._op_sharding))})'
 
   def is_compatible_aval(self, aval_shape: Shape):
-    num_ways_dim_sharded, _ = op_shardings.get_num_ways_dim_sharded(
+    num_ways_dim_sharded, _ = get_num_ways_dim_sharded(
         self._op_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(
@@ -652,8 +651,8 @@ class GSPMDSharding(XLACompatibleSharding):
   @functools.lru_cache(maxsize=4096)
   def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
     self.shard_shape(global_shape)  # raises a good error message
-    indices = op_shardings.op_sharding_to_indices(
-        self._op_sharding, global_shape, len(self._devices))
+    indices = op_sharding_to_indices(self._op_sharding, global_shape,
+                                     len(self._devices))
     return dict(safe_zip(self._devices, indices))
 
   @property
