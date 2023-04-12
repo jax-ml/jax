@@ -110,9 +110,6 @@ def tearDownModule():
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
-ignore_slow_all_to_all_warning = partial(
-  jtu.ignore_warning, message="all_to_all.*expect significant slowdowns.*")
-
 ignore_xmap_warning = partial(
   jtu.ignore_warning, message=".*is an experimental.*")
 
@@ -515,7 +512,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       self.assertAllClose(
           actual, expected[i // 2 * scatter_len:(i // 2 + 1) * scatter_len])
 
-  @ignore_slow_all_to_all_warning()
   def testTrees(self):
     ptranspose = lambda x, axis_name: lax.all_to_all(x, axis_name, 0, 0)
     def protate(x, axis_name):
@@ -572,7 +568,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
       "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAll(self, split_axis, concat_axis):
     pmap_in_axis = 0
     shape = (jax.device_count(),) * 3
@@ -592,7 +587,6 @@ class PythonPmapTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(2), range(2)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAllSplitAxis(self, split_axis, concat_axis):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
@@ -1030,7 +1024,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     ] for name, prim in
     (('Gather', lax.all_gather), ('ReduceScatter', lax.psum_scatter))
   ))
-  @ignore_slow_all_to_all_warning()
   def testGradOf(self, prim, tiled, use_axis_index_groups):
     if jtu.device_under_test() == "gpu":
       raise SkipTest("XLA:GPU with ReduceScatter deadlocks")  # b/264516146
@@ -1549,7 +1542,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(expected_bz1, bz1, check_dtypes=False)
     self.assertAllClose(bz2, bz2, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testPswapaxes(self):
     device_count = jax.device_count()
     shape = (device_count, 3, device_count, 5)
@@ -1559,7 +1551,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.swapaxes(x, 0, 2)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testGradOfPswapaxes(self):
     device_count = jax.device_count()
     shape = (device_count, 1, device_count)
@@ -1575,7 +1566,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.tile(w, reps=device_count).reshape(shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testAllToAllReplicaGroups(self):
     # If num_devices = 4, these would be the inputs/outputs:
     # input = [[0, 1], [2, 3], [4, 5], [6, 7]]
@@ -1604,7 +1594,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         0, 2).reshape(shape)
     self.assertAllClose(fn(x), expected, check_dtypes=False)
 
-  @ignore_slow_all_to_all_warning()
   def testGradOfAllToAllReplicaGroups(self):
     device_count = jax.device_count()
     if device_count % 2 != 0:
@@ -2322,7 +2311,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}_vmap={vmap_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis, "vmap_axis": vmap_axis}
       for split_axis, concat_axis, vmap_axis in it.product(range(3), range(3), range(4)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAllInVmap(self, split_axis, concat_axis, vmap_axis):
     def f(x):
       return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
@@ -2391,7 +2379,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       {"testcase_name": f"_split={split_axis}_concat={concat_axis}",
        "split_axis": split_axis, "concat_axis": concat_axis}
       for split_axis, concat_axis in it.product(range(3), range(3)))
-  @ignore_slow_all_to_all_warning()
   def testAllToAllVsVmap(self, split_axis, concat_axis):
     def f(x):
       return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
@@ -2406,7 +2393,6 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
        "axes": axes, "split_axis": split_axis, "concat_axis": concat_axis}
       for axes, split_axis, concat_axis
       in it.product([('i', 'j'), ('j', 'i')], range(3), range(3)))
-  @ignore_slow_all_to_all_warning()
   @unittest.skip("multi-axis all_to_all broken after #4835")  # TODO(mattjj,apaszke)
   def testAllToAllMultipleAxesVsVmap(self, axes, split_axis, concat_axis):
     if jax.device_count() < 4:
