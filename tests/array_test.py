@@ -915,6 +915,15 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(ps._device_assignment, pmap_in_sharding._device_assignment)
     self.assertEqual(ps.sharding_spec, pmap_in_sharding.sharding_spec)
 
+  def test_default_pmap_sharding_with_devices(self):
+    if jax.device_count() < 4:
+      self.skipTest('Test needs >= 4 devices.')
+
+    devs = jax.devices()
+    new_order = (devs[0], devs[3], devs[2], devs[1])
+    ps = jax.sharding.PmapSharding.default((4, 2), devices=new_order)
+    self.assertEqual(ps._device_assignment, new_order)
+
   def test_mesh_repr(self):
     mesh = jtu.create_global_mesh((1, 1), ('x', 'y'))
     mesh_repr = repr(mesh)
