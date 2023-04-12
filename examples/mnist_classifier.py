@@ -30,8 +30,7 @@ from jax import jit, grad, random
 from jax.example_libraries import optimizers
 from jax.example_libraries import stax
 from jax.example_libraries.stax import Dense, Relu, LogSoftmax
-from examples import datasets
-
+import datasets
 
 def loss(params, batch):
   inputs, targets = batch
