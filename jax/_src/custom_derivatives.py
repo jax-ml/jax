@@ -267,7 +267,7 @@ def _add_args_(extra_args, *args, **kwargs):
   all_args = (extra_args + args)
   yield (yield all_args, kwargs)
 
-@lu.transformation_with_aux
+@partial(lu.transformation_with_aux, use_eq_store=True)
 def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
   primals_in, tangents_in = split_list(args, [len(args) // 2])
   py_primals = tree_unflatten(in_tree, primals_in)
@@ -327,7 +327,8 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
       for x in primals_out]
   tangent_avals_out = [
       raise_to_shaped(core.get_aval(t), weak_type=False).strip_named_shape()
-      if type(t) is not SymbolicZero else t.aval for t in tangents_out]
+      if type(t) is not SymbolicZero else t.aval.strip_weak_type()
+      for t in tangents_out]
   if primal_avals_out != tangent_avals_out:
     if len(primal_avals_out) == 1:
       (av1,), (av2,) = primal_avals_out, tangent_avals_out
@@ -372,18 +373,29 @@ class CustomJVPCallPrimitive(core.Primitive):
     num_consts = new_params.pop('num_consts')
     jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
     fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr))
-
-    @lu.wrap_init
-    def jvp(*xs):
-      jvp_jaxpr, jvp_consts = jvp_jaxpr_thunk()
-      n, ragged = divmod(len(xs), 2)
-      assert not ragged
-      primals, tangents = xs[num_consts:n], xs[n+num_consts:]
-      return core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *tangents)
-
+    jvp = lift_jvp(num_consts, jvp_jaxpr_thunk)
     return [fun, jvp], new_params
 
-@lu.transformation_with_aux
+def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
+  @lu.wrap_init
+  def jvp(*xs):
+    n, ragged = divmod(len(xs), 2)
+    assert not ragged
+    primals, tangents = xs[num_consts:n], xs[n+num_consts:]
+    zeros = [type(t) is SymbolicZero for t in tangents]
+    jvp_jaxpr, jvp_consts, out_zeros = jvp_jaxpr_thunk(*zeros)
+    nonzero_tangents = [t for t in tangents if type(t) is not SymbolicZero]
+    out = core.eval_jaxpr(jvp_jaxpr, jvp_consts, *primals, *nonzero_tangents)
+    out_primals, nz_out_tangents = split_list(out, [len(out_zeros)])
+    nz_out_tangents_ = iter(nz_out_tangents)
+    out_tangents = [SymbolicZero(core.get_aval(p).at_least_vspace())
+                    if z else next(nz_out_tangents_)
+                    for p, z in zip(out_primals, out_zeros)]
+    assert next(nz_out_tangents_, None) is None
+    return [*out_primals, *out_tangents]
+  return jvp
+
+@partial(lu.transformation_with_aux, use_eq_store=True)
 def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
   outs = yield args, {}
   todo = []
