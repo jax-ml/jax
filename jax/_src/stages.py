@@ -33,7 +33,8 @@ from __future__ import annotations
 import warnings
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple
+from typing import (
+    Any, Dict, List, NamedTuple, Optional, Protocol, Sequence, Tuple, Union)
 
 import jax
 
@@ -55,6 +56,8 @@ traceback_util.register_exclusion(__file__)
 xla_extension = xc._xla
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
+
+CompilerOptions = Dict[str, Union[str, bool]]
 
 
 # -- Internal protocols
@@ -146,7 +149,8 @@ class Executable(Protocol):
 class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
-  def compile(self, compiler_options=None) -> Executable:
+  def compile(
+      self, compiler_options: Optional[CompilerOptions] = None) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
@@ -194,6 +198,7 @@ class Lowering(Protocol):
     """
     # TODO(frostig): improve annotation (arbitrary pytree)
     raise NotImplementedError
+
 
 # -- Internal adapters from XLA-related objects to the above protocols
 
@@ -296,7 +301,8 @@ class XlaLowering(Lowering):
     """Return a StableHLO representation of this computation."""
     raise NotImplementedError("must override")
 
-  def compile(self, compiler_options=None) -> Executable:
+  def compile(
+      self, compiler_options: Optional[CompilerOptions] = None) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
@@ -588,11 +594,12 @@ class Lowered(Stage):
         out_tree,
         no_kwargs=no_kwargs)
 
-  def compile(self, compiler_options=None) -> Compiled:
+  def compile(
+      self, compiler_options: Optional[CompilerOptions] = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
     from jax._src.interpreters import pxla
 
-    kw = {"compiler_options": compiler_options}
+    kw: Dict[str, Any] = {"compiler_options": compiler_options}
 
     if isinstance(self._lowering, pxla.MeshComputation):
       kw.update(
