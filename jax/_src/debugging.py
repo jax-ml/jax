@@ -28,7 +28,6 @@ from jax._src import core
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
-from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import tree_util
 from jax._src import util
@@ -40,7 +39,8 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import GSPMDSharding, NamedSharding
+from jax._src.sharding_impls import (GSPMDSharding, NamedSharding,
+                                     parse_flatten_op_sharding)
 
 # pytype: disable=import-error
 try:
@@ -326,7 +326,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
     if mesh.empty:
       return callback(GSPMDSharding(
         devices, op_sharding))
-    pspec = pjit.parse_flatten_op_sharding(
+    pspec = parse_flatten_op_sharding(
         op_sharding, mesh)[0].get_partition_spec()
     return callback(NamedSharding(mesh, pspec))
 
