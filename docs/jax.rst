@@ -141,7 +141,9 @@ Callbacks
   :toctree: _autosummary
 
     pure_callback
+    experimental.io_callback
     debug.callback
+    debug.print
 
 Miscellaneous
 -------------
