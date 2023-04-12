@@ -89,9 +89,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     osp_fun = partial(osp_op, mode=mode, method=method)
     jsp_fun = partial(jsp_op, mode=mode, method=method, precision=lax.Precision.HIGHEST)
     if method == 'fft':
-      # TODO(jakevdp): can we improve these tolerances?
-      tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-5,
-             np.complex64: 1e-2, np.complex128: 1e-5}
+      tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-6,
+             np.complex64: 1e-2, np.complex128: 1e-6}
     else:
       tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-12,
              np.complex64: 1e-2, np.complex128: 1e-12}
@@ -114,9 +113,8 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
     osp_fun = partial(osp_op, mode=mode)
     jsp_fun = partial(jsp_op, mode=mode)
-    # TODO(jakevdp): improve these tolerances
-    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-5,
-           np.complex64: 1e-2, np.complex128: 1e-5}
+    tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-6,
+           np.complex64: 1e-2, np.complex128: 1e-6}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
