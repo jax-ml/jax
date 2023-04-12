@@ -19,15 +19,11 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax._src import api
-from jax._src import dispatch
 from jax._src import test_util as jtu
 from jax._src.typing import DTypeLike
 from jax import tree_util
 from jax.util import safe_zip, split_list
 from jax.experimental import sparse
-from jax.experimental.sparse import bcoo as sparse_bcoo
-from jax.experimental.sparse import bcsr as sparse_bcsr
 import jax.numpy as jnp
 
 
