@@ -2813,12 +2813,17 @@ def _top_k(operand: TfVal, k: int) -> Tuple[TfVal, TfVal]:
     return None
 
   conversion_dtype = promote_tf_dtype(operand.dtype)
+  if core.is_special_dim_size(k):
+    k_tf = _eval_shape((k,))[0]
+    k_tf = tf.cast(k_tf, tf.int32)  # TopK works only for int32
+  else:
+    k_tf = k
   if conversion_dtype:
     values, indices = tf.math.top_k(
-        tf.dtypes.cast(operand, conversion_dtype), k=k, sorted=True)
+        tf.dtypes.cast(operand, conversion_dtype), k=k_tf, sorted=True)
     return tf.dtypes.cast(values, operand.dtype), indices
   else:
-    return tf.math.top_k(operand, k=k, sorted=True)
+    return tf.math.top_k(operand, k=k_tf, sorted=True)
 
 
 tf_impl[lax.top_k_p] = _top_k
@@ -2828,12 +2833,13 @@ def _approx_top_k(operand: TfVal, k: int, reduction_dimension: int,
                   recall_target: float, is_max_k: bool,
                   reduction_input_size_override: int,
                   aggregate_to_topk: bool) -> Tuple[TfVal, TfVal]:
+  k_tf = _eval_shape((k,))[0]
   if is_max_k:
-    return tf.math.approx_max_k(operand, k, reduction_dimension, recall_target,
+    return tf.math.approx_max_k(operand, k_tf, reduction_dimension, recall_target,
                                 reduction_input_size_override,
                                 aggregate_to_topk)
   else:
-    return tf.math.approx_min_k(operand, k, reduction_dimension, recall_target,
+    return tf.math.approx_min_k(operand, k_tf, reduction_dimension, recall_target,
                                 reduction_input_size_override,
                                 aggregate_to_topk)
 
