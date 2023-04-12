@@ -203,6 +203,8 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
                    ordered: bool = False, **kwargs: Any) -> None:
   """Calls a stageable Python callback.
 
+  For more explanation, see `External Callbacks`_.
+
   `debug_callback` enables you to pass in a Python function that can be called
   inside of a staged JAX program. A `debug_callback` follows existing JAX
   transformation *pure* operational semantics, which are therefore unaware of
@@ -222,8 +224,16 @@ def debug_callback(callback: Callable[..., Any], *args: Any,
       staged out computation will enforce ordering of this callback w.r.t.
       other ordered callbacks.
     **kwargs: The keyword arguments to the callback.
+
   Returns:
     None
+
+  See Also:
+    - :func:`jax.experimental.io_callback`: callback designed for impure functions.
+    - :func:`jax.pure_callback`: callback designed for pure functions.
+    - :func:`jax.debug.print`: callback designed for printing.
+
+  .. _External Callbacks: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
   """
   flat_args, in_tree = tree_util.tree_flatten((args, kwargs))
   effect = ordered_debug_effect if ordered else debug_effect
