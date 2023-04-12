@@ -1780,19 +1780,3 @@ def build_xla_computation_helper(
   return xc._xla.mlir.mlir_module_to_xla_computation(
       module_to_string(lowering_result.module), use_tuple_args=False,
       return_tuple=False)
-
-# Lax ops missing MLIR lowerings.
-# # TODO(b/203775215): these are missing from the cHLO dialect. Either add
-# # them or port them to Python.
-# lax.igamma_p,
-# lax.igammac_p,
-# lax.igamma_grad_a,
-# lax.random_gamma_grad_p,
-# lax.bessel_i0e_p,
-# lax.bessel_i1e_p,
-# lax.erf_inv_p,
-# lax.regularized_incomplete_beta_p,
-
-# # CHLO doesn't have a legalization for bf16 (b/203774470)
-# lax.erf_p,
-# lax.erfc_p,
