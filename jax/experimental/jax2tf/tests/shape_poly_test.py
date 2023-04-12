@@ -2472,6 +2472,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.tile(x, (1, x.shape[0])),
                 arg_descriptors=[RandArg((4, 2), _f32)],
                 poly_axes=[0]),
+    PolyHarness("lax_top_k", "",
+                lambda x: jax.lax.top_k(x, x.shape[-1] - 1),
+                arg_descriptors=[RandArg((16,), _f32)],
+                poly_axes=[0]),
     PolyHarness("tri", "N=poly_M=None",
                 lambda x: jnp.tri(x.shape[0]) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
@@ -2689,6 +2693,10 @@ class ShapePolyPrimitivesTest(tf_test_util.JaxToTfTestCase):
       if harness.group_name in require_stablehlo_feature_support:
         raise unittest.SkipTest(
             "native lowering with shape polymorphism requires additional StableHLO feature support")
+
+      if "top_k" in harness.fullname:
+        # https://github.com/openxla/stablehlo/issues/1255
+        raise unittest.SkipTest("native lowering with shape polymorphism not implemented for top_k")
       if (jtu.device_under_test() == "tpu" and
           harness.fullname in [
               "jnp.cumsum_reduce_axis=poly",
