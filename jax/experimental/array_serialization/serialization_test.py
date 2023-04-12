@@ -13,6 +13,8 @@
 # limitations under the License.
 """Tests for serialization and deserialization of GDA."""
 
+import asyncio
+import gc
 import math
 import pathlib
 
@@ -26,11 +28,46 @@ from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
 import numpy as np
 import tensorstore as ts
+import memory_profiler
+import time
+
 
 config.parse_flags_with_absl()
 
+class LimitInFlightBytesWithGc(serialization._LimitInFlightBytes):
+  """Adds garbage collection to release_bytes."""
+  async def release_bytes(self, requested_bytes):
+    gc.collect(0)
+    super().release_bytes(requested_bytes)
 
 class CheckpointTest(jtu.JaxTestCase):
+  def test_memory_consumption(self):
+    global_mesh = jtu.create_global_mesh((2, 4), ('x', 'y'))
+    inp_shape = (2_048, 4_096)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+    # First Array
+    sharding = NamedSharding(global_mesh, pspec)
+    src = jax.numpy.arange(num, dtype=np.int64).reshape(inp_shape)  # 8e9
+    inp = array.make_array_from_callback(
+        inp_shape, sharding,
+        lambda idx: src[idx])
+    ckpt_dir = pathlib.Path(self.create_tempdir('memprof').full_path)
+    tspec = serialization.get_tensorstore_spec(str(ckpt_dir))
+    serialization.run_serialization([inp], [tspec])
+    v = serialization.async_deserialize(
+        sharding, tspec, inp_shape,
+        byte_limiter=LimitInFlightBytesWithGc(4_200_000))
+    gc.collect()
+    before_mem_usage = memory_profiler.memory_usage(
+        (lambda : time.sleep(.001)), interval=0.01, max_usage=True)
+    print('Before memory usage:', before_mem_usage)
+    mem_usage = memory_profiler.memory_usage(
+        (asyncio.run, (v,)), interval=0.0001, max_usage=True)
+    # There is ~2x overhead in memory usage  creating numpy arrays
+    # and we add some padding. Typical memory usage is ~ 12M
+    # If serialization doesn't release memory, the typical memory usage is 60M
+    self.assertLess(mem_usage, before_mem_usage + 25)
 
   def test_checkpointing_jax_array(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
