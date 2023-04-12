@@ -20,7 +20,6 @@ import itertools
 import math
 import string
 from typing import Sequence, Union
-import warnings
 
 import numpy as np
 
@@ -960,16 +959,6 @@ def _index_in_group(axis_name, axis_index_groups):
   return lax.squeeze(
       slicing.dynamic_slice_in_dim(device_id_to_idx, cur_device_id, 1), [0])
 
-def _all_to_all_via_all_gather(x, *, axis_name, split_axis, concat_axis, axis_index_groups):
-  idx = _index_in_group(axis_name, axis_index_groups)
-  full = all_gather(x, axis_name, axis_index_groups=axis_index_groups)
-  axis_size = full.shape[0]
-  tile_size = x.shape[split_axis] // axis_size
-  tile_base_idx = idx * tile_size
-  sliced = slicing.dynamic_slice_in_dim(full, tile_base_idx, tile_size,
-                                        split_axis + 1)
-  return _foldaxis(concat_axis, _moveaxis(0, concat_axis, sliced))
-
 
 def _all_to_all_lowering(ctx, x, *,
                          split_axis, concat_axis, axis_name, axis_index_groups):
@@ -978,46 +967,29 @@ def _all_to_all_lowering(ctx, x, *,
                                    axis_index_groups)
   if len(replica_groups[0]) == 1:
     return [x]
-  elif ((ctx.module_context.platform == "tpu") or
-        ((ctx.module_context.platform in ("cuda", "rocm"))
-         and (split_axis == 0) and (concat_axis == 0))):
-    split_count = len(replica_groups[0])
-    if not all(split_count == len(g) for g in replica_groups):
-      raise ValueError('Replica groups must be equally sized')
-    is_spmd = isinstance(
-        ctx.module_context.axis_context,
-        (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
-    )
-    if is_spmd:
-      # We want to emit the all-gather with global device IDs and a unique
-      # channel ID, as otherwise it interprets the devices as replicas instead
-      # of partitions - and XLA is configured with only a single replica.
-      channel = ctx.module_context.new_channel()
-      other_args = dict(
-          channel_handle=hlo.ChannelHandle.get(channel,
-                                               mlir.DEVICE_TO_DEVICE_TYPE))
-    else:
-      other_args = {}
-    return hlo.AllToAllOp(
-        x,
-        split_dimension=mlir.i64_attr(split_axis),
-        concat_dimension=mlir.i64_attr(concat_axis),
-        split_count=mlir.i64_attr(split_count),
-        replica_groups=_replica_groups_hlo(replica_groups),
-        **other_args).results
+  split_count = len(replica_groups[0])
+  if not all(split_count == len(g) for g in replica_groups):
+    raise ValueError('Replica groups must be equally sized')
+  is_spmd = isinstance(
+      ctx.module_context.axis_context,
+      (sharding_impls.SPMDAxisContext, sharding_impls.ShardingContext),
+  )
+  if is_spmd:
+    # We want to emit the all-gather with global device IDs and a unique
+    # channel ID, as otherwise it interprets the devices as replicas instead
+    # of partitions - and XLA is configured with only a single replica.
+    channel = ctx.module_context.new_channel()
+    channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
+    other_args = dict(channel_handle=channel_handle)
   else:
-    warnings.warn(
-        "all_to_all (and pswapaxes) are only implemented properly for TPUs and GPUs (if "
-        "split_axis and concat_axis are both 0). All other backends emulate it using a "
-        "very slow and memory intensive algorithm, so expect significant slowdowns."
-    )
-    lowering = mlir.lower_fun(_all_to_all_via_all_gather,
-                              multiple_results=False)
-    return lowering(ctx, x,
-                    axis_name=axis_name,
-                    split_axis=split_axis,
-                    concat_axis=concat_axis,
-                    axis_index_groups=axis_index_groups)
+    other_args = {}
+  return hlo.AllToAllOp(
+      x,
+      split_dimension=mlir.i64_attr(split_axis),
+      concat_dimension=mlir.i64_attr(concat_axis),
+      split_count=mlir.i64_attr(split_count),
+      replica_groups=_replica_groups_hlo(replica_groups),
+      **other_args).results
 
 def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
   return (all_to_all(

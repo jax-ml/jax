@@ -170,7 +170,6 @@ class ShardMapTest(jtu.JaxTestCase):
     c = fwd(a)
     self.assertAllClose(c[1, :], a[0, :])
 
-  @jtu.skip_on_devices("cpu")  # all_to_all has a warning on cpu
   def test_all_to_all(self):
     devices = np.array(jax.devices())
     mesh = Mesh(devices, axis_names=('x'))
