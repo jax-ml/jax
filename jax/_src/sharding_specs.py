@@ -254,22 +254,6 @@ def spec_to_indices(shape: Sequence[int],
   return tuple(spec.indices(shape).flat)  # type: ignore
 
 
-def partitioned_sharding_spec(num_partitions: int,
-                              partitions: Optional[Sequence[int]],
-                              shape: Sequence[int]) -> ShardingSpec:
-  if partitions is None:
-    maybe_replicate = () if num_partitions == 1 else (Replicated(num_partitions),)
-    return ShardingSpec(
-        sharding=[_UNSHARDED_INSTANCE] * len(shape),
-        mesh_mapping=maybe_replicate)
-  else:
-    assert len(partitions) == len(shape)
-    return ShardingSpec(
-        # Chunked expects a list of integers
-        sharding=map(Chunked, [[x] for x in partitions]),
-        mesh_mapping=map(ShardedAxis, range(len(partitions))))
-
-
 def make_sharding_spec(axis_sizes, mesh_axis_pos, num_dimensions, aval_axes):
   mesh_mapping = [Replicated(axis_size) for axis_size in axis_sizes.values()]
   sharding = [_UNSHARDED_INSTANCE] * num_dimensions
@@ -292,15 +276,12 @@ def new_mesh_sharding_specs(axis_sizes, axis_names):
   mesh_axis_pos = {name: i for i, name in enumerate(axis_names)}
   return functools.partial(make_sharding_spec, axis_sizes, mesh_axis_pos)
 
-def pmap_sharding_spec(nrep, axis_size, npart, parts,
-                       sharded_shape: Sequence[int],
+def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
                        map_axis: Optional[int]) -> ShardingSpec:
   """Sharding spec for arguments or results of a pmap.
   Args:
     nrep: number of local XLA replicas (product of local axis sizes)
     axis_size: local axis size for outer pmap
-    npart: total number of XLA partitions (required by sharded_jit calls)
-    parts: the partitioning of the value or None
     sharded_aval: the aval of the value inside the outer pmap, an instance of
       a ShapedArray.
     map_axis: the axis along which the value is mapped in the outer pmap
@@ -309,8 +290,8 @@ def pmap_sharding_spec(nrep, axis_size, npart, parts,
   """
   replication_factor, ragged = divmod(nrep, axis_size)
   assert not ragged
-  # get the sharding spec from inner sharded_jits as if we weren't in a pmap
-  pspec = partitioned_sharding_spec(npart, parts, sharded_shape)
+  pspec = ShardingSpec(sharding=[_UNSHARDED_INSTANCE] * len(sharded_shape),
+                       mesh_mapping=())
   maybe_replicate = () if replication_factor == 1 else (Replicated(replication_factor),)
   if map_axis is not None:
     sharded_in_axis = sum(not isinstance(s, NoSharding) for s in pspec.sharding[:map_axis])
@@ -342,5 +323,5 @@ def create_pmap_sharding_spec(shape: Tuple[int, ...], sharded_dim: int = 0,
     assert sharded_dim_size is not None
     sharded_shape = shape
 
-  return pmap_sharding_spec(sharded_dim_size, sharded_dim_size, 1, None,
-                            sharded_shape, sharded_dim)
+  return pmap_sharding_spec(sharded_dim_size, sharded_dim_size, sharded_shape,
+                            sharded_dim)

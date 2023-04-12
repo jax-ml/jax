@@ -192,8 +192,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     for p in all_primitives:
       if p.name == "axis_index":
         continue
-      # TODO: remove once we delete sharded_jit.py
-      if p.name in ["sharded_call", "sharding_constraint"]:
+      if p.name == "sharding_constraint":
         continue
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
