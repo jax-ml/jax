@@ -1604,16 +1604,6 @@ def _get_axis_sizes(args_flat: Iterable[Any],
   return FrozenDict(global_axis_sizes)
 
 
-def lookup_exactly_one_of(d: AxisNamePos, names: Set[AxisName]) -> Optional[int]:
-  res = None
-  for name in names:
-    if name in d:
-      if res is not None:
-        raise ValueError("An input was mapped to the same resource twice")
-      res = d[name]
-  return res
-
-
 @lu.transformation
 def hide_mapped_axes(flat_in_axes, flat_out_axes, *flat_args):
   def _squeeze_mapped_axes(arg, axes: AxisNamePos):

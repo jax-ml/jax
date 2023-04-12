@@ -745,39 +745,6 @@ _bcoo_dot_general_default_lowering = mlir.lower_fun(
     _bcoo_dot_general_impl, multiple_results=False)
 
 
-def _hlo_reshape(x, shape):
-  x_type = ir.RankedTensorType(x.type)
-  return hlo.ReshapeOp(
-      ir.RankedTensorType.get(shape, x_type.element_type), x).result
-
-def _bcoo_get_row_col(ctx, indices):
-  shape = ir.RankedTensorType(indices.type).shape
-  assert len(shape) == 2
-  if shape[1] == 1:
-    col = _hlo_reshape(indices, shape[:1])
-    row = mlir.full_like_aval(
-        ctx, 0, core.ShapedArray(ir.RankedTensorType(col.type).shape,
-                                 np.dtype(np.int32)))
-  elif shape[1] == 2:
-    row = _hlo_reshape(
-        hlo.SliceOp(
-            indices,
-            start_indices=mlir.dense_int_elements([0, 0]),
-            limit_indices=mlir.dense_int_elements([shape[0], 1]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        shape[:1])
-    col = _hlo_reshape(
-        hlo.SliceOp(
-            indices,
-            start_indices=mlir.dense_int_elements([0, 1]),
-            limit_indices=mlir.dense_int_elements([shape[0], 2]),
-            strides=mlir.dense_int_elements([1, 1])).result,
-        shape[:1])
-  else:
-    raise ValueError(f"expected shape[1] in (1, 2), got {shape=}")
-
-  return row, col
-
 def _bcoo_dot_general_fallback(data, indices, spinfo):
   if data.dtype not in CUSPARSE_DATA_DTYPES:
     warnings.warn('bcoo_dot_general cusparse/hipsparse lowering not available '
