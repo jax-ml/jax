@@ -724,7 +724,9 @@ class ReplicaInfo(NamedTuple):
   num_global_replicas: int
 
 
-def find_replicas(jaxpr, axis_size, global_axis_size):
+def find_replicas(
+    jaxpr: core.Jaxpr, axis_size: int, global_axis_size: int
+) -> ReplicaInfo:
   # TODO(skyewm): replace this with a chain of pmaps and/or sharded_jits
   jaxpr_replicas = dispatch.jaxpr_replicas(jaxpr)
   num_local_replicas = axis_size * jaxpr_replicas
@@ -733,8 +735,8 @@ def find_replicas(jaxpr, axis_size, global_axis_size):
 
 
 def stage_parallel_callable(
-    pci: ParallelCallableInfo,
-    fun: lu.WrappedFun):
+    pci: ParallelCallableInfo, fun: lu.WrappedFun
+) -> Tuple[core.Jaxpr, List[Any], ReplicaInfo, ShardInfo]:
   sharded_avals = tuple(
       shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))

@@ -14,13 +14,13 @@
 from __future__ import annotations
 
 import enum
-from functools import partial, lru_cache
+from functools import partial
 import inspect
 import itertools as it
 import math
 import operator as op
 from typing import (Any, Callable, Dict, Hashable, List, Optional, Sequence,
-                    Set, Tuple, TypeVar, Union, Protocol)
+                    Set, Tuple, TypeVar, Union, cast)
 
 import numpy as np
 
@@ -358,6 +358,14 @@ def process_env_traces(level: int, mesh, in_names, out_names_thunk, check_rep,
 
 # Staging
 
+
+def _check_avals_are_shapedarrays(
+    avals: Sequence[core.AbstractValue],
+) -> Sequence[core.ShapedArray]:
+  assert all(isinstance(a, core.ShapedArray) for a in avals), avals
+  return cast(Sequence[core.ShapedArray], avals)
+
+
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
     in_tracers: Sequence[pe.DynamicJaxprTracer], *, mesh: Mesh,
@@ -369,7 +377,8 @@ def _shard_map_staging(
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
   main = trace.main
   with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr, out_avals_, consts = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
+    jaxpr, out_avals_generic, consts = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
+  out_avals_ = _check_avals_are_shapedarrays(out_avals_generic)
   _check_names(out_names_thunk(), out_avals_)
   if check_rep:
     in_rep = map(partial(_in_names_to_rep, mesh), in_names)

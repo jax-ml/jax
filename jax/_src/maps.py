@@ -17,7 +17,7 @@ import numpy as np
 import itertools as it
 from collections import OrderedDict, abc
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
-                    NamedTuple, Union, Sequence)
+                    NamedTuple, Union, Sequence, Mapping)
 from functools import wraps, partial, partialmethod, lru_cache
 
 from jax import lax
@@ -271,8 +271,8 @@ def xmap(fun: Callable,
          in_axes,
          out_axes,
          *,
-         axis_sizes: Dict[AxisName, int] = {},
-         axis_resources: Dict[AxisName, ResourceSet] = {},
+         axis_sizes: Optional[Mapping[AxisName, int]] = None,
+         axis_resources: Optional[Mapping[AxisName, ResourceSet]] = None,
          donate_argnums: Union[int, Sequence[int]] = (),
          backend: Optional[str] = None) -> stages.Wrapped:
   """Assign a positional signature to a program that uses named array axes.
@@ -459,6 +459,9 @@ def xmap(fun: Callable,
   else:
     out_axes, out_axes_entries, out_axes_treedef = _prepare_axes(out_axes, "out_axes")
     out_axes_entries = tuple(out_axes_entries)  # Make entries hashable
+
+  axis_sizes = {} if axis_sizes is None else axis_sizes
+  axis_resources = {} if axis_resources is None else axis_resources
 
   axis_sizes_names = set(axis_sizes.keys())
   in_axes_names = set(it.chain(*(spec.keys() for spec in in_axes_entries)))
