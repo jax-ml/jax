@@ -39,7 +39,6 @@ else:
     SingleIndex = Union[None, int, slice, Sequence[int], Array]
 Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
-Numeric = Union[Array, Scalar]
 
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
