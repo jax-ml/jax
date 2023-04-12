@@ -65,7 +65,7 @@ import itertools
 import os
 import re
 import sys
-from typing import Any, Callable, Dict, Iterable, List, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 # from absl import logging
 from absl.testing import absltest, parameterized
@@ -182,8 +182,9 @@ class CompatTest(jtu.JaxTestCase):
 
   def run_one_test(self, func: Callable[..., jax.Array],
                    data: CompatTestData,
-                   run_tf=None,
-                   rtol=None):
+                   run_tf = None,
+                   rtol = None,
+                   check_results: Optional[Callable[..., None]] = None):
     """Run one compatibility test.
 
     Args:
@@ -192,15 +193,17 @@ class CompatTest(jtu.JaxTestCase):
       run_tf: (optional) a function to invoke the XlaCallModule TF op. Takes
         a TensorFlow callable and the arguments.
       rtol: relative tolerance for numerical comparisons
+      check_results: invoked with the results obtained from running the
+        serialized code, and those stored in the test data, and the kwarg rtol.
     """
     if default_jax_backend() != data.platform:
       self.skipTest(f"Test enabled only for {data.platform}")
 
     # Check that it runs in JAX native
-    res_from_jax = jax.jit(func)(*data.inputs)
-    if not isinstance(res_from_jax, (list, tuple)):
-      res_from_jax = (res_from_jax,)
-    res_from_jax = tuple(np.array(a) for a in res_from_jax)
+    res_from_jax_run_now = jax.jit(func)(*data.inputs)
+    if not isinstance(res_from_jax_run_now, (list, tuple)):
+      res_from_jax_run_now = (res_from_jax_run_now,)
+    res_from_jax_run_now = tuple(np.array(a) for a in res_from_jax_run_now)
 
     # Use the native exporter, to make sure we get the proper serialized module.
     exported = jax2tf.jax_export.export_native(
@@ -226,7 +229,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     custom_call_targets={repr(custom_call_targets)},
     serialized_date={repr(datetime.date.today())},
     inputs={repr(data.inputs)},
-    expected_outputs={repr(res_from_jax)},
+    expected_outputs={repr(res_from_jax_run_now)},
     mlir_module_text=\"\"\"\n{module_str}\"\"\",
     mlir_module_serialized={repr(exported.mlir_module_serialized)},
     xla_call_module_version={exported.xla_call_module_version},
@@ -239,13 +242,19 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     with open(output_file, "w") as f:
       f.write(updated_testdata)
 
-    if rtol is not None:
+    if rtol is None:
       rtol = 1.e-7
-    self.assertAllClose(res_from_jax, data.expected_outputs, rtol=rtol)
+    if check_results is not None:
+      check_results(res_from_jax_run_now, data.expected_outputs, rtol=rtol)
+    else:
+      self.assertAllClose(res_from_jax_run_now, data.expected_outputs, rtol=rtol)
 
-    res_serialized = self.run_serialized(data, run_tf=run_tf)
-    logging.info("Result of serialized run is %s", res_serialized)
-    self.assertAllClose(res_serialized, data.expected_outputs)
+    res_from_serialized_run_now = self.run_serialized(data, run_tf=run_tf)
+    logging.info("Result of serialized run is %s", res_from_serialized_run_now)
+    if check_results is not None:
+      check_results(res_from_serialized_run_now, data.expected_outputs, rtol=rtol)
+    else:
+      self.assertAllClose(res_from_serialized_run_now, data.expected_outputs, rtol=rtol)
     self.assertListEqual(custom_call_targets, data.custom_call_targets)
 
   def run_serialized(self, data: CompatTestData, run_tf=None):
@@ -335,12 +344,30 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     self.run_one_test(func, data)
 
   @staticmethod
-  def eigh_harness(shape, dtype):
+  def eigh_input(shape, dtype):
     # In order to keep inputs small, we construct the input programmatically
     operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
     # Make operand self-adjoint
     operand = (operand + jnp.conj(jnp.swapaxes(operand, -1, -2))) / 2.
+    return operand
+
+  @staticmethod
+  def eigh_harness(shape, dtype):
+    operand = CompatTest.eigh_input(shape, dtype)
     return lax.linalg.eigh(jnp.tril(operand), lower=True, symmetrize_input=False)
+
+  def check_eigh_results(self, operand, res_now, res_expected, *,
+                         rtol):
+    v_now, w_now = res_now
+    _, w_expected = res_expected
+    n, m = operand.shape
+    assert n == m
+    self.assertLessEqual(
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(np.swapaxes(v_now, -1, -2)), v_now)),
+        rtol)
+    self.assertLessEqual(np.linalg.norm(np.matmul(operand, v_now) - w_now * v_now),
+                         rtol * np.linalg.norm(operand))
+    self.assertAllClose(w_expected, w_now, rtol=rtol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -352,10 +379,13 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
     dtype = dict(f32=np.float32, f64=np.float64,
                  c64=np.complex64, c128=np.complex128)[dtype_name]
+    size = 8
+    operand = CompatTest.eigh_input((size, size), dtype)
     func = lambda: CompatTest.eigh_harness((8, 8), dtype)
     data = load_testdata(cpu_lapack_syev.data_2023_03_17[dtype_name])
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)
-    self.run_one_test(func, data, rtol=rtol)
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
+    self.run_one_test(func, data, rtol=rtol,
+                      check_results=partial(self.check_eigh_results, operand))
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}_{variant}",
@@ -367,18 +397,22 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
     # For lax.linalg.eigh
     dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
     size = dict(syevj=8, syevd=36)[variant]
-    rtol = dict(f32=1e-3, f64=1e-5)
+    rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
+    operand = CompatTest.eigh_input((size, size), dtype)
     func = lambda: CompatTest.eigh_harness((size, size), dtype)
     data = load_testdata(cuda_cusolver_syev.data_2023_03_17[f"{dtype_name}_{variant}"])
-    self.run_one_test(func, data, rtol=rtol)
+    self.run_one_test(func, data, rtol=rtol,
+                      check_results=partial(self.check_eigh_results, operand))
 
   def test_tpu_Eigh(self):
     # For lax.linalg.eigh
-    if jtu.device_under_test() == "tpu":
-      self.skipTest("b/277593283")
-    func = lambda: CompatTest.eigh_harness((8, 8), np.float32)
+    shape = (8, 8)
+    dtype = np.float32
+    operand = CompatTest.eigh_input(shape, dtype)
+    func = lambda: CompatTest.eigh_harness(shape, dtype)
     data = load_testdata(tpu_Eigh.data)
-    self.run_one_test(func, data, rtol=1e-3)
+    self.run_one_test(func, data, rtol=1e-3,
+                      check_results=partial(self.check_eigh_results, operand))
 
   @staticmethod
   def qr_harness(shape, dtype):
@@ -398,7 +432,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
                  c64=np.complex64, c128=np.complex128)[dtype_name]
     func = lambda: CompatTest.qr_harness((3, 3), dtype)
     data = load_testdata(cpu_lapack_geqrf.data_2023_03_17[dtype_name])
-    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)
+    rtol = dict(f32=1e-3, f64=1e-5, c64=1e-3, c128=1e-5)[dtype_name]
     self.run_one_test(func, data, rtol=rtol)
 
   @parameterized.named_parameters(
@@ -410,7 +444,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
   def test_gpu_cusolver_geqrf(self, dtype_name="f32", batched="unbatched"):
     # For lax.linalg.qr
     dtype = dict(f32=np.float32, f64=np.float64)[dtype_name]
-    rtol = dict(f32=1e-3, f64=1e-5)
+    rtol = dict(f32=1e-3, f64=1e-5)[dtype_name]
     shape = dict(batched=(2, 3, 3), unbatched=(3, 3))[batched]
     func = lambda: CompatTest.qr_harness(shape, dtype)
     data = load_testdata(cuda_cusolver_geqrf.data_2023_03_18[batched])
