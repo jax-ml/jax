@@ -3063,8 +3063,10 @@ def _custom_lin(*args: TfVal, **_) -> Sequence[TfVal]:
 tf_impl[ad.custom_lin_p] = _custom_lin
 
 
+PartitionsOrReplicated = Optional[Tuple[int, ...]]
+
 def split_to_logical_devices(tensor: TfVal,
-                             partition_dimensions: pxla.PartitionsOrReplicated):
+                             partition_dimensions: PartitionsOrReplicated):
   """Like TPUMPStrategy.experimental_split_to_logical_devices.
 
   For jax2tf purposes we want to avoid needing to thread the `strategy` object
