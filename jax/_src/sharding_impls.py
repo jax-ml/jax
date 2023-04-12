@@ -107,9 +107,9 @@ class XLACompatibleSharding(sharding.Sharding):
   def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
                        other: XLACompatibleSharding, ndim: int) -> bool:
     try:
-      return (are_op_shardings_equal(self._to_xla_op_sharding(ndim),
-                                     other._to_xla_op_sharding(ndim))
-              and self._device_assignment == other._device_assignment)
+      return are_op_shardings_equal(
+          self._to_xla_op_sharding(ndim), other._to_xla_op_sharding(ndim)
+      ) and tuple(self._device_assignment) == tuple(other._device_assignment)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
     # equality check.
@@ -434,7 +434,7 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self.devices.flat)
+    return self.devices.flatten()
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
@@ -657,7 +657,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self._devices)
+    return self._devices
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return self._op_sharding
