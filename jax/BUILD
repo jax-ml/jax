@@ -371,6 +371,7 @@ pytype_strict_library(
     name = "partial_eval",
     srcs = ["_src/interpreters/partial_eval.py"],
     deps = [
+        ":ad_util",
         ":api_util",
         ":config",
         ":core",
