@@ -1724,13 +1724,29 @@ def fori_loop(lower, upper, body_fun, init_val):
   """
   if not callable(body_fun):
     raise TypeError("lax.fori_loop: body_fun argument should be callable.")
+
   # TODO(phawkins): perhaps do more type checking here, better error messages.
   lower_dtype = dtypes.canonicalize_dtype(lax.dtype(lower))
   upper_dtype = dtypes.canonicalize_dtype(lax.dtype(upper))
-  if lower_dtype != upper_dtype:
-    msg = ("lower and upper arguments to fori_loop must have equal types, "
-           "got {} and {}")
-    raise TypeError(msg.format(lower_dtype.name, upper_dtype.name))
+  if lower_dtype == upper_dtype:
+    dtype = lower_dtype
+  else:
+    # As a special case: allow promotion of weak integers (e.g., Python scalars)
+    # This improves the ergonomics if one but not both of the loop bounds is a
+    # scalar.
+    dtype = None
+    if (np.issubdtype(lower_dtype, np.signedinteger) and
+        np.issubdtype(upper_dtype, np.signedinteger)):
+      lower_weak = dtypes.is_weakly_typed(lower)
+      upper_weak = dtypes.is_weakly_typed(upper)
+      if lower_weak and not upper_weak:
+        dtype = upper_dtype
+      elif not lower_weak and upper_weak:
+        dtype = lower_dtype
+
+    if dtype is None:
+      raise TypeError("lower and upper arguments to fori_loop must have equal "
+                      f"types, got {lower_dtype.name} and {upper_dtype.name}")
 
   # If we can specialize on the trip count, call scan instead of a while_loop
   # to enable efficient reverse-mode differentiation.
@@ -1753,9 +1769,14 @@ def fori_loop(lower, upper, body_fun, init_val):
 
     (_, result), _ = scan(_fori_scan_body_fun(body_fun), (lower_, init_val),
                           None, length=upper_ - lower_)
-  else:
-    _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
-                              (lower, upper, init_val))
+    return result
+
+  if lower_dtype != dtype:
+    lower = lax.convert_element_type(lower, dtype)
+  if upper_dtype != dtype:
+    upper = lax.convert_element_type(upper, dtype)
+  _, _, result = while_loop(_fori_cond_fun, _fori_body_fun(body_fun),
+                            (lower, upper, init_val))
   return result
 
 ### map and miscellaneous rules
