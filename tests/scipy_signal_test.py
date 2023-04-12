@@ -104,21 +104,25 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
      for yshape in shapeset
     ],
     mode=['full', 'same', 'valid'],
+    pass_axes=[True, False],
     dtype=default_dtypes,
   )
-  def testFFTConvolution(self, xshape, yshape, dtype, mode):
-    jsp_op = jsp_signal.fftconvolve
-    osp_op = osp_signal.fftconvolve
+  def testFFTConvolution(self, xshape, yshape, dtype, mode, pass_axes):
+    if pass_axes:
+      # unspecified axes effectively act as batch dimensions, so their shape
+      # must be equal
+      axes = tuple(i for i in range(len(xshape)) if xshape[i] != yshape[i]) or 0
+    else:
+      axes = None
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(xshape, dtype), rng(yshape, dtype)]
-    osp_fun = partial(osp_op, mode=mode)
-    jsp_fun = partial(jsp_op, mode=mode)
+    osp_fun = partial(osp_signal.fftconvolve, mode=mode, axes=axes)
+    jsp_fun = partial(jsp_signal.fftconvolve, mode=mode, axes=axes)
     tol = {np.float16: 1e-2, np.float32: 1e-2, np.float64: 1e-6,
            np.complex64: 1e-2, np.complex128: 1e-6}
     self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, check_dtypes=False,
                             tol=tol)
-    self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
-
+    self._CompileAndCheck(jsp_fun, args_maker, tol=tol)
 
   @jtu.sample_product(
     mode=['full', 'same', 'valid'],

@@ -25,6 +25,7 @@ import jax
 import jax.numpy.fft
 import jax.numpy as jnp
 from jax import lax
+from jax._src.api_util import _ensure_index_tuple
 from jax._src import dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import linalg
@@ -35,92 +36,60 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
 
-
 @_wraps(osp_signal.fftconvolve)
-def fftconvolve(in1: ArrayLike ,in2: ArrayLike, mode: str = "full",
+def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
                 axes: Optional[Sequence[int]] = None) -> Array:
-  # sanity checks
   check_arraylike('fftconvolve', in1, in2)
   in1, in2 = promote_dtypes_inexact(in1, in2)
-  if in1.ndim == in2.ndim == 0:  # scalar inputs
-    return in1 * in2
-  elif in1.ndim != in2.ndim:
+  if in1.ndim != in2.ndim:
     raise ValueError("in1 and in2 should have the same dimensionality")
-  elif in1.size == 0 or in2.size == 0:  # empty arrays
-    return jnp.array([], dtype=in1.dtype)
-  # warn current limitations
   if mode not in ["same", "full", "valid"]:
     raise ValueError("mode must be one of ['same', 'full', 'valid']")
-
+  _fftconvolve = partial(_fftconvolve_unbatched, mode=mode)
   if axes is None:
-    axes = range(in1.ndim)
-  else:
-    try:
-      axes = tuple(axes)
-    except TypeError:
-      raise ValueError("axes must be a tuple of ints or (single-int,)")
+    return _fftconvolve(in1, in2)
+  axes = _ensure_index_tuple(axes)
+  axes = tuple(canonicalize_axis(ax, in1.ndim) for ax in axes)
+  mapped_axes = set(range(in1.ndim)) - set(axes)
+  if any(in1.shape[i] != in2.shape[i] for i in mapped_axes):
+    raise ValueError(f"mapped axes must have same shape; got {in1.shape=} {in2.shape=} {axes=}")
+  for ax in sorted(mapped_axes):
+    _fftconvolve = jax.vmap(_fftconvolve, in_axes=ax, out_axes=ax)
+  return _fftconvolve(in1, in2)
 
-    axes = [a + in1.ndim if a < 0 else a for a in axes]
-    if any(a >= in1.ndim or a < 0 for a in axes):
-      raise ValueError("axes exceeds dimensionality of input")
-    if len(set(axes)) != len(axes):
-      raise ValueError("all axes must be unique")
+def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
+  full_shape = tuple(s1 + s2 - 1 for s1, s2 in zip(in1.shape, in2.shape))
+  fft_shape = tuple(osp_fft_next_fast_len(s) for s in full_shape)
 
-  # necessary for mode=valid
-  axes = [a for a in axes if in1.shape[a] != 1 and in2.shape[a] != 1]
-
-  # see if one should swap inputs
-  if mode == "valid":
-    ok1 = all(in1.shape[i] >= in2.shape[i] for i in axes)
-    ok2 = all(in2.shape[i] >= in1.shape[i] for i in axes)
-    if not (ok1 or ok2):
-        raise ValueError("For 'valid' mode, one must be at least "
-                         "as large as the other in every dimension")
-    if not ok1:
+  if mode == 'valid':
+    no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
+    swap = all(s1 <= s2 for s1, s2 in zip(in1.shape, in2.shape))
+    if not (no_swap or swap):
+      raise ValueError("For 'valid' mode, One input must be at least as "
+                       "large as the other in every dimension.")
+    if swap:
       in1, in2 = in2, in1
 
-  s1 = in1.shape
-  s2 = in2.shape
-
-  shape = [max((s1[i], s2[i])) if i not in axes else s1[i] + s2[i] - 1
-           for i in range(in1.ndim)]
-
-  def _centered(arr, newshape):
-    # Return the center newshape portion of the array.
-    newshape = np.asarray(newshape)
-    currshape = np.array(arr.shape)
-    startind = (currshape - newshape) // 2
-    endind = startind + newshape
-    myslice = [slice(startind[k], endind[k]) for k in range(len(endind))]
-    return arr[tuple(myslice)]
-
-  def _finalize(res, s1, mode, axes):
-    if mode == "full":
-      return res
-    elif mode == "same":
-      return _centered(conv, s1)
-    else:
-      shape_valid = [res.shape[a] if a not in axes else s1[a] - s2[a] + 1
-                       for a in range(res.ndim)]
-      return _centered(res, shape_valid)
-
-  if len(axes) == 0:
-    conv = in1 * in2
-    return _finalize(conv, s1, mode, axes)
-
-  # compute the optimized FFT size (use of original scipy code as fshape is static)
-  fshape = [osp_fft_next_fast_len(shape[a]) for a in axes]
-
-  if in1.dtype.kind == 'c':
+  if jnp.iscomplexobj(in1):
     fft, ifft = jnp.fft.fftn, jnp.fft.ifftn
   else:
     fft, ifft = jnp.fft.rfftn, jnp.fft.irfftn
+  sp1 = fft(in1, fft_shape)
+  sp2 = fft(in2, fft_shape)
+  conv = ifft(sp1 * sp2, fft_shape)
 
-  sp1 = fft(in1, fshape, axes=axes)
-  sp2 = fft(in2, fshape, axes=axes)
-  conv = ifft(sp1 * sp2, fshape, axes=axes)
-  conv = conv[tuple(map(slice, shape))]
-  return _finalize(conv, s1, mode, axes)
+  if mode == "full":
+    out_shape = full_shape
+  elif mode == "same":
+    out_shape = in1.shape
+  elif mode == "valid":
+    out_shape = tuple(s1 - s2 + 1 for s1, s2 in zip(in1.shape, in2.shape))
+  else:
+    raise ValueError(f"Unrecognized {mode=}")
+
+  start_indices = tuple((full_size - out_size) // 2
+                        for full_size, out_size in zip(full_shape, out_shape))
+  return lax.dynamic_slice(conv, start_indices, out_shape)
 
 
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling
