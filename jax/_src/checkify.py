@@ -382,20 +382,6 @@ def default_checkify_rule(primitive: core.Primitive, error: Error,
 def get_shaped_aval(val):
   return core.raise_to_shaped(core.get_aval(val))
 
-def initial_style_jaxpr(
-    fun: Callable, in_tree: PyTreeDef, in_avals: Sequence[core.AbstractValue]
-  ) -> Tuple[core.Jaxpr, List[Any], PyTreeDef]:
-  return _initial_style_jaxpr(fun, in_tree, tuple(in_avals))
-
-@weakref_lru_cache
-def _initial_style_jaxpr(fun, in_tree, in_avals):
-  # like control_flow._initial_style_jaxpr, but use flatten_fun not _nokwargs
-  fun_, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  debug = pe.debug_info(fun, in_tree, out_tree, False, 'checkify')
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
-  return jaxpr, consts, out_tree()
-
-
 def checkify_jaxpr(jaxpr: core.ClosedJaxpr, enabled_errors,
                    error: Error, *args) -> Tuple[Error, List[core.Value]]:
   err_vals, err_tree = jtu.tree_flatten(error)
@@ -1065,16 +1051,17 @@ def checkify(f: Callable[..., Out],
   """
   @traceback_util.api_boundary
   def checked_fun(*args, **kwargs):
+    # close over all arguments so they're not turned into abstract values.
+    in_tree = jtu.tree_structure(((), {}))
+    closed_f = lambda: f(*args, **kwargs)
     # stage:
-    flat_args, in_tree = tree_flatten((args, kwargs))
-    in_avals = map(get_shaped_aval, flat_args)
-    jaxpr_, consts, out_tree = initial_style_jaxpr(f, in_tree, in_avals)
+    fun_, out_tree = flatten_fun(lu.wrap_init(closed_f), in_tree)
+    debug = pe.debug_info(closed_f, in_tree, out_tree, False, 'checkify')
+    jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(fun_, (), debug)
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:
-    flat_args = jtu.tree_leaves((args, kwargs))
-    error, out_flat = checkify_jaxpr(jaxpr, errors, init_error,
-                                     *consts, *flat_args)
-    return error, jtu.tree_unflatten(out_tree, out_flat)
+    error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)
+    return error, jtu.tree_unflatten(out_tree(), out_flat)
   return checked_fun
 
 def check(pred: Bool, msg: str, *fmt_args, **fmt_kwargs) -> None:
