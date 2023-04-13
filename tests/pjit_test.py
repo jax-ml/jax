@@ -42,7 +42,7 @@ from jax.experimental.maps import xmap
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import Sharding
+from jax._src.sharding import Sharding, _addressable_devices_indices_map
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
@@ -3176,6 +3176,30 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out4 = jnp.copy(arr4)
     self.assertIsInstance(out4.sharding, SingleDeviceSharding)
     self.assertEqual(out4.device(), jax.devices()[1])
+
+  def test_get_indices_cache(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    ns = NamedSharding(mesh, P('x'))
+    ns2 = NamedSharding(mesh, P('x', 'y'))
+
+    np_inp = np.arange(16).reshape(8, 2)
+    arr1 = jax.device_put(np_inp, ns)
+    arr2 = jax.device_put(np_inp, ns2)
+    arr3 = jax.device_put(np_inp, ns)
+
+    cache_info1 = _addressable_devices_indices_map.cache_info()
+    out = pjit(lambda x, y, z: x + y + z)(arr1, arr2, arr3)
+    cache_info2 = _addressable_devices_indices_map.cache_info()
+    self.assertArraysEqual(out, np_inp * 3)
+
+    # arr3 and arr1 should have the same GSPMDSharding objects internally.
+    # So there will be 2 hits in _addressable_devices_indices_map,
+    # One in `pxla._get_input_indices` and second in `_array_shard_arg`.
+    self.assertEqual(cache_info2.hits, cache_info1.hits + 2)
+    # There will double the amount of misses as hits because arr1 and arr2's
+    # sharding are not the same. So 2 misses in _addressable_devices_indices_map
+    # and 2 in _array_shard_arg.
+    self.assertEqual(cache_info2.misses, cache_info1.misses + 4)
 
 
 class TempSharding(Sharding):

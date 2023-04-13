@@ -26,6 +26,13 @@ Index = Tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
 
+@functools.lru_cache(maxsize=4096)
+def _addressable_devices_indices_map(
+    sharding: Sharding, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+  return {d: ind for d, ind in sharding.devices_indices_map(global_shape).items()
+          if d.process_index == d.client.process_index()}
+
+
 @util.use_cpp_class(xc.Sharding)
 class Sharding:
   """Abstract ``Sharding`` interface which describes how a ``jax.Array`` is laid out
@@ -86,7 +93,6 @@ class Sharding:
     # The pytype disable is because pytype can't recognize a cached property.
     return len(self.device_set) == len(self.addressable_devices)  # type: ignore
 
-  @functools.lru_cache(maxsize=4096)
   def addressable_devices_indices_map(
       self, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
     """A mapping from addressable device to the slice of global data it contains.
@@ -94,5 +100,4 @@ class Sharding:
     ``addressable_devices_indices_map`` contains that part of
     ``device_indices_map`` that applies to the addressable devices.
     """
-    return {d: ind for d, ind in self.devices_indices_map(global_shape).items()
-            if d.process_index == d.client.process_index()}
+    return _addressable_devices_indices_map(self, global_shape)

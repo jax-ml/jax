@@ -2034,8 +2034,8 @@ def lower_sharding_computation(
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
       any(not is_unspecified(o) for o in out_shardings))
 
-  in_shardings = tuple(sharding_impls.GSPMDSharding.get_replicated(device_assignment)
-                       if is_unspecified(i) else i for i in in_shardings)
+  gs = sharding_impls.GSPMDSharding.get_replicated(device_assignment)
+  in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
 
@@ -2401,10 +2401,8 @@ def get_gspmd_shardings_from_executable(
   # just return SingleDeviceShardings since we know the computation is running
   # only on 1 device.
   if len(device_assignment) == 1:
-    return ([sharding_impls.SingleDeviceSharding(device_assignment[0])
-             for _ in range(num_in_avals)],
-            [sharding_impls.SingleDeviceSharding(device_assignment[0])
-             for _ in range(num_out_avals)])
+    ss = sharding_impls.SingleDeviceSharding(device_assignment[0])
+    return [ss] * num_in_avals, [ss] * num_out_avals
 
   in_op_shardings, out_op_shardings = pjit._get_op_sharding_from_executable(xla_executable)
 
@@ -2445,9 +2443,10 @@ orig_out_sharding_handlers: OrigHandlerType = {}
 def _gspmd_to_named_sharding(
     op_sharding: xc.OpSharding,
     self: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
-  return sharding_impls.NamedSharding._from_parsed_pspec(
-      self.mesh,
-      sharding_impls.parse_flatten_op_sharding(op_sharding, self.mesh)[0])
+  parsed_pspec = sharding_impls.parse_flatten_op_sharding(
+      op_sharding, self.mesh)[0]
+  return create_mesh_pspec_sharding(
+      self.mesh, parsed_pspec.get_partition_spec(), parsed_pspec)
 orig_out_sharding_handlers[sharding_impls.NamedSharding] = _gspmd_to_named_sharding
 
 
@@ -2844,12 +2843,9 @@ def check_arg_avals_for_call(ref_avals, arg_avals):
 def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   # Create replicated shardings for jit(pmap) path with local devices
   # because multihost jit(pmap) is not allowed.
-  in_shardings = [
-      sharding_impls.GSPMDSharding.get_replicated(local_devices)
-  ] * num_in_shardings
-  out_shardings = [
-      sharding_impls.GSPMDSharding.get_replicated(local_devices)
-  ] * num_out_shardings
+  gs = sharding_impls.GSPMDSharding.get_replicated(local_devices)
+  in_shardings = [gs] * num_in_shardings
+  out_shardings = [gs] * num_out_shardings
   # jit(pmap) will generate Arrays with multi-device sharding.
   # It is unsupported for these shardings to be uncommited, so force
   # the outputs to be committed.
