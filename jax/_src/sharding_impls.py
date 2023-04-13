@@ -396,13 +396,18 @@ class PmapSharding(XLACompatibleSharding):
 
   # TODO(yashkatariya): Expose `sharded_dim_size` in the API if required.
   @classmethod
-  def default(cls, shape: Shape, sharded_dim: int = 0) -> PmapSharding:
+  def default(cls, shape: Shape, sharded_dim: int = 0,
+              devices: Optional[Sequence[xc.Device]] = None) -> PmapSharding:
     """Creates a `PmapSharding` which matches the implicit device order used by
-    `pmap`.
+    `pmap` if devices is None. If devices is specified, it will use those
+    devices.
 
     Args:
       shape: The shape of the input array.
       sharded_dim: Dimension the input array is sharded on. Defaults to 0.
+      devices: Optional sequence of devices used to create PmapSharding. If not
+        specified, it will use the implicit device order used by pmap which is
+        the order of jax.local_devices()
     """
     # The dtype doesn't matter here. Its only used for creating the
     # sharding_spec.
@@ -418,8 +423,11 @@ class PmapSharding(XLACompatibleSharding):
           '`None` to sharded_dim is not supported. Please file a jax '
           'issue if you need this feature.')
 
-    pmap_devices: np.ndarray = np.array(
-        xla_bridge.local_devices()[:num_ways_sharded])
+    if devices is None:
+      pmap_devices: np.ndarray = np.array(
+          xla_bridge.local_devices()[:num_ways_sharded])
+    else:
+      pmap_devices = np.array(devices)
     return cls(pmap_devices, sharding_spec)
 
   @functools.cached_property
