@@ -250,8 +250,8 @@ class Mesh(contextlib.ContextDecorator):
     return set(self.local_devices)
 
   @functools.cached_property
-  def _flat_devices_list(self):
-    return list(self.devices.flat)
+  def _flat_devices_tuple(self):
+    return tuple(self.devices.flat)
 
   @functools.cached_property
   def _flat_devices_set(self):
