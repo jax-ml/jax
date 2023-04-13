@@ -540,7 +540,6 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
-    unordered_effects: List[core.Effect],
     ordered_effects: List[core.Effect],
     backend_or_name: Optional[Union[str, xb.XlaBackend]],
     platform: str,
@@ -1773,7 +1772,7 @@ def build_xla_computation_helper(
   if closed_jaxpr.effects:
     raise NotImplementedError
   lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
-      backend_or_name=backend_or_name, unordered_effects=[], ordered_effects=[],
+      backend_or_name=backend_or_name, ordered_effects=[],
       name_stack=source_info_util.NameStack(),
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platform=platform)
