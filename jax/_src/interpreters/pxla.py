@@ -2318,7 +2318,6 @@ class MeshComputation(stages.XlaLowering):
   def compile(
       self,
       compiler_options=None,
-      _allow_propagation_to_outputs: Optional[Sequence[bool]] = None,
   ) -> MeshExecutable:
     if self._executable is None or compiler_options is not None:
       if self.is_trivial:
@@ -2329,7 +2328,6 @@ class MeshComputation(stages.XlaLowering):
             self._name,
             self._hlo,
             **self.compile_args,
-            _allow_propagation_to_outputs=_allow_propagation_to_outputs,
             compiler_options=compiler_options)
       if compiler_options is None:
         self._executable = executable
@@ -2484,7 +2482,7 @@ def maybe_get_orig_out_sharding(
 
 
 @weakref_lru_cache
-def _cached_compilation(computation, name, mesh, num_out_avals, spmd_lowering,
+def _cached_compilation(computation, name, mesh, spmd_lowering,
                         tuple_args, auto_spmd_lowering,
                         _allow_propagation_to_outputs, host_callbacks, backend,
                         da, pmap_nreps, compiler_options_keys,
@@ -2542,9 +2540,6 @@ def _cached_compilation(computation, name, mesh, num_out_avals, spmd_lowering,
         sharding_specs.get_logical_mesh_ids(list(mesh.shape.values()))
         .reshape(-1))
   compile_options.parameter_is_tupled_arguments = tuple_args
-
-  if _allow_propagation_to_outputs is None:
-    _allow_propagation_to_outputs = [False] * num_out_avals
   opts.allow_spmd_sharding_propagation_to_output = list(_allow_propagation_to_outputs)
 
   if hasattr(backend, "compile_replicated"):
@@ -2614,7 +2609,6 @@ class UnloadedMeshExecutable:
                spmd_lowering: bool,
                tuple_args: bool,
                auto_spmd_lowering: bool,
-               _allow_propagation_to_outputs: Optional[Sequence[bool]],
                unordered_effects: List[core.Effect],
                ordered_effects: List[core.Effect],
                host_callbacks: List[Any],
@@ -2626,9 +2620,6 @@ class UnloadedMeshExecutable:
                pmap_nreps: int = 1,
                compiler_options=None
   ) -> MeshExecutable:
-    allow_propagation_to_outputs = (
-        tuple(_allow_propagation_to_outputs)
-        if _allow_propagation_to_outputs is not None else None)
     compiler_options_keys = tuple(
         compiler_options.keys()) if compiler_options is not None else None
     compiler_options_values = tuple(
@@ -2636,9 +2627,10 @@ class UnloadedMeshExecutable:
     da = device_assignment if isinstance(
         device_assignment, _DeviceAssignment) else tuple(device_assignment)
     del device_assignment
+    allow_prop_to_outputs = tuple(is_unspecified(o) for o in out_shardings)
     xla_executable, compile_options = _cached_compilation(
-        computation, name, mesh, len(global_out_avals), spmd_lowering,
-        tuple_args, auto_spmd_lowering, allow_propagation_to_outputs,
+        computation, name, mesh, spmd_lowering,
+        tuple_args, auto_spmd_lowering, allow_prop_to_outputs,
         tuple(host_callbacks), backend, da, pmap_nreps,
         compiler_options_keys, compiler_options_values)
 

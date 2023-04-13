@@ -131,7 +131,7 @@ def apply_primitive(prim, *args, **params):
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
     # TODO(yashkatariya): Thread through a signature_fun via every primitive
-    # using apply_primtive so that the error message has the right argument
+    # using apply_primitive so that the error message has the right argument
     # name instead of `args[0]`, etc.
     arg_names = api_util._arg_names(prim.impl, args, {}, (), ())
     msg = pjit._device_assignment_mismatch_error(
@@ -247,8 +247,7 @@ def _xla_callable_uncached(fun: lu.WrappedFun, name, donated_invars,
   computation = sharded_lowering(fun, name, donated_invars, keep_unused,
                                  in_avals, orig_in_shardings,
                                  lowering_platform=None)
-  allow_prop = [True] * len(computation.compile_args['global_out_avals'])
-  return computation.compile(_allow_propagation_to_outputs=allow_prop).unsafe_call
+  return computation.compile().unsafe_call
 
 
 def is_single_device_sharding(sharding) -> bool:

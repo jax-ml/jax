@@ -1071,12 +1071,10 @@ def _pjit_call_impl(*args, jaxpr,
       args, in_shardings, out_shardings,
       resource_env.physical_mesh if resource_env is not None else None)
 
-  _allow_propagation_to_outputs = [is_unspecified(o) for o in out_shardings]
   compiled = _pjit_lower(
       jaxpr, in_shardings, out_shardings, resource_env,
       donated_invars, name, keep_unused,
-      always_lower=False, lowering_platform=None).compile(
-          _allow_propagation_to_outputs=_allow_propagation_to_outputs)
+      always_lower=False, lowering_platform=None).compile()
   _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:

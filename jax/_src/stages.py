@@ -39,7 +39,6 @@ from typing import (
 import jax
 
 from jax._src import core
-from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
@@ -597,18 +596,7 @@ class Lowered(Stage):
   def compile(
       self, compiler_options: Optional[CompilerOptions] = None) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
-    from jax._src.interpreters import pxla
-
     kw: Dict[str, Any] = {"compiler_options": compiler_options}
-
-    if isinstance(self._lowering, pxla.MeshComputation):
-      kw.update(
-          _allow_propagation_to_outputs=[
-              sharding_impls.is_unspecified(o)
-              for o in self._lowering.compile_args["out_shardings"]
-          ]
-      )
-
     return Compiled(
         self._lowering.compile(**kw),  # pytype: disable=wrong-keyword-args
         self.args_info,
