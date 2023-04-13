@@ -1767,12 +1767,12 @@ def _get_default_device() -> xc.Device:
 def _get_and_check_device_assignment(
     shardings: Iterable[ShardingInfo],
     devices: Optional[Sequence[xc.Device]],
-) -> Tuple[xc.Client, Sequence[xc.Device]]:
+) -> Tuple[xc.Client, Tuple[xc.Device, ...]]:
   first_sharding_info = None
   if devices is None:
-    devices = []
+    devices = ()
   else:
-    devices = list(devices)
+    devices = tuple(devices)
 
   for i, s_type, source_info in shardings:
     if is_auto(i) or is_unspecified(i):
@@ -1780,8 +1780,8 @@ def _get_and_check_device_assignment(
     # Assign `first_sharding_info` after `AUTO` and `UNSPECIFIED` have been
     # skipped.
     if first_sharding_info is None:
-      first_sharding_info = (list(i._device_assignment), s_type, source_info)  # type: ignore
-    arr_device_assignment = list(i._device_assignment)  # type: ignore
+      first_sharding_info = (i._device_assignment, s_type, source_info)  # type: ignore
+    arr_device_assignment = i._device_assignment  # type: ignore
     if not devices:
       if first_sharding_info[0] != arr_device_assignment:
         raise DeviceAssignmentMismatchError([
@@ -1795,7 +1795,7 @@ def _get_and_check_device_assignment(
   if first_sharding_info is None and devices:
     final_device_assignment = devices
   elif first_sharding_info is None:
-    final_device_assignment = [_get_default_device()]
+    final_device_assignment = (_get_default_device(),)
   else:
     final_device_assignment = first_sharding_info[0]
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment

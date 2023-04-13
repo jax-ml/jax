@@ -48,7 +48,7 @@ else:
 Shape = Tuple[int, ...]
 Device = xc.Device
 Index = Tuple[slice, ...]
-XLADeviceAssignment = Sequence[Device]
+XLADeviceAssignment = Tuple[Device, ...]
 
 
 # Shardings that inherit from XLACompatibleSharding should implement the
@@ -81,8 +81,8 @@ class XLACompatibleSharding(sharding.Sharding):
 
   @functools.cached_property
   def _addressable_device_assignment(self) -> XLADeviceAssignment:
-    return [d for d in self._device_assignment
-            if d.process_index == d.client.process_index()]
+    return tuple(d for d in self._device_assignment
+                 if d.process_index == d.client.process_index())
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
@@ -255,7 +255,7 @@ class NamedSharding(XLACompatibleSharding):
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return self.mesh._flat_devices_list
+    return self.mesh._flat_devices_tuple
 
   @property
   def is_fully_addressable(self) -> bool:
@@ -345,7 +345,7 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return [self._device]
+    return (self._device,)
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return get_replicated_op_sharding()
@@ -434,7 +434,7 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self.devices.flat)
+    return tuple(self.devices.flat)
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
@@ -469,7 +469,7 @@ def _from_op_sharding_to_pos_sharding(
   name = device_assignment[0].platform.upper()
   ids = np.array([DeviceIdSet(name, i)
                   for i in op_sharding.tile_assignment_devices])
-  p = PositionalSharding.remake(list(device_assignment), ids)
+  p = PositionalSharding.remake(tuple(device_assignment), ids)
   p = p.reshape(op_sharding.tile_assignment_dimensions)
   if num_replicas > 1:
     p = p.replicate(-1, keepdims=False)
@@ -477,7 +477,7 @@ def _from_op_sharding_to_pos_sharding(
 
 
 class PositionalSharding(XLACompatibleSharding):
-  _devices: List[xc.Device]
+  _devices: Tuple[xc.Device, ...]
   _ids: np.ndarray  # dtype DeviceIdSet
 
   def __init__(self, devices: Union[Sequence[xc.Device], np.ndarray]):
@@ -486,7 +486,7 @@ class PositionalSharding(XLACompatibleSharding):
     if not devices.size:
       raise ValueError(f"{self.__class__.__name__}.__init__ requires at least "
                        f"one device, got {devices}")
-    self._devices = list(devices.flat)
+    self._devices = tuple(devices.flat)
     name = self._devices[0].platform.upper()
     self._ids = np.array([DeviceIdSet(name, i) for i in range(devices.size)],
                          dtype='object').reshape(devices.shape)
@@ -517,7 +517,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   @classmethod
   def remake(
-      cls, devices: List[xc.Device], ids: np.ndarray) -> PositionalSharding:
+      cls, devices: Tuple[xc.Device, ...], ids: np.ndarray) -> PositionalSharding:
     self = cls.__new__(cls)
     self._devices = devices
     self._ids = ids
@@ -527,7 +527,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   def __hash__(self) -> int:
     if not hasattr(self, '_hash'):
-      self._hash = hash(tuple(self._devices))
+      self._hash = hash(self._devices)
     return self._hash
 
   def __eq__(self, other) -> bool:
@@ -549,7 +549,7 @@ class PositionalSharding(XLACompatibleSharding):
   # XLACompatibleSharding interface
 
   @property
-  def _device_assignment(self) -> list[xc.Device]:
+  def _device_assignment(self) -> XLADeviceAssignment:
     return self._devices
 
   @functools.lru_cache(maxsize=4096)
@@ -657,7 +657,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
-    return list(self._devices)
+    return self._devices
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return self._op_sharding
@@ -665,7 +665,7 @@ class GSPMDSharding(XLACompatibleSharding):
   @classmethod
   def get_replicated(cls, device_assignment):
     proto = get_replicated_op_sharding()
-    return cls(device_assignment, proto)
+    return cls(tuple(device_assignment), proto)
 
 
 class AUTOAxisResource:

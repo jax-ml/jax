@@ -1306,7 +1306,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     ans_devices = ans.sharding._device_assignment
     # TODO(mattjj,sharadmv): fix physical layout with eager pmap, remove 'if'
     if not config.jax_disable_jit:
-      self.assertEqual(ans_devices, devices)
+      self.assertEqual(ans_devices, tuple(devices))
 
   def testPmapConstantError(self):
     device_count = jax.device_count()
