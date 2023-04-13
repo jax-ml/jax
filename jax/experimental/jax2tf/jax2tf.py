@@ -14,6 +14,7 @@
 """Provides JAX and TensorFlow interoperation APIs."""
 from functools import partial
 import contextlib
+import math
 import operator
 import os
 import re
@@ -3094,7 +3095,7 @@ def split_to_logical_devices(tensor: TfVal,
   # of _shard_values.
   if partition_dimensions is None:
     return xla_sharding.replicate(tensor, use_sharding_op=True)
-  num_partition_splits = np.prod(partition_dimensions)
+  num_partition_splits = math.prod(partition_dimensions)
   tile_assignment = np.arange(num_partition_splits).reshape(
       partition_dimensions)
   return xla_sharding.tile(tensor, tile_assignment, use_sharding_op=True)

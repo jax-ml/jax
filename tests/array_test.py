@@ -908,7 +908,7 @@ class ShardingTest(jtu.JaxTestCase):
       self.skipTest('Test needs >= 4 devices.')
     ps = jax.sharding.PmapSharding.default(shape, sharded_dim)
 
-    inp = jnp.arange(np.prod(shape)).reshape(shape)
+    inp = jnp.arange(math.prod(shape)).reshape(shape)
     compiled = jax.pmap(lambda x: x, in_axes=sharded_dim).lower(inp).compile()
     pmap_in_sharding, = compiled._executable.unsafe_call.in_handler.in_shardings
 

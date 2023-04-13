@@ -304,7 +304,7 @@ class _DimMon(dict):
       assert a_l <= a_u
       bounds.append((a_l ** exp, a_u ** exp))
 
-    candidates = [np.prod(atom_bounds) for atom_bounds in itertools.product(*bounds)]
+    candidates = [math.prod(atom_bounds) for atom_bounds in itertools.product(*bounds)]
     return (min(*candidates), max(*candidates))  # type: ignore
 
 
@@ -696,8 +696,8 @@ class DimensionHandlerPoly(core.DimensionHandler):
     return _ensure_poly(d1, "ge") >= d2
 
   def divide_shape_sizes(self, s1: Shape, s2: Shape) -> DimSize:
-    sz1 = np.prod(s1)
-    sz2 = np.prod(s2)
+    sz1 = math.prod(s1)
+    sz2 = math.prod(s2)
     if core.symbolic_equal_dim(sz1, sz2):  # Takes care also of sz1 == sz2 == 0
       return 1
     err_msg = f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}"

@@ -15,6 +15,7 @@
 
 import enum
 import functools
+import math
 import operator
 
 import google_benchmark
@@ -54,7 +55,7 @@ def required_devices(num_devices_required):
 
 
 def create_mesh(shape, axis_names, state):
-  size = np.prod(shape)
+  size = math.prod(shape)
   if len(jax.devices()) < size:
     state.skip_with_error(f"Requires {size} devices")
     return None
@@ -421,7 +422,7 @@ def sda_index_8(state):
 def _sparse_bcoo_fromdense(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
-  size = np.prod(shape)
+  size = math.prod(shape)
   rng = np.random.RandomState(1701)
   data = rng.randn(nse)
   indices = np.unravel_index(
@@ -460,7 +461,7 @@ def sparse_bcoo_fromdense_compile(state):
 def _sparse_bcoo_todense(state, jit: bool = False, compile: bool = False):
   shape = (2000, 2000)
   nse = 10000
-  size = np.prod(shape)
+  size = math.prod(shape)
   rng = np.random.RandomState(1701)
   data = rng.randn(nse)
   indices = np.unravel_index(
@@ -600,7 +601,7 @@ def bench_addressable_shards_index(state):
   if mesh is None:
     return
   shape = (8, 2)
-  inp = np.arange(np.prod(shape)).reshape(shape)
+  inp = np.arange(math.prod(shape)).reshape(shape)
   s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x', 'y'))
   arr = jax.device_put(inp, s)
 
@@ -614,7 +615,7 @@ def bench_addressable_shards_replica_id(state):
   if mesh is None:
     return
   shape = (64, 32)
-  inp = np.arange(np.prod(shape)).reshape(shape)
+  inp = np.arange(math.prod(shape)).reshape(shape)
   s = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('x', 'y'))
   arr = jax.device_put(inp, s)
 
@@ -785,7 +786,7 @@ def pjit_aot_4000_device(state):
 def host_local_array_to_global_array(state):
   global_mesh = create_mesh((4, 2), ('x', 'y'), state)
   input_shape = (8, 2)
-  input_data = np.arange(np.prod(input_shape)).reshape(input_shape)
+  input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
   in_pspec = jax.sharding.PartitionSpec('x', 'y')
 
   while state:

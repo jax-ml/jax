@@ -1043,7 +1043,7 @@ def iota_2x32_shape(shape):
   Setting aside representation, this function essentially computes the
   equivalent of::
 
-    jax.lax.iota(dtype=np.uint64, size=np.prod(shape)).reshape(shape)
+    jax.lax.iota(dtype=np.uint64, size=math.prod(shape)).reshape(shape)
 
   However:
 
@@ -1069,7 +1069,7 @@ def iota_2x32_shape(shape):
             [ 8,  9, 10, 11]], dtype=uint32)]
 
     >>> def reshaped_iota(shape):
-    ...   return lax.iota(size=np.prod(shape), dtype=np.uint32).reshape(shape)
+    ...   return lax.iota(size=math.prod(shape), dtype=np.uint32).reshape(shape)
     ...
     >>> reshaped_iota((3, 4))
     Array([[ 0,  1,  2,  3],

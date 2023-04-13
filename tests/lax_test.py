@@ -641,7 +641,7 @@ class LaxTest(jtu.JaxTestCase):
       if c == 'N':
         self.assertEqual(out_c, patch_c)
       elif c == 'C':
-        self.assertEqual(out_c * np.prod(filter_shape), patch_c)
+        self.assertEqual(out_c * math.prod(filter_shape), patch_c)
       else:
         self.assertEqual(out_c, patch_c * filter_shape[filter_spec.index(c)])
 

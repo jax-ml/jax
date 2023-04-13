@@ -498,6 +498,7 @@ import atexit
 import functools
 import itertools
 import logging
+import math
 import threading
 import traceback
 from typing import (Any, Callable, Dict, List, Optional, Sequence,
@@ -1380,7 +1381,7 @@ def _add_transform(params: Dict, name: str, *transform_params) -> Dict:
 
 
 def _aval_is_empty(aval) -> bool:
-  return np.prod(aval.shape) == 0
+  return math.prod(aval.shape) == 0
 
 def _instantiate_zeros(tan, arg):
   """Turn special ad.zero tangents into arrays of 0s for sending to host.
