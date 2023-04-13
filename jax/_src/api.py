@@ -542,14 +542,11 @@ def xla_computation(fun: Callable,
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
       jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
       axis_env_ = make_axis_env(dispatch.jaxpr_replicas(jaxpr))
-      unordered_effects = list(
-          effects.ordered_effects.filter_not_in(jaxpr.effects))
       ordered_effects = list(
           effects.ordered_effects.filter_in(jaxpr.effects))
       lowering_result = mlir.lower_jaxpr_to_module(
           f"xla_computation_{fun_name}",
           core.ClosedJaxpr(jaxpr, consts),
-          unordered_effects=unordered_effects,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
           platform=platform,

@@ -878,7 +878,6 @@ def lower_parallel_callable(
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
-        unordered_effects,
         ordered_effects,
         backend,
         lowering_platform or backend.platform,
@@ -1918,13 +1917,10 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     if any(effects.ordered_effects.contains(eff) for eff
            in closed_jaxpr.effects):
       raise ValueError("Ordered effects are not supported for more than 1 device.")
-  unordered_effects = list(
-      effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
   lowering_result = mlir.lower_jaxpr_to_module(
       module_name,
       closed_jaxpr,
-      unordered_effects,
       ordered_effects,
       backend,
       # Optionally, override the lowering platform
@@ -1943,6 +1939,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
       lowering_result.module, lowering_result.keepalive,
       lowering_result.host_callbacks)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
+  unordered_effects = list(
+      effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
   return (module, keepalive, host_callbacks, unordered_effects,
           ordered_effects, nreps, tuple_args)
 
@@ -2256,7 +2254,6 @@ def lower_mesh_computation(
     lowering_result = mlir.lower_jaxpr_to_module(
         module_name,
         closed_jaxpr,
-        unordered_effects,
         ordered_effects,
         backend,
         lowering_platform or backend.platform,
