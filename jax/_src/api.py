@@ -493,6 +493,15 @@ def xla_computation(fun: Callable,
   """
   del instantiate_const_outputs  # Unused
 
+  if in_parts is not None:
+    raise ValueError(
+        "in_parts has been deprecated. Please use the ahead of time APIs. You"
+        " can read more here: https://jax.readthedocs.io/en/latest/aot.html")
+  if out_parts is not None:
+    raise ValueError(
+        "out_parts has been deprecated. Please use the ahead of time APIs. You"
+        " can read more here: https://jax.readthedocs.io/en/latest/aot.html")
+
   check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)
   donate_argnums = _ensure_index_tuple(donate_argnums)
@@ -525,11 +534,6 @@ def xla_computation(fun: Callable,
     else:
       donated_invars = (False,) * len(args_flat)
 
-    if in_parts is None:
-      in_parts_flat = None
-    else:
-      in_parts_flat = tuple(flatten_axes(
-          "xla_computation in_parts", in_tree.children()[0], in_parts))
     jaxtree_fun, out_tree = flatten_fun(f, in_tree)
     avals = map(shaped_abstractify, args_flat)
     with ExitStack() as stack:
@@ -538,11 +542,6 @@ def xla_computation(fun: Callable,
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
       jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
       axis_env_ = make_axis_env(dispatch.jaxpr_replicas(jaxpr))
-      if out_parts is None:
-        out_parts_flat = None
-      else:
-        out_parts_flat = tuple(flatten_axes(
-            "xla_computation out_parts", out_tree(), out_parts))
       unordered_effects = list(
           effects.ordered_effects.filter_not_in(jaxpr.effects))
       ordered_effects = list(
@@ -558,10 +557,8 @@ def xla_computation(fun: Callable,
           name_stack=source_info_util.new_name_stack(
               wrap_name(fun_name, "xla_computation")),
           donated_args=donated_invars,
-          arg_shardings=(None if in_parts_flat is None else map(
-              xla.sharding_to_proto, in_parts_flat)),
-          result_shardings=(None if out_parts_flat is None else map(
-              xla.sharding_to_proto, out_parts_flat)))
+          arg_shardings=None,
+          result_shardings=None)
       if tuple_args is not None:
         should_tuple = tuple_args
       else:

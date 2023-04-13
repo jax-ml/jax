@@ -21,6 +21,8 @@ Remember to align the itemized text with the first line of an item within a list
     deprecated. Please use `in_shardings` and `out_shardings` respectively.
   * The function `jax.numpy.msort` has been removed. It has been deprecated since
     JAX v0.4.1. Use `jnp.sort(a, axis=0)` instead.
+  * `in_parts` and `out_parts` arguments have been removed from `jax.xla_computation`
+    since they were only used with sharded_jit and sharded_jit is long gone.
 
 ## jaxlib 0.4.9
 
