@@ -2411,6 +2411,7 @@ def _infer_src_sharding(src, x):
   return x.sharding if isinstance(x, array.ArrayImpl) else None
 
 
+@api_boundary
 def device_put(
     x,
     device: Union[None, xc.Device, Sharding, Any] = None,
