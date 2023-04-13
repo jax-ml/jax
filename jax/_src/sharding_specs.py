@@ -75,7 +75,7 @@ def _sharding_spec_mesh_shape(self):
 
 
 def get_logical_mesh_ids(mesh_shape):
-  return np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+  return np.arange(math.prod(mesh_shape)).reshape(mesh_shape)
 
 
 _MeshAxisName = Any
@@ -123,7 +123,7 @@ def sharding_spec_sharding_proto(
         assert mesh_shape[maxis] == nchunks
         mesh_permutation.append(maxis)
         next_sharded_axis += 1
-      new_mesh_shape.append(int(np.prod(sharding.chunks)))
+      new_mesh_shape.append(math.prod(sharding.chunks))
     elif isinstance(sharding, Unstacked):
       raise RuntimeError("Cannot convert unstacked sharding specs to XLA OpSharding")
     else:
@@ -187,7 +187,7 @@ def _sharding_spec_indices(self, shape: Tuple[int, ...]) -> np.ndarray:
       axis_indices.append(range(axis_size))
       shard_indices_shape.append(axis_size)
     elif isinstance(sharding, Chunked):
-      total_chunks = int(np.prod(sharding.chunks))
+      total_chunks = math.prod(sharding.chunks)
       shard_size, ragged = divmod(axis_size, total_chunks)
       assert not ragged, (axis_size, total_chunks, dim)
       axis_indices.append([slice(i * shard_size, (i + 1) * shard_size)

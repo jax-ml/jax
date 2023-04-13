@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from absl.testing import absltest
+import math
 import unittest
 
 import numpy as np
@@ -206,7 +207,7 @@ mlir.register_lowering(
 
 def make_sparse_array(rng, shape, dtype, nnz=0.2):
   mat = rng(shape, dtype)
-  size = int(np.prod(shape))
+  size = math.prod(shape)
   if 0 < nnz < 1:
     nnz = nnz * size
   nnz = int(nnz)

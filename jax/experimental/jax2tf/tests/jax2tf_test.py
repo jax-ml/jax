@@ -16,6 +16,7 @@
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
 import contextlib
+import math
 import os
 import re
 from typing import Callable, Dict, Optional, Tuple
@@ -1286,7 +1287,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return carry
 
     shape = (3, 2)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     jax_comp = jax.xla_computation(f_while)(x)
     backend = jax._src.xla_bridge.get_backend()
@@ -1723,7 +1724,7 @@ class XlaCallModuleTest(tf_test_util.JaxToTfTestCase):
       return x + y
 
     shape = (8, 10)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     in_axis_resources = (P("x"), P("x"))
     out_axis_resources = None
     res_jax = pjit.pjit(

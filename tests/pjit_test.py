@@ -226,8 +226,8 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     x_shape = (8, 6, 4)
     y_shape = (4, 2)
-    x = jnp.arange(np.prod(x_shape)).reshape(x_shape)
-    y = jnp.arange(np.prod(y_shape)).reshape(y_shape)
+    x = jnp.arange(math.prod(x_shape)).reshape(x_shape)
+    y = jnp.arange(math.prod(y_shape)).reshape(y_shape)
     actual = f(x, y)
     expected = x @ y
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -285,7 +285,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     actual = f(x, x + 1)
     expected = x @ (x + 1)
     self.assertAllClose(actual, expected, check_dtypes=False)
@@ -753,7 +753,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
       return x + y + z + w
 
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     y = x * 2.
     z = x * 3.
     w = x * 4.
@@ -822,7 +822,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       token = lax.outfeed(token, x, partitions=(P(1, nr_devices),))
       return x
 
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
     def _dispatch():
       with jax.sharding.Mesh(devices, ['d']):
@@ -863,7 +863,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     expected = x @ (x + 1)
 
     lowered = f.lower(x, x + 1)
@@ -896,7 +896,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     exe = f.lower(x, x + 1, a=1, b=2).compile()
     out = exe(x, x + 1, a=1, b=2)
     self.assertArraysEqual(out, x @ (x + 1))
@@ -910,7 +910,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     exe = f.lower(x, x + 1).compile()
 
     self.assertRaisesRegex(
@@ -926,7 +926,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     x_f32 = x.astype(jnp.float32)
     x_i32 = x.astype(jnp.int32)
     exe = f.lower(x_f32, x_f32).compile()
@@ -947,7 +947,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1)
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
@@ -963,7 +963,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
@@ -995,7 +995,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1).compile()
     self.assertIsNotNone(f.compiler_ir())
 
@@ -1008,7 +1008,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1).compile()
     self.assertIsInstance(f.as_text(), (str, type(None)))
 
@@ -1022,7 +1022,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1)
     f.cost_analysis()  # doesn't raise
 
@@ -1036,7 +1036,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1).compile()
     f.cost_analysis()  # doesn't raise
 
@@ -1050,7 +1050,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = f.lower(x, x + 1).compile()
     f.memory_analysis()  # doesn't raise
 
@@ -1063,7 +1063,7 @@ class PJitTest(jtu.BufferDonationTestCase):
       return x @ y
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
 
     f = f.lower(x, x + 1).compile()
     self.assertIsNotNone(f.runtime_executable())
@@ -1088,7 +1088,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     shape = (8, 8)
     aval = core.ShapedArray(shape, dtypes.canonicalize_dtype(jnp.int64))
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     exe = f.lower(aval, x).compile()
     self.assertIsInstance(exe, stages.Compiled)
     self.assertArraysEqual(exe(x, x), x @ x)
@@ -2158,7 +2158,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       return x if c == 0 else x + 1
 
     shape = (8, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     exe = f.lower(1, x).compile()
 
     self.assertAllClose(exe(x), x + 1, check_dtypes=False)
@@ -3205,7 +3205,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testNonDivisibleArgs(self, mesh, resources):
     x = jnp.ones((3, 2))
     spec = P(resources, None)
-    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+    mesh_size = str(math.prod([dim[1] for dim in mesh]))
     error = re.compile(
         r"One of pjit arguments.*" + spec_regex(spec) + r".*"
         r"implies that the global size of its dimension 0 should be "
@@ -3218,7 +3218,7 @@ class PJitErrorTest(jtu.JaxTestCase):
   def testNonDivisibleOuts(self, mesh, resources):
     x = jnp.ones((3, 2))
     spec = P(resources, None)
-    mesh_size = str(np.prod([dim[1] for dim in mesh], dtype=np.int64))
+    mesh_size = str(math.prod([dim[1] for dim in mesh]))
     error = re.compile(
         r"One of pjit outputs.*" + spec_regex(spec) + r".*"
         r"implies that the global size of its dimension 0 should be "
@@ -3456,7 +3456,7 @@ class PJitErrorTest(jtu.JaxTestCase):
           return x
         return h(x)
     xshape = (2, 5, 6)
-    x = jnp.arange(np.prod(xshape)).reshape(xshape)
+    x = jnp.arange(math.prod(xshape)).reshape(xshape)
     with self.assertRaisesRegex(RuntimeError,
                                 "Changing the physical mesh is not allowed.*"):
       f(x)
@@ -3506,7 +3506,7 @@ class UtilTest(jtu.JaxTestCase):
     FakeDevice = namedtuple('FakeDevice', ['id'])
     mesh_named_shape = OrderedDict([('a', 2), ('b', 3), ('c', 4), ('d', 7), ('e', 4)])
     mesh_axes, mesh_shape = unzip2(mesh_named_shape.items())
-    devices = [FakeDevice(i) for i in range(np.prod(list(mesh_shape)))]
+    devices = [FakeDevice(i) for i in range(math.prod(mesh_shape))]
     mesh = pxla.Mesh(np.array(devices).reshape(*mesh_shape), tuple(mesh_axes))
 
     dims = 5

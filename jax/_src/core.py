@@ -1869,8 +1869,8 @@ class DimensionHandler:
     Raise InconclusiveDimensionOperation if there is no such integer for all
     contexts,
     """
-    sz1 = int(np.prod(s1))
-    sz2 = int(np.prod(s2))
+    sz1 = math.prod(s1)
+    sz2 = math.prod(s2)
     if sz1 == 0 and sz2 == 0:
       return 1
     if sz1 % sz2:

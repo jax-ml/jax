@@ -13,6 +13,7 @@
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
 import contextlib
+import math
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -1280,7 +1281,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # https://github.com/google/jax/issues/7093
     # Also issue #6975.
     x_shape = (2, 3, 4)
-    xi = np.arange(np.prod(x_shape), dtype=np.int16).reshape(x_shape)
+    xi = np.arange(math.prod(x_shape), dtype=np.int16).reshape(x_shape)
     yf = xi.astype(np.float32)
     xi_yf = (xi, yf)
     zb = np.array([True, False], dtype=np.bool_)
@@ -1350,7 +1351,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     f_tf = jax2tf.convert(f_jax, polymorphic_shapes=["(b, ...)"])
     f_tf = tf.function(f_tf, autograph=False)
     x_shape = (2, 3, 4)
-    x = np.arange(np.prod(x_shape), dtype=np.int32).reshape(x_shape)
+    x = np.arange(math.prod(x_shape), dtype=np.int32).reshape(x_shape)
 
     # When saving the model with gradients, we trace the gradient function
     # and we used to get an error when creating zeros_like_aval for a
@@ -1378,7 +1379,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     jax2tf.convert(lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1],)),
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
-    jax2tf.convert(lambda x: jnp.reshape(x, (np.prod(x.shape),)),
+    jax2tf.convert(lambda x: jnp.reshape(x, (math.prod(x.shape),)),
                    polymorphic_shapes=["(b, 4)"])(np.ones((3, 4)))
 
     jax2tf.convert(lambda x: x + x.shape[0] + jnp.sin(x.shape[0]),

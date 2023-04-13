@@ -1256,7 +1256,7 @@ mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
 @partial(vectorize, excluded={3}, signature='(n,n),(n),(n,k)->(n,k)')
 def _lu_solve_core(lu: Array, permutation: Array, b: Array, trans: int) -> Array:
   m = lu.shape[0]
-  x = jnp.reshape(b, (m, np.prod(b.shape[1:])))
+  x = jnp.reshape(b, (m, math.prod(b.shape[1:])))
   if trans == 0:
     x = x[permutation, :]
     x = triangular_solve(lu, x, left_side=True, lower=True, unit_diagonal=True)

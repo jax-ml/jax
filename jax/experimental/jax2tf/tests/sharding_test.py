@@ -628,7 +628,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       raise unittest.SkipTest("TODO(b/268295912): ShardingRemover crash")
 
     mesh = Mesh(self.devices, axis_names=('x'))
-    a = np.arange(np.prod(4 * 4), dtype=np.float32).reshape((4, 4))
+    a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
     @partial(pjit.pjit,
              in_shardings=(P('x', None),), out_shardings=P(None, 'x'))
@@ -680,7 +680,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
       return lax.ppermute(b, 'x', perm=perm)
 
     with mesh:
-      a = np.arange(np.prod(4 * 4)).reshape((4, 4))
+      a = np.arange(4 * 4).reshape((4, 4))
       res_jax = f_jax(a)
       b0, b1 = np.split(a, 2, axis=0)  # The shard_map splits on axis 0
       b0, b1 = b1, b0
@@ -705,7 +705,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
     if poly is not None:
       raise unittest.SkipTest("TODO: Sharding custom calls lack shape refinement")
     mesh = Mesh(self.devices, axis_names=('x'))
-    a = np.arange(np.prod(4 * 4), dtype=np.float32).reshape((4, 4))
+    a = np.arange(4 * 4, dtype=np.float32).reshape((4, 4))
 
     @partial(pjit.pjit,
              in_shardings=(P('x', None),), out_shardings=P('x', None))

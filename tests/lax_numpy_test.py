@@ -3805,16 +3805,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testTakeAlongAxis(self, x_shape, i_shape, dtype, index_dtype, axis):
     rng = jtu.rand_default(self.rng())
 
-    i_shape = np.array(i_shape)
+    i_shape = list(i_shape)
     if axis is None:
-      i_shape = [np.prod(i_shape, dtype=np.int64)]
+      i_shape = [math.prod(i_shape)]
     else:
       # Test the case where the size of the axis doesn't necessarily broadcast.
       i_shape[axis] *= 3
-      i_shape = list(i_shape)
     def args_maker():
       x = rng(x_shape, dtype)
-      n = np.prod(x_shape, dtype=np.int32) if axis is None else x_shape[axis]
+      n = math.prod(x_shape) if axis is None else x_shape[axis]
       if np.issubdtype(index_dtype, np.unsignedinteger):
         index_rng = jtu.rand_int(self.rng(), 0, n)
       else:

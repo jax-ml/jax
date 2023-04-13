@@ -1624,10 +1624,10 @@ def manual_proto(
   tad_perm = ([axis_order[a] for a in replicated_axes] +
               [axis_order[a] for a in manual_axes])
   tad_shape = [1] * aval.ndim
-  tad_shape.append(int(np.prod([named_mesh_shape[a] for a in replicated_axes], dtype=int)))
-  tad_shape.append(int(np.prod([named_mesh_shape[a] for a in manual_axes], dtype=int)))
+  tad_shape.append(math.prod([named_mesh_shape[a] for a in replicated_axes]))
+  tad_shape.append(math.prod([named_mesh_shape[a] for a in manual_axes]))
 
-  raw_mesh = np.arange(np.prod(mesh_shape)).reshape(mesh_shape)
+  raw_mesh = np.arange(math.prod(mesh_shape)).reshape(mesh_shape)
   proto = xc.OpSharding()
   proto.type = xc.OpSharding.Type.OTHER
   proto.tile_assignment_dimensions = tad_shape
