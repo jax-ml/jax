@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import math
 import operator
 from typing import Callable, Optional, Tuple, Union, Sequence
 import warnings
@@ -232,7 +233,7 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
   else:
     step = nperseg - noverlap
     batch_shape = list(batch_shape)
-    x = x.reshape((int(np.prod(batch_shape)), signal_length))[..., np.newaxis]
+    x = x.reshape((math.prod(batch_shape)), signal_length)[..., np.newaxis]
     result = jax.lax.conv_general_dilated_patches(
         x, (nperseg,), (step,),
         'VALID',
@@ -579,7 +580,7 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
     raise ValueError('Input must have (..., frames, frame_length) shape.')
 
   *batch_shape, nframes, segment_len = x.shape
-  flat_batchsize = np.prod(batch_shape, dtype=np.int64)
+  flat_batchsize = math.prod(batch_shape)
   x = x.reshape((flat_batchsize, nframes, segment_len))
   output_size = step_size * (nframes - 1) + segment_len
   nstep_per_segment = 1 + (segment_len - 1) // step_size

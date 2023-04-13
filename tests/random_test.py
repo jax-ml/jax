@@ -14,6 +14,7 @@
 
 
 from functools import partial
+import math
 from unittest import SkipTest, skipIf
 from typing import Any, Tuple, NamedTuple, Optional
 import zlib
@@ -689,7 +690,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       for ndim in [1 if is_range else len(input_range_or_shape)]
       for axis in range(-ndim, ndim or 1)
       for ninputs in [input_range_or_shape if is_range else input_range_or_shape[axis]]
-      if replace or np.prod(shape) <= ninputs
+      if replace or math.prod(shape) <= ninputs
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.integer,
     weighted=[True, False],
@@ -702,7 +703,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     key = self.seed_prng(0)
     is_range = type(input_range_or_shape) is int
     x = (input_range_or_shape if is_range else
-         self.rng().permutation(np.arange(np.prod(
+         self.rng().permutation(np.arange(math.prod(
            input_range_or_shape), dtype=dtype)).reshape(input_range_or_shape))
     N = x if is_range else x.shape[axis]
     if weighted:
@@ -718,7 +719,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     self.assertEqual(np_shape, sample.shape)
     if not replace and shape:
       def lsort(x):
-        if not np.prod(x.shape): return x
+        if not math.prod(x.shape): return x
         ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
         return jnp.take(x, ind, axis)
       self.assertArraysEqual(lsort(sample), lsort(np.unique(sample, axis=axis)))
@@ -741,7 +742,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     is_range = type(range_or_shape) is int
     x = (range_or_shape if is_range else
          self.rng().permutation(np.arange(
-           np.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
+           math.prod(range_or_shape), dtype=dtype)).reshape(range_or_shape))
     shape = ((range_or_shape,) if is_range else range_or_shape)
     x_ = np.copy(x)
     rand = lambda key, x: random.permutation(key, x, axis, independent=independent)
@@ -750,7 +751,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       self.assertFalse(np.all(perm == x))  # seems unlikely!
     arr = np.arange(x) if is_range else x
     def lsort(x):
-      if not np.prod(x.shape): return x
+      if not math.prod(x.shape): return x
       ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
       return jnp.take(x, ind, axis)
     if not independent:
@@ -1602,7 +1603,7 @@ class KeyArrayTest(jtu.JaxTestCase):
   def make_keys(self, *shape, seed=None):
     if seed is None:
       seed = 28
-    seeds = seed + jnp.arange(np.prod(shape), dtype=jnp.uint32)
+    seeds = seed + jnp.arange(math.prod(shape), dtype=jnp.uint32)
     make_key = partial(prng.seed_with_impl, prng.threefry_prng_impl)
     return jnp.reshape(jax.vmap(make_key)(seeds), shape)
 

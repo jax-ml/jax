@@ -14,6 +14,7 @@
 
 import enum
 from functools import partial
+import math
 from typing import Callable, List, NamedTuple, Optional, Sequence, Tuple, Union
 import weakref
 
@@ -1891,7 +1892,7 @@ def _scatter_jvp(primals, tangents, *, update_jaxpr, update_consts,
   #    on the IDs.
   ids_shape = np.array(updates.shape, dtype=np.int64)
   ids_shape[dnums.update_window_dims,] = 1
-  num_ids = np.prod(ids_shape)
+  num_ids = math.prod(ids_shape)
   id_dtype = np.uint32 if (num_ids + 1) < np.iinfo(np.uint32).max else np.uint64
   update_ids = lax.add(lax.reshape(lax.iota(id_dtype, num_ids), ids_shape),
                        lax._ones(updates, dtype=id_dtype))

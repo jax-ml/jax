@@ -15,6 +15,7 @@
 import builtins
 import dataclasses
 from functools import partial, wraps
+import math
 import string
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
@@ -665,7 +666,7 @@ def _reduce_monoid(operand, window_dimensions, window_strides, padding,
     # TODO(marcvanzee): This may give very large deviations on TPU when using
     # floats as inputs. Alternatively, we could implement this using a
     # convolution with an all-1's kernel.
-    return tf.multiply(tf_pool(operand, "AVG"), np.prod(window_dimensions))
+    return tf.multiply(tf_pool(operand, "AVG"), math.prod(window_dimensions))
 
 
 def _reduce_window(*args, jaxpr, consts, window_dimensions,
@@ -951,7 +952,7 @@ def _gather_generate_indices(shape: Tuple[int, ...]):
   """
   Returns the indices of the according to `shape`:
     each element in the output is the index of an element of an array
-    of the provided shape. The result's shape is (np.prod(shape), len(shape))
+    of the provided shape. The result's shape is (math.prod(shape), len(shape))
 
   For example, given shape (2,2) it returns (0,0),(0,1),(1,0),(1,1)
   """

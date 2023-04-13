@@ -18,6 +18,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import functools
+import math
 import threading
 from typing import Any, Hashable, NamedTuple, Set, Sequence, Tuple, Union
 
@@ -199,7 +200,7 @@ class Mesh(contextlib.ContextDecorator):
 
   @property
   def size(self):
-    return np.prod(list(self.shape.values()))
+    return math.prod(self.shape.values())
 
   @property
   def empty(self):

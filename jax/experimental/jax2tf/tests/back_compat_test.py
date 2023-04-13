@@ -62,6 +62,7 @@ import dataclasses
 import datetime
 from functools import partial
 import itertools
+import math
 import os
 import re
 import sys
@@ -346,7 +347,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
   @staticmethod
   def eigh_input(shape, dtype):
     # In order to keep inputs small, we construct the input programmatically
-    operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
+    operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
     # Make operand self-adjoint
     operand = (operand + jnp.conj(jnp.swapaxes(operand, -1, -2))) / 2.
     return operand
@@ -417,7 +418,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
   @staticmethod
   def qr_harness(shape, dtype):
     # In order to keep inputs small, we construct the input programmatically
-    operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
+    operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
     return lax.linalg.qr(operand, full_matrices=True)
 
   @parameterized.named_parameters(
@@ -458,7 +459,7 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
 
   @staticmethod
   def lu_harness(shape, dtype):
-    operand = jnp.reshape(jnp.arange(np.prod(shape), dtype=dtype), shape)
+    operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
     return lax.linalg.lu(operand)
 
   def test_tpu_Lu(self):

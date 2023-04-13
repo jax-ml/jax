@@ -19,6 +19,7 @@ from collections import OrderedDict, abc
 from typing import (Callable, Iterable, Tuple, Optional, Dict, Any, Set,
                     NamedTuple, Union, Sequence, Mapping)
 from functools import wraps, partial, partialmethod, lru_cache
+import math
 
 from jax import lax
 from jax import numpy as jnp
@@ -1573,9 +1574,9 @@ def _get_axis_resource_count(
     if local_res_shape is None:
       nlocal = None
     else:
-      nlocal = int(np.prod(map(local_res_shape.get, resources), dtype=np.int64))
+      nlocal = math.prod(map(local_res_shape.get, resources))
     resource_count_map[axis] = ResourceCount(
-        int(np.prod(map(global_res_shape.get, resources), dtype=np.int64)),
+        math.prod(map(global_res_shape.get, resources)),
         nlocal, distributed)
   return resource_count_map
 

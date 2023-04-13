@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+import math
 import operator
 
 from absl.testing import absltest
@@ -35,7 +36,7 @@ config.parse_flags_with_absl()
 def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
   def _rand_sparse(shape, dtype, nse=nse):
     rand = rand_method(rng)
-    size = np.prod(shape).astype(int)
+    size = math.prod(shape)
     if 0 <= nse < 1:
       nse = nse * size
     nse = min(size, int(nse))

@@ -15,6 +15,7 @@
 import contextlib
 from functools import partial
 import itertools
+import math
 import operator
 import random
 import unittest
@@ -174,7 +175,7 @@ all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 def rand_sparse(rng, nse=0.5, post=lambda x: x, rand_method=jtu.rand_default):
   def _rand_sparse(shape, dtype, nse=nse):
     rand = rand_method(rng)
-    size = np.prod(shape).astype(int)
+    size = math.prod(shape)
     if 0 <= nse < 1:
       nse = nse * size
     nse = min(size, int(nse))
@@ -1554,7 +1555,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(mat.n_dense, out.n_dense)
 
     # Unnecessary padding eliminated
-    max_nse = np.prod(out.shape[out.n_batch: out.n_batch + out.n_sparse])
+    max_nse = math.prod(out.shape[out.n_batch: out.n_batch + out.n_sparse])
     self.assertLessEqual(out.nse, max_nse)
 
   @jtu.sample_product(
@@ -1589,7 +1590,7 @@ class BCOOTest(sptu.SparseTestCase):
     self.assertEqual(mat.n_dense, out.n_dense)
 
     # Unnecessary padding eliminated
-    max_nse = np.prod(out.shape[out.n_batch: out.n_batch + out.n_sparse])
+    max_nse = math.prod(out.shape[out.n_batch: out.n_batch + out.n_sparse])
     self.assertLessEqual(out.nse, max_nse)
 
   @jtu.sample_product(
@@ -1644,7 +1645,7 @@ class BCOOTest(sptu.SparseTestCase):
     [dict(shape=shape, n_batch=layout.n_batch, n_dense=layout.n_dense, nse=nse)
       for shape in [(5,), (5, 8), (8, 5), (3, 4, 5), (3, 4, 3, 2)]
       for layout in iter_sparse_layouts(shape)
-      for nse in [None, np.prod(shape) - 1]
+      for nse in [None, math.prod(shape) - 1]
     ],
     dtype=jtu.dtypes.floating + jtu.dtypes.complex,
     remove_zeros=[True, False],
@@ -2106,7 +2107,7 @@ class BCOOTest(sptu.SparseTestCase):
     M = rng(shape, dtype)
 
     def make_bcoo(M):
-      return sparse_bcoo._bcoo_fromdense(M, nse=np.prod(M.shape[:-1], dtype=int), n_dense=1)
+      return sparse_bcoo._bcoo_fromdense(M, nse=math.prod(M.shape[:-1]), n_dense=1)
 
     todense = partial(sparse_bcoo._bcoo_todense, spinfo=sparse_util.SparseInfo(shape))
 
@@ -2586,7 +2587,7 @@ class SparseObjectTest(sptu.SparseTestCase):
 
     self.assertIsInstance(M, Obj)
     self.assertEqual(M.shape, shape)
-    self.assertEqual(M.size, np.prod(shape))
+    self.assertEqual(M.size, math.prod(shape))
     self.assertEqual(M.ndim, len(shape))
     self.assertEqual(M.dtype, dtype)
     self.assertEqual(M.nse, (M.todense() != 0).sum())
@@ -2757,8 +2758,8 @@ class SparseRandomTest(sptu.SparseTestCase):
     batch_shape, sparse_shape, dense_shape = split_list(shape, [n_batch, n_sparse])
 
     approx_expected_num_nonzero = (
-      np.ceil(0.2 * np.prod(sparse_shape))
-      * np.prod(batch_shape) * np.prod(dense_shape))
+      np.ceil(0.2 * math.prod(sparse_shape))
+      * math.prod(batch_shape) * math.prod(dense_shape))
     num_nonzero = (mat_dense != 0).sum()
     self.assertAlmostEqual(int(num_nonzero), approx_expected_num_nonzero, delta=2)
 

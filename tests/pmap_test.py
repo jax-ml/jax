@@ -581,7 +581,7 @@ class PythonPmapTest(jtu.JaxTestCase):
   def testAllToAll(self, split_axis, concat_axis):
     pmap_in_axis = 0
     shape = (jax.device_count(),) * 3
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
 
     @partial(self.pmap, axis_name='i')
     def f(x):
@@ -602,7 +602,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       raise SkipTest("test requires at least four devices")
     pmap_in_axis = 0
     shape = (4, 4, 4)
-    x = np.arange(np.prod(shape)).reshape(shape)
+    x = np.arange(math.prod(shape)).reshape(shape)
 
     @partial(self.pmap, axis_name='i')
     @partial(self.pmap, axis_name='j')
@@ -2400,7 +2400,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     verify_ref()
 
     shape = (jax.device_count(),) * 5
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(vmap(f, in_axes=vmap_axis), axis_name='i')(x),
                         reference(x, split_axis, concat_axis, vmap_axis))
 
@@ -2413,7 +2413,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       return lax.all_to_all(x, 'i', split_axis=split_axis, concat_axis=concat_axis)
 
     shape = (jax.device_count(),) * 4
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(f, axis_name='i')(x),
                         vmap(f, axis_name='i')(x))
 
@@ -2431,7 +2431,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
       return lax.all_to_all(x, axes, split_axis=split_axis, concat_axis=concat_axis)
 
     shape = (2, 2, 4, 4, 4)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     self.assertAllClose(pmap(pmap(f, axis_name='j'), axis_name='i')(x),
                         vmap(vmap(f, axis_name='j'), axis_name='i')(x))
 
@@ -2456,7 +2456,7 @@ class VmapPmapCollectivesTest(jtu.JaxTestCase):
     if jax.device_count() < 4:
       raise SkipTest("test requires at least four devices")
     shape = (4, 4, 8)
-    x = jnp.arange(np.prod(shape)).reshape(shape)
+    x = jnp.arange(math.prod(shape)).reshape(shape)
     f = partial(prim, axis_name='i', tiled=tiled)
     self.assertAllClose(vmap(f, axis_name='i')(x), pmap(f, axis_name='i')(x))
 
