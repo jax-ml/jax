@@ -812,6 +812,12 @@ class ShardMapTest(jtu.JaxTestCase):
         expected_num_eqns=1 + 1,  # one outer eqn, two remain in body
         check_diff=False)
 
+  def test_post_process_partial_eval_with_scalar_res(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+    g = jax.grad(lambda x: shard_map(lambda: jnp.sin(x), mesh=mesh,
+                                     in_specs=P(), out_specs=P())())(2.0)
+    self.assertAllClose(g, jnp.cos(2.0), check_dtypes=False)
+
 
 class FunSpec(NamedTuple):
   name: str
