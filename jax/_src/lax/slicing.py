@@ -827,28 +827,34 @@ mlir.register_lowering(slice_p, _slice_lower)
 
 
 def _dynamic_slice_shape_rule(operand, *start_indices, slice_sizes):
-  if operand.ndim != len(start_indices):
-    msg = ("dynamic_slice start_indices must have length equal to the number "
-           "of dimensions of the operand, got indices {} for operand shape {}.")
-    raise TypeError(msg.format(start_indices, operand.shape))
   if len(start_indices) != len(slice_sizes):
-    msg = ("dynamic_slice slice_sizes must have the same length as "
-           "start_indices, got start_indices length {} and slice_sizes {}.")
-    raise TypeError(msg.format(len(start_indices), slice_sizes))
-  if not core.greater_equal_shape(operand.shape, slice_sizes):
-    msg = ("slice slice_sizes must be less than or equal to operand shape, "
-           "got slice_sizes {} for operand shape {}.")
-    raise TypeError(msg.format(slice_sizes, operand.shape))
+    raise TypeError("dynamic_slice slice_sizes must have the same length as "
+                    f"start_indices, got {len(start_indices)=}, {slice_sizes=}.")
+  if not start_indices:
+    return operand.shape
+
+  start_indices_shapes = [ind.shape for ind in start_indices]
+  if len(set(start_indices_shapes)) != 1:
+    raise TypeError("dynamic_slice start_indices must all have the same shape. "
+                    "Got {start_indices_shapes=}")
+  batch_shape = start_indices_shapes[0]
+  if operand.shape[:len(batch_shape)] != batch_shape:
+    raise TypeError("dynamic_slice start_indices must have a batch size equal to the "
+                    f"index batch size, got {operand.shape=}, {batch_shape=}")
+  if operand.ndim != len(start_indices) + len(batch_shape):
+    raise TypeError("dynamic_slice start_indices must have length equal to the number "
+                    f"of non-batch dimensions of the operand, got {start_indices=}, "
+                    f"{batch_shape=}, {operand.shape=}.")
+  if not core.greater_equal_shape(operand.shape[len(batch_shape):], slice_sizes):
+    raise TypeError("slice slice_sizes must be less than or equal to operand shape, "
+                    f"got {slice_sizes=}, {operand.shape=}.")
   if not all(core.greater_equal_dim(ssz, 0) for ssz in slice_sizes):
-    msg = ("slice slice_sizes must be greater than or equal to zero, "
-           "got slice_sizes of {}.")
-    raise TypeError(msg.format(slice_sizes))
-  if any(idx.ndim != 0 for idx in start_indices):
-    raise TypeError("start_indices arguments to dynamic_slice must be scalars, "
-                    f" got indices {start_indices}")
-  return tuple(slice_sizes)
+    raise TypeError("slice slice_sizes must be greater than or equal to zero, "
+                    f"got {slice_sizes=}.")
+  return (*batch_shape, *slice_sizes)
 
 def _dynamic_slice_dtype_rule(operand, *start_indices, slice_sizes):
+  del slice_sizes
   if any(i.dtype != start_indices[0].dtype or
          not dtypes.issubdtype(i.dtype, np.integer) for i in start_indices):
     msg = ("index arguments to dynamic_slice must be integers of the same "
@@ -863,6 +869,7 @@ def _dynamic_slice_jvp(primals, tangents, *, slice_sizes):
   return dynamic_slice_p.bind(primals[0], *primals[1:], slice_sizes=slice_sizes), tangent_out
 
 def _dynamic_slice_transpose_rule(t, operand, *start_indices, slice_sizes):
+  del slice_sizes
   assert ad.is_undefined_primal(operand)
   assert all(not ad.is_undefined_primal(s) for s in start_indices)
   operand_shape, operand_dtype = operand.aval.shape, operand.aval.dtype
@@ -888,11 +895,31 @@ def _batch_dynamic_slice_indices(indices, bdims):
     dimension=1)
   return indices, 0
 
-def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
-  # A dynamic slice is a special case of gather; we can delegate to the gather
-  # batching rule.
-  # TODO(phawkins): consider removing dynamic_slice entirely and using gather
-  # always.
+
+def _dynamic_slice_to_gather(operand, start_indices, slice_sizes):
+  """Implement batched dynamic_slice in terms of vmapped gather"""
+  start_indices = _dynamic_slice_indices(operand, start_indices)
+  n_batch = operand.ndim - len(slice_sizes)
+
+  dims = tuple(range(len(slice_sizes)))
+  dnums = GatherDimensionNumbers(offset_dims=dims, collapsed_slice_dims=(),
+                                 start_index_map=dims)
+  if start_indices:
+    # This semantically computes start_indices = jnp.asarray(start_indices)
+    start_indices = lax.concatenate(
+        [lax.expand_dims(ind, [0]) for ind in start_indices],
+        dimension=0)
+  else:
+    start_indices = lax.full([0, *operand.shape[:n_batch]], np.int32(0))
+
+  def f(operand, start_indices):
+    return gather(operand, start_indices, dnums, slice_sizes, mode=GatherScatterMode.CLIP)
+  for _ in range(n_batch):
+    f = jax.vmap(f, in_axes=(0, 1))
+  return f(operand, start_indices)
+
+
+def _dynamic_slice_batched_to_gather(*batched_args, batch_dims, slice_sizes):
   operand, *start_indices = batched_args
   operand_bd, *start_idx_bds = batch_dims
   operand_shape = (operand.shape if operand_bd is batching.not_mapped
@@ -901,10 +928,30 @@ def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
   dnums = GatherDimensionNumbers(offset_dims=dims, collapsed_slice_dims=(),
                                  start_index_map=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_indices, start_idx_bds)
-  return _gather_batching_rule(
+  result, bdim = _gather_batching_rule(
     [operand, index], [operand_bd, index_bdim], dimension_numbers=dnums,
     slice_sizes=slice_sizes, unique_indices=True, indices_are_sorted=True,
     mode=GatherScatterMode.PROMISE_IN_BOUNDS, fill_value=None)
+  assert bdim == 0
+  return result
+
+def _dynamic_slice_batching_rule(batched_args, batch_dims, *, slice_sizes):
+  # A dynamic slice is a special case of gather; we can delegate to the gather
+  # batching rule.
+  # TODO(phawkins): consider removing dynamic_slice entirely and using gather
+  # always.
+
+  # When all operands are batched, we can lower to a batched dynamic_slice.
+  # TODO(jakevdp): add keyword arguments to dynamic_update_slice that allow for
+  # more flexible batching.
+  if all(bdim is not None for bdim in batch_dims):
+    batched_args = [batching.moveaxis(arg, bdim, 0) for arg, bdim in
+                    safe_zip(batched_args, batch_dims)]
+    return dynamic_slice_p.bind(*batched_args, slice_sizes=slice_sizes), 0
+
+  # Otherwise, we lower to a gather.
+  return _dynamic_slice_batched_to_gather(
+    *batched_args, batch_dims=batch_dims, slice_sizes=slice_sizes), 0
 
 def _dynamic_slice_staging_rule(trace, x, *starts_and_dyn_sizes, slice_sizes):
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x.ndim])
@@ -953,11 +1000,20 @@ pe.padding_rules[dynamic_slice_p] = _dynamic_slice_padding_rule
 
 def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   x_aval, *_ = ctx.avals_in
-  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [len(slice_sizes)])
   aval_out, = ctx.avals_out
   if dyn:
     aval_out = aval_out.update(shape=lax._merge_dyn_shape(slice_sizes, dyn))
-  return [mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)]
+  if x_aval.ndim > len(start_indices):
+    # batched computation is not yet supported by mlir.dynamic_slice, so we
+    # lower to gather instead.
+    # TODO(jakevdp): work on native batching in mlir.dynamic_slice
+    _gather_lowered = mlir.lower_fun(
+      lambda operand, *start_indices, slice_sizes: _dynamic_slice_to_gather(operand, start_indices, slice_sizes),
+      multiple_results=False)
+    return _gather_lowered(ctx, x, *start_indices, slice_sizes=slice_sizes)
+  else:
+    return [mlir.dynamic_slice(ctx, aval_out, x, start_indices=start_indices)]
 
 mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
@@ -972,20 +1028,25 @@ mlir.register_lowering(dynamic_slice_p, _dynamic_slice_lower)
 
 def _dynamic_update_slice_shape_rule(operand, update, *start_indices):
   if operand.ndim != update.ndim:
-    msg = ("dynamic_update_slice update must have the same rank as operand, "
-           "got update shape {} for operand shape {}.")
-    raise TypeError(msg.format(update.shape, operand.shape))
-  if operand.ndim != len(start_indices):
-    msg = ("dynamic_update_slice start_indices must have length equal to the "
-           "rank of operand, got indices {} for operand shape {}.")
-    raise TypeError(msg.format(start_indices, operand.shape))
+    raise TypeError("dynamic_update_slice update must have the same rank as operand, "
+                    f"got {update.shape=}, {operand.shape=}.")
   if not core.greater_equal_shape(operand.shape, update.shape):
-    msg = ("dynamic_update_slice update shape must be smaller than operand "
-           "shape, got update shape {} for operand shape {}.")
-    raise TypeError(msg.format(update.shape, operand.shape))
-  if any(idx.ndim != 0 for idx in start_indices):
-    raise TypeError("start_indices arguments to dynamic_update_slice must be "
-                    f"scalars, got indices {start_indices}")
+    raise TypeError("dynamic_update_slice update shape must be smaller than operand "
+                    f"shape, got {update.shape=} for {operand.shape=}")
+  if start_indices:
+    start_indices_shapes = [ind.shape for ind in start_indices]
+    if len(set(start_indices_shapes)) != 1:
+      raise TypeError("dynamic_slice start_indices must all have the same shape. "
+                      f"Got {start_indices_shapes=}")
+    batch_shape = start_indices_shapes[0]
+    if operand.shape[:len(batch_shape)] != update.shape[:len(batch_shape)] != batch_shape:
+      raise TypeError("dynamic_update_slice start_indices must have a batch size equal to "
+                      f"the operand batch size, got {operand.shape=}, {update.shape=}, "
+                      f"{batch_shape=}.")
+    if operand.ndim != len(start_indices) + len(batch_shape):
+      raise TypeError("dynamic_update_slice start_indices must have length equal to the "
+                      "number of non-batch dimensions of the operand, got "
+                      f"{len(start_indices)=}, {batch_shape=}, {operand.ndim=}")
   return operand.shape
 
 def _dynamic_update_slice_dtype_rule(operand, update, *start_indices):
@@ -1027,11 +1088,31 @@ def _dynamic_update_slice_transpose_rule(t, operand, update, *start_indices):
     update_t = ds(t, *start_indices, slice_sizes=update_shape) if ad.is_undefined_primal(update) else None
   return [operand_t, update_t] + [None] * len(start_indices)
 
-def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
-  # A dynamic update slice is a special case of scatter; we can delegate to the
-  # scatter batching rule.
-  # TODO(phawkins): consider removing dynamic_update_slice entirely and using
-  # scatter always.
+
+def _dynamic_update_slice_to_scatter(operand, update, start_indices):
+  """Implement batched dynamic_update_slice in terms of vmapped scatter"""
+  start_indices = _dynamic_slice_indices(operand, start_indices)
+  n_batch = operand.ndim - len(start_indices)
+
+  dims = tuple(range(len(start_indices)))
+  dnums = ScatterDimensionNumbers(update_window_dims=dims,
+                                  inserted_window_dims=(),
+                                  scatter_dims_to_operand_dims=dims)
+  if start_indices:
+    # This semantically computes start_indices = jnp.asarray(start_indices)
+    start_indices = lax.concatenate(
+        [lax.expand_dims(ind, [0]) for ind in start_indices],
+        dimension=0)
+  else:
+    start_indices = lax.full([0, *operand.shape[:n_batch]], np.int32(0))
+
+  def f(operand, start_indices, update):
+    return scatter(operand, start_indices, update, dnums, mode=GatherScatterMode.CLIP)
+  for _ in range(n_batch):
+    f = jax.vmap(f, in_axes=(0, 1, 0))
+  return f(operand, start_indices, update)
+
+def _dynamic_update_slice_batched_to_scatter(*batched_args, batch_dims):
   operand, update, *start_idx = batched_args
   operand_bd, update_bd, *start_idx_bd = batch_dims
   update_shape = (np.shape(update) if update_bd is batching.not_mapped
@@ -1041,12 +1122,30 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
                                   inserted_window_dims=(),
                                   scatter_dims_to_operand_dims=dims)
   index, index_bdim = _batch_dynamic_slice_indices(start_idx, start_idx_bd)
-  return _scatter_batching_rule(
+  result, bdim = _scatter_batching_rule(
     scatter, (operand, index, update), (operand_bd, index_bdim, update_bd),
     update_jaxpr=None, update_consts=None, dimension_numbers=dnums,
     indices_are_sorted=True, unique_indices=True,
     mode=GatherScatterMode.CLIP)
+  assert bdim == 0
+  return result
 
+def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
+  # A dynamic update slice is a special case of scatter; we can delegate to the
+  # scatter batching rule.
+  # TODO(phawkins): consider removing dynamic_update_slice entirely and using
+  # scatter always.
+
+  # When all operands are batched, we can lower to a batched dynamic_update_slice.
+  # TODO(jakevdp): add keyword arguments to dynamic_update_slice that allow for
+  # more flexible batching.
+  if all(bdim is not None for bdim in batch_dims):
+    batched_args = [batching.moveaxis(arg, bdim, 0) for arg, bdim in
+                    safe_zip(batched_args, batch_dims)]
+    return dynamic_update_slice_p.bind(*batched_args), 0
+
+  # Otherwise, we lower to a scatter.
+  return _dynamic_update_slice_batched_to_scatter(*batched_args, batch_dims=batch_dims), 0
 
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
@@ -1059,8 +1158,18 @@ batching.primitive_batchers[dynamic_update_slice_p] = \
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
-  return [mlir.dynamic_update_slice(ctx, aval_out, x, update,
-                                    start_indices=start_indices)]
+  x_aval, *_ = ctx.avals_in
+  if x_aval.ndim > len(start_indices):
+    # batched computation is not yet supported by mlir.dynamic_update_slice, so we
+    # lower to scatter instead.
+    # TODO(jakevdp): work on native batching in mlir.dynamic_update_slice
+    _scatter_lowered = mlir.lower_fun(
+      lambda operand, update, *start_indices: _dynamic_update_slice_to_scatter(operand, update, start_indices),
+      multiple_results=False)
+    return _scatter_lowered(ctx, x, update, *start_indices)
+  else:
+    return [mlir.dynamic_update_slice(ctx, aval_out, x, update,
+                                      start_indices=start_indices)]
 
 mlir.register_lowering(dynamic_update_slice_p, _dynamic_update_slice_lower)
 
@@ -2098,20 +2207,27 @@ mlir.register_lowering(scatter_add_p, _scatter_add_lower_gpu, platform="gpu")
 
 def _dynamic_slice_indices(
     operand: Union[Array, np.ndarray],
-    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]]
+    start_indices: Union[Union[Array, np.ndarray], Sequence[ArrayLike]],
   ) -> List[ArrayLike]:
   # Normalize the start_indices w.r.t. operand.shape
-  if len(start_indices) != operand.ndim:
-    msg = ("Length of slice indices must match number of operand dimensions ({} "
-          "vs {})")
-    raise ValueError(msg.format(len(start_indices), operand.shape))
   if not isinstance(start_indices, (tuple, list)):
-    if start_indices.ndim != 1:  # type: ignore[union-attr]
-      raise ValueError("Slice indices must be a 1D sequence, got {}"
-                       .format(start_indices.shape))  # type: ignore[union-attr]
     start_indices = list(start_indices)
+  if not start_indices:
+    return []
+  index_shapes: List[Tuple[int, ...]] = [np.shape(ind) for ind in start_indices]
+  if len(set(index_shapes)) != 1:
+    raise ValueError(f"All slice indices must have the same shape. Got {index_shapes=}.")
+  index_shape = index_shapes[0]
+  batch_shape = operand.shape[:len(index_shape)]
+  slice_shape = operand.shape[len(index_shape):]
+  if batch_shape != index_shape:
+    raise ValueError("operand leading dimensions must match index dimensions. Got "
+                     f"{index_shape=} {operand.shape=}")
+  if len(slice_shape) != len(start_indices):
+    raise ValueError("Length of slice indices must match number of operand dimensions "
+                     f"({len(slice_shape)} vs {len(start_indices)})")
   result: List[ArrayLike] = []
-  for i, d in zip(start_indices, operand.shape):
+  for i, d in zip(start_indices, slice_shape):
     # We test whether i and d are static to avoid unnecessary staging.
     if isinstance(i, (int, np.integer)) and core.is_constant_dim(d):
       result.append(lax.convert_element_type(i + d if i < 0 else i, _dtype(i)))

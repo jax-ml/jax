@@ -69,6 +69,38 @@ preferred_type_combinations = [
   (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64)]
 
 
+def dynamic_slice_manual_batch(operand, start_indices, slice_sizes):
+  """Compute batched dynamic_slice via looping & concatenation."""
+  # Handle batching via recursive call + stack. Inefficient, but fine for tests.
+  assert len(start_indices) == len(slice_sizes)
+  if operand.ndim > len(start_indices):
+    assert all(ind.shape[0] == operand.shape[0] for ind in start_indices)
+    return jnp.array([
+      dynamic_slice_manual_batch(operand[i], [ind[i] for ind in start_indices],
+                                  slice_sizes=slice_sizes)
+      for i in range(operand.shape[0])])
+  # unbatched dynamic_slice remains
+  assert operand.ndim == len(slice_sizes)
+  assert all(ind.shape == () for ind in start_indices)
+  return lax.dynamic_slice(operand, start_indices, slice_sizes)
+
+
+def dynamic_update_slice_manual_batch(operand, update, start_indices):
+  """Compute batched dynamic_update_slice via looping & concatenation."""
+  # Handle batching via recursive call + stack. Inefficient, but fine for tests.
+  assert operand.ndim == update.ndim
+  if operand.ndim > len(start_indices):
+    assert all(ind.shape[0] == operand.shape[0] == update.shape[0] for ind in start_indices)
+    return jnp.array([
+      dynamic_update_slice_manual_batch(
+          operand[i], update[i], [ind[i] for ind in start_indices])
+      for i in range(operand.shape[0])])
+  # unbatched dynamic_update_slice remains
+  assert operand.ndim == update.ndim == len(start_indices)
+  assert all(ind.shape == () for ind in start_indices)
+  return lax.dynamic_update_slice(operand, update, start_indices)
+
+
 class LaxTest(jtu.JaxTestCase):
   """Numerical tests for LAX operations."""
 
@@ -1498,6 +1530,39 @@ class LaxTest(jtu.JaxTestCase):
     self._CompileAndCheck(op, args_maker)
 
   @jtu.sample_product(
+      [dict(shape=shape, ishape=ishape, slice_sizes=slice_sizes)
+       for shape, ishape, slice_sizes in [
+         [(5,), (), (2,)],
+         [(3, 5), (), (2, 3)],
+         [(3, 5), (3,), (2,)],
+         [(3, 4, 5), (3,), (2, 3)],
+         [(3, 4, 5), (3, 4), (2,)],
+       ]
+      ],
+      dtype=lax_test_util.default_dtypes,
+  )
+  def testDynamicSliceBatched(self, shape, dtype, ishape, slice_sizes):
+    rng = jtu.rand_default(self.rng())
+    irng = jtu.rand_int(self.rng(), -2, 5)
+    args_maker = lambda: (rng(shape, dtype), [irng(ishape, 'int32') for _ in slice_sizes])
+    dynamic_slice = partial(lax.dynamic_slice, slice_sizes=slice_sizes)
+    dynamic_slice_manual = partial(dynamic_slice_manual_batch, slice_sizes=slice_sizes)
+    self._CompileAndCheck(dynamic_slice, args_maker)
+    self._CheckAgainstNumpy(dynamic_slice_manual, dynamic_slice, args_maker)
+
+    # Check vmap behavior.
+    dynamic_slice_vmap = dynamic_slice
+    for _ in ishape:
+      dynamic_slice_vmap = jax.vmap(dynamic_slice_vmap)
+    self._CheckAgainstNumpy(dynamic_slice, dynamic_slice_vmap, args_maker)
+
+    # Check that batching rule lowers to dynamic_slice.
+    jaxpr = jax.make_jaxpr(dynamic_slice_vmap)(*args_maker())
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertIn(lax.dynamic_slice_p, primitives)
+    self.assertNotIn(lax.gather_p, primitives)
+
+  @jtu.sample_product(
       [
           dict(shape=shape, indices=indices, size_indices=size_indices)
           for shape, indices, size_indices in [
@@ -1529,7 +1594,7 @@ class LaxTest(jtu.JaxTestCase):
 
   def testDynamicSliceWithNonScalarIndex(self):
     x = jnp.ones((6, 7), np.int32)
-    with self.assertRaises(TypeError):
+    with self.assertRaises(ValueError):
       lax.dynamic_slice_in_dim(x, jnp.array([2, 2]), 3)
 
   @jtu.sample_product(
@@ -1572,7 +1637,43 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(lax_reference.dynamic_update_slice,
                             lax.dynamic_update_slice, args_maker)
 
-  def testDynamicUpdateSliceBatched(self):
+  @jtu.sample_product(
+      [dict(shape=shape, ishape=ishape, ushape=ushape)
+       for shape, ishape, ushape in [
+         [(5,), (), (2,)],
+         [(3, 5), (), (2, 3)],
+         [(3, 5), (3,), (3, 2)],
+         [(3, 4, 5), (3,), (3, 2, 3)],
+         [(3, 4, 5), (3, 4), (3, 4, 2)],
+       ]
+      ],
+      dtype=lax_test_util.default_dtypes,
+  )
+  def testDynamicUpdateSliceBatched(self, shape, dtype, ishape, ushape):
+    print(shape, ishape, ushape)
+    rng = jtu.rand_default(self.rng())
+    irng = jtu.rand_int(self.rng(), -2, 5)
+    n_batch = len(ishape)
+    slice_sizes = ushape[n_batch:]
+    args_maker = lambda: (rng(shape, dtype), rng(ushape, dtype),
+                          [irng(ishape, 'int32') for _ in slice_sizes])
+    self._CompileAndCheck(lax.dynamic_update_slice, args_maker)
+    self._CheckAgainstNumpy(
+        dynamic_update_slice_manual_batch, lax.dynamic_update_slice, args_maker)
+
+    # Check vmap behavior.
+    dynamic_update_slice_vmap = lax.dynamic_update_slice
+    for _ in ishape:
+      dynamic_update_slice_vmap = jax.vmap(dynamic_update_slice_vmap)
+    self._CheckAgainstNumpy(lax.dynamic_update_slice, dynamic_update_slice_vmap, args_maker)
+
+    # Check that batching rule lowers to dynamic_slice.
+    jaxpr = jax.make_jaxpr(dynamic_update_slice_vmap)(*args_maker())
+    primitives = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertIn(lax.dynamic_update_slice_p, primitives)
+    self.assertNotIn(lax.gather_p, primitives)
+
+  def testDynamicUpdateSliceBatchRegression(self):
     # Regression test for https://github.com/google/jax/issues/9083
     x = jnp.arange(5)
     y = jnp.arange(6, 9)
@@ -1581,9 +1682,27 @@ class LaxTest(jtu.JaxTestCase):
     actual = jax.vmap(lax.dynamic_update_slice, (None, None, 0))(x, y, (ind,))
     self.assertAllClose(expected, actual)
 
+  def testBatchedDynamicUpdateSlice(self):
+    x = jnp.arange(84).reshape(2, 6, 7)
+    y = jnp.arange(12).reshape(2, 2, 3)
+    i1 = jnp.array([0, 1])
+    i2 = jnp.array([1, 2])
+
+    # Test that vmapped dynamic_slice matches native batching.
+    slc = lax.dynamic_update_slice
+    expected = jax.vmap(slc)(x, y, [i1, i2])
+    actual = slc(x, y, [i1, i2])
+    self.assertArraysEqual(actual, expected)
+
+    # Test that vmapped dynamic_slice lowers to dynamic_slice.
+    jaxpr = jax.make_jaxpr(jax.vmap(slc))(x, y, [i1, i2])
+    prims = [eqn.primitive for eqn in jaxpr.eqns]
+    self.assertNotIn(lax.gather_p, prims)
+    self.assertIn(lax.dynamic_update_slice_p, prims)
+
   def testDynamicUpdateSliceWithNonScalarIndex(self):
     x = jnp.ones((6, 7), np.int32)
-    with self.assertRaises(TypeError):
+    with self.assertRaises(ValueError):
       lax.dynamic_update_slice_in_dim(x, jnp.ones((2, 7), np.int32),
                                       jnp.array([2, 2]), axis=0)
 
