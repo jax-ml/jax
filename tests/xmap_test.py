@@ -731,6 +731,19 @@ class XMapTest(XMapTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
+  @jtu.with_mesh([('x', 2)])
+  def testLowerPartitionsAttribute(self):
+    f = xmap(lambda x: x + 4, in_axes=['i', ...], out_axes=['i', ...],
+             axis_resources={'i': 'x'})
+    x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
+    hlo = f.lower(x).as_text(dialect='stablehlo')
+    if config.experimental_xmap_spmd_lowering:
+      self.assertIn("mhlo.num_partitions = 2", hlo)
+      self.assertIn("mhlo.num_replicas = 1", hlo)
+    else:
+      self.assertIn("mhlo.num_partitions = 1", hlo)
+      self.assertIn("mhlo.num_replicas = 2", hlo)
+
   @jtu.ignore_warning(category=DeprecationWarning)
   def testLowerCompileCompilerIR(self):
     # TODO(frostig): remove (deprecated)

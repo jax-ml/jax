@@ -393,6 +393,16 @@ class PythonPmapTest(jtu.JaxTestCase):
     x_shape = core.ShapedArray(x.shape, x.dtype)
     self.assertAllClose(f.lower(x_shape).compile()(x), f(x))
 
+  def testLowerHasReplicaAttributes(self):
+    f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
+    num_devices = jax.device_count()
+    shape = (num_devices, 4)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    lowered = f.lower(x)
+    hlo = lowered.as_text("stablehlo")
+    self.assertIn(f"mhlo.num_replicas = {num_devices}", hlo)
+    self.assertIn("mhlo.num_partitions = 1", hlo)
+
   def testMean(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
 
@@ -1863,6 +1873,25 @@ class PythonPmapTest(jtu.JaxTestCase):
       with jtu.ignore_warning(
           message=".*Using jit-of-pmap can lead to inefficient data movement"):
         x = foo(x)
+
+  @jtu.ignore_warning(
+      message=".*Using jit-of-pmap can lead to inefficient data movement")
+  def testJitOfPmapLowerHasReplicaAttributes(self):
+    device_count = jax.device_count()
+
+    if device_count == 1 or config.jax_disable_jit:
+      raise SkipTest("test requires at least two devices")
+
+    @jax.jit
+    @jax.pmap
+    def foo(x): return x + x
+
+    x = np.ones((2,2,2), dtype=np.float32)
+
+    hlo = foo.lower(x).as_text("stablehlo")
+    self.assertIn(f"mhlo.num_replicas = {2}", hlo)
+    self.assertIn("mhlo.num_partitions = 1", hlo)
+
 
   def testPsumZeroCotangents(self):
     # https://github.com/google/jax/issues/3651

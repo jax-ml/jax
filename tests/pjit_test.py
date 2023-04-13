@@ -970,6 +970,20 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect='stablehlo'))
 
+  @jtu.with_mesh([('x', 2)])
+  def testLowerPartitionsAttribute(self):
+    @partial(pjit,
+             in_shardings=(P('x'), P('x')),
+             out_shardings=None)
+    def f(x, y):
+      return x + y
+
+    shape = (8, 8)
+    x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    hlo = f.lower(x, x + 1).as_text("stablehlo")
+    self.assertIn("mhlo.num_replicas = 1", hlo)
+    self.assertIn("mhlo.num_partitions = 2", hlo)
+
   @jtu.ignore_warning(category=DeprecationWarning)
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileCompilerIR(self):
