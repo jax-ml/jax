@@ -552,6 +552,8 @@ def lower_jaxpr_to_module(
     result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
     arg_names: Optional[Sequence[Optional[str]]] = None,
     result_names: Optional[Sequence[Optional[str]]] = None,
+    num_replicas: int = 1,
+    num_partitions: int = 1,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
 
@@ -600,13 +602,11 @@ def lower_jaxpr_to_module(
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
+    attrs = ctx.module.operation.attributes
     module_name = _module_name_regex.sub("_", module_name)
-    ctx.module.operation.attributes["sym_name"] = ir.StringAttr.get(
-        module_name)
-    unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
-    if unlowerable_effects:
-      raise ValueError(
-          f'Cannot lower jaxpr with unlowerable effects: {unlowerable_effects}')
+    attrs["sym_name"] = ir.StringAttr.get(module_name)
+    attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
+    attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects, public=True, create_tokens=True,
         replace_tokens_with_dummy=True,

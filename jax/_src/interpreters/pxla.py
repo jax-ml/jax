@@ -889,7 +889,8 @@ def lower_parallel_callable(
         arg_shardings=None,
         result_shardings=None,
         arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths)
+        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+        num_replicas=replicas.num_global_replicas)
     module, keepalive, host_callbacks = (
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)
@@ -1901,6 +1902,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     out_op_shardings = map(_to_logical_op_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
     axis_ctx = sharding_impls.ShardingContext(device_assignment)
+    num_partitions = len(device_assignment)
   else:
     # This path is triggered for `jit(pmap)` cases.
     replicated_args = None
@@ -1908,6 +1910,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     out_op_shardings = None
     axis_env = sharding_impls.AxisEnv(nreps, (), ())
     axis_ctx = sharding_impls.ReplicaAxisContext(axis_env)
+    num_partitions = 1
 
   module_name = f"{api_name}_{fun_name}"
 
@@ -1933,7 +1936,9 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
       arg_shardings=in_op_shardings,
       result_shardings=out_op_shardings,
       arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-      result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths)
+      result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+      num_replicas=nreps,
+      num_partitions=num_partitions)
   module, keepalive, host_callbacks = (
       lowering_result.module, lowering_result.keepalive,
       lowering_result.host_callbacks)
@@ -2224,6 +2229,8 @@ def lower_mesh_computation(
     out_partitions = map(_to_logical_op_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = sharding_impls.SPMDAxisContext(mesh, manual_axes)
+    num_replicas = 1
+    num_partitions = mesh.devices.size
   else:
     replicated_args = [not get_array_mapping(i.spec) for i in in_shardings]  # type: ignore
     in_partitions = None
@@ -2233,6 +2240,8 @@ def lower_mesh_computation(
         names=tuple(global_axis_sizes.keys()),
         sizes=tuple(global_axis_sizes.values()))
     axis_ctx = sharding_impls.ReplicaAxisContext(axis_env)
+    num_replicas = mesh.devices.size
+    num_partitions = 1
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module: Union[str, xc.XlaComputation]
   module_name = f"{api_name}_{fun_name}"
@@ -2258,7 +2267,9 @@ def lower_mesh_computation(
         arg_shardings=in_partitions,
         result_shardings=out_partitions,
         arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
-        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths)
+        result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
+        num_replicas=num_replicas,
+        num_partitions=num_partitions)
     module, keepalive, host_callbacks = (
         lowering_result.module, lowering_result.keepalive,
         lowering_result.host_callbacks)

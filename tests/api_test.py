@@ -1051,7 +1051,12 @@ class CPPJitTest(jtu.BufferDonationTestCase):
     self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
-  def test_jit_lower_no_prunning(self):
+  def test_jit_replica_attributes(self):
+    hlo = self.jit(lambda x: x + 4).lower(1.).as_text("stablehlo")
+    self.assertIn("mhlo.num_partitions = 1", hlo)
+    self.assertIn("mhlo.num_replicas = 1", hlo)
+
+  def test_jit_lower_no_pruning(self):
     compiled = self.jit(lambda x, y: x + y).lower(1., 2.).compile()
     self.assertEqual(compiled._executable._kept_var_idx, {0, 1})
     self.assertLen(compiled._executable.in_avals, 2)
