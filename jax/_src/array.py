@@ -330,7 +330,7 @@ class ArrayImpl(basearray.Array):
 
   @property
   def is_fully_replicated(self) -> bool:
-    return self.shape == self._arrays[0].shape
+    return self.sharding.is_fully_replicated
 
   def __repr__(self):
     prefix = 'Array('

@@ -1029,9 +1029,8 @@ def _resolve_in_shardings(
                                       'multiple devices is not supported.')
     else:
       if (isinstance(arg, np.ndarray) and
-          not op_shardings.is_op_sharding_replicated(
-              pjit_in_s._to_xla_op_sharding(arg.ndim))  # type: ignore
-          and xb.process_count() > 1):
+          not pjit_in_s.is_fully_replicated and  # type: ignore
+          xb.process_count() > 1):
         raise ValueError(
             'Passing non-trivial shardings for numpy '
             'inputs is not allowed. To fix this error, either specify a '

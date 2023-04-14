@@ -191,7 +191,7 @@ class NamedSharding(XLACompatibleSharding):
 
   mesh: mesh_lib.Mesh
   spec: PartitionSpec
-  _parsed_pspec: Optional[Any]
+  _parsed_pspec: ParsedPartitionSpec
 
   @use_cpp_method()
   def __init__(
@@ -268,6 +268,17 @@ class NamedSharding(XLACompatibleSharding):
     # Override addressable devices because there is a high chance that the mesh
     # across multiple NamedSharding objects will be the same.
     return self.mesh._local_devices_set
+
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    if self.mesh.size == 1:
+      return True
+    array_mapping = cast(ParsedPartitionSpec, get_array_mapping(self._parsed_pspec))
+    mesh_shape = self.mesh.shape
+    num_partitions = 1
+    for name in array_mapping:
+      num_partitions *= mesh_shape[name]
+    return num_partitions == 1
 
   @functools.lru_cache(maxsize=4096)
   def _to_xla_op_sharding(
@@ -349,6 +360,10 @@ class SingleDeviceSharding(XLACompatibleSharding):
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return get_replicated_op_sharding()
+
+  @property
+  def is_fully_replicated(self) -> bool:
+    return True
 
 
 @use_cpp_class(xc.PmapSharding)
@@ -446,6 +461,13 @@ class PmapSharding(XLACompatibleSharding):
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     raise NotImplementedError("pmap doesn't use OpSharding.")
+
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    for s in self.sharding_spec.sharding:
+      if isinstance(s, sharding_specs.Unstacked):
+        return False
+    return True
 
   @functools.lru_cache(maxsize=4096)
   def shard_shape(self, global_shape: Shape) -> Shape:
@@ -553,6 +575,10 @@ class PositionalSharding(XLACompatibleSharding):
   @functools.cached_property
   def device_set(self) -> set[xc.Device]:
     return set(self._devices)
+
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    return self.shape == (1,) * self.ndim
 
   # XLACompatibleSharding interface
 
@@ -669,6 +695,10 @@ class GSPMDSharding(XLACompatibleSharding):
 
   def _to_xla_op_sharding(self, num_dimensions: int) -> xc.OpSharding:
     return self._op_sharding
+
+  @functools.cached_property
+  def is_fully_replicated(self) -> bool:
+    return is_op_sharding_replicated(self._op_sharding)
 
   @classmethod
   def get_replicated(cls, device_assignment):

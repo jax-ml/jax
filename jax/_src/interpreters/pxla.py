@@ -1892,21 +1892,21 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   dispatch.raise_warnings_or_errors_for_jit_of_pmap(
       nreps, backend, fun_name, jaxpr)
 
-  in_op_shardings: Optional[List[Optional[xc.OpSharding]]]
-  out_op_shardings: Optional[List[Optional[xc.OpSharding]]]
+  in_mlir_shardings: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
+  out_mlir_shardings: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
-    in_op_shardings = map(_to_logical_op_sharding, global_in_avals, in_shardings)
-    out_op_shardings = map(_to_logical_op_sharding, global_out_avals, out_shardings)
+    in_mlir_shardings = map(_to_logical_sharding, global_in_avals, in_shardings)
+    out_mlir_shardings = map(_to_logical_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
     axis_ctx = sharding_impls.ShardingContext(device_assignment)
     num_partitions = len(device_assignment)
   else:
     # This path is triggered for `jit(pmap)` cases.
     replicated_args = None
-    in_op_shardings = None
-    out_op_shardings = None
+    in_mlir_shardings = None
+    out_mlir_shardings = None
     axis_env = sharding_impls.AxisEnv(nreps, (), ())
     axis_ctx = sharding_impls.ReplicaAxisContext(axis_env)
     num_partitions = 1
@@ -1929,8 +1929,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
       name_stack,
       donated_invars,
       replicated_args=replicated_args,
-      arg_shardings=in_op_shardings,
-      result_shardings=out_op_shardings,
+      arg_shardings=in_mlir_shardings,
+      result_shardings=out_mlir_shardings,
       arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
       result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
       num_replicas=nreps,
@@ -2113,14 +2113,14 @@ def lower_sharding_computation(
       pmap_nreps=nreps)
 
 
-def _to_logical_op_sharding(
+def _to_logical_sharding(
     aval: core.AbstractValue, sharding: Union[MaybeSharding, AUTOAxisResource]
-) -> Optional[xc.OpSharding]:
+) -> Optional[sharding_impls.XLACompatibleSharding]:
   if is_unspecified(sharding) or is_auto(sharding):
     return None
   elif isinstance(aval, ShapedArray):
     assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
-    return sharding._to_xla_op_sharding(aval.ndim)
+    return sharding
   elif isinstance(aval, core.AbstractToken):
     return None
   else:
@@ -2219,12 +2219,12 @@ def lower_mesh_computation(
   # 2. Build up the HLO
   tuple_args = dispatch.should_tuple_args(len(in_jaxpr_avals), backend.platform)
 
-  in_partitions: Optional[List[Optional[xc.OpSharding]]]
-  out_partitions: Optional[List[Optional[xc.OpSharding]]]
+  in_partitions: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
+  out_partitions: Optional[List[Optional[sharding_impls.XLACompatibleSharding]]]
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
-    in_partitions = map(_to_logical_op_sharding, global_in_avals, in_shardings)
-    out_partitions = map(_to_logical_op_sharding, global_out_avals, out_shardings)
+    in_partitions = map(_to_logical_sharding, global_in_avals, in_shardings)
+    out_partitions = map(_to_logical_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(in_jaxpr_avals)
     axis_ctx = sharding_impls.SPMDAxisContext(mesh, manual_axes)
     num_replicas = 1
@@ -2370,12 +2370,7 @@ def _get_input_indices(
       index = tuple(
           (slice(None),) for _ in range(num_addressable_devices))
     else:
-      # We special case this logic to support fully replicated values because
-      # the mesh is global mesh and the indices returned by `spec_to_indices` will
-      # represent index for each device in the global mesh. But here we want
-      # indices for the local devices of the global mesh.
-      proto = sharding._to_xla_op_sharding(aval.ndim)
-      if op_shardings.is_op_sharding_replicated(proto):
+      if sharding.is_fully_replicated:
         index = tuple(
             (slice(None),) * aval.ndim for _ in range(num_addressable_devices))  # type: ignore
       else:
