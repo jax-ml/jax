@@ -823,6 +823,26 @@ class ShardMapTest(jtu.JaxTestCase):
                                      in_specs=P(), out_specs=P())())(2.0)
     self.assertAllClose(g, jnp.cos(2.0), check_dtypes=False)
 
+  def test_sharding_metadata_in_mhlo_attrs(self):
+    mesh = Mesh(jax.devices(), ('i',))
+    x = jnp.arange(len(jax.devices()), dtype='float32')
+    y = jnp.array([3.], dtype='float32')
+
+    def foo(x):
+      x = jnp.sin(x)
+      x = shard_map(lambda x: jnp.cos(x * y), mesh,
+                    in_specs=P('i'), out_specs=P('i'))(x)
+      x = shard_map(lambda x: jnp.cos(x * y), mesh,
+                    in_specs=P('i'), out_specs=P('i'))(x)
+      return x
+
+    mhlo_str = str(jax.jit(foo).lower(x).compiler_ir('mhlo'))
+    self.assertIn("call @shmap_body", mhlo_str)
+    self.assertIn("call @shmap_body_0", mhlo_str)
+    self.assertIn("%arg0: tensor<1xf32> {jax.arg_info = \"[None]\"}", mhlo_str)
+    self.assertIn("%arg1: tensor<1xf32> {jax.arg_info = \"[('i',)]\"}", mhlo_str)
+    self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", mhlo_str)
+
 
 class FunSpec(NamedTuple):
   name: str
