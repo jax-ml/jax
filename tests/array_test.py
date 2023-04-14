@@ -855,6 +855,7 @@ class ShardingTest(jtu.JaxTestCase):
       ("2d_mesh_none_x",           (4, 2), P(None, "x")),
       ("2d_mesh_xy",               (4, 2), P(("x", "y"))),
       ("2d_mesh_none_xy",          (4, 2), P(None, ("x", "y"))),
+      ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
       ("2d_mesh_fully_replicated", (4, 2), P()),
       ("3d_mesh_none_none_z",      (2, 2, 2), P(None, None, 'z')),
       ("3d_mesh_none_y_none",      (2, 2, 2), P(None, 'y', None)),
@@ -862,6 +863,7 @@ class ShardingTest(jtu.JaxTestCase):
       ("3d_mesh_none_yz",          (2, 2, 2), P(None, ('y', 'z'))),
       ("3d_mesh2_none_none_z",     (1, 2, 4), P(None, None, 'z')),
       ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
+      ("3d_mesh_x_none_none",      (2, 1, 1), P('x', None, None)),
   )
   def test_positional_sharding_from_op_sharding(self, mesh_shape, pspec):
     ndim = len(mesh_shape)

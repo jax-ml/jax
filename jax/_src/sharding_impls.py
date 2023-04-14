@@ -19,6 +19,7 @@ import dataclasses
 import enum
 import functools
 import itertools
+import math
 import operator as op
 import sys
 from typing import (Any, Dict, FrozenSet, List, Mapping, Optional, OrderedDict,
@@ -495,13 +496,20 @@ def _from_op_sharding_to_pos_sharding(
   if op_sharding.type == xc.OpSharding.Type.REPLICATED:
     return PositionalSharding(device_assignment).replicate()
 
-  _, num_replicas = get_num_ways_dim_sharded(op_sharding)
+  if op_sharding.last_tile_dims == [xc.OpSharding.Type.REPLICATED]:
+    replicate_on_last_tile_dim = True
+  else:
+    replicate_on_last_tile_dim = op_sharding.replicate_on_last_tile_dim
+    if op_sharding.last_tile_dims:
+      raise NotImplementedError(
+          "Unhandled OpSharding type. Please open a bug report!")
+
   name = device_assignment[0].platform.upper()
   ids = np.array([DeviceIdSet(name, i)
                   for i in op_sharding.tile_assignment_devices])
   p = PositionalSharding.remake(tuple(device_assignment), ids)
   p = p.reshape(op_sharding.tile_assignment_dimensions)
-  if num_replicas > 1:
+  if replicate_on_last_tile_dim:
     p = p.replicate(-1, keepdims=False)
   return p
 
@@ -604,6 +612,7 @@ class PositionalSharding(XLACompatibleSharding):
     else:
       pbuf.tile_assignment_dimensions = shape
     pbuf.tile_assignment_devices = [i for ids in self._ids.flat for i in ids]
+    assert math.prod(pbuf.tile_assignment_dimensions) == len(pbuf.tile_assignment_devices)
     return pbuf
 
 

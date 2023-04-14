@@ -149,6 +149,7 @@ def sharding_spec_sharding_proto(
   proto_mesh = mesh.transpose(mesh_permutation).reshape(new_mesh_shape)
   proto.tile_assignment_dimensions = list(proto_mesh.shape)
   proto.tile_assignment_devices = list(proto_mesh.flat)
+  assert math.prod(proto.tile_assignment_dimensions) == len(proto.tile_assignment_devices)
   return proto
 
 
