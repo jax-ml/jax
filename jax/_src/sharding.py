@@ -18,6 +18,7 @@ import functools
 from typing import (Mapping, Optional, Sequence, Set, Tuple)
 
 from jax._src import util
+from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 
 Shape = Tuple[int, ...]
@@ -29,6 +30,8 @@ XLADeviceAssignment = Sequence[Device]
 @functools.lru_cache(maxsize=4096)
 def _addressable_devices_indices_map(
     sharding: Sharding, global_shape: Shape) -> Mapping[Device, Optional[Index]]:
+  if sharding.is_fully_addressable:
+    return sharding.devices_indices_map(global_shape)
   return {d: ind for d, ind in sharding.devices_indices_map(global_shape).items()
           if d.process_index == d.client.process_index()}
 
@@ -83,6 +86,9 @@ class Sharding:
   @functools.cached_property
   def addressable_devices(self) -> Set[Device]:
     """A set of devices that are addressable by the current process."""
+    # Add a fast path for single controller runtimes.
+    if xb.process_count() == 1:
+      return self.device_set
     return {d for d in self.device_set
             if d.process_index == d.client.process_index()}
 
