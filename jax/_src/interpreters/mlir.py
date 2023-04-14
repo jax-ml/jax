@@ -34,7 +34,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
-from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
@@ -47,6 +46,7 @@ from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir.dialects import func as func_dialect
+from jax._src.sharding_impls import XLACompatibleSharding
 
 
 map, unsafe_map = util.safe_map, map
@@ -491,7 +491,7 @@ def flatten_lowering_ir_args(
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.AbstractValue,
-                 sharding: Optional[xc.OpSharding]) -> core.AbstractValue:
+                 sharding: Optional[XLACompatibleSharding]) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
     return aval
@@ -499,18 +499,7 @@ def sharded_aval(aval: core.AbstractValue,
     return aval
   if not isinstance(aval, core.ShapedArray):
     raise NotImplementedError
-
-  if (op_shardings.is_op_sharding_replicated(sharding) or
-      sharding.type == xc.OpSharding.Type.MANUAL):
-    return aval
-
-  partitions, _ = op_shardings.get_num_ways_dim_sharded(sharding)
-  out = []
-  for s, p in zip(aval.shape, partitions):
-    quotient, remainder = divmod(s, p)
-    assert remainder == 0
-    out.append(quotient)
-  return aval.update(tuple(out))
+  return aval.update(sharding.shard_shape(aval.shape))
 
 
 def eval_dynamic_shape(ctx: LoweringRuleContext,
@@ -537,6 +526,16 @@ class LoweringResult(NamedTuple):
 _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
+def _to_logical_op_sharding(
+    aval: core.AbstractValue, sharding: Optional[XLACompatibleSharding],
+) -> Optional[xc.OpSharding]:
+  if sharding is None:
+    return None
+  assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+  assert isinstance(aval, core.ShapedArray)
+  return sharding._to_xla_op_sharding(aval.ndim)
+
+
 def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
@@ -547,8 +546,8 @@ def lower_jaxpr_to_module(
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Optional[Sequence[bool]] = None,
-    arg_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
-    result_shardings: Optional[Sequence[Optional[xc.OpSharding]]] = None,
+    arg_shardings: Optional[Sequence[Optional[XLACompatibleSharding]]] = None,
+    result_shardings: Optional[Sequence[Optional[XLACompatibleSharding]]] = None,
     arg_names: Optional[Sequence[Optional[str]]] = None,
     result_names: Optional[Sequence[Optional[str]]] = None,
     num_replicas: int = 1,
@@ -596,6 +595,13 @@ def lower_jaxpr_to_module(
   else:
     dim_vars = ()
 
+  arg_op_shardings = (
+      map(_to_logical_op_sharding, jaxpr.in_avals, arg_shardings)
+      if arg_shardings is not None else arg_shardings)
+  result_op_shardings = (
+      map(_to_logical_op_sharding, jaxpr.out_avals, result_shardings)
+      if result_shardings is not None else result_shardings)
+
   ctx = ModuleContext(backend_or_name, platform, axis_context, name_stack,
                       keepalives, channel_iter, host_callbacks, dim_vars=dim_vars)
   with ctx.context, ir.Location.unknown(ctx.context):
@@ -611,9 +617,11 @@ def lower_jaxpr_to_module(
         replace_tokens_with_dummy=True,
         num_output_tokens=0,
         replicated_args=replicated_args,
-        arg_shardings=arg_shardings, result_shardings=result_shardings,
+        arg_shardings=arg_op_shardings,
+        result_shardings=result_op_shardings,
         input_output_aliases=input_output_aliases,
-        arg_names=arg_names, result_names=result_names)
+        arg_names=arg_names,
+        result_names=result_names)
 
   if not ctx.module.operation.verify():
     module_string = module_to_string(ctx.module)

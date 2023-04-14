@@ -80,6 +80,11 @@ class Sharding:
     """
     raise NotImplementedError('Subclasses should implement this method.')
 
+  @property
+  def is_fully_replicated(self) -> bool:
+    """Returns if a sharding is fully replicated on all the devices."""
+    raise NotImplementedError('Subclasses should implement this method.')
+
   #############################################################################
   # Default implementations below that all subclasses will inherit.
 

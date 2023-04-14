@@ -860,7 +860,7 @@ class ShardingTest(jtu.JaxTestCase):
       ("3d_mesh_none_y_none",      (2, 2, 2), P(None, 'y', None)),
       ("3d_mesh_x_y_none",         (2, 2, 2), P('x', 'y', None)),
       ("3d_mesh_none_yz",          (2, 2, 2), P(None, ('y', 'z'))),
-      ("3d_mesh2_none_y_none",     (1, 2, 4), P(None, None, 'z')),
+      ("3d_mesh2_none_none_z",     (1, 2, 4), P(None, None, 'z')),
       ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
   )
   def test_positional_sharding_from_op_sharding(self, mesh_shape, pspec):
@@ -874,6 +874,42 @@ class ShardingTest(jtu.JaxTestCase):
     out_op_sharding = ps._to_xla_op_sharding(ndim)
     self.assertTrue(op_shardings.are_op_shardings_equal(
         original_op_sharding, out_op_sharding))
+
+  @parameterized.named_parameters(
+      ("2d_mesh_x",                (1, 1), P("x", "y")),
+      ("2d_mesh_x_y",              (4, 2), P("x", "y")),
+      ("2d_mesh_empty",            (2, 1), P()),
+      ("2d_mesh_p_none",           (2, 1), P(None)),
+      ("2d_mesh_none_none",        (2, 1), P(None, None)),
+      ("2d_mesh_tuple_empty",      (2, 1), P((),)),
+      ("2d_mesh_x_none",           (2, 1), P(('x',), None)),
+      ("2d_mesh_xy_none",          (2, 1), P(('x', 'y'), None)),
+      ("2d_mesh_none",             (2, 1), None),
+      ("2d_mesh_x_tuple_empty",    (2, 1), P('x', (), (), ())),
+      ("2d_mesh_3_tuple_empty",    (2, 1), P((), (), ())),
+      ("3d_mesh2_x_none_none",     (1, 2, 4), P('x', None, None)),
+      ("3d_mesh2_x_y_none",        (1, 1, 4), P('x', 'y', None)),
+      ("3d_mesh2_xy_none",         (1, 1, 4), P(('x', 'y'), None)),
+  )
+  def test_is_fully_replicated_named_sharding(self, mesh_shape, pspec):
+    if len(mesh_shape) == 2:
+      axis_names = ('x', 'y')
+    elif len(mesh_shape) == 3:
+      axis_names = ('x', 'y', 'z')
+    else:
+      axis_names = ('x',)
+    mesh = jtu.create_global_mesh(mesh_shape, axis_names)
+    mps = jax.sharding.NamedSharding(mesh, pspec)
+    shape = (8, 2, 4)
+    mps_op_sharding = mps._to_xla_op_sharding(len(shape))
+    ops_ifr = op_shardings.is_op_sharding_replicated(mps_op_sharding)
+    self.assertEqual(mps.is_fully_replicated, ops_ifr)
+
+    ps = _from_op_sharding_to_pos_sharding(mps_op_sharding,
+                                           mps._device_assignment)
+    self.assertEqual(ps.is_fully_replicated,
+                     op_shardings.is_op_sharding_replicated(
+                         ps._to_xla_op_sharding(len(shape))))
 
   def test_devices_sharding_respects_init_mesh_shape(self):
     value_shape = (8, 4)
