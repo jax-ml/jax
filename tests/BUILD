@@ -861,7 +861,7 @@ py_test(
     srcs = ["gfile_cache_test.py"],
     deps = [
         "//jax",
-        "//jax:compilation_cache",
+        "//jax:gfile_cache",
         "//jax:test_util",
     ],
 )
@@ -873,8 +873,7 @@ jax_test(
         "tpu": ["nomsan"],  # TODO(b/213388298): this test fails msan.
     },
     deps = [
-        "//jax:compilation_cache",
-        "//jax:experimental",
+        "//jax:compilation_cache_internal",
     ],
 )
 
