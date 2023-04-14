@@ -491,8 +491,11 @@ def xla_computation(fun: Callable,
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
-  del instantiate_const_outputs  # Unused
-
+  if instantiate_const_outputs is not None:
+    raise ValueError(
+        "instantiate_const_outputs has been deprecated. Please use the ahead of"
+        " time APIs. You can read more here:"
+        " https://jax.readthedocs.io/en/latest/aot.html")
   if in_parts is not None:
     raise ValueError(
         "in_parts has been deprecated. Please use the ahead of time APIs. You"
