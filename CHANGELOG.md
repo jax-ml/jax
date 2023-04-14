@@ -23,6 +23,8 @@ Remember to align the itemized text with the first line of an item within a list
     JAX v0.4.1. Use `jnp.sort(a, axis=0)` instead.
   * `in_parts` and `out_parts` arguments have been removed from `jax.xla_computation`
     since they were only used with sharded_jit and sharded_jit is long gone.
+  * `instantiate_const_outputs` argument has been removed from `jax.xla_computation`
+    since it has been unused for a very long time.
 
 ## jaxlib 0.4.9
 
