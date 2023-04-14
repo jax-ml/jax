@@ -377,6 +377,10 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(foo, mesh=mesh, in_specs=({'hi': P('x')},), out_specs=())(
           {'hi': [jnp.array(3.)]})
 
+    with self.assertRaisesRegex(ValueError,
+                                r'consider using an in_specs entry of `P\(\)`'):
+      shard_map(foo, mesh=mesh, in_specs=P(None), out_specs=())(3.)
+
   def test_reverse_mode_ad(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
 

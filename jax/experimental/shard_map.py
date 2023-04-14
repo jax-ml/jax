@@ -186,7 +186,7 @@ def _spec_rank_error(
     else:
       extra = ""
     msgs.append(
-        f"{prefix}_specs{keystr(spec_key)} is {spec} which has length "
+        f"* {prefix}_specs{keystr(spec_key)} is {spec} which has length "
         f"{len(spec)}, but "
         f"{base}{keystr(fail_key)}{extra} has shape {aval.str_short()}, "
         f"which has rank {aval.ndim} (and {aval.ndim} < {len(spec)})")
@@ -199,6 +199,9 @@ def _spec_rank_error(
          f"number of axes in the corresponding {prefix}put value.\n\n"
          f"Either revise the spec to be shorter, or modify '{fun_name}' so "
          f"that its {prefix}puts have sufficient rank.")
+  if any(not aval.ndim for _, (_, aval) in _iter_paths(tree, specs, fails)):
+    msg += (f"\n\nFor scalar values (rank 0), consider using an {prefix}_specs "
+            "entry of `P()`, where `P = jax.sharding.PartitionSpec`.")
   return msg
 
 def _spec_divisibility_error(
@@ -219,7 +222,7 @@ def _spec_divisibility_error(
         total = 'total ' if len(ns) > 1 else ''
         sz = math.prod(mesh.shape[n] for n in ns)
         msgs.append(
-            f"args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
+            f"* args{keystr(fail_key)} of shape {aval.str_short()}{extra} "
             f"corresponds to in_specs{keystr(spec_key)} of value {spec}, "
             f"which maps array axis {d} (of size {aval.shape[d]}) to mesh "
             f"{axis} (of {total}size {sz}), but {sz} does not evenly divide "
@@ -250,14 +253,14 @@ def _rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
       got_rep = ','.join(map(str, rep))
       diff = ','.join(map(str, unmentioned - rep))
       msgs.append(
-          f"out_specs{keystr(spec_key)} is {spec} which implies that the "
+          f"* out_specs{keystr(spec_key)} is {spec} which implies that the "
           f"corresponding output value is replicated across mesh axes "
           f"{{{need_rep}}}, but could only infer replication over {{{got_rep}}}, "
           f"which is missing the required axes {diff}")
     else:
       need_rep_, = unmentioned
       msgs.append(
-          f"out_specs{keystr(spec_key)} is {spec} which implies that the "
+          f"* out_specs{keystr(spec_key)} is {spec} which implies that the "
           f"corresponding output value is replicated across mesh axis "
           f"'{need_rep_}', but could not infer replication over any axes")
   assert msgs
