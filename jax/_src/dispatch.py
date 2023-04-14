@@ -584,12 +584,21 @@ def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
   map_ = s.devices_indices_map(aval.shape)  # type: ignore
   return result_handler(pxla.shard_arg(x, list(map_), list(map_.values()), s))
 
+def _sharding_or_none(x):
+  if isinstance(x, (Sharding, type(None))):
+    return x
+  return SingleDeviceSharding(x)
+
 
 def _device_put_impl(
     x,
     device: Optional[Union[Device, Sharding]] = None,
     src: Optional[Union[Device, Sharding]] = None):
   from jax._src import array
+
+  device = _sharding_or_none(device)
+  src = _sharding_or_none(src)
+
   try:
     aval = xla.abstractify(x)
   except TypeError as err:
@@ -603,25 +612,20 @@ def _device_put_impl(
           "device_put's second argument must be a Device or a Sharding which "
           f"represents addressable devices, but got {s}")
     _check_sharding(aval, s)
-    if getattr(x, 'sharding', None) == s:
-      return x
+
+    if isinstance(x, array.ArrayImpl):
+      if not x.is_fully_addressable:
+        raise ValueError(
+            "device_put's first argument must be a fully addressable array, but "
+            f"got value with devices {x.devices()}")
+      if x._committed and x.sharding == s:
+        return x
     return _put_x(x, s, aval, True)
 
-  # Only `Device` exists below. `Sharding` instance is handled above.
+  assert device is None
   if isinstance(x, array.ArrayImpl):
-    if not x.is_fully_addressable:
-      raise ValueError(
-          "device_put's first argument must be a fully addressable array, but "
-          f"got value with devices {x.devices()}")
-    if device is None:
-      return x
-    elif is_single_device_sharding(x.sharding):
-      return pxla.batched_device_put(aval, SingleDeviceSharding(device), [x],
-                                     [device])
-
-  sh = SingleDeviceSharding(pxla._get_default_device()
-                            if device is None else device)
-  return _put_x(x, sh, aval, device is not None)
+    return x
+  return _put_x(x, SingleDeviceSharding(pxla._get_default_device()), aval, False)
 
 
 device_put_p = core.Primitive('device_put')
@@ -635,6 +639,4 @@ batching.defvectorized(device_put_p)
 
 def _device_put_lowering(ctx, x, *, device, src):
   return [x]
-
-
 mlir.register_lowering(device_put_p, _device_put_lowering)
