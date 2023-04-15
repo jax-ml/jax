@@ -21,7 +21,7 @@ from functools import partial
 import os
 import re
 import threading
-from typing import Callable, Sequence, Optional, Dict, Any
+from typing import Awaitable, Any, Callable, Dict, Optional, Sequence, Union
 
 import jax
 from jax._src import distributed
@@ -45,18 +45,13 @@ logger = logging.getLogger(__name__)
 async def create_async_array_from_callback(
     global_shape: array.Shape,
     inp_sharding: sharding_impls.XLACompatibleSharding,
-    data_callback: Callable[[array.Index], asyncio.Future],
+    data_callback: Callable[[array.Index, jax.Device], Awaitable[jax.Array]],
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
   addressable_da = inp_sharding._addressable_device_assignment
-  future_arrays = [data_callback(device_to_index_map[d])  # type: ignore
+  future_arrays = [data_callback(device_to_index_map[d], d)  # type: ignore
                    for d in addressable_da]
-  # Pause here and come back to `from_async_callback()` when future_arrays are
-  # ready. device_put cannot happen with future_arrays.
-  local_arrays = await asyncio.gather(*future_arrays)
-
-  dbs = [jax.device_put(array, device)
-         for array, device in zip(local_arrays, addressable_da)]
+  dbs = await asyncio.gather(*future_arrays)
   return array.make_array_from_single_device_arrays(
       global_shape, inp_sharding, dbs)
 
@@ -203,12 +198,15 @@ def run_serialization(arrays, tensorstore_specs):
   asyncio.run(_run_serializer())
 
 
-def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
+def estimate_read_memory_footprint(t: ts.TensorStore,
+                                   domain: ts.IndexDomain) -> int:
   rank = t.rank
   num_bytes = t.dtype.numpy_dtype.itemsize
   chunk_template = t.chunk_layout.read_chunk_template
-  origin = t.domain.origin
-  shape = t.domain.shape
+  if domain is None:
+    domain = t.domain
+  origin = domain.origin
+  shape = domain.shape
   chunk_origin = chunk_template.origin
   chunk_shape = chunk_template.shape
 
@@ -217,7 +215,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
   # the footprint as the entire shape.
   for i in range(rank):
     if not chunk_template[i].finite:
-      return t.domain.size * num_bytes
+      return domain.size * num_bytes
 
   # Otherwise, if we have a chunked driver, estimate based on chunk size.
   for i in range(rank):
@@ -234,42 +232,48 @@ def estimate_read_memory_footprint(t: ts.TensorStore) -> int:
 
 
 async def async_deserialize(
-    in_sharding,
-    tensorstore_spec,
-    global_shape=None,
+    in_sharding: sharding_impls.XLACompatibleSharding,
+    tensorstore_spec: Union[ts.Spec, Dict[str, Any]],
+    global_shape: Optional[Sequence[int]] = None,
     dtype=None,
     byte_limiter: Optional[_LimitInFlightBytes] = None,
     context=TS_CONTEXT,
 ):
-  t = await ts.open(ts.Spec(tensorstore_spec), open=True, context=context)
+  t = await ts.open(tensorstore_spec, open=True, context=context)
   shape = t.shape if global_shape is None else global_shape
   new_shard_shape = in_sharding.shard_shape(tuple(shape))
 
-  async def cb(index):
+  async def cb(index: array.Index, device: jax.Device):
+    requested_domain = ts.IndexTransform(input_shape=shape)[index].domain
+    restricted_domain = t.domain.intersect(requested_domain)
+    requested_bytes = estimate_read_memory_footprint(t, restricted_domain)
+    # Limit the bytes read for every shard.
+    if byte_limiter is not None:
+      await byte_limiter.wait_for_bytes(requested_bytes)
     # This maybe needed because the shape the array was saved with is smaller
     # than the requested shape of the array in which it will be reloaded. So
     # the extra values will be filled with 0s.
     out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
-    requested_domain = ts.IndexTransform(input_shape=shape)[index].domain
-    restricted_domain = t.domain.intersect(requested_domain)
-
-    requested_bytes = estimate_read_memory_footprint(t[restricted_domain])
-
-    # Limit the bytes read for every shard.
-    if byte_limiter is not None:
-      await byte_limiter.wait_for_bytes(requested_bytes)
-
-    await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][restricted_domain].write(
-        t[restricted_domain])
-
+    await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][
+        restricted_domain].write(t[restricted_domain])
     if dtype is not None:
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
       out = out.astype(dtype)
-
+    result = jax.device_put(out, device)
     if byte_limiter is not None:
+      # NB: `out` actually might not be ready for garbage collection by the
+      # time we call release_bytes . Thus peak memory usage still might grow
+      # beyond what byte_limiter limit suggests it should. The simplest option
+      # would be to call  `result.block_until_ready()`` here. However it
+      # also comes with ~15-20% perf penalty as we would be waiting for CPU->GPU
+      # transfer instead of loading data. In the future, if memory pressure
+      # becomes a problem, we can instead instrument  bytelimiter to
+      # keep track of all in-flight tensors and only block_until_ready, if byte
+      # limiter hits the limit to get reduced memory usage, without loosing
+      # performance in common use cases.
       await byte_limiter.release_bytes(requested_bytes)
-    return out
+    return result
 
   return await create_async_array_from_callback(tuple(shape), in_sharding, cb)
 
