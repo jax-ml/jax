@@ -270,7 +270,7 @@ A related application is to enforce a differentiation convention, perhaps at a b
 
 +++ {"id": "l_6tdb-QGK-H"}
 
-Consider the function $f : \mathbb{R}_+ \mapsto \mathbb{R}_+$ with $f(x) = \frac{x}{1 + \sqrt{x}}$, where we take $\mathbb{R}_+ = [0, \infty)$. We might implement $f$ as a program like this:
+Consider the function $f : \mathbb{R}_+ \to \mathbb{R}_+$ with $f(x) = \frac{x}{1 + \sqrt{x}}$, where we take $\mathbb{R}_+ = [0, \infty)$. We might implement $f$ as a program like this:
 
 ```{code-cell} ipython3
 :id: AfF5P7x_GaSe
