@@ -13,8 +13,10 @@
 # limitations under the License.
 """Tests for serialization and deserialization of GDA."""
 
+import asyncio
 import math
 import pathlib
+import tracemalloc as tm
 
 from absl.testing import absltest
 import jax
@@ -29,8 +31,43 @@ import tensorstore as ts
 
 config.parse_flags_with_absl()
 
-
 class CheckpointTest(jtu.JaxTestCase):
+  def test_memory_consumption(self):
+    global_mesh = jtu.create_global_mesh((2, 4), ('x', 'y'))
+    inp_shape = (2_048, 4_096)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+    sharding = NamedSharding(global_mesh, pspec)
+    src = jax.numpy.arange(num, dtype=np.int64).reshape(inp_shape)  # 8e9
+    inp = array.make_array_from_callback(
+        inp_shape, sharding,
+        lambda idx: src[idx])
+    ckpt_dir = pathlib.Path(self.create_tempdir('memprof').full_path)
+    tspec = serialization.get_tensorstore_spec(str(ckpt_dir))
+    serialization.run_serialization([inp], [tspec])
+    deserialize_with_byte_limit = serialization.async_deserialize(
+        sharding, tspec, inp_shape,
+        byte_limiter=serialization._LimitInFlightBytes(4_200_000))
+    tm.start()
+    asyncio.run(deserialize_with_byte_limit).block_until_ready()
+    unused_current, peak = tm.get_traced_memory()
+    # NB: some padding + tensorstore overhead. It should always be
+    # less than array size (2048 * 4096 * 4 = 32M)
+    self.assertLess(peak, 10_000_000)
+
+    deserialize_wo_limit = serialization.async_deserialize(
+        sharding, tspec, inp_shape)
+    tm.clear_traces()
+    # NB: call block_until_ready() is important here and above
+    # because otherwise this leads to racing condition and segfault with
+    # tensorstore attempting to dealloc using tracemalloc which is already
+    # destroyed.
+    asyncio.run(deserialize_wo_limit).block_until_ready()
+
+    unused_current, peak = tm.get_traced_memory()
+    # We load entire array in memory here.
+    self.assertGreater(peak, 30_000_000)
+    tm.stop()
 
   def test_checkpointing_jax_array(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
