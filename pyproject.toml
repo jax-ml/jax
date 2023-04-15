@@ -1,3 +1,107 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.mypy]
+show_error_codes = true
+disable_error_code = "attr-defined"
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = [
+    "absl.*",
+    "colorama.*",
+    "IPython.*",
+    "numpy.*",
+    "opt_einsum.*",
+    "scipy.*",
+    "libtpu.*",
+    "jaxlib.mlir.*",
+    "iree.*",
+    "rich.*",
+    "optax.*",
+    "flax.*",
+    "tensorflow.*",
+    "tensorflowjs.*",
+    "tensorflow.io.*",
+    "tensorstore.*",
+    "web_pdb.*",
+    "etils.*",
+    "google.colab.*",
+    "pygments.*",
+    "jraph.*",
+    "matplotlib.*",
+    "tensorboard_plugin_profile.convert.*",
+    "jaxlib.*",
+    "pytest.*",
+    "ml_dtypes",
+    "jax.experimental.jax2tf.tests.flax_models",
+    "jax.experimental.jax2tf.tests.back_compat_testdata"
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "jax.interpreters.autospmd",
+    "jax.lax.lax_parallel",
+    "jax.experimental.jax2tf.tests.primitive_harness"
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+markers = [
+    "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
+    "SlurmMultiNodeGpuTest: mark a test for Slurm multinode GPU nightly CI"
+]
+filterwarnings = [
+    "error",
+    "ignore:No GPU/TPU found, falling back to CPU.:UserWarning",
+    "ignore:outfeed_receiver is unnecessary and deprecated:DeprecationWarning",
+    "ignore:xmap is an experimental feature and probably has bugs!",
+    "ignore:the imp module is deprecated in favour of importlib.*:DeprecationWarning",
+    "ignore:can't resolve package from __spec__ or __package__:ImportWarning",
+    "ignore:Using or importing the ABCs.*:DeprecationWarning",
+    "ignore:numpy.ufunc size changed",
+    "ignore:.*experimental feature",
+    "ignore:index.*is deprecated.*:DeprecationWarning",
+    "ignore:jax.experimental.* is deprecated, import jax.example_libraries.* instead:FutureWarning",
+    "ignore:The distutils.* is deprecated.*:DeprecationWarning",
+    "ignore:`sharded_jit` is deprecated. Please use `pjit` instead.*:DeprecationWarning",
+    "default:Error reading persistent compilation cache entry for 'jit__lambda_'",
+    "default:Error writing persistent compilation cache entry for 'jit__lambda_'",
+    "ignore:DeviceArray, ShardedDeviceArray, and GlobalDeviceArray have been deprecated.*:DeprecationWarning",
+    "ignore:backend and device argument on jit is deprecated.*:DeprecationWarning",
+    "ignore:GlobalDeviceArray has been deprecated.*:DeprecationWarning",
+    "ignore:jax.interpreters.pxla.make_sharded_device_array is deprecated.*:DeprecationWarning",
+    # TODO(skyewm, yashkatariya): Remove after jaxlib 0.4.7 is released.
+    "ignore:jax.interpreters.pxla.ShardedDeviceArray is deprecated.*:DeprecationWarning"
+]
+doctest_optionflags = [
+    "NUMBER",
+    "NORMALIZE_WHITESPACE"
+]
+addopts = "--doctest-glob='*.rst'"
+
+[tool.pylint.master]
+extension-pkg-whitelist = "numpy"
+
+[tool.pylint."messages control"]
+disable = [
+    "missing-docstring",
+    "too-many-locals",
+    "invalid-name",
+    "redefined-outer-name",
+    "redefined-builtin",
+    "protected-name",
+    "no-else-return",
+    "fixme",
+    "protected-access",
+    "too-many-arguments",
+    "blacklisted-name",
+    "too-few-public-methods",
+    "unnecessary-lambda"
+]
+enable = "c-extension-no-member"
+
+[tool.pylint.format]
+indent-string=" "
