@@ -527,6 +527,13 @@ class PrngTest(jtu.JaxTestCase):
     self.assertIsInstance(key, jax.Array)
 
 
+class ThreefryPrngTest(jtu.JaxTestCase):
+  def test_seed_no_implicit_transfers(self):
+    # See https://github.com/google/jax/issues/15613
+    with jax.transfer_guard('disallow'):
+      random.threefry2x32_key(jax.device_put(42))  # doesn't crash
+
+
 class LaxRandomTest(jtu.JaxTestCase):
 
   def _CheckCollisions(self, samples, nbits):
