@@ -617,10 +617,10 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
       dt = np.result_type(x)
     except TypeError as err:
       raise TypeError(f"Cannot determine dtype of {x}") from err
-  if dt not in _jax_dtype_set:
+  if dt not in _jax_dtype_set and not core.is_opaque_dtype(dt):
     raise TypeError(f"Value '{x}' with dtype {dt} is not a valid JAX array "
                     "type. Only arrays of numeric types are supported by JAX.")
-  return canonicalize_dtype(dt) if canonicalize else dt
+  return canonicalize_dtype(dt, allow_opaque_dtype=True) if canonicalize else dt
 
 def _lattice_result_type(*args: Any) -> Tuple[DType, bool]:
   dtypes, weak_types = zip(*(_dtype_and_weaktype(arg) for arg in args))
