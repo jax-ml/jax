@@ -875,6 +875,10 @@ def threefry_seed(seed: typing.Array) -> typing.Array:
     bit-casting to a pair of uint32 values (or from a 32-bit seed by
     first padding out with zeros).
   """
+  return _threefry_seed(seed)
+
+@partial(jit, inline=True)
+def _threefry_seed(seed: typing.Array) -> typing.Array:
   if seed.shape:
     raise TypeError(f"PRNG key seed must be a scalar; got {seed!r}.")
   if not np.issubdtype(seed.dtype, np.integer):
