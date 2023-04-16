@@ -526,6 +526,11 @@ class PrngTest(jtu.JaxTestCase):
     key = random.PRNGKey(0)
     self.assertIsInstance(key, jax.Array)
 
+  def test_key_output_vjp(self):
+    # See https://github.com/google/jax/issues/14856
+    def f(seed): return random.PRNGKey(seed)
+    jax.vjp(f, 1)  # doesn't crash
+
 
 class ThreefryPrngTest(jtu.JaxTestCase):
   def test_seed_no_implicit_transfers(self):
