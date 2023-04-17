@@ -11,6 +11,8 @@ jax.scipy.fft
 
    dct
    dctn
+   idct
+   idctn
 
 jax.scipy.linalg
 ----------------
