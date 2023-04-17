@@ -35,7 +35,6 @@ module = [
     "jaxlib.*",
     "pytest.*",
     "zstandard.*",
-    "ml_dtypes",
     "jax.experimental.jax2tf.tests.flax_models",
     "jax.experimental.jax2tf.tests.back_compat_testdata"
 ]
