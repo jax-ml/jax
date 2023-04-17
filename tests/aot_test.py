@@ -20,12 +20,15 @@ from absl.testing import absltest
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     serialize, deserialize_and_load)
+from jax.experimental import topologies
+from jax.experimental import mesh_utils
 from jax.sharding import PartitionSpec as P
 
 from jax.config import config
@@ -96,6 +99,36 @@ class JaxAotTest(jtu.JaxTestCase):
     verify_serialization(
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
+
+  def test_topology_pjit_serialize(self):
+    self.check_for_compile_options()
+
+    @jax.jit
+    def fn(x):
+      return x * x
+
+    def lower_and_load(mesh):
+      s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+      x_shape = jax.ShapeDtypeStruct(
+          shape=(16, 16),
+          dtype=jnp.dtype('float32'),
+          sharding=s)
+      lowered = fn.lower(x_shape)
+      serialized, in_tree, out_tree = serialize(lowered.compile())
+      compiled = deserialize_and_load(serialized, in_tree, out_tree)
+      return compiled
+
+    topo = topologies.get_attached_topology()
+    n = max(1, len(topo.devices) // 2)
+    mesh_shape = (len(topo.devices) // n, n)
+
+    mesh = topologies.make_mesh(topo, mesh_shape, ('x', 'y'))
+    ref_mesh = jax.sharding.Mesh(
+        mesh_utils.create_device_mesh(
+            mesh_shape, jax.devices()),
+        ('x', 'y'))
+    self.assertEqual(lower_and_load(ref_mesh).as_text(),
+                     lower_and_load(mesh).as_text())
 
 
 if __name__ == '__main__':
