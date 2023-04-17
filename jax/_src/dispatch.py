@@ -265,7 +265,8 @@ def log_elapsed_time(fmt: str, event: Optional[str] = None):
     start_time = time.time()
     yield
     elapsed_time = time.time() - start_time
-    logger.log(log_priority, fmt.format(elapsed_time=elapsed_time))
+    if logger.isEnabledFor(log_priority):
+      logger.log(logging.WARNING, fmt.format(elapsed_time=elapsed_time))
     if event is not None:
       record_event_duration_secs(event, elapsed_time)
 
