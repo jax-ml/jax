@@ -591,6 +591,22 @@ def dynamic_slice_error_check(error, enabled_errors, operand, *start_indices, sl
   return error, out
 error_checks[lax.dynamic_slice_p] = dynamic_slice_error_check
 
+def dynamic_update_slice_error_check(error, enabled_errors, operand, update, *start_indices):
+  out = lax.dynamic_update_slice_p.bind(operand, update, *start_indices)
+
+  if OOBError not in enabled_errors:
+    return error, out
+
+  operand_dims = np.array(operand.shape)
+  update_dims = np.array(update.shape)
+  start_indices = jnp.array(start_indices)
+  oob_mask = (start_indices < 0) | (start_indices + update_dims > operand_dims)
+
+  payload = oob_payload(oob_mask, start_indices, range(operand.ndim), operand.shape)
+  error = assert_func(error, jnp.any(oob_mask), OOBError(summary(), "dynamic_update_slice", operand.shape, payload))
+  return error, out
+error_checks[lax.dynamic_update_slice_p] = dynamic_update_slice_error_check
+
 def gather_error_check(error, enabled_errors, operand, start_indices, *,
                        dimension_numbers, slice_sizes, unique_indices,
                        indices_are_sorted, mode, fill_value):
