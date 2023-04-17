@@ -146,10 +146,7 @@ py_library_providing_imports_info(
         "experimental/shard_map.py",
         # until checkify is moved out of experimental
         "experimental/checkify.py",
-        # to avoid circular dependencies
         "experimental/compilation_cache/compilation_cache.py",
-        "experimental/compilation_cache/gfile_cache.py",
-        "experimental/compilation_cache/cache_interface.py",
     ],
     lib_rule = pytype_library,
     pytype_srcs = glob(
@@ -165,6 +162,7 @@ py_library_providing_imports_info(
         ":api_util",
         ":basearray",
         ":cloud_tpu_init",
+        ":compilation_cache_internal",
         ":config",
         ":core",
         ":custom_api_util",
@@ -247,6 +245,24 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "compilation_cache_internal",
+    srcs = ["_src/compilation_cache.py"],
+    visibility = [":internal"] + jax_visibility("compilation_cache"),
+    deps = [
+        ":compilation_cache_interface",
+        ":gfile_cache",
+        ":path",
+        "//jax/_src/lib",
+    ],
+)
+
+pytype_strict_library(
+    name = "compilation_cache_interface",
+    srcs = ["_src/compilation_cache_interface.py"],
+    deps = [":path"],
+)
+
+pytype_strict_library(
     name = "config",
     srcs = ["_src/config.py"],
     deps = [
@@ -298,6 +314,15 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "gfile_cache",
+    srcs = ["_src/gfile_cache.py"],
+    deps = [
+        ":compilation_cache_interface",
+        ":path",
+    ],
 )
 
 pytype_library(
@@ -664,7 +689,6 @@ pytype_library(
     name = "compilation_cache",
     srcs = [
         "experimental/compilation_cache/compilation_cache.py",
-        "experimental/compilation_cache/gfile_cache.py",
     ],
     visibility = ["//visibility:public"],
     deps = [":jax"],

@@ -24,20 +24,21 @@ from unittest import mock, SkipTest
 import warnings
 
 from absl.testing import absltest
-from jax.sharding import PartitionSpec as P
-from jax.experimental.compilation_cache import compilation_cache as cc
-from jax.experimental.maps import xmap
-from jax.experimental.pjit import pjit
 import jax
 from jax import jit, lax, pmap
-import jax._src.test_util as jtu
+from jax.experimental.maps import xmap
+from jax.experimental.pjit import pjit
+from jax.sharding import PartitionSpec as P
+from jax._src import compilation_cache as cc
+from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.config import (persistent_cache_min_compile_time_secs,
+                             raise_persistent_cache_errors)
 from jax._src.lib import xla_client
+
 import numpy as np
 
 from jax.config import config
-from jax._src.config import (persistent_cache_min_compile_time_secs,
-                             raise_persistent_cache_errors)
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS

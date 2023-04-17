@@ -31,6 +31,7 @@ import warnings
 
 import numpy as np
 
+from jax._src import compilation_cache
 from jax._src import core
 from jax._src import dtypes
 from jax._src import linear_util as lu
@@ -466,9 +467,6 @@ def _dump_ir_to_file(name: str, ir: str):
 
 def compile_or_get_cached(backend, computation: ir.Module, compile_options,
                           host_callbacks):
-  # Avoid import cycle between jax and jax.experimental
-  from jax.experimental.compilation_cache import compilation_cache as cc
-
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
@@ -490,7 +488,8 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
   if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("cpu")
-  if cc.is_initialized() and backend.platform in supported_platforms:
+  if (compilation_cache.is_initialized() and
+      backend.platform in supported_platforms):
     cached_executable = _cache_read(serialized_computation, module_name,
                                     compile_options, backend)
     if cached_executable is not None:
@@ -513,11 +512,9 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
                 compile_options: CompileOptions,
                 backend: Backend) -> Optional[xc.LoadedExecutable]:
   """Looks up `computation` in the persistent compilation cache."""
-  # Avoid import cycle between jax and jax.experimental
-  from jax.experimental.compilation_cache import compilation_cache as cc
-
   try:
-    return cc.get_executable(computation, compile_options, backend)
+    return compilation_cache.get_executable(computation, compile_options,
+                                            backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
@@ -533,9 +530,6 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
                  backend: Backend, compiled: xc.LoadedExecutable,
                  host_callbacks: List[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
-  # Avoid import cycle between jax and jax.experimental
-  from jax.experimental.compilation_cache import compilation_cache as cc
-
   if host_callbacks:
     logger.info(
         "Not writing persistent cache entry for '%s' because it uses host "
@@ -557,8 +551,8 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
           compile_time_secs)
 
   try:
-    cc.put_executable(module_name, serialized_computation, compile_options,
-                      compiled, backend)
+    compilation_cache.put_executable(module_name, serialized_computation,
+                                     compile_options, compiled, backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
