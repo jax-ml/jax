@@ -14,8 +14,8 @@
 
 import os
 
-from jax.experimental.compilation_cache.cache_interface import CacheInterface
 from jax._src import path as pathlib
+from jax._src.compilation_cache_interface import CacheInterface
 
 class GFileCache(CacheInterface):
 

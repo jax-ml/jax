@@ -14,11 +14,16 @@
 
 from abc import ABC, abstractmethod
 
-class CacheInterface(ABC):
-    @abstractmethod
-    def get(self, key: str):
-        pass
+from jax._src import path as pathlib
 
-    @abstractmethod
-    def put(self, key: str, value: bytes):
-        pass
+
+class CacheInterface(ABC):
+  _path: pathlib.Path
+
+  @abstractmethod
+  def get(self, key: str):
+    pass
+
+  @abstractmethod
+  def put(self, key: str, value: bytes):
+    pass
