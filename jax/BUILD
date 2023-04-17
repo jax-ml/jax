@@ -253,7 +253,7 @@ pytype_strict_library(
         ":gfile_cache",
         ":path",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("zstandard"),
 )
 
 pytype_strict_library(

@@ -18,6 +18,13 @@ import os
 import re
 import sys
 from typing import List, Optional
+import zlib
+
+# If zstandard is installed, we use zstd compression, otherwise we use zlib.
+try:
+  import zstandard
+except ImportError:
+  zstandard = None
 
 from jax._src import path as pathlib
 from jax._src.compilation_cache_interface import CacheInterface
@@ -55,11 +62,16 @@ def get_executable(xla_computation, compile_options,
   """Returns the cached executable if present, or None otherwise."""
   assert _cache is not None, "initialize_cache must be called before you can call get_executable()"
   cache_key = get_cache_key(xla_computation, compile_options, backend)
-  xla_executable_serialized = _cache.get(cache_key)
-  if not xla_executable_serialized:
+  serialized_executable = _cache.get(cache_key)
+  if not serialized_executable:
     return None
+  if zstandard:
+    decompressor = zstandard.ZstdDecompressor()
+    serialized_executable = decompressor.decompress(serialized_executable)
+  else:
+    serialized_executable = zlib.decompress(serialized_executable)
   xla_executable_deserialized = backend.deserialize_executable(
-      xla_executable_serialized,
+      serialized_executable,
       compile_options)
   return xla_executable_deserialized
 
@@ -71,6 +83,11 @@ def put_executable(module_name, xla_computation, compile_options,
   logger.info('Writing %s to persistent compilation cache with key %s.',
                module_name, cache_key)
   serialized_executable = backend.serialize_executable(executable)
+  if zstandard:
+    compressor = zstandard.ZstdCompressor()
+    serialized_executable = compressor.compress(serialized_executable)
+  else:
+    serialized_executable = zlib.compress(serialized_executable)
   _cache.put(cache_key, serialized_executable)
 
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
@@ -103,6 +120,7 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
        lambda hash_obj: hash_obj.update(bytes(jaxlib_version_str.encode('utf-8')))),
       ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
       ("XLA flags", _hash_xla_flags),
+      ("compression", _hash_compression),
   ]
 
   hash_obj = hashlib.sha256()
@@ -255,6 +273,10 @@ def _hash_xla_flags(hash_obj):
       continue
     logger.debug("Including XLA flag in cache key: %s", flag)
     _hash_string(hash_obj, flag)
+
+def _hash_compression(hash_obj):
+  _hash_string(hash_obj, "zstandard" if zstandard is not None else "zlib")
+
 
 def _hash_int(hash_obj, int_var):
   hash_obj.update(int_var.to_bytes(8, byteorder='big'))
