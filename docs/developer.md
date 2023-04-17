@@ -30,7 +30,7 @@ guidance on pip installation (e.g., for GPU and TPU support).
 
 To build `jaxlib` from source, you must also install some prerequisites:
 
-* a C++ compiler (g++, clang, or MSVC)
+- a C++ compiler (g++, clang, or MSVC)
 
   On Ubuntu or Debian you can install the necessary prerequisites with:
 
@@ -42,7 +42,8 @@ To build `jaxlib` from source, you must also install some prerequisites:
   are installed.
 
   See below for Windows build instructions.
-* Python packages: `numpy`, `wheel`.
+
+- Python packages: `numpy`, `wheel`.
 
 You can install the necessary Python dependencies using `pip`:
 
@@ -74,13 +75,14 @@ By default JAX uses a pinned copy of the XLA repository, but we often
 want to use a locally-modified copy of XLA when working on JAX. There are two
 ways to do this:
 
-* use Bazel's `override_repository` feature, which you can pass as a command
+- use Bazel's `override_repository` feature, which you can pass as a command
   line flag to `build.py` as follows:
 
   ```
   python build/build.py --bazel_options=--override_repository=xla=/path/to/xla
   ```
-* modify the `WORKSPACE` file in the root of the JAX source tree to point to
+
+- modify the `WORKSPACE` file in the root of the JAX source tree to point to
   a different XLA tree.
 
 To contribute changes back to XLA, send PRs to the XLA repository.
@@ -112,6 +114,7 @@ for more details. Install the following packages:
 ```
 pacman -S patch coreutils
 ```
+
 Once coreutils is installed, the realpath command should be present in your shell's path.
 
 Once everything is installed. Open PowerShell, and make sure MSYS2 is in the
@@ -144,12 +147,14 @@ sudo apt install miopen-hip hipfft-dev rocrand-dev hipsparse-dev hipsolver-dev \
 AMD's fork of the XLA repository may include fixes
 not present in the upstream repository. To use AMD's fork, you should clone
 their repository:
+
 ```
 git clone https://github.com/ROCmSoftwarePlatform/tensorflow-upstream.git
 ```
 
 To build jaxlib with ROCM support, you can run the following build command,
 suitably adjusted for your paths and ROCM version.
+
 ```
 python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.3.0 \
   --bazel_options=--override_repository=xla=/path/to/xla-upstream
@@ -178,6 +183,7 @@ or using pytest.
 ### Using Bazel
 
 First, configure the JAX build by running:
+
 ```
 python build/build.py --configure_only
 ```
@@ -199,7 +205,6 @@ To use a preinstalled `jaxlib` instead of building `jaxlib` from source, run
 ```
 bazel test --//jax:build_jaxlib=false //tests:cpu_tests //tests:backend_independent_tests
 ```
-
 
 A number of test behaviors can be controlled using environment variables (see
 below). Environment variables may be passed to JAX tests using the
@@ -240,11 +245,14 @@ cases that are generated and checked for each test (default is 10) using the
 currently use 25 by default.
 
 For example, one might write
+
 ```
 # Bazel
 bazel test //tests/... --test_env=JAX_NUM_GENERATED_CASES=25`
 ```
+
 or
+
 ```
 # pytest
 JAX_NUM_GENERATED_CASES=25 pytest -n auto tests
@@ -283,14 +291,18 @@ The Colab notebooks are tested for errors as part of the documentation build.
 
 JAX uses pytest in doctest mode to test the code examples within the documentation.
 You can run this using
+
 ```
 pytest docs
 ```
+
 Additionally, JAX runs pytest in `doctest-modules` mode to ensure code examples in
 function docstrings will run correctly. You can run this locally using, for example:
+
 ```
 pytest --doctest-modules jax/_src/numpy/lax_numpy.py
 ```
+
 Keep in mind that there are several files that are marked to be skipped when the
 doctest command is run on the full package; you can see the details in
 [`ci-build.yaml`](https://github.com/google/jax/blob/main/.github/workflows/ci-build.yaml)
@@ -302,7 +314,7 @@ as the CI checks them:
 
 ```
 pip install mypy
-mypy --config=mypy.ini --show-error-codes jax
+mypy --config=pyproject.toml --show-error-codes jax
 ```
 
 Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
@@ -334,18 +346,24 @@ pre-commit run flake8
 ## Update documentation
 
 To rebuild the documentation, install several packages:
+
 ```
 pip install -r docs/requirements.txt
 ```
+
 And then run:
+
 ```
 sphinx-build -b html docs docs/build/html -j auto
 ```
+
 This can take a long time because it executes many of the notebooks in the documentation source;
 if you'd prefer to build the docs without executing the notebooks, you can run:
+
 ```
 sphinx-build -b html -D nb_execution_mode=off docs docs/build/html -j auto
 ```
+
 You can then see the generated documentation in `docs/build/html/index.html`.
 
 The `-j auto` option controls the parallelism of the build. You can use a number
