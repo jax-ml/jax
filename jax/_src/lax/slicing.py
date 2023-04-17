@@ -514,6 +514,7 @@ def scatter_apply(
   operand: Array, scatter_indices: Array,
   func: Callable[[Array], Array],
   dimension_numbers: ScatterDimensionNumbers, *,
+  update_shape: Shape = (),
   indices_are_sorted: bool = False, unique_indices: bool = False,
   mode: Optional[Union[str, GatherScatterMode]] = None) -> Array:
   """Scatter-apply operator.
@@ -539,6 +540,7 @@ def scatter_apply(
     dimension_numbers: a `lax.ScatterDimensionNumbers` object that describes
       how dimensions of `operand`, `start_indices`, `updates` and the output
       relate.
+    update_shape: the shape of the updates at the given indices.
     indices_are_sorted: whether `scatter_indices` is known to be sorted. If
       true, may improve performance on some backends.
     unique_indices: whether the elements to be updated in ``operand`` are
@@ -555,7 +557,7 @@ def scatter_apply(
     An array containing the result of applying `func` to `operand` at the given indices.
   """
   # TODO: can we implement this without a placeholder?
-  unused = lax.full(scatter_indices.shape[:1], 0, operand.dtype)
+  unused = lax.full(update_shape, 0, operand.dtype)
   _apply = lambda x, _: func(x)
   try:
     _apply = _scatter_apply_cache.setdefault(func, _apply)

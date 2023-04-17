@@ -541,8 +541,8 @@ class _IndexUpdateRef:
 
     See :mod:`jax.ops` for details.
     """
-    def _scatter_apply(x, indices, _, dims, **kwargs):
-      return lax.scatter_apply(x, indices, func, dims, **kwargs)
+    def _scatter_apply(x, indices, y, dims, **kwargs):
+      return lax.scatter_apply(x, indices, func, dims, update_shape=y.shape, **kwargs)
     return scatter._scatter_update(self.array, self.index,
                                    lax_internal._zero(self.array.dtype),
                                    _scatter_apply,
