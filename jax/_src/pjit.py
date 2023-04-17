@@ -1859,15 +1859,12 @@ pxla.custom_resource_typing_rules[sharding_constraint_p] = \
 # -------------------- helpers --------------------
 
 @lru_cache(maxsize=2048)
-def _cached_gspmd_sharding(s, ndim):
-  gs = GSPMDSharding(s._device_assignment, s._to_xla_op_sharding(ndim))
-  gs._original_sharding = s
-  return gs
-
 def to_gspmd_sharding(s: XLACompatibleSharding, ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  return _cached_gspmd_sharding(s, ndim)
+  gs = GSPMDSharding(s._device_assignment, s._to_xla_op_sharding(ndim))
+  gs._original_sharding = s
+  return gs
 
 
 def get_unconstrained_dims(sharding: NamedSharding):
