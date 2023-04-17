@@ -28,6 +28,7 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax._src.sharding_impls import _from_op_sharding_to_pos_sharding
 from jax.experimental.pjit import pjit
@@ -698,6 +699,20 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertLen(x.sharding.device_set, 4)
     x.copy_to_host_async()  # doesn't crash
     self.assertArraysEqual(np.arange(8.), x)
+
+  def test_array_fully_replicated_shard(self):
+    if xla_extension_version < 148:
+      self.skipTest('Requires xla_extension_version >= 148')
+
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    inp_shape = (8, 2)
+    arr, inp_data = create_array(
+        inp_shape, jax.sharding.NamedSharding(global_mesh, P()))
+    fs = arr._fully_replicated_shard()
+    self.assertEqual(fs.shape, inp_shape)
+    self.assertTrue(dispatch.is_single_device_sharding(fs.sharding))
+    self.assertArraysEqual(fs, inp_data)
+    self.assertArraysEqual(arr.addressable_data(0), inp_data)
 
 
 class ShardingTest(jtu.JaxTestCase):
