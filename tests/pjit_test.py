@@ -2222,8 +2222,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     self.assertArraysEqual(f_out1, g_out1)
     self.assertArraysEqual(f_out2, g_out2)
-    self.assertTrue(f_out1.sharding.is_equivalent_to(g_out1.sharding, f_out1.ndim))
-    self.assertTrue(f_out2.sharding.is_equivalent_to(g_out2.sharding, f_out2.ndim))
+    self.assertEqual(f_out1.sharding, g_out1.sharding)
+    self.assertEqual(f_out2.sharding, g_out2.sharding)
 
   def test_pjit_on_different_default_device_with_uncommitted_inputs(self):
     if jax.device_count() < 2:
@@ -3066,15 +3066,15 @@ class ArrayPjitTest(jtu.JaxTestCase):
     vf = jax.vmap(pjit(lambda x: x * 2, in_shardings=ns))
     out = vf(arr)
     cache_info1 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out.sharding, GSPMDSharding)
+    self.assertIsInstance(out.sharding, NamedSharding)
 
     out2 = vf(out)
     cache_info2 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out2.sharding, GSPMDSharding)
+    self.assertIsInstance(out2.sharding, NamedSharding)
 
     out3 = vf(out2)
     cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
-    self.assertIsInstance(out3.sharding, GSPMDSharding)
+    self.assertIsInstance(out3.sharding, NamedSharding)
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
