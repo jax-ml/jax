@@ -1857,6 +1857,10 @@ class DynamicJaxprTrace(core.Trace):
   def default_process_primitive(self, primitive, tracers, params):
     avals = [t.aval for t in tracers]
     out_avals, effects = primitive.abstract_eval(*avals, **params)
+    if not (isinstance(out_avals, (tuple,list)) == primitive.multiple_results):
+      raise ValueError(str(primitive) + ".abstract_eval() method should return"
+                      " a tuple or a list if it return multiple results,"
+                      " otherwise it shouldn't return a tuple or a list.")
     out_avals = [out_avals] if not primitive.multiple_results else out_avals
     source_info = source_info_util.current()
     out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
