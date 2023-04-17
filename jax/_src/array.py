@@ -32,6 +32,7 @@ from jax._src import profiler
 from jax._src import xla_bridge
 from jax._src.config import config
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -423,6 +424,8 @@ class ArrayImpl(basearray.Array):
 
   def addressable_data(self, index: int) -> ArrayImpl:
     self._check_if_deleted()
+    if self.is_fully_replicated and xla_extension_version >= 148:
+      return self._fully_replicated_shard()
     return self._arrays[index]
 
   @functools.cached_property
