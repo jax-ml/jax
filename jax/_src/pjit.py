@@ -964,7 +964,6 @@ def pjit_check_aval_sharding(
                          f"(full shape: {shape}) ")
 
 
-
 # -------------------- pjit rules --------------------
 
 pjit_p = core.AxisPrimitive("pjit")
@@ -1369,7 +1368,12 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    return GSPMDSharding(s._device_assignment, new_op)  # type: ignore
+    new_gs = GSPMDSharding(s._device_assignment, new_op)  # type: ignore
+    if hasattr(s, '_original_sharding'):
+      vmapped_s, _ = pxla._get_out_sharding_from_orig_sharding(
+          [new_gs], s._original_sharding, [False])[0]  # type: ignore
+      new_gs = to_gspmd_sharding(vmapped_s, ndim)
+    return new_gs
   else:
     assert isinstance(s, GSPMDSharding)
     assert mesh is not None and not mesh.empty
