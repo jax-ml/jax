@@ -181,6 +181,8 @@ from jax import util as util
 # Also circular dependency.
 from jax._src.array import Shard as Shard
 
+import jax.experimental.compilation_cache as _ccache
+del _ccache
 
 _deprecations = {
   # Added 28 March 2023
