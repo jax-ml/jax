@@ -88,6 +88,7 @@ Operators
     floor
     full
     full_like
+    gamma
     gather
     ge
     gt
