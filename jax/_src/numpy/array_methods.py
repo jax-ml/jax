@@ -21,6 +21,7 @@ This is done dynamically in order to avoid circular imports.
 
 __all__ = ['register_jax_array_methods']
 
+import abc
 from functools import partial, wraps
 import inspect
 from typing import Any, List, Optional, Tuple, Union
@@ -777,8 +778,34 @@ def _set_shaped_array_attributes(shaped_array):
     setattr(shaped_array, prop_name, core.aval_property(prop))
   setattr(shaped_array, "_array_module", staticmethod(__array_module__))
 
+def _forward_operator_to_aval(name):
+  def op(self, *args):
+    return getattr(self.aval, f"_{name}")(self, *args)
+  return op
 
-def _set_device_array_base_attributes(device_array, include=None, exclude=None):
+def _forward_method_to_aval(name):
+  def meth(self, *args, **kwargs):
+    return getattr(self.aval, name).fun(self, *args, **kwargs)
+  return meth
+
+def _forward_property_to_aval(name):
+  @property
+  def prop(self):
+    return getattr(self.aval, name).fget(self)
+  return prop
+
+def _set_tracer_aval_forwarding(tracer, exclude=()):
+  for operator_name in _array_operators:
+    if operator_name not in exclude:
+      setattr(tracer, f"__{operator_name}__", _forward_operator_to_aval(operator_name))
+  for method_name in _array_methods:
+    if method_name not in exclude:
+      setattr(tracer, method_name, _forward_method_to_aval(method_name))
+  for prop_name in _array_properties:
+    if prop_name not in exclude:
+      setattr(tracer, prop_name, _forward_property_to_aval(prop_name))
+
+def _set_array_base_attributes(device_array, include=None, exclude=None):
   # Forward operators, methods, and properties on DeviceArray to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   def maybe_setattr(attr_name, target):
@@ -797,16 +824,36 @@ def _set_device_array_base_attributes(device_array, include=None, exclude=None):
   for name, func in _impl_only_array_methods.items():
     setattr(device_array, name, func)
 
-def _set_device_array_attributes(device_array):
+def _set_array_attributes(device_array):
   setattr(device_array, "__array_module__", __array_module__)
 
+def _make_abstract_method(name, func):
+  @abc.abstractmethod
+  @wraps(func)
+  def method(*args, **kwargs):
+    raise NotImplementedError(f"Cannot call abstract method {name}")
+  return method
+
+def _set_array_abstract_methods(basearray):
+  for operator_name, function in _array_operators.items():
+    setattr(basearray, f"__{operator_name}__",
+            _make_abstract_method(f"__{operator_name}__", function))
+  for method_name, method in _array_methods.items():
+    setattr(basearray, method_name,
+            _make_abstract_method(method_name, method))
+  for prop_name, prop in _array_properties.items():
+    setattr(basearray, prop_name,
+            property(_make_abstract_method(prop_name, prop)))
 
 def register_jax_array_methods():
   """Call this function once to register methods of JAX arrays"""
   _set_shaped_array_attributes(core.ShapedArray)
   _set_shaped_array_attributes(core.DShapedArray)
 
-  _set_device_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
-  _set_device_array_attributes(ArrayImpl)
+  _set_array_base_attributes(ArrayImpl, exclude={'__getitem__'})
+  _set_tracer_aval_forwarding(core.Tracer, exclude={*_impl_only_array_methods, "at"})
+  _set_array_attributes(ArrayImpl)
+
+  _set_array_abstract_methods(Array)
 
   Array.at.__doc__ = _IndexUpdateHelper.__doc__

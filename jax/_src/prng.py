@@ -45,7 +45,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy.array_methods import _set_device_array_base_attributes
+from jax._src.numpy.array_methods import _set_array_base_attributes
 from jax._src.numpy.util import _register_stackable
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
@@ -320,7 +320,7 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   def transpose(self, *_, **__) -> PRNGKeyArray: assert False
   def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
 
-_set_device_array_base_attributes(PRNGKeyArrayImpl, include=[
+_set_array_base_attributes(PRNGKeyArrayImpl, include=[
     '__getitem__', 'ravel', 'squeeze', 'swapaxes', 'take', 'reshape',
     'transpose', 'flatten', 'T'])
 _register_stackable(PRNGKeyArrayImpl)
