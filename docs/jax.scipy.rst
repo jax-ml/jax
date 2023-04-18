@@ -120,6 +120,7 @@ jax.scipy.special
    expi
    expit
    expn
+   gamma
    gammainc
    gammaincc
    gammaln
