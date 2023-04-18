@@ -45,6 +45,10 @@ def lgamma(x: ArrayLike) -> Array:
   r"""Elementwise log gamma: :math:`\mathrm{log}(\Gamma(x))`."""
   return lgamma_p.bind(x)
 
+def gamma(x: ArrayLike) -> Array:
+  r"""Elementwise gamma: :math:`\Gamma(x)`."""
+  return exp(lgamma_p.bind(x))
+
 def digamma(x: ArrayLike) -> Array:
   r"""Elementwise digamma: :math:`\psi(x)`."""
   return digamma_p.bind(x)

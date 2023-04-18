@@ -42,6 +42,12 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
+@_wraps(osp_special.gammaln, module='scipy.special')
+def gamma(x: ArrayLike) -> Array:
+  x, = promote_args_inexact("gamma", x)
+  return lax.exp(lax.lgamma(x))
+
+
 betaln = _wraps(
     osp_special.betaln,
     module='scipy.special',
