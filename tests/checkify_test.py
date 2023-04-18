@@ -198,6 +198,24 @@ class CheckifyTransformTests(jtu.JaxTestCase):
     raises_oob(partial(lax.dynamic_slice, slice_sizes=(1, 1, 1)), x, (0, 1, 8), 'index 8')
     raises_oob(partial(lax.dynamic_slice, slice_sizes=(1, 1, 1)), x, (0, 1, -10), 'index -3')
 
+  def test_dynamic_update_slice_oobs(self):
+    def raises_oob(fn, x, y, idx, *expected_strs):
+      err, _ = checkify.checkify(jax.jit(fn), errors=checkify.index_checks)(x, y, idx)
+      error_txt = err.get()
+      self.assertIsNotNone(error_txt)
+      self.assertStartsWith(error_txt, "out-of-bounds indexing")
+      for s in expected_strs:
+        self.assertIn(s, error_txt)
+
+    x = jnp.ones((2, 3, 7))
+    y = jnp.zeros((1, 1, 1))
+    raises_oob(lax.dynamic_update_slice, x, y, (2, 0, 0), 'index 2')
+    raises_oob(lax.dynamic_update_slice, x, y, (-3, 0, 0), 'index -1')
+    raises_oob(lax.dynamic_update_slice, x, y, (0, 3, 0), 'index 3')
+    raises_oob(lax.dynamic_update_slice, x, y, (0, -5, 0), 'index -2')
+    raises_oob(lax.dynamic_update_slice, x, y, (0, 1, 8), 'index 8')
+    raises_oob(lax.dynamic_update_slice, x, y, (0, 1, -10), 'index -3')
+
   @jtu.sample_product(jit=[False, True])
   def test_jit_ordering(self, jit):
     def f(x, i):
