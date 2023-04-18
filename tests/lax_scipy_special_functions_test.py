@@ -60,6 +60,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "gamma", 1, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
