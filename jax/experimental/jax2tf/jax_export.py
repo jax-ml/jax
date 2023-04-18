@@ -413,22 +413,25 @@ def _check_module(mod: mlir.ir.Module, *,
       mlir.ir.StringAttr.get(target, mod.context)
       for target in _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE]
   disallowed_custom_call_ops: List[str] = []
-  def check_sharding(op_str: str, loc: mlir.ir.Location):
-    # Check the shardings in an operation or attribute (`op_str`)
+  def check_sharding(op: mlir.ir.Operation, loc: mlir.ir.Location):
     if not allow_non_replicated_sharding:
-      m = re.search(r'mhlo.sharding\s*=\s*"([^"]+)"', op_str)
-      if m and m.group(1) not in ["{replicated}", ""]:
-        raise ValueError(
-            "Lowered function does not have a top-level pjit but it has "
-            f"non-replicated sharding annotations, e.g., {op_str} at {loc}.\n"
-            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning for a discussion.")
+      try:
+        sharding = op.attributes["mhlo.sharding"]
+      except KeyError:
+        pass
+      else:
+        if mlir.ir.StringAttr(sharding).value not in ["{replicated}", ""]:
+          raise ValueError(
+              "Lowered function does not have a top-level pjit but it has"
+              f" non-replicated sharding annotations, e.g., {op} at {loc}.\nSee"
+              " https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning"
+              " for a discussion."
+          )
 
   def check_op(op: mlir.ir.Operation):
     op_name = op.operation.name
     if op_name == "func.func":
-      for a in op.operation.attributes:
-        # TODO: figure out how to parse the attributes properly
-        check_sharding(str(a), op.location)
+      check_sharding(op.operation, op.location)
 
     elif op_name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
@@ -436,7 +439,7 @@ def _check_module(mod: mlir.ir.Module, *,
           call_target_name_attr not in allowed_custom_call_targets_attrs):
         disallowed_custom_call_ops.append(str(op))
       if call_target_name_attr == sharding_attr:
-        check_sharding(str(op), op.location)
+        check_sharding(op, op.location)
 
   def walk_operations(op):
     check_op(op)
