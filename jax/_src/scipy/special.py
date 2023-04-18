@@ -114,23 +114,40 @@ def expit(x: ArrayLike) -> Array:
 logsumexp = _wraps(osp_special.logsumexp, module='scipy.special')(ops_special.logsumexp)
 
 
+@custom_derivatives.custom_jvp
 @_wraps(osp_special.xlogy, module='scipy.special')
 def xlogy(x: ArrayLike, y: ArrayLike) -> Array:
+  # Note: xlogy(0, 0) should return 0 according to the function documentation.
   x, y = promote_args_inexact("xlogy", x, y)
   x_ok = x != 0.
   safe_x = jnp.where(x_ok, x, 1.)
   safe_y = jnp.where(x_ok, y, 1.)
   return jnp.where(x_ok, lax.mul(safe_x, lax.log(safe_y)), jnp.zeros_like(x))
 
+def _xlogy_jvp(primals, tangents):
+  (x, y) = primals
+  (x_dot, y_dot) = tangents
+  result = xlogy(x, y)
+  return result, (x_dot * lax.log(y) + y_dot * x / y).astype(result.dtype)
+xlogy.defjvp(_xlogy_jvp)
 
+
+@custom_derivatives.custom_jvp
 @_wraps(osp_special.xlog1py, module='scipy.special', update_doc=False)
 def xlog1py(x: ArrayLike, y: ArrayLike) -> Array:
+  # Note: xlog1py(0, -1) should return 0 according to the function documentation.
   x, y = promote_args_inexact("xlog1py", x, y)
   x_ok = x != 0.
   safe_x = jnp.where(x_ok, x, 1.)
   safe_y = jnp.where(x_ok, y, 1.)
   return jnp.where(x_ok, lax.mul(safe_x, lax.log1p(safe_y)), jnp.zeros_like(x))
 
+def _xlog1py_jvp(primals, tangents):
+  (x, y) = primals
+  (x_dot, y_dot) = tangents
+  result = xlog1py(x, y)
+  return result, (x_dot * lax.log1p(y) + y_dot * x / (1 + y)).astype(result.dtype)
+xlog1py.defjvp(_xlog1py_jvp)
 
 @_wraps(osp_special.entr, module='scipy.special')
 def entr(x: ArrayLike) -> Array:
