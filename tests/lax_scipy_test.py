@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import functools
 from functools import partial
 import itertools
 import unittest
@@ -220,15 +219,29 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(lsp_special.xlogy(0., 0.), 0., check_dtypes=False)
 
   def testGradOfXlogyAtZero(self):
-    partial_xlogy = functools.partial(lsp_special.xlogy, 0.)
-    self.assertAllClose(jax.grad(partial_xlogy)(0.), 0., check_dtypes=False)
+    # https://github.com/google/jax/issues/15598
+    x0, y0 = 0.0, 3.0
+    d_xlog1py_dx = jax.grad(lsp_special.xlogy, argnums=0)(x0, y0)
+    self.assertAllClose(d_xlog1py_dx, lax.log(y0))
+
+    d_xlog1py_dy = jax.grad(lsp_special.xlogy, argnums=1)(x0, y0)
+    self.assertAllClose(d_xlog1py_dy, 0.0)
+
+    jtu.check_grads(lsp_special.xlogy, (x0, y0), order=2)
 
   def testXlog1pyShouldReturnZero(self):
     self.assertAllClose(lsp_special.xlog1py(0., -1.), 0., check_dtypes=False)
 
   def testGradOfXlog1pyAtZero(self):
-    partial_xlog1py = functools.partial(lsp_special.xlog1py, 0.)
-    self.assertAllClose(jax.grad(partial_xlog1py)(-1.), 0., check_dtypes=False)
+    # https://github.com/google/jax/issues/15598
+    x0, y0 = 0.0, 3.0
+    d_xlog1py_dx = jax.grad(lsp_special.xlog1py, argnums=0)(x0, y0)
+    self.assertAllClose(d_xlog1py_dx, lax.log1p(y0))
+
+    d_xlog1py_dy = jax.grad(lsp_special.xlog1py, argnums=1)(x0, y0)
+    self.assertAllClose(d_xlog1py_dy, 0.0)
+
+    jtu.check_grads(lsp_special.xlog1py, (x0, y0), order=2)
 
   @jtu.sample_product(
     [dict(order=order, z=z, n_iter=n_iter)
