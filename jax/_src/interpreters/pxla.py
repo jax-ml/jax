@@ -2353,6 +2353,14 @@ class MeshComputation(stages.XlaLowering):
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
 
+@lru_cache(maxsize=1024)
+def _get_replicated_slices(num_addressable_devices: int, ndim: Optional[int]):
+  if ndim is None:
+    return ((slice(None),),) * num_addressable_devices
+  else:
+    return ((slice(None),) * ndim,) * num_addressable_devices
+
+
 def _get_input_indices(
     avals: Sequence[ShapedArray],
     shardings: Sequence[sharding_impls.XLACompatibleSharding],
@@ -2368,12 +2376,10 @@ def _get_input_indices(
 
   for aval, sharding in zip(avals, shardings):
     if aval is core.abstract_token:
-      index = tuple(
-          (slice(None),) for _ in range(num_addressable_devices))
+      index = _get_replicated_slices(num_addressable_devices, None)
     else:
       if sharding.is_fully_replicated:
-        index = tuple(
-            (slice(None),) * aval.ndim for _ in range(num_addressable_devices))  # type: ignore
+        index = _get_replicated_slices(num_addressable_devices, aval.ndim)
       else:
         index = tuple(
             sharding.addressable_devices_indices_map(aval.shape).values())  # type: ignore
@@ -2894,7 +2900,7 @@ def _compile_replicated_mesh_executable_from_hlo(
     host_callbacks, has_unordered_effects, ordered_effects, kept_var_idx,
     backend, da, committed, pmap_nreps):
   assert not auto_spmd_lowering
-
+  assert isinstance(da, _DeviceAssignment)
   in_shardings = semantics_in_shardings.shardings
   out_shardings = semantics_out_shardings.shardings
 
