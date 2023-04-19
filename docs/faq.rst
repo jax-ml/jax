@@ -806,6 +806,10 @@ computation at runtime. For example:
 - If you wish to call non-JAX code within a transformed JAX function, you might
   consider using :func:`jax.pure_callback`, an example of which is available at
   `Pure callback example`_.
+- If you wish to input or output array buffers at runtime (for example, load data
+  from file, or log the contents of the array to disk), you might consider using
+  :func:`jax.experimental.io_callback`, an example of which can be found at
+  `IO callback example`_.
 
 For more information on runtime callbacks and examples of their use,
 see `External callbacks in JAX`_.
@@ -814,6 +818,7 @@ see `External callbacks in JAX`_.
 .. _JIT mechanics: https://jax.readthedocs.io/en/latest/notebooks/thinking_in_jax.html#jit-mechanics-tracing-and-static-variables
 .. _External callbacks in JAX: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html
 .. _Pure callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#example-pure-callback-with-custom-jvp
+.. _IO callback example: https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html#exploring-jax-experimental-io-callback
 .. _Heaviside Step Function: https://en.wikipedia.org/wiki/Heaviside_step_function
 .. _Sigmoid Function: https://en.wikipedia.org/wiki/Sigmoid_function
 .. _algebraic_simplifier.cc: https://github.com/tensorflow/tensorflow/blob/v2.10.0/tensorflow/compiler/xla/service/algebraic_simplifier.cc#L3266
