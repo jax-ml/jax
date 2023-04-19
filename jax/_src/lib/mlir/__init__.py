@@ -13,4 +13,6 @@
 # limitations under the License.
 
 # flake8: noqa: F401
+
 import jaxlib.mlir.ir as ir
+import jaxlib.mlir.passmanager as passmanager

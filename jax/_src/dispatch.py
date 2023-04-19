@@ -442,7 +442,15 @@ def _check_special(name, dtype, buf):
 
 
 @profiler.annotate_function
-def backend_compile(backend, built_c, options, host_callbacks):
+def backend_compile(backend, module: ir.Module, options, host_callbacks):
+  # Convert ir.Module to a string representation, unless the
+  # back-end expliclity flags the ability to handle a module directly
+  # (avoiding the overhead of back and forth conversions)
+  if getattr(backend, "needs_str_ir", True):
+    built_c = mlir.module_to_bytecode(module)
+  else:
+    built_c = module
+
   # we use a separate function call to ensure that XLA compilation appears
   # separately in Python profiling results
   if host_callbacks:
@@ -473,48 +481,43 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
   if FLAGS.jax_dump_ir_to:
     _dump_ir_to_file(module_name, mlir.module_to_string(computation))
 
-  # Convert ir.Module to a string representation, unless the
-  # back-end expliclity flags the ability to handle a module directly
-  # (avoiding the overhead of back and forth conversions)
-  serialized_computation: Union[str, bytes, ir.Module]
-  if getattr(backend, "needs_str_ir", True):
-    serialized_computation = mlir.module_to_bytecode(computation)
-  else:
-    serialized_computation = computation
-
   # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
   supported_platforms = ["tpu", "gpu"]
   # (b/233850967) CPU caching can be enabled if XLA Runtime is enabled.
   if "--xla_cpu_use_xla_runtime=true" in os.environ.get("XLA_FLAGS", ""):
     supported_platforms.append("cpu")
-  if (compilation_cache.is_initialized() and
-      backend.platform in supported_platforms):
-    cached_executable = _cache_read(serialized_computation, module_name,
-                                    compile_options, backend)
-    if cached_executable is not None:
-      logger.info("Persistent compilation cache hit for '%s'", module_name)
-      return cached_executable
-    else:
-      start_time = time.monotonic()
-      compiled = backend_compile(backend, serialized_computation,
-                                 compile_options, host_callbacks)
-      compile_time = time.monotonic() - start_time
-      _cache_write(serialized_computation, compile_time, module_name,
-                   compile_options, backend, compiled, host_callbacks)
-      return compiled
+  use_compilation_cache = (compilation_cache.is_initialized() and
+                           backend.platform in supported_platforms)
 
-  return backend_compile(backend, serialized_computation, compile_options,
-                         host_callbacks)
+  if not use_compilation_cache:
+    return backend_compile(backend, computation, compile_options,
+                           host_callbacks)
+
+  cache_key = compilation_cache.get_cache_key(
+      computation, compile_options, backend)
+
+  cached_executable = _cache_read(module_name, cache_key, compile_options,
+                                  backend)
+  if cached_executable is not None:
+    logger.info("Persistent compilation cache hit for '%s'", module_name)
+    return cached_executable
+  else:
+    start_time = time.monotonic()
+    executable = backend_compile(backend, computation,
+                                compile_options, host_callbacks)
+    compile_time = time.monotonic() - start_time
+    _cache_write(cache_key, compile_time, module_name, backend, executable,
+                 host_callbacks)
+    return executable
 
 
-def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
-                compile_options: CompileOptions,
-                backend: Backend) -> Optional[xc.LoadedExecutable]:
+def _cache_read(
+    module_name: str, cache_key: str, compile_options, backend
+) -> Optional[xc.LoadedExecutable]:
   """Looks up `computation` in the persistent compilation cache."""
   try:
-    return compilation_cache.get_executable(computation, compile_options,
-                                            backend)
+    return compilation_cache.get_executable(cache_key, compile_options, backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise
@@ -524,10 +527,10 @@ def _cache_read(computation: Union[str, bytes, ir.Module], module_name: str,
     return None
 
 
-def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
+def _cache_write(cache_key: str,
                  compile_time_secs: float,
-                 module_name: str, compile_options: CompileOptions,
-                 backend: Backend, compiled: xc.LoadedExecutable,
+                 module_name: str,
+                 backend: Backend, executable: xc.LoadedExecutable,
                  host_callbacks: List[Any]):
   """Writes `serialized_computation` to the persistent compilation cache."""
   if host_callbacks:
@@ -551,8 +554,8 @@ def _cache_write(serialized_computation: Union[str, bytes, ir.Module],
           compile_time_secs)
 
   try:
-    compilation_cache.put_executable(module_name, serialized_computation,
-                                     compile_options, compiled, backend)
+    compilation_cache.put_executable(cache_key, module_name, executable,
+                                     backend)
   except Exception as ex:
     if config.jax_raise_persistent_cache_errors:
       raise

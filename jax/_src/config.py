@@ -865,6 +865,18 @@ persistent_cache_min_compile_time_secs = config.define_float_state(
           'persistent compilation cache. This threshold can be raised to '
           'decrease the number of entries written to the cache.'))
 
+compilation_cache_include_metadata_in_key = config.define_bool_state(
+    name='jax_compilation_cache_include_metadata_in_key',
+    default=False,
+    help=(
+        'Include metadata, such as file names and line numbers, in the'
+        ' compilation cache key. If false, the cache will still get hits even'
+        ' if functions or files are moved, etc. However, it means that'
+        ' executables loaded from the cache may have stale metadata, which'
+        ' may show up in, e.g., profiles.'
+    ),
+)
+
 hlo_source_file_canonicalization_regex = config.define_string_state(
     name='jax_hlo_source_file_canonicalization_regex',
     default=None,

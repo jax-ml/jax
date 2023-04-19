@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import hashlib
+import io
 import logging
 import os
 import re
 import sys
-from typing import List, Optional
+from typing import Any, List, Optional
 import zlib
 
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
@@ -26,12 +27,24 @@ try:
 except ImportError:
   zstandard = None
 
+from jax._src.config import config
 from jax._src import path as pathlib
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.gfile_cache import GFileCache
 from jax._src.lib import xla_client
 from jax._src.lib import version_str as jaxlib_version_str
 from jax._src.lib import xla_extension_version
+from jax._src.lib.mlir import ir
+from jax._src.lib.mlir import passmanager as pm
+
+# TODO(phawkins): remove the conditional import after jaxlib 0.4.9 is the
+# minimum.
+mlir_jax: Any
+try:
+  from jax._src.lib.mlir import jax as mlir_jax
+except ImportError:
+  mlir_jax = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,29 +52,34 @@ _cache: Optional[CacheInterface] = None
 
 
 def initialize_cache(path):
-  """Creates a global cache object. Should only be called once per process.
+  """Creates a global cache object.
+
+  Should only be called once per process.
 
   Will throw an assertion error if called a second time with a different path.
 
   Args:
     path: path for the cache directory.
-
   """
   global _cache
   if _cache is not None and _cache._path == pathlib.Path(path):
     logger.warning("Cache already previously initialized at %s", _cache._path)
     return
 
-  assert _cache is None, f"The cache path has already been initialized to {_cache._path}"
+  assert (
+      _cache is None
+  ), f"The cache path has already been initialized to {_cache._path}"
   _cache = GFileCache(path)
   logger.warning("Initialized persistent compilation cache at %s", path)
 
 
-def get_executable(xla_computation, compile_options,
-                   backend) -> Optional[xla_client.LoadedExecutable]:
+def get_executable(
+    cache_key: str, compile_options, backend
+) -> Optional[xla_client.LoadedExecutable]:
   """Returns the cached executable if present, or None otherwise."""
-  assert _cache is not None, "initialize_cache must be called before you can call get_executable()"
-  cache_key = get_cache_key(xla_computation, compile_options, backend)
+  assert (
+      _cache is not None
+  ), "initialize_cache must be called before you can call get_executable()"
   serialized_executable = _cache.get(cache_key)
   if not serialized_executable:
     return None
@@ -71,17 +89,26 @@ def get_executable(xla_computation, compile_options,
   else:
     serialized_executable = zlib.decompress(serialized_executable)
   xla_executable_deserialized = backend.deserialize_executable(
-      serialized_executable,
-      compile_options)
+      serialized_executable, compile_options
+  )
   return xla_executable_deserialized
 
-def put_executable(module_name, xla_computation, compile_options,
-                   executable: xla_client.LoadedExecutable, backend):
+
+def put_executable(
+    cache_key: str,
+    module_name: str,
+    executable: xla_client.LoadedExecutable,
+    backend,
+) -> None:
   """Adds 'executable' to the cache, possibly evicting older entries."""
-  assert _cache is not None, "initialize_cache must be called before you can call put_executable()"
-  cache_key = get_cache_key(xla_computation, compile_options, backend)
-  logger.info('Writing %s to persistent compilation cache with key %s.',
-               module_name, cache_key)
+  assert (
+      _cache is not None
+  ), "initialize_cache must be called before you can call put_executable()"
+  logger.info(
+      "Writing %s to persistent compilation cache with key %s.",
+      module_name,
+      cache_key,
+  )
   serialized_executable = backend.serialize_executable(executable)
   if zstandard:
     compressor = zstandard.ZstdCompressor()
@@ -90,37 +117,45 @@ def put_executable(module_name, xla_computation, compile_options,
     serialized_executable = zlib.compress(serialized_executable)
   _cache.put(cache_key, serialized_executable)
 
+
 def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
   if logger.isEnabledFor(logging.DEBUG):
     # Log the hash of just this entry
     fresh_hash_obj = hashlib.sha256()
     hashfn(fresh_hash_obj)
-    logger.debug("get_cache_key hash of serialized %s: %s", last_serialized,
-                 fresh_hash_obj.digest().hex())
+    logger.debug(
+        "get_cache_key hash of serialized %s: %s",
+        last_serialized,
+        fresh_hash_obj.digest().hex(),
+    )
     # Log the cumulative hash
-    logger.debug("get_cache_key hash after serializing %s: %s",
-                 last_serialized, hash_obj.digest().hex())
+    logger.debug(
+        "get_cache_key hash after serializing %s: %s",
+        last_serialized,
+        hash_obj.digest().hex(),
+    )
 
-def get_cache_key(xla_computation, compile_options, backend) -> str:
+
+def get_cache_key(module: ir.Module, compile_options, backend) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
-     get_cache_key takes in the xla_computation and compile_options of a program and hashes
-     all the components into a uniuqe byte string. This byte string is returned as a regular
-     string that is 256 characters long.
+  get_cache_key takes in the MLIR module and compile_options of a program
+  and hashes all the components into a unique hash. The hash is returned as a
+  hex-encoded string that is 256 characters long.
 
-     Typical return value example:
-      '14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
+  Typical return value example:
+   '14ac577cdb2ef6d986078b4054cc9893a9a14a16dbb0d8f37b89167c1f1aacdf'
   """
   entries = [
-      ("computation",
-       lambda hash_obj: _hash_computation(hash_obj, xla_computation)),
-      ("compile_options",
-       lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
-      ("jax_lib version",
-       lambda hash_obj: hash_obj.update(bytes(jaxlib_version_str.encode('utf-8')))),
-      ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
-      ("XLA flags", _hash_xla_flags),
-      ("compression", _hash_compression),
+    ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
+    ("compile_options",
+     lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
+    ("jax_lib version",
+     lambda hash_obj: hash_obj.update(bytes(jaxlib_version_str.encode("utf-8")))
+    ),
+    ("the backend", lambda hash_obj: _hash_platform(hash_obj, backend)),
+    ("XLA flags", _hash_xla_flags),
+    ("compression", _hash_compression),
   ]
 
   hash_obj = hashlib.sha256()
@@ -129,23 +164,33 @@ def get_cache_key(xla_computation, compile_options, backend) -> str:
     _log_cache_key_hash(hash_obj, name, hashfn)
   return hash_obj.digest().hex()
 
-def _hash_computation(hash_obj, xla_computation):
-  # The HLO op_name metadata sometimes includes Python function pointers,
-  # which cause spurious cache misses. Scrub anything that looks like a
-  # function pointer. Example op_name metadata:
-  #  op_name="jit(s)/custom_jvp_call_jaxpr
-  #   [ jvp_jaxpr_thunk=<function _memoize.<locals>.memoized at 0x7f3fa30f0940>\n
-  #   num_consts=0 ]"
-  # TODO(skye): in theory this could cause us to scrub meaningful binary proto
-  # data. Do something more robust.
-  if isinstance(xla_computation, bytes):
-    serialized_hlo = xla_computation  # MLIR module bytecode
-  elif isinstance(xla_computation, str):
-    serialized_hlo = xla_computation.encode()  # MLIR module text
+
+def _serialize_ir(m: ir.Module) -> bytes:
+  output = io.BytesIO()
+  m.operation.write_bytecode(file=output)
+  return output.getvalue()
+
+def _canonicalize_ir(m_original: ir.Module) -> bytes:
+  # TODO(phawkins): remove the 'else' branch when jaxlib 0.4.9 is the minimum.
+  if mlir_jax is not None:
+    with m_original.context:
+      m = m_original.operation.clone()
+      passes = pm.PassManager.parse(
+          "builtin.module(func.func(jax-strip-locations))"
+      )
+      passes.run(m.operation)
+      return _serialize_ir(m)
   else:
-    raise TypeError(f"Unknown computation type {type(xla_computation)}")
-  scrubbed_hlo = re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", serialized_hlo)
-  hash_obj.update(scrubbed_hlo)
+    bytecode = _serialize_ir(m_original)
+    return re.sub(b" at 0x[a-f0-9]+>", b" at 0x...>", bytecode)
+
+def _hash_computation(hash_obj, module):
+  if config.jax_compilation_cache_include_metadata_in_key:
+    canonical_ir = _serialize_ir(module)
+  else:
+    canonical_ir = _canonicalize_ir(module)
+  hash_obj.update(canonical_ir)
+
 
 def _hash_compile_options(hash_obj, compile_options_obj):
   if xla_extension_version >= 145:
@@ -156,7 +201,8 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   # to false positives, e.g. when different Python versions include different
   # built-ins.
   num_actual_options = len(
-      [x for x in dir(compile_options_obj) if not x.startswith("_")])
+      [x for x in dir(compile_options_obj) if not x.startswith("_")]
+  )
   assert num_actual_options == expected_num_compile_options, (
       "Unexpected number of CompileOption fields: "
       f"{num_actual_options}. This likely: means that an extra "
@@ -164,10 +210,14 @@ def _hash_compile_options(hash_obj, compile_options_obj):
   )
 
   if compile_options_obj.argument_layouts is not None:
-    map(lambda shape: hash_obj.update(shape.to_serialized_proto()),
-        compile_options_obj.argument_layouts)
+    map(
+        lambda shape: hash_obj.update(shape.to_serialized_proto()),
+        compile_options_obj.argument_layouts,
+    )
   _hash_int(hash_obj, compile_options_obj.parameter_is_tupled_arguments)
-  _hash_executable_build_options(hash_obj, compile_options_obj.executable_build_options)
+  _hash_executable_build_options(
+      hash_obj, compile_options_obj.executable_build_options
+  )
   _hash_bool(hash_obj, compile_options_obj.tuple_arguments)
   _hash_int(hash_obj, compile_options_obj.num_replicas)
   _hash_int(hash_obj, compile_options_obj.num_partitions)
@@ -186,17 +236,20 @@ def _hash_compile_options(hash_obj, compile_options_obj):
       else:
         raise RuntimeError("Invalid type: %s" % repr(type(kv[1])))
 
+
 def _hash_executable_build_options(hash_obj, executable_obj):
   expected_options = 10
   # Ignore private and built-in methods. These can unexpectedly change and lead
   # to false positives, e.g. when different Python versions include different
   # built-ins.
   actual_options = len(
-      [x for x in dir(executable_obj) if not x.startswith('_')])
+      [x for x in dir(executable_obj) if not x.startswith("_")]
+  )
   assert actual_options == expected_options, (
-        f"Unexpected number of executable_build_options fields: "
-        f"{actual_options}, expected: {expected_options}. This likely means "
-        "that an extra field was added, and this function needs to be updated.")
+      "Unexpected number of executable_build_options fields: "
+      f"{actual_options}, expected: {expected_options}. This likely means "
+      "that an extra field was added, and this function needs to be updated."
+  )
   if executable_obj.result_layout is not None:
     hash_obj.update(executable_obj.result_layout.to_serialized_proto())
   _hash_int(hash_obj, executable_obj.num_replicas)
@@ -211,8 +264,10 @@ def _hash_executable_build_options(hash_obj, executable_obj):
       _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_shape)
     if executable_obj.auto_spmd_partitioning_mesh_ids is not None:
       _hash_int_list(hash_obj, executable_obj.auto_spmd_partitioning_mesh_ids)
-  _hash_bool_list(hash_obj,
-                  executable_obj.allow_spmd_sharding_propagation_to_output)
+  _hash_bool_list(
+      hash_obj, executable_obj.allow_spmd_sharding_propagation_to_output
+  )
+
 
 def _hash_debug_options(hash_obj, debug_obj):
   _hash_bool(hash_obj, debug_obj.xla_cpu_enable_fast_math)
@@ -226,10 +281,12 @@ def _hash_debug_options(hash_obj, debug_obj):
   _hash_bool(hash_obj, debug_obj.xla_llvm_disable_expensive_passes)
   _hash_bool(hash_obj, debug_obj.xla_test_all_input_layouts)
 
+
 def _hash_platform(hash_obj, backend):
   _hash_string(hash_obj, backend.platform)
   _hash_string(hash_obj, backend.platform_version)
   _hash_string(hash_obj, backend.runtime_type)
+
 
 _xla_flags_to_exclude_from_cache_key = [
     "--xla_dump_compress_protos",
@@ -253,6 +310,7 @@ _xla_flags_to_exclude_from_cache_key = [
 
 extra_flag_prefixes_to_include_in_cache_key: List[str] = []
 
+
 def _hash_xla_flags(hash_obj):
   xla_flags = []
 
@@ -262,43 +320,51 @@ def _hash_xla_flags(hash_obj):
 
   for arg in sys.argv:
     if arg.startswith("--xla") or any(
-        arg.startswith(p) for p in extra_flag_prefixes_to_include_in_cache_key):
+        arg.startswith(p) for p in extra_flag_prefixes_to_include_in_cache_key
+    ):
       xla_flags.append(arg)
 
   # N.B. all XLA flags that take an argument must use '=' and not a space
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
   for flag in xla_flags:
-    if flag.split('=')[0] in _xla_flags_to_exclude_from_cache_key:
+    if flag.split("=")[0] in _xla_flags_to_exclude_from_cache_key:
       logger.debug("Not including XLA flag in cache key: %s", flag)
       continue
     logger.debug("Including XLA flag in cache key: %s", flag)
     _hash_string(hash_obj, flag)
+
 
 def _hash_compression(hash_obj):
   _hash_string(hash_obj, "zstandard" if zstandard is not None else "zlib")
 
 
 def _hash_int(hash_obj, int_var):
-  hash_obj.update(int_var.to_bytes(8, byteorder='big'))
+  hash_obj.update(int_var.to_bytes(8, byteorder="big"))
+
 
 def _hash_bool(hash_obj, bool_var):
-  hash_obj.update(bool_var.to_bytes(1, byteorder='big'))
+  hash_obj.update(bool_var.to_bytes(1, byteorder="big"))
+
 
 def _hash_string(hash_obj, str_var):
-  hash_obj.update(str_var.encode('utf-8').strip())
+  hash_obj.update(str_var.encode("utf-8").strip())
+
 
 def _hash_bool_list(hash_obj, bool_list):
   for b in bool_list:
     _hash_bool(hash_obj, b)
   _hash_int(hash_obj, len(bool_list))
 
+
 def _hash_int_list(hash_obj, int_list):
   for i in int_list:
     _hash_int(hash_obj, i)
   _hash_int(hash_obj, len(int_list))
 
+
 def is_initialized():
   return _cache is not None
+
 
 def reset_cache():
   global _cache

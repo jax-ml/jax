@@ -20,7 +20,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//visibility:private"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//visibility:private"],
+)
 
 py_library(
     name = "jax2tf",
