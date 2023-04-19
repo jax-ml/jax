@@ -643,7 +643,7 @@ def jaxpr_debug_info(jaxpr: core.Jaxpr, trace_debug: Optional[TracingDebugInfo],
     result_paths = trace_debug.result_paths()  # type: ignore
   debug_info = core.JaxprDebugInfo(
       trace_debug.traced_for, trace_debug.func_src_info,
-      trace_debug.arg_names, result_paths)
+      trace_debug.arg_names, tuple(result_paths))
   return jaxpr.replace(debug_info=debug_info)
 
 def debug_info_final(f: lu.WrappedFun, dbg: Optional[TracingDebugInfo],

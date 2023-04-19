@@ -930,13 +930,13 @@ class PJitTest(jtu.BufferDonationTestCase):
     x_f32 = x.astype(jnp.float32)
     x_i32 = x.astype(jnp.int32)
     exe = f.lower(x_f32, x_f32).compile()
-    self.assertRaisesRegex(
+    with self.assertRaisesRegex(
         TypeError,
-        "Computation was compiled for different input types and called with "
-        "different types. One of the mismatches is:\n"
-        "Compiled with:\n.*float32.*\n"
-        "called with:\n.*int32.*",
-        lambda: exe(x_i32, x_i32))
+        r"Computation was compiled for different input types and called with "
+        r"different types. Here are the 2 mismatches:\n"
+        r"Compiled with.*float32.*and called with.*int32.*for arg x\n"
+        r"Compiled with.*float32.*and called with.*int32.*for arg y"):
+      exe(x_i32, x_i32)
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerAsText(self):
@@ -1541,7 +1541,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           ValueError,
           r"Array\(s\) sharding does not match the input\(s\) sharding. "
-          "Here are the 5 mismatches out of 6"):
+          "Here are 5 mismatches out of 6"):
         compiled(a2, a2, a2, a2, a2, a2)
 
     with global_mesh:
