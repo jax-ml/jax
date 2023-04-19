@@ -24,11 +24,11 @@ import jax.numpy as jnp
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
+from jax._src.config import flags
 from jax.experimental.pjit import pjit
 from jax.experimental.serialize_executable import (
     serialize, deserialize_and_load)
 from jax.experimental import topologies
-from jax.experimental import mesh_utils
 from jax.sharding import PartitionSpec as P
 
 from jax.config import config
@@ -103,6 +103,16 @@ class JaxAotTest(jtu.JaxTestCase):
   def test_topology_pjit_serialize(self):
     self.check_for_compile_options()
 
+    try:
+      aot_topo = topologies.get_topology_desc(
+          platform=jax.devices()[0].platform
+      )
+    except NotImplementedError:
+      raise unittest.SkipTest('PJRT Topology not supported')
+
+    if flags.FLAGS.jax_test_with_persistent_compilation_cache:
+      raise unittest.SkipTest('Compilation caching not yet supported.')
+
     @jax.jit
     def fn(x):
       return x * x
@@ -118,17 +128,15 @@ class JaxAotTest(jtu.JaxTestCase):
       compiled = deserialize_and_load(serialized, in_tree, out_tree)
       return compiled
 
-    topo = topologies.get_attached_topology()
-    n = max(1, len(topo.devices) // 2)
-    mesh_shape = (len(topo.devices) // n, n)
+    ref_topo = topologies.get_attached_topology()
+    n = max(1, len(ref_topo.devices) // 2)
+    mesh_shape = (len(ref_topo.devices) // n, n)
 
-    mesh = topologies.make_mesh(topo, mesh_shape, ('x', 'y'))
-    ref_mesh = jax.sharding.Mesh(
-        mesh_utils.create_device_mesh(
-            mesh_shape, jax.devices()),
-        ('x', 'y'))
-    self.assertEqual(lower_and_load(ref_mesh).as_text(),
-                     lower_and_load(mesh).as_text())
+    ref_mesh = topologies.make_mesh(ref_topo, mesh_shape, ('x', 'y'))
+    aot_mesh = topologies.make_mesh(aot_topo, mesh_shape, ('x', 'y'))
+    self.assertEqual(
+        lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
+    )
 
 
 if __name__ == '__main__':
