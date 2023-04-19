@@ -2883,8 +2883,18 @@ def append(arr, values, axis: Optional[int] = None):
     return concatenate([arr, values], axis=axis)
 
 
-@util._wraps(np.delete)
-def delete(arr, obj, axis=None):
+@util._wraps(np.delete,
+  lax_description=_dedent("""
+    delete() usually requires the index specification to be static. If the index
+    is an integer array that is guaranteed to contain unique entries, you may
+    specify ``assume_unique_indices=True`` to perform the operation in a
+    manner that does not require static indices."""),
+  extra_params=_dedent("""
+    assume_unique_indices : int, optional (default=False)
+        In case of array-like integer (not boolean) indices, assume the indices are unique,
+        and perform the deletion in a way that is compatible with JIT and other JAX
+        transformations."""))
+def delete(arr, obj, axis=None, *, assume_unique_indices=False):
   util.check_arraylike("delete", arr)
   if axis is None:
     arr = ravel(arr)
@@ -2910,6 +2920,18 @@ def delete(arr, obj, axis=None):
   # Case 3: obj is an array
   # NB: pass both arrays to check for appropriate error message.
   util.check_arraylike("delete", arr, obj)
+
+  # Case 3a: unique integer indices; delete in a JIT-compatible way
+  if issubdtype(_dtype(obj), integer) and assume_unique_indices:
+    obj = asarray(obj).ravel()
+    obj = clip(where(obj < 0, obj + arr.shape[axis], obj), 0, arr.shape[axis])
+    obj = sort(obj)
+    obj -= arange(len(obj))
+    i = arange(arr.shape[axis] - obj.size)
+    i += (i[None, :] >= obj[:, None]).sum(0)
+    return arr[(slice(None),) * axis + (i,)]
+
+  # Case 3b: non-unique indices: must be static.
   obj = core.concrete_or_error(np.asarray, obj, "'obj' array argument of jnp.delete()")
 
   if issubdtype(obj.dtype, integer):
