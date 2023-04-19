@@ -39,11 +39,10 @@ MOUNTS="--container-mounts=$BASE_OUTPUT_DIR:$OUTPUT_DIR"
 EXPORTS="--export=ALL,PYTHONPATH=${T5X_DIR}"
 #-------------------------------------------------------------------------------
 
-# Setup command to be run before the actual pytest command
+# Setup command to be run before the actual test command
 # We remove cudf from the container as a temporary WAR to a protobuf
 # dependency issue between cudf and tensorflow-cpu that t5x try to
 # install.
-# Note, we need to take the yesterday date as the current nightly isn't build.
 read -r -d '' setup_cmd <<EOF
 rm -rf ${E2E_TESTS_WORKSPACE_DIR}/* \
 && mkdir -p ${E2E_TESTS_WORKSPACE_DIR} \
@@ -75,7 +74,7 @@ EOF
 # Count errors
 errors=0 && trap errors=1 ERR
 
-# Run any setup commands before the actual pytest command to make sure
+# Run any setup commands before the actual test command to make sure
 # that the processes are launched together
 echo "$setup_cmd"
 srun -o "$OUTFILE" -e "$OUTFILE" \
@@ -88,7 +87,7 @@ srun -o "$OUTFILE" -e "$OUTFILE" \
     "$EXPORTS" \
     timeout -v -k 0.5m 9m bash -c "${setup_cmd}"
 
-# Run the actual pytest command
+# Run the actual test command
 echo "$cmd"
 srun -o "$OUTFILE" -e "$OUTFILE" \
     -t 00:15:00 \
