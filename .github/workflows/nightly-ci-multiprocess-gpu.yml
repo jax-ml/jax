@@ -80,7 +80,6 @@ jobs:
           ssh ${CONFIG} headnode "rm -rf ${GITHUB_WORKSPACE_REMOTE} && mkdir -p ${GITHUB_WORKSPACE_REMOTE}"
           scp ${CONFIG} -r ./.github     headnode:${GITHUB_WORKSPACE_REMOTE}/.github
           scp ${CONFIG} -r ./tests       headnode:${GITHUB_WORKSPACE_REMOTE}/tests
-          scp ${CONFIG} -r ./pytest*     headnode:${GITHUB_WORKSPACE_REMOTE}/
 
       - name: T5X end-to-end tests
         timeout-minutes: 25
