@@ -685,3 +685,8 @@ def host_ids(
 
 def using_pjrt_c_api(backend=None):
   return "PJRT C API" in get_backend(backend).platform_version
+
+
+# TODO(parkers): Get rid of this in favor of a generic way to get topologies.
+def make_pjrt_tpu_topology(topology_name=None, **kwargs):
+  raise NotImplementedError('make_pjrt_tpu_topology is not implemented')

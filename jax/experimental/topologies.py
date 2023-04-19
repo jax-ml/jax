@@ -21,25 +21,46 @@ import numpy as np
 import jax
 from jax.experimental import mesh_utils
 from jax._src.lib import xla_client as xc
+from jax._src import xla_bridge as xb
 
 Device = xc.Device
 
 
-class Topology(abc.ABC):
+class TopologyDescription(abc.ABC):
   def __init__(self, devices: List[Device]):
     self.devices: List[Device] = devices
 
 
-def get_attached_topology(platform=None) -> Topology:
-  return Topology(jax.devices(backend=platform))
+def get_attached_topology(platform=None) -> TopologyDescription:
+  return TopologyDescription(jax.devices(backend=platform))
+
+
+def get_topology_desc(
+    topology_name: Optional[str] = None,
+    platform: Optional[str] = None,
+    **kwargs
+) -> TopologyDescription:
+  if platform == "tpu":
+    if topology_name is not None:
+      kwargs.update(topology_name=topology_name)
+    return TopologyDescription(
+        xb.make_pjrt_tpu_topology(**kwargs)._make_compile_only_devices()
+    )
+  raise NotImplementedError(
+      "get_topology_desc(platform=%s) is not implemented" % repr(platform)
+  )
 
 
 # -- future mesh_utils --
 
-def make_mesh(topo: Topology, mesh_shape: Sequence[int],
-              axis_names: Tuple[str, ...],
-              *, contiguous_submeshes: bool = False
-              ) -> jax.sharding.Mesh:
+
+def make_mesh(
+    topo: TopologyDescription,
+    mesh_shape: Sequence[int],
+    axis_names: Tuple[str, ...],
+    *,
+    contiguous_submeshes: bool = False
+) -> jax.sharding.Mesh:
   devices = mesh_utils.create_device_mesh(
       mesh_shape, list(topo.devices), contiguous_submeshes=contiguous_submeshes)
   return jax.sharding.Mesh(devices, axis_names)
