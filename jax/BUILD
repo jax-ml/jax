@@ -27,7 +27,10 @@ load(
     "pytype_strict_library",
 )
 
-package(default_visibility = [":internal"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = [":internal"],
+)
 
 licenses(["notice"])
 
@@ -250,6 +253,7 @@ pytype_strict_library(
     visibility = [":internal"] + jax_visibility("compilation_cache"),
     deps = [
         ":compilation_cache_interface",
+        ":config",
         ":gfile_cache",
         ":path",
         "//jax/_src/lib",

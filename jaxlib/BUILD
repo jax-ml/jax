@@ -25,7 +25,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
 
 py_library_providing_imports_info(
     name = "jaxlib",
@@ -54,6 +57,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:chlo_dialect",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:jax",
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:ml_program_dialect",
         "//jaxlib/mlir:pass_manager",

@@ -14,7 +14,10 @@
 
 licenses(["notice"])
 
-package(default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//third_party/py/jax/experimental/jax2tf:__subpackages__"],
+)
 
 py_library(
     name = "back_compat_testdata",
