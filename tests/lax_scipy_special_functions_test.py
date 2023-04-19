@@ -88,7 +88,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "i0", 1, float_dtypes, jtu.rand_default, True
     ),
     op_record(
-        "i0e", 1, float_dtypes, jtu.rand_default, True
+        # Note: values near zero can fail numeric gradient tests.
+        "i0e", 1, float_dtypes, functools.partial(jtu.rand_not_small, offset=1E-3), True
     ),
     op_record(
         "i1", 1, float_dtypes, jtu.rand_default, True
