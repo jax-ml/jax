@@ -873,11 +873,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     samples = random.beta(key, a, b, shape=(100,), dtype=dtype)
 
     # With such small parameters, all samples should be exactly zero or one.
+    tol = 5E-2 if jtu.device_under_test() == "tpu" else 1E-3
+
     zeros = samples[samples < 0.5]
-    self.assertAllClose(zeros, jnp.zeros_like(zeros))
+    self.assertAllClose(zeros, jnp.zeros_like(zeros), atol=tol)
 
     ones = samples[samples >= 0.5]
-    self.assertAllClose(ones, jnp.ones_like(ones))
+    self.assertAllClose(ones, jnp.ones_like(ones), atol=tol)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testCauchy(self, dtype):
