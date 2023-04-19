@@ -426,7 +426,7 @@ def traverse_jaxpr_params(f, params):
           if type(p) in (Jaxpr, ClosedJaxpr)}
 
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
+def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
 
@@ -441,7 +441,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args):
   for eqn in jaxpr.eqns:
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-    with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
+    traceback = eqn.source_info.traceback if propagate_source_info else None
+    with source_info_util.user_context(traceback, name_stack=name_stack):
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)

@@ -1063,6 +1063,15 @@ jax_test(
     ],
 )
 
+py_test(
+    name = "source_info_test",
+    srcs = ["source_info_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
