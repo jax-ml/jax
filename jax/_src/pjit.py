@@ -1234,7 +1234,8 @@ def pjit_staging_rule(trace, *args, **params):
       all(is_unspecified(i) for i in params["in_shardings"]) and
       all(is_unspecified(o) for o in params["out_shardings"])):
     jaxpr = params['jaxpr']
-    return core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args)
+    return core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
+                           propagate_source_info=False)
   elif config.jax_dynamic_shapes:
     source_info = source_info_util.current()
     out_tracers = []

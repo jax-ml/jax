@@ -1879,7 +1879,8 @@ class DynamicJaxprTrace(core.Trace):
       dbg = debug_info_final(f, call_primitive.name)
       jaxpr, out_type, consts = trace_to_subjaxpr_dynamic2(f, self.main, debug_info=dbg)
     if params.get('inline', False):
-      return core.eval_jaxpr(jaxpr, consts, *in_tracers)
+      return core.eval_jaxpr(jaxpr, consts, *in_tracers,
+                             propagate_source_info=False)
     source_info = source_info_util.current()
     out_tracers = []
     for aval, _ in out_type:
