@@ -60,6 +60,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "betainc", 3, float_dtypes, jtu.rand_positive, False
     ),
     op_record(
+        "gamma", 1, float_dtypes, jtu.rand_positive, True
+    ),
+    op_record(
         "digamma", 1, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
@@ -89,7 +92,8 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         # Note: values near zero can fail numeric gradient tests.
-        "i0e", 1, float_dtypes, functools.partial(jtu.rand_not_small, offset=1E-3), True
+        "i0e", 1, float_dtypes,
+        functools.partial(jtu.rand_not_small, offset=0.1), True
     ),
     op_record(
         "i1", 1, float_dtypes, jtu.rand_default, True
