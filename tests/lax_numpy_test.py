@@ -1532,6 +1532,29 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in [None] + list(range(-len(shape), len(shape)))
     ],
     dtype=all_dtypes,
+    idx_shape=all_shapes,
+  )
+  def testDeleteUniqueIndices(self, shape, dtype, axis, idx_shape):
+    rng = jtu.rand_default(self.rng())
+    max_idx = np.zeros(shape).size if axis is None else np.zeros(shape).shape[axis]
+    idx_size = np.zeros(idx_shape).size
+    if idx_size > max_idx:
+      self.skipTest("Too many indices to be unique")
+    def args_maker():
+      x = rng(shape, dtype)
+      idx = self.rng().choice(max_idx, idx_shape, replace=False)
+      return x, idx
+    np_fun = partial(np.delete, axis=axis)
+    jnp_fun = partial(jnp.delete, axis=axis, assume_unique_indices=True)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in nonempty_nonscalar_array_shapes
+      for axis in [None] + list(range(-len(shape), len(shape)))
+    ],
+    dtype=all_dtypes,
   )
   def testDeleteMaskArray(self, shape, dtype, axis):
     rng = jtu.rand_default(self.rng())
