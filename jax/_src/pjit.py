@@ -1076,7 +1076,8 @@ def _pjit_call_impl(*args, jaxpr,
   _most_recent_pjit_call_executable.value = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.jax_enable_checks:
-    pxla.check_gda_or_array_xla_sharding_match(args, compiled._in_shardings)
+    pxla.check_gda_or_array_xla_sharding_match(args, compiled._in_shardings,
+                                               jaxpr.jaxpr.debug_info)
   if config.jax_distributed_debug:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this

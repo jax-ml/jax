@@ -1229,7 +1229,8 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
                             input_data)
       with self.assertRaisesRegex(
           ValueError,
-          "Array sharding does not match the input sharding."):
+          r"Array\(s\) sharding does not match the input\(s\) "
+          r"sharding.*\n.*for arg x"):
         compiled(arr)
 
   def test_gda_auto_shardings_len(self):
@@ -1530,16 +1531,31 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with global_mesh:
       f = pjit(
-          lambda x, y: x @ y.T,
+          lambda x, y, z, a, b, c: (x @ y.T, y, z, a, b, c),
           in_shardings=NamedSharding(global_mesh, P('x' ,'y')))
-      compiled = f.lower(aval, aval).compile()
-      out = compiled(a1, a1)
+      compiled = f.lower(aval, aval, aval, aval, aval, aval).compile()
+      out, *_ = compiled(a1, a1, a1, a1, a1, a1)
       self.assertIsInstance(out, array.ArrayImpl)
       self.assertArraysEqual(out._value, input_data @ input_data.T)
 
       with self.assertRaisesRegex(
-          ValueError, 'Array sharding does not match the input sharding'):
-        compiled(a2, a2)
+          ValueError,
+          r"Array\(s\) sharding does not match the input\(s\) sharding. "
+          "Here are the 5 mismatches out of 6"):
+        compiled(a2, a2, a2, a2, a2, a2)
+
+    with global_mesh:
+      f = pjit(lambda a: a, in_shardings=NamedSharding(global_mesh, P('x' ,'y')))
+      abstract_inp = {'x': aval, 'y': {'y1': aval}}
+      inp1 = {'x': a1, 'y': {'y1': a1}}
+      compiled = f.lower(abstract_inp).compile()
+      compiled(inp1)
+      inp2 = {'x': a2, 'y': {'y1': a2}}
+      with self.assertRaisesRegex(
+          ValueError,
+          r"Array\(s\) sharding does not match the input\(s\) sharding. "
+          "Here are the 2 mismatches"):
+        compiled(inp2)
 
   def test_globally_sharded_key_array_result_8x4_single_device(self):
     input_shape = (8, 4)
