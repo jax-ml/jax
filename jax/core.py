@@ -36,6 +36,7 @@ from jax._src.core import (
   InconclusiveDimensionOperation as InconclusiveDimensionOperation,
   InputType as InputType,
   Jaxpr as Jaxpr,
+  JaxprDebugInfo as JaxprDebugInfo,
   JaxprEqn as JaxprEqn,
   JaxprPpContext as JaxprPpContext,
   JaxprPpSettings as JaxprPpSettings,
