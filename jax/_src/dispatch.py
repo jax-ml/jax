@@ -473,8 +473,8 @@ def _dump_ir_to_file(name: str, ir: str):
   name.write_text(ir)
 
 
-def compile_or_get_cached(backend, computation: ir.Module, compile_options,
-                          host_callbacks):
+def compile_or_get_cached(backend, computation: ir.Module, devices: np.ndarray,
+                          compile_options, host_callbacks):
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
 
@@ -495,7 +495,7 @@ def compile_or_get_cached(backend, computation: ir.Module, compile_options,
                            host_callbacks)
 
   cache_key = compilation_cache.get_cache_key(
-      computation, compile_options, backend)
+      computation, devices, compile_options, backend)
 
   cached_executable = _cache_read(module_name, cache_key, compile_options,
                                   backend)

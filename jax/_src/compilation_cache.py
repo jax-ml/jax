@@ -21,6 +21,8 @@ import sys
 from typing import Any, List, Optional
 import zlib
 
+import numpy as np
+
 # If zstandard is installed, we use zstd compression, otherwise we use zlib.
 try:
   import zstandard
@@ -136,7 +138,8 @@ def _log_cache_key_hash(hash_obj, last_serialized: str, hashfn):
     )
 
 
-def get_cache_key(module: ir.Module, compile_options, backend) -> str:
+def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
+                  backend) -> str:
   """Creates a hashed string to use as a key to the compilation cache.
 
   get_cache_key takes in the MLIR module and compile_options of a program
@@ -148,6 +151,7 @@ def get_cache_key(module: ir.Module, compile_options, backend) -> str:
   """
   entries = [
     ("computation", lambda hash_obj: _hash_computation(hash_obj, module)),
+    ("devices", lambda hash_obj: _hash_devices(hash_obj, devices)),
     ("compile_options",
      lambda hash_obj: _hash_compile_options(hash_obj, compile_options)),
     ("jax_lib version",
@@ -191,6 +195,9 @@ def _hash_computation(hash_obj, module):
     canonical_ir = _canonicalize_ir(module)
   hash_obj.update(canonical_ir)
 
+def _hash_devices(hash_obj, devices: np.ndarray) -> None:
+  for device in devices.flat:
+    _hash_string(hash_obj, device.device_kind)
 
 def _hash_compile_options(hash_obj, compile_options_obj):
   if xla_extension_version >= 145:

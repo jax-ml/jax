@@ -1092,7 +1092,8 @@ class UnloadedPmapExecutable:
         f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec",
          event=dispatch.BACKEND_COMPILE_EVENT):
       compiled = dispatch.compile_or_get_cached(
-          pci.backend, xla_computation, compile_options, host_callbacks)
+          pci.backend, xla_computation, device_assignment, compile_options,
+          host_callbacks)
 
     return UnloadedPmapExecutable(
         compiled=compiled,
@@ -2568,7 +2569,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
                                  "in {elapsed_time} sec",
                                  event=dispatch.BACKEND_COMPILE_EVENT):
     xla_executable = dispatch.compile_or_get_cached(
-        backend, computation, compile_options, host_callbacks)
+        backend, computation, dev, compile_options, host_callbacks)
   return xla_executable, compile_options
 
 
