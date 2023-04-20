@@ -15,15 +15,17 @@
 # Helpers for indexed updates.
 
 import sys
-from typing import Any, Callable, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
 
+from jax import Array
 from jax import lax
 
 from jax._src import core
 from jax._src import dtypes
+from jax.typing import ArrayLike
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 from jax._src.numpy import lax_numpy as jnp
@@ -31,7 +33,6 @@ from jax._src.numpy import reductions
 from jax._src.numpy.util import check_arraylike, promote_dtypes
 
 
-Array = Any
 if sys.version_info >= (3, 10):
     from types import EllipsisType
     SingleIndex = Union[None, int, slice, Sequence[int], Array, EllipsisType]
@@ -40,6 +41,107 @@ else:
 Index = Union[SingleIndex, Tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
 
+def _is_integer_index(idx: Any) -> bool:
+  return isinstance(idx, (int, np.integer)) and not isinstance(idx, (bool, np.bool_))
+
+def _is_simple_reverse_slice(idx: Any) -> bool:
+  return (isinstance(idx, slice) and
+          idx.start is idx.stop is None and
+          isinstance(idx.step, int) and idx.step == -1)
+
+def _is_valid_integer_index_for_slice(idx, size, mode):
+  if size == 0:
+    return False
+  if _is_integer_index(idx):
+    return -size <= idx < size
+  try:
+    shape, dtype = np.shape(idx), dtypes.dtype(idx)
+  except:
+    return False
+  if shape == () and np.issubdtype(dtype, np.integer):
+    # For dynamic integer indices, dynamic_slice semantics require index clipping:
+    return mode in [None, 'promise_inbounds', 'clip']
+  return False
+
+def _is_contiguous_slice(idx):
+  return (isinstance(idx, slice) and
+          (idx.start is None or _is_integer_index(idx.start)) and
+          (idx.stop is None or _is_integer_index(idx.stop)) and
+          (idx.step is None or (_is_integer_index(idx.step) and idx.step == 1)))
+
+def _attempt_scatter_update_via_dynamic_slice(x: Array, idx: Any, y: Array,
+                                              mode: Optional[str]) -> Optional[Array]:
+  # attempt to compute _scatter_update via lax.dynamic_update_slice(); return None if not possible.
+  idx = idx if isinstance(idx, tuple) else (idx,)
+  if not all(isinstance(i, int) for i in y.shape):
+    return None
+  if not all(isinstance(i, int) for i in x.shape):
+    return None
+  if len(idx) > x.ndim:
+    return None
+  if any(i is None for i in idx):
+    return None  # TODO(jakevdp): handle newaxis case
+
+  simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
+  int_indices = {i for i, (ind, size) in enumerate(zip(idx, x.shape))
+                 if _is_valid_integer_index_for_slice(ind, size, mode)}
+  contiguous_slices = {i for i, ind in enumerate(idx) if _is_contiguous_slice(ind)}
+
+  if len(simple_revs) + len(int_indices) + len(contiguous_slices) != len(idx):
+    return None
+
+  idx += (x.ndim - len(idx)) * (slice(None),)
+  start_indices: List[ArrayLike] = []
+  expand_indices: List[int] = []
+  expected_shape: List[int] = []
+  update_shape: List[int] = []
+
+  for i, (ind, size) in enumerate(util.safe_zip(idx, x.shape)):
+    if _is_simple_reverse_slice(ind):
+      start_indices.append(0)
+      expected_shape.append(size)
+      update_shape.append(size)
+    elif isinstance(ind, slice):
+      start, stop, step = ind.indices(size)
+      assert step == 1  # checked above
+      start_indices.append(start)
+      expected_shape.append(max(0, stop - start))
+      update_shape.append(max(0, stop - start))
+    else:
+      assert np.issubdtype(dtypes.dtype(ind), np.integer)  # checked above
+      assert np.shape(ind) == ()  # checked above
+      start_indices.append(ind)
+      update_shape.append(1)
+      expand_indices.append(i)
+
+  try:
+    y = jnp.broadcast_to(y, expected_shape)
+  except ValueError:
+    return None
+
+  if expand_indices:
+    y = lax.expand_dims(y, expand_indices)
+
+  if simple_revs:
+    y = lax.rev(y, tuple(simple_revs))
+
+  dtype = lax.dtype(x)
+  weak_type = dtypes.is_weakly_typed(x)
+  if dtype != lax.dtype(y) and dtype != dtypes.result_type(x, y):
+    # TODO(jakevdp): change this to an error after the deprecation period.
+    warnings.warn("scatter inputs have incompatible types: cannot safely cast "
+                  f"value from dtype={lax.dtype(y)} to dtype={lax.dtype(x)}. "
+                  "In future JAX releases this will result in an error.",
+                  FutureWarning)
+  # We must be careful with dtypes because dynamic_slice requires all
+  # start indices to have matching types.
+  if len(start_indices) > 1:
+    # We need to cast weak types to strong, otherwise e.g. (uint32(0), -2)
+    # will be cast to the wrong values.
+    start_indices = promote_dtypes(
+      *(jnp.array(i, dtype=lax.dtype(i)) for i in start_indices))  # type: ignore[assignment]
+  out = lax.dynamic_update_slice(x, y.astype(dtype), start_indices)
+  return lax_internal._convert_element_type(out, dtype, weak_type)
 
 def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
                     unique_indices, mode=None, normalize_indices=True):
@@ -69,6 +171,11 @@ def _scatter_update(x, idx, y, scatter_op, indices_are_sorted,
     y = jnp.asarray(y, dtype=x.dtype)
   else:
     y = jnp.asarray(y)
+
+  if scatter_op is lax.scatter:
+    result = _attempt_scatter_update_via_dynamic_slice(x, idx, y, mode)
+    if result is not None:
+      return result
 
   # XLA gathers and scatters are very similar in structure; the scatter logic
   # is more or less a transpose of the gather equivalent.

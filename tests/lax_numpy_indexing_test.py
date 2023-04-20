@@ -911,6 +911,46 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.rev_p)
 
+  def testSimpleIndexUpdateUsesSlice(self):
+    x = jnp.ones((3, 4))
+    y = 0.0
+    jaxpr = jax.make_jaxpr(lambda x, y: x.at[:2, :2].set(y))(x, y)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 9)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_update_slice_p)
+
+    x = jnp.ones((3, 4, 5))
+    y = jnp.zeros(2)
+    jaxpr = jax.make_jaxpr(lambda x, y: x.at[0, :2, 1].set(y))(x, y)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 11)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_update_slice_p)
+
+    x = jnp.ones((3, 4, 5))
+    y = jnp.arange(5.0)
+    jaxpr = jax.make_jaxpr(lambda x, y, i, j: x.at[i, j].set(y))(x, y, 0, 0)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 15)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_update_slice_p)
+    jaxpr = jax.make_jaxpr(lambda x, y: x.at[:, 1].set(y))(x, y)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 12)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_update_slice_p)
+
+    x = jnp.ones((3, 4))
+    y = jnp.zeros(4)
+    jaxpr = jax.make_jaxpr(lambda x, y: x.at[:, ::-1].set(y))(x, y)
+    self.assertEqual(len(jaxpr.jaxpr.eqns), 9)
+    self.assertIn(lax.rev_p, [eqn.primitive for eqn in jaxpr.eqns])
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.dynamic_update_slice_p)
+
+  def testMixedDtypeIndices(self):
+    # Test bug where weak-typed negative index promotes with strong-typed unsigned.
+    x = jnp.array([[1, 2, 3]])
+    y = 999
+    idx = (jnp.uint32(0), -2)
+    expected = jnp.array([[1, y, 3]])
+    f = lambda x, idx, y: x.at[idx].set(y)
+    with jax.numpy_dtype_promotion('standard'):
+      self.assertArraysEqual(expected, f(x, idx, y))
+      self.assertArraysEqual(expected, jax.jit(f)(x, idx, y))
+
   def testOOBEmptySlice(self):
     x = jnp.arange(4, dtype='float32')
     self.assertArraysEqual(x[1:0], jnp.empty(0, dtype='float32'))
