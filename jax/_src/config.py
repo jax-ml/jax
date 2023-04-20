@@ -470,6 +470,7 @@ class Config:
             self.jax_dynamic_shapes, self.jax_numpy_dtype_promotion,
             self.jax_default_device, self.jax_array,
             self.jax_threefry_partitionable,
+            self.jax_softmax_custom_jvp,
             # Technically this affects jaxpr->MHLO lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
@@ -561,6 +562,7 @@ class _GlobalExtraJitContext(NamedTuple):
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
   threefry_partitionable: bool = False
+  softmax_custom_jvp: bool = True
 
 
 def _update_global_jit_state(**kw):
@@ -585,6 +587,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   numpy_dtype_promotion: Optional[str] = None
   default_matmul_precision: Optional[Any] = None
   dynamic_shapes: bool = False
+  softmax_custom_jvp: bool = True
 
 
 class _ThreadLocalStateCache(threading.local):
@@ -847,6 +850,20 @@ threefry_partitionable = config.define_bool_state(
         threefry_partitionable=val),
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_partitionable=val))
+
+
+softmax_custom_jvp = config.define_bool_state(
+    name='jax_softmax_custom_jvp',
+    default=True,
+    upgrade=True,
+    help=('Use a new custom_jvp rule for jax.nn.softmax. The new rule should '
+          'improve memory usage and stability. Set False to revert to old '
+          'behavior. See https://github.com/google/jax/pull/15677'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        softmax_custom_jvp=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        softmax_custom_jvp=val))
+
 
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',

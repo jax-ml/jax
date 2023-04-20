@@ -302,7 +302,7 @@ def log_softmax(x: Array,
   elements to the range :math:`[-\infty, 0)`.
 
   .. math ::
-    \mathrm{log\_softmax}(x) = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+    \mathrm{log\_softmax}(x)_i = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
     \right)
 
   Args:
@@ -343,9 +343,33 @@ def softmax(x: Array,
     initial: The minimum value used to shift the input array. Must be present
       when :code:`where` is not None.
   """
+  if jax.config.jax_softmax_custom_jvp:
+    return _softmax(x, axis, where, initial)
+  else:
+    return _softmax_deprecated(x, axis, where, initial)
+
+# TODO(mattjj): replace softmax with _softmax when deprecation flag is removed
+@partial(jax.custom_jvp, nondiff_argnums=(1,))
+def _softmax(
+    x,
+    axis: Optional[Union[int, Tuple[int, ...]]] = -1,
+    where: Optional[Array] = None,
+    initial: Optional[Array] = None) -> Array:
+  x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
+  unnormalized = jnp.exp(x - x_max)
+  return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+
+@_softmax.defjvp
+def _softmax_jvp(axis, primals, tangents):
+  (x, where, initial), (x_dot, _, _) = primals, tangents
+  y = _softmax(x, axis, where, initial)
+  return y, y * (x_dot - (y * x_dot).sum(axis, where=where, keepdims=True))
+
+def _softmax_deprecated(x, axis, where, initial):
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
   return unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
+
 
 @partial(jax.jit, static_argnames=("axis",))
 def standardize(x: Array,
