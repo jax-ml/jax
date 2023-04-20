@@ -164,37 +164,41 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def test_same_hash_key(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
     compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
     self.assertEqual(
-        cc.get_cache_key(computation, compile_options, backend),
-        cc.get_cache_key(computation, compile_options, backend),
+        cc.get_cache_key(computation, devices, compile_options, backend),
+        cc.get_cache_key(computation, devices, compile_options, backend),
     )
 
   def test_different_hash_key(self):
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
     compile_options_not_filled = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     compile_options_filled = self.filled_compile_options()
     backend = xla_bridge.get_backend()
     self.assertNotEqual(
-        cc.get_cache_key(computation, compile_options_not_filled, backend),
-        cc.get_cache_key(computation, compile_options_filled, backend),
+        cc.get_cache_key(computation, devices, compile_options_not_filled,
+                         backend),
+        cc.get_cache_key(computation, devices, compile_options_filled, backend),
     )
 
   def test_different_computations(self):
     computation1 = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     computation2 = jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
     compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
     self.assertNotEqual(
-        cc.get_cache_key(computation1, compile_options, backend),
-        cc.get_cache_key(computation2, compile_options, backend),
+        cc.get_cache_key(computation1, devices, compile_options, backend),
+        cc.get_cache_key(computation2, devices, compile_options, backend),
     )
 
   @unittest.skipIf(jax._src.lib.version < (0, 4, 9),
@@ -206,13 +210,14 @@ class CompilationCacheTest(jtu.JaxTestCase):
     assert id(f) != id(g)
     computation1 = jax.jit(f).lower(1, 1).compiler_ir()
     computation2 = jax.jit(g).lower(2, 3).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
     compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1
     )
     backend = xla_bridge.get_backend()
     with compilation_cache_include_metadata_in_key(include_metadata):
-      key1 = cc.get_cache_key(computation1, compile_options, backend)
-      key2 = cc.get_cache_key(computation2, compile_options, backend)
+      key1 = cc.get_cache_key(computation1, devices, compile_options, backend)
+      key2 = cc.get_cache_key(computation2, devices, compile_options, backend)
     self.assertEqual(include_metadata, key1 != key2)
 
   def test_xla_flags(self):
@@ -220,6 +225,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
       raise unittest.SkipTest("TODO(b/240151176)")
 
     computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
     compile_options = xla_bridge.get_compile_options(
         num_replicas=1, num_partitions=1
     )
@@ -229,26 +235,26 @@ class CompilationCacheTest(jtu.JaxTestCase):
     orig_argv = sys.argv
     try:
       os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
-      key1 = cc.get_cache_key(computation, compile_options, backend)
+      key1 = cc.get_cache_key(computation, devices, compile_options, backend)
       os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=1"
-      key2 = cc.get_cache_key(computation, compile_options, backend)
+      key2 = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertNotEqual(key1, key2)
 
       os.environ["XLA_FLAGS"] = "--xla_gpu_autotune_level=0"
-      key3 = cc.get_cache_key(computation, compile_options, backend)
+      key3 = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertEqual(key1, key3)
 
       # Test flag in _xla_flags_to_exclude_from_cache_key
       os.environ["XLA_FLAGS"] = (
           "--xla_gpu_autotune_level=0 --xla_force_host_platform_device_count=8"
       )
-      key4 = cc.get_cache_key(computation, compile_options, backend)
+      key4 = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertEqual(key1, key4)
 
       # Test flags given on command line
       del os.environ["XLA_FLAGS"]
       sys.argv.append("--xla_gpu_autotune_level=0")
-      key5 = cc.get_cache_key(computation, compile_options, backend)
+      key5 = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertEqual(key1, key5)
       sys.argv.append("--xla_force_host_platform_device_count=8")
       self.assertEqual(key1, key5)
@@ -264,11 +270,12 @@ class CompilationCacheTest(jtu.JaxTestCase):
     with tempfile.TemporaryDirectory() as tmpdir:
       cc.initialize_cache(tmpdir)
       computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+      devices = np.array([[jax.local_devices()[0]]])
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
-      key = cc.get_cache_key(computation, compile_options, backend)
+      key = cc.get_cache_key(computation, devices, compile_options, backend)
       self.assertEqual(
           cc.get_executable(key, compile_options, backend), None
       )
@@ -299,13 +306,13 @@ class CompilationCacheTest(jtu.JaxTestCase):
           .lower(np.int32(1), np.int32(1))
           .compiler_ir()
       )
-
+      devices = np.array([[jax.local_devices()[0]]])
       compile_options = xla_bridge.get_compile_options(
           num_replicas=1, num_partitions=1
       )
       backend = xla_bridge.get_backend()
       executable = backend.compile(str(computation), compile_options)
-      key = cc.get_cache_key(computation, compile_options, backend)
+      key = cc.get_cache_key(computation, devices, compile_options, backend)
       cc.put_executable(key, "alambda", executable, backend)
       deserialized_executable = cc.get_executable(key, compile_options, backend)
       inputs_to_executable = (
