@@ -16,6 +16,8 @@
 import contextlib
 import math
 import os
+import unittest
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import numpy as np
@@ -688,6 +690,38 @@ class JaxArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, x.shape)
     self.assertArraysEqual(out, x)
 
+  @jtu.sample_product(
+    dtype=[dt for dt in jtu.dtypes.all if dt != jax.dtypes.bfloat16],
+    shape=[(), (10), (2, 3)],
+  )
+  @unittest.skipIf(xla_extension_version < 157, "Test requires jaxlib >= 0.4.11")
+  def test_buffer_protocol(self, dtype, shape):
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("Buffer protocol only works on CPU")
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    y = jax.device_put(x)
+    x_bytes = memoryview(x).tobytes()
+    y_bytes = memoryview(y).tobytes()
+    self.assertEqual(x_bytes, y_bytes)
+
+  @unittest.skipIf(xla_extension_version < 157, "Test requires jaxlib >= 0.4.11")
+  def test_buffer_protocol_deletion(self):
+    if jtu.device_under_test() != "cpu":
+      raise unittest.SkipTest("Buffer protocol only works on CPU")
+    rng = jtu.rand_default(self.rng())
+    x = rng((3, 4), np.float32)
+    y = jax.device_put(x)
+    x_bytes = memoryview(x).tobytes()
+    y_view = memoryview(y)
+    # The array does not actually get deleted until any external reference is
+    # dropped. Arguably we should make calling delete() in these circumstances
+    # return an error instead, but that would be a behavior change for existing
+    # users.
+    y.delete()
+    y_bytes = y_view.tobytes()
+    self.assertEqual(x_bytes, y_bytes)
+
   def test_array_copy_to_host_async(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     x = pjit(lambda: jnp.arange(8.),
@@ -1117,6 +1151,7 @@ class RngShardingTest(jtu.JaxTestCase):
     y = f(x)
     y_ref1 = f(jax.device_put(x, jax.devices()[0]))
     self.assertArraysEqual(y, y_ref1)
+
 
 
 if __name__ == '__main__':

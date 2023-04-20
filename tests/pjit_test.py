@@ -3771,7 +3771,8 @@ class PJitErrorTest(jtu.JaxTestCase):
       x = jax.device_put(inp_data)
     f = pjit(lambda x: x + 1)
     _ = f(x)
-    with self.assertRaisesRegex(RuntimeError, 'Array has been deleted.'):
+    with self.assertRaisesRegex((RuntimeError, ValueError),
+                                '.*(Array|buffer|Buffer) has been deleted.*'):
       x.delete()
       _ = f(x)
 
