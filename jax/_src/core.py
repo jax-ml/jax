@@ -48,7 +48,8 @@ from jax._src import linear_util as lu
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
-                           HashableFunction, HashableWrapper, weakref_lru_cache)
+                           HashableFunction, HashableWrapper, weakref_lru_cache,
+                           partition_list)
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
@@ -1211,6 +1212,9 @@ def same_referent(x: Any, y: Any) -> bool:
 def dedup_referents(itr: Iterable[Any]) -> List[Any]:
   return list({HashableWrapper(get_referent(x)):x for x in itr}.values())
 
+def definitely_equal(x, y):
+  return x is y or same_referent(x, y) or symbolic_equal_dim(x, y)
+
 
 # -------------------- abstract values --------------------
 
@@ -1479,7 +1483,9 @@ class ShapedArray(UnshapedArray):
     return ShapedArray(shape, dtype, weak_type, named_shape)
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: math.prod(self.shape))
+  size = property(lambda self:
+                  0 if any(type(d) is int and d == 0 for d in self.shape)
+                  else math.prod(self.shape))
 
   broadcast: ClassVar[Optional[aval_method]] = None
   transpose: ClassVar[Optional[aval_method]] = None
@@ -1626,7 +1632,9 @@ class DShapedArray(UnshapedArray):
     self.weak_type = weak_type
 
   ndim = property(lambda self: len(self.shape))
-  size = property(lambda self: math.prod(self.shape))
+  size = property(lambda self:
+                  0 if any(type(d) is int and d == 0 for d in self.shape)
+                  else math.prod(self.shape))
 
   def str_short(self, short_dtypes=False) -> str:
     del short_dtypes  # ignored
@@ -1903,7 +1911,7 @@ def is_constant_shape(s: Shape) -> bool:
   return all(is_constant_dim(d) for d in s)
 
 def symbolic_equal_dim(d1: DimSize, d2: DimSize) -> bool:
-  if d1 is d2 or get_referent(d1) is get_referent(d2): return True
+  if d1 is d2 or same_referent(d1, d2): return True
   handler, ds = _dim_handler_and_canonical(d1, d2)
   return handler.symbolic_equal(*ds)
 
@@ -1946,7 +1954,31 @@ def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
   return handler.divide_shape_sizes(ds[:len(s1)], ds[len(s1):])
 
 def same_shape_sizes(s1: Shape, s2: Shape) -> bool:
+  maybe_result = cancel_divide_tracers(s1, s2)
+  if maybe_result is not None: return maybe_result == 1
   return 1 == divide_shape_sizes(s1, s2)
+
+def cancel_divide_tracers(num, denom):
+  partition = lambda l: partition_list([isinstance(d, Tracer) for d in l], l)
+  num, num_tracers = partition(num)
+  denom, denom_tracers = partition(denom)
+  if num_tracers or denom_tracers:
+    factor = _cancel_divide(num_tracers, denom_tracers)
+    if factor is not None:
+      size1 = math.prod(num)
+      size2 = math.prod(denom)
+      if size1 == size2 or size2 != 0:
+        return factor * (size1 // size2 if size1 != size2 else 1)
+
+def _cancel_divide(num, denom):
+  num = list(num)
+  for a in denom:
+    i = next((i for i, b in enumerate(num) if definitely_equal(a, b)), None)
+    if i is None:
+      break  # couldn't cancel
+    del num[i]
+  else:
+    return math.prod(num)
 
 def is_empty_shape(s: Shape) -> bool:
   return any(symbolic_equal_dim(d, 0) for d in s)
