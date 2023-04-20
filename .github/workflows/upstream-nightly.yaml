@@ -1,4 +1,4 @@
-name: CI-Nightly
+name: CI-numpy-scipy-nightly
 # This configures a github action that runs the JAX test suite against nightly development builds
 # of numpy and scipy, in order to catch issues with new package versions prior to their release.
 # Unlike our other CI, this is one that we expect to fail frequently, and so we don't run it against
@@ -22,7 +22,7 @@ on:
 
 jobs:
   upstream-dev:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04-16core
     permissions:
       contents: read
       checks: write  # for upload-artifact
@@ -64,6 +64,7 @@ jobs:
           JAX_NUM_GENERATED_CASES: 1
           JAX_ENABLE_X64: true
           JAX_ENABLE_CHECKS: true
+          JAX_SKIP_SLOW_TESTS: true
         run: |
           echo "JAX_NUM_GENERATED_CASES=$JAX_NUM_GENERATED_CASES"
           echo "JAX_ENABLE_X64=$JAX_ENABLE_X64"
