@@ -95,8 +95,17 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       _to_jax_shape(sharding.tile(s))
       for sharding, s in zip(arg_shardings, arg_shapes)
   ]
+  tiled_results = [
+      _to_jax_shape(sharding.tile(s))
+      for sharding, s in zip([result_sharding], [result_shape])
+  ]
   closed_jaxpr = jax.make_jaxpr(
       lower_fn, axis_env=list(info.mesh.shape.items()))(*tiled_args)
+  if closed_jaxpr.out_avals != tiled_results:
+    raise ValueError(
+        "Mismatch in result shapes. %s vs %s"
+        % (repr(closed_jaxpr.out_avals), repr(tiled_results))
+    )
   axis_context = sharding_impls.SPMDAxisContext(info.mesh)
   built = mlir.build_xla_computation_helper(
       closed_jaxpr,

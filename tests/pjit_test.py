@@ -55,6 +55,7 @@ from jax._src.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, safe_zip
 
 from jax.config import config
@@ -1129,13 +1130,20 @@ class PJitTest(jtu.BufferDonationTestCase):
           "valid for values of rank at least 4, but was applied to a value of rank 1"):
         pjit_f(jnp.array([1, 2, 3]))
 
-  @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
-  @jtu.with_mesh([('x', 4), ('y', 2)])
-  def test_custom_partitioner(self):
+
+@jtu.pytest_mark_if_available('multiaccelerator')
+class CustomPartitionerTest(jtu.JaxTestCase):
+
+  def skip_if_custom_partitioning_not_supported(self):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
     if xla_bridge.using_pjrt_c_api():
       raise unittest.SkipTest('custom partitioning not implemented in PJRT C API')
+
+  @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_custom_partitioner(self):
+    self.skip_if_custom_partitioning_not_supported()
 
     def partition(
         precision, arg_shapes, arg_shardings, result_shape, result_sharding
@@ -1179,6 +1187,74 @@ class PJitTest(jtu.BufferDonationTestCase):
     result0 = pjit_f(x, y)
     self.assertArraysEqual(result0, result1)
     self.assertArraysEqual(result1, result2)
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_custom_partitioner_sharding_override(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+      def lower_fn(x):
+        return x
+
+      (y_shard,) = arg_shardings
+      return (
+          lower_fn,
+          NamedSharding(y_shard.mesh, P(None)),
+          [NamedSharding(y_shard.mesh, P(None))],
+      )
+
+    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
+      (y_shard,) = arg_shardings
+      return NamedSharding(y_shard.mesh, P('x'))
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+    )
+
+    pjit_f = pjit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+    self.assertArraysEqual(x, pjit_f(x))
+
+  @jtu.with_mesh([('x', 4), ('y', 2)])
+  def test_custom_partitioner_invalid_sharding(self):
+    self.skip_if_custom_partitioning_not_supported()
+    if xla_extension_version < 149:
+      self.skipTest('Requires xla_extension_version >= 149')
+
+    def partition(arg_shapes, arg_shardings, result_shape, result_sharding):
+      def lower_fn(x):
+        return x
+
+      (y_shard,) = arg_shardings
+      return (
+          lower_fn,
+          NamedSharding(y_shard.mesh, P(None)),
+          [NamedSharding(y_shard.mesh, P(None, 'x'))],
+      )
+
+    def infer_sharding_from_operands(arg_shapes, arg_shardings, shape):
+      (y_shard,) = arg_shardings
+      return NamedSharding(y_shard.mesh, P('x'))
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+    )
+
+    pjit_f = pjit(f, in_shardings=(P(None, 'x')), out_shardings=P('x'))
+    x = np.asarray(np.random.randint(0, 20, (32, 16)), dtype=np.float32)
+
+    with self.assertRaisesRegex(Exception, 'Mismatch in result shapes.'):
+      pjit_f(x).block_until_ready()
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
