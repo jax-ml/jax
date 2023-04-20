@@ -41,7 +41,10 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape
-from jax._src.util import safe_zip
+from jax._src.util import safe_zip, safe_map
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 
 ### add method and operator overloads to arraylike classes
@@ -119,11 +122,15 @@ def _compute_newshape(a: ArrayLike, newshape: Union[DimSize, Shape]) -> Shape:
   try:
     iter(newshape)  # type: ignore[arg-type]
   except:
-    iterable = False
-  else:
-    iterable = True
-  newshape = core.canonicalize_shape(newshape if iterable else [newshape])  # type: ignore[arg-type]
-  return tuple(- core.divide_shape_sizes(np.shape(a), newshape)
+    newshape = [newshape]
+  newshape = core.canonicalize_shape(newshape)  # type: ignore[arg-type]
+  neg1s = [i for i, d in enumerate(newshape) if type(d) is int and d == -1]
+  if len(neg1s) == 1:
+    i, = neg1s
+    sz = core.cancel_divide_tracers(np.shape(a), (*newshape[:i], *newshape[i+1:]))
+    if sz is not None:
+      return (*newshape[:i], sz, *newshape[i+1:])
+  return tuple(-core.divide_shape_sizes(np.shape(a), newshape)
                if core.symbolic_equal_dim(d, -1) else d
                for d in newshape)
 
@@ -337,7 +344,7 @@ def _multi_slice(arr: ArrayLike,
   DeviceArray method here to avoid circular imports.
   """
   results: List[Array] = []
-  for starts, limits, removed in safe_zip(start_indices, limit_indices, removed_dims):
+  for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
     sliced = lax.slice(arr, starts, limits)
     if removed:
       sliced = lax.squeeze(sliced, removed)
@@ -472,7 +479,7 @@ def allow_pass_by_position_with_warning(f):
       warnings.warn(
           f"jnp.ndarray.at[...].{f.__name__}: Passing '{keywords[0]}' by position is deprecated. "
           f"Pass by keyword instead", category=FutureWarning, stacklevel=2)
-      converted_kwargs = dict(zip(keywords, args[n_positional:]))
+      converted_kwargs = dict(unsafe_zip(keywords, args[n_positional:]))
       return f(*args[:n_positional], **converted_kwargs, **kwargs)
     else:
       return f(*args, **kwargs)
