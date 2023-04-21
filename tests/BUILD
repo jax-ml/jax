@@ -1072,6 +1072,15 @@ py_test(
     ],
 )
 
+py_test(
+    name = "package_structure_test",
+    srcs = ["package_structure_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
