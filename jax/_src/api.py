@@ -1553,6 +1553,16 @@ def pmap(
         " removed from JAX. Please migrate to pjit and remove global_arg_shapes"
         " from pmap.")
 
+  # TODO(yashkatariya): Move this out after shard_map is out of experimental and
+  # in _src
+  if config.jax_pmap_shmap_merge:
+    from jax.experimental.shard_map import pmap
+    return pmap(fun, axis_name, in_axes=in_axes, out_axes=out_axes,
+                static_broadcasted_argnums=static_broadcasted_argnums,
+                devices=devices, backend=backend,
+                axis_size=axis_size,
+                donate_argnums=donate_argnums)
+
   return _cpp_pmap(
       fun,
       axis_name,
