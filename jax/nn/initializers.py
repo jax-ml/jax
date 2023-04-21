@@ -41,11 +41,3 @@ from jax._src.nn.initializers import (
   xavier_uniform as xavier_uniform,
   zeros as zeros,
 )
-
-# Set __module__ to the public name.
-def _fixup_modules():
-  for _fn in globals().values():
-    if getattr(_fn, "__module__", None) == "jax._src.nn.initializers":
-      _fn.__module__ = "jax.nn.initializers"
-_fixup_modules()
-del _fixup_modules
