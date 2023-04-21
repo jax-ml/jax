@@ -17,7 +17,7 @@ from absl import flags
 from absl.testing import absltest
 from absl.testing import parameterized
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 
 from jax.experimental.jax2tf.examples import keras_reuse_main
 from jax.experimental.jax2tf.tests import tf_test_util

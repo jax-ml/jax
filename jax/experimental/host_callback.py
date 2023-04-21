@@ -507,7 +507,7 @@ import warnings
 
 from jax._src import api
 from jax._src import core
-from jax.config import config
+from jax import config
 from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax

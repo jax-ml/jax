@@ -23,7 +23,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 from jax import lax
-from jax.config import config
+from jax import config
 from jax.interpreters import batching
 
 import jax._src.lib

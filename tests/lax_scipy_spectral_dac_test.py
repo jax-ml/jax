@@ -21,7 +21,7 @@ from jax._src.lax import eigh as lax_eigh
 
 from absl.testing import absltest
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

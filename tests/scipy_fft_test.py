@@ -19,7 +19,7 @@ from jax._src import test_util as jtu
 import jax.scipy.fft as jsp_fft
 import scipy.fft as osp_fft
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 

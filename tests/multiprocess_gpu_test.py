@@ -26,7 +26,7 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax.config import config
+from jax import config
 from jax._src import core
 from jax._src import distributed
 import jax.numpy as jnp

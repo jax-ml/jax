@@ -25,7 +25,7 @@ from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit, maps
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

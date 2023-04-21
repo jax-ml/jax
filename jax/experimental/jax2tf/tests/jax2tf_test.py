@@ -35,7 +35,7 @@ from jax._src import core
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 import jax._src.xla_bridge
-from jax.config import config
+from jax import config
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf import jax_export
 from jax.experimental.jax2tf.tests import tf_test_util

@@ -20,7 +20,7 @@ import numpy as np
 
 import jax.numpy as jnp
 from jax import jit, lax, make_jaxpr
-from jax.config import config
+from jax import config
 from jax.interpreters import mlir
 from jax.interpreters import xla
 

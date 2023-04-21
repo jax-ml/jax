@@ -30,7 +30,7 @@ import scipy.linalg as sla
 import scipy.sparse as sps
 
 import jax
-from jax.config import config
+from jax import config
 from jax._src import test_util as jtu
 from jax.experimental.sparse import linalg, bcoo
 import jax.numpy as jnp

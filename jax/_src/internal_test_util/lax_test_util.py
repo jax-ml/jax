@@ -28,7 +28,7 @@ from jax._src.util import safe_map, safe_zip
 
 import numpy as np
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 map, unsafe_map = safe_map, map

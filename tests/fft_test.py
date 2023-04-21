@@ -27,7 +27,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.numpy.util import promote_dtypes_complex
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 FFT_NORMS = [None, "ortho", "forward", "backward"]

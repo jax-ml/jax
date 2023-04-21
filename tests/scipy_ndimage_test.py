@@ -26,7 +26,7 @@ from jax._src import test_util as jtu
 from jax import dtypes
 from jax.scipy import ndimage as lsp_ndimage
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

@@ -49,7 +49,7 @@ from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
 from jax._src.util import safe_zip
 from jax._src import array
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

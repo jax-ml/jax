@@ -23,7 +23,7 @@ from jax._src import dtypes
 from jax import numpy as jnp
 from jax._src import test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

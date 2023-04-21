@@ -24,7 +24,7 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None

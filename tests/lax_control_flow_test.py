@@ -41,7 +41,7 @@ import jax.scipy as jsp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

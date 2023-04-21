@@ -31,7 +31,7 @@ from absl.testing import parameterized
 
 import jax
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental import pjit
