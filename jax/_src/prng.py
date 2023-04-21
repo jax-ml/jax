@@ -223,6 +223,10 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
     return self
 
   @property
+  def aval(self):
+    return keys_shaped_array(self.impl, self.shape)
+
+  @property
   def shape(self):
     return base_arr_shape_to_keys_shape(self.impl, self._base_array.shape)
 
@@ -239,9 +243,8 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
 
   @property
   def sharding(self):
-    aval = keys_shaped_array(self.impl, self.shape)
     phys_sharding = self._base_array.sharding
-    return KeyTyRules.logical_op_sharding(aval, phys_sharding)
+    return KeyTyRules.logical_op_sharding(self.aval, phys_sharding)
 
   def _is_scalar(self):
     base_ndim = len(self.impl.key_shape)
@@ -544,11 +547,8 @@ class KeyTy:
 core.opaque_dtypes.add(KeyTy)
 
 
-core.pytype_aval_mappings[PRNGKeyArrayImpl] = (
-    lambda x: keys_shaped_array(x.impl, x.shape))
-
-xla.pytype_aval_mappings[PRNGKeyArrayImpl] = (
-    lambda x: keys_shaped_array(x.impl, x.shape))
+core.pytype_aval_mappings[PRNGKeyArrayImpl] = lambda x: x.aval
+xla.pytype_aval_mappings[PRNGKeyArrayImpl] = lambda x: x.aval
 
 xla.canonicalize_dtype_handlers[PRNGKeyArrayImpl] = lambda x: x
 
