@@ -60,9 +60,8 @@ from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
-from jax._src.ops import scatter
 from jax._src.typing import Array, ArrayLike, DimSize, DType, DTypeLike, Shape
-from jax._src.util import (unzip2, unzip3, subvals, safe_zip,
+from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis)
 
@@ -2007,22 +2006,17 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
   if not weak_type:
     dtype = dtypes.canonicalize_dtype(dtype)
 
-  # We can't use the ndarray class because we need to handle internal buffers
-  # (See https://github.com/google/jax/issues/8950)
-  ndarray_types = (core.Tracer, ArrayImpl)
-
   out: ArrayLike
 
-  if _all(not isinstance(leaf, ndarray_types) for leaf in leaves):
+  if _all(not isinstance(leaf, Array) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
     # https://github.com/google/jax/pull/6047. More correct would be to call
     # coerce_to_array on each leaf, but this may have performance implications.
     out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)
-  elif isinstance(object, ndarray_types):
-    # TODO(phawkins): remove the type: ignore here after DeviceArray has been deleted.
-    assert object.aval is not None  # type: ignore
-    out = _array_copy(object) if copy else object  # type: ignore
+  elif isinstance(object, Array):
+    assert object.aval is not None
+    out = _array_copy(object) if copy else object
   elif isinstance(object, (list, tuple)):
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])
