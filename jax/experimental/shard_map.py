@@ -25,6 +25,7 @@ from typing import (Any, Callable, Dict, Hashable, List, Optional, Sequence,
 import numpy as np
 
 import jax
+import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import core
 from jax._src import ad_util
@@ -40,6 +41,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
+from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, fft, linalg, control_flow)
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
@@ -66,9 +68,15 @@ traceback_util.register_exclusion(__file__)
 
 Specs = Any  # PyTree[PartitionSpec]
 
+
 @traceback_util.api_boundary
 def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
               check_rep: bool = True):
+  return _shard_map(f, mesh, in_specs, out_specs, check_rep)
+
+def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
+               out_specs: Union[Specs, Callable[[], Specs]],
+               check_rep: bool = True):
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
@@ -76,8 +84,10 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
     raise TypeError("shard_map requires a `jax.sharding.Mesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
   _check_specs(SpecErrorType.input, in_specs)
-  _check_specs(SpecErrorType.out, out_specs)
+  if not callable(out_specs):
+    _check_specs(SpecErrorType.out, out_specs)
 
+  @util.wraps(f)
   @traceback_util.api_boundary
   def wrapped(*args):
     fun = lu.wrap_init(f)
@@ -92,10 +102,15 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
 
     @memoize
     def out_names_thunk():
+      if callable(out_specs):
+        out_specs_ = out_specs()
+        _check_specs(SpecErrorType.out, out_specs_)
+      else:
+        out_specs_ = out_specs
       dummy = tree_unflatten(out_tree(), [object()] * out_tree().num_leaves)
-      try: out_specs_flat = broadcast_prefix(out_specs, dummy)
+      try: out_specs_flat = broadcast_prefix(out_specs_, dummy)
       except ValueError:
-        e, *_ = prefix_errors(out_specs, dummy)
+        e, *_ = prefix_errors(out_specs_, dummy)
         raise e('shard_map out_specs') from None
       return tuple(map(_canonicalize_spec, out_specs_flat))
     try:
@@ -104,16 +119,18 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
           out_names_thunk=out_names_thunk, check_rep=check_rep)
     except _SpecError as e:
       fails, = e.args
-      msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
-      if any(fail is not no_fail and not fail.shape for fail in fails):
-        msg += (" In particular, for rank 0 outputs which are not constant "
-                "over the mesh, add at least one (singleton) axis to them so "
-                "that they can be concatenated using out_specs.")
-      raise ValueError(msg) from None
+      if not callable(out_specs):
+        msg = _spec_rank_error(SpecErrorType.out, f, out_tree(), out_specs, fails)
+        if any(fail is not no_fail and not fail.shape for fail in fails):
+          msg += (" In particular, for rank 0 outputs which are not constant "
+                  "over the mesh, add at least one (singleton) axis to them so "
+                  "that they can be concatenated using out_specs.")
+        raise ValueError(msg) from None
     except _RepError as e:
       fails, = e.args
-      msg = _rep_error(f, mesh, out_tree(), out_specs, fails)
-      raise ValueError(msg) from None
+      if not callable(out_specs):
+        msg = _rep_error(f, mesh, out_tree(), out_specs, fails)
+        raise ValueError(msg) from None
     return tree_unflatten(out_tree(), out_flat)
   return wrapped
 
@@ -1153,3 +1170,56 @@ def _shard_map_dce(used_outputs: List[bool], eqn: core.JaxprEqn
         eqn.primitive, new_params, jaxpr.effects, eqn.source_info)
     return used_inputs, new_eqn
 pe.dce_rules[shard_map_p] = _shard_map_dce
+
+
+# Implementing pmap in terms of shard_map
+
+def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
+         static_broadcasted_argnums=(), devices=None, backend=None,
+         axis_size=None, donate_argnums=(), global_arg_shapes=None):
+  if axis_size is not None:  # TODO what even is this?
+    raise NotImplementedError
+  devices = tuple(devices) if devices is not None else devices
+  axis_name, _, _ = _shared_code_pmap(
+      f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
+  return jax.jit(
+      HashablePartial(_pmapped, (f, axis_name, in_axes, out_axes, devices,
+                                 backend)),
+      static_argnums=static_broadcasted_argnums,
+      donate_argnums=donate_argnums)
+
+def _pmapped(metadata, *args, **kwargs):
+  f, axis_name, in_axes, out_axes, devices, backend = metadata
+  p = _prepare_pmap(f, in_axes, out_axes, (), (), devices, backend, None,
+                    args, kwargs)
+  in_specs = tuple(map(partial(_axis_to_spec, axis_name), p.in_axes_flat))
+  out_specs = lambda: map(partial(_axis_to_spec, axis_name), p.out_axes_thunk())
+  fun = _handle_reshapes(p.flat_fun, p.in_axes_flat, p.out_axes_thunk)
+  mesh = Mesh(_get_devices(p, backend), (axis_name,))
+  out = _shard_map(fun.call_wrapped, mesh, in_specs, out_specs,
+                   check_rep=False)(*p.flat_args)
+  return tree_unflatten(p.out_tree(), out)
+
+@lu.transformation
+def _handle_reshapes(in_axes, out_axes_thunk, *args, **kwargs):
+  args = tree_map(lambda x, ax: x if ax is None else jnp.squeeze(x, axis=ax),
+                  list(args), list(in_axes))
+  out = yield args, {}
+  yield tree_map(lambda x, ax: x if ax is None else jnp.expand_dims(x, axis=ax),
+                 list(out), list(out_axes_thunk()))
+
+def _axis_to_spec(axis_name, ax):
+  if isinstance(ax, int):
+    specs = [None] * ax + [axis_name]
+    return P(*specs)
+  elif ax is None:
+    return P()
+  else:
+    raise TypeError(ax)
+
+def _get_devices(p, backend):
+  if backend is not None and p.devices is None:
+    devs = jax.devices(backend=backend)
+  else:
+    devs = jax.devices() if p.devices is None else p.devices
+  return devs[:p.local_axis_size]

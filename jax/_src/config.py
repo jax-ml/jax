@@ -786,6 +786,13 @@ jit_pjit_api_merge = config.define_bool_state(
           "imported."))
 
 
+pmap_shmap_merge = config.define_bool_state(
+    name='jax_pmap_shmap_merge',
+    default=False,
+    upgrade=True,
+    help='If True, pmap and shard_map API will be merged.')
+
+
 spmd_mode = config.define_enum_state(
     name='jax_spmd_mode',
     enum_values=['allow_all', 'allow_jit', 'allow_pjit'],

@@ -187,7 +187,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     # the default order of pmap for single-host jobs.
     device_order = jax.devices()
     pmap_sharding = pmap(lambda x: x)(np.arange(jax.device_count())).sharding
-    self.assertListEqual(device_order, pmap_sharding.devices.tolist())
+    if jax.config.jax_pmap_shmap_merge:
+      self.assertListEqual(device_order, pmap_sharding._device_assignment)
+    else:
+      self.assertListEqual(device_order, pmap_sharding.devices.tolist())
 
   def testLowerCompile(self):
     f = self.pmap(lambda x: x - lax.pmean(x, 'i'), axis_name='i')
@@ -2177,6 +2180,8 @@ class CppPmapTest(PythonPmapTest):
 
   @property
   def pmap(self):
+    if jax.config.jax_pmap_shmap_merge:
+      return src_api.pmap
     return src_api._cpp_pmap
 
   def pmap_fast_path_is_enabled(self):
@@ -3230,7 +3235,7 @@ class EagerPmapMixin:
     super().tearDown()
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
+class PythonPmapEagerTest(EagerPmapMixin, PythonPmapTest):
 
   def test_custom_jvp(self):
 
@@ -3266,19 +3271,19 @@ class EagerPythonPmapTest(EagerPmapMixin, PythonPmapTest):
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerCppPmapTest(EagerPmapMixin, CppPmapTest):
+class CppPmapEagerTest(EagerPmapMixin, CppPmapTest):
   pass
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerPmapWithDevicesTest(EagerPmapMixin, PmapWithDevicesTest):
+class PmapWithDevicesEagerTest(EagerPmapMixin, PmapWithDevicesTest):
   pass
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerVmapOfPmapTest(EagerPmapMixin, VmapOfPmapTest):
+class VmapOfPmapEagerTest(EagerPmapMixin, VmapOfPmapTest):
   pass
 
 @jtu.pytest_mark_if_available('multiaccelerator')
-class EagerArrayPmapTest(EagerPmapMixin, ArrayPmapTest):
+class ArrayPmapEagerTest(EagerPmapMixin, ArrayPmapTest):
   pass
 
 
