@@ -287,7 +287,9 @@ class XlaLowering(Lowering):
 
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
-    raise NotImplementedError("must override")
+    return xla_extension.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(self.stablehlo()),
+        use_tuple_args=self.compile_args["tuple_args"])
 
   def mhlo(self) -> ir.Module:
     """Return an MHLO representation of this computation."""

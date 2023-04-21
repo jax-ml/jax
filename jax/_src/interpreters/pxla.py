@@ -891,14 +891,12 @@ def lower_parallel_callable(
         arg_names=jaxpr.debug_info and jaxpr.debug_info.arg_names,
         result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
         num_replicas=replicas.num_global_replicas)
-    module, keepalive, host_callbacks = (
-        lowering_result.module, lowering_result.keepalive,
-        lowering_result.host_callbacks)
-  return PmapComputation(module, pci=pci, replicas=replicas,
+  return PmapComputation(lowering_result.module, pci=pci, replicas=replicas,
                          shards=shards, tuple_args=tuple_args,
                          unordered_effects=unordered_effects,
                          ordered_effects=ordered_effects,
-                         keepalive=keepalive, host_callbacks=host_callbacks,
+                         keepalive=lowering_result.keepalive,
+                         host_callbacks=lowering_result.host_callbacks,
                          jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info)
 
 
@@ -912,15 +910,6 @@ class PmapComputation(stages.XlaLowering):
     self.compile_args = compile_args
 
   # -- stages.XlaLowering overrides
-
-  def hlo(self) -> xc.XlaComputation:
-    # this is a method for api consistency with dispatch.XlaComputation
-    return xe.mlir.mlir_module_to_xla_computation(
-        mlir.module_to_string(self._hlo),
-        use_tuple_args=self.compile_args["tuple_args"])
-
-  def mhlo(self) -> ir.Module:
-    return super().mhlo()
 
   def stablehlo(self) -> ir.Module:
     return self._hlo
@@ -982,7 +971,7 @@ class UnloadedPmapExecutable:
         self.local_input_avals, self.jaxpr_debug_info, self)
 
   @staticmethod
-  def from_hlo(xla_computation,
+  def from_hlo(hlo: ir.Module,
                pci: ParallelCallableInfo,
                replicas: ReplicaInfo,
                shards: ShardInfo,
@@ -1084,7 +1073,7 @@ class UnloadedPmapExecutable:
       handle_outs = local_avals_to_results_handler(local_unmapped_avals,
                                                    out_shardings)
       return _compile_replicated_pmap_executable_from_hlo(
-          xla_computation, pci, input_indices, in_shardings, handle_outs,
+          hlo, pci, input_indices, in_shardings, handle_outs,
           compile_options, host_callbacks, bool(unordered_effects),
           ordered_effects, jaxpr_debug_info)
 
@@ -1092,7 +1081,7 @@ class UnloadedPmapExecutable:
         f"Finished XLA compilation of {pci.name} in {{elapsed_time}} sec",
          event=dispatch.BACKEND_COMPILE_EVENT):
       compiled = dispatch.compile_or_get_cached(
-          pci.backend, xla_computation, device_assignment, compile_options,
+          pci.backend, hlo, device_assignment, compile_options,
           host_callbacks)
 
     return UnloadedPmapExecutable(
@@ -1110,12 +1099,12 @@ class UnloadedPmapExecutable:
 
 
 def _compile_replicated_pmap_executable_from_hlo(
-    xla_computation, pci, input_indices, in_shardings, handle_outs,
+    hlo: ir.Module, pci, input_indices, in_shardings, handle_outs,
     compile_options, host_callbacks, has_unordered_effects, ordered_effects,
     jaxpr_debug_info):
   # Use the standard out_handler.
   execute_fun = pci.backend.compile_replicated(
-      is_trivial=False, name=pci.name, computation=xla_computation,
+      is_trivial=False, name=pci.name, computation=hlo,
       compile_options=compile_options, host_callbacks=host_callbacks,
       has_unordered_effects=has_unordered_effects,
       ordered_effects=ordered_effects, in_avals=pci.avals,
@@ -1944,14 +1933,12 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
       result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
       num_replicas=nreps,
       num_partitions=num_partitions)
-  module, keepalive, host_callbacks = (
-      lowering_result.module, lowering_result.keepalive,
-      lowering_result.host_callbacks)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
-  return (module, keepalive, host_callbacks, unordered_effects,
-          ordered_effects, nreps, tuple_args)
+  return (lowering_result.module, lowering_result.keepalive,
+          lowering_result.host_callbacks, unordered_effects, ordered_effects,
+          nreps, tuple_args)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2252,7 +2239,6 @@ def lower_mesh_computation(
     num_replicas = mesh.devices.size
     num_partitions = 1
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  module: Union[str, xc.XlaComputation]
   module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):
     if any(effects.ordered_effects.contains(eff) for eff
@@ -2278,12 +2264,9 @@ def lower_mesh_computation(
         result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
         num_replicas=num_replicas,
         num_partitions=num_partitions)
-    module, keepalive, host_callbacks = (
-        lowering_result.module, lowering_result.keepalive,
-        lowering_result.host_callbacks)
   return MeshComputation(
       str(name_stack),
-      module,
+      lowering_result.module,
       False,
       donated_invars,
       mesh=mesh,
@@ -2296,8 +2279,8 @@ def lower_mesh_computation(
       auto_spmd_lowering=auto_spmd_lowering,
       unordered_effects=unordered_effects,
       ordered_effects=ordered_effects,
-      host_callbacks=host_callbacks,
-      keepalive=keepalive,
+      host_callbacks=lowering_result.host_callbacks,
+      keepalive=lowering_result.keepalive,
       kept_var_idx=set(range(len(global_in_avals))),
       backend=backend,
       device_assignment=_create_da_object(tuple(mesh.devices.flat)),
@@ -2319,20 +2302,9 @@ class MeshComputation(stages.XlaLowering):
 
   # -- stages.XlaLowering overrides
 
-  def hlo(self) -> xc.XlaComputation:
-    if self.is_trivial:
-      raise ValueError("A trivial computation has no HLO")
-    # this is a method for api consistency with dispatch.XlaComputation
-    return xe.mlir.mlir_module_to_xla_computation(
-        mlir.module_to_string(self._hlo),
-        use_tuple_args=self.compile_args["tuple_args"])
-
-  def mhlo(self) -> ir.Module:
-    return super().mhlo()
-
   def stablehlo(self) -> ir.Module:
     if self.is_trivial:
-      raise ValueError("A trivial computation has no StableHLO")
+      raise ValueError("A trivial computation has no HLO")
     return self._hlo
 
   def compile(
@@ -2618,7 +2590,7 @@ class UnloadedMeshExecutable:
   # May return a MeshExecutable in the compile_replicated case.
   @staticmethod
   def from_hlo(name: str,
-               computation: Union[ir.Module, xc.XlaComputation],
+               hlo: ir.Module,
                # TODO(yashkatariya): Remove `mesh` from here once AUTO can work
                # without mesh.
                mesh: Optional[Mesh],
@@ -2651,7 +2623,7 @@ class UnloadedMeshExecutable:
     del device_assignment
     allow_prop_to_outputs = tuple(is_unspecified(o) for o in out_shardings)
     xla_executable, compile_options = _cached_compilation(
-        computation, name, mesh, spmd_lowering,
+        hlo, name, mesh, spmd_lowering,
         tuple_args, auto_spmd_lowering, allow_prop_to_outputs,
         tuple(host_callbacks), backend, da, pmap_nreps,
         compiler_options_keys, compiler_options_values)
@@ -2660,7 +2632,7 @@ class UnloadedMeshExecutable:
       semantics_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
       semantics_out_shardings = SemanticallyEqualShardings(out_shardings)  # type: ignore
       return _compile_replicated_mesh_executable_from_hlo(
-          computation, name, tuple(global_in_avals), tuple(global_out_avals),
+          hlo, name, tuple(global_in_avals), tuple(global_out_avals),
           semantics_in_shardings, semantics_out_shardings, auto_spmd_lowering,
           compile_options, tuple(host_callbacks), bool(unordered_effects),
           tuple(ordered_effects), tuple(kept_var_idx), backend, da, committed,
