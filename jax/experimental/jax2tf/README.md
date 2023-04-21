@@ -1136,7 +1136,7 @@ Use this only if it improves the performance for your application.
 Note that this lowering may not work as well as the default one in presence
 of shape polymorphism.
 
-### TensorFlow XLA ops
+### XLA TensorFlow ops
 
 Applies to non-native serialization only.
 
@@ -1160,6 +1160,8 @@ There are several drawbacks of using XLA TensorFlow ops:
 
    * These ops will only be executable by a consumer that has XLA linked in.
    This should not be a problem for TPU execution, since that requires XLA anyway.
+   For CPU deployment, you will need to add an explicit BUILD dependency to
+   `"//third_party/tensorflow/compiler/jit:xla_cpu_jit"`.
    * These ops are not yet recognized by tools that process
    tf.Graph, e.g., TensorFlow.js converter or the TensorFlow Lite converter.
 
