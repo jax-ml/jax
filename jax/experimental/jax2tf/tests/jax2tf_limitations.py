@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional, Sequence, Union
 import jax
 from jax import lax
 from jax import numpy as jnp
-from jax.config import config
+from jax import config
 from jax._src import test_util as jtu
 from jax._src import dtypes
 from jax.experimental.jax2tf.tests import primitive_harness

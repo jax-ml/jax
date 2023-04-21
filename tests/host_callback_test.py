@@ -28,7 +28,7 @@ from absl.testing import absltest
 import jax
 from jax import ad_checkpoint
 from jax._src import core
-from jax.config import config
+from jax import config
 from jax import dtypes
 from jax.experimental import host_callback as hcb
 from jax.sharding import PartitionSpec as P

@@ -25,7 +25,7 @@ from jax.tree_util import tree_map
 
 import scipy.integrate as osp_integrate
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

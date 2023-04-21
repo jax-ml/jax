@@ -42,7 +42,7 @@ from jax.interpreters import xla
 from jax._src import random as jax_random
 from jax._src import prng as prng_internal
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 float_dtypes = jtu.dtypes.all_floating

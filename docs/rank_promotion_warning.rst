@@ -40,7 +40,7 @@ One is by using :code:`jax.config` in your code:
 
 .. code-block:: python
 
-  from jax.config import config
+  from jax import config
   config.update("jax_numpy_rank_promotion", "warn")
 
 You can also set the option using the environment variable

@@ -35,7 +35,7 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 # We disable the whitespace continuation check in this file because otherwise it

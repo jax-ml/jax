@@ -47,7 +47,7 @@ from jax._src import lax_reference
 from jax._src.lax import lax as lax_internal
 from jax._src.internal_test_util import lax_test_util
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

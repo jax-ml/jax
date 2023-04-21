@@ -22,7 +22,7 @@ import jax
 from jax import jaxpr_util, jit, make_jaxpr, numpy as jnp
 from jax._src.lib import xla_client
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 
 
 config.parse_flags_with_absl()

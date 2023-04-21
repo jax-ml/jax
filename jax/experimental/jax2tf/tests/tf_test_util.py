@@ -28,7 +28,7 @@ from jax import numpy as jnp
 from jax._src import test_util as jtu
 from jax import tree_util
 
-from jax.config import config
+from jax import config
 from jax.experimental import jax2tf
 from jax._src import xla_bridge
 import numpy as np

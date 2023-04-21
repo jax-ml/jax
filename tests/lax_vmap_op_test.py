@@ -26,7 +26,7 @@ from jax._src import test_util as jtu
 from jax._src.internal_test_util import lax_test_util
 from jax._src import util
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 FLAGS = config.FLAGS

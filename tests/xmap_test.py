@@ -50,7 +50,7 @@ from jax._src.lax.parallel import pgather
 from jax.interpreters import batching
 from jax.ad_checkpoint import checkpoint
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

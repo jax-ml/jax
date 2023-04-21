@@ -26,7 +26,7 @@ from jax import tree_util
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

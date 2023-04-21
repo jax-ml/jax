@@ -16,7 +16,7 @@
 import functools
 
 import jax
-from jax.config import config
+from jax import config
 import jax.numpy as jnp
 import numpy as np
 import scipy.linalg as osp_linalg

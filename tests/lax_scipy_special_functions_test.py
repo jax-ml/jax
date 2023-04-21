@@ -26,7 +26,7 @@ import jax
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

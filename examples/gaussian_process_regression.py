@@ -21,7 +21,7 @@ from functools import partial
 from jax import grad
 from jax import jit
 from jax import vmap
-from jax.config import config
+from jax import config
 import jax.numpy as jnp
 import jax.random as random
 import jax.scipy as scipy

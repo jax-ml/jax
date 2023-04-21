@@ -21,7 +21,7 @@ import tracemalloc as tm
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 from jax._src import array
 from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P

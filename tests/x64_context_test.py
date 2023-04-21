@@ -24,7 +24,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax import random
-from jax.config import config
+from jax import config
 from jax.experimental import enable_x64, disable_x64
 import jax.numpy as jnp
 import jax._src.test_util as jtu

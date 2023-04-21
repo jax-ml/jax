@@ -25,7 +25,7 @@ import jax.numpy as jnp
 from jax import jit, jvp, vjp
 import jax._src.test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 npr.seed(0)

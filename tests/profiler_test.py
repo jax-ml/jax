@@ -25,7 +25,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 import jax.profiler
-from jax.config import config
+from jax import config
 import jax._src.test_util as jtu
 
 try:

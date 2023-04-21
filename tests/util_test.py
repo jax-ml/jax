@@ -21,7 +21,7 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import util
 
-from jax.config import config
+from jax import config
 from jax._src.util import weakref_lru_cache
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS

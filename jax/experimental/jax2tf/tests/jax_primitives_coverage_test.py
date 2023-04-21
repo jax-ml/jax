@@ -28,7 +28,7 @@ import unittest
 from absl.testing import absltest
 
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 
 import numpy as np
 

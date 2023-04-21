@@ -19,7 +19,7 @@ from absl.testing import absltest
 
 import jax
 from jax import lax
-from jax.config import config
+from jax import config
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 

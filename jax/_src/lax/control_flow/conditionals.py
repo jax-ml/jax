@@ -21,7 +21,7 @@ import operator
 
 from typing import Callable, Sequence, List, Tuple
 
-from jax.config import config
+from jax import config
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import core
