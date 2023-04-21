@@ -543,7 +543,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
   # So if N ∩ CUB(N) is nonempty, if follows that LUB(N) = N ∩ CUB(N).
   N = set(nodes)
   UB = _lattice_upper_bounds[jax_numpy_dtype_promotion]
-  CUB = set.intersection(*(UB[n] for n in N))
+  try:
+    bounds = [UB[n] for n in N]
+  except KeyError:
+    dtype = next(n for n in N if n not in UB)
+    raise ValueError(f"{dtype=} is not a valid dtype for JAX type promotion.")
+  CUB = set.intersection(*bounds)
   LUB = (CUB & N) or {c for c in CUB if CUB.issubset(UB[c])}
   if len(LUB) == 1:
     return LUB.pop()
