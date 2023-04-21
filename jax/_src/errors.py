@@ -14,6 +14,8 @@
 from __future__ import annotations
 
 from jax._src import core
+from jax._src.util import set_module
+
 
 class _JAXErrorMixin:
   """Mixin for JAX-specific errors"""
@@ -29,14 +31,17 @@ class _JAXErrorMixin:
     super().__init__(error_msg)  # type: ignore
 
 
+@set_module('jax.errors')
 class JAXTypeError(_JAXErrorMixin, TypeError):
   pass
 
 
+@set_module('jax.errors')
 class JAXIndexError(_JAXErrorMixin, IndexError):
   pass
 
 
+@set_module('jax.errors')
 class ConcretizationTypeError(JAXTypeError):
   """
   This error occurs when a JAX Tracer object is used in a context where a
@@ -180,6 +185,7 @@ class ConcretizationTypeError(JAXTypeError):
         f"{tracer}\n{context}{tracer._origin_msg()}\n")
 
 
+@set_module('jax.errors')
 class NonConcreteBooleanIndexError(JAXIndexError):
   """
   This error occurs when a program attempts to use non-concrete boolean indices
@@ -271,6 +277,7 @@ class NonConcreteBooleanIndexError(JAXIndexError):
         f"Array boolean indices must be concrete; got {tracer}\n")
 
 
+@set_module('jax.errors')
 class TracerArrayConversionError(JAXTypeError):
   """
   This error occurs when a program attempts to convert a JAX Tracer object into
@@ -351,6 +358,7 @@ class TracerArrayConversionError(JAXTypeError):
         f"the JAX Tracer object {tracer}{tracer._origin_msg()}")
 
 
+@set_module('jax.errors')
 class TracerIntegerConversionError(JAXTypeError):
   """
   This error can occur when a JAX Tracer object is used in a context where a
@@ -443,6 +451,7 @@ class TracerIntegerConversionError(JAXTypeError):
         f"The __index__() method was called on the JAX Tracer object {tracer}")
 
 
+@set_module('jax.errors')
 class UnexpectedTracerError(JAXTypeError):
   """
   This error occurs when you use a JAX value that has leaked out of a function.

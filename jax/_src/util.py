@@ -547,6 +547,14 @@ def _original_func(f):
   return f
 
 
+def set_module(module):
+  def wrapper(func):
+    if module is not None:
+      func.__module__ = module
+    return func
+  return wrapper
+
+
 if TYPE_CHECKING:
   def use_cpp_class(cpp_cls: Any) -> Callable[[T], T]:
     def wrapper(cls: T) -> T:
