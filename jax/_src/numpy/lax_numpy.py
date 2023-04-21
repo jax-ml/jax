@@ -92,15 +92,6 @@ of two :class:`~jax.lax.Precision` enums indicating separate precision for each 
 # Some objects below rewrite their __module__ attribute to this name.
 _PUBLIC_MODULE_NAME = "jax.numpy"
 
-# We replace some builtin names to follow Numpy's API, so we capture here.
-_abs = builtins.abs
-_all = builtins.all
-_any = builtins.any
-_max = builtins.max
-_min = builtins.min
-_sum = builtins.sum
-_divmod = builtins.divmod
-
 # NumPy constants
 
 pi = np.pi
@@ -278,8 +269,8 @@ def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
     # This happens in X32 mode and can either come from a jax value created in another
     # context, or a Python integer converted to int64.
     pass
-  min_val = _lax_const(val, _max(iinfo(dtype).min, iinfo(val_dtype).min))
-  max_val = _lax_const(val, _min(iinfo(dtype).max, iinfo(val_dtype).max))
+  min_val = _lax_const(val, max(iinfo(dtype).min, iinfo(val_dtype).min))
+  max_val = _lax_const(val, min(iinfo(dtype).max, iinfo(val_dtype).max))
   return clip(val, min_val, max_val).astype(dtype)
 
 
@@ -485,7 +476,7 @@ def histogramdd(sample: ArrayLike, bins: Union[ArrayLike, List[ArrayLike]] = 10,
   N, D = shape(sample)
 
   if range is not None and (
-      len(range) != D or _any(r is not None and shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
+      len(range) != D or any(r is not None and shape(r)[0] != 2 for r in range)):  # type: ignore[arg-type]
     raise ValueError(f"For sample.shape={(N, D)}, range must be a sequence "
                      f"of {D} pairs or Nones; got {range=}")
 
@@ -720,7 +711,7 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
       return []
     axis_tuple = tuple(_canonicalize_axis(i, a.ndim) for i in axis)
 
-  if _min([s for i, s in enumerate(a.shape) if i in axis_tuple]) < 2:
+  if min([s for i, s in enumerate(a.shape) if i in axis_tuple]) < 2:
     raise ValueError("Shape of array too small to calculate "
                      "a numerical gradient, "
                      "at least 2 elements are required.")
@@ -779,7 +770,7 @@ def ravel_multi_index(multi_index: Tuple[ArrayLike, ...], dims: Tuple[int, ...],
     if not issubdtype(_dtype(index), integer):
       raise TypeError("only int indices permitted")
   if mode == "raise":
-    if _any(reductions.any((i < 0) | (i >= d)) for i, d in zip(multi_index_arr, dims)):
+    if any(reductions.any((i < 0) | (i >= d)) for i, d in zip(multi_index_arr, dims)):
       raise ValueError("invalid entry in coordinates array")
   elif mode == "clip":
     multi_index_arr = [clip(i, 0, d - 1) for i, d in zip(multi_index_arr, dims)]
@@ -817,7 +808,7 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> Tuple[Array, ...]:
     shape = list(shape)
   except TypeError:
     shape = [shape]
-  if _any(ndim(s) != 0 for s in shape):
+  if any(ndim(s) != 0 for s in shape):
     raise ValueError("unravel_index: shape should be a scalar or 1D sequence.")
   out_indices = [0] * len(shape)
   for i, s in reversed(list(enumerate(shape))):
@@ -833,7 +824,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
   util.check_arraylike("resize", a)
   new_shape = _ensure_index_tuple(new_shape)
 
-  if _any(dim_length < 0 for dim_length in new_shape):
+  if any(dim_length < 0 for dim_length in new_shape):
     raise ValueError("all elements of `new_shape` must be non-negative")
 
   arr = ravel(a)
@@ -1116,7 +1107,7 @@ def bincount(x: ArrayLike, weights: Optional[ArrayLike] = None,
     x_arr = core.concrete_or_error(asarray, x,
       "The error occurred because of argument 'x' of jnp.bincount. "
       "To avoid this error, pass a static `length` argument.")
-    length = _max(minlength, x_arr.size and int(x_arr.max()) + 1)
+    length = max(minlength, x_arr.size and int(x_arr.max()) + 1)
   elif not core.is_special_dim_size(length):
     length = core.concrete_or_error(operator.index, length,
         "The error occurred because of argument 'length' of jnp.bincount.")
@@ -1176,17 +1167,17 @@ def _split(op: str, ary: ArrayLike,
     split_indices = np.concatenate([[np.int64(0)], indices_or_sections,
                                     [np.int64(size)]])
   else:
-    indices_or_sections = core.concrete_or_error(np.int64, indices_or_sections,
-                                                 f"in jax.numpy.{op} argument 1")
-    part_size, r = _divmod(size, indices_or_sections)  # type: ignore[misc]
+    num_sections: int = core.concrete_or_error(int, indices_or_sections,
+                                               f"in jax.numpy.{op} argument 1")
+    part_size, r = divmod(size, num_sections)
     if r == 0:
-      split_indices = [np.int64(i) * part_size  # type: ignore
-                       for i in range(indices_or_sections + 1)]  # type: ignore
+      split_indices = [np.int64(i) * part_size
+                       for i in range(num_sections + 1)]
     elif op == "array_split":
       split_indices = (
-        [np.int64(i) * (part_size + 1) for i in range(r + 1)] +  # type: ignore
+        [np.int64(i) * (part_size + 1) for i in range(r + 1)] +
         [np.int64(i) * part_size + ((r + 1) * (part_size + 1) - 1)
-         for i in range(indices_or_sections - r)])
+         for i in range(num_sections - r)])
     else:
       raise ValueError("array split does not result in an equal division")
   starts, ends = [0] * ndim(ary), shape(ary)
@@ -1348,7 +1339,7 @@ def nonzero(a: ArrayLike, *, size: Optional[int] = None,
   out = tuple((flat_indices // stride) % size for stride, size in zip(strides, arr.shape))
   if size is not None and fill_value is not None:
     fill_value_tup = fill_value if isinstance(fill_value, tuple) else arr.ndim * (fill_value,)
-    if _any(_shape(val) != () for val in fill_value_tup):
+    if any(_shape(val) != () for val in fill_value_tup):
       raise ValueError(f"fill_value must be a scalar or a tuple of length {arr.ndim}; got {fill_value}")
     fill_mask = arange(size) >= mask.sum()
     out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
@@ -1497,7 +1488,7 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
         edge = lax.slice_in_dim(array, -1, None, axis=i)
 
       while padding > 0:
-        curr_pad = _min(padding, n - offset)
+        curr_pad = min(padding, n - offset)
         padding -= curr_pad
 
         if before:
@@ -1596,8 +1587,8 @@ def _pad_stats(array: Array, pad_width: PadValue[int], stat_length: Optional[Pad
         raise ValueError("stat_length of 0 yields no value for padding")
 
       # Limit stat_length to length of array.
-      length_before = _min(length_before, array_length)
-      length_after = _min(length_after, array_length)
+      length_before = min(length_before, array_length)
+      length_after = min(length_after, array_length)
 
       slice_before = lax.slice_in_dim(array, 0, length_before, axis=i)
       slice_after = lax.slice_in_dim(array, -length_after, None, axis=i)
@@ -1704,8 +1695,8 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int],
         mode: Union[str, Callable[..., Any]] = "constant", **kwargs) -> Array:
   util.check_arraylike("pad", array)
   pad_width = _broadcast_to_pairs(pad_width, ndim(array), "pad_width")
-  if pad_width and not _all(core.is_dim(p[0]) and core.is_dim(p[1])
-                            for p in pad_width):
+  if pad_width and not all(core.is_dim(p[0]) and core.is_dim(p[1])
+                           for p in pad_width):
     raise TypeError('`pad_width` must be of integral type.')
 
   if callable(mode):
@@ -1904,9 +1895,9 @@ def _block(xs: Union[ArrayLike, List[ArrayLike]]) -> Tuple[Array, int]:
     if len(xs) == 0:
       raise ValueError("jax.numpy.block does not allow empty list arguments")
     xs_tup, depths = unzip2([_block(x) for x in xs])
-    if _any(d != depths[0] for d in depths[1:]):
+    if any(d != depths[0] for d in depths[1:]):
       raise ValueError("Mismatched list depths in jax.numpy.block")
-    rank = _max(depths[0], _max(ndim(x) for x in xs_tup))
+    rank = max(depths[0], max(ndim(x) for x in xs_tup))
     xs_tup = tuple(_atleast_nd(x, rank) for x in xs_tup)
     return concatenate(xs_tup, axis=-depths[0]), depths[0] + 1
   else:
@@ -2008,7 +1999,7 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
 
   out: ArrayLike
 
-  if _all(not isinstance(leaf, Array) for leaf in leaves):
+  if all(not isinstance(leaf, Array) for leaf in leaves):
     # TODO(jakevdp): falling back to numpy here fails to overflow for lists
     # containing large integers; see discussion in
     # https://github.com/google/jax/pull/6047. More correct would be to call
@@ -2268,7 +2259,7 @@ def arange(start: DimSize, stop: Optional[DimSize] = None,
   for name, val in [(start_name, start), ("stop", stop), ("step", step)]:
     if val is not None and np.ndim(val) != 0:
       raise ValueError(f"jax.numpy.arange: arguments must be scalars; got {name}={val}")
-  if _any(core.is_special_dim_size(d) for d in (start, stop, step)):
+  if any(core.is_special_dim_size(d) for d in (start, stop, step)):
     if stop is None and step is None:
       stop = start
       start = 0
@@ -2486,7 +2477,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
     raise ValueError("jax.numpy.meshgrid only supports copy=True")
   if indexing not in ["xy", "ij"]:
     raise ValueError(f"Valid values for indexing are 'xy' and 'ij', got {indexing}")
-  if _any(a.ndim != 1 for a in args):
+  if any(a.ndim != 1 for a in args):
     raise ValueError("Arguments to jax.numpy.meshgrid must be 1D, got shapes "
                      f"{[a.shape for a in args]}")
   if indexing == "xy" and len(args) >= 2:
@@ -2729,7 +2720,7 @@ def _triu_size(n, m, k):
   elif k >= m:
     return 0
   else:
-    mk = _min(n, m - k)
+    mk = min(n, m - k)
     return mk * (mk + 1) // 2 + mk * (m - k - mk)
 
 
@@ -2797,10 +2788,10 @@ def diagonal(a, offset=0, axis1: int = 0, axis2: int = 1):
 
   a = moveaxis(a, (axis1, axis2), (-2, -1))
 
-  diag_size = _max(0, _min(a_shape[axis1] + _min(offset, 0),
-                           a_shape[axis2] - _max(offset, 0)))
+  diag_size = max(0, min(a_shape[axis1] + min(offset, 0),
+                         a_shape[axis2] - max(offset, 0)))
   i = arange(diag_size)
-  j = arange(_abs(offset), _abs(offset) + diag_size)
+  j = arange(abs(offset), abs(offset) + diag_size)
   return a[..., i, j] if offset >= 0 else a[..., j, i]
 
 
@@ -2814,8 +2805,8 @@ def _diag(v, k):
   v_shape = shape(v)
   if len(v_shape) == 1:
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
-    n = v_shape[0] + _abs(k)
-    v = lax.pad(v, zero(v), ((_max(0, k), _max(0, -k), 0),))
+    n = v_shape[0] + abs(k)
+    v = lax.pad(v, zero(v), ((max(0, k), max(0, -k), 0),))
     return where(eye(n, k=k, dtype=bool), v, zeros_like(v))
   elif len(v_shape) == 2:
     return diagonal(v, offset=k)
@@ -2833,9 +2824,9 @@ def diagflat(v, k=0):
   util.check_arraylike("diagflat", v)
   v = ravel(v)
   v_length = len(v)
-  adj_length = v_length + _abs(k)
+  adj_length = v_length + abs(k)
   res = zeros(adj_length*adj_length, dtype=v.dtype)
-  i = arange(0, adj_length-_abs(k))
+  i = arange(0, adj_length-abs(k))
   if (k >= 0):
     fi = i+k+i*adj_length
   else:
@@ -3030,7 +3021,7 @@ def dot(a, b, *, precision=None):  # pylint: disable=missing-docstring
   a_ndim, b_ndim = ndim(a), ndim(b)
   if a_ndim == 0 or b_ndim == 0:
     return lax.mul(a, b)
-  if _max(a_ndim, b_ndim) <= 2:
+  if max(a_ndim, b_ndim) <= 2:
     return lax.dot(a, b, precision=precision)
 
   if b_ndim == 1:
@@ -3056,7 +3047,7 @@ def matmul(a, b, *, precision=None):  # pylint: disable=missing-docstring
   a_is_mat, b_is_mat = (ndim(a) > 1), (ndim(b) > 1)
   a_batch_dims = shape(a)[:-2] if a_is_mat else ()
   b_batch_dims = shape(b)[:-2] if b_is_mat else ()
-  num_batch_dims = _max(len(a_batch_dims), len(b_batch_dims))
+  num_batch_dims = max(len(a_batch_dims), len(b_batch_dims))
   a_batch_dims = (None,) * (num_batch_dims - len(a_batch_dims)) + a_batch_dims
   b_batch_dims = (None,) * (num_batch_dims - len(b_batch_dims)) + b_batch_dims
 
@@ -3121,7 +3112,7 @@ def tensordot(a, b, axes=2, *, precision=None):
 
   a, b = util.promote_dtypes(a, b)
   if type(axes) is int:
-    if axes > _min(a_ndim, b_ndim):
+    if axes > min(a_ndim, b_ndim):
       msg = "Number of tensordot axes (axes {}) exceeds input ranks ({} and {})"
       raise TypeError(msg.format(axes, a.shape, b.shape))
     contracting_dims = tuple(range(a_ndim - axes, a_ndim)), tuple(range(axes))
@@ -3343,7 +3334,7 @@ def _einsum(
 
       # NOTE(mattjj): this can fail non-deterministically in python3, maybe
       # due to opt_einsum
-      assert jax.config.jax_dynamic_shapes or _all(
+      assert jax.config.jax_dynamic_shapes or all(
         name in lhs_names and name in rhs_names and
         lhs.shape[lhs_names.index(name)] == rhs.shape[rhs_names.index(name)]
         for name in contracted_names), (
@@ -3923,7 +3914,7 @@ def take_along_axis(arr, indices, axis: Optional[int],
     lst[axis] = val
     return tuple(lst)
 
-  use_64bit_index = _any([not core.is_constant_dim(d) or d >= (1 << 31) for d in arr.shape])
+  use_64bit_index = any([not core.is_constant_dim(d) or d >= (1 << 31) for d in arr.shape])
   index_dtype = dtype(int64 if use_64bit_index else int32)
   indices = lax.convert_element_type(indices, index_dtype)
 
@@ -4018,11 +4009,11 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: Optional[str])
   # attempt to compute _rewriting_take via lax.slice(); return None if not possible.
   idx = idx if isinstance(idx, tuple) else (idx,)
 
-  if not _all(isinstance(i, int) for i in arr.shape):
+  if not all(isinstance(i, int) for i in arr.shape):
     return None
   if len(idx) > arr.ndim:
     return None
-  if _any(i is None for i in idx):
+  if any(i is None for i in idx):
     return None  # TODO(jakevdp): handle newaxis case
 
   simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
@@ -4036,8 +4027,8 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: Optional[str])
   # TODO(yashkatariya): fix dynamic_slice with sharding
   is_sharded = (isinstance(arr, ArrayImpl) and
                 not dispatch.is_single_device_sharding(arr.sharding))
-  has_partial_slices = _any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)
-                            for i in contiguous_slices)
+  has_partial_slices = any(idx[i].indices(arr.shape[i]) != (0, arr.shape[i], 1)
+                           for i in contiguous_slices)
   if is_sharded and (int_indices or has_partial_slices):
     return None
 
@@ -4062,7 +4053,7 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: Optional[str])
       start, stop, step = ind.indices(size)
       assert step == 1  # checked above
       start_indices.append(start)
-      slice_sizes.append(_max(0, stop - start))
+      slice_sizes.append(max(0, stop - start))
     else:
       assert np.issubdtype(_dtype(ind), np.integer)  # checked above
       assert np.shape(ind) == ()  # checked above
@@ -4250,7 +4241,7 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
   collapsed_slice_dims: Sequence[int] = []
   start_index_map: Sequence[int] = []
 
-  use_64bit_index = _any([not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape])
+  use_64bit_index = any([not core.is_constant_dim(d) or d >= (1 << 31) for d in x_shape])
   index_dtype = int64 if use_64bit_index else int32
 
   # Gather indices.
@@ -4354,8 +4345,8 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
         x_axis += 1
       # Handle slice index (only static, otherwise an error is raised)
       else:
-        if not _all(_is_slice_element_none_or_constant(elt)
-                    for elt in (start, stop, step)):
+        if not all(_is_slice_element_none_or_constant(elt)
+                   for elt in (start, stop, step)):
           msg = ("Array slice indices must have static start/stop/step to be used "
                  "with NumPy indexing syntax. "
                  f"Found slice({start}, {stop}, {step}). "
@@ -4448,7 +4439,7 @@ def _eliminate_deprecated_list_indexing(idx):
       # others are converted to arrays, based on a set of somewhat convoluted heuristics
       # (See https://github.com/numpy/numpy/blob/v1.19.2/numpy/core/src/multiarray/mapping.c#L179-L343)
       # In JAX, we raise an informative TypeError for *all* non-tuple sequences.
-      if _any(_should_unpack_list_index(i) for i in idx):
+      if any(_should_unpack_list_index(i) for i in idx):
         msg = ("Using a non-tuple sequence for multidimensional indexing is not allowed; "
                "use `arr[tuple(seq)]` instead of `arr[seq]`. "
                "See https://github.com/google/jax/issues/4564 for more information.")
@@ -4467,19 +4458,19 @@ def _is_boolean_index(i):
   except TypeError:
     abstract_i = None
   return (isinstance(abstract_i, ShapedArray) and issubdtype(abstract_i.dtype, bool_)
-          or isinstance(i, list) and i and _all(_is_scalar(e)
+          or isinstance(i, list) and i and all(_is_scalar(e)
           and issubdtype(_dtype(e), np.bool_) for e in i))
 
 def _expand_bool_indices(idx, shape):
   """Converts concrete bool indexes into advanced integer indexes."""
   out = []
   total_dims = len(shape)
-  num_ellipsis = _sum(e is Ellipsis for e in idx)
+  num_ellipsis = sum(e is Ellipsis for e in idx)
   if num_ellipsis > 1:
     raise IndexError("an index can only have a single ellipsis ('...')")
   elif num_ellipsis == 1:
-    total_dims = _sum(_ndim(e) if _is_boolean_index(e) else 1 for e in idx
-                      if e is not None and e is not Ellipsis)
+    total_dims = sum(_ndim(e) if _is_boolean_index(e) else 1 for e in idx
+                     if e is not None and e is not Ellipsis)
   ellipsis_offset = 0
   for dim_number, i in enumerate(idx):
     try:
@@ -4524,17 +4515,17 @@ def _is_advanced_int_indexer(idx):
   """Returns True if idx should trigger int array indexing, False otherwise."""
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
   assert isinstance(idx, tuple)
-  if _all(e is None or e is Ellipsis or isinstance(e, slice)
-          or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
+  if all(e is None or e is Ellipsis or isinstance(e, slice)
+         or _is_scalar(e) and issubdtype(_dtype(e), np.integer) for e in idx):
     return False
-  return _all(e is None or e is Ellipsis or isinstance(e, slice)
-              or _is_int_arraylike(e) for e in idx)
+  return all(e is None or e is Ellipsis or isinstance(e, slice)
+             or _is_int_arraylike(e) for e in idx)
 
 def _is_int_arraylike(x):
   """Returns True if x is array-like with integer dtype, False otherwise."""
   return (isinstance(x, int) and not isinstance(x, bool)
           or issubdtype(getattr(x, "dtype", None), np.integer)
-          or isinstance(x, (list, tuple)) and _all(_is_int_arraylike(e) for e in x))
+          or isinstance(x, (list, tuple)) and all(_is_int_arraylike(e) for e in x))
 
 def _is_scalar(x):
   """Checks if a Python or NumPy scalar."""
@@ -4543,7 +4534,7 @@ def _is_scalar(x):
 
 def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
-  len_without_none = _sum(1 for e in idx if e is not None and e is not Ellipsis)
+  len_without_none = sum(1 for e in idx if e is not None and e is not Ellipsis)
   if len_without_none > arr_ndim:
     raise IndexError(
         f"Too many indices for {array_name}: {len_without_none} "
