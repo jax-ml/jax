@@ -44,7 +44,7 @@ from jax.experimental.jax2tf.tests import tf_test_util
 
 import tensorflow as tf  # type: ignore[import]
 
-from jax.config import config
+from jax import config
 from jax._src.config import numpy_dtype_promotion
 
 config.parse_flags_with_absl()

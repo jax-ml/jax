@@ -27,7 +27,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 import jax.scipy.signal as jsp_signal
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 onedim_shapes = [(1,), (2,), (5,), (10,)]

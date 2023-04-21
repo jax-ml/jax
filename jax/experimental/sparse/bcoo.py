@@ -28,7 +28,7 @@ import jax
 from jax import lax
 from jax import tree_util
 from jax import vmap
-from jax.config import config
+from jax import config
 from jax.experimental.sparse._base import JAXSparse
 from jax.experimental.sparse.util import (
   nfold_vmap, _count_stored_elements,

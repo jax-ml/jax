@@ -64,7 +64,7 @@ import jax
 from jax import dtypes
 from jax import numpy as jnp
 from jax._src import test_util as jtu
-from jax.config import config
+from jax import config
 from jax.experimental import jax2tf
 from jax.interpreters import mlir
 from jax._src.interpreters import xla

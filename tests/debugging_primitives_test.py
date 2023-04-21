@@ -19,7 +19,7 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
-from jax.config import config
+from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import pxla

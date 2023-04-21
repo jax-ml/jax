@@ -32,7 +32,7 @@ from jax import scipy as jsp
 from jax._src.numpy.util import promote_dtypes_inexact
 from jax._src import test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

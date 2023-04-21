@@ -35,7 +35,7 @@ from jax import vmap
 from jax.interpreters import batching
 from jax.tree_util import register_pytree_node
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

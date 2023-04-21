@@ -74,5 +74,5 @@ from jax._src.interpreters.ad import (
   zeros_like_p as zeros_like_p,
 )
 
-from jax.config import config
+from jax import config
 from jax._src import source_info_util

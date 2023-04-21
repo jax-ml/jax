@@ -20,7 +20,7 @@ from typing import IO, Sequence, Tuple
 
 from absl.testing import absltest
 import jax
-from jax.config import config
+from jax import config
 from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu

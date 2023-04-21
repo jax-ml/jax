@@ -28,7 +28,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
 

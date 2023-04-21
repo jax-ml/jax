@@ -28,7 +28,7 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.config import config
+from jax import config
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 from jax._src import core

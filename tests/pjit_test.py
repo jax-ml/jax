@@ -58,7 +58,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2, safe_zip
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None

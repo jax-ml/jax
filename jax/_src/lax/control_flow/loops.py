@@ -22,7 +22,7 @@ import jax
 import weakref
 from jax._src import core
 from jax._src import linear_util as lu
-from jax.config import config
+from jax import config
 from jax._src.core import ConcreteArray, ShapedArray, raise_to_shaped
 from jax.tree_util import (tree_flatten, tree_unflatten, treedef_is_leaf,
                            tree_map, tree_flatten_with_path, keystr)

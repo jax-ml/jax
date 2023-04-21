@@ -23,7 +23,7 @@ import jax
 from jax import lax
 import jax._src.test_util as jtu
 from jax._src.lib import xla_extension
-from jax.config import config
+from jax import config
 from jax.experimental import checkify
 from jax.experimental import pjit
 from jax.sharding import NamedSharding

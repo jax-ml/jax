@@ -22,7 +22,7 @@ from typing import (Any, Callable, Dict, Iterable, Optional, Sequence, Set,
 import numpy as np
 
 import jax
-from jax.config import config
+from jax import config
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import linear_util as lu

@@ -77,7 +77,7 @@ import numpy as np
 from numpy import array, float32
 
 import jax
-from jax.config import config
+from jax import config
 from jax import lax
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests.back_compat_testdata import cpu_ducc_fft

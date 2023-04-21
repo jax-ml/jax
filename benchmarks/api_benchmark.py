@@ -34,7 +34,7 @@ from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 

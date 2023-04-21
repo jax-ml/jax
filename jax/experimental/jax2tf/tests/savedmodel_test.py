@@ -25,7 +25,7 @@ from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax._src import test_util as jtu
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 

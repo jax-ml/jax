@@ -31,7 +31,7 @@ from jax.experimental.serialize_executable import (
 from jax.experimental import topologies
 from jax.sharding import PartitionSpec as P
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None

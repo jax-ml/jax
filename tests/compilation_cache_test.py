@@ -43,7 +43,7 @@ from jax._src.lib import xla_client
 
 import numpy as np
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS

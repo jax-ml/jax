@@ -23,7 +23,7 @@ from jax._src import core
 from jax import lax
 from jax._src import effects
 from jax._src import linear_util as lu
-from jax.config import config
+from jax import config
 from jax.experimental import maps
 from jax.experimental import pjit
 from jax._src.interpreters import ad

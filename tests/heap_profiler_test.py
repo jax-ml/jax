@@ -17,7 +17,7 @@ from absl.testing import absltest
 
 import jax
 import jax._src.xla_bridge as xla_bridge
-from jax.config import config
+from jax import config
 import jax._src.test_util as jtu
 
 

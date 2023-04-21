@@ -22,7 +22,7 @@ from jax._src import test_util as jtu
 import scipy.interpolate as sp_interp
 import jax.scipy.interpolate as jsp_interp
 
-from jax.config import config
+from jax import config
 
 config.parse_flags_with_absl()
 

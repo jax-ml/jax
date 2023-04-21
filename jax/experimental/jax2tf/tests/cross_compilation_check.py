@@ -36,7 +36,7 @@ from absl import logging
 import numpy.random as npr
 
 import jax
-from jax.config import config   # Must import before TF
+from jax import config   # Must import before TF
 from jax.experimental import jax2tf  # Defines needed flags
 from jax._src import test_util  # Defines needed flags
 

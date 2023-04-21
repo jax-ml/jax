@@ -55,7 +55,7 @@ from jax._src import array
 from jax._src.sharding_impls import PmapSharding
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 prev_xla_flags = None

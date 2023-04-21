@@ -37,7 +37,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax._src import prng
 
-from jax.config import config
+from jax import config
 config.parse_flags_with_absl()
 
 
