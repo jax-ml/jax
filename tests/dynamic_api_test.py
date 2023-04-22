@@ -582,6 +582,53 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     self.assertIsInstance(three_, int)
     self.assertEqual(three_, 3)
 
+  def test_zero_size_checking(self):
+    def f(x):
+      if core.definitely_equal(x.size, 0):
+        return x
+      else:
+        return -x
+
+    x = jnp.zeros(1)
+    jaxpr = jax.make_jaxpr(f, abstracted_axes={0: 'n'})(x)  # doesn't crash
+    self.assertGreaterEqual(len(jaxpr.jaxpr.eqns), 1)
+
+    y = jnp.zeros((2, 0))
+    jaxpr = jax.make_jaxpr(f, abstracted_axes={0: 'n'})(y)  # doesn't crash
+    self.assertLen(jaxpr.jaxpr.eqns, 0)
+
+  def test_flattening_basic(self):
+    x = jnp.zeros((2, 3, 4, 5))
+
+    # don't need to divide or multiply any dynamic axis sizes
+    jaxpr = jax.make_jaxpr(lambda x: x.reshape(x.shape[0], -1),
+                           abstracted_axes={0: 'n'})(x)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
+    jaxpr = jax.make_jaxpr(lambda x: x.reshape(3, x.shape[0], -1),
+                           abstracted_axes={0: 'n'})(x)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
+    jaxpr = jax.make_jaxpr(lambda x: x.reshape(-1, x.shape[0]),
+                           abstracted_axes={0: 'n'})(x)
+    self.assertLen(jaxpr.jaxpr.eqns, 1)
+
+    # don't need to divide but do need a dynamic axis size in multiplication
+    # (so to typecheck we'd need nontrivial reductions)
+    jaxpr = jax.make_jaxpr(lambda x: x.reshape(-1),
+                           abstracted_axes={0: 'n'})(x)
+    self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)  # may have mul with 1
+    self.assertEqual(str(jaxpr.jaxpr.eqns[-2].primitive), 'mul')
+    self.assertEqual(str(jaxpr.jaxpr.eqns[-1].primitive), 'reshape')
+    jaxpr = jax.make_jaxpr(lambda x: x.reshape(2, -1),
+                           abstracted_axes={0: 'n'})(x)
+    self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)
+    jaxpr = jax.make_jaxpr(lambda x: x.reshape(-1, 12), abstracted_axes={0: 'n'})(x)
+    self.assertLessEqual(len(jaxpr.jaxpr.eqns), 3)
+
+    # do need divide, also shouldn't typecheck
+    _ = jax.make_jaxpr(lambda x: x.reshape(x.shape[0], x.shape[0], -1),
+                       abstracted_axes={0: 'n'})(x)  # don't crash
+
+
 @unittest.skip("Test does not work with jax.Array")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeAutodiffTest(jtu.JaxTestCase):
