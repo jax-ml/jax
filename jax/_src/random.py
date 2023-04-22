@@ -1520,7 +1520,7 @@ def pareto(key: KeyArray,
   .. math::
      f(x; b) = b / x^{b + 1}
 
-  on the domain :math:`0 \le x < \infty` with :math:`b > 0`
+  on the domain :math:`1 \le x < \infty` with :math:`b > 0`
 
   Args:
     key: a PRNG key used as the random key.
