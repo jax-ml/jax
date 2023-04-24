@@ -1980,6 +1980,9 @@ def like(keys):
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
 class JnpWithKeyArrayTest(jtu.JaxTestCase):
+  def assertKeysEqual(self, key1, key2):
+    self.assertArraysEqual(key1.unsafe_raw_array(), key2.unsafe_raw_array())
+
   def test_reshape(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 4)
@@ -2065,6 +2068,13 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     ref = jnp.stack([like(keys)] * 3, axis=0)
     self.assertEqual(out.shape, ref.shape)
     self.assertEqual(out.shape, (3, 2))
+
+  def test_array(self):
+    key = random.PRNGKey(123)
+    self.assertKeysEqual(key, jnp.array(key))
+    self.assertKeysEqual(key, jnp.asarray(key))
+    self.assertKeysEqual(key, jax.jit(jnp.array)(key))
+    self.assertKeysEqual(key, jax.jit(jnp.asarray)(key))
 
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
