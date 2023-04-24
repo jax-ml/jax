@@ -526,7 +526,7 @@ view of the input.
 
 @util._wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a: ArrayLike, axes: Optional[Sequence[int]] = None) -> Array:
-  util._stackable(a) or util.check_arraylike("transpose", a)
+  util.check_arraylike("transpose", a)
   axes_ = list(range(ndim(a))[::-1]) if axes is None else axes
   axes_ = [_canonicalize_axis(i, ndim(a)) for i in axes_]
   return lax.transpose(a, axes_)
@@ -738,7 +738,7 @@ def isrealobj(x: Any) -> bool:
 
 @util._wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a: ArrayLike, newshape: Union[DimSize, Shape], order: str = "C") -> Array:
-  util._stackable(a) or util.check_arraylike("reshape", a)
+  util.check_arraylike("reshape", a)
   try:
     # forward to method for ndarrays
     return a.reshape(newshape, order=order)  # type: ignore[call-overload,union-attr]
@@ -749,7 +749,7 @@ def reshape(a: ArrayLike, newshape: Union[DimSize, Shape], order: str = "C") -> 
 @util._wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('order',), inline=True)
 def ravel(a: ArrayLike, order: str = "C") -> Array:
-  util._stackable(a) or util.check_arraylike("ravel", a)
+  util.check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
   return reshape(a, (size(a),), order)
@@ -856,10 +856,8 @@ def _squeeze(a: Array, axis: Tuple[int]) -> Array:
 
 @util._wraps(np.expand_dims)
 def expand_dims(a: ArrayLike, axis: Union[int, Sequence[int]]) -> Array:
-  util._stackable(a) or util.check_arraylike("expand_dims", a)
+  util.check_arraylike("expand_dims", a)
   axis = _ensure_index_tuple(axis)
-  if hasattr(a, "expand_dims"):
-    return a.expand_dims(axis)  # type: ignore
   return lax.expand_dims(a, axis)
 
 
@@ -1743,7 +1741,7 @@ def stack(arrays: Union[np.ndarray, Array, Sequence[ArrayLike]],
     axis = _canonicalize_axis(axis, arrays.ndim)
     return concatenate(expand_dims(arrays, axis + 1), axis=axis, dtype=dtype)
   else:
-    util._stackable(*arrays) or util.check_arraylike("stack", *arrays)
+    util.check_arraylike("stack", *arrays)
     shape0 = shape(arrays[0])
     axis = _canonicalize_axis(axis, len(shape0) + 1)
     new_arrays = []
@@ -1755,7 +1753,7 @@ def stack(arrays: Union[np.ndarray, Array, Sequence[ArrayLike]],
 
 @util._wraps(np.tile)
 def tile(A: ArrayLike, reps: Union[DimSize, Sequence[DimSize]]) -> Array:
-  util._stackable(A) or util.check_arraylike("tile", A)
+  util.check_arraylike("tile", A)
   try:
     iter(reps)  # type: ignore[arg-type]
   except TypeError:
