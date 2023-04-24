@@ -1790,15 +1790,13 @@ def concatenate(arrays: Union[np.ndarray, Array, Sequence[ArrayLike]],
                 axis: Optional[int] = 0, dtype: Optional[DTypeLike] = None) -> Array:
   if isinstance(arrays, (np.ndarray, Array)):
     return _concatenate_array(arrays, axis, dtype=dtype)
-  util._stackable(*arrays) or util.check_arraylike("concatenate", *arrays)
+  util.check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
   if ndim(arrays[0]) == 0:
     raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   if axis is None:
     return concatenate([ravel(a) for a in arrays], axis=0, dtype=dtype)
-  if hasattr(arrays[0], "concatenate"):
-    return arrays[0].concatenate(arrays[1:], axis, dtype=dtype)  # type: ignore[union-attr]
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
   if dtype is None:
     arrays_out = util.promote_dtypes(*arrays)

@@ -161,8 +161,6 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   @abc.abstractmethod
   def reshape(self, newshape, order=None)           -> PRNGKeyArray: ...
   @abc.abstractmethod
-  def concatenate(self, key_arrs, axis, dtype=None) -> PRNGKeyArray: ...
-  @abc.abstractmethod
   def broadcast_to(self, shape)                     -> PRNGKeyArray: ...
   @abc.abstractmethod
   def expand_dims(self, dimensions: Sequence[int])  -> PRNGKeyArray: ...
@@ -278,14 +276,6 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   def reshape(self, newshape, order=None) -> PRNGKeyArrayImpl:
     reshaped_base = jnp.reshape(self._base_array, (*newshape, -1), order=order)
     return PRNGKeyArrayImpl(self.impl, reshaped_base)
-
-  def concatenate(self, key_arrs, axis, dtype=None) -> PRNGKeyArrayImpl:
-    if dtype is not None:
-      raise ValueError(
-          'dtype argument not supported for concatenating PRNGKeyArray')
-    axis = canonicalize_axis(axis, self.ndim)
-    arrs = [self._base_array, *[k._base_array for k in key_arrs]]
-    return PRNGKeyArrayImpl(self.impl, jnp.concatenate(arrs, axis))
 
   def broadcast_to(self, shape) -> PRNGKeyArrayImpl:
     if jnp.ndim(shape) == 0:
