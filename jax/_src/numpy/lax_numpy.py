@@ -1995,7 +1995,7 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
       dtype = dtypes._lattice_result_type(*leaves)[0]
 
   if not weak_type:
-    dtype = dtypes.canonicalize_dtype(dtype)
+    dtype = dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True)
 
   out: ArrayLike
 
