@@ -2097,6 +2097,17 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertKeysEqual(key, jax.jit(jnp.array)(key))
     self.assertKeysEqual(key, jax.jit(jnp.asarray)(key))
 
+  def test_errors(self):
+    key = random.PRNGKey(123)
+    with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
+      jnp.add(key, 1)
+    with self.assertRaisesRegex(TypeError, "add does not accept dtype key<fry>"):
+      jnp.add(key, key)
+    with self.assertRaisesRegex(TypeError, "neg does not accept dtype key<fry>"):
+      jnp.negative(key)
+    with self.assertRaisesRegex(ValueError, "Cannot call convert_element_type on dtype key<fry>"):
+      lax.convert_element_type(key, int)
+
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
