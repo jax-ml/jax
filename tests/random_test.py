@@ -1992,10 +1992,15 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(out_key.shape, out_like_key.shape)
 
   def check_against_reference(self, key_func, arr_func, *key_args):
-    out_key = key_func(*key_args)
-    self.assertIsInstance(out_key, random.KeyArray)
     out_arr = arr_func(*tree_util.tree_map(lambda x: x.unsafe_raw_array(), key_args))
     self.assertIsInstance(out_arr, jax.Array)
+
+    out_key = key_func(*key_args)
+    self.assertIsInstance(out_key, random.KeyArray)
+    self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
+
+    out_key = jax.jit(key_func)(*key_args)
+    self.assertIsInstance(out_key, random.KeyArray)
     self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
 
   def test_reshape(self):
@@ -2057,19 +2062,14 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_against_reference(key_func, arr_func, key, keys)
 
   def test_append(self):
-    self.skipTest('jnp.append on key arrays') # TODO(frostig)
     key = random.PRNGKey(123)
-    out = jnp.append(key,       key)
-    ref = jnp.append(like(key), like(key))
-    self.assertEqual(out.shape, ref.shape)
-    self.assertEqual(out.shape, (2,))
-    out1 = jnp.append(out,       out)
-    ref1 = jnp.append(like(out), like(out))
-    self.assertEqual(out1.shape, ref1.shape)
-    self.assertEqual(out1.shape, (4,))
-    out2 = jax.jit(jnp.append)(key, key)
-    self.assertEqual(out2.shape, ref.shape)
-    self.assertEqual(out2.shape, (6,))
+    keys = random.split(key, 4)
+
+    key_func = jnp.append
+    arr_func = lambda keys, key: jnp.append(keys, key[None], axis=0)
+
+    self.check_shape(key_func, keys, key)
+    self.check_against_reference(key_func, arr_func, keys, key)
 
   def test_ravel(self):
     key = random.PRNGKey(123)

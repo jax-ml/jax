@@ -46,12 +46,11 @@ from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import _set_array_base_attributes
-from jax._src.numpy.util import _register_stackable
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, GSPMDSharding)
 from jax._src.typing import Array
-from jax._src.util import canonicalize_axis, safe_map, safe_zip
+from jax._src.util import safe_map, safe_zip
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -160,10 +159,6 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
 
   @abc.abstractmethod
   def reshape(self, newshape, order=None)           -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def broadcast_to(self, shape)                     -> PRNGKeyArray: ...
-  @abc.abstractmethod
-  def expand_dims(self, dimensions: Sequence[int])  -> PRNGKeyArray: ...
 
   @property
   @abc.abstractmethod
@@ -272,24 +267,9 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   # still needed? If, with some work, none are needed, then do we want
   # to remove stackables altogether? This may be the only application.
 
-  # TODO(frostig): Remove? Overwritten below in particular
+  # Dynamically overridden below.
   def reshape(self, newshape, order=None) -> PRNGKeyArrayImpl:
-    reshaped_base = jnp.reshape(self._base_array, (*newshape, -1), order=order)
-    return PRNGKeyArrayImpl(self.impl, reshaped_base)
-
-  def broadcast_to(self, shape) -> PRNGKeyArrayImpl:
-    if jnp.ndim(shape) == 0:
-      shape = (shape,)
-    new_shape = (*shape, *self.impl.key_shape)
-    return PRNGKeyArrayImpl(
-        self.impl, jnp.broadcast_to(self._base_array, new_shape))
-
-  def expand_dims(self, dimensions: Sequence[int]) -> PRNGKeyArrayImpl:
-    # follows lax.expand_dims, not jnp.expand_dims, so dimensions is a sequence
-    ndim_out = self.ndim + len(set(dimensions))
-    dimensions = [canonicalize_axis(d, ndim_out) for d in dimensions]
-    return PRNGKeyArrayImpl(
-        self.impl, lax.expand_dims(self._base_array, dimensions))
+    raise NotImplementedError("reshape method must be overridden")
 
   def __repr__(self):
     return (f'{self.__class__.__name__}[{self.impl.tag}]'
@@ -316,7 +296,6 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
 _set_array_base_attributes(PRNGKeyArrayImpl, include=[
     '__getitem__', 'ravel', 'squeeze', 'swapaxes', 'take', 'reshape',
     'transpose', 'flatten', 'T'])
-_register_stackable(PRNGKeyArrayImpl)
 basearray.Array.register(PRNGKeyArrayImpl)
 
 

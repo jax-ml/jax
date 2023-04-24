@@ -16,7 +16,7 @@ from functools import partial
 import re
 import textwrap
 from typing import (
-    Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Set, Type, TypeVar
+    Any, Callable, Dict, List, NamedTuple, Optional, Sequence, TypeVar
 )
 import warnings
 
@@ -318,12 +318,6 @@ def _arraylike(x: ArrayLike) -> bool:
           hasattr(x, '__jax_array__') or np.isscalar(x))
 
 
-def _stackable(*args: Any) -> bool:
-  return all(type(arg) in stackables for arg in args)
-stackables: Set[Type] = set()
-_register_stackable: Callable[[Type], None] = stackables.add
-
-
 def check_arraylike(fun_name: str, *args: Any):
   """Check if all args fit JAX's definition of arraylike."""
   assert isinstance(fun_name, str), f"fun_name must be a string. Got {fun_name}"
@@ -389,8 +383,6 @@ def _broadcast_arrays(*args: ArrayLike) -> List[Array]:
 
 
 def _broadcast_to(arr: ArrayLike, shape: Shape) -> Array:
-  if hasattr(arr, "broadcast_to"):
-    return arr.broadcast_to(shape)  # type: ignore[union-attr]
   check_arraylike("broadcast_to", arr)
   arr = arr if isinstance(arr, Array) else lax.asarray(arr)
   if not isinstance(shape, tuple) and np.ndim(shape) == 0:
