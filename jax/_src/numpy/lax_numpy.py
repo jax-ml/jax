@@ -1984,15 +1984,16 @@ def array(object: Any, dtype: Optional[DTypeLike] = None, copy: bool = True,
                     object)
   leaves = tree_leaves(object)
   if dtype is None:
-    # Use lattice_result_type rather than result_type to avoid canonicalization.
-    # Otherwise, weakly-typed inputs would have their dtypes canonicalized.
-    try:
-      dtype = dtypes._lattice_result_type(*leaves)[0] if leaves else dtypes.float_
-    except TypeError:
-      # This happens if, e.g. one of the entries is a memoryview object.
-      # This is rare, so we only handle it if the normal path fails.
-      leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
-      dtype = dtypes._lattice_result_type(*leaves)[0]
+    if leaves:
+      try:
+        dtype, _ = dtypes.result_type(*leaves, return_weak_type_flag=True, canonicalize=False)
+      except TypeError:
+        # This happens if, e.g. one of the entries is a memoryview object.
+        # This is rare, so we only handle it if the normal path fails.
+        leaves = [_convert_to_array_if_dtype_fails(leaf) for leaf in leaves]
+        dtype, _ = dtypes.result_type(*leaves, return_weak_type_flag=True, canonicalize=False)
+    else:
+      dtype = dtypes.float_
 
   if not weak_type:
     dtype = dtypes.canonicalize_dtype(dtype, allow_opaque_dtype=True)

@@ -54,6 +54,7 @@ uint: type = np.uint32 if config.jax_default_dtype_bits == '32' else np.uint64
 float_: type = np.float32 if config.jax_default_dtype_bits == '32' else np.float64
 complex_: type = np.complex64 if config.jax_default_dtype_bits == '32' else np.complex128
 _default_types: Dict[str, type] = {'b': bool_, 'i': int_, 'u': uint, 'f': float_, 'c': complex_}
+_custom_float_dtypes = [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype]
 
 # Trivial vectorspace datatype needed for tangent values of int/bool primals
 float0: np.dtype = np.dtype([('float0', np.void, 0)])
@@ -455,7 +456,7 @@ def _jax_type(dtype: DType, weak_type: bool) -> JAXType:
   if weak_type:
     if dtype == bool:
       return dtype
-    if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype]:
+    if dtype in _custom_float_dtypes:
       return float
     return type(dtype.type(0).item())
   return dtype
@@ -649,20 +650,27 @@ def _lattice_result_type(*args: Any) -> Tuple[DType, bool]:
   return out_dtype, (out_dtype != bool_) and out_weak_type
 
 @overload
-def result_type(*args: Any, return_weak_type_flag: Literal[True]) -> Tuple[DType, bool]: ...
+def result_type(*args: Any, return_weak_type_flag: Literal[True],
+                standardize_weak_dtype=True, canonicalize=True) -> Tuple[DType, bool]: ...
 
 @overload
-def result_type(*args: Any, return_weak_type_flag: Literal[False] = False) -> DType: ...
+def result_type(*args: Any, return_weak_type_flag: Literal[False] = False,
+                standardize_weak_dtype=True, canonicalize=True) -> DType: ...
 
 @overload
-def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType, Tuple[DType, bool]]: ...
+def result_type(*args: Any, return_weak_type_flag: bool = False,
+                standardize_weak_dtype=True, canonicalize=True) -> Union[DType, Tuple[DType, bool]]: ...
 
-def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType, Tuple[DType, bool]]:
+def result_type(*args: Any, return_weak_type_flag: bool = False,
+                standardize_weak_dtype=True, canonicalize=True) -> Union[DType, Tuple[DType, bool]]:
   """Convenience function to apply JAX argument dtype promotion.
 
   Args:
     return_weak_type_flag : if True, then return a ``(dtype, weak_type)`` tuple.
       If False, just return `dtype`
+    standardize_weak_dtype: if True, then when the output is weakly typed, ensure
+      the output dtype is canonical
+    canonicalize_dtype: if True, then canonicalize the output dtype
 
   Returns:
     dtype or (dtype, weak_type) depending on the value of the ``return_weak_type`` argument.
@@ -670,10 +678,10 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
   if len(args) == 0:
     raise ValueError("at least one array or dtype is required")
   dtype, weak_type = _lattice_result_type(*(float_ if arg is None else arg for arg in args))
-  if weak_type:
+  if weak_type and standardize_weak_dtype:
     dtype = canonicalize_dtype(
-      _default_types['f' if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype] else dtype.kind])
-  else:
+        _default_types['f' if dtype in _custom_float_dtypes else dtype.kind])
+  elif canonicalize:
     dtype = canonicalize_dtype(dtype)
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
