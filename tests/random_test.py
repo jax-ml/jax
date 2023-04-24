@@ -1999,7 +1999,6 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(out.shape, (3,))
 
   def test_concatenate(self):
-    self.skipTest('jnp.concatenate on key arrays') # TODO(frostig)
     key = random.PRNGKey(123)
     keys = random.split(key, 2)
     ref = jnp.concatenate([like(keys)] * 3, axis=0)
