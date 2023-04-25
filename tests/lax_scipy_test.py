@@ -243,6 +243,11 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     jtu.check_grads(lsp_special.xlog1py, (x0, y0), order=2)
 
+  def testGradOfEntrAtZero(self):
+    # https://github.com/google/jax/issues/15709
+    self.assertEqual(jax.jacfwd(lsp_special.entr)(0.0), jnp.inf)
+    self.assertEqual(jax.jacrev(lsp_special.entr)(0.0), jnp.inf)
+
   @jtu.sample_product(
     [dict(order=order, z=z, n_iter=n_iter)
      for order, z, n_iter in zip(
