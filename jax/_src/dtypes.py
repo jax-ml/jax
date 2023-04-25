@@ -678,7 +678,7 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
     dtype = canonicalize_dtype(
       _default_types['f' if dtype in [_float8_e4m3fn_dtype, _float8_e5m2_dtype, _bfloat16_dtype] else dtype.kind])
   else:
-    dtype = canonicalize_dtype(dtype)
+    dtype = canonicalize_dtype(dtype, allow_opaque_dtype=True)
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_user_dtype_supported(dtype, fun_name=None):
