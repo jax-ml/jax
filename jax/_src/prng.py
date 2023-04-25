@@ -45,7 +45,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy.array_methods import _set_array_base_attributes
+from jax._src.numpy.array_methods import _set_array_base_attributes, _IndexUpdateHelper
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, GSPMDSharding)
@@ -151,6 +151,10 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
   @property
   @abc.abstractmethod
   def sharding(self): ...
+
+  @property
+  @abc.abstractmethod
+  def at(self) -> _IndexUpdateHelper: ...
 
   @abc.abstractmethod
   def __len__(self) -> int: ...
@@ -267,10 +271,6 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   # still needed? If, with some work, none are needed, then do we want
   # to remove stackables altogether? This may be the only application.
 
-  # Dynamically overridden below.
-  def reshape(self, newshape, order=None) -> PRNGKeyArrayImpl:
-    raise NotImplementedError("reshape method must be overridden")
-
   def __repr__(self):
     return (f'{self.__class__.__name__}[{self.impl.tag}]'
             f' {{ {self._base_array} }}')
@@ -284,18 +284,21 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
 
   # Overwritten immediately below
   @property
+  def at(self)                  -> _IndexUpdateHelper: assert False
+  @property
   def T(self)                   -> PRNGKeyArray: assert False
   def __getitem__(self, _)      -> PRNGKeyArray: assert False
+  def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
   def ravel(self, *_, **__)     -> PRNGKeyArray: assert False
+  def reshape(self, *_, **__)   -> PRNGKeyArray: assert False
   def squeeze(self, *_, **__)   -> PRNGKeyArray: assert False
   def swapaxes(self, *_, **__)  -> PRNGKeyArray: assert False
   def take(self, *_, **__)      -> PRNGKeyArray: assert False
   def transpose(self, *_, **__) -> PRNGKeyArray: assert False
-  def flatten(self, *_, **__)   -> PRNGKeyArray: assert False
 
 _set_array_base_attributes(PRNGKeyArrayImpl, include=[
-    '__getitem__', 'ravel', 'squeeze', 'swapaxes', 'take', 'reshape',
-    'transpose', 'flatten', 'T'])
+    '__getitem__', 'at', 'flatten', 'ravel', 'reshape',
+    'squeeze', 'swapaxes', 'take', 'transpose', 'T'])
 basearray.Array.register(PRNGKeyArrayImpl)
 
 
@@ -488,6 +491,28 @@ class KeyTyRules:
     res, = mlir.delegate_lowering(
         ctx, gather_lower, x, indices,
         avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices],
+        avals_out=[keys_aval_to_base_arr_aval(aval_y)])
+    return res
+
+  @staticmethod
+  def scatter_mlir(ctx, avals_in, aval_out, x, indices, updates, *,
+                   update_jaxpr, update_consts, dimension_numbers,
+                   unique_indices, indices_are_sorted, mode):
+    aval_x, aval_indices, aval_updates = avals_in
+    aval_y = aval_out
+    key_shape = aval_x.dtype.impl.key_shape
+    trailing_window_dims = [aval_updates.ndim + i for i in range(len(key_shape))]
+    dimension_numbers = dimension_numbers._replace(
+        update_window_dims=(*dimension_numbers.update_window_dims, *trailing_window_dims))
+    scatter_lower = partial(
+        lax_internal.slicing._scatter_lower, update_jaxpr=update_jaxpr,
+        update_consts=update_consts, dimension_numbers=dimension_numbers,
+        unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
+        mode=mode)
+    res, = mlir.delegate_lowering(
+        ctx, scatter_lower, x, indices, updates,
+        avals_in=[keys_aval_to_base_arr_aval(aval_x), aval_indices,
+                  keys_aval_to_base_arr_aval(aval_updates)],
         avals_out=[keys_aval_to_base_arr_aval(aval_y)])
     return res
 
