@@ -2114,6 +2114,10 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     out = jax.eval_shape(lambda x: x, shapedtype)
     self.assertEqual(out, shapedtype)
 
+  def test_result_type(self):
+    key = jax.random.PRNGKey(123456)
+    self.assertEqual(jnp.result_type(key), key.dtype)
+
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')
