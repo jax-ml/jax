@@ -682,6 +682,9 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> Union[DType,
   return (dtype, weak_type) if return_weak_type_flag else dtype
 
 def check_user_dtype_supported(dtype, fun_name=None):
+  from jax._src import core     # TODO(frostig): break this cycle
+  if core.is_opaque_dtype(dtype):
+    return
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:
     return
