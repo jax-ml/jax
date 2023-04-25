@@ -310,7 +310,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                            UPLO=uplo, symmetrize_input=False)
     w = w.astype(v.dtype)
     self.assertLessEqual(
-        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 2e-4
+        np.linalg.norm(np.eye(n) - np.matmul(np.conj(T(v)), v)), 1.2e-4
     )
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(np.linalg.norm(np.matmul(a, v) - w * v),
@@ -330,6 +330,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     with jax.numpy_rank_promotion('allow'):
       self.assertLessEqual(
           np.linalg.norm(np.matmul(a, v) - w * v), 1e-5 * np.linalg.norm(a)
+      )
+
+  def testEighTinyNorm(self):
+    rng = jtu.rand_default(self.rng())
+    a = rng((300, 300), dtype=np.float32)
+    eps = jnp.finfo(a.dtype).eps
+    a = eps * (a + np.conj(a.T))
+    w, v = jnp.linalg.eigh(a)
+    w = w.astype(v.dtype)
+    with jax.numpy_rank_promotion("allow"):
+      self.assertLessEqual(
+          np.linalg.norm(np.matmul(a, v) - w * v), 40 * eps * np.linalg.norm(a)
       )
 
   @jtu.sample_product(
@@ -446,7 +458,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     ws, vs = vmap(jsp.linalg.eigh)(args)
     ws = ws.astype(vs.dtype)
     norm = np.max(np.linalg.norm(np.matmul(args, vs) - ws[..., None, :] * vs))
-    self.assertLess(norm, 3e-2)
+    self.assertLess(norm, 1e-2)
 
   @jtu.sample_product(
     shape=[(1,), (4,), (5,)],
@@ -542,12 +554,9 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       max_backward_error = np.amax(backward_error)
       return max_backward_error
 
-    if dtype in [np.float32, np.complex64]:
-      reconstruction_tol = 6e-3
-      unitariness_tol = 5e-3
-    elif dtype in [np.float64, np.complex128]:
-      reconstruction_tol = 1e-8
-      unitariness_tol = 1e-8
+    tol = 100 * jnp.finfo(dtype).eps
+    reconstruction_tol = 2 * tol
+    unitariness_tol = tol
 
     a, = args_maker()
     if hermitian:
@@ -1734,11 +1743,11 @@ class LaxLinalgTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("gpu", "tpu")
   def testSchur(self, shape, dtype):
-      rng = jtu.rand_default(self.rng())
-      args_maker = lambda: [rng(shape, dtype)]
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
 
-      self._CheckAgainstNumpy(osp.linalg.schur, lax.linalg.schur, args_maker)
-      self._CompileAndCheck(lax.linalg.schur, args_maker)
+    self._CheckAgainstNumpy(osp.linalg.schur, lax.linalg.schur, args_maker)
+    self._CompileAndCheck(lax.linalg.schur, args_maker)
 
   @jtu.sample_product(
     shape=[(2, 2), (4, 4), (15, 15), (50, 50), (100, 100)],
@@ -1746,14 +1755,14 @@ class LaxLinalgTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("gpu", "tpu")
   def testSchurBatching(self, shape, dtype):
-      rng = jtu.rand_default(self.rng())
-      batch_size = 10
-      shape = (batch_size, ) + shape
-      args = rng(shape, dtype)
-      reconstruct = vmap(lambda S, T: S @ T @ jnp.conj(S.T))
+    rng = jtu.rand_default(self.rng())
+    batch_size = 10
+    shape = (batch_size,) + shape
+    args = rng(shape, dtype)
+    reconstruct = vmap(lambda S, T: S @ T @ jnp.conj(S.T))
 
-      Ts, Ss = vmap(lax.linalg.schur)(args)
-      self.assertAllClose(reconstruct(Ss, Ts), args, atol=1e-4)
+    Ts, Ss = vmap(lax.linalg.schur)(args)
+    self.assertAllClose(reconstruct(Ss, Ts), args, atol=1e-4)
 
 
 if __name__ == "__main__":
