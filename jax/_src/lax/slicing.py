@@ -617,7 +617,7 @@ def scatter(
     An array containing the sum of `operand` and the scattered updates.
   """
   jaxpr, consts = lax._reduction_jaxpr(_scatter_reduction_computation,
-                                       lax._abstractify(lax._const(operand, 0)))
+                                       core.ShapedArray((), lax.dtype(operand)))
   return scatter_p.bind(
       operand, scatter_indices, updates, update_jaxpr=jaxpr,
       update_consts=consts, dimension_numbers=dimension_numbers,
@@ -1423,7 +1423,7 @@ def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
     raise ValueError("indices must have an integer type")
   lax.check_same_dtypes("scatter", operand, updates)
-  return dtypes.canonicalize_dtype(operand.dtype)
+  return dtypes.canonicalize_dtype(operand.dtype, allow_opaque_dtype=True)
 
 def _scatter_shape_rule(operand, indices, updates, *, update_jaxpr,
                         update_consts, dimension_numbers, indices_are_sorted,
@@ -1998,12 +1998,18 @@ batching.primitive_batchers[scatter_p] = (
 def _scatter_lower(ctx, operand, indices, updates, *,
                    update_jaxpr, update_consts, dimension_numbers,
                    indices_are_sorted, unique_indices, mode):
+  aval_out, = ctx.avals_out
+  if core.is_opaque_dtype(aval_out.dtype):
+    return [aval_out.dtype._rules.scatter_mlir(
+        ctx, ctx.avals_in, aval_out, operand, indices, updates,
+        update_jaxpr=update_jaxpr, update_consts=update_consts,
+        dimension_numbers=dimension_numbers, unique_indices=unique_indices,
+        indices_are_sorted=indices_are_sorted, mode=mode)]
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
     (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices,
                           updates, dnums=dimension_numbers)
 
-  aval_out, = ctx.avals_out
   dnums = dimension_numbers
   scatter_dnums = hlo.ScatterDimensionNumbers.get(
     update_window_dims=list(dnums.update_window_dims),
