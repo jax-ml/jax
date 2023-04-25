@@ -55,6 +55,7 @@ from jax._src.interpreters.batching import ConcatAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype,
+  dtype_to_string,
   standard_abstract_eval,
   standard_multi_result_abstract_eval,
   standard_named_shape_rule,
@@ -1502,7 +1503,7 @@ _strip_weak_type = lambda *args, **_: False
 def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
   if not any(dtypes.issubdtype(aval.dtype, t) for t in accepted_dtypes):
     msg = '{} does not accept dtype {}. Accepted dtypes are subtypes of {}.'
-    typename = str(np.dtype(aval.dtype).name)
+    typename = dtype_to_string(aval.dtype)
     accepted_typenames = (t.__name__ for t in accepted_dtypes)
     raise TypeError(msg.format(name, typename, ', '.join(accepted_typenames)))
   return result_dtype(aval.dtype)
@@ -1538,7 +1539,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
       else:
         msg = ('{} does not accept dtype {} at position {}. '
                'Accepted dtypes at position {} are subtypes of {}.')
-        typename = str(np.dtype(aval.dtype).name)
+        typename = dtype_to_string(aval.dtype)
         typenames = ', '.join(t.__name__ for t in types)
         raise TypeError(msg.format(name, typename, i, i, typenames))
   check_same_dtypes(name, *avals)
@@ -2212,6 +2213,13 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
   return operand.shape
 
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
+  if operand.dtype != new_dtype:
+    if core.is_opaque_dtype(operand.dtype):
+      raise ValueError(
+          f"Cannot call convert_element_type on dtype {dtype_to_string(operand.dtype)}")
+    if core.is_opaque_dtype(new_dtype):
+      raise ValueError(
+          f"Cannot convert_element_type to dtype={dtype_to_string(new_dtype)}")
   return new_dtype
 
 def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
@@ -3521,7 +3529,7 @@ mlir.register_lowering(reduce_p, _reduce_lower)
 def _reduce_number_dtype_rule(name, operand, *args, **kw):
   if not dtypes.issubdtype(operand.dtype, np.number):
     raise TypeError("{} does not accept dtype {}. Accepted dtypes are subtypes "
-                    "of number.".format(name, np.dtype(operand.dtype).name))
+                    "of number.".format(name, dtype_to_string(operand.dtype)))
   return dtypes.canonicalize_dtype(operand.dtype)
 
 def _reduce_sum_shape_rule(operand, *, axes):
@@ -3625,7 +3633,7 @@ def _argminmax_shape_rule(operand, *, axes, index_dtype):
 def _argminmax_dtype_rule(operand, *, axes, index_dtype):
   if not dtypes.issubdtype(index_dtype, np.integer):
     raise TypeError("index_dtype must be an integer type, but got {}"
-                    .format(np.dtype(index_dtype).name))
+                    .format(dtype_to_string(index_dtype)))
   return index_dtype
 
 def _compute_argminmax(value_comparator, get_identity,
@@ -4350,7 +4358,7 @@ def _iota_abstract_eval(*, dtype, shape, dimension):
   _check_shapelike("iota", "shape", shape)
   if not any(dtypes.issubdtype(dtype, t) for t in _num):
     msg = 'iota does not accept dtype {}. Accepted dtypes are subtypes of {}.'
-    typename = str(np.dtype(dtype).name)
+    typename = dtype_to_string(dtype)
     accepted_typenames = (t.__name__ for t in _num)
     raise TypeError(msg.format(typename, ', '.join(accepted_typenames)))
   if not 0 <= dimension < len(shape):
