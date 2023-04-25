@@ -158,7 +158,7 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
     # TODO: might be able to get away with lower precision here
     error_matrix = jnp.dot(V2.conj().T, H)
     error_matrix = jnp.dot(error_matrix, V1)
-    error = jnp_linalg.norm(error_matrix) / H_norm
+    error = jnp_linalg.norm(error_matrix)
     return V1, V2, error
 
   def cond_f(args):
@@ -338,7 +338,7 @@ def _eigh_work(H, n, termination_size=256):
     # the eigenvalues for this reason! This is currently not true of JAX's CPU
     # and GPU eigendecompositions, and for those platforms this algorithm will
     # only do the right thing if termination_size == 1.
-    H = _mask(H, (b, b), jnp.eye(B, dtype=H.dtype))
+    H = _mask(H, (b, b))
     eig_vecs, eig_vals = lax.linalg.eigh(H, sort_eigenvalues=False)
     eig_vecs = _mask(eig_vecs, (b, b))
     eig_vals = _mask(eig_vals, (b,))
@@ -381,11 +381,10 @@ def _eigh_work(H, n, termination_size=256):
     # necessary to handle matrices with clusters of eigenvalues. See Nakatsukasa
     # and Higham section 5.2.
     norm = jnp_linalg.norm(H)
-    tol = jnp.asarray(10 * jnp.finfo(H.dtype).eps / 2, dtype=norm.dtype)
+    tol = jnp.asarray(5 * jnp.finfo(H.dtype).eps, dtype=norm.dtype)
     off_diag_norm = jnp_linalg.norm(
         H - jnp.diag(jnp.diag(ufuncs.real(H)).astype(H.dtype)))
-    # We also handle nearly-all-zero matrices matrices here.
-    nearly_diagonal = (norm < tol) | (off_diag_norm / norm < tol)
+    nearly_diagonal = off_diag_norm <= tol * norm
     return lax.cond(nearly_diagonal, nearly_diagonal_case, default_case,
                     agenda, blocks, eigenvectors)
 
@@ -442,7 +441,7 @@ def eigh(H, *, precision="float32", termination_size=256, n=None,
 
   if N <= termination_size:
     if n is not None:
-      H = _mask(H, (n, n), jnp.eye(N, dtype=H.dtype))
+      H = _mask(H, (n, n))
     return lax_linalg.eigh_jacobi(
         H, sort_eigenvalues=sort_eigenvalues)
 
