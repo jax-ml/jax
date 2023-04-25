@@ -155,12 +155,24 @@ def _xlog1py_jvp(primals, tangents):
   return result, (x_dot * lax.log1p(y) + y_dot * x / (1 + y)).astype(result.dtype)
 xlog1py.defjvp(_xlog1py_jvp)
 
+@custom_derivatives.custom_jvp
+def _xlogx(x):
+  """Compute x log(x) with well-defined derivatives."""
+  return xlogy(x, x)
+
+def _xlogx_jvp(primals, tangents):
+  x, = primals
+  x_dot, = tangents
+  return  _xlogx(x), x_dot * (lax.log(x) + 1)
+_xlogx.defjvp(_xlogx_jvp)
+
+
 @_wraps(osp_special.entr, module='scipy.special')
 def entr(x: ArrayLike) -> Array:
   x, = promote_args_inexact("entr", x)
   return lax.select(lax.lt(x, _lax_const(x, 0)),
                     lax.full_like(x, -np.inf),
-                    lax.neg(xlogy(x, x)))
+                    lax.neg(_xlogx(x)))
 
 
 @_wraps(osp_special.multigammaln, update_doc=False)
