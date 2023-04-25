@@ -2108,6 +2108,12 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Cannot call convert_element_type on dtype key<fry>"):
       lax.convert_element_type(key, int)
 
+  def test_eval_shape(self):
+    key = jax.random.PRNGKey(1701)
+    shapedtype = jax.ShapeDtypeStruct(key.shape, key.dtype)
+    out = jax.eval_shape(lambda x: x, shapedtype)
+    self.assertEqual(out, shapedtype)
+
 
 def _sampler_unimplemented_with_custom_prng(*args, **kwargs):
   raise SkipTest('sampler only implemented for default RNG')

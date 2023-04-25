@@ -2693,7 +2693,7 @@ class ShapeDtypeStruct:
     return hash((self.shape, self.dtype, named, sh))
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
-    lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype),
+    lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_opaque_dtype=True),
                           weak_type=False, named_shape=x.named_shape))
 
 @api_boundary
