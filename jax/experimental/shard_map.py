@@ -1177,21 +1177,21 @@ pe.dce_rules[shard_map_p] = _shard_map_dce
 def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
          static_broadcasted_argnums=(), devices=None, backend=None,
          axis_size=None, donate_argnums=(), global_arg_shapes=None):
-  if axis_size is not None:  # TODO what even is this?
-    raise NotImplementedError
   devices = tuple(devices) if devices is not None else devices
-  axis_name, _, _ = _shared_code_pmap(
+  axis_name, static_broadcasted_tuple, donate_tuple = _shared_code_pmap(
       f, axis_name, static_broadcasted_argnums, donate_argnums, in_axes, out_axes)
   return jax.jit(
       HashablePartial(_pmapped, (f, axis_name, in_axes, out_axes, devices,
-                                 backend)),
+                                 backend, axis_size, static_broadcasted_tuple,
+                                 donate_tuple)),
       static_argnums=static_broadcasted_argnums,
       donate_argnums=donate_argnums)
 
 def _pmapped(metadata, *args, **kwargs):
-  f, axis_name, in_axes, out_axes, devices, backend = metadata
-  p = _prepare_pmap(f, in_axes, out_axes, (), (), devices, backend, None,
-                    args, kwargs)
+  (f, axis_name, in_axes, out_axes, devices, backend, axis_size,
+   static_broadcasted_tuple, donate_tuple) = metadata
+  p = _prepare_pmap(f, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
+                    devices, backend, axis_size, args, kwargs)
   in_specs = tuple(map(partial(_axis_to_spec, axis_name), p.in_axes_flat))
   out_specs = lambda: map(partial(_axis_to_spec, axis_name), p.out_axes_thunk())
   fun = _handle_reshapes(p.flat_fun, p.in_axes_flat, p.out_axes_thunk)
