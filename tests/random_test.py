@@ -2097,6 +2097,11 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertKeysEqual(key, jax.jit(jnp.array)(key))
     self.assertKeysEqual(key, jax.jit(jnp.asarray)(key))
 
+  def test_array_user_dtype(self):
+    key = random.PRNGKey(123)
+    self.assertKeysEqual(key, jnp.array(key, dtype=key.dtype))
+    self.assertKeysEqual(key, jnp.asarray(key, dtype=key.dtype))
+
   def test_errors(self):
     key = random.PRNGKey(123)
     with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
