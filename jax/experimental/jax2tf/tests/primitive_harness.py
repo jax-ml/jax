@@ -768,7 +768,10 @@ for dtype in jtu.dtypes.all:
       dtype=dtype)
 
 for dtype in jtu.dtypes.all_integer + jtu.dtypes.all_unsigned:
-  arg = np.array([-1, -2, 0, 1], dtype=dtype)
+  if np.issubdtype(dtype, np.unsignedinteger):
+    arg = np.array([0, 1, 2], dtype=dtype)
+  else:
+    arg = np.array([-1, -2, 0, 1], dtype=dtype)
   define(
       "population_count",
       f"{jtu.dtype_str(dtype)}",
