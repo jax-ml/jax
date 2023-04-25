@@ -582,7 +582,8 @@ class ShardMapTest(jtu.JaxTestCase):
       return jax.random.randint(key[0], shape=(1, 16), minval=0, maxval=16,
                                 dtype=jnp.int32)
 
-    g = shard_map(f, mesh, in_specs=(P('x', None),), out_specs=P('x', None))
+    pspec = P('x') if config.jax_enable_custom_prng else P('x', None)
+    g = shard_map(f, mesh, in_specs=(pspec,), out_specs=pspec)
     _ = g(sharded_rng)  # don't crash!
 
   def test_functools_partial_rank_error(self):
