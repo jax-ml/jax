@@ -102,7 +102,7 @@ def _canonicalize_dtype(x64_enabled: bool, allow_opaque_dtype: bool, dtype: Any)
   from jax._src import core     # TODO(frostig): break this cycle
   if core.is_opaque_dtype(dtype):
     if not allow_opaque_dtype:
-      raise ValueError(f"Internal: canonicalize_dtype called onopaque dtype {dtype} "
+      raise ValueError(f"Internal: canonicalize_dtype called on opaque dtype {dtype} "
                        "with allow_opaque_dtype=False")
     return dtype
   try:
