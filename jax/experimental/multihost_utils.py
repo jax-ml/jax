@@ -20,6 +20,7 @@ import zlib
 
 from typing import Any
 import jax
+import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_map, tree_unflatten
 from jax._src import core
 from jax._src import dispatch
@@ -35,10 +36,8 @@ from jax._src import config as config_internal
 import numpy as np
 
 
-# This needs to be top-level for the jax compilation cache.
-@functools.partial(jax.pmap, axis_name='hosts')
 def _psum(x: Any) -> Any:
-  return jax.lax.psum(x, 'hosts')
+  return jax.tree_map(functools.partial(jnp.sum, axis=0), x)
 
 
 def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
@@ -58,22 +57,26 @@ def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
   if is_source is None:
     is_source = jax.process_index() == 0
 
-  def pre_pmap(x):
+  devices = np.array(jax.devices()).reshape(jax.process_count(),
+                                            jax.local_device_count())
+  global_mesh = jax.sharding.Mesh(devices, ('processes', 'local_devices'))
+  pspec = P('processes')
+
+  def pre_jit(x):
     if is_source:
-      return np.concatenate([
-          x[None, ...],
-          np.repeat([np.zeros_like(x)],
-                    jax.local_device_count() - 1, 0)
-      ])
+      inp = x
     else:
-      return np.repeat([np.zeros_like(x)], jax.local_device_count(), 0)
+      inp = np.zeros_like(x)
+    inp = np.expand_dims(inp, axis=0)
+    return host_local_array_to_global_array(inp, global_mesh, pspec)
 
-  def post_pmap(x):
-    return jax.device_get(x)[0]
+  def post_jit(x):
+    return np.asarray(x.addressable_data(0))
 
-  in_tree = jax.tree_util.tree_map(pre_pmap, in_tree)
-  in_tree = jax.device_get(_psum(in_tree))
-  return jax.tree_util.tree_map(post_pmap, in_tree)
+  in_tree = jax.tree_map(pre_jit, in_tree)
+  out_tree = pjit(_psum, out_shardings=jax.sharding.NamedSharding(
+      global_mesh, P()))(in_tree)
+  return jax.tree_map(post_jit, out_tree)
 
 
 def sync_global_devices(name: str):
