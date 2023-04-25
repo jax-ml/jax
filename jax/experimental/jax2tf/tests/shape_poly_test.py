@@ -1036,15 +1036,38 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
       return functools.reduce(op.add,
                               x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
 
+    input_signature = [([tf.TensorSpec([None]), tf.TensorSpec([None])],
+                                       [tf.TensorSpec([None])]),
+                                      dict(a=tf.TensorSpec([None]),
+                                           b=tf.TensorSpec([None]))]
     check_shape_poly(self,
                      add_all_jax,
                      skip_jax_run=True,
-                     input_signature=[([tf.TensorSpec([None]), tf.TensorSpec([None])],
-                                       [tf.TensorSpec([None])]),
-                                      dict(a=tf.TensorSpec([None]),
-                                           b=tf.TensorSpec([None]))],
+                     input_signature=input_signature,
                      polymorphic_shapes=[(["v", "v"], ["v"]),
                                          dict(a="v", b="v")],
+                     expected_output_signature=tf.TensorSpec([None]))
+
+    # Prefix polymorphic shapes
+    check_shape_poly(self,
+                     add_all_jax,
+                     skip_jax_run=True,
+                     input_signature=input_signature,
+                     polymorphic_shapes="v",
+                     expected_output_signature=tf.TensorSpec([None]))
+
+    check_shape_poly(self,
+                     add_all_jax,
+                     skip_jax_run=True,
+                     input_signature=input_signature,
+                     polymorphic_shapes=["v", "v"],
+                     expected_output_signature=tf.TensorSpec([None]))
+
+    check_shape_poly(self,
+                     add_all_jax,
+                     skip_jax_run=True,
+                     input_signature=input_signature,
+                     polymorphic_shapes=[("v", "v"), "v"],
                      expected_output_signature=tf.TensorSpec([None]))
 
     # Now partial polymorphic_shapes; the parts of the polymorphic_shapes that
@@ -1054,9 +1077,33 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                      skip_jax_run=True,
                      input_signature=[([tf.TensorSpec([4]), tf.TensorSpec([4])], [tf.TensorSpec([4])]),
                                       dict(a=tf.TensorSpec([4]), b=tf.TensorSpec([4]))],
-                     polymorphic_shapes=[(["(4,)", "(_,)"], [("4,")]),
-                                         dict(a="(_,)", b="(4,)")],
+                     polymorphic_shapes=((["(4,)", "(_,)"], [("4,")]),
+                                         dict(a="(_,)", b="(4,)")),
                      expected_output_signature=tf.TensorSpec([4]))
+
+  @parameterized.named_parameters(
+      dict(testcase_name=f"_{name}",
+           polymorphic_shapes=polymorphic_shapes)
+      for name, polymorphic_shapes in [
+          ("1", ("b", "b", "b")),
+          ("2", dict(a="b")),
+          ("3", (dict(a="b"), "b")),
+      ]
+  )
+  def test_pytree_errors(self, polymorphic_shapes=("b", "b", "b")):
+    """Arguments and polymorphic_shapes are not-matching pytrees."""
+
+    # Arguments are of the form [([x00, x01], [x10]), dict(a=ya, b=yb)]
+    x = np.arange(4, dtype=_f32)
+    args = (([x, x], [x]), dict(a=x, b=x))
+    def add_all_jax(x_pair_of_list, y_dict):
+      x_list_0, x_list_1 = x_pair_of_list
+      return functools.reduce(op.add,
+                              x_list_0 + x_list_1 + [y_dict["a"], y_dict["b"]])
+
+    with self.assertRaisesRegex(ValueError, "pytree structure error"):
+      jax2tf.convert(add_all_jax,
+                     polymorphic_shapes=polymorphic_shapes)(*args)
 
   def test_with_nested_jit(self):
     def f_jax(x):  # x: f32[w, h]
@@ -1277,7 +1324,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose(f(x), res_tf)
 
   @jtu.sample_product(with_function=[False, True])
-  def test_grad_int(self, with_function=True):
+  def test_grad_int(self, with_function=False):
     # https://github.com/google/jax/issues/7093
     # Also issue #6975.
     x_shape = (2, 3, 4)

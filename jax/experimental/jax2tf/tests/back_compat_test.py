@@ -207,13 +207,12 @@ class CompatTest(jtu.JaxTestCase):
     res_from_jax_run_now = tuple(np.array(a) for a in res_from_jax_run_now)
 
     # Use the native exporter, to make sure we get the proper serialized module.
-    exported = jax2tf.jax_export.export_native(
+    exported = jax2tf.jax_export.export(
         jax.jit(func),
-        [core.ShapedArray(a.shape, a.dtype) for a in data.inputs],
         lowering_platform=default_jax_backend(),
         # Must turn off strict checks because the custom calls may be unallowed.
-        strict_checks=False,
-    )
+        strict_checks=False
+    )(*(jax.ShapeDtypeStruct(a.shape, a.dtype) for a in data.inputs))
 
     module_str = str(exported.mlir_module)
     custom_call_re = r"stablehlo.custom_call\s*@([^\(]+)\("
