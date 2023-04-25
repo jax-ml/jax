@@ -28,6 +28,7 @@ from jax import numpy as jnp
 from jax import lax
 from jax import scipy as jsp
 from jax.tree_util import tree_map
+from jax._src.scipy import special as lsp_special_internal
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
@@ -242,6 +243,17 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self.assertAllClose(d_xlog1py_dy, 0.0)
 
     jtu.check_grads(lsp_special.xlog1py, (x0, y0), order=2)
+
+  def testXLogX(self):
+    scipy_op = lambda x: osp_special.xlogy(x, x)
+    lax_op = lsp_special_internal._xlogx
+    rng = jtu.rand_positive(self.rng())
+    args_maker = lambda: [rng((2, 3, 4), np.float32)]
+    self._CheckAgainstNumpy(scipy_op, lax_op, args_maker)
+    self._CompileAndCheck(lax_op, args_maker)
+    jtu.check_grads(lax_op, args_maker(), order=1,
+                    atol=jtu.if_device_under_test("tpu", .1, 1e-3),
+                    rtol=.1, eps=1e-3)
 
   def testGradOfEntrAtZero(self):
     # https://github.com/google/jax/issues/15709
