@@ -518,6 +518,26 @@ class KeyTyRules:
         avals_out=[keys_aval_to_base_arr_aval(aval_y)])
     return res
 
+  def _comparison_mlir(direction, reduction_op, identity,
+                       ctx, avals_in, aval_out, x, y, **kwargs):
+    aval_x, aval_y = avals_in
+    base_aval_x = keys_aval_to_base_arr_aval(aval_x)
+    base_aval_y = keys_aval_to_base_arr_aval(aval_y)
+    base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
+    reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
+    res, = mlir.delegate_lowering(
+      ctx, partial(lax_internal._compare_lower_hlo, direction),
+      x, y, avals_in=[base_aval_x, base_aval_y], avals_out=[base_aval_out])
+    return mlir.delegate_lowering(
+      ctx, partial(lax_internal._unary_reduce_lower, reduction_op,
+                   identity, axes=reduce_axes),
+      res, avals_in=[base_aval_out], avals_out=[aval_out])
+
+  eq_mlir = staticmethod(partial(_comparison_mlir, 'EQ', hlo.AndOp,
+                                 lax_internal._get_bitwise_and_identity))
+  ne_mlir = staticmethod(partial(_comparison_mlir, 'NE', hlo.OrOp,
+                                 lax_internal._get_bitwise_or_identity))
+
 
 class KeyTy:
   impl: Hashable  # prng.PRNGImpl. TODO(mattjj,frostig): protocol really
