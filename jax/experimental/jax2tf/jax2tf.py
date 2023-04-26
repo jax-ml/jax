@@ -57,7 +57,6 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src.interpreters import ad
-from jax._src.interpreters import pxla
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import linalg as lax_linalg
@@ -731,19 +730,31 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
 
   Returns: the flattened tuple of results.
   """
+  args_avals = exported.in_avals
+
+  # TF values may be integer types for float0
+  def _convert_value(val, aval):
+    # Check the shape
+    assert all(d_aval == d_val
+               for d_aval, d_val in zip(aval.shape, val.shape)
+               if core.is_constant_dim(d_aval)), (aval, val)
+    conversion_dtype = _to_tf_dtype(aval.dtype)
+    if conversion_dtype != aval.dtype:
+      return tf.cast(val, conversion_dtype)
+    else:
+      return val
+
+  args_flat_tf = tuple(map(_convert_value, args_flat_tf, args_avals))
+
   out_shapes_tf = tuple(
-      tuple(d if type(d) is int else None
+      tuple(d if core.is_constant_dim(d) else None
             for d in out_aval.shape)
       for out_aval in exported.out_avals)
 
-  def _out_type(jax_type):
-    if jax_type == dtypes.float0:
-      return dtypes.bool_
-    return jax_type
-  out_types = tuple(_out_type(out_aval.dtype) for out_aval in exported.out_avals)
+  out_types = tuple(_to_tf_dtype(out_aval.dtype) for out_aval in exported.out_avals)
 
-  args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
-  args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
+  kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
+  kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
   call_module_attrs = dict(
       version=exported.xla_call_module_version,
@@ -773,23 +784,13 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   if exported.in_shardings is not None:
     args_flat_tf = tuple(
       map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
-          args_flat_tf, args_avals, exported.in_shardings))
+          kept_args_flat_tf, kept_args_avals, exported.in_shardings))
   res = tfxla.call_module(args_flat_tf, **call_module_attrs)
   if exported.out_shardings is not None:
     res = list(map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
                    res, exported.out_avals, exported.out_shardings))
 
-  # Convert the results to the needed TF types
-  def _convert_res(res_val, res_jax_type):
-    conversion_dtype = _to_tf_dtype(res_jax_type)
-    if conversion_dtype != res_jax_type:
-      return tf.cast(res_val, conversion_dtype)
-    else:
-      return res_val
-
-  res = tuple(
-      _convert_res(res_val, out_aval.dtype)
-      for res_val, out_aval in zip(res, exported.out_avals))
+  res = tuple(map(_convert_value, res, exported.out_avals))
   return res
 
 
@@ -920,7 +921,8 @@ def _aval_to_tf_shape(aval: core.ShapedArray) -> Tuple[Optional[int], ...]:
                    aval.shape))  # type: ignore[attr-defined]
 
 # In the TF world, we represent float0 as zeros of this type.
-_tf_np_dtype_for_float0 = np.int32
+# We pick bool because this is what JAX uses when it lowers float0 to HLO.
+_tf_np_dtype_for_float0 = np.bool_
 
 def _to_tf_dtype(jax_dtype):
   # Note that converting _to_tf_dtype and _to_jax_dtype are not inverses,

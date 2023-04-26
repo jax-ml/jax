@@ -501,7 +501,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     d_dx_jax = grad_g(x)
     d_dx_tf = jax2tf.convert(grad_g)(x)
     self.assertEqual(d_dx_jax.dtype, dtypes.float0)
-    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.int32),
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.bool_),
                         d_dx_tf.numpy())
 
     shape = (3, 4)
@@ -509,7 +509,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     d_dx_jax = grad_g(x)
     d_dx_tf = jax2tf.convert(grad_g)(x)
     self.assertEqual(d_dx_jax.dtype, dtypes.float0)
-    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.int32),
+    self.assertAllClose(jnp.zeros(np.shape(d_dx_jax), np.bool_),
                         d_dx_tf.numpy())
 
   @jtu.sample_product(with_function=[False, True])
@@ -598,8 +598,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         if k in expected_overrides:
           if expected_overrides[k] == "ZERO":
             e = np.zeros_like(w)
-          elif expected_overrides[k] == "ZERO_INT32":
-            e = np.zeros(np.shape(w), dtype=np.int32)
+          elif expected_overrides[k] == "ZERO_BOOL":
+            e = np.zeros(np.shape(w), dtype=np.bool_)
           elif expected_overrides[k] == "ONE":
             e = np.ones_like(w)
           else:
@@ -668,10 +668,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     grad_tf_vjp_jax, = tf_vjp_jax_fun(*args_vjp)
     compare_with_overrides(what=grad_tf_vjp_jax,
                            expected=grad_tf_0,
-                           bool_passthrough="ZERO_INT32",
-                           bool_unused="ZERO_INT32", bool_used="ZERO_INT32",
-                           int_passthrough="ZERO_INT32", int_unused="ZERO_INT32",
-                           int_used="ZERO_INT32")
+                           bool_passthrough="ZERO_BOOL",
+                           bool_unused="ZERO_BOOL", bool_used="ZERO_BOOL",
+                           int_passthrough="ZERO_BOOL", int_unused="ZERO_BOOL",
+                           int_used="ZERO_BOOL")
 
   def test_readme_gradient_int(self):
     x = np.array(2, dtype=np.int16)
