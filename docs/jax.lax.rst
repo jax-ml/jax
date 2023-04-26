@@ -194,6 +194,13 @@ Parallelism support is experimental.
     pswapaxes
     axis_index
 
+Sharding-related operators
+--------------------------
+.. autosummary::
+  :toctree: _autosummary
+
+    with_sharding_constraint
+
 Linear algebra operators (jax.lax.linalg)
 -----------------------------------------
 
