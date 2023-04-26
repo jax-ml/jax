@@ -2102,6 +2102,53 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertKeysEqual(key, jnp.array(key, dtype=key.dtype))
     self.assertKeysEqual(key, jnp.asarray(key, dtype=key.dtype))
 
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_getitem(self, idx):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+
+    key_func = arr_func = lambda x: x[idx]
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_gather(self, idx):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+
+    key_func = arr_func = lambda x: x.at[idx].get()
+
+    self.check_shape(key_func, keys)
+    self.check_against_reference(key_func, arr_func, keys)
+
+  @parameterized.parameters([
+    (0,),
+    (slice(1),),
+    (np.array([0, 2]),),
+    (np.array([False, True, True]),)
+  ])
+  def test_scatter(self, idx):
+    key = random.PRNGKey(123)
+    keys = jax.random.split(key, 3)
+
+    key_func = arr_func = lambda x, y: x.at[idx].set(y)
+
+    self.check_shape(key_func, keys, key)
+    self.check_against_reference(key_func, arr_func, keys, key)
+
+
+
   def test_errors(self):
     key = random.PRNGKey(123)
     with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
