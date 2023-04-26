@@ -1757,6 +1757,21 @@ def _resolve_wsc_args(axis_resources, shardings):
 # period is finished. The deprecation period expires 3 months from Feb 13, 2023.
 def with_sharding_constraint(x, shardings=UNSPECIFIED,
                              axis_resources=UNSPECIFIED):
+  """Mechanism to constrain the sharding of an Array inside a jitted computation
+
+  This is a strict constraint for the GSPMD partitioner and not a hint. For examples
+  of how to use this function, see `Distributed arrays and automatic parallelization`_.
+
+  Args:
+    x: PyTree of jax.Arrays which will have their shardings constrainted
+    shardings: PyTree of sharding specifications. Valid values are the same as for
+      the ``in_shardings`` argument of :func:`jax.experimental.pjit`.
+    axis_resources: (deprecated) use shardings instead.
+  Returns:
+    x_with_shardings: PyTree of jax.Arrays with specified sharding constraints.
+
+  .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
+  """
   final_shardings = _resolve_wsc_args(axis_resources, shardings)
   x_flat, tree = tree_flatten(x)
   user_shardings, _, _ = prepare_axis_resources(
