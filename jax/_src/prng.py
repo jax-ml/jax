@@ -45,7 +45,8 @@ from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
 from jax._src.lib import gpu_prng
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.numpy.array_methods import _set_array_base_attributes, _IndexUpdateHelper
+from jax._src.numpy.array_methods import (
+    _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, GSPMDSharding)
@@ -297,7 +298,8 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   def transpose(self, *_, **__) -> PRNGKeyArray: assert False
 
 _set_array_base_attributes(PRNGKeyArrayImpl, include=[
-    '__getitem__', 'at', 'flatten', 'ravel', 'reshape',
+    *(f"__{op}__" for op in _array_operators),
+    'at', 'flatten', 'ravel', 'reshape',
     'squeeze', 'swapaxes', 'take', 'transpose', 'T'])
 basearray.Array.register(PRNGKeyArrayImpl)
 

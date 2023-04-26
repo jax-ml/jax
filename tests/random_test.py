@@ -1889,7 +1889,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
-        TypeError, r'unsupported operand type\(s\) for \+*',
+        ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
 
   @skipIf(np.__version__ == "1.21.0",
@@ -1950,7 +1950,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
   def test_cannot_add(self):
     key = self.seed_prng(73)
     self.assertRaisesRegex(
-        TypeError, r'unsupported operand type\(s\) for \+*',
+        ValueError, r'dtype=key<.*> is not a valid dtype for JAX type promotion.',
         lambda: key + 47)
 
   @skipIf(np.__version__ == "1.21.0",
@@ -2153,10 +2153,16 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key = random.PRNGKey(123)
     with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
       jnp.add(key, 1)
+    with self.assertRaisesRegex(ValueError, "dtype=key<fry> is not a valid dtype"):
+      key + 1
     with self.assertRaisesRegex(TypeError, "add does not accept dtype key<fry>"):
       jnp.add(key, key)
+    with self.assertRaisesRegex(TypeError, "add does not accept dtype key<fry>"):
+      key + key
     with self.assertRaisesRegex(TypeError, "neg does not accept dtype key<fry>"):
       jnp.negative(key)
+    with self.assertRaisesRegex(TypeError, "neg does not accept dtype key<fry>"):
+      -key
     with self.assertRaisesRegex(ValueError, "Cannot call convert_element_type on dtype key<fry>"):
       lax.convert_element_type(key, int)
 
