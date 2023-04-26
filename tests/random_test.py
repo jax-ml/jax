@@ -1981,9 +1981,6 @@ def like(keys):
 @skipIf(not config.jax_enable_custom_prng,
         'custom PRNG tests require config.jax_enable_custom_prng')
 class JnpWithKeyArrayTest(jtu.JaxTestCase):
-  def assertKeysEqual(self, key1, key2):
-    self.assertArraysEqual(key1.unsafe_raw_array(), key2.unsafe_raw_array())
-
   def check_shape(self, func, *args):
     out_key = func(*args)
     self.assertIsInstance(out_key, random.KeyArray)
@@ -2092,15 +2089,15 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
   def test_array(self):
     key = random.PRNGKey(123)
-    self.assertKeysEqual(key, jnp.array(key))
-    self.assertKeysEqual(key, jnp.asarray(key))
-    self.assertKeysEqual(key, jax.jit(jnp.array)(key))
-    self.assertKeysEqual(key, jax.jit(jnp.asarray)(key))
+    self.assertArraysEqual(key, jnp.array(key))
+    self.assertArraysEqual(key, jnp.asarray(key))
+    self.assertArraysEqual(key, jax.jit(jnp.array)(key))
+    self.assertArraysEqual(key, jax.jit(jnp.asarray)(key))
 
   def test_array_user_dtype(self):
     key = random.PRNGKey(123)
-    self.assertKeysEqual(key, jnp.array(key, dtype=key.dtype))
-    self.assertKeysEqual(key, jnp.asarray(key, dtype=key.dtype))
+    self.assertArraysEqual(key, jnp.array(key, dtype=key.dtype))
+    self.assertArraysEqual(key, jnp.asarray(key, dtype=key.dtype))
 
   @parameterized.parameters([
     (0,),
@@ -2131,6 +2128,24 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
+
+  def test_equality(self):
+    key = random.PRNGKey(123)
+    key2 = random.PRNGKey(456)
+
+    self.assertTrue(key == key)
+    self.assertFalse(key == key2)
+
+    self.assertTrue(key != key2)
+    self.assertFalse(key != key)
+
+    size = 5
+    idx = slice(2, 4)
+    key_arr = random.split(key, size).at[idx].set(key)
+    expected = jnp.zeros(size, dtype=bool).at[idx].set(True)
+
+    self.assertArraysEqual(key == key_arr, expected)
+    self.assertArraysEqual(key != key_arr, ~expected)
 
   @parameterized.parameters([
     (0,),

@@ -905,8 +905,8 @@ class JaxTestCase(parameterized.TestCase):
 
   def assertDtypesMatch(self, x, y, *, canonicalize_dtypes=True):
     if not config.x64_enabled and canonicalize_dtypes:
-      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x)),
-                       _dtypes.canonicalize_dtype(_dtype(y)))
+      self.assertEqual(_dtypes.canonicalize_dtype(_dtype(x), allow_opaque_dtype=True),
+                       _dtypes.canonicalize_dtype(_dtype(y), allow_opaque_dtype=True))
     else:
       self.assertEqual(_dtype(x), _dtype(y))
 
