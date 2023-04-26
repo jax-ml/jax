@@ -26,6 +26,7 @@ import jax
 from jax import sharding
 
 from jax._src import core
+from jax._src import dispatch
 from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
@@ -106,6 +107,11 @@ class Exported:
   @property
   def mlir_module(self) -> mlir.ir.Module:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
+
+  def __str__(self):
+    # This is called to make a MLIR source location when we call an Exported, and we
+    # do not want the entire serialized module to end up in locations.
+    return f"Exported(fun_name={self.fun_name}, ...)"
 
   def vjp(self) -> "Exported":
     """Gets the exported VJP.
@@ -626,3 +632,124 @@ def _export_native_vjp(primal_fun_jax, primal: Exported) -> Exported:
   return export(fun_vjp_jax,
                 lowering_platform=primal.lowering_platform,
                 strict_checks=primal.strict_checks)(*vjp_in_avals)
+
+### Importing
+
+def call_exported(exported: Exported) -> Callable[..., jax.Array]:
+  @jax.custom_vjp
+  def f_flat(*args_flat):
+    return call_exported_p.bind(*args_flat, exported=exported)
+
+  def f_flat_vjp_fwd(*args_flat):
+    # Return the primal arguments as the residual
+    # TODO: keep as residuals only the arguments that are needed
+    return f_flat(*args_flat), args_flat
+
+  def f_flat_vjp_bwd(residual, ct_res_flat):
+    args_flat = residual  # residual is the primal argument flat tuple
+    exp_vjp = exported.vjp()
+    in_ct_flat = call_exported(exp_vjp)(*args_flat, *ct_res_flat)
+    return in_ct_flat
+
+  f_flat.defvjp(f_flat_vjp_fwd, f_flat_vjp_bwd)
+
+  def f_imported(*args, **kwargs):
+    # since custom_vjp does not support kwargs, flatten the function first.
+    args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
+    if in_tree != exported.in_tree:
+      # Give errors with the precise tree difference; use fake leaves so we can
+      # use tree_util.equality_errors.
+      in_args = in_tree.unflatten([0] * in_tree.num_leaves)
+      exp_in_args = exported.in_tree.unflatten([0] * exported.in_tree.num_leaves)
+      def path_to_str(path):
+        if path[0] == tree_util.SequenceKey(0):
+          return f"args{tree_util.keystr(path[1:])}"
+        elif path[0] == tree_util.SequenceKey(1):
+          return f"kwargs{tree_util.keystr(path[1:])}"
+        else:
+          assert False
+      msg = (
+          "The invocation args and kwargs must have the same pytree structure "
+          f"as when the function '{exported.fun_name}' was exported, but they "
+          "have the following structural differences:\n" +
+          ("\n".join(
+             f"   - {path_to_str(path)} is a {thing1} in the invocation and a "
+             f"{thing2} when exported, so {explanation}.\n"
+             for path, thing1, thing2, explanation
+             in tree_util.equality_errors(in_args, exp_in_args))))
+      raise ValueError(msg)
+
+    res_flat = f_flat(*args_flat)
+    return exported.out_tree.unflatten(res_flat)
+  return f_imported
+
+
+# A JAX primitive for invoking a serialized JAX function.
+call_exported_p = core.Primitive("call_exported")
+call_exported_p.multiple_results = True
+
+def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
+                                 exported: Exported) -> Tuple[core.AbstractValue, ...]:
+  # TODO: handle shape polymorphism
+  if in_avals != exported.in_avals:
+    if any(not core.is_constant_shape(aval.shape)
+           for aval in exported.in_avals):
+      raise NotImplementedError("call_exported for exported with polymorphic shapes")
+    assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
+    exported_avals = exported.in_tree.unflatten(exported.in_avals)
+    exp_avals_with_paths, _ = tree_util.tree_flatten_with_path(exported_avals)
+
+    def path_to_str(path):
+      if path[0] == tree_util.SequenceKey(0):
+        return f"args{tree_util.keystr(path[1:])}"
+      elif path[0] == tree_util.SequenceKey(1):
+        return f"kwargs{tree_util.keystr(path[1:])}"
+      else:
+        assert False
+    msg = (
+        "The invocation args and kwargs must have the same abstract values "
+        f"as when the function '{exported.fun_name}' was exported, but they have"
+        " the following differences:\n" +
+        ("\n".join(
+            f"  - {path_to_str(path)} is a {in_aval} in the invocation and a "
+            f"{exp_aval} when exported\n"
+            for in_aval, (path, exp_aval) in zip(in_avals, exp_avals_with_paths)
+        )))
+    raise ValueError(msg)
+  return exported.out_avals
+
+call_exported_p.def_abstract_eval(_call_exported_abstract_eval)
+
+def _call_exported_impl(*args, exported: Exported):
+  return dispatch.apply_primitive(call_exported_p, *args, exported=exported)
+
+call_exported_p.def_impl(_call_exported_impl)
+
+def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
+                            platform: str,
+                            exported: Exported):
+  if platform != exported.lowering_platform:
+    raise ValueError(
+        f"The exported function '{exported.fun_name}' was lowered for "
+        f"platform '{exported.lowering_platform}' but it is used "
+        f"on '{platform}'.")
+  submodule_str = xla_client._xla.mlir.deserialize_portable_artifact(
+      exported.mlir_module_serialized)
+  submodule = mlir.ir.Module.parse(submodule_str)
+  symtab = ir.SymbolTable(submodule.operation)
+  callee_result_types = symtab["main"].type.results
+  # TODO: maybe cache multiple calls
+  fn = mlir.merge_mlir_modules(ctx.module_context.module,
+                               f"call_exported_{exported.fun_name}",
+                               submodule)
+  kept_args = [a for i, a in enumerate(args) if i in exported.module_kept_var_idx]
+  call = func_dialect.CallOp(callee_result_types,
+                             ir.FlatSymbolRefAttr.get(fn),
+                             kept_args)
+  return call.results
+
+
+for _p in ("cpu", "tpu", "cuda", "rocm"):
+  mlir.register_lowering(call_exported_p,
+                         functools.partial(_call_exported_lowering, platform=_p),
+                         platform=_p)

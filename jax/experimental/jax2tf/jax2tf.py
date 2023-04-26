@@ -1348,6 +1348,8 @@ tf_not_yet_impl = [
     "io_callback",
     "shard_map",
 
+    "call_exported",
+
     # Not high priority?
     "after_all",
     "all_to_all",
