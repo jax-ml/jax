@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
+import re
 import unittest
 
 from absl.testing import absltest, parameterized
@@ -59,6 +61,16 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual(exp.in_avals, (a_aval, b_aval, a_aval, b_aval))
     self.assertEqual(exp.out_tree, tree_util.tree_flatten(f(*args, **kwargs))[1])
     self.assertEqual(exp.out_avals, (a_aval, b_aval, a_aval, b_aval, a_aval, b_aval))
+
+  def test_poly_export_only(self):
+    a = np.arange(12, dtype=np.float32).reshape((3, 4))
+    def f(a):
+      return jnp.concatenate([a, a], axis=0)
+
+    exp = jax_export.export(f)(
+        jax_export.poly_spec(a.shape, a.dtype, "(w, h)"))
+    self.assertEqual("(w, h)", str(exp.in_avals[0].shape))
+    self.assertEqual("(2*w, h)", str(exp.out_avals[0].shape))
 
   def test_basic(self):
     f = jnp.sin
@@ -119,16 +131,26 @@ class JaxExportTest(jtu.JaxTestCase):
       jax_export.call_exported(exp_f)(a, b, c=(a, b))
 
   def test_error_wrong_avals(self):
-    def f(a, *, b):
+    def f(a, *, b):  # a: f32[4] and b: f32[4]
       return jnp.sin(a) + jnp.cos(b)
-    a = np.arange(4, dtype=np.float32)
-    b = np.arange(6, dtype=np.float32)
-    exp_f = jax_export.export(f)(a, b=a)
+    f32_4 = np.arange(4, dtype=np.float32)
+    exp_f = jax_export.export(f)(f32_4, b=f32_4)
 
-    with self.assertRaisesRegex(
-        ValueError,
-        "The invocation args and kwargs must have the same abstract values"):
-      jax_export.call_exported(exp_f)(b, b=a.astype(np.float16))
+    with self.assertRaisesRegex(ValueError,
+        r"Shape mismatch for args\[0\] in dimension 0"):
+      jax_export.call_exported(exp_f)(np.arange(6, dtype=np.float32), b=f32_4)
+
+    with self.assertRaisesRegex(ValueError,
+        r"Shape mismatch for kwargs\['b'\] in dimension 0"):
+      jax_export.call_exported(exp_f)(f32_4, b=np.arange(6, dtype=np.float32))
+
+    with self.assertRaisesRegex(ValueError,
+        r"Rank mismatch for args\[0\]"):
+      jax_export.call_exported(exp_f)(f32_4.reshape((1, 4)), b=f32_4)
+
+    with self.assertRaisesRegex(ValueError,
+        r"Dtype mismatch for args\[0\]"):
+      jax_export.call_exported(exp_f)(f32_4.astype(np.float16), b=f32_4)
 
   @parameterized.named_parameters(
       dict(testcase_name=p, platform=p)

@@ -122,6 +122,7 @@ class Exported:
       raise ValueError("No VJP is available")
     return self._get_vjp(self)
 
+
 def default_lowering_platform() -> str:
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
@@ -267,7 +268,8 @@ def export(fun_jax: Callable,
     if not all(core.is_constant_shape(a.shape) for a in args_avals_flat):
       # All arguments are kept if we have dimension variables.
       assert len(module_kept_var_idx) == len(args_avals_flat)
-      mlir_module = _add_dim_arg_computation(mlir_module, args_avals_flat)
+      mlir_module = _add_dim_arg_computation(mlir_module, args_avals_flat,
+                                             args_kwargs_tree=lowered.in_tree)
 
     xla_call_module_version = 4
     mlir_str = mlir.module_to_bytecode(mlir_module)
@@ -313,7 +315,8 @@ def export(fun_jax: Callable,
 
 
 def _add_dim_arg_computation(module: mlir.ir.Module,
-                             args_avals_flat: Sequence[core.ShapedArray]) -> mlir.ir.Module:
+                             args_avals_flat: Sequence[core.ShapedArray], *,
+                             args_kwargs_tree: tree_util.PyTreeDef) -> mlir.ir.Module:
   """Wraps the lowered module with a new "main" that computes the dim args.
 
   JAX lowering in presence of shape polymorphism produces a `module` that
@@ -344,6 +347,8 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
       dimension arguments, followed by the kept array arguments.
     args_avals_flat: the avals for all the arguments of the lowered function, which
       correspond to the array arguments of the `module`.
+    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for
+      error messages.
 
   Returns the wrapped module.
   """
@@ -356,9 +361,8 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
     symbol_table = ir.SymbolTable(new_module.operation)
     orig_main = symbol_table["main"]
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
-    orig_main_name = "_wrapped_jax_export_main"
-    symbol_table.set_symbol_name(orig_main, orig_main_name)
-
+    symbol_table.set_symbol_name(orig_main, "_wrapped_jax_export_main")
+    orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
     orig_input_types = orig_main.type.inputs
     nr_array_args = len(orig_input_types) - len(dim_vars)
     assert nr_array_args >= 0
@@ -390,7 +394,8 @@ def _add_dim_arg_computation(module: mlir.ir.Module,
                                      primitive=None, avals_in=args_avals_flat, avals_out=None,
                                      tokens_in=mlir.TokenSet(), tokens_out=None)
       dim_args = _compute_dim_args(ctx, args_avals_flat, tuple(new_main_op.arguments),
-                                  orig_input_types[:len(dim_vars)])
+                                   orig_input_types[:len(dim_vars)],
+                                   args_kwargs_tree=args_kwargs_tree)
       # The first arguments are the dimension variable
       orig_main_args.extend(dim_args)
       # Then the array arguments
@@ -407,13 +412,16 @@ def _compute_dim_args(
     ctx: mlir.LoweringRuleContext,
     args_avals_flat: Sequence[core.ShapedArray],
     array_args: Sequence[mlir.ir.Value],
-    dim_arg_types: Sequence[mlir.ir.Type]) -> Sequence[mlir.ir.Value]:
+    dim_arg_types: Sequence[mlir.ir.Type], *,
+    args_kwargs_tree: tree_util.PyTreeDef) -> Sequence[mlir.ir.Value]:
   """Compute the values of the dimension arguments.
 
   Args:
     args_avals_flat: the abstract values of the array arguments.
     array_args: the values of the array arguments.
     dim_arg_types: the desired types for the dimension arguments.
+    args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for
+      error messages.
 
   Returns:
     the values of the dimension variables, in the sorted order of the
@@ -421,7 +429,9 @@ def _compute_dim_args(
   """
   dim_vars = shape_poly.all_dim_vars(args_avals_flat)
   dim_values = mlir.lower_fun(
-      functools.partial(shape_poly.compute_dim_values, args_avals_flat, dim_vars),
+      functools.partial(shape_poly.unify_avals_with_args, args_avals_flat, dim_vars,
+                        use_static_dimension_size=False,
+                        args_kwargs_tree=args_kwargs_tree),
       multiple_results=True)(ctx, *array_args)
   res = []
   for dim_arg, dim_arg_type in zip(util.flatten(dim_values), dim_arg_types):
@@ -452,7 +462,8 @@ def _check_lowering(lowering) -> None:
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
 
-  # We have not implemented support for some of the compile_args.
+  # We have not implemented support for some of the compile_args. Check here that
+  # the compile_args have the values that have been implemented.
   not_implemented_msgs = []
   for compile_arg, check_value, err_msg in (
       ("spmd_lowering", lambda v: v, "True"),
@@ -661,19 +672,13 @@ def call_exported(exported: Exported) -> Callable[..., jax.Array]:
       # use tree_util.equality_errors.
       in_args = in_tree.unflatten([0] * in_tree.num_leaves)
       exp_in_args = exported.in_tree.unflatten([0] * exported.in_tree.num_leaves)
-      def path_to_str(path):
-        if path[0] == tree_util.SequenceKey(0):
-          return f"args{tree_util.keystr(path[1:])}"
-        elif path[0] == tree_util.SequenceKey(1):
-          return f"kwargs{tree_util.keystr(path[1:])}"
-        else:
-          assert False
+
       msg = (
           "The invocation args and kwargs must have the same pytree structure "
           f"as when the function '{exported.fun_name}' was exported, but they "
           "have the following structural differences:\n" +
           ("\n".join(
-             f"   - {path_to_str(path)} is a {thing1} in the invocation and a "
+             f"   - {shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
              f"{thing2} when exported, so {explanation}.\n"
              for path, thing1, thing2, explanation
              in tree_util.equality_errors(in_args, exp_in_args))))
@@ -690,33 +695,17 @@ call_exported_p.multiple_results = True
 
 def _call_exported_abstract_eval(*in_avals: core.AbstractValue,
                                  exported: Exported) -> Tuple[core.AbstractValue, ...]:
-  # TODO: handle shape polymorphism
-  if in_avals != exported.in_avals:
-    if any(not core.is_constant_shape(aval.shape)
-           for aval in exported.in_avals):
-      raise NotImplementedError("call_exported for exported with polymorphic shapes")
-    assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
-    exported_avals = exported.in_tree.unflatten(exported.in_avals)
-    exp_avals_with_paths, _ = tree_util.tree_flatten_with_path(exported_avals)
-
-    def path_to_str(path):
-      if path[0] == tree_util.SequenceKey(0):
-        return f"args{tree_util.keystr(path[1:])}"
-      elif path[0] == tree_util.SequenceKey(1):
-        return f"kwargs{tree_util.keystr(path[1:])}"
-      else:
-        assert False
-    msg = (
-        "The invocation args and kwargs must have the same abstract values "
-        f"as when the function '{exported.fun_name}' was exported, but they have"
-        " the following differences:\n" +
-        ("\n".join(
-            f"  - {path_to_str(path)} is a {in_aval} in the invocation and a "
-            f"{exp_aval} when exported\n"
-            for in_aval, (path, exp_aval) in zip(in_avals, exp_avals_with_paths)
-        )))
-    raise ValueError(msg)
+  exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
+  if exported_dim_vars:
+    raise NotImplementedError("call_exported for exported with polymorphic shapes")
+  assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
+  # Must express the exported_dim_vars in terms of the shapes in in_avals.
+  _ = shape_poly.unify_avals_with_args(
+      exported.in_avals, exported_dim_vars, *in_avals,  # type: ignore
+      use_static_dimension_size=True,
+      args_kwargs_tree=exported.in_tree)
   return exported.out_avals
+
 
 call_exported_p.def_abstract_eval(_call_exported_abstract_eval)
 
@@ -733,9 +722,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
         f"The exported function '{exported.fun_name}' was lowered for "
         f"platform '{exported.lowering_platform}' but it is used "
         f"on '{platform}'.")
-  submodule_str = xla_client._xla.mlir.deserialize_portable_artifact(
-      exported.mlir_module_serialized)
-  submodule = mlir.ir.Module.parse(submodule_str)
+  submodule = mlir.ir.Module.parse(exported.mlir_module)
   symtab = ir.SymbolTable(submodule.operation)
   callee_result_types = symtab["main"].type.results
   # TODO: maybe cache multiple calls

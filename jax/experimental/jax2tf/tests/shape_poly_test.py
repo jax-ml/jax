@@ -33,6 +33,7 @@ from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
 from jax import random
+from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lax import lax as lax_internal
@@ -800,7 +801,9 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
         avals = tuple(map(shape_poly.arg_aval, arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars = shape_poly.all_dim_vars(avals)
         dim_values, _ = jax2tf.jax2tf._interpret_fun_jax(
-            partial(shape_poly.compute_dim_values, avals, dim_vars),
+            partial(shape_poly.unify_avals_with_args, avals, dim_vars,
+                    use_static_dimension_size=False,
+                    args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
             args_tf, avals, "")
         if expected_avals is not None:
           self.assertEqual(expected_avals, avals)
@@ -908,21 +911,21 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
           polymorphic_shapes=[PS("b * b", "b * d * d", "d")])
 
     with self.assertRaisesRegex(ValueError,
-                                "Dimension variable b must have integer value >= 1"):
+                                "Dimension variable 'b' must have integer value >= 1"):
       check_avals(
           arg_shapes=[(5, 36)],
           polymorphic_shapes=[PS("3 * b", ...)],
           eager_mode=True)
 
     with self.assertRaisesRegex(ValueError,
-                                "Dimension variable b must have integer value >= 1"):
+                                "Dimension variable 'b' must have integer value >= 1"):
       check_avals(
           arg_shapes=[(10, 3)],
           polymorphic_shapes=[PS("3 * b + 10", ...)],
           eager_mode=True)
 
     with self.assertRaisesRegex(ValueError,
-                                "Dimension variable b must have integer value >= 1"):
+                                "Dimension variable 'b' must have integer value >= 1"):
       check_avals(
           arg_shapes=[(7, 3)],
           polymorphic_shapes=[PS("3 * b + 10", ...)],
@@ -1498,7 +1501,7 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
     # eagerly.
     with self.assertRaisesRegex(
         ValueError,
-        "Dimension variable b must have integer value >= 1. Found value 0 when solving .*"):
+        "Dimension variable 'b' must have integer value >= 1. Found value 0 when solving .*"):
       jax2tf.convert(f1_jax, polymorphic_shapes=["b"],
                      native_serialization=False)(x0)
 
