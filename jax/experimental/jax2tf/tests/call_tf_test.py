@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for call_tf."""
-import base64
 from functools import partial
 from typing import Callable, Dict, Tuple
 import unittest
@@ -1333,85 +1332,69 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     stablehlo_module = f_jax.lower(x, y, z).compiler_ir("stablehlo")
     self.assertIn("stablehlo.custom_call", str(stablehlo_module))
 
-    concrete_function_flat_tf = tf_func_3.get_concrete_function(x, y, z)
-    expect_function_def_dict = {}
-    expect_function_def_dict[
-        concrete_function_flat_tf.function_def.signature.name
-    ] = concrete_function_flat_tf.function_def
-    for k, v in concrete_function_flat_tf.graph._functions.items():
-      expect_function_def_dict[k] = v.definition
+    caller_name_list = []
 
-    deserialized_function_def_dict = {}
-
-    def extract_func_def(op):
+    def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
       tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
-      function_def_list = ir.ArrayAttr(tf_metadata["function_def_list"])
+      caller_name = ir.StringAttr(tf_metadata["caller_name"]).value
+      caller_name_list.append(caller_name)
 
-      for fdef_str in function_def_list:
-        fdef_str_bytes = base64.b64decode(str(fdef_str)[1:-1])
-        fdef = function_pb2.FunctionDef()
-        fdef.ParseFromString(fdef_str_bytes)
-        deserialized_function_def_dict.update({fdef.signature.name: fdef})
+    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+    self.assertLen(caller_name_list, 1)
 
-    self._walk_stablehlo_operations(stablehlo_module, extract_func_def)
+  @parameterized.named_parameters(
+      dict(
+          testcase_name="multiple_outputs",
+          tf_f=lambda x: tf.py_function(np.sin, [x], tf.float32),
+          output_shape_dtype=jax.ShapeDtypeStruct((10,), jnp.float32),
+      ),
+      dict(
+          testcase_name="zero_outputs",
+          tf_f=lambda x: print(tf.strings.length(tf.constant("hello, world"))),
+          output_shape_dtype=None,
+      ),
+  )
+  def test_use_custom_call_non_compilable(self, tf_f, output_shape_dtype):
+    inputs = jnp.ones([10], dtype=jnp.float32)
+    caller_name_list = []
 
-    for k, _ in expect_function_def_dict.items():
-      self.assertEqual(
-          expect_function_def_dict[k], deserialized_function_def_dict[k]
-      )
-
-  def test_use_custom_call_non_compilable(self):
-    deserialized_function_def_dict = {}
-
-    def extract_func_def(op):
+    def _extract_info(op):
       if op.operation.name != "stablehlo.custom_call":
         return
       tf_metadata = ir.DictAttr(op.attributes["tf_metadata"])
-      function_def_list = ir.ArrayAttr(tf_metadata["function_def_list"])
+      caller_name = ir.StringAttr(tf_metadata["caller_name"]).value
+      caller_name_list.append(caller_name)
 
-      for fdef_str in function_def_list:
-        fdef_str_bytes = base64.b64decode(str(fdef_str)[1:-1])
-        fdef = function_pb2.FunctionDef()
-        fdef.ParseFromString(fdef_str_bytes)
-        deserialized_function_def_dict.update({fdef.signature.name: fdef})
-
-    @tf.function(jit_compile=False)
-    def my_op(x):
-      return tf.py_function(np.sin, [x], tf.float32)
-
-    x = jnp.ones([10], dtype=jnp.float32)
-    output_shape_dtype = jax.ShapeDtypeStruct(x.shape, x.dtype)
-    f_jax = jax.jit(
-        jax2tf.call_tf(
-            my_op,
-            use_custom_call=False,
-            output_shape_dtype=output_shape_dtype,
-        )
+    jax_f = jax2tf.call_tf(
+        tf_f,
+        use_custom_call=True,
+        output_shape_dtype=output_shape_dtype,
     )
 
-    f_jax = jax.jit(
-        jax2tf.call_tf(
-            my_op,
-            use_custom_call=True,
-            output_shape_dtype=output_shape_dtype,
-        )
-    )
-    stablehlo_module = f_jax.lower(x).compiler_ir("stablehlo")
-    concrete_function_flat_tf = my_op.get_concrete_function(x)
-    expect_function_def_dict = {}
-    expect_function_def_dict[
-        concrete_function_flat_tf.function_def.signature.name
-    ] = concrete_function_flat_tf.function_def
-    for k, v in concrete_function_flat_tf.graph._functions.items():
-      expect_function_def_dict[k] = v.definition
+    # Eager mode
+    self.assertAllClose(tf_f(inputs), jax_f(inputs))
 
-    self._walk_stablehlo_operations(stablehlo_module, extract_func_def)
-    for k, _ in expect_function_def_dict.items():
-      self.assertEqual(
-          expect_function_def_dict[k], deserialized_function_def_dict[k]
-      )
+    # Jit mode
+    stablehlo_module = jax.jit(jax_f).lower(inputs).compiler_ir("stablehlo")
+    self.assertIn(
+        "stablehlo.custom_call @tf_function_custom_call",
+        str(stablehlo_module),
+    )
+    self.assertIn("tf_metadata", str(stablehlo_module))
+    self._walk_stablehlo_operations(stablehlo_module, _extract_info)
+    self.assertLen(caller_name_list, 1)
+
+    # Test model exporting and reloading.
+    # There is no runtime support yet so it can not run.
+    tf_f_rt = jax2tf.convert(
+        jax_f,
+        native_serialization=True,
+        native_serialization_strict_checks=False,
+        with_gradient=False,
+    )
+    _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt, input_args=[inputs])
 
 
 if __name__ == "__main__":

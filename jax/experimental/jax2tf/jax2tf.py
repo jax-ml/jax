@@ -194,6 +194,11 @@ class _ThreadLocalState(threading.local):
     # "{tf_outer_name_scope}/JAX_NAME_STACKS"
     self.tf_outer_name_scope = ""
 
+    # A set collecting all tf concrete_functions called by stablehlo.custom_call
+    # This is used only by native serialization ((unlike all the other
+    # thread-local state).
+    self.call_tf_concrete_function_set: set[Any] = set()
+
 _thread_local_state = _ThreadLocalState()
 
 def _get_current_name_stack() -> Union[NameStack, str]:
@@ -208,6 +213,13 @@ def inside_call_tf():
     yield
   finally:
     _thread_local_state.inside_call_tf = prev
+
+
+def add_to_call_tf_concrete_function_set(func_list: List[Any]) -> None:
+  assert (
+      _thread_local_state.inside_call_tf
+  ), "Updating call_tf_concrete_function_set can only happen inside call_tf."
+  _thread_local_state.call_tf_concrete_function_set.update(func_list)
 
 
 @partial(api_util.api_hook, tag="jax2tf_convert")
@@ -482,6 +494,12 @@ class NativeSerializationImpl(SerializationImpl):
       self.lowering_platform = None
 
   def before_conversion(self):
+    _thread_local_state.call_tf_concrete_function_set = set()
+
+    def _restore_context():
+      _thread_local_state.call_tf_concrete_function_set.clear()
+
+    self._restore_context = _restore_context
     self.exported = jax_export.export(
         self.fun_jax,
         lowering_platform=self.lowering_platform,
@@ -489,7 +507,7 @@ class NativeSerializationImpl(SerializationImpl):
     )(*self.args_specs, **self.kwargs_specs)
 
   def after_conversion(self):
-    pass
+    self._restore_context()
 
   def run_fun_tf(self,
                  args_flat_tf: Sequence[TfVal]
@@ -786,6 +804,14 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
           kept_args_flat_tf, kept_args_avals, exported.in_shardings))
   res = tfxla.call_module(args_flat_tf, **call_module_attrs)
+  # TODO(b/278940799): Replace the TF v1 API with public TF2 API.
+  # Add the custom call tf.function into the default graph, so those functions
+  # will be available during tf.SavedModel.save.
+  for concrete_fn in _thread_local_state.call_tf_concrete_function_set:
+    tf.compat.v1.get_default_graph()._add_function_recursive(
+        concrete_fn._inference_function
+    )
+
   if exported.out_shardings is not None:
     res = list(map(partial(_shard_value, skip_replicated_sharding=tf.executing_eagerly()),
                    res, exported.out_avals, exported.out_shardings))
