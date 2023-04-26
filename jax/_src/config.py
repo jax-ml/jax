@@ -799,9 +799,7 @@ pmap_shmap_merge = config.define_bool_state(
 spmd_mode = config.define_enum_state(
     name='jax_spmd_mode',
     enum_values=['allow_all', 'allow_jit', 'allow_pjit'],
-    # TODO(yashkatariya): Default to `allow_jit` when the training wheels come
-    # off.
-    default='allow_pjit',
+    default='allow_jit',
     help=("Decides whether Math on `jax.Array`'s that are not fully addressable "
           "(i.e. spans across multiple processes) is allowed. The options are: "
           "* allow_pjit: Default, only `pjit` computations are allowed to "

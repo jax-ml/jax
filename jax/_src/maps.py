@@ -695,7 +695,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         lowering_platform=lowering_platform)
   else:
     return dispatch.sharded_lowering(
-        f, name, donated_invars, True, in_avals, (None,) * len(in_avals),
+        f, name, donated_invars, True, False, in_avals, (None,) * len(in_avals),
         lowering_platform=lowering_platform)
 
 

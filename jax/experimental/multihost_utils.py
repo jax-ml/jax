@@ -74,9 +74,8 @@ def broadcast_one_to_all(in_tree: Any, is_source: Optional[bool] = None) -> Any:
     return np.asarray(x.addressable_data(0))
 
   in_tree = jax.tree_map(pre_jit, in_tree)
-  with jax.spmd_mode('allow_all'):
-    out_tree = jax.jit(_psum, out_shardings=jax.sharding.NamedSharding(
-        global_mesh, P()))(in_tree)
+  out_tree = jax.jit(_psum, out_shardings=jax.sharding.NamedSharding(
+      global_mesh, P()))(in_tree)
   return jax.tree_map(post_jit, out_tree)
 
 

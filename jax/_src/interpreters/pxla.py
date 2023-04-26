@@ -1986,6 +1986,7 @@ def lower_sharding_computation(
     global_in_avals: Sequence[core.ShapedArray],
     *,
     keep_unused: bool,
+    inline: bool,
     always_lower: bool,
     devices_from_context: Optional[Sequence[xc.Device]] = None,
     lowering_platform: Optional[str],
@@ -2035,14 +2036,7 @@ def lower_sharding_computation(
 
   if not da_object.is_fully_addressable:
     check_multihost_collective_allowlist(jaxpr)
-    # TODO(yashkatariya): Once jit and pjit's frontend is merged, use the
-    # argument on jit `_allow_multiprocess` (which will be added later) instead
-    # of the `api_name` check here.
-    # Furthermore, `allow_jit` is not allowed yet because `allow_jit` only
-    # allows explicit `jax.jit` to work but not implicitly jitted `jnp`.
-    # operations. This restriction will be relaxed in the future when the
-    # default value of `spmd_mode` config changes to `allow_jit`.
-    if api_name == 'jit' and config.jax_spmd_mode != 'allow_all':
+    if inline and config.jax_spmd_mode != 'allow_all':
       raise RuntimeError(
           "Running operations on `Array`s that are not fully addressable by this "
           "process (i.e. `Array`s with data sharded across multiple devices and "
