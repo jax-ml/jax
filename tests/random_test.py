@@ -2132,6 +2132,24 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
 
+  def test_equality(self):
+    key = random.PRNGKey(123)
+    key2 = random.PRNGKey(456)
+
+    self.assertTrue(key == key)
+    self.assertFalse(key == key2)
+
+    self.assertTrue(key != key2)
+    self.assertFalse(key != key)
+
+    size = 5
+    idx = slice(2, 4)
+    key_arr = random.split(key, size).at[idx].set(key)
+    expected = jnp.zeros(size, dtype=bool).at[idx].set(True)
+
+    self.assertArraysEqual(key == key_arr, expected)
+    self.assertArraysEqual(key != key_arr, ~expected)
+
   @parameterized.parameters([
     (0,),
     (slice(1),),

@@ -1521,10 +1521,13 @@ standard_unop = partial(unop, _identity)
 _attrgetter = lambda name: lambda x, **kwargs: getattr(x, name)
 
 
-def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals, **kwargs):
+def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
+                      allow_opaque_dtype=False, **kwargs):
   del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
+    if allow_opaque_dtype and core.is_opaque_dtype(aval.dtype):
+      continue
     types = accepted_dtypes[i]
     if not any(dtypes.issubdtype(aval.dtype, t) for t in types):
       if aval.dtype == dtypes.float0:
@@ -1585,8 +1588,9 @@ def _naryop_weak_type_rule(name, *avals, **kwargs):
         "taken a gradient with respect to an integer argument.")
   return all(aval.weak_type for aval in avals)
 
-def naryop(result_dtype, accepted_dtypes, name):
-  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name)
+def naryop(result_dtype, accepted_dtypes, name, allow_opaque_dtype=False):
+  dtype_rule = partial(naryop_dtype_rule, result_dtype, accepted_dtypes, name,
+                       allow_opaque_dtype=allow_opaque_dtype)
   shape_rule = partial(broadcasting_shape_rule, name)
   weak_type_rule = partial(_naryop_weak_type_rule, name)
   prim = standard_primitive(shape_rule, dtype_rule, name,
@@ -2175,6 +2179,16 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
   x_dtype = avals_in[0].dtype
   x, y = mlir.multi_broadcast_in_dim(ctx, (x, y), avals_in, aval_out.shape)
+  if core.is_opaque_dtype(x_dtype):
+    broadcast_avals_in = tuple(
+        core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
+    if direction == 'EQ':
+      return x_dtype._rules.eq_mlir(ctx, broadcast_avals_in, aval_out, x, y)
+    elif direction == 'NE':
+      return x_dtype._rules.ne_mlir(ctx, broadcast_avals_in, aval_out, x, y)
+    else:
+      raise NotImplementedError(
+          f"HLO comparison {direction} for opaque dtype {x_dtype}")
 
   if dtypes.issubdtype(x_dtype, np.inexact):
     compare_type = "FLOAT"
@@ -2184,11 +2198,11 @@ def _compare_lower_hlo(direction: str, ctx, x, y):
     compare_type = "UNSIGNED"
   return mlir.compare_hlo(x, y, direction, compare_type).results
 
-eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq')
+eq_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'eq', allow_opaque_dtype=True)
 ad.defjvp_zero(eq_p)
 mlir.register_lowering(eq_p, partial(_compare_lower_hlo, "EQ"))
 
-ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne')
+ne_p = naryop(_fixed_dtype(np.bool_), [_any, _any], 'ne', allow_opaque_dtype=True)
 ad.defjvp_zero(ne_p)
 mlir.register_lowering(ne_p, partial(_compare_lower_hlo, "NE"))
 
