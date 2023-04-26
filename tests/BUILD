@@ -148,7 +148,7 @@ jax_test(
     shard_count = {
         "cpu": 10,
         "gpu": 10,
-        "tpu": 10,
+        "tpu": 20,
     },
 )
 
@@ -540,6 +540,9 @@ jax_test(
 jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
+    shard_count = {
+        "tpu": 10,
+    },
 )
 
 jax_test(
