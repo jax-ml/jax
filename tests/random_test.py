@@ -2000,6 +2000,17 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.assertIsInstance(out_key, random.KeyArray)
     self.assertArraysEqual(out_key.unsafe_raw_array(), out_arr)
 
+  @parameterized.parameters([
+    [(2, 3), 'shape', (2, 3)],
+    [(2, 3), 'size', 6],
+    [(2, 3), 'ndim', 2]
+  ])
+  def test_properties(self, shape, prop, expected):
+    get_prop = lambda x: getattr(x, prop)
+    key = random.split(random.PRNGKey(0), math.prod(shape)).reshape(shape)
+    self.assertEqual(get_prop(key), expected)
+    self.assertEqual(jax.jit(get_prop)(key), expected)
+
   def test_reshape(self):
     key = random.PRNGKey(123)
     keys = random.split(key, 4)

@@ -147,6 +147,10 @@ class PRNGKeyArray(abc.ABC, metaclass=PRNGKeyArrayMeta):
 
   @property
   @abc.abstractmethod
+  def size(self) -> int: ...
+
+  @property
+  @abc.abstractmethod
   def dtype(self): ...
 
   @property
@@ -227,6 +231,10 @@ class PRNGKeyArrayImpl(PRNGKeyArray):
   @property
   def shape(self):
     return base_arr_shape_to_keys_shape(self.impl, self._base_array.shape)
+
+  @property
+  def size(self):
+    return math.prod(self.shape)
 
   @property
   def ndim(self):
