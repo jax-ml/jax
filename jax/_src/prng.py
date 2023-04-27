@@ -1338,7 +1338,7 @@ rbg_prng_impl = PRNGImpl(
 def _unsafe_rbg_split(key: typing.Array, num: int) -> typing.Array:
   # treat 10 iterations of random bits as a 'hash function'
   _, keys = lax.rng_bit_generator(key, (10 * num, 4), dtype='uint32')
-  return keys[::10]
+  return lax.slice_in_dim(keys, start_index=None, limit_index=None, stride=10)
 
 def _unsafe_rbg_fold_in(key: typing.Array, data: typing.Array) -> typing.Array:
   assert not data.shape
