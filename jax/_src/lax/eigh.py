@@ -136,10 +136,10 @@ def _projector_subspace(P, H, n, rank, maxiter=2):
   """
   # Choose an initial guess: the `rank` largest-norm columns of P.
   N, _ = P.shape
-  column_norms = jnp_linalg.norm(P, axis=1)
+  negative_column_norms = -jnp_linalg.norm(P, axis=1)
   # `jnp.argsort` ensures NaNs sort last, so set masked-out column norms to NaN.
-  column_norms = _mask(column_norms, (n,), jnp.nan)
-  sort_idxs = jnp.argsort(column_norms)
+  negative_column_norms = _mask(negative_column_norms, (n,), jnp.nan)
+  sort_idxs = jnp.argsort(negative_column_norms)
   X = P[:, sort_idxs]
   # X = X[:, :rank]
   X = _mask(X, (n, rank))
